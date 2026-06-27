@@ -76,31 +76,42 @@ evaluated on the **PlantSeg** in-the-wild plant-disease segmentation benchmark `
 | Plant hosts | **34** | `[Wei]` |
 | Distinct disease types | **69** (combine with 34 hosts → 115 combos) | `[Wei]` |
 | Split ratio | **70 / 10 / 20** (train / val / test) | `[Wei]` |
-| Split sizes (computed) | ≈ **5,442 / 778 / 1,554** from 7,774 total | `[ch3 §E]` |
-| Split files | `annotation_train.json`, `annotation_val.json`, `annotation_test.json` | `[ch3 §E]` |
-| Test images used everywhere | **1,554** (per-image metric unit count) | `[ch3 §E]` |
+| Split sizes (**empirical, verified**) | **train 5,367 / val 846 / test 1,561** (total 7,774); folder + JSON + CSV encodings all agree, **zero overlap** | `[empirical]` |
+| Split files | `annotation_train.json`, `annotation_val.json`, `annotation_test.json` (COCO format) + `train/val/test` subfolders + `Metadata.csv` `Split` column | `[ch3 §E; empirical]` |
+| Test images used everywhere | **1,561** (per-image metric unit count; verified) | `[empirical]` |
 | Image format | **JPEG** (`images/`) | `[Wei]` |
-| Mask format | **PNG grayscale** (`annotations/`) | `[Wei]` |
-| Mask class indices | **0–114** for the 115 plant-disease combinations | `[Wei]` |
-| Ignore index | **255** (padding regions; excluded from all loss & metrics) | `[ch3]` |
-| `num_classes` | **OPEN — DO NOT HARDCODE.** See conflict below. | `[Wei]` vs `[ch3]` |
-| `reduce_zero_label` | `NEED_TO_CONFIRM` (not stated in any source; tied to the num_classes/background question) | — |
+| Mask format | **PNG, single-channel indexed** (mode `L`, 7774/7774; no color masks) | `[Wei; empirical]` |
+| Mask pixel values | **0–115** (contiguous): **0 = background**, **1–115 = the 115 diseases** (`mask value = COCO category_id + 1`, 99.85% per-image consistent). Wei's "0–114" describe the `category_id`s, not the mask pixel values. | `[Wei; empirical]` |
+| EXIF orientation (images) | **`ImageOps.exif_transpose` is MANDATORY** on images before pairing/transforming with masks; **never** on masks (PNG, no EXIF). 9 images affected (8× orient-6 dim-swap + 1× orient-3 180°). | `[empirical]` |
+| Ignore index | **255** (padding regions; excluded from all loss & metrics). **Absent from raw masks** — introduced only at preprocessing. | `[ch3; empirical]` |
+| `num_classes` (all-class) | **116** — empirically supported (mask values 0–115; max non-ignore = 115; background 0 + 115 diseases). | `[empirical]` |
+| `reduce_zero_label` / background | **background = index 0** (empirical: present in 7773/7774 masks, 80.6% of pixels). `reduce_zero_label` itself = `NEED_TO_CONFIRM` (implementation choice; no literal "background" category named in dataset files). | `[empirical]` |
 | Zenodo DOI | **10.5281/zenodo.17719108** | `[Wei; ch3]` |
 | License (dataset) | **CC BY-NC 4.0** | `[Wei; ch3]` |
 | License (the article itself) | CC BY-NC-**ND** 4.0 (Nature) — distinct from dataset license; do not conflate | `[Wei]` |
 | Imbalance note | mask ratios of ~80% of images are below 36% (small-lesion regime) | `[Wei; ch3]` |
 
+> `[empirical]` = verified by `scripts/verify_plantseg_dataset.py` → [reports/dataset_report.md](../reports/dataset_report.md) (full-dataset, read-only, 2026-06-27).
+
 **Benchmark reference numbers (contextual only, `[Wei]` Table 3):**
 SegNeXt-B/MSCAN-B = 28M params, **42.05%** mIoU / 56.30% mAcc · MobileNetV3 = 5M, 10.22% / 17.15% ·
 SegNeXt-L/MSCAN-L = 49M, 44.52% mIoU · ConvNeXt-L = 121M, 46.24% / 59.97% (highest).
 
-### ⚠ Critical OPEN conflict — `num_classes`
-- `[Wei]`: "we use indices **0 to 114** to represent the corresponding plant-disease combinations" → **115** disease classes.
-- `[ch3]`: provisionally states **`num_classes = 116`** ("the background class and 115 disease classes"),
-  but is **internally inconsistent** (elsewhere writes "115 output channels", and itself calls 116
-  "provisional until confirmed by the mask-value verification in Table 3.1").
-- **Resolution (locked rule):** size the final classifier to the **empirically verified** count from
-  `np.unique()` over the real annotation PNGs. **Do not pick a winner now.** `[ch3 Table 3.1; ctx]`
+### ✅ RESOLVED (empirically, 2026-06-27) — `num_classes` = 116
+`np.unique()` over **all 7,774** real annotation PNGs returns contiguous values **0–115** (116 distinct;
+max non-ignore = **115**), so the earlier 115-vs-116 conflict is **resolved toward 116** for all-class
+segmentation. The two source claims were a **frame mismatch**, not a true contradiction:
+- `[Wei]`'s "indices **0–114**" describe the COCO **`category_id`s** (verified: `category_id` ∈ 0–114).
+- The **rasterized mask pixel values** are **0–115**: **0 = background**, **1–115 = the 115 diseases**,
+  i.e. `mask value = category_id + 1` (verified **99.85%** per-image consistent, 7762/7774; 12 minor
+  off-by-one exceptions logged in the report). `[ch3]`'s `num_classes = 116` matches this mask space.
+
+**Locked outcomes:** classifier output channels = **116**; **do not change masks**; apply
+`ImageOps.exif_transpose` to images (not masks) before any pairing/resizing.
+**Residual `NEED_TO_CONFIRM`:** the *disease-only* metric must exclude background = **index 0**
+(empirically), but no literal "background" category is named in the dataset files (COCO `categories`
+list is empty), so `reduce_zero_label` and the formal disease-only exclusion stay `NEED_TO_CONFIRM`
+pending the PlantSeg repo's official convention. `[empirical; ch3 Table 3.1; ctx]`
 
 ---
 
@@ -263,7 +274,7 @@ SegNeXt-L/MSCAN-L = 49M, 44.52% mIoU · ConvNeXt-L = 121M, 46.24% / 59.97% (high
   2. **Low-level skip (OS8):** projected by a **1×1 conv → `num_classes`**.
   3. The **upsampled high-level branch** is projected by a **separate 1×1 conv → `num_classes`**.
   4. The two `num_classes` maps are **summed** and bilinearly upsampled to **full resolution**.
-- **Output channels = empirically verified class count** (see the OPEN num_classes conflict) `[ch3; ctx]`.
+- **Output channels = 116** (empirically verified: background 0 + 115 diseases; mask values 0–115) `[ch3; ctx; empirical]`.
 - The CWD training-only 1×1 projection head (B3) is **absent from every evaluated model** `[ch3; ctx]`.
 
 ---
@@ -271,7 +282,8 @@ SegNeXt-L/MSCAN-L = 49M, 44.52% mIoU · ConvNeXt-L = 121M, 46.24% / 59.97% (high
 ## (f) Evaluation metrics + statistics `[ch3 §F]`
 
 **Accuracy**
-- **Primary inferential unit:** per-image **disease-only mIoU** (115 disease classes; background excluded;
+- **Primary inferential unit:** per-image **disease-only mIoU** (115 disease classes = mask values **1–115**;
+  **background = index 0 excluded** [empirical; residual `NEED_TO_CONFIRM` on the formal convention];
   per-image absent-class exclusion; 255 always excluded).
 - **Dataset-level all-class mIoU:** TP/FP/FN accumulated per class over the whole test set, macro-averaged;
   basis for **non-inferiority + bootstrap**; matches PlantSeg benchmark reporting.
@@ -321,11 +333,18 @@ SegNeXt-L/MSCAN-L = 49M, 44.52% mIoU · ConvNeXt-L = 121M, 46.24% / 59.97% (high
 Full detail + resolution mechanism in [open_questions.md](open_questions.md); full disagreement log in
 [conflicts.md](conflicts.md). Summary:
 
-**OPEN (authoritative sources disagree / unresolved — resolve empirically, do not guess):**
-1. **`num_classes`** — `[Wei]` 0–114 = 115 disease classes vs `[ch3]` provisional 116 (bg + 115).
-   Resolve via `np.unique()` on real masks (Table 3.1) **before E1**. Do not pick a winner.
-2. **`reduce_zero_label` / background index** — whether a distinct background index exists or background
-   is encoded inside 0–114. Same `np.unique()` resolution.
+**✅ RESOLVED empirically (2026-06-27, see [reports/dataset_report.md](../reports/dataset_report.md)):**
+1. **`num_classes` = 116** — masks contain contiguous **0–115** (max non-ignore 115). Background = **0**,
+   diseases = **1–115** (`mask = category_id + 1`, 99.85% consistent). Wei's "0–114" = COCO `category_id`s.
+   Earlier 115-vs-116 conflict resolved toward **116** for all-class segmentation. Output layer = 116.
+- Empirical split sizes **5,367 / 846 / 1,561** (replacing the contract's earlier ≈ guesses).
+- **EXIF**: `ImageOps.exif_transpose` on images (never masks) is mandatory before pairing/transform.
+
+**OPEN / NEED_TO_CONFIRM remaining (do not guess):**
+2. **Disease-only / background convention** — empirically background = **index 0** (exclude for disease-only
+   mIoU; diseases 1–115), but no literal "background" category is named in the dataset files (COCO
+   `categories` empty), so `reduce_zero_label` and the formal disease-only exclusion stay **NEED_TO_CONFIRM**
+   pending the PlantSeg repo's official convention.
 
 **NEED_TO_CONFIRM (not stated in any source; filled by experiment/selection, never guessed):**
 - `λ_logit` — validation sweep over {0.25, 0.5, 1, 2, 4}, reported Ch4.

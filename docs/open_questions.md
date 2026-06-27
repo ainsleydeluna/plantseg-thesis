@@ -8,22 +8,26 @@ Source tags as in the contract.
 
 ---
 
-## OPEN conflicts (two authoritative sources disagree — resolve empirically, no winner)
+## Empirically resolved (2026-06-27) — formerly OPEN conflicts
 
-### 1. `num_classes` — 115 (Wei, indices 0–114) vs 116 (ch3, provisional bg+115)
-- **Resolution:** run `np.unique()` over **all** real annotation PNGs (train+val+test) from the
-  downloaded Zenodo dataset; the verified distinct label set (excluding 255) defines the classifier
-  output size. `[ch3 Table 3.1; ctx]`
-- **When:** mandatory **before E1** training. Do **not** hardcode 115 or 116 until then.
-- **Status:** unresolved by design (dataset not downloaded in Week 1).
+### 1. ✅ RESOLVED — `num_classes` = 116
+- **Result:** `np.unique()` over **all 7,774** annotation PNGs → contiguous **0–115** (max non-ignore 115).
+  Background = **0**, diseases = **1–115** (`mask = category_id + 1`, 99.85% consistent). Wei's "0–114" are
+  the COCO `category_id`s. All-class classifier output = **116**.
+- **Status:** **RESOLVED.** Evidence: [reports/dataset_report.md](../reports/dataset_report.md). Do **not**
+  change masks; apply `ImageOps.exif_transpose` to images (never masks) before pairing/transform.
 
-### 2. `reduce_zero_label` / background-index encoding
-- **Question:** does a distinct background index exist (e.g., a separate value outside 0–114), or is
-  background folded into the 0–114 range? This drives `reduce_zero_label` and the disease-only vs
-  all-class metric split.
-- **Resolution:** same `np.unique()` inspection as #1 — inspect whether index 0 is a disease class or
-  background, and whether the label set is exactly {0..114} ∪ {255} or includes another value. `[ch3; ctx]`
-- **When:** before E1.
+### 2. ⚠ STILL OPEN — disease-only / background convention (`reduce_zero_label`)
+- **Empirical finding:** background = **index 0** (in 7773/7774 masks, 80.6% of pixels); diseases = 1–115.
+  So disease-only mIoU should **exclude index 0**.
+- **Why still NEED_TO_CONFIRM:** no literal "background" category is named in the dataset files (the COCO
+  `categories` list is **empty**), so the background label is *derived*, not declared. `reduce_zero_label`
+  (keep background as class 0 vs MMSeg-style shift) is an implementation choice not fixed by any source.
+- **Resolution:** confirm against the official PlantSeg repo / MMSeg config convention
+  (`https://github.com/tqwei05/PlantSeg`) before E1; until then, exclude index 0 for disease-only metrics
+  as the empirically-supported default. `[empirical; ch3; ctx]`
+- **Minor data-quality note:** 12/7,774 masks (0.15%) have a disease value off by one from their
+  `Metadata` `Index` (logged in the report) — does not affect the num_classes/background conclusion.
 
 ---
 

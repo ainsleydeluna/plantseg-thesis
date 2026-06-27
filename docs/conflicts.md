@@ -2,26 +2,32 @@
 
 **Rule:** `ch3.pdf` is the single source of truth for method/protocol; `Wei (2026)` is authoritative
 for dataset facts; `context.md` is the reconciliation source-of-truth. Where an older/secondary file
-(`ch1.pdf`, `ch2.pdf`, `reference.pdf`) disagrees with `ch3.pdf`, **ch3 wins ("current-wins")** —
-*except* the `num_classes` item, which is a genuine **OPEN** conflict between two authoritative sources
-and is **resolved empirically, with no winner picked** (per session instruction and `context.md` golden rule).
+(`ch1.pdf`, `ch2.pdf`, `reference.pdf`) disagrees with `ch3.pdf`, **ch3 wins ("current-wins")**. The
+`num_classes` item (#1) was a genuine cross-authority conflict held OPEN pending evidence; it is now
+**RESOLVED empirically (2026-06-27)** — see below — toward **116**, with a residual background/disease-only
+`NEED_TO_CONFIRM`.
 
 Source tags as in [IMPLEMENTATION_CONTRACT.md](IMPLEMENTATION_CONTRACT.md).
 
 ---
 
-## 1. ⚠ OPEN — `num_classes` / mask index range (NO winner; resolve empirically)
+## 1. ✅ RESOLVED (2026-06-27) — `num_classes` = 116 (was: Wei 0–114 vs ch3 116)
 
-| Source | Claim |
-|---|---|
-| `[Wei]` (dataset authority) | Mask indices **0–114** represent the 115 plant-disease combinations → **115** classes. |
-| `[ch3]` (method authority) | Provisionally **`num_classes = 116`** ("the background class and 115 disease classes"); *also* internally inconsistent — elsewhere states "115 output channels", and self-labels 116 as "provisional until confirmed by Table 3.1". |
-| `[ch1]` | "7,774 diseased plants covering **115** different plant diseases on 34 species." (consistent with Wei) |
-| `[ctx]` | Explicitly: "`num_classes` is NOT settled. NEVER hardcode it." 115 vs 116 / background-as-separate-index unresolved. |
+| Source | Claim | Empirical verdict |
+|---|---|---|
+| `[Wei]` | Indices **0–114** represent the 115 plant-disease combinations. | ✔ true **of the COCO `category_id`s** (verified `category_id` ∈ 0–114). |
+| `[ch3]` | **`num_classes = 116`** (background + 115 diseases); self-labelled provisional. | ✔ true **of the mask pixel values** (verified 0–115). |
+| `[ch1]` | "115 different plant diseases on 34 species." | ✔ 115 diseases (mask values 1–115). |
+| `[ctx]` | "`num_classes` is NOT settled. NEVER hardcode it." | Now settled by measurement. |
 
-**Decision: NOT RESOLVED HERE.** Size the classifier to the count verified by `np.unique()` on the real
-annotation PNGs (Table 3.1), before E1. This is the **only** conflict where ch3 does **not** automatically win.
-→ tracked in [open_questions.md](open_questions.md) #1.
+**Resolution (no silent winner — decided by full-dataset `np.unique()`):** the two claims were a **frame
+mismatch**, not a contradiction. Rasterized masks use **0–115**: **0 = background**, **1–115 = diseases**
+(`mask value = category_id + 1`, **99.85%** per-image consistent over 7,774 masks; 12 off-by-one exceptions
+logged). All-class **`num_classes = 116`**; Wei's 0–114 are the underlying `category_id`s. Evidence:
+[reports/dataset_report.md](../reports/dataset_report.md).
+
+**Residual (still open):** which index the *disease-only* metric excludes — empirically **0 (background)** —
+is not explicitly named in the dataset files, so it stays `NEED_TO_CONFIRM`. → [open_questions.md](open_questions.md) #2.
 
 ---
 
