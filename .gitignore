@@ -10,3 +10,18 @@ outputs/**/checkpoints/
 *.log
 .DS_Store
 .ipynb_checkpoints/
+
+# raw datasets (kept outside the repo; these guard against accidental in-repo copies)
+datasets/
+plantseg_data/
+
+# archives
+*.zip
+*.rar
+*.7z
+*.tar
+*.tar.gz
+
+# model artifacts
+*.ckpt
+*.onnx
