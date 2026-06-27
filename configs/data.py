@@ -1,27 +1,30 @@
 # Dataset config — PlantSeg (Wei et al., 2026)
 # Source of truth: docs/IMPLEMENTATION_CONTRACT.md  section (c) "Dataset facts" + (e)/(f) preprocessing.
 # Dataset facts traced to Wei (2026); preprocessing traced to ch3.pdf.
-# num_classes / reduce_zero_label are OPEN (resolved by np.unique before E1) and root is not a
-# locked value, so all three stay the literal NEED_TO_CONFIRM string (rules 5 + golden rule).
+# num_classes/root resolved empirically 2026-06-27 (see reports/dataset_report.md). reduce_zero_label
+# stays NEED_TO_CONFIRM (background convention not explicitly named in dataset files; see open_questions #2).
 # Analysis/config artifact only — contains NO training logic.
 
 DATA = {
-    # Root (extracted dataset path) — not a locked value anywhere; dataset not downloaded
-    "root": "NEED_TO_CONFIRM",
+    # Root (extracted dataset path) — verified to exist; see reports/dataset_location_log.md
+    "root": r"C:\Users\admin\plantseg_data\plantseg",
 
-    # Class space — OPEN conflict (Wei: 0-114 = 115 disease; ch3: provisional 116). DO NOT HARDCODE.
-    "num_classes": "NEED_TO_CONFIRM",            # size to verified np.unique() count before E1
-    "reduce_zero_label": "NEED_TO_CONFIRM",      # background-index encoding unresolved
-    "ignore_index": 255,
-    "mask_indices_documented": "0-114 per Wei (2026); verify empirically via np.unique()",
+    # Class space — empirically verified: mask values 0-115 (background 0 + 115 diseases 1-115).
+    "num_classes": 116,                          # all-class; output layer = 116  [empirical]
+    "reduce_zero_label": "NEED_TO_CONFIRM",      # background=index 0 empirically, but not explicitly named
+    "ignore_index": 255,                         # padding/ignore; ABSENT from raw masks, added at preprocessing
+    "background_index": 0,                       # [empirical] disease-only metrics exclude this
+    "mask_indices_documented": "verified 0-115: 0=background, 1-115=diseases (mask=category_id+1)",
 
-    # Splits (official 70/10/20)
+    # Splits (official 70/10/20) — pre-partitioned on disk as images/<split>/ + annotations/<split>/
     "splits": {
         "ratio": "70/10/20",
-        "files": ("annotation_train.json", "annotation_val.json", "annotation_test.json"),
-        "sizes_approx": {"train": 5442, "val": 778, "test": 1554},
-        "test_count": 1554,                      # per-image metric unit count
-        "integrity_check": "zero identifier overlap across partitions",
+        "dirs": ("images/{split}", "annotations/{split}"),  # use folders, NOT annotation_*.json
+        "names": ("train", "val", "test"),
+        "files": ("annotation_train.json", "annotation_val.json", "annotation_test.json"),  # COCO; not used for split
+        "sizes": {"train": 5367, "val": 846, "test": 1561},  # [empirical]
+        "test_count": 1561,                      # per-image metric unit count
+        "integrity_check": "zero identifier overlap across partitions (verified)",
     },
 
     # Formats
