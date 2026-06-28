@@ -1,0 +1,25 @@
+================ B7/B13 QNNPACK INT8 operator-support smokes ================
+run date (UTC): 2026-06-28T09:44:46Z
+NOTE: QNNPACK is NOT available in this torch build (supported engines: onednn only).
+      Both smokes below run under an onednn PROXY and are NOT a QNNPACK result.
+      Authoritative QNNPACK run must be done in the pinned torch-2.1 + QNNPACK env.
+
+######## PART 1: scripts/smoke_qnnpack_head.py ########
+[engine] onednn (PROXY - NOT QNNPACK) | supported=['onednn']
+[note] eager-mode QNNPACK INT8 OPERATOR-SUPPORT smoke (not an x86 latency benchmark)
+[attempt CLEAN] OK -> output (2, 116, 512, 512)
+[HEAD_OUTCOME] engine=onednn proxy=True result=CLEAN shape=(2, 116, 512, 512)
+[PASS] qnnpack head smoke (PROXY)
+head exit: 0
+
+######## PART 2: scripts/smoke_qnnpack_full_student.py ########
+C:\Users\admin\anaconda3\Lib\site-packages\torch\ao\quantization\observer.py:1343: UserWarning: must run observer before calling calculate_qparams.                                    Returning default scale and zero point 
+  warnings.warn(
+[engine] onednn (PROXY - NOT QNNPACK) | supported=['onednn']
+[note] eager-mode QNNPACK INT8 OPERATOR-SUPPORT smoke (not an x86 latency benchmark)
+[note] student used as-is from src/models/student.py (no quantization-readiness hacks)
+[fail-stage] forward(converted)
+[exact-error] RuntimeError: empty_strided not supported on quantized tensors yet see https://github.com/pytorch/pytorch/issues/74540
+[FULL_STUDENT_OUTCOME] engine=onednn proxy=True result=FULL_STUDENT_FAILS shape=None fail_stage=forward(converted)
+[DOCUMENTED] full-student qnnpack smoke (PROXY)
+full-student exit: 0
