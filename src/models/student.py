@@ -1,8 +1,10 @@
 """PlantSeg student scaffold — MobileNetV3-Large (quantizable) + LR-ASPP head.
 
-Blocker B10. FORWARD-PASS scaffold ONLY:
-  - QuantStub/DeQuantStub are present but NO prepare/convert is run (FP32 pass-through).
-  - NO training, NO loss, NO distillation, NO PTQ/QAT.
+Blockers B10 (FP32 forward scaffold) + B7b (quantization-readiness):
+  - QuantStub/DeQuantStub at the boundary; head uses FloatFunctional for the attention-multiply and
+    class-logit add (quantization-safe); final upsample is in float after dequant.
+  - fuse() fuses Conv-BN(-ReLU) for eager-mode quantization (head + backbone blocks).
+  - Still NO prepare/convert here, NO training, NO loss/distillation, NO PTQ/QAT.
 Architecture per docs/IMPLEMENTATION_CONTRACT.md (e). Native Hard-Swish/ReLU retained
 (no ReLU6 substitution). Output stride 16 via dilation; head taps OS8 (40ch) + OS16 C5 (160ch).
 """
@@ -15,6 +17,7 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.ao.nn.quantized import FloatFunctional
 from torch.ao.quantization import DeQuantStub, QuantStub
 
 REPO = Path(__file__).resolve().parents[2]
@@ -58,14 +61,18 @@ class LRASPPHead(nn.Module):
         )
         self.high_logits = nn.Conv2d(inter_ch, num_classes, 1)
         self.low_logits = nn.Conv2d(low_ch, num_classes, 1)
+        self.ff_mul = FloatFunctional()   # quantization-safe element-wise multiply (attention)
+        self.ff_add = FloatFunctional()   # quantization-safe class-logit add
 
-    def forward(self, low: torch.Tensor, high: torch.Tensor, out_size) -> torch.Tensor:
+    def forward(self, low: torch.Tensor, high: torch.Tensor) -> torch.Tensor:
+        """Return OS8 class logits. The final upsample to full resolution happens after dequant in
+        the parent (matches the quantization-ready isolated head: one quantized interpolate, then a
+        float final upsample). In FP32 this is numerically identical to the B10 head."""
         a = self.high_proj(high)                                       # [B,inter,H16,W16]
         s = self.context(high)                                         # [B,inter,1,1]
-        high_feat = a * s                                              # element-wise attention
+        high_feat = self.ff_mul.mul(a, s)                              # quantization-safe attention
         high_os8 = F.interpolate(high_feat, size=low.shape[-2:], mode="bilinear", align_corners=False)
-        logits = self.high_logits(high_os8) + self.low_logits(low)     # add class logits
-        return F.interpolate(logits, size=out_size, mode="bilinear", align_corners=False)
+        return self.ff_add.add(self.high_logits(high_os8), self.low_logits(low))  # OS8 class logits
 
 
 class PlantSegStudent(nn.Module):
@@ -112,8 +119,24 @@ class PlantSegStudent(nn.Module):
         out_size = x.shape[-2:]
         x = self.quant(x)                          # pass-through in FP32 (not prepared)
         low, high = self._forward_features(x)
-        out = self.head(low, high, out_size)
-        return self.dequant(out)                   # pass-through in FP32
+        logits = self.head(low, high)              # OS8 class logits
+        logits = self.dequant(logits)              # dequant BEFORE the float final upsample
+        return F.interpolate(logits, size=out_size, mode="bilinear", align_corners=False)
+
+    def fuse(self) -> "PlantSegStudent":
+        """Fuse Conv-BN(-ReLU) for eager-mode quantization. Call in eval() before prepare.
+
+        Fuses the head's 1x1 Conv-BN-ReLU and the quantizable backbone blocks via their own
+        fuse_model(). FP32 behaviour is unchanged (BN folds into Conv in eval). This is NOT called
+        by the FP32 forward path; it is only used ahead of quantization prepare/convert.
+        """
+        from torch.ao.quantization import fuse_modules
+        self.eval()
+        fuse_modules(self.head.high_proj, ["0", "1", "2"], inplace=True)
+        for block in self.features:                # quantizable backbone blocks self-fuse
+            if hasattr(block, "fuse_model"):
+                block.fuse_model()
+        return self
 
 
 def build_student(num_classes: int | None = None, pretrained: bool = False) -> PlantSegStudent:

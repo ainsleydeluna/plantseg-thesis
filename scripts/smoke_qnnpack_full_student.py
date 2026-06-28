@@ -45,6 +45,15 @@ def main() -> int:
     print(f"[note] student used as-is from src/models/student.py (no quantization-readiness hacks)")
 
     model = build_student(num_classes=116, pretrained=False).eval()
+
+    fused = False
+    try:
+        model.fuse()                       # B7b: fuse Conv-BN-ReLU (head + backbone blocks)
+        fused = True
+        print("[fuse] model.fuse() called -> head Conv-BN-ReLU + backbone blocks fused")
+    except Exception as e:  # noqa: BLE001
+        print(f"[fuse] model.fuse() FAILED (continuing UNFUSED): {type(e).__name__}: {str(e)[:160]}")
+
     model.qconfig = tq.get_default_qconfig(engine)
 
     stage, outcome, shape, err = "init", "FULL_STUDENT_FAILS", None, None
@@ -68,8 +77,8 @@ def main() -> int:
         print(f"[fail-stage] {stage}")
         print(f"[exact-error] {err}")
 
-    print(f"[FULL_STUDENT_OUTCOME] engine={engine} proxy={is_proxy} result={outcome} "
-          f"shape={shape} fail_stage={stage if err else 'n/a'}")
+    print(f"[FULL_STUDENT_OUTCOME] engine={engine} proxy={is_proxy} fusion_called={fused} "
+          f"result={outcome} shape={shape} fail_stage={stage if err else 'n/a'}")
     # This script never asserts PASS for the full student unless it converts+forwards cleanly with
     # no fallback. A documented failure is an acceptable B7 outcome (exit 0) so the log/doc are produced.
     clean = (outcome == "PASS_CLEAN" and not is_proxy)
