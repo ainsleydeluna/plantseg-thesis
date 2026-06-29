@@ -26,7 +26,7 @@ from configs.augment import AUGMENT          # noqa: E402
 from configs.data import DATA                # noqa: E402
 from src.seeds import SEED                   # noqa: E402
 
-from .transforms import augment, core_preprocess, finalize  # noqa: E402
+from .transforms import core_preprocess, finalize, train_preprocess  # noqa: E402
 
 NUM_CLASSES = DATA["num_classes"]
 _SPLITS = ("train", "val", "test")
@@ -56,10 +56,12 @@ class PlantSegDataset(Dataset):
     def __getitem__(self, idx: int):
         img_path, mask_path = self.pairs[idx]
         with Image.open(img_path) as im, Image.open(mask_path) as mk:
-            img_np, mask_np = core_preprocess(im, mk)        # uint8 HWC, int64 HW (512x512)
-        if self.split == "train":
-            rng = np.random.RandomState((SEED + idx) % (2 ** 32))  # deterministic per-sample aug
-            img_np, mask_np = augment(img_np, mask_np, rng, self.aug_params)
+            if self.split == "train":
+                rng = np.random.RandomState((SEED + idx) % (2 ** 32))  # deterministic per-sample aug
+                # true train-time multi-scale RRC on the original-resolution image (pre-pad)
+                img_np, mask_np = train_preprocess(im, mk, rng, self.aug_params)
+            else:
+                img_np, mask_np = core_preprocess(im, mk)    # val/test: unchanged deterministic core
         return finalize(img_np, mask_np)                      # float32 CHW, int64 HW
 
 
