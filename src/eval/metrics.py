@@ -44,6 +44,18 @@ def _miou_from_cm(cm: torch.Tensor, class_indices: torch.Tensor | None = None):
     return float("nan"), iou
 
 
+def miou_from_confusion(cm: torch.Tensor, class_indices: torch.Tensor | None = None) -> float:
+    """Public mIoU from an (already accumulated) confusion matrix.
+
+    class_indices=None -> macro IoU over all GT-present classes; otherwise restrict to those indices
+    (e.g. disease-only = every class except background). This is the helper the E1 validation loop uses
+    for the accumulate-ONE-confusion-matrix-then-compute-once protocol (see
+    reports/e1_training_loop_readiness.md); it delegates to the same `_miou_from_cm` core used by the
+    per-tensor metrics, so behaviour is identical. Returns NaN if no selected class is present in GT.
+    """
+    return _miou_from_cm(cm, class_indices)[0]
+
+
 def all_class_miou(pred: torch.Tensor, target: torch.Tensor, num_classes: int,
                    ignore_index: int = IGNORE_INDEX) -> float:
     cm = confusion_matrix(pred, target, num_classes, ignore_index)
