@@ -7,16 +7,17 @@ no Week-1 work redone; no training started.**
 
 **Generated:** 2026-06-28 · **Branch:** `master` · **HEAD:** `e73d712` · **Remote:** none configured.
 
-> **⏩ Post-Week-1 update (2026-06-30 · B20c · HEAD `73aa06d`):** the rows below are the **Week-1
-> snapshot** (`e73d712`). Since then **two strict-G0 items have CLOSED** — **compute-platform
-> verification** (B20a `7452b89`) and the **persisted dataloader smoke report** (B20b `73aa06d`) — and
-> the **B19 E1 training-loop scaffold** (`93e57bb`, CPU dry-run PASS) landed. Those two rows in §3/§4 are
-> updated in place. **Authoritative current status: [`reports/strict_G0_closeout_update.md`](strict_G0_closeout_update.md).**
-> `docs/WEEK1_CLOSEOUT.md` §7 **predates** B20a/B20b and is superseded for those two items by the
-> addendum (the closeout itself is intentionally left unedited). **Strict-G0 overall remains ⚠ PARTIAL**
-> — GitHub remote/push deferred (no URL yet), teacher-init env-gated, optional download log deferred.
-> **B19 scaffold is complete and its dry-run passed, but the real E1 run is still blocked on a GPU/CUDA
-> stack and the ImageNet cache/download.**
+> **⏩ Post-Week-1 update (2026-06-30 · B20c–B20e · latest HEAD `c5e5d16`):** the rows below are the
+> **Week-1 snapshot** (`e73d712`). Since then **three strict-G0 items have CLOSED** — **compute-platform
+> verification** (B20a `7452b89`), the **persisted dataloader smoke report** (B20b `73aa06d`), and the
+> **(optional) dataset download/location log** (B20d `c5e5d16` — `reports/dataset_download_log.md`, a
+> provenance/location log, not a fresh audit) — and the **B19 E1 training-loop scaffold** (`93e57bb`, CPU
+> dry-run PASS) landed. The affected rows in §3/§4 are updated in place. **Authoritative current status:
+> [`reports/strict_G0_closeout_update.md`](strict_G0_closeout_update.md).** `docs/WEEK1_CLOSEOUT.md` §7
+> **predates** B20a/B20b/B20d and is superseded for those items by the addendum (the closeout itself is
+> intentionally left unedited). **Strict-G0 overall remains ⚠ PARTIAL** — only GitHub remote/push deferred
+> (no URL yet) and teacher-init env-gated. **B19 scaffold is complete and its dry-run passed, but the real
+> E1 run is still blocked on a GPU/CUDA stack and the ImageNet cache/download.**
 
 ---
 
@@ -49,7 +50,7 @@ Consistent with `docs/WEEK1_CLOSEOUT.md` §7.
 | Original G0 guide item | Current repo evidence | Status | Blocks W2 / B17? | When to resolve |
 |---|---|---|---|---|
 | No training during Week 1 (G0 rule) | all smokes are forward / single-step gradient checks; **no training run executed** | **DONE** | N/A | — |
-| Dataset download log vs location log | `reports/dataset_location_log.md` registers the **manual** download ("nothing downloaded by task"); **no** separate `reports/dataset_download_log.md` | **PARTIAL** | NO | optional — location-log serves the purpose, or add an explicit download log |
+| Dataset download log vs location log | **✅ DONE (B20d, `c5e5d16`)** — `reports/dataset_download_log.md` (provenance/location log, not a fresh audit) + `reports/dataset_location_log.md` (manual download; "nothing downloaded by task") | **✅ DONE** | NO | — |
 | B8 teacher-checkpoint check | `docs/B8_checkpoint.md` — none public → in-house fine-tune | **DONE** | NO | — |
 | Teacher init weights + load test | `weights/` **empty**; `scripts/test_teacher_init.py` present but **unrun**; `docs/teacher_init_source.md` fields = `NEED_TO_CONFIRM` | **ENV-GATED / NOT DONE** | NO | teacher phase — pinned MMSeg env (`mim download` + `test_teacher_init.py`) |
 | Compute-platform verification | **✅ DONE (B20a, `7452b89`)** — `scripts/verify_env.py` + `reports/platform_verify.md` capture this machine; verdict **PARTIAL** (OK for dry-run only, **NOT** real E1). Reusable script re-runs on the real GPU target. | **✅ DONE** | NO | a PASS verdict on the actual GPU target is pending provisioning |
@@ -59,12 +60,11 @@ Consistent with `docs/WEEK1_CLOSEOUT.md` §7.
 | GitHub remote / push status | `git remote -v` **empty**; `master` has **no upstream**; **not pushed** | **NOT DONE / UNKNOWN** (no remote) | NO | when a remote is configured |
 
 ## 4. What remains to FORMALLY close strict G0
-_Updated 2026-06-30 (B20c). **Closed since the Week-1 snapshot:** ~~compute-platform verification~~ (B20a `7452b89`) and ~~persisted dataloader smoke report~~ (B20b `73aa06d`). Remaining items:_
+_Updated 2026-06-30 (B20e). **Closed since the Week-1 snapshot:** ~~compute-platform verification~~ (B20a `7452b89`), ~~persisted dataloader smoke report~~ (B20b `73aa06d`), and ~~(optional) dataset download/location log~~ (B20d `c5e5d16` — `reports/dataset_download_log.md`, a provenance/location log, not a fresh audit). Remaining items:_
 1. **Teacher-init weights + teacher load test** — in the pinned MMSeg env: `mim download … --dest weights/`, then `python scripts/test_teacher_init.py` → `RESULT: PASS`; fill the 4 `NEED_TO_CONFIRM` fields in `docs/teacher_init_source.md`. **(env-gated / deferred)**
 2. **GitHub remote / push** — configure a remote and push `master` (so the work is backed up / verifiable). **(deferred — no remote URL provided yet)**
-3. **(Optional) explicit dataset download log** — `reports/dataset_download_log.md`, or formally accept `reports/dataset_location_log.md` as serving this purpose. **(optional / deferred)**
 
-> Teacher-init also gates the teacher phase / E1 *real-run* prerequisites; GitHub push + download log are hygiene/provenance. **None gate B17.** **Strict-G0 overall remains ⚠ PARTIAL** — see [`reports/strict_G0_closeout_update.md`](strict_G0_closeout_update.md).
+> Teacher-init also gates the teacher phase / E1 *real-run* prerequisites; GitHub push is hygiene/provenance. **None gate B17.** **Strict-G0 overall remains ⚠ PARTIAL** (only GitHub remote/push + teacher-init remain) — see [`reports/strict_G0_closeout_update.md`](strict_G0_closeout_update.md).
 
 ## 5. Statement
 - **None of the remaining strict-G0 items blocks B17.**

@@ -6,8 +6,9 @@ it supersedes the affected rows of [`reports/week1_G0_status.md`](week1_G0_statu
 `docs/WEEK1_CLOSEOUT.md` §7 (which **predates** B20a/B20b and is intentionally left unedited).
 
 **Generated:** 2026-06-30 · **Branch:** `master` · **HEAD:** `73aa06d` · **Remote:** none configured.
+**Updated:** 2026-06-30 (B20e · HEAD `c5e5d16`) — the **optional dataset download/location log** is now **DONE** via **B20d `c5e5d16`** (`reports/dataset_download_log.md`, a provenance/location log — **not** a fresh audit); moved from §2 to §1 below.
 
-**Strict-G0 overall: ⚠ PARTIAL** (improved — two more items closed; not fully closed). **This update task: ✅ PASS.**
+**Strict-G0 overall: ⚠ PARTIAL** (improved — **three items now closed** since the Week-1 snapshot; not fully closed: only **GitHub remote/push** and **teacher-init weights/load test** remain). **This update task: ✅ PASS.**
 
 ---
 
@@ -22,6 +23,7 @@ now-closed rows updated in place.
 |---|---|---|---|
 | **Compute-platform verification** | **✅ DONE** | **B20a `7452b89`** | `scripts/verify_env.py` + `reports/platform_verify.md`. Verdict **PARTIAL**: this machine is **OK for dry-run only, NOT for real E1**. The script is reusable and re-runs on the actual GPU target for a PASS there. |
 | **Persisted dataloader smoke report** | **✅ DONE** | **B20b `73aa06d`** | `reports/dataloader_smoke.md`: committed `scripts/smoke_dataloader.py` PASS (train+val) + scratchpad probe **7/7** (test batch, normalization sanity, effective `reduce_zero_label=False`, val determinism, train RRC label-safety). |
+| **(Optional) dataset download / location log** | **✅ DONE** | **B20d `c5e5d16`** | `reports/dataset_download_log.md` — provenance/location log (manual acquisition; DOI 10.5281/zenodo.17719108, CC BY-NC 4.0; external root + depth-1 layout + all six split dirs; reuses audit counts 7,774 = 5,367/846/1,561; bg=0, diseases 1–115, num_classes=116, 255=pad/ignore, effective `reduce_zero_label=False`). **Not a fresh audit.** |
 
 **Also landed (Week-2 implementation, not an original Week-1 row):**
 | Work | Status | Commit | Evidence |
@@ -33,9 +35,8 @@ now-closed rows updated in place.
 |---|---|---|
 | **GitHub remote / push** | **deferred** | No remote URL provided yet; `git remote -v` empty, `master` has no upstream, nothing pushed. Outward-facing — awaits an explicit remote URL + visibility. |
 | **Teacher-init weights + load test** | **env-gated / deferred** | Needs the pinned MMSeg env (`mim download … --dest weights/` → `python scripts/test_teacher_init.py` → PASS; fill the 4 `NEED_TO_CONFIRM` fields in `docs/teacher_init_source.md`). Teacher phase (E2/E3), not E1. |
-| **(Optional) explicit dataset download log** | **optional / deferred** | `reports/dataset_location_log.md` already registers the manual download; a separate `reports/dataset_download_log.md` is optional provenance. |
 
-> Because these three remain open, **strict-G0 overall stays ⚠ PARTIAL** — not fully/formally closed.
+> Because these **two** remain open (GitHub remote/push; teacher-init weights/load test), **strict-G0 overall stays ⚠ PARTIAL** — not fully/formally closed. _(The optional dataset download/location log moved to §1 — DONE via B20d `c5e5d16`.)_
 
 ## 3. Is the B19 scaffold complete?
 **Yes — the scaffold is complete and its CPU dry-run PASSED** (`93e57bb`; `reports/e1_train_scaffold_dryrun.md`).
@@ -57,7 +58,7 @@ Only the **real E1 run** is outstanding, and it is environment-gated, not code-g
 ## 6. Exact next choices
 - **(a) GitHub remote/push** — provide a remote URL + visibility (public/private); then add the remote and push `master` (no force, no `--no-verify`). Closes the last environment-independent strict-G0 hygiene item.
 - **(b) Provision compute for real E1** — stand up a GPU target with the pinned stack (`pip install -r requirements.lock` → `torch 2.1.0+cu121`), re-run `scripts/verify_env.py` there for a PASS, populate the ImageNet cache, then launch `python src/training/train_e1.py --real-run --confirm-real-run --init imagenet --ckpt-dir <out-of-repo path>`.
-- **(c) Continue local docs/review work** — e.g. optional dataset download log, or pre-E2/E3 (teacher / distillation) planning that doesn't need GPU.
+- **(c) Continue local docs/review work** — e.g. pre-E2/E3 (teacher / distillation) planning that doesn't need GPU. _(The optional dataset download/location log is now DONE — B20d `c5e5d16`.)_
 
 ---
 
