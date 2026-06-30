@@ -28,15 +28,40 @@ from configs.data import DATA      # noqa: E402
 from configs.model import MODEL    # noqa: E402
 
 
-def _build_backbone(dilated: bool, pretrained: bool):
-    """Return (features Sequential, used_pretrained). For the smoke we never download weights."""
+# Accepted aliases that select ImageNet IMAGENET1K_V2 init (incl. the literal configs/e1_student.py value).
+_IMAGENET_V2_ALIASES = (True, "IMAGENET1K_V2", "torchvision MobileNet_V3_Large_Weights.IMAGENET1K_V2")
+
+
+def _build_backbone(dilated: bool, pretrained):
+    """Build the MobileNetV3-Large (quantizable, float) backbone features.
+
+    pretrained:
+      False / None  -> random init, NO weight download (default; smoke/offline-safe).
+      True / "IMAGENET1K_V2" / "torchvision MobileNet_V3_Large_Weights.IMAGENET1K_V2"
+                    -> torchvision MobileNet_V3_Large_Weights.IMAGENET1K_V2 (float). Loads from the
+                       torch-hub cache if present, else downloads (intended for the real E1 run).
+      anything else -> ValueError.
+    Returns (features Sequential, used_pretrained: bool). If ImageNet weights are requested but cannot
+    be obtained (e.g. offline + not cached), raises a clear RuntimeError (NO silent random fallback).
+    """
     from torchvision.models.quantization import mobilenet_v3_large
-    weights = None
-    used_pretrained = False
-    # NOTE: pretrained download intentionally NOT performed here (cache empty). If/when ImageNet
-    # weights are available, wire MobileNet_V3_Large_Weights.IMAGENET1K_V2 in and set the flag.
-    model = mobilenet_v3_large(weights=weights, quantize=False, dilated=dilated)
-    return model.features, used_pretrained
+    if pretrained in (False, None):
+        model = mobilenet_v3_large(weights=None, quantize=False, dilated=dilated)
+        return model.features, False
+    if pretrained in _IMAGENET_V2_ALIASES:
+        from torchvision.models import MobileNet_V3_Large_Weights
+        weights = MobileNet_V3_Large_Weights.IMAGENET1K_V2
+        try:
+            model = mobilenet_v3_large(weights=weights, quantize=False, dilated=dilated)
+        except Exception as e:  # noqa: BLE001 -- offline / download failure -> fail with guidance
+            raise RuntimeError(
+                "ImageNet init (IMAGENET1K_V2) requested but the backbone weights could not be "
+                f"loaded ({type(e).__name__}: {e}). Populate the torch-hub cache or run with network "
+                "access, or call build_student(pretrained=False) for random init.") from e
+        return model.features, True
+    raise ValueError(
+        f"unsupported pretrained={pretrained!r}; use False/None, True, 'IMAGENET1K_V2', or "
+        "'torchvision MobileNet_V3_Large_Weights.IMAGENET1K_V2'")
 
 
 class _ConvBNReLU(nn.Sequential):
@@ -77,7 +102,7 @@ class LRASPPHead(nn.Module):
 
 class PlantSegStudent(nn.Module):
     def __init__(self, num_classes: int, low_tap: int = 6, high_tap: int = 15,
-                 inter_ch: int = 256, dilated: bool = True, pretrained: bool = False,
+                 inter_ch: int = 256, dilated: bool = True, pretrained=False,
                  truncate: int = 16):
         super().__init__()
         features, used_pretrained = _build_backbone(dilated, pretrained)
@@ -139,8 +164,15 @@ class PlantSegStudent(nn.Module):
         return self
 
 
-def build_student(num_classes: int | None = None, pretrained: bool = False) -> PlantSegStudent:
-    """Build the FP32 student. num_classes defaults to configs/data.py (116)."""
+def build_student(num_classes: int | None = None, pretrained=False) -> PlantSegStudent:
+    """Build the FP32 student. num_classes defaults to configs/data.py (116).
+
+    pretrained:
+      False (default) -> random init, no download (smoke/offline-safe).
+      True / "IMAGENET1K_V2" / "torchvision MobileNet_V3_Large_Weights.IMAGENET1K_V2"
+        -> ImageNet-pretrained backbone (configs/e1_student.py init); loads from the torch-hub cache
+           or downloads (real E1 run, NOT local smokes). Unknown values raise ValueError.
+    """
     if num_classes is None:
         num_classes = DATA["num_classes"]
     return PlantSegStudent(
