@@ -151,6 +151,13 @@ pending the PlantSeg repo's official convention. `[empirical; ch3 Table 3.1; ctx
 | Teacher in loop (E2/E3) | eval mode, online, consumes **identical augmented input** as student | `[ch3]` |
 | Optional control | extended-schedule E2 (~160,000 iters, 1 seed) — optional, future work if not run | `[ch3 §C]` |
 
+> **[D2 Option E — gradient-clipping magnitude]** Chapter 3 specifies global-norm clipping "throughout"
+> (the row above) but **does not specify a numeric `max_norm`**. The repo therefore keeps the
+> `src/training/train_e1.py` clip hook **config/CLI-driven** and defaults E1 `grad_clip_max_norm` to
+> **`None`** (clipping inactive) until a concrete value is approved before the real E1 run — or unclipped
+> E1 is explicitly accepted as a deviation. Records the missing magnitude + current safe default; does
+> **not** alter the `[ch3]`-traced method row. See `docs/open_questions.md` D2. `[D2]`
+
 ### B2 — Augmentation (train split only) `[ch3 §E.2.c]`
 | Component | Value | Source |
 |---|---|---|

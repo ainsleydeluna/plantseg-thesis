@@ -161,7 +161,9 @@
 - **E1 gradient clipping** — **contract B2 (`ch3`) specifies global-norm clipping "throughout"** for the
   shared E1/E2/E3 recipe, **but no numeric `max_norm` is given in any source**, and the **B19 scaffold
   currently OMITS clipping by default** (`grad_clip_norm=None`). Claude Web must verify: does the manuscript
-  give a clip value, and must the real E1 run enable global-norm clipping?
+  give a clip value, and must the real E1 run enable global-norm clipping? **[D2 DECIDED 2026-07-01:
+  Option E]** Hook exists; E1 default remains `None`; a numeric `max_norm` is still required before the real
+  E1 run, or an unclipped-E1 deviation must be explicitly accepted. See `docs/open_questions.md` D2.
 - **`reduce_zero_label = NEED_TO_CONFIRM`** (stale placeholder in `configs/data.py`) vs **proven effective
   `reduce_zero_label = False`** (no remap; verified in `dataloader_smoke.md` / `dataset_audit_summary.md`).
 - **Augmentation library naming/dependency** — `ch3 §D` and `configs/augment.py` name **Albumentations**

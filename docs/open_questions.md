@@ -39,6 +39,14 @@ Source tags as in the contract.
 - **Minor data-quality note:** 12/7,774 masks (0.15%) have a disease value off by one from their
   `Metadata` `Index` (logged in the report) — does not affect the num_classes/background conclusion.
 
+### D2 — E1 gradient clipping `max_norm` — ◐ PARTIALLY RESOLVED (Option E, 2026-07-01)
+**D2 — E1 gradient clipping max_norm: PARTIALLY RESOLVED as Option E.** The training hook exists in
+`src/training/train_e1.py` and defaults to `None`, so E1 clipping is currently inactive unless a numeric
+`--grad-clip-norm` is supplied. This is acceptable for dry-runs and scaffold tests, but before the real E1
+run the project must either choose a concrete global-norm `max_norm` or explicitly document unclipped E1 as
+a deviation from the Chapter 3 "global-norm, throughout" wording. `configs/e1_student.py` records
+`grad_clip_max_norm=None`; `gradient_clipping="global_norm"` is the method family, not a numeric value. `[ch3 §C; D2]`
+
 ---
 
 ## NEED_TO_CONFIRM (not stated in any source; filled by selection/measurement, never guessed)

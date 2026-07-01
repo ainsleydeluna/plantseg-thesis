@@ -24,9 +24,11 @@ E1_STUDENT = {
     "val_interval": 4000,
     "checkpoint_selection": "best_val_miou",  # D1: ALL-CLASS validation mIoU (headline + checkpoint); disease-only mIoU is secondary/provisional only; switching headline/checkpoint to disease-only needs a separate explicit decision. See docs/open_questions.md #2.
 
-    # Distillation stages (E2/E3) shared mechanics
+    # Shared training mechanics — applied per ch3 to the WHOLE E1/E2/E3 recipe (see `shared_by`); the
+    # distill-specific items only take effect once E2/E3 add distillation.
     "distill_weight_ramp": "linear 0 -> target over first epoch",
-    "gradient_clipping": "global_norm",
+    "gradient_clipping": "global_norm",   # D2: METHOD FAMILY only (global-norm) — NOT a numeric value and NOT proof clipping is active.
+    "grad_clip_max_norm": None,           # D2 Option E: the global-norm hook exists in src/training/train_e1.py, but E1 clipping stays DISABLED (None) until a numeric max_norm is explicitly decided before the real E1 run. See docs/open_questions.md D2.
     "teacher_in_loop": "eval mode, online, identical augmented input as student",
 
     # Scope note: E1=this recipe with no distillation; E2/E3 add distill terms on top (see configs/distill.py).
