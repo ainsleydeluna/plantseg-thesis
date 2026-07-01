@@ -57,10 +57,9 @@ ch3 conflicts.
 ## 6. Augmentation — CONSISTENT (exclusions); 1 partial-impl note
 - **Exclusions match ch3**: `configs/augment.py excluded=(brightness, contrast, blur, noise, jpeg)`; `transforms.augment`
   implements only joint hflip/vflip/rotation (mask fill 255) + image-only hue/sat. No corruption-test leakage.
-- **Partial-impl note (not a conflict):** ch3's training aug also includes **multi-scale random-resized-crop**
-  (scale [0.75,2.0], `cat_max_ratio` 0.95). It is present in `configs/augment.py` but **intentionally not wired
-  into the current dataloader** (documented scope decision in `transforms.py`). To fully match ch3 before training,
-  RRC should be added — tracked as forward work, not a ch3 conflict.
+- **[CORRECTION 2026-07-01: supersedes the earlier "not wired" note.]** RRC is wired into the dataloader as of
+  B18c: `src/data/dataset.py` routes train samples to `train_preprocess`, which applies multi-scale RRC with
+  `cat_max_ratio=0.95`. This was re-confirmed by `reports/rrc_augmentation_smoke.md` and `reports/dataloader_smoke.md`.
 
 ## 7. Corruption robustness — CONSISTENT (documented; suite not yet coded)
 - **5 corruption types match ch3**: motion blur, Gaussian noise, JPEG compression, brightness variation, fog.
@@ -111,7 +110,7 @@ ch3 conflicts.
 
 ### NEEDS PATCHING (vs current ch3)
 - **None.** No file conflicts with ch3. Forward-work items (NOT ch3 conflicts, do only on your approval):
-  - wire multi-scale RRC into the train augmentation to fully realize ch3 B2 (item 6);
+  - ~~wire multi-scale RRC into the train augmentation (item 6)~~ **[DONE 2026-07-01 — B18c wired RRC into `train_preprocess`; re-confirmed by `reports/rrc_augmentation_smoke.md` / `reports/dataloader_smoke.md`]**;
   - resolve the disease-only/background convention (item 4 / `open_questions #2`) — needs the PlantSeg repo
     convention, not a code patch.
 
@@ -131,7 +130,7 @@ ch3 conflicts.
 No ch3-sync patches are required. When you choose to advance the build (separate from this audit):
 1. **Confirm your ch3 update actually landed** if you believe it changed — current `docs/reference/ch3.pdf` is
    the original (see Authoritative source status). If you re-copy a truly updated ch3, re-run this audit to diff.
-2. (Optional, pre-training) add multi-scale RRC to the train augmentation (item 6).
+2. ~~(Optional, pre-training) add multi-scale RRC to the train augmentation (item 6).~~ **[DONE 2026-07-01 — RRC wired in B18c; see `reports/rrc_augmentation_smoke.md`]**
 3. Resolve disease-only/background convention from the PlantSeg repo (item 4).
 4. Proceed to future blockers in existing order: teacher fine-tune (env-gated), corruption suite, training loop,
    quant prepare/convert, stats.

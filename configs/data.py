@@ -1,8 +1,9 @@
 # Dataset config — PlantSeg (Wei et al., 2026)
 # Source of truth: docs/IMPLEMENTATION_CONTRACT.md  section (c) "Dataset facts" + (e)/(f) preprocessing.
 # Dataset facts traced to Wei (2026); preprocessing traced to ch3.pdf.
-# num_classes/root resolved empirically 2026-06-27 (see reports/dataset_report.md). reduce_zero_label
-# stays NEED_TO_CONFIRM (background convention not explicitly named in dataset files; see open_questions #2).
+# num_classes/root resolved empirically 2026-06-27 (see reports/dataset_report.md). reduce_zero_label is
+# set False (PROVEN no-remap: masks already 0-115, bg=0 kept); the separate disease-only metric convention
+# (exclude index 0 in reporting) remains open — see open_questions #2.
 # Analysis/config artifact only — contains NO training logic.
 
 DATA = {
@@ -11,7 +12,7 @@ DATA = {
 
     # Class space — empirically verified: mask values 0-115 (background 0 + 115 diseases 1-115).
     "num_classes": 116,                          # all-class; output layer = 116  [empirical]
-    "reduce_zero_label": "NEED_TO_CONFIRM",      # background=index 0 empirically, but not explicitly named
+    "reduce_zero_label": False,                  # PROVEN no-remap: masks are already 0-115 (bg=0 kept). See reports/dataloader_smoke.md and reports/dataset_audit_summary.md. NOTE: the separate disease-only metric convention (exclude index 0 in reporting) is NOT controlled by this flag and remains open; see docs/open_questions.md #2.
     "ignore_index": 255,                         # padding/ignore; ABSENT from raw masks, added at preprocessing
     "background_index": 0,                       # [empirical] disease-only metrics exclude this
     "mask_indices_documented": "verified 0-115: 0=background, 1-115=diseases (mask=category_id+1)",
