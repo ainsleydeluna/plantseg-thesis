@@ -22,7 +22,7 @@ E1_STUDENT = {
 
     # Validation / checkpoint
     "val_interval": 4000,
-    "checkpoint_selection": "best_val_miou",
+    "checkpoint_selection": "best_val_miou",  # D1: ALL-CLASS validation mIoU (headline + checkpoint); disease-only mIoU is secondary/provisional only; switching headline/checkpoint to disease-only needs a separate explicit decision. See docs/open_questions.md #2.
 
     # Distillation stages (E2/E3) shared mechanics
     "distill_weight_ramp": "linear 0 -> target over first epoch",

@@ -145,7 +145,7 @@ pending the PlantSeg repo's official convention. `[empirical; ch3 Table 3.1; ctx
 | Batch size | **16** | `[ch3]` |
 | Iterations | **80,000** @ 512×512 | `[ch3]` |
 | Validation interval | every **4,000** iters | `[ch3]` |
-| Checkpoint selection | **best validation-mIoU** | `[ch3]` |
+| Checkpoint selection | **best validation-mIoU — all-class val mIoU (D1)** | `[ch3; D1]` |
 | Distillation-weight ramp (E2/E3) | linear **0 → target over first epoch** | `[ch3]` |
 | Gradient clipping | global-norm, throughout | `[ch3]` |
 | Teacher in loop (E2/E3) | eval mode, online, consumes **identical augmented input** as student | `[ch3]` |
@@ -287,6 +287,13 @@ pending the PlantSeg repo's official convention. `[empirical; ch3 Table 3.1; ctx
   per-image absent-class exclusion; 255 always excluded).
 - **Dataset-level all-class mIoU:** TP/FP/FN accumulated per class over the whole test set, macro-averaged;
   basis for **non-inferiority + bootstrap**; matches PlantSeg benchmark reporting.
+- **[D1] Checkpoint selection & headline validation metric = all-class mIoU.** Training-time best-val
+  checkpoint selection and headline E1/E-stage validation reporting use **all-class validation mIoU**
+  (`configs/e1_student.py` `checkpoint_selection`; implemented in `src/training/train_e1.py`). Disease-only
+  mIoU is a **secondary/provisional** validation/report metric there. This is **distinct from and does not
+  change** the **per-image disease-only mIoU _primary inferential_ unit** above (used for the Ch4 hypothesis
+  tests); a future switch of the headline/checkpoint convention to disease-only requires a separate explicit
+  decision.
 - **Dice:** dataset-level **secondary, descriptive only** — no separate test (monotonic with IoU).
 - **mAcc:** descriptive only (benchmark against Wei).
 

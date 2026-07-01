@@ -17,14 +17,24 @@ Source tags as in the contract.
 - **Status:** **RESOLVED.** Evidence: [reports/dataset_report.md](../reports/dataset_report.md). Do **not**
   change masks; apply `ImageOps.exif_transpose` to images (never masks) before pairing/transform.
 
-### 2. ⚠ STILL OPEN — disease-only / background convention (`reduce_zero_label`)
+### 2. ◐ PARTIALLY RESOLVED (D1) — disease-only / background convention (`reduce_zero_label`)
+> **D1 (2026-07-01) — metric policy:** **all-class mIoU is the checkpoint-selection metric and the headline
+> E1/E-stage validation metric** (`src/training/train_e1.py` already selects the best-val checkpoint on
+> all-class mIoU and logs disease-only mIoU as a **secondary/provisional** metric). Confirming the exact
+> official disease-only exclusion convention is still useful for **Ch4** lesion-focused interpretation/
+> reporting, **but it does NOT block E1 training, checkpointing, or all-class reporting.** A future switch to
+> disease-only headline/checkpointing requires a separate explicit decision. This is **separate from — and
+> does not change — the manuscript's per-image disease-only mIoU _primary inferential_ unit** for the Ch4
+> hypothesis tests (see `IMPLEMENTATION_CONTRACT.md` §(f)).
+
 - **Empirical finding:** background = **index 0** (in 7773/7774 masks, 80.6% of pixels); diseases = 1–115.
   So disease-only mIoU should **exclude index 0**.
 - **Why still NEED_TO_CONFIRM:** no literal "background" category is named in the dataset files (the COCO
   `categories` list is **empty**), so the background label is *derived*, not declared. `reduce_zero_label`
   (keep background as class 0 vs MMSeg-style shift) is an implementation choice not fixed by any source.
 - **Resolution:** confirm against the official PlantSeg repo / MMSeg config convention
-  (`https://github.com/tqwei05/PlantSeg`) before E1; until then, exclude index 0 for disease-only metrics
+  (`https://github.com/tqwei05/PlantSeg`) before finalizing disease-only reporting (Ch4) — this does **not**
+  block E1 (D1); until then, exclude index 0 for disease-only metrics
   as the empirically-supported default. `[empirical; ch3; ctx]`
 - **Minor data-quality note:** 12/7,774 masks (0.15%) have a disease value off by one from their
   `Metadata` `Index` (logged in the report) — does not affect the num_classes/background conclusion.

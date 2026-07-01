@@ -170,7 +170,10 @@
   Augmentation *semantics* match the contract; the *named library/dependency* does not. Claude Web must
   decide if this is a manuscript/repo wording fix.
 - **Checkpoint-selection metric** — scaffold selects on **all-class** val mIoU; `ch3 B2` says "best
-  validation-mIoU" without stating all-class vs disease-only. Verify intended metric.
+  validation-mIoU" without stating all-class vs disease-only. Verify intended metric. **[D1 RESOLVED
+  2026-07-01: checkpoint selection + headline validation = all-class val mIoU; disease-only mIoU is
+  secondary/provisional (still the per-image _inferential_ unit for Ch4); a switch needs a separate explicit
+  decision. See docs/open_questions.md #2.]**
 - **`updated_ch3_sync_audit.md` staleness** — 2026-06-27 snapshot; its "RRC not wired" (item 6) and file
   inventory predate B18c/B19/B20. Verify and flag.
 
