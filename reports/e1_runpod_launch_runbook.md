@@ -12,7 +12,7 @@ alongside this runbook._
 ---
 
 ## 1. Current repo baseline
-- **Expected remote HEAD:** `8288f82` (`resolve B27 D-A unclipped E1 decision`).
+- **Expected remote HEAD:** latest `master` — must include the **B29 `PLANTSEG_DATA_ROOT`** commit (adds the portable dataset-root env var; ≥ `8288f82`).
 - **Branch:** `master` (local and `origin/master` in sync).
 - **Deferred local dirty file:** `docs/reference/reference.pdf` (` M`) — **do NOT stage/commit/restore it**; it is a pre-existing deferred artifact and is unrelated to the run.
 - **No remaining repo-side decision blockers:** D1 (metric policy = all-class), D2/D-A (E1 unclipped documented deviation), D3 (aug wording), F1/F2 (stale wording) are all resolved & pushed.
@@ -23,7 +23,7 @@ alongside this runbook._
 |---|---|---|---|
 | CUDA GPU | CUDA GPU available (`torch.cuda.is_available()=True`) | **CPU-only** (`torch 2.9.1+cpu`, 0 GPUs) — `reports/platform_verify.md` | Provision a RunPod GPU (e.g. RTX 4090, 24 GB). |
 | Pinned torch/torchvision (cu121) | `torch 2.1.0+cu121` / `torchvision 0.16.0+cu121`, Python 3.11 | local `torch 2.9.1+cpu` / `tv 0.24.1+cpu`, Python 3.13 | `pip install -r requirements.lock --extra-index-url https://download.pytorch.org/whl/cu121`. |
-| **`DATA["root"]` path** | Points to the **Linux** dataset dir on the pod | **Hardcoded Windows path** `C:\Users\admin\plantseg_data\plantseg` (`configs/data.py:11`) | **Edit `DATA["root"]` on the pod** to the Linux path (see §4). Treat as env-specific/uncommitted. |
+| Dataset root resolution | `DATA["root"]` resolves to the pod dataset dir | Root = `PLANTSEG_DATA_ROOT` if set, else the Windows default `C:\Users\admin\plantseg_data\plantseg` (`configs/data.py`, B29) | **Set `PLANTSEG_DATA_ROOT=/workspace/plantseg_data/plantseg`** (preferred; no file edit — see §4). Editing `DATA["root"]` is a fallback only. |
 | Dataset mounted/uploaded | 7,774 pairs present under the pod dataset root | Dataset is on the **local** machine only | Upload/mount to the pod (see §4). |
 | ImageNet MobileNetV3 weights | `IMAGENET1K_V2` cached or download permitted | **Not cached** (`mobilenet_v3_large-5c1a4163.pth` absent) | Allow one-time in-pod download, or pre-stage the hub file (see §5). |
 | Environment verification PASS | `scripts/verify_env.py` → **PASS** (CUDA true, deps match, dataloader dry-run OK) | Local verdict **PARTIAL** (dry-run only) | Re-run `verify_env.py` **on the pod** and require PASS. |
@@ -38,7 +38,7 @@ cd /workspace
 git clone https://github.com/ainsleydeluna/plantseg-thesis.git
 cd plantseg-thesis
 git checkout master
-git rev-parse HEAD          # MUST print: 8288f82... (matches this runbook)
+git rev-parse HEAD          # MUST be latest master incl. the B29 PLANTSEG_DATA_ROOT commit (>= 8288f82)
 git status -sb              # expect clean (no reference.pdf change on a fresh clone)
 
 # 3.2 Python 3.11 environment (conda or venv)
@@ -49,10 +49,10 @@ conda create -y -n plantseg python=3.11 && conda activate plantseg
 pip install -r requirements.lock --extra-index-url https://download.pytorch.org/whl/cu121
 python -c "import torch; print(torch.__version__, torch.cuda.is_available())"   # expect 2.1.0+cu121 True
 
-# 3.4 Place/upload the dataset (see §4), then point DATA['root'] at it (env-specific, uncommitted)
-#     Edit configs/data.py:  "root": r"C:\Users\admin\plantseg_data\plantseg"
-#                        ->   "root": "/workspace/plantseg_data/plantseg"
-#     Do NOT commit/push this env-specific path change (see §4).
+# 3.4 Place/upload the dataset (see §4), then set the portable env var (B29 — no file edit needed):
+export PLANTSEG_DATA_ROOT=/workspace/plantseg_data/plantseg
+#     configs/data.py reads DATA['root'] = os.environ.get("PLANTSEG_DATA_ROOT", <windows default>).
+#     Fallback only (not required): editing configs/data.py DATA['root'] still works if you prefer.
 
 # 3.5 Verify dataset structure (depth-1, no full scan)
 ls /workspace/plantseg_data/plantseg                       # images/ annotations/ 3 JSONs Metadata.csv
@@ -75,8 +75,14 @@ python src/training/train_e1.py --dry-run                  # expect RESULT: PASS
 - **Pod dataset root (placeholder):** `/workspace/plantseg_data/plantseg`.
 - **Expected split counts (do not re-audit; from `reports/dataset_audit_summary.md`):**
   - train **5,367**, val **846**, test **1,561**, **total 7,774**; 0 silent drops.
-- ⚠ **`DATA["root"]` is a hardcoded Windows path** (`configs/data.py:11`). On RunPod/Linux it **must be changed or overridden** to the pod path **before** any dataloader use (the loader, `verify_env.py`'s dry-run subprocess, and the real run all read `DATA["root"]`).
-- **Treat the Linux path as an environment-specific LOCAL change — do NOT commit/push it** to `master` (it would break the Windows dev box). If a portable solution is wanted later, add an env-var override (e.g. `PLANTSEG_DATA_ROOT`) as a separate, reviewed code change — not part of this launch.
+- ✅ **Preferred (B29): set the `PLANTSEG_DATA_ROOT` env var** — `configs/data.py` resolves
+  `DATA["root"] = os.environ.get("PLANTSEG_DATA_ROOT", <windows default>)`, so on RunPod/Linux just run
+  `export PLANTSEG_DATA_ROOT=/workspace/plantseg_data/plantseg` **before** any dataloader use (the loader,
+  `verify_env.py`'s dry-run subprocess, and the real run all read `DATA["root"]`). **No `configs/data.py`
+  edit is needed.**
+- **Fallback only:** editing `configs/data.py` `DATA["root"]` to the Linux path still works, but treat it as
+  an environment-specific change and do **not** commit/push it (it would break the Windows dev box). The env
+  var is the portable, commit-safe method.
 - **Never commit dataset files into git** (the dataset is external and `.gitignore`-protected; keep it that way).
 
 ## 5. ImageNet initialization checklist
@@ -92,7 +98,7 @@ python src/training/train_e1.py --dry-run                  # expect RESULT: PASS
 
 ## 6. Safe pre-real-run checks (all must pass first)
 ```bash
-git status -sb                                             # clean or only expected env-specific DATA['root'] edit
+git status -sb                                             # clean (PLANTSEG_DATA_ROOT env var used; no configs/data.py edit)
 python scripts/verify_env.py                               # verdict PASS (CUDA true, deps, dry-run OK)
 ls -d /workspace/plantseg_data/plantseg/{images,annotations}/{train,val,test}/   # 6 dirs present
 python scripts/smoke_dataloader.py                         # [PASS] (builds train+val batches)
@@ -121,23 +127,23 @@ python src/training/train_e1.py \
 
 ## 8. Stop conditions (abort / do not launch the real run if any is true)
 - **`scripts/verify_env.py` fails** or reports **CUDA not available** (`cuda_available=False`) / wrong torch build.
-- **Dataset split counts mismatch** the expected **5,367 / 846 / 1,561 / 7,774** (or `DATA["root"]` still points at the Windows path).
+- **Dataset split counts mismatch** the expected **5,367 / 846 / 1,561 / 7,774** (or `DATA["root"]` does not resolve to the pod dataset — set `PLANTSEG_DATA_ROOT`).
 - **ImageNet init fails unexpectedly** (e.g. `RuntimeError` from `build_student` when offline+uncached) — resolve caching/network first; do **not** switch to random init.
 - **Dry-run loss is NaN/inf**, or the `--dry-run` smoke does not print `RESULT: PASS`.
 - **Checkpoint/output path is inside a forbidden location** — the repo working tree, `docs/reference/`, or the dataset dir. `--ckpt-dir` must be outside the repo (e.g. `/workspace/e1_ckpts`).
-- **Any unexpected uncommitted/dirty file** appears beyond the expected env-specific `DATA["root"]` edit (and the always-deferred `reference.pdf` on a machine that has it) — investigate before launching.
+- **Any unexpected uncommitted/dirty file** appears — with `PLANTSEG_DATA_ROOT` set there should be **no** `configs/data.py` edit; only the always-deferred `reference.pdf` may show on a machine that has it — investigate before launching.
 
 ## 9. Final launch approval checklist (review before "start real E1")
-- [ ] Pod at HEAD **`8288f82`**, branch `master`; clean except the intended env-specific `DATA["root"]` edit.
+- [ ] Pod at latest `master` (includes the **B29 `PLANTSEG_DATA_ROOT`** commit), branch `master`; working tree **clean** (no `configs/data.py` edit needed).
 - [ ] `pip` shows **`torch 2.1.0+cu121`**, `torchvision 0.16.0+cu121`; `torch.cuda.is_available()` = **True**.
-- [ ] Dataset present at the pod root; **`DATA["root"]` points to it** (Linux path); split dirs verified.
+- [ ] Dataset present at the pod root; **`PLANTSEG_DATA_ROOT` exported** so `DATA["root"]` resolves to it; split dirs verified.
 - [ ] Split counts confirmed **5,367 / 846 / 1,561 / 7,774**.
 - [ ] ImageNet `IMAGENET1K_V2` cached or download permitted (network on).
 - [ ] `scripts/verify_env.py` → **PASS**.
 - [ ] `train_e1.py --dry-run` → **RESULT: PASS** on the pod.
 - [ ] `--ckpt-dir` set to an **out-of-repo** path (e.g. `/workspace/e1_ckpts`).
 - [ ] Understood: E1 **unclipped by default** (B27); `--grad-clip-norm` only if divergence.
-- [ ] `docs/reference/reference.pdf` **not staged**; env-specific `DATA["root"]` change **not committed/pushed**.
+- [ ] `docs/reference/reference.pdf` **not staged**; no stray `configs/data.py` edit (env var used, so none needed).
 - [ ] No forbidden-path checkpoint; no unexpected dirty files.
 - → If **all** checked: launch the §7 real-run command.
 

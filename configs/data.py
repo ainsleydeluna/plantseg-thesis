@@ -6,9 +6,17 @@
 # (exclude index 0 in reporting) remains open — see open_questions #2.
 # Analysis/config artifact only — contains NO training logic.
 
+import os
+
+# Dataset root is portable via the PLANTSEG_DATA_ROOT environment variable. Set PLANTSEG_DATA_ROOT on
+# RunPod/Linux to avoid editing this file; if it is unset, the local Windows default below is used for the
+# current development machine (behavior unchanged). See reports/e1_runpod_launch_runbook.md.
+DEFAULT_PLANTSEG_DATA_ROOT = r"C:\Users\admin\plantseg_data\plantseg"
+
 DATA = {
-    # Root (extracted dataset path) — verified to exist; see reports/dataset_location_log.md
-    "root": r"C:\Users\admin\plantseg_data\plantseg",
+    # Root (extracted dataset path) — verified to exist; see reports/dataset_location_log.md.
+    # PLANTSEG_DATA_ROOT env var overrides this when set; otherwise the Windows default is used.
+    "root": os.environ.get("PLANTSEG_DATA_ROOT", DEFAULT_PLANTSEG_DATA_ROOT),
 
     # Class space — empirically verified: mask values 0-115 (background 0 + 115 diseases 1-115).
     "num_classes": 116,                          # all-class; output layer = 116  [empirical]
