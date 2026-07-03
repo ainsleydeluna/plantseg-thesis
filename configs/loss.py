@@ -13,7 +13,7 @@ LOSS = {
     # --- unresolved (never guessed) ---
     "real_class_weights": "NEED_TO_CONFIRM",     # sqrt inv-freq over FULL train set (not yet computed)
     "logit_kd_weight": "NEED_TO_CONFIRM",        # lambda_logit; validation sweep {0.25,0.5,1,2,4}
-    "reduce_zero_label": "NEED_TO_CONFIRM",      # background convention unresolved (open_questions #2)
+    "reduce_zero_label": False,                  # locked in configs/data.py (PROVEN no-remap: masks already 0-115, bg=0 kept). Disease-only reporting convention is separate & still open — see docs/open_questions.md #2.
 
     "supervised": "L_sup = L_CE + L_Dice (equal weight)",
 
