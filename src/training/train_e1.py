@@ -199,6 +199,11 @@ def run(*, mode: str, device: str, pretrained, batch_size: int, max_iters: int, 
         ce = criterion.ce(logits, mask)
         dice = criterion.dice(logits, mask)
         loss = ce + dice                              # == CombinedCEDiceLoss(logits, mask)
+        if mode == "real" and not bool(torch.isfinite(loss)):
+            raise RuntimeError(
+                f"non-finite loss at iter {it}: loss={loss.item():.4f} ce={ce.item():.4f} "
+                f"dice={dice.item():.4f}. Aborting the real E1 run to avoid poisoning the model "
+                "or wasting compute.")
 
         if it == 1:
             checks["loss_finite"] = bool(torch.isfinite(loss)) and loss.dim() == 0
@@ -314,6 +319,16 @@ def main(argv=None) -> int:
         num_workers = args.num_workers if args.num_workers is not None else 0
     else:  # real (defined, NOT exercised by B19)
         device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
+        # Real E1 must run on CUDA. Refuse a CPU real run (an 80k-iter CPU run is almost certainly a
+        # mistake and would take weeks); fail loud rather than silently degrade. No hidden CPU path.
+        if not str(device).startswith("cuda"):
+            reason = ("--device cpu was passed" if args.device == "cpu"
+                      else "CUDA is not available (torch.cuda.is_available()=False)")
+            print(f"REFUSING to start the real E1 run on CPU: {reason}.\n"
+                  "The real 80k run requires a CUDA GPU. Provision a GPU (see "
+                  "reports/e1_runpod_launch_runbook.md), or use --dry-run for a safe CPU smoke.",
+                  file=sys.stderr)
+            return 2
         init = args.init or "imagenet"
         pretrained = False if init == "none" else E1_STUDENT["init_weights"]
         batch_size = args.batch_size or E1_STUDENT["batch_size"]

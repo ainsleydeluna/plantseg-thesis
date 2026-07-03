@@ -124,7 +124,7 @@ python src/training/train_e1.py \
 # optional explicit device: add  --device cuda
 ```
 - **`--init imagenet`** → ImageNet `IMAGENET1K_V2` backbone (real-run default is already `imagenet`; stated explicitly for clarity).
-- **Real-mode defaults** (no need to pass): `device` = cuda-if-available (`:316`), batch **16**, **80,000** iters, val every **4000**, **full** validation, `num_workers` **4** — all from `configs/e1_student.py`.
+- **Real-mode defaults** (no need to pass): `device` = **CUDA (required)** — the real run now **hard-aborts (exit 2) on CPU** (`--device cpu` or no CUDA), no silent CPU fallback; batch **16**, **80,000** iters, val every **4000**, **full** validation, `num_workers` **4** — all from `configs/e1_student.py`.
 - **`--ckpt-dir` MUST be OUTSIDE the repo** (`train_e1.py` hard-guards and raises if the dir is the repo or inside it; auto temp dir if omitted, but for a real run use a persistent out-of-repo path like `/workspace/e1_ckpts`).
 - **Gradient clipping:** E1 is **intentionally unclipped by default** (B27 D-A: `grad_clip_max_norm=None`, a documented deviation from ch3's value-less "global-norm, throughout"). **Add `--grad-clip-norm <value>` ONLY if divergence/instability is observed** later — not by default, and do not invent a value pre-emptively.
 - Checkpoint selection = **all-class validation mIoU** (D1); disease-only mIoU logged as PROVISIONAL secondary.
