@@ -107,7 +107,7 @@ python src/training/train_e1.py --dry-run                  # expect RESULT: PASS
 git status -sb                                             # clean (PLANTSEG_DATA_ROOT env var used; no configs/data.py edit)
 python scripts/verify_env.py                               # verdict PASS (CUDA true, deps, dry-run OK)
 ls -d /workspace/plantseg_data/plantseg/{images,annotations}/{train,val,test}/   # 6 dirs present
-python scripts/smoke_dataloader.py                         # [PASS] (builds train+val batches)
+python scripts/smoke_dataloader.py                         # [PASS] builds train+val batches; the loader now also hard-checks locked split counts + mask pairing (B31b-fix)
 python src/training/train_e1.py --dry-run                  # RESULT: PASS (few CPU/GPU iters, temp ckpt)
 git status --porcelain docs/reference/reference.pdf        # if present it must stay UNSTAGED; never add it
 ```
@@ -133,7 +133,7 @@ python src/training/train_e1.py \
 
 ## 8. Stop conditions (abort / do not launch the real run if any is true)
 - **`scripts/verify_env.py` fails** or reports **CUDA not available** (`cuda_available=False`) / wrong torch build.
-- **Dataset split counts mismatch** the expected **5,367 / 846 / 1,561 / 7,774** (or `DATA["root"]` does not resolve to the pod dataset — set `PLANTSEG_DATA_ROOT`).
+- **Dataset split counts mismatch** the expected **5,367 / 846 / 1,561 / 7,774** (or `DATA["root"]` does not resolve to the pod dataset — set `PLANTSEG_DATA_ROOT`). **The dataloader now enforces this automatically** — `PlantSegDataset` raises on a per-split count mismatch or any image missing its mask (B31b-fix); a correct upload passes without error.
 - **ImageNet init fails unexpectedly** (e.g. `RuntimeError` from `build_student` when offline+uncached) — resolve caching/network first; do **not** switch to random init.
 - **Dry-run loss is NaN/inf**, or the `--dry-run` smoke does not print `RESULT: PASS`.
 - **Checkpoint/output path is inside a forbidden location** — the repo working tree, `docs/reference/`, or the dataset dir. `--ckpt-dir` must be outside the repo (e.g. `/workspace/e1_ckpts`).

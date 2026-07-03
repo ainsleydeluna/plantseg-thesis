@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import csv
 import json
+import os
 import re
 import sys
 import warnings
@@ -68,6 +69,12 @@ def log(msg: str) -> None:
 
 
 def resolve_root() -> Path:
+    # Prefer PLANTSEG_DATA_ROOT (the portable root the dataloader uses via configs/data.py) so this
+    # verifier is runnable on RunPod too; then fall back to the local log / documented path.
+    env = os.environ.get("PLANTSEG_DATA_ROOT")
+    if env and Path(env).exists():
+        log(f"[root] from PLANTSEG_DATA_ROOT: {env}")
+        return Path(env)
     if LOG.exists():
         text = LOG.read_text(encoding="utf-8", errors="replace")
         m = re.search(r"\*\*Path:\*\*\s*`([^`]+)`", text)
