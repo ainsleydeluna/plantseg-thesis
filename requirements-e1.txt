@@ -1,0 +1,20 @@
+# requirements-e1.txt — E1 student-only runtime (FP32 MobileNetV3-Large + LR-ASPP baseline).
+#
+# Derived from the ACTUAL E1 import graph (src/training/train_e1.py + its transitive src/* and configs/*):
+#   torch, torchvision  -> src/models/student.py  (torchvision.models.quantization.mobilenet_v3_large)
+#   numpy               -> src/seeds.py, src/data/transforms.py, src/data/dataset.py
+#   pillow (PIL)        -> src/data/transforms.py, src/data/dataset.py  (Image, ImageOps)
+#
+# E1 imports NOTHING from the teacher/MMSeg stack. Intentionally EXCLUDED (teacher-only; see
+# docs/teacher_prep_runbook.md): mmcv, mmengine, mmsegmentation, openmim, openxlab, opendatalab,
+# aliyun-python-sdk-*, oss2. Also EXCLUDED: opencv-python and albumentations — the E1 graph uses
+# NumPy/PIL transforms only (no OpenCV / Albumentations import anywhere in E1).
+#
+# Versions pinned to requirements.lock. The cu121 index below supplies the +cu121 torch/torchvision
+# builds; numpy/pillow resolve from PyPI. Installing this file does NOT trigger an mmcv source build.
+#   pip install -r requirements-e1.txt
+--extra-index-url https://download.pytorch.org/whl/cu121
+torch==2.1.0+cu121
+torchvision==0.16.0+cu121
+numpy==1.26.4
+pillow==12.2.0

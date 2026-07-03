@@ -5,24 +5,25 @@ instructions only** — no training, download, install, or GPU use was performed
 code/config was changed. All repo-side audit/decision blockers are resolved; the real run is gated only by
 GPU-environment setup below.
 
-_Generated 2026-07-01 at repo HEAD `8288f82`. Read `configs/e1_student.py`, `configs/data.py`,
-`src/training/train_e1.py`, `scripts/verify_env.py`, `requirements.lock`, `reports/platform_verify.md`
-alongside this runbook._
+_Generated 2026-07-01; revised 2026-07-03 (B31a-fix: corrected HEAD pin + split out an E1-only install).
+Provision the pod from the latest `master` (see §1) — **not** a fixed commit. Read `configs/e1_student.py`,
+`configs/data.py`, `src/training/train_e1.py`, `scripts/verify_env.py`, `requirements-e1.txt` (E1 student
+stack) / `requirements.lock` (full pinned stack), `reports/platform_verify.md` alongside this runbook._
 
 ---
 
 ## 1. Current repo baseline
-- **Expected remote HEAD:** latest `master` — must include the **B29 `PLANTSEG_DATA_ROOT`** commit (adds the portable dataset-root env var; ≥ `8288f82`).
+- **Expected remote HEAD:** latest `master` (currently **`21b5c22`** or newer) — **must include the B29 `PLANTSEG_DATA_ROOT` commit `1576d7c`** (adds the portable dataset-root env var). Minimum feature floor: **HEAD ≥ `1576d7c`**. Do **not** provision from an earlier commit — e.g. `8288f82` predates B29 and lacks env-var support, so `PLANTSEG_DATA_ROOT` would have no effect there.
 - **Branch:** `master` (local and `origin/master` in sync).
 - **Deferred local dirty file:** `docs/reference/reference.pdf` (` M`) — **do NOT stage/commit/restore it**; it is a pre-existing deferred artifact and is unrelated to the run.
 - **No remaining repo-side decision blockers:** D1 (metric policy = all-class), D2/D-A (E1 unclipped documented deviation), D3 (aug wording), F1/F2 (stale wording) are all resolved & pushed.
-- The GPU box should be provisioned from this exact commit; verify `git rev-parse HEAD` equals `8288f82` after checkout.
+- Provision the GPU box from the **latest `master`**; after checkout verify `git rev-parse HEAD` matches `origin/master` and that `git log` includes the **B29 `PLANTSEG_DATA_ROOT` commit `1576d7c`** (i.e. HEAD ≥ `1576d7c`; currently `21b5c22`). Do **not** pin to `8288f82` — it predates B29 and the portable dataset root.
 
 ## 2. What still blocks real E1
 | Item | Required state | Current/local state | Action |
 |---|---|---|---|
 | CUDA GPU | CUDA GPU available (`torch.cuda.is_available()=True`) | **CPU-only** (`torch 2.9.1+cpu`, 0 GPUs) — `reports/platform_verify.md` | Provision a RunPod GPU (e.g. RTX 4090, 24 GB). |
-| Pinned torch/torchvision (cu121) | `torch 2.1.0+cu121` / `torchvision 0.16.0+cu121`, Python 3.11 | local `torch 2.9.1+cpu` / `tv 0.24.1+cpu`, Python 3.13 | `pip install -r requirements.lock --extra-index-url https://download.pytorch.org/whl/cu121`. |
+| Pinned torch/torchvision (cu121) | `torch 2.1.0+cu121` / `torchvision 0.16.0+cu121`, Python 3.11 | local `torch 2.9.1+cpu` / `tv 0.24.1+cpu`, Python 3.13 | **E1 (student-only):** `pip install -r requirements-e1.txt` (torch/torchvision/numpy/pillow; embeds the cu121 index; **no** mmcv/mmseg/teacher deps). |
 | Dataset root resolution | `DATA["root"]` resolves to the pod dataset dir | Root = `PLANTSEG_DATA_ROOT` if set, else the Windows default `C:\Users\admin\plantseg_data\plantseg` (`configs/data.py`, B29) | **Set `PLANTSEG_DATA_ROOT=/workspace/plantseg_data/plantseg`** (preferred; no file edit — see §4). Editing `DATA["root"]` is a fallback only. |
 | Dataset mounted/uploaded | 7,774 pairs present under the pod dataset root | Dataset is on the **local** machine only | Upload/mount to the pod (see §4). |
 | ImageNet MobileNetV3 weights | `IMAGENET1K_V2` cached or download permitted | **Not cached** (`mobilenet_v3_large-5c1a4163.pth` absent) | Allow one-time in-pod download, or pre-stage the hub file (see §5). |
@@ -38,16 +39,21 @@ cd /workspace
 git clone https://github.com/ainsleydeluna/plantseg-thesis.git
 cd plantseg-thesis
 git checkout master
-git rev-parse HEAD          # MUST be latest master incl. the B29 PLANTSEG_DATA_ROOT commit (>= 8288f82)
+git rev-parse HEAD          # MUST include B29 PLANTSEG_DATA_ROOT commit 1576d7c (HEAD >= 1576d7c; currently 21b5c22). Do NOT use 8288f82 (pre-B29).
 git status -sb              # expect clean (no reference.pdf change on a fresh clone)
 
 # 3.2 Python 3.11 environment (conda or venv)
 conda create -y -n plantseg python=3.11 && conda activate plantseg
 #   (or: python3.11 -m venv .venv && source .venv/bin/activate)
 
-# 3.3 Install the pinned cu121 stack
-pip install -r requirements.lock --extra-index-url https://download.pytorch.org/whl/cu121
+# 3.3 Install the E1 student-only stack (torch/torchvision/numpy/pillow; requirements-e1.txt embeds the
+#     cu121 index and will NOT source-build mmcv). Teacher/MMSeg deps are intentionally omitted for E1.
+pip install -r requirements-e1.txt
 python -c "import torch; print(torch.__version__, torch.cuda.is_available())"   # expect 2.1.0+cu121 True
+#     NOTE: mmcv / mmengine / mmsegmentation / openmim / openxlab / opendatalab are TEACHER-only — do NOT
+#     install them for E1 (they belong to docs/teacher_prep_runbook.md, on the A6000 teacher box). As a
+#     result scripts/verify_env.py will list mmcv/mmseg/cv2/albumentations as "not installed" — that is
+#     EXPECTED for E1 and does NOT fail its PASS verdict (they are E2-E3 / teacher-only, not E1 deps).
 
 # 3.4 Place/upload the dataset (see §4), then set the portable env var (B29 — no file edit needed):
 export PLANTSEG_DATA_ROOT=/workspace/plantseg_data/plantseg
@@ -150,7 +156,8 @@ python src/training/train_e1.py \
 ---
 
 ## Provenance / guardrails honored
-Documentation only. No training, no download, no install, no GPU use; no code/config/dataset changes on
+Documentation + packaging only (B31a-fix: corrected the stale `8288f82` HEAD pin and added `requirements-e1.txt`
+for a student-only E1 install). No training, no download, no install, no GPU use; no behavior-changing code/config/dataset changes on
 this machine (the `DATA["root"]` Linux edit is **documented as a pod-side action**, not performed here).
 `docs/reference/reference.pdf`, manuscript PDFs, and dataset files untouched; nothing staged, committed, or
 pushed.
