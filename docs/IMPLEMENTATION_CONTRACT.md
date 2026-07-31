@@ -288,6 +288,12 @@ pending the PlantSeg repo's official convention. `[empirical; ch3 Table 3.1; ctx
 
 ## (f) Evaluation metrics + statistics `[ch3 §F]`
 
+> **Exact computation is frozen in [EVALUATION_CONTRACT.md](EVALUATION_CONTRACT.md) (A0, 2026-07-26).**
+> This section states *which* metrics the thesis reports; the evaluation contract states *how* each is
+> computed — class-eligibility rules (union-present for dataset-level IoU/Dice, GT-present for mAcc and for
+> both per-image vectors), ignore-255 masking, undefined-value handling, the bootstrap resampling unit, and
+> the result-artifact schema. Decision records: `open_questions.md` D3/D3b/D3c/D4/D5.
+
 **Accuracy**
 - **Primary inferential unit:** per-image **disease-only mIoU** (115 disease classes = mask values **1–115**;
   **background = index 0 excluded** [empirical; residual `NEED_TO_CONFIRM` on the formal convention];
@@ -305,6 +311,27 @@ pending the PlantSeg repo's official convention. `[empirical; ch3 Table 3.1; ctx
 - **mAcc:** descriptive only (benchmark against Wei).
 
 **Robustness**
+> **Canonical corruption identifiers are frozen in `configs/corruption_protocol.json`**
+> (`plantseg-corruptions/1.0.0`, A3b-0): `motion_blur` · `gaussian_noise` · `jpeg_compression` ·
+> **`brightness`** · `fog`, in that order — the vendored `imagecorruptions` reference function
+> names. Inferential severities **1–3**; severity **4 descriptive-only**; severity **5 excluded**.
+> "brightness variation" is a display label, never an identifier; `brightness_variation` and
+> `motion-blur` are rejected. The future corruption generator and cache manifest must **consume
+> that file** rather than duplicate the vocabulary. Rationale:
+> [STATISTICAL_ANALYSIS_CONTRACT.md](STATISTICAL_ANALYSIS_CONTRACT.md) §2.1.
+
+> **Observed-value provenance and result schema frozen (A3b-2, 2026-07-30).** **Amendment C** corrects
+> where each bootstrap task's observed scalar comes from — **24** from typed A3a `ComparisonResult`
+> objects, **3** descriptive E1→E3 values from the public A3a estimator primitives, **8** from A3b
+> pooled re-accumulation — recorded per task in a required `observed_source` field. E1→E3 stays outside
+> the canonical eight-member family and is never routed through `run_comparison`. Separately, the
+> complete top-level `family.json` schema is **newly frozen**: nineteen ordered keys, the A+
+> `a3a_family` envelope carrying the full finalized `HolmFamily`, the literal A3a dataclass field
+> tuples, the `relative_retention` ratio, the 37-record official input set, and the integrity block.
+> See [STATISTICAL_ANALYSIS_CONTRACT.md](STATISTICAL_ANALYSIS_CONTRACT.md) **§12.3.3, §12.3.5 and
+> §12.4**. Decision records: `open_questions.md` **D23** (amendment) and **D24** (newly frozen). Not
+> duplicated here.
+
 - **5 corruptions:** motion blur, Gaussian noise, JPEG compression, brightness, fog. Vendored from
   Hendrycks 2019 reference impl (not the installed package), applied to **uint8 RGB before padding &
   normalization**, **never to masks**; byte-identical cached + checksummed set across stages.
@@ -313,22 +340,67 @@ pending the PlantSeg repo's official convention. `[empirical; ch3 Table 3.1; ctx
 - **RPD** = (mIoU_clean − mIoU_C)/mIoU_clean × 100 — **descriptive only**.
 - **rCD** (Kamann 2020) — descriptive only; E1 = internal reference (rCD(E1)=1); teacher excluded.
 
+> **The inferential protocol is frozen in [STATISTICAL_ANALYSIS_CONTRACT.md](STATISTICAL_ANALYSIS_CONTRACT.md)
+> (A3-0, 2026-07-28).** This section states *which* analyses the thesis reports; that contract states
+> *how* each is computed — test configuration, tie and degenerate policy, effect-size definitions,
+> the BCa seed/`z0`/acceleration/fallback rules, and the statistics result artifact. Decision
+> records: `open_questions.md` D7-series.
+
+> **Bootstrap reproducibility protocol frozen (A3b-1, 2026-07-29).** The seed namespaces, the exact
+> 35 bootstrap tasks and their canonical order, the row-wise draw call and per-task RNG streams, the
+> BCa adjusted-probability transform and nominal tails, the deterministic first-trigger P1–P8 fallback
+> ladder, int64 sufficient-statistic accumulation, and the `bootstrap.npz` / `family.json` schemas with
+> exact cross-representation verification live in
+> [STATISTICAL_ANALYSIS_CONTRACT.md](STATISTICAL_ANALYSIS_CONTRACT.md) **§8.7** and **§12.3**. Two rules
+> were **amended** there before any implementation or official use — the §8.1 seed bytes now render
+> `root_seed`, and the artifact field `confidence_type` became `interval_type`. A pooled dataset-level
+> *robustness* estimand is **deferred**, not omitted. Decision records: `open_questions.md` **D21**,
+> **D22**; amendment history in **D12**. Not duplicated here.
+
 **Inferential tests (8 total, Holm-Bonferroni family, α = 0.05)**
-- Primary: one-tailed **Wilcoxon signed-rank**,
-  `scipy.stats.wilcoxon(d, zero_method='pratt', correction=True, alternative='greater')`.
-- Sensitivity: paired t-test `scipy.stats.ttest_rel(..., alternative='greater')` (CLT at n≈1,554).
-- Correction: `statsmodels.stats.multitest.multipletests(method='holm')`.
-- The 8 tests: **E1vE2, E2vE3, E4vE5, E7vE6, E4vE7, E5vE6, E1vE6 (mIoU), E1vE6 (mIoU-C)**.
+- Primary: one-tailed **Wilcoxon signed-rank**, `scipy.stats.wilcoxon(d, zero_method='pratt',
+  correction=True, alternative='greater', **method='approx'**)`, `d = candidate − baseline`.
+- Sensitivity: paired t-test `scipy.stats.ttest_rel(..., alternative='greater')` (CLT at n = **1,561**).
+  Sensitivity p-values **never** enter the Holm family.
+- Correction: `statsmodels.stats.multitest.multipletests(method='holm')`, strict boundary
+  (equality does not reject).
+- **The 8 comparison IDs** (candidate − baseline, positive favours the candidate):
+  `accuracy_e1_e2` · `accuracy_e2_e3` · `accuracy_e4_e5` · `accuracy_e7_e6` · `accuracy_e4_e7` ·
+  `accuracy_e5_e6` · `accuracy_e1_e6` — all on **clean per-image disease-only mIoU** — plus
+  `robustness_e1_e6` on **per-image mIoU-C**.
+
+> **Chapter III internal inconsistency, reconciled.** A §B summary sentence lists E1→E3 and E3→E6 as
+> though they complete the eight-test family, but Table 3.6 marks **E1→E3 descriptive and "not
+> included in the eight-test Holm-Bonferroni family"**, and ch3 states three separate times that the
+> **E3→E6 non-inferiority check is reported separately** from that family. Admitting both would give
+> ten members against ch3's own explicit eight-test, "seven clean + one robustness" structure. The
+> comparison table, formal hypotheses and repeated exclusions therefore govern the summary sentence.
+> Full ledger: STATISTICAL_ANALYSIS_CONTRACT.md §0.1.
+
+**Excluded from the family (reported, but not Holm-corrected)**
+- **E1→E3** — descriptive total-FP32-distillation gain: mean ΔmIoU and Hodges-Lehmann shift with
+  BCa 95 % CIs, **no family p-value, no superiority claim**.
+- **E3→E6** — dataset-level non-inferiority (below).
+- Teacher comparisons, Dice, mAcc, aAcc, RPD, rCD and efficiency remain descriptive.
 
 **Non-inferiority (separate from the 8)**
-- E6 non-inferior to E3 iff lower bound of **paired BCa 95% CI** on `ΔmIoU = mIoU(E6) − mIoU(E3)` > **−2.0 pp**,
-  **B = 10,000** (`scipy.stats.bootstrap(method='BCa')`).
-- **E6-KD contingency trigger** (stricter, distinct): run if E3→E6 clean mIoU drop > **1.0 pp**.
+- E6 non-inferior to E3 iff the **one-sided 95 % BCa lower bound** on
+  `ΔmIoU = mIoU(E6) − mIoU(E3)` (dataset-level, all-class, union-present) is **strictly greater than
+  −2.0 pp**; equality fails. **B = 10,000**. Sensitivity decisions at 1.0/1.5/2.0/2.5 pp are read
+  from the **same** bootstrap distribution.
+- **E6-KD contingency trigger** (stricter, distinct): run if the **observed** clean E3→E6 mIoU drop
+  is **> 1.0 pp**; equality does not trigger. No p-value, not a Holm test.
 
 **Effect sizes (reported with each test)**
-- matched-pairs **rank-biserial r_rb** [−1,1]; **Cohen's dz** (small 0.20 / med 0.50 / large 0.80);
-  **Hodges-Lehmann** shift (Walsh averages); **mean Δ mIoU (pp)**; **BCa 95% CI, B = 10,000**
-  (documented percentile/basic fallback for degenerate zero-inflated medians; HL BCa ≈ 7–8 min, O(n²)).
+- matched-pairs **rank-biserial r_rb** = `(R₊ − R₋)/(R₊ + R₋)` with Pratt ranking (zeros are ranked
+  but their ranks enter neither signed sum) [−1,1]; **Cohen's dz** (small 0.20 / med 0.50 / large
+  0.80); **exact Hodges-Lehmann** shift (median of Walsh averages, i ≤ j); **mean Δ mIoU (pp)**;
+  **BCa 95 % CI, B = 10,000** with a single frozen **percentile** fallback when acceleration is
+  degenerate. Measured cost: exact HL BCa ≈ 5.3 min per comparison — feasible, not approximated.
+
+**Statistics environment**
+- Official p-values and confidence intervals may be produced **only on the pinned stack**
+  (`requirements.lock`). Any version mismatch forces non-official status.
 
 **Efficiency (descriptive only)**
 - params · model size (deterministic **parameter-byte footprint**: INT8=1B/weight, FP32=4B/weight,
@@ -374,3 +446,33 @@ overlap) · mask value range ⊆ class set ∪ {255} · ignore-label unit tests 
 when padded values altered; CWD channel-wise softmax sums to 1 over valid locations; teacher hook returns
 stride-16 MSCAN-B Stage-3 320-ch feature). Store verification logs as JSON next to each run.
 **Plus** QNNPACK INT8-Sigmoid support in the LR-ASPP global-pool branch must be verified before E4.
+
+### (g.1) Tool/environment precondition-verification phase `[ch3 ~p.112, ~p.113, ~p.11–12]`
+
+Distinct from the Table 3.1 *data* gates above, Chapter III also requires **tool-specific preconditions**
+to be verified through pilot/smoke checks before the pipeline proceeds:
+
+> *"Tool-specific preconditions (e.g., QNNPACK backend operator support for INT8 Sigmoid in the LR-ASPP
+> head, MMSegmentation model-zoo checkpoint availability for SegNeXt-B, and RunPod GPU pod availability)
+> are verified during pilot runs before E1 training begins."* `[ch3 ~p.112]`
+
+**Stage-specific applicability.** Chapter III's ~p.112 sentence groups all three preconditions under
+"before E1 training begins", while ~p.113 and ~p.11–12 specifically tie QNNPACK to *pilot quantization,
+before the quantization stages are run*. That source tension is recorded openly; the **stage-specific
+reading is adopted**:
+
+| Precondition | Governs | Evidence / status |
+|---|---|---|
+| **RunPod GPU/pod availability** | **before real E1 execution** | verified on the pod (`scripts/verify_env.py` → PASS, `train_e1.py --dry-run` → PASS) |
+| **SegNeXt-B / MMSeg checkpoint availability** | **before teacher-dependent execution** (teacher fine-tune, E2/E3 prep) | `docs/B8_checkpoint.md` — none publicly released; in-house fine-tune planned |
+| **QNNPACK INT8 operator support** | **before the quantization stages (E4–E7)** | `docs/b7_result.md` — onednn proxy `PASS_CLEAN`; authoritative run env-gated |
+
+**QNNPACK is a pre-quantization gate and is NOT an independent blocker to FP32 E1.**
+
+**No training-pilot requirement.** Chapter III specifies **no** short-training-run pilot and **no**
+iteration count for this phase. The "2,000-iteration E1 pilot" figure appears **only** in
+`docs/reference/context.md` `[ctx]`; it is operational, is **not** part of the locked methodology, and does
+**not** modify the **80,000-iteration / validate-every-4,000** recipe in §(d) B2. An optional short training
+rehearsal is tracked as `[operational] RECOMMENDED_NOT_BLOCKING` — see
+[open_questions.md](open_questions.md) **D6** and
+[reports/e1_runpod_launch_runbook.md](../reports/e1_runpod_launch_runbook.md).
