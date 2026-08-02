@@ -12,7 +12,7 @@ Three sections:
 Random-init metric values are smoke diagnostics ONLY and are never interpreted as performance.
 No real checkpoint is loaded. The test split is never touched.
 
-Run:  set PYTHONIOENCODING=utf-8 && C:\\Users\\admin\\anaconda3\\python.exe scripts/smoke_eval_plantseg.py
+Run:  set PYTHONIOENCODING=utf-8 && python -B scripts/smoke_eval_plantseg.py
 """
 from __future__ import annotations
 
