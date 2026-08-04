@@ -1,0 +1,604 @@
+{
+  "schema": "plantseg-class-map/1.0.0",
+  "source": {
+    "repository_owner": "tqwei05",
+    "repository_name": "PlantSeg",
+    "repository_url": "https://github.com/tqwei05/PlantSeg",
+    "source_path": "mmseg/datasets/plantseg115.py",
+    "source_commit_sha": "1a3dd4d9224bcc97a5850af7dd1c423abc24eae0",
+    "immutable_source_url": "https://raw.githubusercontent.com/tqwei05/PlantSeg/1a3dd4d9224bcc97a5850af7dd1c423abc24eae0/mmseg/datasets/plantseg115.py",
+    "source_object": "PlantSeg115Dataset.METAINFO[\"classes\"]",
+    "raw_source_sha256": "baffa8860cfba380674dedc3eef2ac9d0bf5b29d5041be4c784a3fa898e5940c",
+    "retrieved_utc": "2026-07-27T11:58:18Z",
+    "extraction_method": "python-ast-static/1.0.0",
+    "upstream_commit_date": "2025-03-25T05:31:07Z",
+    "note": "Ordered names come verbatim from PlantSeg115Dataset.METAINFO[\"classes\"] at the pinned commit. Metadata.csv['Index'], majority vote and annotation frequency are NOT sources."
+  },
+  "class_space": {
+    "num_classes": 116,
+    "background_index": 0,
+    "ignore_index": 255
+  },
+  "entries": [
+    {
+      "class_id": 0,
+      "name": "",
+      "role": "background_or_non_disease"
+    },
+    {
+      "class_id": 1,
+      "name": "apple black rot",
+      "role": "disease"
+    },
+    {
+      "class_id": 2,
+      "name": "apple mosaic virus",
+      "role": "disease"
+    },
+    {
+      "class_id": 3,
+      "name": "apple rust",
+      "role": "disease"
+    },
+    {
+      "class_id": 4,
+      "name": "apple scab",
+      "role": "disease"
+    },
+    {
+      "class_id": 5,
+      "name": "banana anthracnose",
+      "role": "disease"
+    },
+    {
+      "class_id": 6,
+      "name": "banana black leaf streak",
+      "role": "disease"
+    },
+    {
+      "class_id": 7,
+      "name": "banana bunchy top",
+      "role": "disease"
+    },
+    {
+      "class_id": 8,
+      "name": "banana cigar end rot",
+      "role": "disease"
+    },
+    {
+      "class_id": 9,
+      "name": "banana cordana leaf spot",
+      "role": "disease"
+    },
+    {
+      "class_id": 10,
+      "name": "banana panama disease",
+      "role": "disease"
+    },
+    {
+      "class_id": 11,
+      "name": "basil downy mildew",
+      "role": "disease"
+    },
+    {
+      "class_id": 12,
+      "name": "bean halo blight",
+      "role": "disease"
+    },
+    {
+      "class_id": 13,
+      "name": "bean mosaic virus",
+      "role": "disease"
+    },
+    {
+      "class_id": 14,
+      "name": "bean rust",
+      "role": "disease"
+    },
+    {
+      "class_id": 15,
+      "name": "bell pepper bacterial spot",
+      "role": "disease"
+    },
+    {
+      "class_id": 16,
+      "name": "bell pepper blossom end rot",
+      "role": "disease"
+    },
+    {
+      "class_id": 17,
+      "name": "bell pepper frogeye leaf spot",
+      "role": "disease"
+    },
+    {
+      "class_id": 18,
+      "name": "bell pepper powdery mildew",
+      "role": "disease"
+    },
+    {
+      "class_id": 19,
+      "name": "blueberry anthracnose",
+      "role": "disease"
+    },
+    {
+      "class_id": 20,
+      "name": "blueberry botrytis blight",
+      "role": "disease"
+    },
+    {
+      "class_id": 21,
+      "name": "blueberry mummy berry",
+      "role": "disease"
+    },
+    {
+      "class_id": 22,
+      "name": "blueberry rust",
+      "role": "disease"
+    },
+    {
+      "class_id": 23,
+      "name": "blueberry scorch",
+      "role": "disease"
+    },
+    {
+      "class_id": 24,
+      "name": "broccoli alternaria leaf spot",
+      "role": "disease"
+    },
+    {
+      "class_id": 25,
+      "name": "broccoli downy mildew",
+      "role": "disease"
+    },
+    {
+      "class_id": 26,
+      "name": "broccoli ring spot",
+      "role": "disease"
+    },
+    {
+      "class_id": 27,
+      "name": "cabbage alternaria leaf spot",
+      "role": "disease"
+    },
+    {
+      "class_id": 28,
+      "name": "cabbage black rot",
+      "role": "disease"
+    },
+    {
+      "class_id": 29,
+      "name": "cabbage downy mildew",
+      "role": "disease"
+    },
+    {
+      "class_id": 30,
+      "name": "carrot alternaria leaf blight",
+      "role": "disease"
+    },
+    {
+      "class_id": 31,
+      "name": "carrot cavity spot",
+      "role": "disease"
+    },
+    {
+      "class_id": 32,
+      "name": "carrot cercospora leaf blight",
+      "role": "disease"
+    },
+    {
+      "class_id": 33,
+      "name": "cauliflower alternaria leaf spot",
+      "role": "disease"
+    },
+    {
+      "class_id": 34,
+      "name": "cauliflower bacterial soft rot",
+      "role": "disease"
+    },
+    {
+      "class_id": 35,
+      "name": "celery anthracnose",
+      "role": "disease"
+    },
+    {
+      "class_id": 36,
+      "name": "celery early blight",
+      "role": "disease"
+    },
+    {
+      "class_id": 37,
+      "name": "cherry leaf spot",
+      "role": "disease"
+    },
+    {
+      "class_id": 38,
+      "name": "cherry powdery mildew",
+      "role": "disease"
+    },
+    {
+      "class_id": 39,
+      "name": "citrus canker",
+      "role": "disease"
+    },
+    {
+      "class_id": 40,
+      "name": "citrus greening disease",
+      "role": "disease"
+    },
+    {
+      "class_id": 41,
+      "name": "coffee berry blotch",
+      "role": "disease"
+    },
+    {
+      "class_id": 42,
+      "name": "coffee black rot",
+      "role": "disease"
+    },
+    {
+      "class_id": 43,
+      "name": "coffee brown eye spot",
+      "role": "disease"
+    },
+    {
+      "class_id": 44,
+      "name": "coffee leaf rust",
+      "role": "disease"
+    },
+    {
+      "class_id": 45,
+      "name": "corn gray leaf spot",
+      "role": "disease"
+    },
+    {
+      "class_id": 46,
+      "name": "corn northern leaf blight",
+      "role": "disease"
+    },
+    {
+      "class_id": 47,
+      "name": "corn rust",
+      "role": "disease"
+    },
+    {
+      "class_id": 48,
+      "name": "corn smut",
+      "role": "disease"
+    },
+    {
+      "class_id": 49,
+      "name": "cucumber angular leaf spot",
+      "role": "disease"
+    },
+    {
+      "class_id": 50,
+      "name": "cucumber bacterial wilt",
+      "role": "disease"
+    },
+    {
+      "class_id": 51,
+      "name": "cucumber powdery mildew",
+      "role": "disease"
+    },
+    {
+      "class_id": 52,
+      "name": "eggplant cercospora leaf spot",
+      "role": "disease"
+    },
+    {
+      "class_id": 53,
+      "name": "eggplant phomopsis fruit rot",
+      "role": "disease"
+    },
+    {
+      "class_id": 54,
+      "name": "eggplant phytophthora blight",
+      "role": "disease"
+    },
+    {
+      "class_id": 55,
+      "name": "garlic leaf blight",
+      "role": "disease"
+    },
+    {
+      "class_id": 56,
+      "name": "garlic rust",
+      "role": "disease"
+    },
+    {
+      "class_id": 57,
+      "name": "ginger leaf spot",
+      "role": "disease"
+    },
+    {
+      "class_id": 58,
+      "name": "ginger sheath blight",
+      "role": "disease"
+    },
+    {
+      "class_id": 59,
+      "name": "grape black rot",
+      "role": "disease"
+    },
+    {
+      "class_id": 60,
+      "name": "grape downy mildew",
+      "role": "disease"
+    },
+    {
+      "class_id": 61,
+      "name": "grape leaf spot",
+      "role": "disease"
+    },
+    {
+      "class_id": 62,
+      "name": "grapevine leafroll disease",
+      "role": "disease"
+    },
+    {
+      "class_id": 63,
+      "name": "lettuce downy mildew",
+      "role": "disease"
+    },
+    {
+      "class_id": 64,
+      "name": "lettuce mosaic virus",
+      "role": "disease"
+    },
+    {
+      "class_id": 65,
+      "name": "maple tar spot",
+      "role": "disease"
+    },
+    {
+      "class_id": 66,
+      "name": "peach anthracnose",
+      "role": "disease"
+    },
+    {
+      "class_id": 67,
+      "name": "peach brown rot",
+      "role": "disease"
+    },
+    {
+      "class_id": 68,
+      "name": "peach leaf curl",
+      "role": "disease"
+    },
+    {
+      "class_id": 69,
+      "name": "peach rust",
+      "role": "disease"
+    },
+    {
+      "class_id": 70,
+      "name": "peach scab",
+      "role": "disease"
+    },
+    {
+      "class_id": 71,
+      "name": "plum bacterial spot",
+      "role": "disease"
+    },
+    {
+      "class_id": 72,
+      "name": "plum brown rot",
+      "role": "disease"
+    },
+    {
+      "class_id": 73,
+      "name": "plum pocket disease",
+      "role": "disease"
+    },
+    {
+      "class_id": 74,
+      "name": "plum pox virus",
+      "role": "disease"
+    },
+    {
+      "class_id": 75,
+      "name": "plum rust",
+      "role": "disease"
+    },
+    {
+      "class_id": 76,
+      "name": "potato early blight",
+      "role": "disease"
+    },
+    {
+      "class_id": 77,
+      "name": "potato late blight",
+      "role": "disease"
+    },
+    {
+      "class_id": 78,
+      "name": "raspberry fire blight",
+      "role": "disease"
+    },
+    {
+      "class_id": 79,
+      "name": "raspberry gray mold",
+      "role": "disease"
+    },
+    {
+      "class_id": 80,
+      "name": "raspberry leaf spot",
+      "role": "disease"
+    },
+    {
+      "class_id": 81,
+      "name": "raspberry yellow rust",
+      "role": "disease"
+    },
+    {
+      "class_id": 82,
+      "name": "rice blast",
+      "role": "disease"
+    },
+    {
+      "class_id": 83,
+      "name": "rice sheath blight",
+      "role": "disease"
+    },
+    {
+      "class_id": 84,
+      "name": "soybean bacterial blight",
+      "role": "disease"
+    },
+    {
+      "class_id": 85,
+      "name": "soybean brown spot",
+      "role": "disease"
+    },
+    {
+      "class_id": 86,
+      "name": "soybean downy mildew",
+      "role": "disease"
+    },
+    {
+      "class_id": 87,
+      "name": "soybean frog eye leaf spot",
+      "role": "disease"
+    },
+    {
+      "class_id": 88,
+      "name": "soybean mosaic",
+      "role": "disease"
+    },
+    {
+      "class_id": 89,
+      "name": "soybean rust",
+      "role": "disease"
+    },
+    {
+      "class_id": 90,
+      "name": "squash powdery mildew",
+      "role": "disease"
+    },
+    {
+      "class_id": 91,
+      "name": "strawberry anthracnose",
+      "role": "disease"
+    },
+    {
+      "class_id": 92,
+      "name": "strawberry leaf scorch",
+      "role": "disease"
+    },
+    {
+      "class_id": 93,
+      "name": "tobacco blue mold",
+      "role": "disease"
+    },
+    {
+      "class_id": 94,
+      "name": "tobacco brown spot",
+      "role": "disease"
+    },
+    {
+      "class_id": 95,
+      "name": "tobacco frogeye leaf spot",
+      "role": "disease"
+    },
+    {
+      "class_id": 96,
+      "name": "tobacco mosaic virus",
+      "role": "disease"
+    },
+    {
+      "class_id": 97,
+      "name": "tomato bacterial leaf spot",
+      "role": "disease"
+    },
+    {
+      "class_id": 98,
+      "name": "tomato early blight",
+      "role": "disease"
+    },
+    {
+      "class_id": 99,
+      "name": "tomato late blight",
+      "role": "disease"
+    },
+    {
+      "class_id": 100,
+      "name": "tomato leaf mold",
+      "role": "disease"
+    },
+    {
+      "class_id": 101,
+      "name": "tomato mosaic virus",
+      "role": "disease"
+    },
+    {
+      "class_id": 102,
+      "name": "tomato septoria leaf spot",
+      "role": "disease"
+    },
+    {
+      "class_id": 103,
+      "name": "tomato yellow leaf curl virus",
+      "role": "disease"
+    },
+    {
+      "class_id": 104,
+      "name": "wheat bacterial leaf streak (black chaff)",
+      "role": "disease"
+    },
+    {
+      "class_id": 105,
+      "name": "wheat head scab",
+      "role": "disease"
+    },
+    {
+      "class_id": 106,
+      "name": "wheat leaf rust",
+      "role": "disease"
+    },
+    {
+      "class_id": 107,
+      "name": "wheat loose smut",
+      "role": "disease"
+    },
+    {
+      "class_id": 108,
+      "name": "wheat powdery mildew",
+      "role": "disease"
+    },
+    {
+      "class_id": 109,
+      "name": "wheat septoria blotch",
+      "role": "disease"
+    },
+    {
+      "class_id": 110,
+      "name": "wheat stem rust",
+      "role": "disease"
+    },
+    {
+      "class_id": 111,
+      "name": "wheat stripe rust",
+      "role": "disease"
+    },
+    {
+      "class_id": 112,
+      "name": "zucchini bacterial wilt",
+      "role": "disease"
+    },
+    {
+      "class_id": 113,
+      "name": "zucchini downy mildew",
+      "role": "disease"
+    },
+    {
+      "class_id": 114,
+      "name": "zucchini powdery mildew",
+      "role": "disease"
+    },
+    {
+      "class_id": 115,
+      "name": "zucchini yellow mosaic virus",
+      "role": "disease"
+    }
+  ]
+}
