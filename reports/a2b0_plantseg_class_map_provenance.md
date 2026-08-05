@@ -87,8 +87,10 @@ removed in a `finally` block. **No upstream Python source remains in the reposit
 
 **Regeneration idempotence:** re-running the generator in offline `--from-file` mode against the
 same pinned bytes produced an **identical semantic payload** and an identical semantic SHA-256.
-The local *file* hash differed only because `retrieved_utc` differs — which is exactly why the
-three hashes are kept as separate concepts.
+The local *file* hash differed because two provenance fields necessarily differ in offline mode:
+`retrieved_utc`, and `upstream_commit_date`, which is `null` offline because no API call resolves
+it. Neither field is part of the semantic payload — which is exactly why the three hashes are kept
+as separate concepts.
 
 ## 5. Class 0 treatment
 
@@ -181,6 +183,53 @@ The 116 names are not reproduced here — they live in the JSON, which is the si
 | `scripts/smoke_eval_contract.py` (A2a) | 63/63 | **63/63 PASS**, exit 0 |
 
 Neither prior smoke script was modified.
+
+## 11. Vendor-tool hardening — 2026-08-04
+
+A complete line-by-line review of `scripts/vendor_plantseg_class_map.py`, performed before the tool
+entered Git history, found two write-safety weaknesses. Both are now corrected. **No class-map
+value, hash, ordering, or historical result in sections 1–10 changed** — the artifact and its
+frozen 21-check smoke are byte-identical.
+
+| Weakness found | Correction |
+|---|---|
+| `--out` accepted any writable destination, so an explicit invocation could target an unrelated file — including a protected document | **`--out` removed.** The only repository path the tool can write is `configs/plantseg_class_map.json`. A non-writing `--dry-run` prints the canonical payload to stdout for inspection. |
+| The artifact was written directly, so an I/O failure mid-write could leave a partial class map | **Atomic same-directory replacement.** Content goes to a temporary sibling in `configs/`, is re-read and re-validated, then moved into place with `Path.replace`. |
+
+**Destination containment** is re-validated immediately before every write, deriving from the
+repository root at call time rather than a cached constant: `configs/` must be a real directory and
+not a symlink; it must resolve to a direct child of the repository root; the destination must not be
+a symlink; and the resolved destination must remain inside the repository under `configs/` with the
+canonical filename. Any violation raises before a single byte is written.
+
+**Failure semantics.** Every failure the tool detects aborts before the replacement, leaving an
+existing class map byte-identical and removing the temporary sibling. A failure *during* the
+replacement itself is the only uncovered case, and `Path.replace` is atomic on both POSIX and
+Windows. The class docstring previously claimed slightly more than this and now states it exactly.
+
+**Unchanged by the hardening:** import remains side-effect-free; a no-mode invocation still performs
+no network request and no write; offline mode is fully network-free; online mode retains its 30 s
+timeout, HTTP-status validation, 40-character lowercase commit-SHA validation, SHA-pinned raw
+retrieval, and AST-only extraction that never imports or executes upstream source; and the JSON
+payload, canonical semantic serialization, class ordering, class-0 empty-string treatment, and
+provenance schema are identical.
+
+**New auxiliary suite — `scripts/smoke_vendor_plantseg_class_map.py`, 6/6 PASS, exit 0.** Standard
+library only, fully offline, with network actively blocked in every subprocess via a generated
+`sitecustomize.py` rather than relying on the absence of connectivity. All writes occur inside one
+temporary simulation directory; the real artifact is read-only throughout.
+
+| # | Check |
+|---|---|
+| 1 | `import is side-effect-free` — importing the module creates or modifies nothing |
+| 2 | `no-mode invocation refuses safely` — exits non-zero with no network and no write |
+| 3 | `arbitrary output destination is refused` — `--out` is rejected by argument parsing; no outside file appears |
+| 4 | `symlink or path-escape target is refused` — a `configs/` directory symlink is refused before any write |
+| 5 | `offline canonical generation is deterministic` — regenerating from a local fixture reproduces the committed entries, schema, class space, ID order, class-0 role, and semantic SHA-256 `d14182…a729`, differing only in the documented provenance fields |
+| 6 | `pre-replace failure preserves existing artifact` — an injected fault before replacement leaves the existing artifact byte-identical with no temporary sibling left behind |
+
+This suite is auxiliary. `scripts/smoke_plantseg_class_map.py` remains the frozen 21-check
+semantic and provenance gate for the artifact, unchanged at **21/21**.
 
 ---
 

@@ -24,6 +24,19 @@ Two modes:
           --from-file <upstream plantseg115.py> --commit-sha <40-hex> \
           [--retrieved-utc <ISO-8601 Z>]
 
+Add --dry-run to either mode to print the canonical payload to stdout and write nothing.
+
+WRITE SAFETY (there is no arbitrary output option, by design):
+  * the only repository path this tool can ever write is configs/plantseg_class_map.json;
+  * the destination is re-validated immediately before every write -- the parent must be the
+    repository's own `configs` directory, neither the destination nor its parent may be a
+    symlink, and a resolved path that escapes the repository is refused;
+  * content is written to a temporary sibling INSIDE that same directory, re-read and
+    re-validated, and only then moved into place with an atomic same-directory replacement;
+  * a failure before that replacement leaves any existing class map byte-identical and removes
+    the temporary sibling. A failure DURING the replacement is the only uncovered case, and
+    `Path.replace` is atomic on both POSIX and Windows.
+
 Extraction is static via the standard-library `ast` module. The upstream file is never
 imported or executed, and never stored inside the repository.
 
@@ -39,6 +52,7 @@ import shutil
 import sys
 import tempfile
 import urllib.request
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -63,11 +77,16 @@ ROLE_DISEASE = "disease"
 USER_AGENT = "plantseg-thesis-vendor-class-map/1.0 (A2b-0 one-time provenance pin)"
 TIMEOUT = 30
 
-DEFAULT_OUT = REPO / "configs" / "plantseg_class_map.json"
+# The ONE repository path this tool may write. There is deliberately no CLI override: an
+# arbitrary destination could target an unrelated file, follow a symlink out of the tree, or
+# overwrite a protected document.
+CONFIG_DIRNAME = "configs"
+CLASS_MAP_FILENAME = "plantseg_class_map.json"
 
 
 class VendorError(RuntimeError):
-    """Any failure here must abort without leaving a partial class-map artifact."""
+    """Any detected failure aborts before the atomic replacement, so an existing class-map
+    artifact is left byte-identical and no partial artifact is published."""
 
 
 # --------------------------------------------------------------------------------------------------
@@ -224,6 +243,67 @@ def build_payload(entries, *, sha, raw_sha, retrieved_utc, upstream_commit_date=
 
 
 # --------------------------------------------------------------------------------------------------
+# destination containment + atomic replacement
+# --------------------------------------------------------------------------------------------------
+def validated_out_path() -> Path:
+    """The single writable destination, re-validated at call time. Raises on anything unsafe.
+
+    Derived from REPO on every call (never a cached module constant), so the containment rules
+    are enforced against the tree the tool is actually running in.
+    """
+    repo_root = Path(REPO).resolve()
+    cfg_dir = repo_root / CONFIG_DIRNAME
+    if cfg_dir.is_symlink():
+        raise VendorError(f"refusing to write: {CONFIG_DIRNAME}/ is a symlink ({cfg_dir})")
+    if not cfg_dir.is_dir():
+        raise VendorError(f"refusing to write: {CONFIG_DIRNAME}/ is not a directory ({cfg_dir})")
+    cfg_real = cfg_dir.resolve()
+    if cfg_real.parent != repo_root or cfg_real.name != CONFIG_DIRNAME:
+        raise VendorError(
+            f"refusing to write: {CONFIG_DIRNAME}/ resolves outside the repository -> {cfg_real}")
+
+    dest = cfg_dir / CLASS_MAP_FILENAME
+    if dest.is_symlink():
+        raise VendorError(f"refusing to write: destination is a symlink ({dest})")
+    dest_real = cfg_real / CLASS_MAP_FILENAME
+    if dest_real.parent != cfg_real or dest_real.name != CLASS_MAP_FILENAME:
+        raise VendorError(f"refusing to write: destination escapes {CONFIG_DIRNAME}/ -> {dest_real}")
+    if not dest_real.is_relative_to(repo_root):
+        raise VendorError(f"refusing to write: destination escapes the repository -> {dest_real}")
+    return dest_real
+
+
+def atomic_write_json(dest: Path, payload: dict, expected_semantic: str) -> str:
+    """Write `payload` to `dest` via a validated temporary sibling + atomic replacement.
+
+    Mirrors the finalisation discipline in src/eval/artifacts.py: write to a sibling in the
+    SAME directory, re-read and re-validate it, then replace. Any failure before the replace
+    removes the sibling and leaves `dest` untouched.
+    """
+    text = json.dumps(payload, indent=2, ensure_ascii=False, allow_nan=False) + "\n"
+    tmp_out = dest.parent / f".{dest.name}.tmp-{uuid.uuid4().hex}"
+    try:
+        with open(tmp_out, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(text)
+            fh.flush()
+        reread = tmp_out.read_bytes()
+        if reread.decode("utf-8") != text:
+            raise VendorError("temporary artifact did not round-trip byte-for-byte")
+        doc = json.loads(reread.decode("utf-8"))
+        if doc.get("schema") != SCHEMA:
+            raise VendorError(f"temporary artifact schema mismatch: {doc.get('schema')!r}")
+        if len(doc.get("entries", [])) != NUM_CLASSES:
+            raise VendorError(f"temporary artifact has {len(doc.get('entries', []))} entries")
+        if semantic_class_map_sha256(doc["entries"]) != expected_semantic:
+            raise VendorError("temporary artifact semantic hash does not match the built payload")
+        tmp_out.replace(dest)                    # atomic on POSIX and Windows
+    finally:
+        if tmp_out.exists():
+            tmp_out.unlink()
+    return sha256_bytes(dest.read_bytes())
+
+
+# --------------------------------------------------------------------------------------------------
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -233,7 +313,8 @@ def main(argv=None) -> int:
                    help="OFFLINE MODE: path to an already-obtained upstream plantseg115.py")
     p.add_argument("--commit-sha", help="OFFLINE MODE: the resolved 40-hex commit SHA")
     p.add_argument("--retrieved-utc", help="OFFLINE MODE: original retrieval timestamp (ISO-8601 Z)")
-    p.add_argument("--out", type=Path, default=DEFAULT_OUT)
+    p.add_argument("--dry-run", action="store_true",
+                   help="print the canonical payload to stdout and write nothing")
     args = p.parse_args(argv)
 
     if args.resolve_main and args.from_file:
@@ -282,12 +363,16 @@ def main(argv=None) -> int:
         sem = semantic_class_map_sha256(entries)
         print(f"[hash] semantic class-map sha256: {sem}")
 
-        args.out.parent.mkdir(parents=True, exist_ok=True)
-        args.out.write_text(json.dumps(payload, indent=2, ensure_ascii=False, allow_nan=False)
-                            + "\n", encoding="utf-8", newline="\n")
-        local_sha = sha256_bytes(args.out.read_bytes())
+        if args.dry_run:
+            print(json.dumps(payload, indent=2, ensure_ascii=False, allow_nan=False))
+            print("[dry ] --dry-run: nothing was written")
+            return 0
+
+        dest = validated_out_path()
+        local_sha = atomic_write_json(dest, payload, sem)
         print(f"[hash] local vendored file sha256: {local_sha}  (NOT embedded -- recursive)")
-        print(f"[out ] wrote {args.out.relative_to(REPO) if args.out.is_relative_to(REPO) else args.out}")
+        print(f"[out ] wrote {dest.relative_to(Path(REPO).resolve())} "
+              f"(temp sibling + atomic replace)")
         print(f"[ok  ] {len(entries)} entries; class 0 name = {entries[0]['name']!r} "
               f"(official empty string preserved)")
         return 0
