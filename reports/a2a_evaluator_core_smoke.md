@@ -20,7 +20,7 @@ delivered in A1b. _Generated 2026-07-26 · CPU only._
 | A1b regression | **21/21 PASS, exit 0** |
 | D5 | closed in both governing documents |
 | Evaluator pre-existing | none — `src/eval/` held only `metrics.py`, `__init__.py` |
-| Governed paths dirty | **yes** → A2a can only produce `smoke`, and `official` must refuse |
+| Governed paths dirty | **yes** (ambient, 2026-07-26) → A2a can only produce `smoke`, and `official` must refuse — the suite no longer depends on this, see [§12](#12-2026-08-07--governed-dirty-fixture-isolated-g6a) |
 
 ## 2. Core API implemented
 
@@ -250,6 +250,11 @@ request in `smoke` mode succeeds and records `governed_paths_clean: false` plus 
 non-governed `dirty_allowlisted` paths — the §7.1 **scoped** rule, neither a whole-repo-clean
 requirement nor a permissive "dirty is fine".
 
+> The transcript above is the **original 2026-07-26 run**, where the governed-dirty condition came
+> from the ambient worktree. That dependency was a fixture defect and has been removed; the same
+> guard is now proved against a controlled repository. See
+> [§12](#12-2026-08-07--governed-dirty-fixture-isolated-g6a).
+
 ## 9. Regression and scope
 
 - ✅ A1b's **21 metric-contract cases still PASS, exit 0**.
@@ -275,6 +280,92 @@ assertion) · a `PlantSegDataset` wrapper emitting `(image, target, image_id, cl
 manifest_index)` · the split manifest built from the real ordered stems · capped **validation** smoke
 · production CLI with the test-split guards. `macc_from_confusion` / `dice_from_confusion` are now
 exported from `src.eval`; the artifact writer stays importable only from `src.eval.artifacts`.
+
+## 12. 2026-08-07 — governed-dirty fixture isolated (G6A)
+
+_Checkpoint **G6A**. Scope: `scripts/smoke_eval_contract.py` + this report. **No production code was
+edited** — `src/eval/artifacts.py`, `evaluate.py`, `metrics.py` and `__init__.py` are byte-identical
+to their committed state. The historical result above is unchanged: **63/63, exit 0**._
+
+### The defect
+
+Two checks — `17 official refused by pre-inference gate` and `smoke request accepted with dirty
+governed paths` — asserted a property of **the developer's working tree** rather than constructing
+the condition they meant to test. They passed only because the PlantSeg repository happened to
+contain dirty governed files.
+
+That made a **correct** repository state fail. The tracking programme's whole purpose is to commit
+the remaining governed paths; the moment it succeeded, this suite would break. Leaving some
+unrelated file permanently uncommitted to keep the suite green was never an acceptable answer — it
+would have made a passing test depend on the repository staying incomplete.
+
+### Observed failure, reproduced first-hand
+
+The **committed** smoke was run inside a fully committed, governed-clean temporary checkout:
+
+```
+exit code    : 2
+SUMMARY line : none printed
+checks        : 0 recorded ([PASS] 0, [FAIL] 0)
+
+  File ".../scripts/smoke_eval_contract.py", line 614, in <module>
+  File ".../scripts/smoke_eval_contract.py", line 197, in main
+  File ".../scripts/smoke_eval_contract.py", line 179, in expect_raises
+    raise AssertionError("expected an exception, none raised")
+```
+
+This is a **total abort**, not a partial failure: `expect_raises` finds no exception, the
+`AssertionError` escapes `main()`, and the module-level handler exits **2** before a single check is
+recorded. The remaining checks never run.
+
+### The repair
+
+The governed-dirty condition is now built by the suite itself, in a throwaway Git repository under
+the temp workdir, and handed to production through the **existing** `repo_root` argument:
+
+```
+prepare_artifact_request(..., repo_root=<temp fixture>)   ->  ArtifactRequest.repo_root
+validate_artifact_request(req)                            ->  git_porcelain_bytes(req.repo_root)
+                                                              git_commit(req.repo_root)
+```
+
+So the **real** production Git-provenance and refusal path is still exercised end to end — no
+provenance object is fabricated, no production behaviour is monkeypatched, and the suite does not
+re-implement the governed-prefix rule. The fixture repository gets one real commit (so `git_commit`
+resolves a real HEAD), then exactly one untracked path beneath the governed `scripts/` prefix, and
+the suite **requires Git itself to report that path**, read through the production porcelain reader,
+before using it as evidence. Git identity is passed per command, so no global configuration is read
+or written. Fixture-construction failures raise rather than adding checks, so the total is unchanged.
+
+**Neither assertion was weakened.** `official` must still refuse with the real
+`governed paths are dirty` message, and a `smoke` request against the *same* dirty state must still
+be accepted and name the violation it saw:
+
+```
+17 official refused by pre-inference gate
+   refusing to produce an 'official' artifact: governed paths are dirty or untracked ->
+   ['scripts/a2a_governed_dirty_probe.txt']
+smoke request accepted with dirty governed paths
+   violations=['scripts/a2a_governed_dirty_probe.txt']
+```
+
+### Proof of ambient independence
+
+| Outer repository state | Result |
+|---|---|
+| Real PlantSeg worktree, governed paths **dirty** | **63/63, exit 0** |
+| Committed temp checkout, governed set **empty** | **63/63, exit 0** |
+| Committed temp checkout **plus** one unrelated governed untracked path | **63/63, exit 0** |
+
+The identical governed-clean tree that aborted the committed smoke at exit 2 returns **63/63, exit 0**
+with the repaired smoke. The two targeted checks are now decided by the suite's own fixture, not by
+accidental ambient state.
+
+All synthetic dirtiness existed only under the system temp directory; the PlantSeg repository was
+never staged, committed, or mutated by the smoke, and no source file was altered to run these
+proofs. No training, checkpoint load, test-split access, GPU execution, or network request is
+involved. The consequence is that final tracking-gap closure can no longer invalidate A2a merely by
+making the repository clean.
 
 ---
 

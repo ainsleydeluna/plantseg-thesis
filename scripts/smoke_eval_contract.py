@@ -9,14 +9,22 @@ plantseg-eval/1.0.0 artifact shape is exercised at negligible cost.
 Model: a deterministic, untrained, no-checkpoint dummy that emits fixed one-hot logits and
 counts its forward calls (used to prove official-mode refusal happens BEFORE inference).
 
+Governed-dirty provenance: the two checks that exercise the official-artifact refusal build their
+own throwaway Git repository under the temp workdir and pass it to production via `repo_root`.
+They do NOT read the state of the PlantSeg worktree, so this suite behaves identically whether
+the repository is dirty or completely clean.
+
 Run:  set PYTHONIOENCODING=utf-8 && python -B scripts/smoke_eval_contract.py
 Exit: 0 only if every check passes.
 """
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
+import stat
+import subprocess
 import sys
 import tempfile
 import traceback
@@ -32,7 +40,8 @@ import torch         # noqa: E402
 from src.eval import (Condition, DatasetMeta, EvalBatch,  # noqa: E402
                       EvaluationIntegrityError, ManifestEntry, RunMeta, evaluate_model)
 from src.eval.artifacts import (ArtifactRequestError, ArtifactWriteError,  # noqa: E402
-                                canonical_json_bytes, prepare_artifact_request,
+                                canonical_json_bytes, git_porcelain_bytes,
+                                parse_porcelain_paths, prepare_artifact_request,
                                 validate_artifact_request, verify_artifact, write_artifact)
 from src.eval.metrics import (confusion_matrix, dice_from_confusion,  # noqa: E402
                               macc_from_confusion, miou_from_confusion, per_image_miou)
@@ -142,7 +151,8 @@ NONCANONICAL = [[4, 1], [5, 0, 3], [2]]
 
 
 def make_request(out_dir: Path, *, status="smoke", random_init=True,
-                 checkpoint_path=None, checkpoint_sha256=None, expected_rows=None):
+                 checkpoint_path=None, checkpoint_sha256=None, expected_rows=None,
+                 repo_root=None):
     return prepare_artifact_request(
         out_dir=out_dir,
         artifact_status=status,
@@ -160,7 +170,7 @@ def make_request(out_dir: Path, *, status="smoke", random_init=True,
         expected_manifest=MANIFEST,
         class_map=SYNTHETIC_CLASS_MAP,
         num_classes=C, background_index=BG, ignore_index=IGNORE,
-        repo_root=REPO)
+        repo_root=REPO if repo_root is None else repo_root)
 
 
 def run_eval(model, batches):
@@ -180,6 +190,78 @@ def expect_raises(exc_types, fn, *a, **kw):
 
 
 # --------------------------------------------------------------------------------------------------
+# controlled governed-dirty Git fixture (temp-only)
+# --------------------------------------------------------------------------------------------------
+# The official-refusal rule is scoped to GOVERNED paths, so testing it needs a repository whose
+# governed paths are dirty. This suite used to read that condition off the ambient PlantSeg
+# worktree, which made a CORRECT repository state fail: once every governed path is committed and
+# clean the official request is accepted, `expect_raises` finds no exception, and the whole suite
+# aborts before recording a single check. The condition is now constructed here instead, so the
+# result depends on the fixture rather than on whatever the developer happens to have uncommitted.
+GOVERNED_FIXTURE_PATH = "scripts/a2a_governed_dirty_probe.txt"
+
+
+def _git(repo: Path, *args: str) -> str:
+    """Run git inside a TEMP-ONLY fixture repository and return stdout.
+
+    Identity is supplied per command rather than through global configuration, so nothing here
+    reads or writes the user's Git config. `cwd` is always the fixture, never the project.
+    """
+    proc = subprocess.run(
+        ["git", "-c", "user.name=a2a-fixture", "-c", "user.email=a2a-fixture@invalid",
+         "-c", "commit.gpgsign=false", *args],
+        cwd=str(repo), capture_output=True, text=True, check=False)
+    if proc.returncode != 0:
+        raise AssertionError(f"fixture git {args} failed ({proc.returncode}): {proc.stderr[:200]}")
+    return proc.stdout
+
+
+def make_governed_dirty_repo(root: Path) -> str:
+    """Create a throwaway repository whose ONLY dirty path is a governed one.
+
+    Returns the governed path that Git actually reports. The project repository is never a cwd
+    here, is never staged or committed, and is not the tree whose status is read.
+    """
+    (root / "scripts").mkdir(parents=True)
+    _git(root, "init", "-q")
+
+    # A real commit, so production `git_commit()` resolves a real HEAD rather than failing.
+    (root / "seed.txt").write_text("a2a governed-dirty fixture\n", encoding="utf-8")
+    _git(root, "add", "--", "seed.txt")
+    _git(root, "commit", "-q", "-m", "fixture baseline")
+    if not _git(root, "rev-parse", "HEAD").strip():
+        raise AssertionError("fixture repository has no HEAD commit")
+
+    # Prove isolation: the fixture must be its own toplevel, not a subtree of the project repo.
+    top = Path(_git(root, "rev-parse", "--show-toplevel").strip()).resolve()
+    if top != root.resolve():
+        raise AssertionError(f"fixture is not a self-contained repository: {top} != {root}")
+    if top == REPO.resolve() or REPO.resolve() in top.parents:
+        raise AssertionError("fixture repository must live outside the project repository")
+
+    # Exactly one dirty path, beneath the governed `scripts/` prefix.
+    (root / GOVERNED_FIXTURE_PATH).write_text("controlled governed-dirty probe\n", encoding="utf-8")
+
+    # Require Git ITSELF to report it, read through the production porcelain reader, before the
+    # fixture is used as evidence for anything.
+    reported = parse_porcelain_paths(git_porcelain_bytes(root))
+    if reported != [GOVERNED_FIXTURE_PATH]:
+        raise AssertionError(
+            f"fixture must report exactly [{GOVERNED_FIXTURE_PATH!r}], got {reported}")
+    return GOVERNED_FIXTURE_PATH
+
+
+def _rm_temp_tree(path: Path) -> None:
+    """Remove a temp tree, clearing the read-only bits Git sets on its object files."""
+    for p in path.rglob("*"):
+        try:
+            os.chmod(p, stat.S_IWRITE)
+        except OSError:
+            pass
+    shutil.rmtree(path, ignore_errors=True)
+
+
+# --------------------------------------------------------------------------------------------------
 def main() -> int:  # noqa: C901
     print("=" * 100)
     print("A2a -- synthetic evaluator-core + artifact-contract smoke")
@@ -192,11 +274,18 @@ def main() -> int:  # noqa: C901
     workdir = Path(tempfile.mkdtemp(prefix="a2a_eval_"))
     try:
         # ---------- 17. official refusal BEFORE inference ----------
+        # Governed dirtiness is manufactured in a throwaway repository under `workdir`, then fed to
+        # production through the supported `repo_root` argument, so the real `git status` /
+        # `git rev-parse` provenance path is exercised end to end against a state this suite
+        # controls. Whether the PlantSeg worktree is dirty or pristine is now irrelevant.
+        gov_repo = workdir / "_governed_fixture"
+        gov_path = make_governed_dirty_repo(gov_repo)
         model_gate = DummySegModel(C)
         off_dir = workdir / "official_attempt"
         err = expect_raises(ArtifactRequestError, validate_artifact_request,
                             make_request(off_dir, status="official", random_init=False,
-                                         checkpoint_path="x.pt", checkpoint_sha256="0" * 64))
+                                         checkpoint_path="x.pt", checkpoint_sha256="0" * 64,
+                                         repo_root=gov_repo))
         check("17 official refused by pre-inference gate", "governed paths are dirty" in str(err),
               str(err)[:150])
         check("17 forward-call count is zero at refusal", model_gate.forward_calls == 0,
@@ -205,13 +294,19 @@ def main() -> int:  # noqa: C901
         check("17 no temp sibling left",
               not list(workdir.glob(".official_attempt.tmp-*")))
 
+        # The other half of contract section 7.1: the SAME governed-dirty state that just refused
+        # `official` must still be accepted for `smoke`, and must name the violation it saw.
+        prov_dirty = validate_artifact_request(
+            make_request(workdir / "gov_smoke", repo_root=gov_repo))
+        check("smoke request accepted with dirty governed paths",
+              prov_dirty.governed_paths_clean is False
+              and gov_path in prov_dirty.governed_violations,
+              f"violations={list(prov_dirty.governed_violations)[:4]}")
+
         # ---------- evaluate (inference happens only after the gate) ----------
         model = DummySegModel(C)
         req = make_request(workdir / "run1")
         prov = validate_artifact_request(req)
-        check("smoke request accepted with dirty governed paths",
-              prov.governed_paths_clean is False and len(prov.governed_violations) > 0,
-              f"violations={list(prov.governed_violations)[:4]}")
         result = run_eval(model, make_batches(NONCANONICAL))
         check("model was invoked after the gate", model.forward_calls == len(NONCANONICAL),
               f"forward_calls={model.forward_calls}")
@@ -506,7 +601,7 @@ def main() -> int:  # noqa: C901
 
     finally:
         builtins.open = _REAL_OPEN
-        shutil.rmtree(workdir, ignore_errors=True)
+        _rm_temp_tree(workdir)
 
     print()
     for name, ok, detail in CHECKS:
