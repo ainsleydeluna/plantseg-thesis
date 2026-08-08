@@ -138,7 +138,10 @@ unconfirmed test · random-init test · capped test · smoke-status test — all
 
 **Construction counters prove ordering:** for a rejected teacher-role run, a rejected capped-test
 run, and an `official` refusal (governed paths dirty), `dataset=0, model=0` and **no output
-directory was created**. The test-split guards are exercised purely through argument/request
+directory was created**. _The governed-dirty condition for that third case came from the ambient
+worktree in this 2026-07-27 run; that dependency was a fixture defect and has been removed — see
+[§13](#13-2026-08-08--governed-dirty-fixture-isolated-g6b). The ordering assertion itself is
+unchanged._ The test-split guards are exercised purely through argument/request
 validation — `PlantSegDataset("test")` was never constructed, no test directory was listed, and no
 subprocess containing `--split test` was executed.
 
@@ -215,6 +218,93 @@ weakened.
 - ✅ A2a core files (`evaluate.py`, `artifacts.py`), `metrics.py`, `__init__.py`, and the class-map
   JSON are all unchanged; the class-map hash still equals the pinned value.
 - ✅ No smoke artifact remains in the working tree.
+
+## 13. 2026-08-08 — governed-dirty fixture isolated (G6B)
+
+_Checkpoint **G6B**. Scope: `scripts/smoke_eval_plantseg.py` + this report. **No production code was
+edited** — `src/eval/artifacts.py`, `evaluate.py`, `metrics.py`, `__init__.py`, `adapters.py`,
+`model_loading.py` and `scripts/evaluate_model.py` are byte-identical to their committed state. The
+historical result above is unchanged: **53/53, exit 0**._
+
+### The defect
+
+Check **B12** asserted that the *ambient project worktree* had dirty governed paths. It passed only
+because the PlantSeg repository happened to contain uncommitted governed files. That made a
+**correct** repository state fail — and the tracking programme's entire purpose is to reach that
+correct state. The same defect was repaired in the evaluator-core smoke as G6A; this is its second
+instance, found while proving that one.
+
+### Observed failure, reproduced before the repair
+
+The **committed** smoke was run inside a fully committed temporary checkout that also contained the
+eight executable statistics/corruption paths, so the governed dirty/untracked set was genuinely
+**empty** — the exact state the statistics closure will create:
+
+```
+exit code : 1
+SUMMARY   : 23/24 checks passed
+RESULT    : A2b BLOCKED
+[FAIL] FATAL: smoke raised
+
+  File ".../scripts/smoke_eval_plantseg.py", line 366, in main
+    section_b_cli_guards(work)
+  File ".../scripts/smoke_eval_plantseg.py", line 174, in section_b_cli_guards
+  File ".../scripts/smoke_eval_plantseg.py", line 70, in expect_raises
+    raise AssertionError("expected an exception, none raised")
+```
+
+Section B aborted, so sections **C, D and E never executed** — the 53-check suite could only record
+24. This was not a missing-data problem: the validation samples resolved normally through the
+committed `configs/data.py`.
+
+### The repair, and why it differs from G6A
+
+G6A could pass a temp root straight through `prepare_artifact_request(..., repo_root=...)`. **`CLI.run`
+offers no such parameter** — verified against current committed source: its signature is
+`run(args, *, counters=None)`, and it reads the module-level `evaluate_model.REPO` when it builds the
+request. Rather than change production to add a parameter, the smoke retargets that attribute for the
+duration of the single official-refusal call and restores it in a `finally`:
+
+```
+CLI.REPO = <temp fixture>  ->  run() builds its request with repo_root=<fixture>
+                           ->  validate_artifact_request
+                           ->  git_porcelain_bytes(<fixture>) / git_commit(<fixture>)
+```
+
+The **real** production provenance collection and official refusal therefore still run end to end;
+no provenance object is fabricated, no production behaviour is stubbed, and the governed-prefix rule
+is not re-implemented in the smoke. The fixture gets one real commit, is asserted **clean before**
+the deliberate probe, then receives exactly one untracked path under the governed `scripts/` prefix,
+and Git itself must report that path — read through the production porcelain reader — before it is
+used as evidence. Git identity is passed per command, so no global configuration is read or written.
+Fixture failures raise rather than adding checks, so the total is unchanged.
+
+**No assertion was weakened; B12 was strengthened.** It still requires the real
+`governed paths are dirty` refusal with `dataset=0, model=0` and no output directory, and now
+additionally requires the refusal to name the fixture's own violating path:
+
+```
+B12 official refused before dataset/model construction
+    dataset=0 model=0 violation=scripts/a2b_governed_dirty_probe.txt
+```
+
+### Proof of ambient independence
+
+| Outer repository state | A2b | A2a |
+|---|---|---|
+| Real PlantSeg worktree, governed paths **dirty** | **53/53, exit 0** | 63/63, exit 0 |
+| Committed temp checkout, governed set **EMPTY** | **53/53, exit 0** | **63/63, exit 0** |
+| Committed temp checkout **plus** one unrelated governed untracked path | **53/53, exit 0** | — |
+
+The identical governed-clean tree that produced 23/24 from the committed smoke yields **53/53** from
+the repaired one. Because the full 53 checks are reached in that clean tree, **B12 was the only
+ambient-dependent check** in the suite — any other would have failed there.
+
+All synthetic dirtiness existed only under the system temp directory; the PlantSeg repository was
+never staged, committed, or mutated by the smoke fixture. A2b still accesses exactly **four real
+validation samples**. No PlantSeg test-split sample was accessed, no real checkpoint was loaded, and
+no training, GPU execution, or external network request is involved. Together with G6A this clears
+the last known ambient-state blocker before the statistics closure.
 
 ---
 

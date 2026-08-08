@@ -12,13 +12,21 @@ Three sections:
 Random-init metric values are smoke diagnostics ONLY and are never interpreted as performance.
 No real checkpoint is loaded. The test split is never touched.
 
+Governed-dirty provenance: section B's official-refusal check builds its own throwaway Git
+repository under the temp workdir and retargets the CLI's repository root at it for the duration of
+that one call. It does NOT read the state of the PlantSeg worktree, so this suite behaves
+identically whether the repository is dirty or completely clean.
+
 Run:  set PYTHONIOENCODING=utf-8 && python -B scripts/smoke_eval_plantseg.py
 """
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
+import stat
+import subprocess
 import sys
 import tempfile
 import traceback
@@ -40,7 +48,8 @@ from src.eval.adapters import (CLASS_MAP_SEMANTIC_SHA256, PlantSegEvalDataset,  
                                build_eval_loader, build_expected_manifest,
                                build_expected_manifest_for, deterministic_subset,
                                load_class_map)
-from src.eval.artifacts import (ArtifactRequestError, validate_artifact_request,  # noqa: E402
+from src.eval.artifacts import (ArtifactRequestError, git_porcelain_bytes,  # noqa: E402
+                                parse_porcelain_paths, validate_artifact_request,
                                 verify_artifact)
 from src.eval.metrics import (confusion_matrix, dice_from_confusion,   # noqa: E402
                               macc_from_confusion, miou_from_confusion, per_image_miou)
@@ -68,6 +77,87 @@ def expect_raises(exc, fn, *a, **kw):
     except Exception as e:                                   # noqa: BLE001
         raise AssertionError(f"wrong exception {type(e).__name__}: {e}") from e
     raise AssertionError("expected an exception, none raised")
+
+
+# --------------------------------------------------------------------------------------------------
+# controlled governed-dirty Git fixture (temp-only)
+# --------------------------------------------------------------------------------------------------
+# The official-artifact refusal is scoped to GOVERNED paths, so testing it needs a repository whose
+# governed paths are dirty. Section B used to read that condition off the ambient PlantSeg worktree,
+# which made a CORRECT repository state fail: with every governed path committed and clean the
+# official request is accepted, `expect_raises` finds no exception, and section B aborts -- taking
+# sections C, D and E with it. The condition is constructed here instead.
+#
+# Unlike the evaluator-core smoke, `CLI.run` exposes no repository-root parameter: it reads the
+# module-level `evaluate_model.REPO` when it builds the request. So the root is retargeted by
+# rebinding that attribute for the duration of the one call, and restored in a `finally`. No
+# production file is modified, and the real `git status` / `git rev-parse` provenance collection and
+# official refusal still execute end to end against the fixture.
+GOVERNED_FIXTURE_PATH = "scripts/a2b_governed_dirty_probe.txt"
+
+
+def _git(repo: Path, *args: str) -> str:
+    """Run git inside a TEMP-ONLY fixture repository and return stdout.
+
+    Identity is supplied per command rather than through global configuration, so nothing here
+    reads or writes the user's Git config. `cwd` is always the fixture, never the project.
+    """
+    proc = subprocess.run(
+        ["git", "-c", "user.name=a2b-fixture", "-c", "user.email=a2b-fixture@invalid",
+         "-c", "commit.gpgsign=false", *args],
+        cwd=str(repo), capture_output=True, text=True, check=False)
+    if proc.returncode != 0:
+        raise AssertionError(f"fixture git {args} failed ({proc.returncode}): {proc.stderr[:200]}")
+    return proc.stdout
+
+
+def make_governed_dirty_repo(root: Path) -> str:
+    """Create a throwaway repository whose ONLY dirty path is a governed one.
+
+    Returns the governed path Git actually reports. The project repository is never a cwd here, is
+    never staged or committed, and is not the tree whose status is read.
+    """
+    (root / "scripts").mkdir(parents=True)
+    _git(root, "init", "-q")
+
+    # A real commit, so production `git_commit()` resolves a real HEAD rather than failing.
+    (root / "seed.txt").write_text("a2b governed-dirty fixture\n", encoding="utf-8")
+    _git(root, "add", "--", "seed.txt")
+    _git(root, "commit", "-q", "-m", "fixture baseline")
+    if not _git(root, "rev-parse", "HEAD").strip():
+        raise AssertionError("fixture repository has no HEAD commit")
+
+    # Clean BEFORE the deliberate probe, so the probe is provably the only violation.
+    if parse_porcelain_paths(git_porcelain_bytes(root)):
+        raise AssertionError("fixture repository is not clean before the probe")
+
+    # Prove isolation: the fixture must be its own toplevel, not a subtree of the project repo.
+    top = Path(_git(root, "rev-parse", "--show-toplevel").strip()).resolve()
+    if top != root.resolve():
+        raise AssertionError(f"fixture is not a self-contained repository: {top} != {root}")
+    if top == REPO.resolve() or REPO.resolve() in top.parents:
+        raise AssertionError("fixture repository must live outside the project repository")
+
+    # Exactly one dirty path, beneath the governed `scripts/` prefix.
+    (root / GOVERNED_FIXTURE_PATH).write_text("controlled governed-dirty probe\n", encoding="utf-8")
+
+    # Require Git ITSELF to report it, read through the production porcelain reader, before the
+    # fixture is used as evidence for anything.
+    reported = parse_porcelain_paths(git_porcelain_bytes(root))
+    if reported != [GOVERNED_FIXTURE_PATH]:
+        raise AssertionError(
+            f"fixture must report exactly [{GOVERNED_FIXTURE_PATH!r}], got {reported}")
+    return GOVERNED_FIXTURE_PATH
+
+
+def _rm_temp_tree(path: Path) -> None:
+    """Remove a temp tree, clearing the read-only bits Git sets on its object files."""
+    for p in path.rglob("*"):
+        try:
+            os.chmod(p, stat.S_IWRITE)
+        except OSError:
+            pass
+    shutil.rmtree(path, ignore_errors=True)
 
 
 def ns(**kw):
@@ -169,15 +259,27 @@ def section_b_cli_guards(work: Path):
               f"dataset={len(ctr.dataset)} model={len(ctr.model)}")
         check(f"B11b no output directory created ({label})", not Path(args.out_dir).exists())
 
-    # official refusal (governed paths dirty) must also precede construction
+    # Official refusal (governed paths dirty) must also precede construction. The dirty state is
+    # manufactured in a throwaway repository under `work`; CLI.REPO is retargeted at it only for
+    # this call, so the refusal is decided by this fixture rather than by the ambient worktree.
+    gov_repo = work / "_governed_fixture"
+    gov_path = make_governed_dirty_repo(gov_repo)
     ctr = CLI.Counters(dataset=[], model=[])
-    e = expect_raises(ArtifactRequestError, CLI.run,
-                      ns(random_init=False, checkpoint=str(work / "good.pt"),
-                         artifact_status="official", max_samples=N_SAMPLES,
-                         out_dir=str(work / "n3")), counters=ctr)
+    saved_repo = CLI.REPO
+    try:
+        CLI.REPO = gov_repo
+        e = expect_raises(ArtifactRequestError, CLI.run,
+                          ns(random_init=False, checkpoint=str(work / "good.pt"),
+                             artifact_status="official", max_samples=N_SAMPLES,
+                             out_dir=str(work / "n3")), counters=ctr)
+    finally:
+        CLI.REPO = saved_repo
+    if CLI.REPO != saved_repo:                    # fixture hygiene, not a scored check
+        raise AssertionError("CLI repository root was not restored after the fixture call")
     check("B12 official refused before dataset/model construction",
-          "governed paths are dirty" in str(e) and not ctr.dataset and not ctr.model,
-          f"dataset={len(ctr.dataset)} model={len(ctr.model)}")
+          "governed paths are dirty" in str(e) and gov_path in str(e)
+          and not ctr.dataset and not ctr.model,
+          f"dataset={len(ctr.dataset)} model={len(ctr.model)} violation={gov_path}")
     check("B12b no output directory after official refusal", not (work / "n3").exists())
 
 
@@ -391,7 +493,7 @@ def main() -> int:
         check("FATAL: smoke raised", False, traceback.format_exc(limit=2))
     finally:
         Image.open = real_open
-        shutil.rmtree(work, ignore_errors=True)
+        _rm_temp_tree(work)
 
     check("F1 temporary artifact directory removed after inspection",
           art is None or not art.exists())
