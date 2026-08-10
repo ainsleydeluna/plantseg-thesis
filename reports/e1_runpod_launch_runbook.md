@@ -13,11 +13,11 @@ stack) / `requirements.lock` (full pinned stack), `reports/platform_verify.md` a
 ---
 
 ## 1. Current repo baseline
-- **Expected remote HEAD:** latest `master` (currently **`21b5c22`** or newer) — **must include the B29 `PLANTSEG_DATA_ROOT` commit `1576d7c`** (adds the portable dataset-root env var). Minimum feature floor: **HEAD ≥ `1576d7c`**. Do **not** provision from an earlier commit — e.g. `8288f82` predates B29 and lacks env-var support, so `PLANTSEG_DATA_ROOT` would have no effect there.
-- **Branch:** `master` (local and `origin/master` in sync).
+- **Expected remote HEAD:** the latest `master` that **satisfies the safety floor below** — do not pin to a fixed commit. **Minimum feature floor: HEAD ≥ `1576d7c`** (B29 `PLANTSEG_DATA_ROOT`, adds the portable dataset-root env var). `21b5c22` is a **historical verified baseline** (the floor-satisfying HEAD when this runbook was last revised), **not** the current HEAD. Do **not** provision from an earlier commit — e.g. `8288f82` predates B29 and lacks env-var support, so `PLANTSEG_DATA_ROOT` would have no effect there.
+- **Branch:** `master`. **Check upstream synchronization at provisioning time** — compare `git rev-parse HEAD` against the remote `master` tip read at that moment; do not rely on a previously recorded sync state, which goes stale as soon as either side advances.
 - **Deferred local dirty file:** `docs/reference/reference.pdf` (` M`) — **do NOT stage/commit/restore it**; it is a pre-existing deferred artifact and is unrelated to the run.
 - **No remaining repo-side decision blockers:** D1 (metric policy = all-class), D2/D-A (E1 unclipped documented deviation), D3 (aug wording), F1/F2 (stale wording) are all resolved & pushed.
-- Provision the GPU box from the **latest `master`**; after checkout verify `git rev-parse HEAD` matches `origin/master` and that `git log` includes the **B29 `PLANTSEG_DATA_ROOT` commit `1576d7c`** (i.e. HEAD ≥ `1576d7c`; currently `21b5c22`). Do **not** pin to `8288f82` — it predates B29 and the portable dataset root.
+- Provision the GPU box from the **latest `master`**; after checkout verify `git rev-parse HEAD` matches the remote `master` tip **as read at that moment** and that `git log` includes the **B29 `PLANTSEG_DATA_ROOT` commit `1576d7c`** (i.e. HEAD ≥ `1576d7c`). Do **not** pin to `8288f82` — it predates B29 and the portable dataset root.
 
 ## 2. What still blocks real E1
 | Item | Required state | Current/local state | Action |
@@ -39,7 +39,7 @@ cd /workspace
 git clone https://github.com/ainsleydeluna/plantseg-thesis.git
 cd plantseg-thesis
 git checkout master
-git rev-parse HEAD          # MUST include B29 PLANTSEG_DATA_ROOT commit 1576d7c (HEAD >= 1576d7c; currently 21b5c22). Do NOT use 8288f82 (pre-B29).
+git rev-parse HEAD          # MUST include B29 PLANTSEG_DATA_ROOT commit 1576d7c (HEAD >= 1576d7c). Do NOT use 8288f82 (pre-B29).
 git status -sb              # expect clean (no reference.pdf change on a fresh clone)
 
 # 3.2 Python 3.11 environment (conda or venv)
@@ -113,8 +113,56 @@ git status --porcelain docs/reference/reference.pdf        # if present it must 
 ```
 Confirm: no unexpected staged/dirty files; `docs/reference/reference.pdf` (if it appears) remains unstaged and untouched.
 
+## 6.1 Pre-launch precondition phase (A1c, 2026-07-26)
+
+Chapter III requires tool/environment preconditions to be verified via pilot/smoke checks before the
+pipeline proceeds `[ch3 ~p.112]`. They are separated below by **which stage each actually governs** and by
+**source authority**. Decision record: [docs/open_questions.md](../docs/open_questions.md) **D6**;
+contract: [IMPLEMENTATION_CONTRACT.md](../docs/IMPLEMENTATION_CONTRACT.md) §(g.1).
+
+### 1. `[ch3]` REQUIRED — E1-relevant preconditions (must pass before the §7 command)
+
+| # | Precondition | How to satisfy | Blocks E1? |
+|---|---|---|---|
+| 1 | **RunPod GPU/pod availability** | pod provisioned, `torch.cuda.is_available()` = True | **YES** |
+| 2 | **Environment verification** | `python scripts/verify_env.py` → **PASS** on the pod (§3.7) | **YES** |
+| 3 | **Dry-run smoke** | `python src/training/train_e1.py --dry-run` → **RESULT: PASS** on the pod (§3.8) | **YES** |
+| 4 | **Dataset + split counts** | 5,367 / 846 / 1,561 enforced by the loader (§4, §6) | **YES** |
+| 5 | **MMSeg / SegNeXt-B checkpoint availability** | `docs/B8_checkpoint.md` — none publicly released; in-house fine-tune planned | **NO for FP32 E1** — governs teacher-dependent execution (teacher fine-tune, E2/E3) |
+
+### 2. `[ch3]` REQUIRED — pre-**quantization** precondition (tracked, not an E1 blocker)
+
+**Authoritative QNNPACK INT8 operator check**, incl. INT8 Sigmoid in the LR-ASPP global-pool branch
+`[ch3 ~p.113, ~p.11–12]`. Current evidence: `docs/b7_result.md` records an **onednn proxy `PASS_CLEAN`**;
+the authoritative run is env-gated (needs the pinned torch-2.1 + QNNPACK environment).
+
+> Chapter III's ~p.112 sentence groups QNNPACK with "before E1 training begins", but ~p.113 and ~p.11–12
+> tie it specifically to *pilot quantization, before the quantization stages are run*. The stage-specific
+> reading is adopted: **this gates E4–E7, and does NOT block the FP32 E1 launch.**
+
+### 3. `[operational]` OPTIONAL — short training rehearsal — `RECOMMENDED_NOT_BLOCKING`
+
+Not a Chapter III requirement and **not** part of the official E1 training budget. May be run to de-risk
+the 80k job by exercising: data loading · finite loss · validation execution · checkpoint writing ·
+logging · artifact persistence · runtime and memory estimation · resume mechanics.
+
+**Guardrails (binding if it is run):**
+- **Not** an official E1 result; **excluded** from all Chapter IV comparisons.
+- **Never** touches the test split; training + validation only.
+- Selects **no** final checkpoint; all artifacts labelled **provisional/pilot**.
+- The official **80,000-iteration** run **starts fresh** — **no silent continuation** from the rehearsal.
+
+**On the "2,000 iterations" figure — do not treat it as authoritative.** It appears **only** in
+`docs/reference/context.md:55` `[ctx]`, **not** in Chapter III. It also would not do what a rehearsal is
+for: with `val_interval = 4000`, a 2,000-iteration run triggers validation **only at termination** (via
+`train_e1.py`'s `it == max_iters` clause) and never exercises the ordinary periodic 4,000-iteration
+validation event. Exercising that path requires **more than 4,000** iterations (≈5,000 is a reasonable
+future operational candidate). **No duration is locked here** — it stays a later execution choice.
+
+---
+
 ## 7. Real E1 command template
-Exact CLI is defined in `src/training/train_e1.py` (`parse_args` `:258–278`; real-run gate + defaults `:281–328`). **Both** `--real-run` **and** `--confirm-real-run` are required (either alone exits 2).
+Exact CLI is defined in `src/training/train_e1.py` — read `parse_args()` for the flag definitions and `main()` for the real-run confirmation guard and real-mode defaults. **Both** `--real-run` **and** `--confirm-real-run` are required (either alone exits 2).
 
 ```bash
 python src/training/train_e1.py \
@@ -129,7 +177,7 @@ python src/training/train_e1.py \
 - **Gradient clipping:** E1 is **intentionally unclipped by default** (B27 D-A: `grad_clip_max_norm=None`, a documented deviation from ch3's value-less "global-norm, throughout"). **Add `--grad-clip-norm <value>` ONLY if divergence/instability is observed** later — not by default, and do not invent a value pre-emptively.
 - Checkpoint selection = **all-class validation mIoU** (D1); disease-only mIoU logged as PROVISIONAL secondary.
 
-> If any exact flag is uncertain on your build, re-quote `train_e1.py:258–328` rather than inventing options.
+> If any exact flag is uncertain on your build, re-read `train_e1.py`'s `parse_args()` and `main()` rather than inventing options.
 
 ## 8. Stop conditions (abort / do not launch the real run if any is true)
 - **`scripts/verify_env.py` fails** or reports **CUDA not available** (`cuda_available=False`) / wrong torch build.
