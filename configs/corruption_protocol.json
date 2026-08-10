@@ -1,0 +1,43 @@
+{
+  "schema_version": "plantseg-corruptions/1.0.0",
+  "identifier_basis": "imagecorruptions_reference_function_name",
+  "condition_type": "corruption",
+  "note": "Vocabulary and severity ROLES only. The corruption implementation bytes, parameters, seed policy and cache protocol are NOT vendored here -- that is a future corruption-scaffold task.",
+  "corruption_order": [
+    "motion_blur",
+    "gaussian_noise",
+    "jpeg_compression",
+    "brightness",
+    "fog"
+  ],
+  "inferential_severities": [1, 2, 3],
+  "descriptive_only_severities": [4],
+  "excluded_severities": [5],
+  "corruptions": [
+    {
+      "id": "motion_blur",
+      "display_name": "motion blur",
+      "reference_function": "motion_blur"
+    },
+    {
+      "id": "gaussian_noise",
+      "display_name": "Gaussian noise",
+      "reference_function": "gaussian_noise"
+    },
+    {
+      "id": "jpeg_compression",
+      "display_name": "JPEG compression",
+      "reference_function": "jpeg_compression"
+    },
+    {
+      "id": "brightness",
+      "display_name": "brightness variation",
+      "reference_function": "brightness"
+    },
+    {
+      "id": "fog",
+      "display_name": "fog",
+      "reference_function": "fog"
+    }
+  ]
+}
