@@ -10,7 +10,7 @@ hard safety rules (protect `reference.pdf`, no wildcard staging, no unapproved t
 - **Explicit-path staging only.** Never `git add -A`, `git add .`, or globs — stage exactly the files the task approved.
 - No commits or pushes until you have shown `git diff` + `git status` and confirmed only the approved paths changed.
 - Never run history-modifying git (force-push, rebase, `reset --hard`) unless explicitly asked.
-- End commit messages with the repo's co-author trailer.
+- **Co-author trailers are opt-in, not a default.** Add one only when the user or the authorized task explicitly asks for it; a commit without a trailer is not a defect. Trailers already in history stay exactly as they are — never rewrite or amend a past commit just to normalize trailer usage. This is the authoritative statement of the policy.
 
 ## 2. Artifact safety
 - **Checkpoints, logs, and datasets never go in the repo.** `.gitignore` covers `*.pt/*.pth/*.ckpt/*.onnx`, `*.log`, `outputs/**/checkpoints/`, `weights/`, `plantseg_data/`, `datasets/`, and archives.
