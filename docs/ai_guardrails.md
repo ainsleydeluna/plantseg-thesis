@@ -6,7 +6,7 @@ hard safety rules (protect `reference.pdf`, no wildcard staging, no unapproved t
 
 ## 1. Git safety
 - Inspect first: `git status -sb` and `git log --oneline -5` before any work.
-- Expected clean state: **only `docs/reference/reference.pdf` dirty (` M`), nothing staged**, local `master` even with `origin/master`.
+- Expected state: this repository is **never globally clean** — `docs/reference/reference.pdf` stays modified by standing policy. Read the actual `git status` and work from it; never require a globally clean tree, and never clean, restore, or normalize unrelated pre-existing dirty paths. Do not assume local `master` matches the remote — verify only when the task depends on it. The gate that matters is **governed-path** cleanliness ([EVALUATION_CONTRACT.md](EVALUATION_CONTRACT.md) §7.1), never a whole-worktree requirement.
 - **Explicit-path staging only.** Never `git add -A`, `git add .`, or globs — stage exactly the files the task approved.
 - No commits or pushes until you have shown `git diff` + `git status` and confirmed only the approved paths changed.
 - Never run history-modifying git (force-push, rebase, `reset --hard`) unless explicitly asked.
@@ -43,10 +43,10 @@ Every task ends with a concise report.
 - **Read-only audits:** use the [B31 review template](task_templates/B31_review_template.md) (sections A–H).
 - **Fixes/changes:** include **files changed** (exact paths) · **verification commands + results** (CPU-only unless approved) · **commit hash** + pushed branch (if any) · **final `git status`** · confirmation that `docs/reference/reference.pdf` remains dirty/unstaged/untouched and no unrelated files changed.
 
-## 8. Expected final git status pattern
-Unless the task explicitly changed files, the tree should end as:
-```
-## master...origin/master
- M docs/reference/reference.pdf
-```
-If a task changed files, the ONLY additional entries are the approved paths — nothing else, and `reference.pdf` is never staged.
+## 8. Expected final git status
+Judge the end state against the status you recorded at the **start** of the task, not against a fixed
+listing — the set of pre-existing dirty paths changes over the life of the repository, and the branch
+is not always level with the remote. Unless the task explicitly changed files, the tree ends exactly as
+it began: every pre-existing dirty path still present and untouched, and nothing staged. If a task
+changed files, the ONLY additional entries are the approved paths — nothing else, and `reference.pdf`
+is never staged.

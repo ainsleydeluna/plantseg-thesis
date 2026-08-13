@@ -497,10 +497,11 @@ An artifact may be marked **`official`** only when **all** of the following hold
    `checkpoint_sha256`, and `split_manifest_sha256` all present and non-null.
 
 **Allowlist status (observation, not methodology).** For the repository's current state the allowlist is
-`docs/reference/reference.pdf` — permanently dirty by standing policy — and, while it remains untracked,
-`AGENTS.md`. **`AGENTS.md` is NOT permanently exempted:** its long-term tracking status is a separate
-pending user decision, and this contract records it only as an observed non-governed path. If it is
-committed or gitignored, remove it from the allowlist.
+`docs/reference/reference.pdf` — permanently dirty by standing policy. `AGENTS.md` was previously
+recorded here as an observed non-governed untracked path; that pending decision is now resolved — it is
+tracked, so it is no longer dirty or untracked and has been removed from the allowlist. This paragraph
+remains an observation of repository state, never methodology: any future non-governed dirty path must
+be enumerated verbatim in `dirty_allowlisted[]` to permit `official`.
 
 **Rejected — requiring a pristine clone or detached worktree.** Cleanest in principle, but it conflicts
 with the standing `reference.pdf` policy and adds RunPod friction for no methodological gain; the scoped
