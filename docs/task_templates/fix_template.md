@@ -20,7 +20,7 @@ For file-changing / behavior-changing work. Default mode: **UltraCode + Accept E
 ## Land the change
 1. `git diff` + `git status` — confirm ONLY the approved paths changed and `reference.pdf` is still unstaged/untouched.
 2. Stage explicit paths only: `git add <path1> <path2>` (never `-A`/`.`/wildcards).
-3. Commit: `git commit -m "<concise imperative message>"` (with the repo's co-author trailer).
+3. Commit: `git commit -m "<concise imperative message>"`. Add a co-author trailer only when the user or the authorized task explicitly requires one; otherwise omit it — see [ai_guardrails.md](../ai_guardrails.md).
 4. Push only if the task approved it: `git push origin master`.
 
 ## Final report
