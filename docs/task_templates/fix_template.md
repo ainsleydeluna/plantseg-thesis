@@ -5,7 +5,7 @@ For file-changing / behavior-changing work. Default mode: **UltraCode + Accept E
 [ai_guardrails.md](../ai_guardrails.md).
 
 ## Plan-gated execution
-1. **Inspect first** — confirm git state (branch `master`, HEAD ≥ `885523a`, synced, only `reference.pdf` dirty, nothing staged); read the files in scope.
+1. **Inspect first** — confirm branch `master` and HEAD ≥ the `885523a` safety floor, then read the **actual** `git status` and work from what it shows: never require a globally clean worktree, leave unrelated pre-existing dirty paths untouched, expect nothing already staged unless the task says otherwise, and do not assume local `master` matches the remote (verify only if the task depends on it); read the files in scope.
 2. **Propose a minimal edit plan** — the smallest change that meets the goal; list the exact files and the intent of each edit.
 3. **Wait for approval** — do NOT edit until the user says "go", UNLESS the task prompt explicitly states the edits are approved (then self-verify the plan matches the approved goals and proceed).
 4. **Edit only approved files** — never touch `src/`, `configs/`, requirements, reports/runbooks, or teacher docs unless the task approved them. Never touch `reference.pdf`.
