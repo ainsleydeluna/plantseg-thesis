@@ -13,6 +13,7 @@ checkpoint projection isolation · real-run safety gates · absence of any quant
 from __future__ import annotations
 
 import sys
+import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -22,14 +23,14 @@ import torch  # noqa: E402
 import torch.nn.functional as F  # noqa: E402
 
 from src.distill import (CWD_PROJECTION_KEY, CWDProjectionLeak, FrozenTeacher, MockTeacher,  # noqa: E402
-                         StudentTaps, TeacherCheckpointMissing, assert_clean_student_state,
-                         build_cwd_projection, find_projection_keys, require_teacher_checkpoint,
-                         strip_cwd_projection)
+                         StudentTaps, TeacherCheckpointMissing, TeacherStackMissing,
+                         assert_clean_student_state, build_cwd_projection, find_projection_keys,
+                         require_teacher_checkpoint, strip_cwd_projection)
 from src.models.student import build_student  # noqa: E402
 from src.seeds import set_seed  # noqa: E402
 from src.training.losses import cwd_channelwise_kl, downsample_validity, logit_kd_kl  # noqa: E402
 from src.training.train_distill import (STAGES, distill_ramp, distillation_losses,  # noqa: E402
-                                        main as distill_main, resolve_stage)
+                                        grad_clip_gate_error, main as distill_main, resolve_stage)
 from configs.distill import DISTILL          # noqa: E402
 from configs.e1_student import E1_STUDENT    # noqa: E402
 
@@ -40,6 +41,14 @@ results: list[tuple[str, bool, str]] = []
 
 def check(name: str, ok: bool, detail: str = "") -> None:
     results.append((name, bool(ok), detail))
+
+
+def run_main(argv: list[str], stage: str) -> int:
+    """Call the distillation entry point, mapping an argparse `SystemExit` to its exit code."""
+    try:
+        return distill_main(argv, stage_default=stage)
+    except SystemExit as e:                       # argparse errors exit(2) rather than returning
+        return int(e.code) if e.code is not None else 0
 
 
 # ---------------------------------------------------------------- 1. Logit KD
@@ -234,12 +243,23 @@ def test_frozen_teacher() -> None:
 def test_training_schedule() -> None:
     set_seed(42)
     # --- first-epoch linear ramp (contract B2: "linear 0 -> target over first epoch") ---
+    # The loop is 1-indexed, so it=1 is the first step and it=ramp_iters the last step of epoch 1.
     n = 336                                     # one epoch at train=5367, batch=16
-    check("ramp_starts_near_zero", 0.0 < distill_ramp(1, n) < 0.01, f"{distill_ramp(1, n):.6f}")
-    check("ramp_is_linear_midway", abs(distill_ramp(n // 2, n) - 0.5) < 1e-6)
-    check("ramp_reaches_target_at_epoch_end", distill_ramp(n, n) == 1.0)
-    check("ramp_stays_at_target_after", distill_ramp(n * 7, n) == 1.0)
-    check("ramp_degenerate_epoch_is_target", distill_ramp(1, 1) == 1.0)
+    check("ramp_first_step_is_exactly_zero", distill_ramp(1, n) == 0.0,
+          f"{distill_ramp(1, n)!r} (exact 0.0, not a small positive fraction)")
+    check("ramp_last_step_of_first_epoch_is_exactly_one", distill_ramp(n, n) == 1.0,
+          f"{distill_ramp(n, n)!r}")
+    check("ramp_second_epoch_and_later_is_exactly_one",
+          distill_ramp(n + 1, n) == 1.0 and distill_ramp(2 * n, n) == 1.0
+          and distill_ramp(n * 238, n) == 1.0)
+    # exact interior fractions on a small epoch: 0, 1/4, 1/2, 3/4, 1
+    small = [distill_ramp(i, 5) for i in range(1, 6)]
+    check("ramp_interior_is_exactly_linear", small == [0.0, 0.25, 0.5, 0.75, 1.0], str(small))
+    check("ramp_interior_matches_formula",
+          all(abs(distill_ramp(i, n) - (i - 1) / (n - 1)) < 1e-12 for i in (2, 50, 168, 335)))
+    check("ramp_degenerate_epoch_is_target",
+          distill_ramp(1, 1) == 1.0 and distill_ramp(1, 0) == 1.0,
+          "a 1-iteration epoch is its own first AND last step")
     check("ramp_config_source_is_contract",
           E1_STUDENT["distill_weight_ramp"] == "linear 0 -> target over first epoch",
           E1_STUDENT["distill_weight_ramp"])
@@ -262,6 +282,14 @@ def test_training_schedule() -> None:
           f"full={float(full_total):.5f} half={float(half_total):.5f}")
     check("ramp_leaves_reported_parts_unramped",
           all(abs(parts_full[k] - parts_half[k]) < 1e-9 for k in parts_full))
+    # at ramp=0 the distillation contribution is EXACTLY zero, so the total loss is the
+    # supervised term alone -> the supervised CE+Dice is never ramped
+    zero_total, parts_zero = distillation_losses(**kw, ramp=0.0)
+    check("ramp_zero_kills_only_distillation", float(zero_total) == 0.0,
+          f"distill total at ramp=0 is {float(zero_total)!r}")
+    check("supervised_term_is_outside_the_ramp",
+          all(parts_zero[k] > 0.0 for k in parts_zero) and float(zero_total) == 0.0,
+          "distillation_losses returns ONLY distillation terms; CE+Dice is added separately")
 
     # --- CWD normalisation: feature map C=320, logit map C=116, never hard-coded ---
     # NOTE: the teacher map must differ NON-CONSTANTLY from the student's — a constant offset leaves
@@ -381,20 +409,43 @@ def test_checkpoint_isolation() -> None:
 # ---------------------------------------------------------------- 7. safety gates
 def test_safety_gates() -> None:
     # Every gate must return BEFORE any dataloader/teacher is built (no dataset access here).
-    check("gate_real_without_confirm",
-          distill_main(["--real-run"], stage_default="e2") == 2)
-    check("gate_confirm_without_real",
-          distill_main(["--confirm-real-run"], stage_default="e2") == 2)
-    check("gate_dry_and_real_conflict",
-          distill_main(["--dry-run", "--real-run"], stage_default="e3") == 2)
+    check("gate_real_without_confirm", run_main(["--real-run"], "e2") == 2)
+    check("gate_confirm_without_real", run_main(["--confirm-real-run"], "e2") == 2)
+    check("gate_dry_and_real_conflict", run_main(["--dry-run", "--real-run"], "e3") == 2)
     # No CUDA locally -> the real run must refuse before touching data or the teacher.
-    if not torch.cuda.is_available():
-        check("gate_real_refuses_cpu",
-              distill_main(["--real-run", "--confirm-real-run"], stage_default="e2") == 2)
-    else:
-        check("gate_real_refuses_cpu",
-              distill_main(["--real-run", "--confirm-real-run", "--device", "cpu"],
-                           stage_default="e2") == 2)
+    cpu_argv = ["--real-run", "--confirm-real-run"] + ([] if not torch.cuda.is_available()
+                                                       else ["--device", "cpu"])
+    check("gate_real_refuses_cpu", run_main(cpu_argv, "e2") == 2)
+
+    # --- real E2/E3 are hard-gated on an explicit global-norm clipping threshold ---
+    # `--device cuda` gets past the CUDA gate on this CPU box so the LATER gates can be isolated;
+    # a throwaway file outside the repo satisfies the teacher-path existence check. Every case below
+    # must return 2 BEFORE any dataset build, teacher load or CUDA work.
+    tmp = Path(tempfile.mkdtemp(prefix="smoke_distill_teacher_")) / "teacher.pth"
+    tmp.write_bytes(b"not-a-real-checkpoint")
+    base = ["--real-run", "--confirm-real-run", "--device", "cuda",
+            "--teacher-ckpt", str(tmp), "--lambda-logit", "1.0"]
+    for stage_key in ("e2", "e3"):
+        check(f"gate_{stage_key}_real_requires_grad_clip",
+              run_main(list(base), stage_key) == 2)
+    # `=` form so argparse cannot mistake a negative value for an option flag
+    for bad in ("0", "-1.0", "nan", "inf", "-inf"):
+        check(f"gate_rejects_grad_clip_{bad}",
+              run_main(base + [f"--grad-clip-norm={bad}"], "e2") == 2)
+    check("gate_error_message_names_the_open_decision",
+          "experiment-level decision" in (grad_clip_gate_error(None) or ""))
+    check("gate_accepts_positive_finite", grad_clip_gate_error(1.0) is None
+          and grad_clip_gate_error(0.5) is None)
+    # a VALID value passes the gate: execution proceeds to teacher construction, which raises
+    # TeacherStackMissing here (mmseg absent) instead of returning 2 at the clip gate.
+    try:
+        rc = run_main(base + ["--grad-clip-norm=1.0"], "e2")
+        check("gate_valid_clip_proceeds_past_gate", False, f"returned {rc} instead of loading teacher")
+    except TeacherStackMissing:
+        check("gate_valid_clip_proceeds_past_gate", True, "reached teacher loading, not the clip gate")
+    check("dry_run_needs_no_grad_clip", grad_clip_gate_error(None) is not None
+          and "--grad-clip-norm" in (grad_clip_gate_error(None) or ""),
+          "gate applies to real runs only; dry-runs never call it")
 
     # No quantization path is reachable from the distillation entry points.
     forbidden = ("quantize_dynamic", "prepare_qat", "convert(", "prepare(", ".fuse(",

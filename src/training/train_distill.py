@@ -17,8 +17,10 @@ SAFETY MODEL (mirrors train_e1.py, plus two distillation-specific gates):
   * Default / `--dry-run` -> tiny CPU run, random student init, NO download, EXPLICIT MockTeacher,
     checkpoint to a temp dir.
   * Real run requires BOTH `--real-run` AND `--confirm-real-run`, requires CUDA, requires an existing
-    `--teacher-ckpt`, and requires an explicit `--lambda-logit` (the contract leaves lambda_logit as
-    NEED_TO_CONFIRM, selected by validation sweep — it is never guessed here).
+    `--teacher-ckpt`, requires an explicit `--lambda-logit` (the contract leaves lambda_logit as
+    NEED_TO_CONFIRM, selected by validation sweep — it is never guessed here), and requires an
+    explicit positive finite `--grad-clip-norm` (methodology mandates global-norm clipping but fixes
+    no numeric threshold, so it stays a recorded experiment-level decision).
   * All gates return before any dataloader or teacher is constructed.
   * Checkpoints are NEVER written inside the repo, and the E3 training-only CWD projection is stored
     under a separate key so `model_state_dict` is already the clean E6/E7 deployment student.
@@ -28,6 +30,7 @@ No quantization path exists in this file: no QuantStub prepare/convert, no QAT, 
 from __future__ import annotations
 
 import argparse
+import math
 import sys
 from pathlib import Path
 
@@ -72,6 +75,29 @@ STAGES: dict[str, dict] = {
 }
 
 
+def grad_clip_gate_error(value: float | None) -> str | None:
+    """Validate `--grad-clip-norm` for a REAL E2/E3 launch. Returns an error string, or None if OK.
+
+    Methodology requires global-norm gradient clipping THROUGHOUT distillation training
+    (IMPLEMENTATION_CONTRACT B2), but no numeric `max_norm` is locked anywhere authoritative — D-A/D2
+    records that Chapter 3 gives no value, and `configs/e1_student.py` keeps `grad_clip_max_norm=None`
+    rather than inventing one. Rather than guessing a default, a real E2/E3 run REQUIRES the value to
+    be supplied explicitly on the command line, so the threshold stays a recorded experiment-level
+    decision. Dry-runs are unaffected. E1 is untouched by this gate.
+    """
+    if value is None:
+        return ("--grad-clip-norm is required. The methodology mandates global-norm gradient "
+                "clipping throughout distillation training, but the numeric max_norm is NOT fixed "
+                "by any authoritative source (IMPLEMENTATION_CONTRACT D-A/D2; open_questions D2; "
+                "configs/e1_student.py grad_clip_max_norm=None). It therefore remains an explicit "
+                "experiment-level decision: re-run with --grad-clip-norm <positive finite value> "
+                "and record the chosen threshold with the run.")
+    if not math.isfinite(value) or value <= 0.0:
+        return (f"--grad-clip-norm must be a positive finite value, got {value!r}. Zero, negative, "
+                "NaN and Inf are rejected.")
+    return None
+
+
 def resolve_stage(stage: str) -> dict:
     """Map a stage key to its distillation composition. E2 = Logit KD only; E3 = Logit KD + CWD."""
     key = str(stage).lower()
@@ -108,17 +134,31 @@ def save_distill_checkpoint(ckpt_dir: Path, stage: dict, student, projection, op
 
 
 def distill_ramp(it: int, ramp_iters: int) -> float:
-    """Linear distillation-weight ramp: 0 -> target over the FIRST EPOCH.
+    """Linear distillation-weight ramp: EXACTLY 0 -> EXACTLY target over the FIRST EPOCH.
 
     IMPLEMENTATION_CONTRACT.md B2 ("Distillation-weight ramp (E2/E3) | linear 0 -> target over first
     epoch") and `configs/e1_student.py["distill_weight_ramp"]`. `ramp_iters` is one epoch expressed
     in iterations — taken from the actual train DataLoader length, never a hand-picked constant.
-    Returns a factor in (0, 1] applied to EVERY distillation term (Logit KD and both CWD terms);
-    the supervised CE+Dice term is never ramped.
+
+    The training loop is 1-indexed (`for it in range(1, max_iters + 1)`), so the first iteration is
+    `it = 1` and the LAST iteration of the first epoch is `it = ramp_iters`. The factor is therefore
+
+        ramp(it) = clamp((it - 1) / (ramp_iters - 1), 0, 1)
+
+    giving ramp(1) = 0.0 exactly, ramp(ramp_iters) = 1.0 exactly, and 1.0 for every later iteration.
+    A degenerate epoch of one iteration (or fewer) is that epoch's first AND last step, so the ramp
+    is already complete and returns 1.0 rather than dividing by zero.
+
+    Applied to EVERY distillation term (Logit KD and both CWD terms); the supervised CE+Dice term is
+    never ramped.
     """
     if ramp_iters <= 1:
         return 1.0
-    return min(float(it) / float(ramp_iters), 1.0)
+    if it <= 1:
+        return 0.0
+    if it >= ramp_iters:
+        return 1.0
+    return float(it - 1) / float(ramp_iters - 1)
 
 
 def distillation_losses(*, stage: dict, logits, head_logits, c5, mask, teacher_out, projection,
@@ -291,8 +331,9 @@ def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeach
             teacher_out=teacher_out, projection=projection, lambda_logit=lambda_logit, ramp=ramp)
         loss = sup + distill
         if it == 1:
-            checks["distill_ramp_starts_below_target"] = (ramp <= 1.0 and ramp > 0.0
-                                                          and (ramp < 1.0 or ramp_iters <= 1))
+            checks["distill_ramp_starts_at_zero"] = (ramp == 0.0 if ramp_iters > 1
+                                                     else ramp == 1.0)
+            checks["supervised_never_ramped"] = bool(torch.equal(sup, criterion(logits, mask)))
 
         if mode == "real" and not bool(torch.isfinite(loss)):
             raise RuntimeError(
@@ -348,8 +389,8 @@ def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeach
 
     hard = ["logits_shape", "c5_channels", "loss_finite", "has_expected_terms", "optimizer_step",
             "teacher_stayed_frozen", "teacher_params_frozen", "optimizer_excludes_teacher",
-            "teacher_same_augmented_input", "distill_ramp_starts_below_target", "grad_clip_applied",
-            "val_cm_accumulated", "lr_non_increasing"]
+            "teacher_same_augmented_input", "distill_ramp_starts_at_zero", "supervised_never_ramped",
+            "grad_clip_applied", "val_cm_accumulated", "lr_non_increasing"]
     passed = all(checks.get(k, False) for k in hard)
     print("\n[CHECKS]")
     for k in hard:
@@ -432,6 +473,10 @@ def main(argv=None, stage_default: str | None = None) -> int:
             print(f"REFUSING to start the real {stage['name']} run: --lambda-logit is required. "
                   f"The contract leaves lambda_logit as NEED_TO_CONFIRM (validation sweep over "
                   f"{LAMBDA_SWEEP} at seed 42); it is never guessed.", file=sys.stderr)
+            return 2
+        clip_error = grad_clip_gate_error(args.grad_clip_norm)
+        if clip_error is not None:
+            print(f"REFUSING to start the real {stage['name']} run: {clip_error}", file=sys.stderr)
             return 2
         teacher = load_frozen_teacher(args.teacher_ckpt, config_path=args.teacher_config)
         init = args.init or "imagenet"
