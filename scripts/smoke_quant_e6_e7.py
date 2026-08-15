@@ -213,10 +213,21 @@ def test_stage_preparation() -> None:
     from src.quant import qat_grad_clip_gate_error
     check("e6_real_run_requires_explicit_clip",
           qat_grad_clip_gate_error(None) is not None and qat_grad_clip_gate_error(1.0) is None)
-    scripts = list((REPO / "scripts").glob("*e6*")) + list((REPO / "scripts").glob("*e7*"))
-    check("no_unguarded_e6_e7_launcher",
-          all("smoke" in p.name for p in scripts),
-          f"{[p.name for p in scripts]} — only smokes exist; real launch is a later gated step")
+    # Any non-smoke e6/e7 script must be a stage-PINNED runner behind the real-run gates. (Before
+    # the runners existed this asserted that none existed at all; that is now superseded.)
+    scripts = sorted(set((REPO / "scripts").glob("*e6*")) | set((REPO / "scripts").glob("*e7*")))
+    launchers = [p for p in scripts if "smoke" not in p.name]
+    # The wrappers are thin: they pin STAGE and delegate to src/quant/runner.py, which owns the
+    # --real-run/--confirm-real-run gates (verified behaviourally in scripts/smoke_quant_runners.py).
+    guarded = []
+    for p in launchers:
+        text = p.read_text(encoding="utf-8")
+        if "STAGE =" in text and "--stage" not in text and "src.quant.runner" in text:
+            guarded.append(p)
+    check("e6_e7_launchers_are_gated_and_stage_pinned",
+          len(guarded) == len(launchers),
+          f"{[p.name for p in launchers]} — {len(guarded)} pinned to the gated shared runner, "
+          "stage not selectable by CLI")
 
 
 def main() -> int:
