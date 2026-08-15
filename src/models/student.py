@@ -148,20 +148,88 @@ class PlantSegStudent(nn.Module):
         logits = self.dequant(logits)              # dequant BEFORE the float final upsample
         return F.interpolate(logits, size=out_size, mode="bilinear", align_corners=False)
 
-    def fuse(self) -> "PlantSegStudent":
-        """Fuse Conv-BN(-ReLU) for eager-mode quantization. Call in eval() before prepare.
+    def fuse(self, is_qat: bool = False) -> "PlantSegStudent":
+        """Fuse Conv-BN(-ReLU) for eager-mode quantization. NOT used by the FP32 forward path.
 
-        Fuses the head's 1x1 Conv-BN-ReLU and the quantizable backbone blocks via their own
-        fuse_model(). FP32 behaviour is unchanged (BN folds into Conv in eval). This is NOT called
-        by the FP32 forward path; it is only used ahead of quantization prepare/convert.
+        Mirrors the pinned TorchVision 0.16 `QuantizableMobileNetV3.fuse_model` semantics over the
+        RETAINED feature subtree, because `QuantizableInvertedResidual` does not expose
+        `fuse_model()` — only the whole-model class does, and this student truncates `features` away
+        from that parent. Per the upstream algorithm:
+
+          * every `Conv2dNormActivation` fuses `["0", "1"]`, plus `"2"` when the third entry is
+            exactly `nn.ReLU` (Hardswish is NOT a fuseable Conv-BN-activation pattern in eager mode
+            and is quantized as a standalone op, per contract B4);
+          * every quantizable squeeze-excitation fuses `["fc1", "activation"]`.
+
+        `is_qat=False` uses `fuse_modules` (eval semantics, BN folded into Conv) for PTQ.
+        `is_qat=True` uses `fuse_modules_qat` in train mode, producing `ConvBn2d`/`ConvBnReLU2d` so
+        `prepare_qat` can learn BN statistics and `freeze_bn_stats` can later freeze them.
+
+        Fails loudly: if the upstream algorithm identifies fuseable backbone groups but none are
+        fused, this raises instead of silently leaving the backbone unfused.
         """
-        from torch.ao.quantization import fuse_modules
-        self.eval()
-        fuse_modules(self.head.high_proj, ["0", "1", "2"], inplace=True)
-        for block in self.features:                # quantizable backbone blocks self-fuse
-            if hasattr(block, "fuse_model"):
-                block.fuse_model()
+        import torch.nn as _nn
+        from torch.ao.quantization import fuse_modules, fuse_modules_qat
+        from torchvision.ops.misc import Conv2dNormActivation
+
+        fuse_fn = fuse_modules_qat if is_qat else fuse_modules
+        if is_qat:
+            self.train()
+        else:
+            self.eval()
+
+        def _is_se(m) -> bool:
+            return (type(m).__name__.endswith("SqueezeExcitation")
+                    and hasattr(m, "fc1") and hasattr(m, "activation"))
+
+        # Collect targets BEFORE mutating, since in-place fusion rewrites children.
+        cna_targets, se_targets = [], []
+        for m in self.features.modules():
+            if isinstance(m, Conv2dNormActivation):
+                if len(m) >= 2 and isinstance(m[1], _nn.BatchNorm2d):
+                    cna_targets.append(m)
+            elif _is_se(m):
+                se_targets.append(m)
+
+        bn_before = sum(1 for m in self.features.modules() if isinstance(m, _nn.BatchNorm2d))
+        fused_groups = 0
+        for m in cna_targets:
+            names = ["0", "1", "2"] if (len(m) >= 3 and type(m[2]) is _nn.ReLU) else ["0", "1"]
+            fuse_fn(m, names, inplace=True)
+            fused_groups += 1
+        for m in se_targets:
+            fuse_fn(m, ["fc1", "activation"], inplace=True)
+        bn_after = sum(1 for m in self.features.modules() if isinstance(m, _nn.BatchNorm2d))
+
+        if cna_targets and fused_groups == 0:
+            raise RuntimeError(
+                f"backbone fusion produced nothing despite {len(cna_targets)} eligible "
+                "Conv2dNormActivation groups — refusing to insert observers on an unfused backbone "
+                "(contract B4 requires Conv-BN-ReLU fusion BEFORE observer insertion)")
+        if fused_groups != len(cna_targets):
+            raise RuntimeError(
+                f"fused {fused_groups} of {len(cna_targets)} eligible backbone Conv-BN groups")
+
+        # Head: 1x1 Conv-BN-ReLU (unchanged behaviour, now routed through the same fuse function).
+        fuse_fn(self.head.high_proj, ["0", "1", "2"], inplace=True)
+
+        self._fusion_report = {
+            "is_qat": is_qat,
+            "fuse_fn": fuse_fn.__name__,
+            "eligible_conv_norm_activation": len(cna_targets),
+            "fused_backbone_groups": fused_groups,
+            "squeeze_excitation_groups": len(se_targets),
+            "backbone_bn_before": bn_before,
+            "backbone_bn_after": bn_after,
+        }
         return self
+
+    def fusion_report(self) -> dict:
+        """Structural evidence from the last `fuse()` call; raises if fusion never ran."""
+        report = getattr(self, "_fusion_report", None)
+        if report is None:
+            raise RuntimeError("fuse() has not been called on this model")
+        return dict(report)
 
 
 def build_student(num_classes: int | None = None, pretrained=False) -> PlantSegStudent:
