@@ -37,7 +37,7 @@ REPO = Path(__file__).resolve().parents[1]
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
-SUPPORTED_ROLES = ("student",)
+SUPPORTED_ROLES = ("student", "teacher")
 SUPPORTED_PRECISIONS = ("fp32", "int8_ptq", "int8_qat")
 INT8_PRECISIONS = ("int8_ptq", "int8_qat")
 SUPPORTED_CONDITIONS = ("clean",)
@@ -88,8 +88,22 @@ def validate_cli_args(args) -> None:
     # --- implemented-support guards (metadata neutrality != runtime support) ---
     if args.model_role not in SUPPORTED_ROLES:
         raise CliError(
-            f"model_role={args.model_role!r} is not implemented in A2b. Supported: "
-            f"{SUPPORTED_ROLES}. Teacher construction does not exist yet.")
+            f"model_role={args.model_role!r} is not supported. Supported: {SUPPORTED_ROLES}.")
+    # stage and role must agree: the teacher stage is the teacher model, and only that.
+    is_teacher = args.stage == "teacher" or args.model_role == "teacher"
+    if is_teacher and not (args.stage == "teacher" and args.model_role == "teacher"):
+        raise CliError(
+            f"stage={args.stage!r} and model_role={args.model_role!r} disagree; the teacher is "
+            "evaluated as stage=teacher with model_role=teacher")
+    if is_teacher:
+        if args.precision != "fp32":
+            raise CliError(f"the teacher is evaluated in fp32; got precision={args.precision!r}")
+        if args.random_init:
+            raise CliError(
+                "the teacher requires its fine-tuned checkpoint; --random-init is refused (no "
+                "random teacher, and no ADE20K-only substitution)")
+        if not args.checkpoint:
+            raise CliError("the teacher stage requires --checkpoint")
     if args.precision not in SUPPORTED_PRECISIONS:
         raise CliError(
             f"precision={args.precision!r} is not supported. Supported: {SUPPORTED_PRECISIONS}.")
@@ -158,7 +172,7 @@ def validate_cli_args(args) -> None:
             raise CliError("--split test refuses artifact_status=smoke")
 
 
-def run(args, *, counters: Counters | None = None) -> Path:
+def run(args, *, counters: Counters | None = None, teacher_builder=None) -> Path:
     """Execute the frozen A2a flow. Returns the finalised artifact directory."""
     from src.eval import Condition, DatasetMeta, RunMeta, evaluate_model
     from src.eval.adapters import (DATASET_DOI, DATASET_NAME, PREPROCESS_PROTOCOL,
@@ -191,6 +205,12 @@ def run(args, *, counters: Counters | None = None) -> Path:
         quant_backend = select_int8_backend(require_qnnpack=True)   # refuses a non-QNNPACK build
         ckpt_path = str(resolved["artifact_path"])
         ckpt_sha = resolved["artifact_sha256"]
+    elif args.model_role == "teacher":
+        from src.eval.stage_artifacts import validate_teacher_artifact
+        # Teacher checkpoint structure/identity is proven before any dataset exists.
+        resolved = validate_teacher_artifact(args.checkpoint)
+        ckpt_path = str(resolved["checkpoint_path"])
+        ckpt_sha = resolved["checkpoint_sha256"]
     elif args.checkpoint:
         from src.eval.model_loading import sha256_file
         from src.eval.stage_artifacts import validate_fp32_artifact
@@ -233,7 +253,10 @@ def run(args, *, counters: Counters | None = None) -> Path:
 
     if counters is not None:
         counters.model.append(("model", args.random_init))
-    if resolved is not None:
+    if args.model_role == "teacher":
+        from src.eval.model_loading import load_teacher_model
+        model = load_teacher_model(resolved, builder=teacher_builder)[0]
+    elif resolved is not None:
         from src.eval.model_loading import load_int8_student
         model = load_int8_student(resolved, require_qnnpack=True)[0]
     else:

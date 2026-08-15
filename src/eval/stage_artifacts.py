@@ -38,8 +38,17 @@ STAGE_ARTIFACTS: dict[str, dict] = {
     "E5": {"kind": "int8_artifact", "precision": "int8_qat", "source_stage": "E1", "method": "qat"},
     "E6": {"kind": "int8_artifact", "precision": "int8_qat", "source_stage": "E3", "method": "qat"},
     "E7": {"kind": "int8_artifact", "precision": "int8_ptq", "source_stage": "E3", "method": "ptq"},
+    # The frozen schema (EVALUATION_CONTRACT 5.x) already admits stage/model_role "teacher" at fp32.
+    # The teacher is a DESCRIPTIVE REFERENCE: its clean artifact may legitimately be `official`
+    # (nothing in the committed contract forbids that), but it never becomes an inferential
+    # comparator — that restriction lives in the statistics stage, not in artifact status.
+    "TEACHER": {"kind": "teacher_checkpoint", "precision": "fp32", "source_stage": None,
+                "method": None},
 }
 PROJECTION_FREE_STAGES = ("E6", "E7")
+TEACHER_STAGE = "TEACHER"
+STUDENT_ROLE, TEACHER_ROLE = "student", "teacher"
+DESCRIPTIVE_ONLY_STAGES = ("TEACHER",)
 
 
 class StageArtifactError(RuntimeError):
@@ -172,10 +181,64 @@ def validate_fp32_artifact(stage: str, checkpoint_path: str | Path) -> dict:
             "declared_stage": declared}
 
 
+def expected_model_role(stage: str) -> str:
+    """`teacher` for the teacher stage, `student` for E1-E7."""
+    return TEACHER_ROLE if resolve_stage_artifact(stage)["stage"] == TEACHER_STAGE else STUDENT_ROLE
+
+
+def is_descriptive_only(stage: str) -> bool:
+    """True when the stage may never act as an inferential comparator (teacher)."""
+    return resolve_stage_artifact(stage)["stage"] in DESCRIPTIVE_ONLY_STAGES
+
+
+def validate_teacher_artifact(checkpoint_path: str | Path, *,
+                              expected_sha256: str | None = None) -> dict:
+    """Validate a fine-tuned SegNeXt-B / MSCAN-B teacher checkpoint for clean evaluation.
+
+    Delegates the structural parse to `src.distill.segnext_teacher.load_teacher_state_dict` — the
+    existing teacher-checkpoint authority — rather than adding a second incompatible parser. That
+    loader already refuses non-dict payloads, empty/tensor-free states, and anything lacking both
+    `backbone.*` and `decode_head.*` keys, so an unrelated or ADE20K-only-shaped file cannot be
+    silently substituted.
+    """
+    from src.distill.segnext_teacher import TeacherCheckpointInvalid, load_teacher_state_dict
+    from src.eval.model_loading import sha256_file
+
+    spec = resolve_stage_artifact(TEACHER_STAGE)
+    p = Path(checkpoint_path)
+    if not p.is_file():
+        _fail("teacher_checkpoint_missing", f"teacher checkpoint not found: {p}")
+    try:
+        state = load_teacher_state_dict(p)
+    except TeacherCheckpointInvalid as e:
+        _fail("teacher_checkpoint_invalid", f"teacher checkpoint rejected: {e}")
+
+    # A student or quantized artifact must never pass as the teacher.
+    if any(k.startswith(("features.", "head.")) for k in state):
+        _fail("teacher_is_student_checkpoint",
+              "this is a PlantSegStudent checkpoint (features./head. keys), not a SegNeXt teacher")
+    if any("_packed_params" in k or "activation_post_process" in k for k in state):
+        _fail("teacher_is_quantized_artifact",
+              "this is a quantized artifact; the teacher is evaluated in FP32")
+
+    digest = sha256_file(p)
+    if expected_sha256 and digest != expected_sha256:
+        _fail("teacher_hash_mismatch",
+              f"teacher checkpoint hash {digest[:16]}… does not match the expected "
+              f"{str(expected_sha256)[:16]}…")
+    return {"spec": spec, "checkpoint_path": p, "checkpoint_sha256": digest,
+            "state_keys": len(state), "descriptive_only": True}
+
+
 def resolve_evaluation_source(stage: str, *, checkpoint: str | Path | None = None,
-                              provenance: str | Path | None = None) -> dict:
+                              provenance: str | Path | None = None,
+                              expected_sha256: str | None = None) -> dict:
     """Single entry point: route a stage to the right validator and reject the wrong artifact kind."""
     spec = resolve_stage_artifact(stage)
+    if spec["kind"] == "teacher_checkpoint":
+        if checkpoint is None:
+            _fail("checkpoint_required", "the teacher stage requires its fine-tuned checkpoint")
+        return validate_teacher_artifact(checkpoint, expected_sha256=expected_sha256)
     if spec["kind"] == "int8_artifact":
         if provenance is None:
             _fail("provenance_required",

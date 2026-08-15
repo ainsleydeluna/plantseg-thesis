@@ -222,7 +222,10 @@ def section_a_checkpoint_loader(work: Path):
 def section_b_cli_guards(work: Path):
     """Pure argument/request validation. The test split is never constructed or listed."""
     cases = [
-        ("B1 unsupported teacher role rejected", ns(model_role="teacher"), "not implemented"),
+        # B1 SUPERSEDED: teacher evaluation is now implemented (stage=teacher + model_role=teacher).
+        # The replacement property is stronger -- the role can no longer be silently attached to a
+        # student stage, which would have evaluated the wrong model under a student's identity.
+        ("B1 teacher role on a student stage rejected", ns(model_role="teacher"), "disagree"),
         # B2 SUPERSEDED: INT8 construction is now implemented (E4-E7 via --provenance), so the old
         # "not implemented" assertion is replaced by the STRONGER safety properties that took its
         # place -- a quantized artifact can never be random-init, and never lacks a validated source.

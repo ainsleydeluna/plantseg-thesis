@@ -76,8 +76,9 @@ def prov(name: str, stage: str, source: str, method: str, art: Path, **over) -> 
 
 # ---------------------------------------------------------------- 1. stage contract
 def test_stage_contract() -> None:
-    check("all_seven_stages_known", sorted(STAGE_ARTIFACTS) == ["E1", "E2", "E3", "E4", "E5",
-                                                                "E6", "E7"])
+    check("all_stages_known", sorted(STAGE_ARTIFACTS) == ["E1", "E2", "E3", "E4", "E5", "E6",
+                                                          "E7", "TEACHER"],
+          "seven student stages plus the descriptive teacher")
     for s, kind, prec in (("E1", "fp32_checkpoint", "fp32"), ("E2", "fp32_checkpoint", "fp32"),
                           ("E3", "fp32_checkpoint", "fp32"), ("E4", "int8_artifact", "int8_ptq"),
                           ("E5", "int8_artifact", "int8_qat"), ("E6", "int8_artifact", "int8_qat"),
@@ -91,7 +92,12 @@ def test_stage_contract() -> None:
     check("e6_e7_derive_from_e3",
           resolve_stage_artifact("E6")["source_stage"] == "E3"
           and resolve_stage_artifact("E7")["source_stage"] == "E3")
-    expect_code("teacher_not_invented", "unknown_stage", resolve_stage_artifact, "teacher")
+    # SUPERSEDED: the teacher now resolves. The property that replaces "teacher is not invented" is
+    # that it resolves to its OWN artifact kind and stays descriptive-only, never a student stage.
+    t = resolve_stage_artifact("teacher")
+    check("teacher_resolves_as_its_own_kind",
+          t["kind"] == "teacher_checkpoint" and t["precision"] == "fp32"
+          and t["source_stage"] is None, str(t["kind"]))
     expect_code("unknown_stage_rejected", "unknown_stage", resolve_stage_artifact, "E9")
 
 

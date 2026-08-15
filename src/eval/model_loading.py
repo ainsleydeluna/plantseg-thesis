@@ -199,6 +199,61 @@ def load_int8_student(resolved: dict, *, require_qnnpack: bool = True,
     return converted.eval(), info
 
 
+# ---------------------------------------------------------------------------------------------
+# Teacher (descriptive reference) -- evaluation-side adapter
+# ---------------------------------------------------------------------------------------------
+class TeacherEvalModel(torch.nn.Module):
+    """Expose a `FrozenTeacher` to the evaluator as a plain segmentation-logits callable.
+
+    The distillation-side `FrozenTeacher` returns a `TeacherOutput(logits, feat_s16)` because KD and
+    CWD need both. The evaluator needs neither that container nor the stride-16 feature, so this
+    thin EVALUATION-SIDE wrapper takes only `.logits` and never surfaces `feat_s16`. Neither
+    `FrozenTeacher` nor `SegNeXtTeacherAdapter` was modified for evaluation convenience.
+
+    Teacher logits are produced at the head's native resolution; `FrozenTeacher` resamples them
+    bilinearly onto the requested `logits_size`, which is the ordinary segmentation-logit
+    upsampling used for MMSeg inference. No CWD/feature-alignment logic is involved.
+    """
+
+    def __init__(self, frozen_teacher, num_classes: int = FROZEN_NUM_CLASSES):
+        super().__init__()
+        self.teacher = frozen_teacher
+        self.num_classes = num_classes
+
+    @torch.no_grad()
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        out = self.teacher(x, logits_size=tuple(x.shape[-2:]))   # feat_size omitted on purpose
+        logits = out.logits
+        if logits.dim() != 4 or logits.shape[1] != self.num_classes:
+            raise CheckpointError(
+                f"teacher produced logits with shape {tuple(logits.shape)}; expected "
+                f"[B, {self.num_classes}, H, W]")
+        if logits.shape[-2:] != x.shape[-2:]:
+            raise CheckpointError(
+                f"teacher logits {tuple(logits.shape[-2:])} do not match the evaluation canvas "
+                f"{tuple(x.shape[-2:])}")
+        return logits
+
+
+def load_teacher_model(resolved: dict, *, builder=None, num_classes: int = FROZEN_NUM_CLASSES):
+    """Build the frozen teacher from an ALREADY-VALIDATED resolved teacher artifact.
+
+    `resolved` comes from `src.eval.stage_artifacts.validate_teacher_artifact`. `builder` is the
+    injectable teacher factory used by synthetic tests; when omitted the real MMSeg path is used and
+    raises `TeacherStackMissing` loudly if the teacher environment is absent. Nothing here downloads
+    or substitutes a model, and a random teacher is impossible: a validated checkpoint is required.
+    """
+    from ..distill.teacher import load_frozen_teacher
+
+    frozen = load_frozen_teacher(str(resolved["checkpoint_path"]), builder=builder)
+    if frozen.trainable_parameters():
+        raise CheckpointError("teacher exposes trainable parameters; it must be frozen")
+    model = TeacherEvalModel(frozen, num_classes=num_classes).eval()
+    for p in model.parameters():
+        p.requires_grad_(False)
+    return model, resolved
+
+
 def _looks_like_bare_state_dict(obj) -> bool:
     if not isinstance(obj, dict) or not obj:
         return False
