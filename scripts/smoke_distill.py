@@ -25,7 +25,7 @@ import torch.nn.functional as F  # noqa: E402
 from src.distill import (CWD_PROJECTION_KEY, CWDProjectionLeak, FrozenTeacher, MockTeacher,  # noqa: E402
                          StudentTaps, TeacherCheckpointMissing, TeacherStackMissing,
                          assert_clean_student_state, build_cwd_projection, find_projection_keys,
-                         require_teacher_checkpoint, strip_cwd_projection)
+                         load_teacher_state_dict, require_teacher_checkpoint, strip_cwd_projection)
 from src.models.student import build_student  # noqa: E402
 from src.seeds import set_seed  # noqa: E402
 from src.training.losses import cwd_channelwise_kl, downsample_validity, logit_kd_kl  # noqa: E402
@@ -421,8 +421,16 @@ def test_safety_gates() -> None:
     # `--device cuda` gets past the CUDA gate on this CPU box so the LATER gates can be isolated;
     # a throwaway file outside the repo satisfies the teacher-path existence check. Every case below
     # must return 2 BEFORE any dataset build, teacher load or CUDA work.
+    # A STRUCTURALLY VALID teacher checkpoint (backbone.* + decode_head.* tensors) written outside
+    # the repo, so the real builder path clears checkpoint validation and reaches the mmseg import —
+    # letting this gate test the stack-missing failure mode precisely.
     tmp = Path(tempfile.mkdtemp(prefix="smoke_distill_teacher_")) / "teacher.pth"
-    tmp.write_bytes(b"not-a-real-checkpoint")
+    torch.save({"meta": {"mmseg_version": "1.2.2"},
+                "state_dict": {"backbone.projs.0.weight": torch.randn(4, 3, 1, 1),
+                               "decode_head.conv_seg.weight": torch.randn(NC, 8, 1, 1),
+                               "decode_head.conv_seg.bias": torch.randn(NC)}}, tmp)
+    check("gate_fixture_checkpoint_is_structurally_valid",
+          len(load_teacher_state_dict(tmp)) == 3, "passes adapter checkpoint validation")
     base = ["--real-run", "--confirm-real-run", "--device", "cuda",
             "--teacher-ckpt", str(tmp), "--lambda-logit", "1.0"]
     for stage_key in ("e2", "e3"):
@@ -436,13 +444,14 @@ def test_safety_gates() -> None:
           "experiment-level decision" in (grad_clip_gate_error(None) or ""))
     check("gate_accepts_positive_finite", grad_clip_gate_error(1.0) is None
           and grad_clip_gate_error(0.5) is None)
-    # a VALID value passes the gate: execution proceeds to teacher construction, which raises
-    # TeacherStackMissing here (mmseg absent) instead of returning 2 at the clip gate.
+    # A VALID value passes the gate: execution proceeds through checkpoint validation to the mmseg
+    # import, which is absent here -> TeacherStackMissing specifically, not a return code of 2.
     try:
         rc = run_main(base + ["--grad-clip-norm=1.0"], "e2")
         check("gate_valid_clip_proceeds_past_gate", False, f"returned {rc} instead of loading teacher")
     except TeacherStackMissing:
-        check("gate_valid_clip_proceeds_past_gate", True, "reached teacher loading, not the clip gate")
+        check("gate_valid_clip_proceeds_past_gate", True,
+              "reached the mmseg teacher build, not the clip gate")
     check("dry_run_needs_no_grad_clip", grad_clip_gate_error(None) is not None
           and "--grad-clip-norm" in (grad_clip_gate_error(None) or ""),
           "gate applies to real runs only; dry-runs never call it")

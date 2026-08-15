@@ -198,23 +198,14 @@ def require_teacher_checkpoint(ckpt_path: str | None) -> Path:
 
 
 def build_mmseg_teacher(ckpt_path: Path, config_path: str | None = None) -> nn.Module:
-    """Build the SegNeXt-B teacher from an MMSegmentation checkpoint.
+    """Build the SegNeXt-B / MSCAN-B teacher from an MMSegmentation checkpoint.
 
-    Requires the teacher stack (MMSegmentation 1.2.2 + mmcv 2.1.0), which is intentionally NOT part
-    of `requirements-e1.txt`. Raises `TeacherStackMissing` with guidance when it is unavailable.
+    Delegates to `segnext_teacher.build_segnext_teacher`, which owns every MMSeg-specific detail.
+    The import is LAZY so this module — and therefore the whole E1/E2/E3 path — never pulls
+    mmcv/mmseg on a normal run. Raises `TeacherStackMissing` when the teacher stack is unavailable.
     """
-    try:
-        import mmseg  # noqa: F401
-    except Exception as e:  # noqa: BLE001
-        raise TeacherStackMissing(
-            "building the SegNeXt-B teacher needs MMSegmentation 1.2.2 + mmcv 2.1.0, which are "
-            "deliberately excluded from the E1/E2/E3 student stack (requirements-e1.txt). Run "
-            "distillation in the teacher-capable environment described in "
-            f"docs/teacher_prep_runbook.md. (import failed: {type(e).__name__}: {e})") from e
-    raise TeacherStackMissing(
-        "the mmseg teacher builder is not wired yet — teacher construction is completed during "
-        "teacher preparation, which also fixes the config path and the Stage-3 hook. "
-        f"(checkpoint={ckpt_path}, config={config_path})")
+    from .segnext_teacher import build_segnext_teacher  # local import: keeps teacher.py mmseg-free
+    return build_segnext_teacher(ckpt_path, config_path=config_path)
 
 
 def load_frozen_teacher(ckpt_path: str | None, *,
