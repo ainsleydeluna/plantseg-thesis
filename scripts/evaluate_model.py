@@ -11,9 +11,13 @@ Drives the proven A2a flow in the frozen order:
       -> write_artifact
 
 The CLI and its metadata are STAGE-NEUTRAL (any stage / role / precision / condition can be
-*described*), but A2b implements only the FP32-student, clean-condition construction path.
-Teacher, PTQ, QAT and corruption construction are rejected explicitly -- metadata neutrality is
-never misrepresented as runtime support.
+*described*). Implemented construction paths are the FP32 student (E1/E2/E3, `--checkpoint`) and the
+converted INT8 student (E4-E7, `--provenance`, CPU/QNNPACK only). Teacher and corruption
+construction remain rejected explicitly -- metadata neutrality is never misrepresented as runtime
+support.
+
+INT8 model-source validation (stage, source stage, artifact hash, backend) happens BEFORE the
+dataset adapter exists, so a tampered or mismatched artifact can never touch the test split.
 
 Importing this module has no side effects: everything happens inside `main()`.
 
@@ -34,7 +38,8 @@ if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
 SUPPORTED_ROLES = ("student",)
-SUPPORTED_PRECISIONS = ("fp32",)
+SUPPORTED_PRECISIONS = ("fp32", "int8_ptq", "int8_qat")
+INT8_PRECISIONS = ("int8_ptq", "int8_qat")
 SUPPORTED_CONDITIONS = ("clean",)
 EXPECTED_SPLIT_ROWS = {"val": 846, "test": 1561}
 
@@ -61,6 +66,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--corruption-severity", type=int, default=None)
     p.add_argument("--out-dir", required=True)
     p.add_argument("--checkpoint", default=None)
+    p.add_argument("--provenance", default=None,
+                   help="E4-E7 run-provenance JSON written by src/quant/runner.py (INT8 stages)")
     p.add_argument("--random-init", action="store_true")
     p.add_argument("--artifact-status", default="smoke",
                    choices=["official", "provisional", "smoke"])
@@ -85,18 +92,42 @@ def validate_cli_args(args) -> None:
             f"{SUPPORTED_ROLES}. Teacher construction does not exist yet.")
     if args.precision not in SUPPORTED_PRECISIONS:
         raise CliError(
-            f"precision={args.precision!r} is not implemented in A2b. Supported: "
-            f"{SUPPORTED_PRECISIONS}. INT8 PTQ/QAT construction does not exist yet.")
+            f"precision={args.precision!r} is not supported. Supported: {SUPPORTED_PRECISIONS}.")
     if args.condition not in SUPPORTED_CONDITIONS:
         raise CliError(
             f"condition={args.condition!r} is not implemented in A2b. Supported: "
             f"{SUPPORTED_CONDITIONS}. Corruption generation does not exist yet.")
 
-    # --- mode / checkpoint consistency ---
-    if args.random_init and args.checkpoint:
-        raise CliError("--random-init and --checkpoint are mutually exclusive")
-    if not args.random_init and not args.checkpoint:
-        raise CliError("exactly one of --random-init or --checkpoint is required")
+    # --- INT8 model-source consistency (E4-E7 consume a run provenance, not a raw checkpoint) ---
+    # `--provenance` is newer than this function's other flags, so it is read defensively: callers
+    # that predate it (existing tests, programmatic args objects) keep working unchanged.
+    provenance = getattr(args, "provenance", None)
+    if args.precision in INT8_PRECISIONS:
+        if args.random_init:
+            raise CliError(
+                f"precision={args.precision!r} forbids --random-init: a quantized artifact always "
+                "derives from a trained source")
+        if not provenance:
+            raise CliError(
+                f"precision={args.precision!r} requires --provenance (the E4-E7 run-provenance "
+                "JSON). A raw checkpoint cannot identify a quantized artifact.")
+        if args.checkpoint:
+            raise CliError(
+                "--checkpoint and --provenance both identify a model source; for INT8 stages pass "
+                "--provenance only")
+        if args.device != "cpu":
+            raise CliError(
+                f"converted eager INT8 models are CPU-only; got --device {args.device!r}")
+    else:
+        if provenance:
+            raise CliError(
+                f"--provenance applies to INT8 stages only; precision={args.precision!r} takes "
+                "--checkpoint")
+        # --- mode / checkpoint consistency (FP32, unchanged) ---
+        if args.random_init and args.checkpoint:
+            raise CliError("--random-init and --checkpoint are mutually exclusive")
+        if not args.random_init and not args.checkpoint:
+            raise CliError("exactly one of --random-init or --checkpoint is required")
     if args.random_init and args.artifact_status != "smoke":
         raise CliError(
             f"--random-init requires --artifact-status smoke, got {args.artifact_status!r}")
@@ -117,7 +148,11 @@ def validate_cli_args(args) -> None:
         if args.max_samples is not None:
             raise CliError(
                 "--split test forbids any sample cap; the full official test split is required")
-        if not args.checkpoint:
+        # A trained model source is mandatory; which flag supplies it depends on the precision.
+        if args.precision in INT8_PRECISIONS:
+            if not provenance:
+                raise CliError("--split test requires --provenance for an INT8 stage")
+        elif not args.checkpoint:
             raise CliError("--split test requires --checkpoint")
         if args.artifact_status == "smoke":
             raise CliError("--split test refuses artifact_status=smoke")
@@ -145,9 +180,21 @@ def run(args, *, counters: Counters | None = None) -> Path:
     source_indices = (deterministic_subset(n_total, n_rows)
                       if args.max_samples is not None else list(range(n_total)))
 
+    # ---- model SOURCE validation: provenance/stage/hash, before any dataset or model exists ----
+    resolved = quant_backend = None
     ckpt_path = ckpt_sha = None
-    if args.checkpoint:
+    if args.precision in INT8_PRECISIONS:
+        from src.eval.model_loading import select_int8_backend
+        from src.eval.stage_artifacts import resolve_evaluation_source
+        # A tampered artifact, a wrong source stage or a stage mismatch fails HERE.
+        resolved = resolve_evaluation_source(args.stage, provenance=args.provenance)
+        quant_backend = select_int8_backend(require_qnnpack=True)   # refuses a non-QNNPACK build
+        ckpt_path = str(resolved["artifact_path"])
+        ckpt_sha = resolved["artifact_sha256"]
+    elif args.checkpoint:
         from src.eval.model_loading import sha256_file
+        from src.eval.stage_artifacts import validate_fp32_artifact
+        validate_fp32_artifact(args.stage, args.checkpoint)        # stage metadata must agree
         ckpt_path = str(args.checkpoint)
         ckpt_sha = sha256_file(Path(args.checkpoint))
 
@@ -163,7 +210,8 @@ def run(args, *, counters: Counters | None = None) -> Path:
         artifact_status=args.artifact_status,
         run_id=run_id,
         run=RunMeta(stage=args.stage, model_role=args.model_role, precision=args.precision,
-                    quant_backend=None, checkpoint_path=ckpt_path, checkpoint_sha256=ckpt_sha,
+                    quant_backend=quant_backend, checkpoint_path=ckpt_path,
+                    checkpoint_sha256=ckpt_sha,
                     random_init=bool(args.random_init), device=args.device),
         dataset=DatasetMeta(
             name=DATASET_NAME, doi=DATASET_DOI, split=args.split,
@@ -185,8 +233,12 @@ def run(args, *, counters: Counters | None = None) -> Path:
 
     if counters is not None:
         counters.model.append(("model", args.random_init))
-    model = (build_fp32_student(device=args.device) if args.random_init
-             else load_student_checkpoint(args.checkpoint, map_location=args.device)[0])
+    if resolved is not None:
+        from src.eval.model_loading import load_int8_student
+        model = load_int8_student(resolved, require_qnnpack=True)[0]
+    else:
+        model = (build_fp32_student(device=args.device) if args.random_init
+                 else load_student_checkpoint(args.checkpoint, map_location=args.device)[0])
 
     loader = build_eval_loader(adapter, args.batch_size, num_workers=0)
     result = evaluate_model(model, loader, expected_manifest=expected_manifest,

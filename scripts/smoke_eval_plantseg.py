@@ -223,7 +223,12 @@ def section_b_cli_guards(work: Path):
     """Pure argument/request validation. The test split is never constructed or listed."""
     cases = [
         ("B1 unsupported teacher role rejected", ns(model_role="teacher"), "not implemented"),
-        ("B2 unsupported INT8 precision rejected", ns(precision="int8_ptq"), "not implemented"),
+        # B2 SUPERSEDED: INT8 construction is now implemented (E4-E7 via --provenance), so the old
+        # "not implemented" assertion is replaced by the STRONGER safety properties that took its
+        # place -- a quantized artifact can never be random-init, and never lacks a validated source.
+        ("B2 INT8 forbids random-init", ns(precision="int8_ptq"), "forbids --random-init"),
+        ("B2b INT8 requires provenance", ns(precision="int8_ptq", random_init=False),
+         "requires --provenance"),
         ("B3 unsupported corruption condition rejected", ns(condition="fog"), "not implemented"),
         ("B4 random-init + checkpoint rejected", ns(random_init=True, checkpoint="x.pt"),
          "mutually exclusive"),

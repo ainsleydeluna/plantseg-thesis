@@ -78,6 +78,127 @@ def build_fp32_student(num_classes: int = FROZEN_NUM_CLASSES, device: str = "cpu
     return model.to(torch.device(device)).eval()
 
 
+# ---------------------------------------------------------------------------------------------
+# INT8 (E4-E7) -- the EXACT schema written by src/quant/runner.py
+#
+#     {"stage": str, "quantization": "ptq"|"qat", "num_classes": 116, "model": <converted
+#      state_dict>}
+#
+# That is a QUANTIZED STATE DICT, not a serialized module, so evaluation rebuilds the converted
+# skeleton with the committed quantization helpers and loads the weights strictly into it. No second
+# artifact representation is introduced, nothing is recalibrated, and no QAT step is run.
+# ---------------------------------------------------------------------------------------------
+INT8_REQUIRED_KEYS = ("stage", "quantization", "num_classes", "model")
+INT8_METHODS = ("ptq", "qat")
+OFFICIAL_QUANT_BACKEND = "qnnpack"
+
+
+@dataclass(frozen=True)
+class Int8ArtifactInfo:
+    """Metadata for a loaded converted INT8 student."""
+    path: str
+    sha256: str
+    stage: str
+    method: str
+    num_classes: int
+    backend: str
+
+
+def select_int8_backend(*, require_qnnpack: bool = True) -> str:
+    """Select the quantized engine for INT8 evaluation.
+
+    The official E4-E7 accuracy artifact is the QNNPACK one, so `require_qnnpack=True` (the only
+    value the evaluator uses) fails loudly when QNNPACK is absent rather than silently evaluating on
+    a different backend. `require_qnnpack=False` exists solely for NON-OFFICIAL structural proxy
+    tests and never reaches the evaluator's official path.
+    """
+    supported = list(torch.backends.quantized.supported_engines)
+    if OFFICIAL_QUANT_BACKEND in supported:
+        torch.backends.quantized.engine = OFFICIAL_QUANT_BACKEND
+    elif require_qnnpack:
+        raise CheckpointError(
+            f"INT8 evaluation requires the {OFFICIAL_QUANT_BACKEND!r} backend, which this build "
+            f"does not provide (supported_engines={supported}). Evaluating the official INT8 "
+            "artifact on another backend would change the artifact and is refused.")
+    if torch.backends.quantized.engine != OFFICIAL_QUANT_BACKEND and require_qnnpack:
+        raise CheckpointError("could not select the qnnpack quantized engine")
+    return torch.backends.quantized.engine
+
+
+def load_int8_student(resolved: dict, *, require_qnnpack: bool = True,
+                      map_location: str = "cpu"):
+    """Load a converted E4-E7 INT8 student from an ALREADY-VALIDATED resolved artifact.
+
+    `resolved` must come from `src.eval.stage_artifacts.validate_int8_artifact`, which has already
+    proven stage/source/method/class-count/backend provenance AND re-verified the artifact's
+    SHA-256 against the file on disk — that hash check is the trust anchor for reading this file.
+    This function never chooses a stage of its own, never downloads, never calibrates and never
+    trains. Returns `(model, Int8ArtifactInfo)` with the model in eval mode on CPU.
+    """
+    from ..quant.prepare import convert_model, prepare_ptq, prepare_qat_model
+
+    spec, prov = resolved["spec"], resolved["provenance"]
+    path = Path(resolved["artifact_path"])
+    method = spec["method"]
+    if method not in INT8_METHODS:
+        raise CheckpointError(f"unsupported quantization method {method!r}")
+    if str(map_location) != "cpu":
+        raise CheckpointError(
+            f"converted eager INT8 models are CPU-only; got map_location={map_location!r}")
+
+    backend = select_int8_backend(require_qnnpack=require_qnnpack)
+
+    # weights_only=False is required here: a converted state_dict carries quantized packed-param
+    # objects that the weights_only unpickler rejects. The file is trusted because the bridge just
+    # re-verified its SHA-256 against the value recorded when the runner produced it.
+    obj = torch.load(path, map_location="cpu", weights_only=False)
+    if not isinstance(obj, dict):
+        raise CheckpointError(f"INT8 artifact must be a dict, got {type(obj).__name__}")
+    missing = [k for k in INT8_REQUIRED_KEYS if k not in obj]
+    if missing:
+        raise CheckpointError(
+            f"INT8 artifact is missing required key(s) {missing}; present keys: {sorted(obj)}. "
+            "The evaluator accepts only the schema written by src/quant/runner.py.")
+    if obj["quantization"] != method:
+        raise CheckpointError(
+            f"artifact records quantization={obj['quantization']!r} but {spec['stage']} is {method}")
+    if str(obj["stage"]).upper() != spec["stage"]:
+        raise CheckpointError(
+            f"artifact records stage={obj['stage']!r}, requested {spec['stage']}")
+    if int(obj["num_classes"]) != FROZEN_NUM_CLASSES:
+        raise CheckpointError(
+            f"artifact num_classes={obj['num_classes']!r} != required {FROZEN_NUM_CLASSES}")
+    if not isinstance(obj["model"], dict) or not obj["model"]:
+        raise CheckpointError("INT8 artifact 'model' must be a non-empty converted state_dict")
+
+    # Rebuild the converted skeleton the SAME way the runner produced it, without calibration or
+    # training, then load the quantized weights strictly.
+    skeleton = build_student(num_classes=FROZEN_NUM_CLASSES, pretrained=False)
+    prepared = (prepare_ptq(skeleton, select_backend=False) if method == "ptq"
+                else prepare_qat_model(skeleton, select_backend=False))
+    converted = convert_model(prepared)
+    try:
+        converted.load_state_dict(obj["model"], strict=True)
+    except Exception as e:                                    # noqa: BLE001 -- surfaced verbatim
+        raise CheckpointError(
+            f"strict INT8 state_dict load failed: {type(e).__name__}: {str(e)[:300]}") from e
+
+    if getattr(converted, "num_classes", FROZEN_NUM_CLASSES) != FROZEN_NUM_CLASSES:
+        raise CheckpointError(
+            f"converted model declares {converted.num_classes} classes, expected "
+            f"{FROZEN_NUM_CLASSES}")
+    if any("cwd" in k.lower() for k in obj["model"]):
+        raise CheckpointError(
+            "converted INT8 artifact contains CWD projection tensors; the training-only projection "
+            "must be absent from every evaluated model")
+
+    info = Int8ArtifactInfo(path=str(path), sha256=resolved["artifact_sha256"],
+                            stage=spec["stage"], method=method,
+                            num_classes=FROZEN_NUM_CLASSES,
+                            backend=str(prov.get("backend", backend)))
+    return converted.eval(), info
+
+
 def _looks_like_bare_state_dict(obj) -> bool:
     if not isinstance(obj, dict) or not obj:
         return False
