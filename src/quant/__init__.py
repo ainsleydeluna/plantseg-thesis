@@ -9,7 +9,11 @@ from .calibration import (CALIBRATION_COUNT, CALIBRATION_SCHEMA, CALIBRATION_SEE
                           CALIBRATION_SPLIT, CalibrationIndexError, build_calibration_index,
                           load_calibration_index, save_calibration_index,
                           verify_calibration_index)
-from .checkpoint import SourceCheckpointInvalid, load_e1_source_checkpoint, load_student_from_e1
+from .checkpoint import (SourceCheckpointInvalid, load_e1_source_checkpoint,
+                         load_e3_source_checkpoint, load_student_from_e1, load_student_from_e3)
+from .stages import (QUANT_STAGES, SHARED_CALIBRATION_STAGES, QuantStageError,
+                     load_source_for_stage, prepare_for_stage, require_shared_calibration_index,
+                     resolve_quant_stage)
 from .prepare import (BN_FREEZE_PCT_RANGE, QuantPreparationError, bn_freeze_iteration, calibrate,
                       convert_model, disable_observers, enable_observers, freeze_bn_stats,
                       prepare_ptq, prepare_qat_model, qat_grad_clip_gate_error,
@@ -21,6 +25,9 @@ __all__ = [
     "QUANT_BACKEND", "QuantBackendUnavailable", "select_qnnpack_backend",
     "ptq_qconfig", "qat_qconfig", "describe_qconfig",
     "SourceCheckpointInvalid", "load_e1_source_checkpoint", "load_student_from_e1",
+    "load_e3_source_checkpoint", "load_student_from_e3",
+    "QUANT_STAGES", "SHARED_CALIBRATION_STAGES", "QuantStageError", "resolve_quant_stage",
+    "load_source_for_stage", "prepare_for_stage", "require_shared_calibration_index",
     "CALIBRATION_SCHEMA", "CALIBRATION_COUNT", "CALIBRATION_SEED", "CALIBRATION_SPLIT",
     "CalibrationIndexError", "build_calibration_index", "verify_calibration_index",
     "save_calibration_index", "load_calibration_index",
