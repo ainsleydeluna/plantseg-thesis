@@ -47,6 +47,7 @@ from .qconfig import (QUANT_BACKEND, QuantBackendUnavailable, describe_qconfig, 
                       qat_qconfig, select_qnnpack_backend)
 from .stages import (load_source_for_stage, prepare_for_stage, require_shared_calibration_index,  # noqa: E402
                      resolve_quant_stage)
+from .x86_latency import QAT_SIDECAR_KIND, QAT_SIDECAR_ROLE, QAT_SIDECAR_SUFFIX  # noqa: E402
 
 NUM_CLASSES = 116
 QAT = QUANT["qat"]
@@ -381,9 +382,24 @@ def run_qat(stage: dict, args, model, source_meta: dict, out_dir: Path, backend:
     if best_state is None:
         raise QuantRunError("qat_no_checkpoint", "QAT produced no validated checkpoint")
     best_miou, best_iter = stopper.best, stopper.best_step
-    qat_path = out_dir / f"{stage['key']}_qat_state.pt"
-    torch.save({"stage": stage["name"], "quantization": "qat-train-state", "iter": best_iter,
-                "best_val_miou_all_class": best_miou, "model_state_dict": best_state}, qat_path)
+    # AUXILIARY COMPANION ARTIFACT (not the deployment artifact). The pre-convert QAT state is what
+    # makes a backend-specific latency representation reconstructible WITHOUT retraining, so its
+    # role markers are explicit and machine-checkable. The official converted artifact written below
+    # is unchanged, and best-validation selection semantics above are untouched.
+    qat_path = out_dir / f"{stage['key']}{QAT_SIDECAR_SUFFIX}"
+    torch.save({"stage": stage["name"], "quantization": QAT_SIDECAR_KIND, "iter": best_iter,
+                "best_val_miou_all_class": best_miou, "model_state_dict": best_state,
+                "num_classes": NUM_CLASSES,
+                "artifact_role": QAT_SIDECAR_ROLE,
+                "is_official_accuracy_artifact": False,
+                "is_deployment_artifact": False,
+                "training_quant_backend": backend,
+                "source_stage": stage["source_stage"],
+                "source_checkpoint_sha256": source_meta["sha256"],
+                "purpose": "auxiliary pre-convert QAT state; enables backend-specific latency "
+                           "reconstruction from the same trained weights without retraining. "
+                           "Never an accuracy, robustness, size or deployment artifact."},
+               qat_path)
 
     prepared.load_state_dict(best_state)
     converted = convert_model(prepared.cpu())

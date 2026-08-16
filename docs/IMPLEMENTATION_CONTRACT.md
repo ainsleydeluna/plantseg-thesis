@@ -404,13 +404,43 @@ pending the PlantSeg repo's official convention. `[empirical; ch3 Table 3.1; ctx
 
 **Efficiency (descriptive only)**
 - params · model size (deterministic **parameter-byte footprint**: INT8=1B/weight, FP32=4B/weight,
-  bias+per-channel scale/zero-point=4B each) **+** serialized on-disk size of the same artifact used for latency.
+  bias+per-channel scale/zero-point=4B each) **+** serialized on-disk size, measured per the
+  **which-artifact rule** below.
 - **FLOPs = 2 × MACs** via fvcore @ 512×512, profiled from the **FP32** architecture (QAT does not cut FLOPs).
 - **CPU-proxy latency** via `torch.utils.benchmark` (CPU, batch 1, **20 warm-up + 100 measured**,
   median / IQR / p95, `eval()` + `inference_mode()`, AMP off, fixed thread count).
 - **Peak memory** via `resource.getrusage` / psutil RSS delta.
-- x86 CPU proxy = separate **fbgemm/x86 INT8** copy (`reduce_range=True`); the **QNNPACK** copy stays the
-  reported accuracy/size artifact. No ARM / on-device latency claimed.
+- No ARM / on-device latency claimed. All runtime/memory results are **CPU PROXY**.
+
+**Which artifact each efficiency number is measured from** (resolves the earlier ambiguity between
+"the same artifact used for latency" and the INT8 backend split — the INT8 rule is the specific one
+and governs):
+
+| Precision | accuracy + robustness | serialized size | CPU-proxy latency |
+|---|---|---|---|
+| **FP32** (teacher, E1–E3) | the model artifact | **same** artifact | **same** artifact |
+| **INT8** (E4–E7) | **QNNPACK** artifact | **QNNPACK** artifact | separate **fbgemm/x86** copy (`reduce_range=True`) |
+
+- For FP32 stages one artifact serves all three, so size and latency do refer to the same file.
+- For INT8 stages the **QNNPACK** copy is authoritative for accuracy, robustness **and reported
+  serialized size**; the fbgemm/x86 copy exists **only** for CPU-proxy latency, is separately
+  identified (`artifact_role = x86_cpu_proxy_latency`), and is never substituted into an accuracy,
+  robustness or size result. Its activation qparams legitimately differ from the QNNPACK copy's
+  because `reduce_range` differs.
+
+**INT8 x86 latency copy — how it is obtained** (no second training run):
+- **E4/E7 (PTQ):** rebuilt from the same FP32 source checkpoint and the **same frozen 128-image
+  seed-42 shared calibration subset**; calibration image identity is never resampled.
+- **E5/E6 (QAT):** the QAT runner writes an **auxiliary companion artifact** alongside the official
+  converted model — the best **pre-convert QAT state** (`*_qat_state.pt`,
+  `quantization = "qat-train-state"`, `artifact_role = preconvert_qat_state`). It is explicitly
+  **not** an accuracy, robustness, size or deployment artifact, and does not alter the official
+  converted-artifact schema or the best-validation selection rule. The x86 copy is produced from it
+  by **translation only**: the same QAT-trained weights and the same learned activation-range
+  evidence are carried over, x86 quantizer parameters are recomputed under the reduced range, and
+  **zero optimizer steps / gradient updates** occur. QNNPACK activation qparams are never reused as
+  x86 qparams. E5/E6 are **not** re-trained under x86 to obtain a latency artifact, and the x86
+  artifact must never be described as x86-QAT-trained.
 
 ---
 

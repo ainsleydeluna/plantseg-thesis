@@ -402,24 +402,30 @@ def require_quantized_backend(name: str) -> str:
     return name
 
 
-def x86_latency_copy_gate() -> None:
-    """Refuse to improvise the x86 CPU-proxy latency copy, and say exactly what is missing.
+def x86_latency_copy_gate(stage: str | None = None) -> str:
+    """Route to the real x86 latency-copy support in `src.quant`; refuse loudly when it cannot run.
 
     Contract line 412 requires the x86 proxy to be a SEPARATE fbgemm/x86 INT8 copy with
-    `reduce_range=True`, while the QNNPACK copy (`reduce_range=False`) remains the reported
-    accuracy/size artifact. `src.quant.qconfig` currently exposes only the QNNPACK configuration
-    (`QUANT_BACKEND='qnnpack'`, `ACT_REDUCE_RANGE=False`, `ptq_qconfig`, `qat_qconfig`,
-    `select_qnnpack_backend`) and deliberately documents the fbgemm/x86 build as a later efficiency
-    concern. Building the copy here would mean inventing a second quantization configuration
-    outside the module that owns them.
+    `reduce_range=True`, while the QNNPACK copy (`reduce_range=False`) stays the reported
+    accuracy/size artifact. `src.quant.x86_latency` now owns that construction; this stays a gate
+    so the profiler can never time the QNNPACK copy and label it the x86 result.
+
+    Returns the engine actually selected. All four INT8 stages are reconstructible — E4/E7 from
+    their FP32 source plus the frozen calibration subset, E5/E6 by zero-training translation of the
+    auxiliary pre-convert QAT sidecar — so this refuses only for a non-INT8 stage or a host without
+    an approved x86 engine. The sidecar requirement itself is enforced where the copy is built.
     """
-    _fail("x86_latency_copy_unavailable",
-          "x86 CPU-proxy latency artifact NOT CONSTRUCTED. It requires an x86/fbgemm QConfig factory "
-          f"(per-channel symmetric INT8 weights, activations with reduce_range="
-          f"{X86_LATENCY_REDUCE_RANGE}) plus an x86 backend selector; src.quant.qconfig provides "
-          f"only the {ACCURACY_BACKEND!r} accuracy configuration with reduce_range="
-          f"{ACCURACY_REDUCE_RANGE}. Add that helper to src.quant before measuring x86 latency; the "
-          "QNNPACK accuracy artifact must not be reused or overwritten for latency.")
+    from src.quant.qconfig import QuantBackendUnavailable, select_x86_backend
+    from src.quant.x86_latency import X86_RECONSTRUCTIBLE_STAGES
+
+    if stage is not None and stage not in X86_RECONSTRUCTIBLE_STAGES:
+        _fail("x86_latency_copy_not_int8_stage",
+              f"{stage} is not an INT8 stage; the x86 CPU-proxy latency copy exists only for "
+              f"{list(X86_RECONSTRUCTIBLE_STAGES)}")
+    try:
+        return select_x86_backend()
+    except QuantBackendUnavailable as e:
+        _fail("x86_backend_unavailable", str(e))
 
 
 def validate_artifact_role(role: str, backend: str) -> None:

@@ -260,14 +260,40 @@ def test_int8_roles() -> None:
     expect("unknown_role_rejected", EfficiencyError, eff.validate_artifact_role, "whatever",
            "fbgemm")
 
-    # the x86 latency copy is NOT improvised, and says exactly what is missing
-    try:
-        eff.x86_latency_copy_gate()
-        check("x86_copy_not_improvised", False, "gate did not refuse")
-    except EfficiencyError as e:
+    # SUPERSEDED ASSERTION. This used to require the gate to report a MISSING src.quant interface.
+    # That interface now exists (`src.quant.x86_latency`), so the absence-claim is obsolete and is
+    # replaced by the stronger property: the copy is still never improvised — the gate routes to the
+    # real support and refuses when this host lacks an approved engine, and refuses QAT stages for a
+    # persisted-state reason regardless of backend.
+    supported = set(torch.backends.quantized.supported_engines)
+    if not ({"x86", "fbgemm"} & supported):
+        try:
+            eff.x86_latency_copy_gate("E4")
+            check("x86_copy_not_improvised", False, "gate did not refuse")
+        except EfficiencyError as e:
+            check("x86_copy_not_improvised", e.code == "x86_backend_unavailable",
+                  "no approved x86/fbgemm engine on this host")
+    else:  # pragma: no cover - not this host
         check("x86_copy_not_improvised",
-              e.code == "x86_latency_copy_unavailable" and "src.quant.qconfig" in str(e),
-              "names the missing src.quant interface")
+              eff.x86_latency_copy_gate("E4") in ("x86", "fbgemm"), "real engine selected")
+
+    # SUPERSEDED: E5/E6 were categorically blocked at this gate. They are now reconstructible by
+    # zero-training translation of the pre-convert QAT sidecar, so the gate admits the STAGE and the
+    # no-fabrication guarantee moved to build time — asserted here so coverage is not lost.
+    try:
+        eff.x86_latency_copy_gate("E5")
+        check("x86_qat_stage_admitted_then_gated", False, "gate did not refuse")
+    except EfficiencyError as e:
+        check("x86_qat_stage_admitted_then_gated", e.code == "x86_backend_unavailable",
+              "stage is eligible; this host simply has no x86 engine")
+
+    from src.quant.x86_latency import X86LatencyCopyError, build_x86_latency_copy
+    try:
+        build_x86_latency_copy("E5", TinyNet(), select_backend=False)
+        check("x86_qat_copy_needs_sidecar", False, "built an E5 copy with no sidecar")
+    except X86LatencyCopyError as e:
+        check("x86_qat_copy_needs_sidecar", e.code == "qat_sidecar_required",
+              "never fabricates a QAT copy")
 
     # local ONEDNN can never stand in for an official backend
     supported = list(torch.backends.quantized.supported_engines)

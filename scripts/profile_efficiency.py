@@ -108,6 +108,12 @@ def profile(resolved: dict, *, stage: str, metrics, artifact_role: str, threads:
         footprint = weight_footprint(model)
         if source_path:
             artifact = serialized_artifact(source_path)
+            # Contract line 412 names the QNNPACK copy "the reported accuracy/size artifact", so
+            # serialized size stays with it even when latency is timed on the x86 copy. Line 407's
+            # "same artifact used for latency" is honoured by labelling which artifact was measured
+            # rather than silently switching size onto the latency copy.
+            artifact["size_artifact_role"] = ARTIFACT_ROLE_ACCURACY
+            artifact["size_measured_from_latency_copy"] = False
     if "flops" in metrics:
         try:
             compute = profile_macs(reference if reference is not None else model,
@@ -117,8 +123,10 @@ def profile(resolved: dict, *, stage: str, metrics, artifact_role: str, threads:
     if "latency" in metrics:
         try:
             if artifact_role == ARTIFACT_ROLE_X86_LATENCY:
-                x86_latency_copy_gate()          # refuses; never benchmarks the QNNPACK copy
-            if precision == "int8":
+                # selects a real x86/fbgemm engine or refuses; never times the QNNPACK copy
+                latency_backend = x86_latency_copy_gate(stage)
+                prov["latency_backend"] = latency_backend
+            elif precision == "int8":
                 require_quantized_backend(backend)
             latency = measure_latency(model, thread_count=threads)
         except EfficiencyError as e:
