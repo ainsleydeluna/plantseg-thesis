@@ -45,6 +45,35 @@ OFFICIAL_SPLIT = "test"
 OFFICIAL_EXPECTED_IMAGES = 1561          # checked only when the REAL cache is built
 MANIFEST_NAME = "corruption_cache_manifest.json"
 
+# ---------------------------------------------------------------- official dependency pins
+# The corrupted BYTES depend on these three libraries, so reproducibility needs exact versions:
+#   numpy         -> every corruption
+#   Pillow        -> jpeg_compression (the JPEG encoder)
+#   scikit-image  -> brightness (rgb2hsv / hsv2rgb)
+# Values are TAKEN FROM `requirements.lock`, the repository's pinned-stack manifest; they are
+# recorded here so cache generation can verify them at runtime, not re-decided here.
+#
+# Verified against primary PyPI metadata for the recorded official Python 3.11:
+#   Pillow 12.2.0        requires_python ">=3.10"; cp311 wheels published
+#   scikit-image 0.23.2  requires_python ">=3.10"; numpy>=1.23, scipy>=1.9, pillow>=9.1;
+#                        cp311 wheels published. (0.23.x dropped the hard PyWavelets dependency,
+#                        which is why the lock contains no PyWavelets entry.)
+OFFICIAL_PYTHON = "3.11"                 # recorded in docs/reference/context.md + the contracts
+OFFICIAL_NUMPY = "1.26.4"
+OFFICIAL_PILLOW = "12.2.0"
+OFFICIAL_SCIKIT_IMAGE = "0.23.2"
+OFFICIAL_DEPENDENCY_SOURCE = "requirements.lock"
+
+# TWO PHASES, DELIBERATELY SEPARATE. Writing a version number down is not the same as having run
+# the corruption verification under that environment, and one Boolean cannot honestly say both.
+DEPENDENCY_VERSIONS_REGISTERED = True
+OFFICIAL_DEPENDENCY_ENVIRONMENT_VALIDATED = False   # flips only after the pinned stack passes
+
+# The corruption RUNTIME closure imports exactly these third-party modules (AST-verified in
+# scripts/smoke_corruption_vendor.py). scikit-image's own transitive dependencies are not corruption
+# imports, and cv2/scipy are NOT in this closure.
+CORRUPTION_RUNTIME_DEPENDENCIES = ("numpy", "pillow", "scikit_image")
+
 
 class CorruptionCacheError(RuntimeError):
     """A rejected cache generation or a failed cache verification."""
@@ -69,6 +98,65 @@ def runtime_versions() -> dict:
     return {"python": sys.version.split()[0], "numpy": np.__version__,
             "pillow": PIL.__version__, "scikit_image": skimage.__version__,
             "platform": platform.platform()}
+
+
+def official_dependency_pins() -> dict:
+    """The registered pins plus their two-phase status. Machine-readable, never inferred."""
+    return {
+        "source": OFFICIAL_DEPENDENCY_SOURCE,
+        "python": OFFICIAL_PYTHON,
+        "numpy": OFFICIAL_NUMPY,
+        "pillow": OFFICIAL_PILLOW,
+        "scikit_image": OFFICIAL_SCIKIT_IMAGE,
+        "corruption_runtime_dependencies": list(CORRUPTION_RUNTIME_DEPENDENCIES),
+        "dependency_versions_registered": DEPENDENCY_VERSIONS_REGISTERED,
+        "official_dependency_environment_validated": OFFICIAL_DEPENDENCY_ENVIRONMENT_VALIDATED,
+        "byte_reproducibility_proven_under_these_pins": False,
+    }
+
+
+def runtime_pin_mismatches(actual: dict | None = None) -> list[str]:
+    """Which registered pins the running interpreter does NOT satisfy.
+
+    Python is compared at MAJOR.MINOR (the pin is a series, e.g. '3.11'); the three libraries are
+    compared exactly, because the corrupted bytes depend on their precise implementations.
+    """
+    actual = actual or runtime_versions()
+    mismatches = []
+    running_python = ".".join(str(actual.get("python", "")).split(".")[:2])
+    if running_python != OFFICIAL_PYTHON:
+        mismatches.append(f"python {actual.get('python')!r} != {OFFICIAL_PYTHON}.x")
+    for key, pin in (("numpy", OFFICIAL_NUMPY), ("pillow", OFFICIAL_PILLOW),
+                     ("scikit_image", OFFICIAL_SCIKIT_IMAGE)):
+        if actual.get(key) != pin:
+            mismatches.append(f"{key} {actual.get(key)!r} != {pin}")
+    return mismatches
+
+
+def require_official_dependency_environment(actual: dict | None = None) -> dict:
+    """Gate for REAL cache generation. Refuses while validation is pending or versions differ.
+
+    Two distinct refusals, never collapsed: an unvalidated environment is refused even if the
+    versions happen to match, because "the numbers were written down" is not evidence that the
+    deterministic corruption verification has ever run under them.
+    """
+    mismatches = runtime_pin_mismatches(actual)
+    if mismatches:
+        _fail("official_dependency_version_mismatch",
+              "the running environment does not match the registered corruption pins: "
+              + "; ".join(mismatches)
+              + f". The corrupted bytes depend on numpy/Pillow/scikit-image, so the cache may only "
+                f"be generated on the pinned stack ({OFFICIAL_DEPENDENCY_SOURCE}).")
+    if not OFFICIAL_DEPENDENCY_ENVIRONMENT_VALIDATED:
+        _fail("official_dependency_environment_unvalidated",
+              "OFFICIAL CORRUPTION CACHE GENERATION BLOCKED: the versions are REGISTERED "
+              f"(python {OFFICIAL_PYTHON}, numpy {OFFICIAL_NUMPY}, pillow {OFFICIAL_PILLOW}, "
+              f"scikit-image {OFFICIAL_SCIKIT_IMAGE}) but the environment has not been EXECUTABLY "
+              "VALIDATED. Install that exact stack and re-run the deterministic corruption "
+              "verification (scripts/smoke_corruption_vendor.py) there; only then may "
+              "OFFICIAL_DEPENDENCY_ENVIRONMENT_VALIDATED become True. Byte reproducibility under "
+              "these pins has not been demonstrated.")
+    return official_dependency_pins()
 
 
 def relative_path(image_id: str, corruption_id: str, severity: int) -> str:
@@ -121,6 +209,7 @@ def generate(cache_root: Path, images: dict[str, np.ndarray], *,
         "corruption_order": list(corruptions), "severities": list(severities),
         "seed_policy_id": SEED_POLICY_ID, "master_seed": MASTER_SEED,
         "vendor": vendor_provenance(), "versions": runtime_versions(),
+        "dependency_pins": official_dependency_pins(),
         "entries": entries,
     }
     if expected_images is not None and len(images) != expected_images:

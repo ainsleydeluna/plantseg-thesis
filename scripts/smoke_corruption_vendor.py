@@ -383,6 +383,70 @@ def test_cache() -> None:
     check("cache_written_outside_repo", REPO not in root.resolve().parents and root.exists())
 
 
+# ---------------------------------------------------------------- 5b. official dependency pins
+def test_dependency_pins() -> None:
+    """The PIN DECISION is registered; EXECUTABLE VALIDATION is explicitly still pending."""
+    pins = cache.official_dependency_pins()
+
+    check("official_pillow_machine_readable", pins["pillow"] == "12.2.0", pins["pillow"])
+    check("official_scikit_image_machine_readable", pins["scikit_image"] == "0.23.2",
+          pins["scikit_image"])
+    check("official_numpy_unchanged", pins["numpy"] == "1.26.4", pins["numpy"])
+    check("official_python_recorded_not_inferred", pins["python"] == "3.11",
+          "recorded in docs/reference/context.md and the contracts")
+    check("pins_sourced_from_lock", pins["source"] == "requirements.lock")
+
+    lock = (REPO / "requirements.lock").read_text(encoding="utf-8").splitlines()
+    lock_pins = dict(ln.split("==", 1) for ln in lock if "==" in ln)
+    check("pins_match_requirements_lock",
+          lock_pins.get("pillow") == pins["pillow"]
+          and lock_pins.get("scikit-image") == pins["scikit_image"]
+          and lock_pins.get("numpy") == pins["numpy"],
+          "no second source of truth")
+
+    # the corruption closure gained no dependency from unregistered upstream corruptions
+    check("no_unregistered_corruption_dependency",
+          tuple(pins["corruption_runtime_dependencies"]) == ("numpy", "pillow", "scikit_image")
+          and not ({"opencv-python", "PyWavelets"} & set(pins["corruption_runtime_dependencies"])),
+          "cv2/scipy/PyWavelets are not corruption-runtime imports")
+
+    # two-phase honesty: registered != validated
+    check("versions_registered", pins["dependency_versions_registered"] is True)
+    check("environment_not_yet_validated",
+          pins["official_dependency_environment_validated"] is False
+          and pins["byte_reproducibility_proven_under_these_pins"] is False,
+          "writing numbers down is not evidence")
+
+    # runtime matching rejects each pinned library independently
+    official = {"python": "3.11.9", "numpy": "1.26.4", "pillow": "12.2.0",
+                "scikit_image": "0.23.2"}
+    check("matching_runtime_has_no_mismatches", cache.runtime_pin_mismatches(official) == [])
+    for key, bad, label in (("pillow", "11.1.0", "pillow"), ("scikit_image", "0.25.0", "scikit"),
+                            ("numpy", "2.1.3", "numpy"), ("python", "3.13.5", "python")):
+        mism = cache.runtime_pin_mismatches({**official, key: bad})
+        check(f"mismatched_{label}_rejected", len(mism) == 1 and key.split('_')[0] in mism[0],
+              mism[0] if mism else "no mismatch reported")
+
+    # even a perfectly matching runtime still refuses while validation is pending
+    expect("matching_runtime_still_refuses_unvalidated", cache.CorruptionCacheError,
+           cache.require_official_dependency_environment, official)
+    expect("local_dev_runtime_refused", cache.CorruptionCacheError,
+           cache.require_official_dependency_environment)
+    check("local_versions_never_labeled_official",
+          cache.runtime_pin_mismatches() != [],
+          f"local runtime differs from the pins: {cache.runtime_pin_mismatches()[:2]}")
+
+    # a generated cache carries the pins alongside the actual runtime it was built with
+    m = cache.generate(TMP / "pins_cache",
+                       {"img_p": np.zeros((32, 32, 3), dtype=np.uint8)},
+                       corruptions=("fog",), severities=(1,), split="test")
+    check("manifest_records_pins_and_runtime",
+          m["dependency_pins"]["pillow"] == "12.2.0"
+          and m["dependency_pins"]["official_dependency_environment_validated"] is False
+          and m["versions"]["pillow"] != m["dependency_pins"]["pillow"],
+          "development build is distinguishable from an official one")
+
+
 # ---------------------------------------------------------------- 6. pipeline position (text)
 def test_pipeline_position() -> None:
     """Source-level checks only — importing src.eval would pull torch and break isolation."""
@@ -409,7 +473,7 @@ def main() -> int:
     print(f"temp: {TMP}")
     print("=" * 78)
     for fn in (test_isolation, test_source, test_reference_equivalence, test_seed_policy,
-               test_input_contract, test_cache, test_pipeline_position):
+               test_input_contract, test_cache, test_dependency_pins, test_pipeline_position):
         print(f"\n--- {fn.__name__} ---")
         fn()
 

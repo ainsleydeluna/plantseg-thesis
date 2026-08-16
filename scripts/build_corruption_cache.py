@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
 """Build the frozen corruption cache. Generation only — never model evaluation.
 
-Guarded like every real-effect entry point. It is NOT run against PlantSeg in the vendoring task:
-official cache generation additionally requires the Pillow and scikit-image versions to be frozen in
-the official evaluation environment (see the dependency-gap note below), which has not happened yet.
+Guarded like every real-effect entry point, and additionally gated on the corruption dependency
+environment in TWO separate phases:
+
+  1. versions REGISTERED  -- the exact python/numpy/Pillow/scikit-image pins are recorded in
+     `src.corruption_cache` (values taken from `requirements.lock`). DONE.
+  2. environment EXECUTABLY VALIDATED -- that exact stack has been installed and the deterministic
+     corruption verification re-run under it. NOT DONE.
+
+Generation refuses until BOTH hold, and the refusal names which one is missing. Writing version
+numbers down is not evidence that the corrupted bytes reproduce under them.
 """
 from __future__ import annotations
 
@@ -17,13 +24,10 @@ if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
 from src.corruption_cache import (MANIFEST_NAME, OFFICIAL_EXPECTED_IMAGES,  # noqa: E402
-                                  CorruptionCacheError, generate, runtime_versions)
+                                  CorruptionCacheError, generate, official_dependency_pins,
+                                  require_official_dependency_environment, runtime_versions)
 from src.vendor.imagecorruptions import CORRUPTION_IDS, GENERATED_SEVERITIES  # noqa: E402
 from src.vendor.imagecorruptions.provenance import verify_vendor_integrity  # noqa: E402
-
-# Official generation prerequisite: the corruption bytes depend on Pillow (jpeg_compression) and
-# scikit-image (brightness), neither of which is version-frozen in the official stack yet.
-OFFICIAL_DEPENDENCY_PINS_FROZEN = False
 
 
 def main(argv=None) -> int:
@@ -47,13 +51,9 @@ def main(argv=None) -> int:
         if REPO == out or REPO in out.parents:
             raise CorruptionCacheError("cache_inside_repo",
                                        "the corruption cache is never written inside the repository")
-        if not OFFICIAL_DEPENDENCY_PINS_FROZEN:
-            raise CorruptionCacheError(
-                "official_dependency_pins_unfrozen",
-                "OFFICIAL CORRUPTION CACHE GENERATION BLOCKED: the corrupted bytes depend on "
-                f"Pillow and scikit-image (current runtime {runtime_versions()}), and neither is "
-                "pinned in the official evaluation environment. Freeze those versions before "
-                "generating the cache every stage will be scored against.")
+        # Two-phase gate: versions are REGISTERED, but the environment is not yet EXECUTABLY
+        # VALIDATED, so generation still refuses — and says which of the two is missing.
+        require_official_dependency_environment()
     except CorruptionCacheError as e:
         print(f"CACHE GENERATION FAILED [{e.code}]: {e}", file=sys.stderr)
         return 2
@@ -61,7 +61,9 @@ def main(argv=None) -> int:
     print(json.dumps({"grid": {"corruptions": list(CORRUPTION_IDS),
                                "severities": list(GENERATED_SEVERITIES),
                                "expected_images": OFFICIAL_EXPECTED_IMAGES,
-                               "manifest": MANIFEST_NAME}}, indent=2))
+                               "manifest": MANIFEST_NAME},
+                      "dependency_pins": official_dependency_pins(),
+                      "runtime": runtime_versions()}, indent=2, sort_keys=True))
     return 0
 
 

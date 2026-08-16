@@ -255,7 +255,8 @@ pending the PlantSeg repo's official convention. `[empirical; ch3 Table 3.1; ctx
 | mmcv | 2.1.0 | `[ch3; ctx]` |
 | numpy | 1.26.4 | `[ch3; ctx]` |
 | scipy | 1.11.4 | `[ch3; ctx]` |
-| scikit-image | 0.20.0 | `[ctx]` |
+| Pillow | 12.2.0 (corruption `jpeg_compression`) | `[requirements.lock; requirements-e1.txt]` |
+| scikit-image | 0.23.2 (corruption `brightness`) — **corrected** from a stale `0.20.0` row, which contradicted `requirements.lock` and additionally hard-requires `PyWavelets`, a package the lock does not contain | `[requirements.lock; PyPI metadata]` |
 | OpenCV | 4.8.1 | `[ch3; ctx]` |
 | fvcore | 0.1.5.post20221221 | `[ch3; ctx]` |
 | imagecorruptions | vendored **1.1.2** (`np.float_`→`np.float64` patched) | `[ctx]` |
@@ -441,6 +442,38 @@ and governs):
   **zero optimizer steps / gradient updates** occur. QNNPACK activation qparams are never reused as
   x86 qparams. E5/E6 are **not** re-trained under x86 to obtain a latency artifact, and the x86
   artifact must never be described as x86-QAT-trained.
+
+**Corruption dependency pins — REGISTERED, not yet executably validated**
+The corrupted bytes depend on three libraries: **numpy** (all corruptions), **Pillow**
+(`jpeg_compression`), **scikit-image** (`brightness`). The registered pins, taken from
+`requirements.lock` and verified against primary PyPI metadata for the recorded official
+**Python 3.11**, are:
+
+| package | version | evidence |
+|---|---|---|
+| numpy | **1.26.4** | unchanged |
+| Pillow | **12.2.0** | `requires_python ">=3.10"`, cp311 wheels published |
+| scikit-image | **0.23.2** | `requires_python ">=3.10"`; `numpy>=1.23`, `scipy>=1.9`, `pillow>=9.1`; cp311 wheels published |
+
+`0.23.x` dropped scikit-image's hard `PyWavelets` dependency, which is why `requirements.lock`
+correctly contains no PyWavelets entry — the decisive evidence that the lock, not the old `0.20.0`
+contract row, is the coherent artifact. The corruption runtime closure imports only
+numpy/Pillow/scikit-image; **cv2 and scipy are not corruption-runtime dependencies** (scipy remains
+in the stack for statistics and as a scikit-image transitive dependency).
+
+**Two phases, never collapsed into one Boolean:**
+- `dependency_versions_registered = true` — the exact versions above are recorded and enforced at
+  runtime by `src.corruption_cache.require_official_dependency_environment()`.
+- `official_dependency_environment_validated = false` — that exact stack has **not** been installed
+  and the deterministic corruption verification has **not** been re-run under it. **Byte
+  reproducibility under these pins is therefore unproven**, and cache generation refuses.
+
+Before the official 31,220-item cache may be generated, the official environment must match Python
+3.11 · numpy 1.26.4 · Pillow 12.2.0 · scikit-image 0.23.2, the pinned vendored corruption checksum
+and seed-policy identity must verify, and `scripts/smoke_corruption_vendor.py` (including the
+40/40 upstream byte-equivalence grid) must pass **there**. Only then may
+`official_dependency_environment_validated` become true. The prior equivalence evidence was produced
+on a development stack (Pillow 11.1.0 / scikit-image 0.25.0) and is **not** official.
 
 **Descriptive backend-accuracy parity (ch3: "any accuracy difference between the two quantization
 configurations is documented")**
