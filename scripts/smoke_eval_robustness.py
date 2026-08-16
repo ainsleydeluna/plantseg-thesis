@@ -103,8 +103,68 @@ def test_ordering() -> None:
     expect("bad_transform_output_refused", RobustnessError, apply_corruption, img,
            lambda a: a.astype(np.float32))
 
-    # the production transform is not vendored and says so
-    expect("real_transform_not_vendored", RobustnessError, real_corruption_transform, "fog", 2)
+
+# ------------------------------------------------- 2b. vendored corruption paths A and B
+def test_vendored_corruption_paths() -> None:
+    """Supersedes the old `real_transform_not_vendored` dead-end assertion.
+
+    That assertion asserted the ABSENCE of an implementation and was correct until the pinned
+    imagecorruptions closure was vendored; it is now obsolete, so it is replaced by the stronger
+    pair of properties rather than deleted:
+
+      PATH A -- a real deterministic vendored transform exists, is seeded per item, and is what
+                CACHE GENERATION applies;
+      PATH B -- official robustness evaluation consumes hash-verified cached bytes and refuses
+                tampered, missing or unknown cache input instead of regenerating.
+
+    Only `fog` is exercised here. It is pure NumPy, whereas `brightness` reaches into
+    scikit-image, whose OpenMP runtime aborts this already-torch-loaded process on the Anaconda
+    development box. The full five-corruption grid is proven in a torch-free process by
+    `scripts/smoke_corruption_vendor.py`.
+    """
+    from src import corruption_cache as cache
+    from src.corruption_cache import CorruptionCacheError
+    from src.eval.robustness import load_cached_corruption
+    from src.vendor.imagecorruptions import apply_corruption as vendor_apply
+
+    img = np.random.RandomState(11).randint(0, 256, (32, 48, 3), dtype=np.uint8)
+
+    # ---- PATH A: real, deterministic, vendored, and bound to one (image, corruption, severity)
+    t = real_corruption_transform("fog", 2, image_id="img_000")
+    out = t(img)
+    direct, _ = vendor_apply(img, "fog", 2, image_id="img_000")
+    check("path_a_transform_is_vendored",
+          out.dtype == np.uint8 and out.shape == img.shape and np.array_equal(out, direct),
+          "byte-identical to the vendored implementation")
+    check("path_a_deterministic", np.array_equal(t(img), out), "same cell -> same bytes")
+    check("path_a_binds_image_id",
+          not np.array_equal(real_corruption_transform("fog", 2, image_id="img_001")(img), out),
+          "the per-item seed is fixed before any pixel is touched")
+    expect("path_a_still_gates_severity", RobustnessError, real_corruption_transform, "fog", 5,
+           image_id="img_000")
+    expect("path_a_still_gates_vocabulary", RobustnessError, real_corruption_transform, "snow", 1,
+           image_id="img_000")
+
+    # ---- PATH B: hash-verified consumption, and refusal of anything unverified
+    root = TMP / "corruption_cache"
+    cache.generate(root, {"img_000": img}, corruptions=("fog",), split="test")
+    man = cache.load_manifest(root)
+    loaded = load_cached_corruption(root, man, "img_000", "fog", 2)
+    check("path_b_consumes_hash_verified_cache",
+          loaded.dtype == np.uint8 and np.array_equal(loaded, direct),
+          "verified read reproduces the generated realisation exactly")
+
+    victim = root / next(e["cache_relative_path"] for e in man["entries"] if e["severity"] == 2)
+    good = np.load(victim)
+    np.save(victim, (good + 1).astype(np.uint8))
+    expect("path_b_refuses_tampered_cache", CorruptionCacheError, load_cached_corruption, root,
+           man, "img_000", "fog", 2)
+    np.save(victim, good)
+    victim.unlink()
+    expect("path_b_refuses_missing_cache", CorruptionCacheError, load_cached_corruption, root,
+           man, "img_000", "fog", 2)
+    expect("path_b_never_regenerates", CorruptionCacheError, load_cached_corruption, root, man,
+           "img_absent", "fog", 2)
 
 
 # ---------------------------------------------------------------- 3. aggregation math
@@ -206,8 +266,8 @@ def main() -> int:
     print("ROBUSTNESS EXECUTION SMOKE — synthetic uint8 fixtures; no PlantSeg, no GPU, no stats")
     print(f"temp: {TMP}")
     print("=" * 78)
-    for fn in (test_vocabulary, test_ordering, test_aggregation, test_stage_matrix,
-               test_runner_gates):
+    for fn in (test_vocabulary, test_ordering, test_vendored_corruption_paths, test_aggregation,
+               test_stage_matrix, test_runner_gates):
         print(f"\n--- {fn.__name__} ---")
         fn()
     print("\n[CHECKS]")

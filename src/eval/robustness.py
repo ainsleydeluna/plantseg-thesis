@@ -16,11 +16,18 @@ Contract math (IMPLEMENTATION_CONTRACT lines 338-341, 370):
     inference; severity 5 is never produced
   * the only inferential robustness pairing is E1 vs E6 on per-image mIoU-C
 
-THE CORRUPTION IMPLEMENTATION IS NOT VENDORED. `configs/corruption_protocol.json` states plainly
-that "the corruption implementation bytes, parameters, seed policy and cache protocol are NOT
-vendored here -- that is a future corruption-scaffold task", and `imagecorruptions` is not part of
-the pinned student stack. This module therefore defines the ORDERING CONTRACT and takes the
-transform as an injected callable; the production path fails loudly instead of inventing one.
+TWO CORRUPTION PATHS, DELIBERATELY DISTINCT. The implementation is now vendored (pinned
+imagecorruptions 1.1.2 under `src.vendor.imagecorruptions`, byte-verified against upstream), so this
+module exposes:
+
+  * PATH A -- `real_corruption_transform`: the deterministic vendored transform, bound to one
+    (image, corruption, severity) cell. For CACHE GENERATION only.
+  * PATH B -- `load_cached_corruption`: hash-verified reads from the frozen cache, which is what
+    official model evaluation uses so every stage scores the identical stochastic realisation.
+
+Evaluation must never take path A: regenerating on the fly would let two stages see different
+realisations. This module still owns only the ORDERING CONTRACT and keeps accepting an injected
+callable, so a caller-supplied transform is still validated rather than trusted.
 """
 
 from __future__ import annotations
@@ -120,20 +127,35 @@ def apply_corruption(image_uint8: np.ndarray, transform: Callable[[np.ndarray], 
     return out, mask
 
 
-def real_corruption_transform(name: str, severity: int):
-    """The production corruption function — NOT vendored yet, so this fails loudly.
+def real_corruption_transform(name: str, severity: int, *, image_id: str):
+    """PATH A — deterministic vendored application, for CACHE GENERATION only.
 
-    `configs/corruption_protocol.json` records that the implementation bytes, parameters, seed
-    policy and cache protocol are a separate future corruption-scaffold task, and the pinned student
-    stack does not ship `imagecorruptions`. Inventing an implementation here would silently create
-    an unregistered corruption definition.
+    Returns a callable `uint8 RGB -> uint8 RGB` bound to this (image, corruption, severity) cell, so
+    the per-item seed is fixed before any pixel is touched. Model evaluation must NOT use this: it
+    reads the frozen cache through `load_cached_corruption` (path B) so every stage scores the exact
+    same realisation.
     """
+    from src.vendor.imagecorruptions import apply_corruption as _apply
+
     validate_condition(name, severity, official=True)
-    _fail("corruption_implementation_not_vendored",
-          f"the {name!r} severity-{severity} implementation is not vendored: "
-          "configs/corruption_protocol.json defines the VOCABULARY and severity roles only, and "
-          "states the implementation bytes/parameters/seed policy remain a future corruption-"
-          "scaffold task. Supply a validated transform explicitly rather than improvising one.")
+
+    def _transform(image_uint8):
+        return _apply(image_uint8, name, severity, image_id=image_id)[0]
+
+    return _transform
+
+
+def load_cached_corruption(cache_root, manifest, image_id: str, name: str, severity: int):
+    """PATH B — hash-verified cached pixels, the path official model evaluation uses.
+
+    Delegates to `src.corruption_cache`, which refuses a missing entry, a modified file, a
+    pixel-digest mismatch, a foreign vendor checksum or a different seed policy. It never
+    regenerates, so a partially repaired cache cannot give two models different realisations.
+    """
+    from src.corruption_cache import load_cached
+
+    validate_condition(name, severity, official=True)
+    return load_cached(cache_root, manifest, image_id, name, severity)
 
 
 # ------------------------------------------------------------------ aggregation
