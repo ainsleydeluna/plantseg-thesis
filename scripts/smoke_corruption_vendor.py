@@ -388,7 +388,7 @@ def test_dependency_pins() -> None:
     """The PIN DECISION is registered; EXECUTABLE VALIDATION is explicitly still pending."""
     pins = cache.official_dependency_pins()
 
-    check("official_pillow_machine_readable", pins["pillow"] == "12.2.0", pins["pillow"])
+    check("official_pillow_machine_readable", pins["pillow"] == "12.3.0", pins["pillow"])
     check("official_scikit_image_machine_readable", pins["scikit_image"] == "0.23.2",
           pins["scikit_image"])
     check("official_numpy_unchanged", pins["numpy"] == "1.26.4", pins["numpy"])
@@ -410,41 +410,62 @@ def test_dependency_pins() -> None:
           and not ({"opencv-python", "PyWavelets"} & set(pins["corruption_runtime_dependencies"])),
           "cv2/scipy/PyWavelets are not corruption-runtime imports")
 
-    # two-phase honesty: registered != validated
+    # two-phase honesty: both phases are now satisfied for the CORRUPTION CLOSURE ONLY
     check("versions_registered", pins["dependency_versions_registered"] is True)
-    check("environment_not_yet_validated",
-          pins["official_dependency_environment_validated"] is False
-          and pins["byte_reproducibility_proven_under_these_pins"] is False,
-          "writing numbers down is not evidence")
+    check("corruption_environment_validated",
+          pins["official_dependency_environment_validated"] is True
+          and pins["byte_reproducibility_proven_under_these_pins"] is True
+          and "40/40" in pins["validation_evidence"]["reference_equivalence"],
+          pins["validation_evidence"]["validated_on_python"])
+    check("validation_scope_is_corruption_closure_only",
+          pins["validation_scope"] == "corruption_dependency_closure_only"
+          and pins["full_experiment_environment_validated"] is False,
+          "torch/mmcv/mmseg/fvcore/CUDA/RunPod remain unvalidated")
 
     # runtime matching rejects each pinned library independently
-    official = {"python": "3.11.9", "numpy": "1.26.4", "pillow": "12.2.0",
-                "scikit_image": "0.23.2"}
-    check("matching_runtime_has_no_mismatches", cache.runtime_pin_mismatches(official) == [])
+    # built FROM the registered pins so this fixture can never drift out of step with them
+    official = {"python": f"{pins['python']}.9", "numpy": pins["numpy"], "pillow": pins["pillow"],
+                "scikit_image": pins["scikit_image"]}
+    check("matching_runtime_has_no_mismatches", cache.runtime_pin_mismatches(official) == [],
+          str(official))
     for key, bad, label in (("pillow", "11.1.0", "pillow"), ("scikit_image", "0.25.0", "scikit"),
                             ("numpy", "2.1.3", "numpy"), ("python", "3.13.5", "python")):
         mism = cache.runtime_pin_mismatches({**official, key: bad})
         check(f"mismatched_{label}_rejected", len(mism) == 1 and key.split('_')[0] in mism[0],
               mism[0] if mism else "no mismatch reported")
 
-    # even a perfectly matching runtime still refuses while validation is pending
-    expect("matching_runtime_still_refuses_unvalidated", cache.CorruptionCacheError,
-           cache.require_official_dependency_environment, official)
-    expect("local_dev_runtime_refused", cache.CorruptionCacheError,
-           cache.require_official_dependency_environment)
-    check("local_versions_never_labeled_official",
-          cache.runtime_pin_mismatches() != [],
-          f"local runtime differs from the pins: {cache.runtime_pin_mismatches()[:2]}")
+    # the validated flag is a HISTORICAL record; the running interpreter is still checked
+    # independently, so a non-matching host is refused no matter what the flag says
+    saved = cache.OFFICIAL_DEPENDENCY_ENVIRONMENT_VALIDATED
+    try:
+        cache.OFFICIAL_DEPENDENCY_ENVIRONMENT_VALIDATED = False
+        expect("unvalidated_environment_refuses_even_when_versions_match",
+               cache.CorruptionCacheError, cache.require_official_dependency_environment, official)
+    finally:
+        cache.OFFICIAL_DEPENDENCY_ENVIRONMENT_VALIDATED = saved
+
+    mismatches = cache.runtime_pin_mismatches()
+    if mismatches:
+        expect("nonmatching_runtime_refused", cache.CorruptionCacheError,
+               cache.require_official_dependency_environment)
+        check("runtime_mismatch_enumerated", len(mismatches) >= 1,
+              f"this interpreter is NOT the pinned stack: {mismatches[:2]}")
+    else:
+        check("runtime_matches_registered_pins", True,
+              "running the validated corruption dependency stack")
+        check("validated_stack_passes_gate",
+              cache.require_official_dependency_environment()["pillow"] == pins["pillow"],
+              "both phases satisfied")
 
     # a generated cache carries the pins alongside the actual runtime it was built with
     m = cache.generate(TMP / "pins_cache",
                        {"img_p": np.zeros((32, 32, 3), dtype=np.uint8)},
                        corruptions=("fog",), severities=(1,), split="test")
     check("manifest_records_pins_and_runtime",
-          m["dependency_pins"]["pillow"] == "12.2.0"
-          and m["dependency_pins"]["official_dependency_environment_validated"] is False
-          and m["versions"]["pillow"] != m["dependency_pins"]["pillow"],
-          "development build is distinguishable from an official one")
+          m["dependency_pins"]["pillow"] == pins["pillow"]
+          and m["dependency_pins"]["validation_scope"] == "corruption_dependency_closure_only"
+          and {"pillow", "scikit_image", "numpy", "python"} <= set(m["versions"]),
+          "a reader can always compare the pins against the runtime that built the cache")
 
 
 # ---------------------------------------------------------------- 6. pipeline position (text)
@@ -486,8 +507,10 @@ def main() -> int:
         print(f"  {name:48}: {'PASS' if ok else 'FAIL'}{('  ' + detail) if detail else ''}")
     passed = sum(1 for _, ok, _ in results if ok)
     print(f"\nRESULT: {'PASS' if passed == len(results) else 'FAIL'} ({passed}/{len(results)})")
-    print("\nNOTE: local Pillow/scikit-image versions are DEVELOPMENT evidence; OFFICIAL cache "
-          "generation stays blocked until they are frozen in the official environment.")
+    print("\nNOTE: the corruption dependency closure (python 3.11 / numpy 1.26.4 / Pillow 12.3.0 / "
+          "scikit-image 0.23.2) is executably validated; running this file on any OTHER interpreter "
+          "is DEVELOPMENT evidence only. The full torch/mmcv/mmseg/CUDA/RunPod environment remains "
+          "UNVALIDATED, and official cache generation is still a separate task.")
     return 0 if passed == len(results) else 1
 
 

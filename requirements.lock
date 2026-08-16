@@ -42,7 +42,7 @@ oss2==2.17.0
 packaging==24.2
 pandas==3.0.3
 patsy==1.0.2
-pillow==12.2.0
+pillow==12.3.0
 platformdirs==4.10.0
 portalocker==3.2.0
 prettytable==3.18.0

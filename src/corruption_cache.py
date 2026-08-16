@@ -54,20 +54,46 @@ MANIFEST_NAME = "corruption_cache_manifest.json"
 # recorded here so cache generation can verify them at runtime, not re-decided here.
 #
 # Verified against primary PyPI metadata for the recorded official Python 3.11:
-#   Pillow 12.2.0        requires_python ">=3.10"; cp311 wheels published
+#   Pillow 12.3.0        requires_python ">=3.10"; cp311 wheels published; released 2026-07-01 as a
+#                        security-maintenance release over 12.2.0 (CVE-2026-55798 and the
+#                        CVE-2026-54059/54060/55379/55380 decompression-bomb set, plus out-of-bounds
+#                        fixes in TGA/RankFilter/Image.paste/ImageCmsTransform). Its release notes
+#                        document NO JPEG encode/decode change, and that was confirmed executably
+#                        rather than assumed: the registered jpeg_compression grid is byte-identical
+#                        under 12.2.0 and 12.3.0, so adopting it changes no corruption output.
 #   scikit-image 0.23.2  requires_python ">=3.10"; numpy>=1.23, scipy>=1.9, pillow>=9.1;
 #                        cp311 wheels published. (0.23.x dropped the hard PyWavelets dependency,
 #                        which is why the lock contains no PyWavelets entry.)
 OFFICIAL_PYTHON = "3.11"                 # recorded in docs/reference/context.md + the contracts
 OFFICIAL_NUMPY = "1.26.4"
-OFFICIAL_PILLOW = "12.2.0"
+OFFICIAL_PILLOW = "12.3.0"
 OFFICIAL_SCIKIT_IMAGE = "0.23.2"
 OFFICIAL_DEPENDENCY_SOURCE = "requirements.lock"
 
 # TWO PHASES, DELIBERATELY SEPARATE. Writing a version number down is not the same as having run
 # the corruption verification under that environment, and one Boolean cannot honestly say both.
 DEPENDENCY_VERSIONS_REGISTERED = True
-OFFICIAL_DEPENDENCY_ENVIRONMENT_VALIDATED = False   # flips only after the pinned stack passes
+
+# HISTORICAL RECORD, NOT A STATEMENT ABOUT THE CURRENT PROCESS. True means "this exact corruption
+# dependency stack has been installed and the deterministic corruption verification passed under
+# it". Whether the *running* interpreter matches is a separate question, answered independently by
+# `runtime_pin_mismatches()`; both must hold before the cache may be generated.
+OFFICIAL_DEPENDENCY_ENVIRONMENT_VALIDATED = True
+VALIDATION_EVIDENCE = {
+    "validated_on_python": "3.11.15",
+    "numpy": "1.26.4", "pillow": "12.3.0", "scikit_image": "0.23.2", "scipy": "1.11.4",
+    "check": "scripts/smoke_corruption_vendor.py",
+    "reference_equivalence": "40/40 byte-identical, zero tolerance "
+                             "(5 corruptions x severities 1-4 x {square, non-square})",
+    "isolated_environment": True,
+}
+
+# SCOPE LIMIT — the two validation claims are NOT interchangeable. Only the corruption dependency
+# closure (python/numpy/Pillow/scikit-image and scikit-image's own runtime deps) was reproduced and
+# executed. torch 2.1.0+cu121, torchvision 0.16.0, mmsegmentation 1.2.2, mmcv 2.1.0, fvcore, CUDA
+# and the RunPod container were NOT, so the full official experiment environment stays unvalidated.
+VALIDATION_SCOPE = "corruption_dependency_closure_only"
+FULL_EXPERIMENT_ENVIRONMENT_VALIDATED = False
 
 # The corruption RUNTIME closure imports exactly these third-party modules (AST-verified in
 # scripts/smoke_corruption_vendor.py). scikit-image's own transitive dependencies are not corruption
@@ -111,7 +137,12 @@ def official_dependency_pins() -> dict:
         "corruption_runtime_dependencies": list(CORRUPTION_RUNTIME_DEPENDENCIES),
         "dependency_versions_registered": DEPENDENCY_VERSIONS_REGISTERED,
         "official_dependency_environment_validated": OFFICIAL_DEPENDENCY_ENVIRONMENT_VALIDATED,
-        "byte_reproducibility_proven_under_these_pins": False,
+        # True only because the 40/40 zero-tolerance reference grid actually passed under these
+        # exact versions; it is a claim about the corruption closure, nothing wider.
+        "byte_reproducibility_proven_under_these_pins": OFFICIAL_DEPENDENCY_ENVIRONMENT_VALIDATED,
+        "validation_scope": VALIDATION_SCOPE,
+        "full_experiment_environment_validated": FULL_EXPERIMENT_ENVIRONMENT_VALIDATED,
+        "validation_evidence": dict(VALIDATION_EVIDENCE),
     }
 
 

@@ -255,7 +255,7 @@ pending the PlantSeg repo's official convention. `[empirical; ch3 Table 3.1; ctx
 | mmcv | 2.1.0 | `[ch3; ctx]` |
 | numpy | 1.26.4 | `[ch3; ctx]` |
 | scipy | 1.11.4 | `[ch3; ctx]` |
-| Pillow | 12.2.0 (corruption `jpeg_compression`) | `[requirements.lock; requirements-e1.txt]` |
+| Pillow | 12.3.0 (corruption `jpeg_compression`) — security-maintenance release superseding 12.2.0 | `[requirements.lock; requirements-e1.txt]` |
 | scikit-image | 0.23.2 (corruption `brightness`) — **corrected** from a stale `0.20.0` row, which contradicted `requirements.lock` and additionally hard-requires `PyWavelets`, a package the lock does not contain | `[requirements.lock; PyPI metadata]` |
 | OpenCV | 4.8.1 | `[ch3; ctx]` |
 | fvcore | 0.1.5.post20221221 | `[ch3; ctx]` |
@@ -443,7 +443,7 @@ and governs):
   x86 qparams. E5/E6 are **not** re-trained under x86 to obtain a latency artifact, and the x86
   artifact must never be described as x86-QAT-trained.
 
-**Corruption dependency pins — REGISTERED, not yet executably validated**
+**Corruption dependency pins — REGISTERED and EXECUTABLY VALIDATED (corruption closure only)**
 The corrupted bytes depend on three libraries: **numpy** (all corruptions), **Pillow**
 (`jpeg_compression`), **scikit-image** (`brightness`). The registered pins, taken from
 `requirements.lock` and verified against primary PyPI metadata for the recorded official
@@ -452,8 +452,17 @@ The corrupted bytes depend on three libraries: **numpy** (all corruptions), **Pi
 | package | version | evidence |
 |---|---|---|
 | numpy | **1.26.4** | unchanged |
-| Pillow | **12.2.0** | `requires_python ">=3.10"`, cp311 wheels published |
+| Pillow | **12.3.0** | `requires_python ">=3.10"`, cp311 wheels published; released 2026-07-01 |
 | scikit-image | **0.23.2** | `requires_python ">=3.10"`; `numpy>=1.23`, `scipy>=1.9`, `pillow>=9.1`; cp311 wheels published |
+
+**Why 12.3.0 supersedes 12.2.0.** 12.3.0 is a later upstream security-maintenance release
+(CVE-2026-55798; the CVE-2026-54059 / 54060 / 55379 / 55380 decompression-bomb set; out-of-bounds
+fixes in TGA, RankFilter, `Image.paste()` and ImageCmsTransform). Its release notes document **no**
+JPEG encode/decode change, and that was confirmed executably rather than assumed: the registered
+`jpeg_compression` grid produces **byte-identical** output under 12.2.0 and 12.3.0, and the full
+40/40 zero-tolerance reference-equivalence grid passes under 12.3.0. **No official thesis artifact
+or corruption cache had been produced under 12.2.0**, so moving the pin costs nothing and gains the
+security fixes.
 
 `0.23.x` dropped scikit-image's hard `PyWavelets` dependency, which is why `requirements.lock`
 correctly contains no PyWavelets entry — the decisive evidence that the lock, not the old `0.20.0`
@@ -464,16 +473,30 @@ in the stack for statistics and as a scikit-image transitive dependency).
 **Two phases, never collapsed into one Boolean:**
 - `dependency_versions_registered = true` — the exact versions above are recorded and enforced at
   runtime by `src.corruption_cache.require_official_dependency_environment()`.
-- `official_dependency_environment_validated = false` — that exact stack has **not** been installed
-  and the deterministic corruption verification has **not** been re-run under it. **Byte
-  reproducibility under these pins is therefore unproven**, and cache generation refuses.
+- `official_dependency_environment_validated = true` — that exact stack was installed in an
+  isolated **Python 3.11.15** environment (numpy 1.26.4 · Pillow 12.3.0 · scikit-image 0.23.2 ·
+  scipy 1.11.4) and `scripts/smoke_corruption_vendor.py` passed there, including the **40/40
+  zero-tolerance** upstream reference-equivalence grid. `byte_reproducibility_proven_under_these_pins`
+  is therefore true **for the corruption closure**.
 
-Before the official 31,220-item cache may be generated, the official environment must match Python
-3.11 · numpy 1.26.4 · Pillow 12.2.0 · scikit-image 0.23.2, the pinned vendored corruption checksum
-and seed-policy identity must verify, and `scripts/smoke_corruption_vendor.py` (including the
-40/40 upstream byte-equivalence grid) must pass **there**. Only then may
-`official_dependency_environment_validated` become true. The prior equivalence evidence was produced
-on a development stack (Pillow 11.1.0 / scikit-image 0.25.0) and is **not** official.
+That flag is a **historical record**, not a claim about whatever interpreter happens to be running:
+`runtime_pin_mismatches()` independently checks the live versions, and cache generation requires
+**both** — a validated stack *and* a matching runtime. Running the corruption smoke on any other
+interpreter remains development evidence only.
+
+**Scope limit — two different claims, never interchangeable:**
+- **Validated:** the corruption dependency closure (Python, numpy, Pillow, scikit-image and
+  scikit-image's own runtime dependencies). `validation_scope = corruption_dependency_closure_only`.
+- **NOT validated:** the full official experiment environment —
+  `full_experiment_environment_validated = false`. torch 2.1.0+cu121, torchvision 0.16.0,
+  mmsegmentation 1.2.2, mmcv 2.1.0, fvcore, CUDA and the RunPod container were **not** reproduced.
+  Chapter III's reproducibility materials also require a committed **Dockerfile / container
+  environment**, which the repository still lacks. The Chapter III environment-reproducibility
+  requirement is therefore **not** complete.
+
+Generating the official 31,220-item cache remains a **separate** operation: it reads the PlantSeg
+test split and produces a large governed artifact. This validation only removes the
+dependency-version blocker.
 
 **Descriptive backend-accuracy parity (ch3: "any accuracy difference between the two quantization
 configurations is documented")**
