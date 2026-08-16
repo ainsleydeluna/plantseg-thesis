@@ -218,7 +218,8 @@ def test_stage_matrix() -> None:
 def test_runner_gates() -> None:
     def parse(**kw):
         base = dict(stage="E1", corruption="fog", severity=2, out_dir=str(TMP / "out"),
-                    checkpoint=str(TMP / "e1.pt"))
+                    checkpoint=str(TMP / "e1.pt"),
+                    corruption_cache=str(TMP / "corruption_cache"))
         base.update(kw)
         argv = []
         for k, v in base.items():
@@ -251,12 +252,16 @@ def test_runner_gates() -> None:
           kinds["teacher"] == "teacher_checkpoint" and kinds["E1"] == "fp32_checkpoint"
           and kinds["E7"] == "int8_artifact", str(len(kinds)) + " stages")
 
-    # a blocked artifact fails before any dataset work: the runner validates the source first
+    # a blocked artifact fails before any dataset work: the runner validates the source first, and
+    # the corruption stage it reaches is now CACHE CONSUMPTION (path B), never regeneration
     runner_src = (REPO / "scripts/evaluate_corruptions.py").read_text(encoding="utf-8")
     body = runner_src[runner_src.index("def main("):]      # CALL sites, not the import block
     check("runner_validates_source_before_dataset",
-          body.index("resolve_evaluation_source") < body.index("real_corruption_transform"),
+          body.index("resolve_evaluation_source") < body.index("resolve_corruption_cache"),
           "model source proven before the corruption/dataset stage")
+    check("runner_corruption_stage_is_cache_consumption",
+          "load_cached_corruption" in runner_src and "real_corruption_transform" not in body,
+          "path B only; regeneration is not reachable from the runner")
     check("runner_builds_no_dataset_yet",
           "PlantSegEvalDataset" not in runner_src and "build_eval_loader" not in runner_src)
 
