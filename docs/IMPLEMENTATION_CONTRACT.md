@@ -442,6 +442,24 @@ and governs):
   x86 qparams. E5/E6 are **not** re-trained under x86 to obtain a latency artifact, and the x86
   artifact must never be described as x86-QAT-trained.
 
+**Descriptive backend-accuracy parity (ch3: "any accuracy difference between the two quantization
+configurations is documented")**
+- Because the x86/fbgemm copy uses a backend-specific quantization configuration, its clean
+  segmentation metrics may differ from the authoritative QNNPACK artifact's. For **E4–E7** those
+  metrics are therefore evaluated **once** as a descriptive **backend-parity check** on the same
+  governed clean test split (**1,561 rows**, same manifest, preprocessing, `ignore_index` and metric
+  reducers as the normal clean evaluator — no second evaluator is built), and the difference from
+  QNNPACK is reported for all-class mIoU, macro Dice, mAcc and disease-only mIoU.
+- Metrics stay on the repository scale (**fractions in [0, 1]**); any percentage-point figure is the
+  same value × 100 and is labelled as such. The delta is defined as **x86 − QNNPACK**.
+- **No acceptable-difference threshold is defined.** The requirement is to DOCUMENT the difference,
+  not to gate on it.
+- These x86 metrics **do not** enter model selection, robustness evaluation, hypothesis testing, or
+  the official E-stage accuracy results. The record is written separately
+  (`evaluation_role = descriptive_x86_backend_parity`) and never into an official clean-evaluation
+  artifact directory, so statistics and robustness consumers cannot discover it as a stage score.
+  The **QNNPACK** artifact remains authoritative for accuracy, robustness and serialized size.
+
 ---
 
 ## (g) Open / NEED_TO_CONFIRM list

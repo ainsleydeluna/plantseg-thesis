@@ -42,6 +42,7 @@ if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
 from src.eval.model_loading import sha256_file  # noqa: E402  (reuse; no second loader here)
+from src.eval.stage_artifacts import OFFICIAL_ROWS  # noqa: E402  (governed clean-test row count)
 
 EFFICIENCY_SCHEMA = "plantseg-efficiency/1.0.0"
 
@@ -472,6 +473,163 @@ def provenance(*, stage: str, model_role: str, precision: str, artifact_role: st
         "source_artifact_sha256": source_sha256,
         "input_shape": list(INPUT_SHAPE),
         "batch_size": BATCH_SIZE,
+        "environment": environment(),
+    }
+
+
+# ------------------------------------------------- descriptive QNNPACK<->x86 accuracy parity
+# Chapter III requires the accuracy difference between the two INT8 quantization configurations to
+# be DOCUMENTED. That is a reporting obligation, not a gate: nothing here defines an acceptable
+# difference, and no result may steer model selection, robustness, or any hypothesis test.
+#
+# The metrics themselves are NOT recomputed here. The governed clean evaluator
+# (`src.eval.evaluate.evaluate_model`) produces both `dataset_level` dicts — same manifest, same
+# preprocessing, same ignore_index, same reducers — and this module only differences them.
+
+PARITY_SCHEMA = "plantseg-backend-parity/1.0.0"
+PARITY_EVALUATION_ROLE = "descriptive_x86_backend_parity"
+PARITY_FILENAME = "backend_parity_{stage}.json"
+# mAcc and disease-only mIoU come out of the same confusion matrix at no extra cost, so they are
+# differenced too rather than reimplementing a reduced duplicate metric.
+PARITY_METRICS = ("all_class_miou", "all_class_macro_dice", "all_class_macc", "disease_only_miou")
+METRIC_SCALE = "fraction_0_1"                 # repository convention: metrics live in [0, 1]
+DELTA_DEFINITION = "x86 minus qnnpack"
+PP_CONVERSION = "percentage_points = delta * 100"
+
+
+def metric_delta(name: str, qnnpack_value, x86_value) -> dict:
+    """Difference one governed metric. Pure reducer; scale is stated, never implied.
+
+    Both inputs are fractions in [0, 1]; `delta_pp` is the same number in percentage points. The two
+    are emitted side by side with explicit labels so a consumer can never mix the scales silently.
+    """
+    if name not in PARITY_METRICS:
+        _fail("parity_metric_unknown",
+              f"{name!r} is not a governed parity metric {PARITY_METRICS}")
+    if qnnpack_value is None or x86_value is None:
+        return {"metric": name, "qnnpack": qnnpack_value, "x86": x86_value,
+                "delta": None, "delta_pp": None, "status": "undefined",
+                "scale": METRIC_SCALE, "delta_definition": DELTA_DEFINITION,
+                "pp_conversion": PP_CONVERSION}
+    for label, value in (("qnnpack", qnnpack_value), ("x86", x86_value)):
+        if not 0.0 <= float(value) <= 1.0:
+            _fail("parity_metric_out_of_scale",
+                  f"{label} {name}={value!r} is outside {METRIC_SCALE}; the repository reports "
+                  "metrics as fractions, so a percentage here would corrupt the delta")
+    delta = float(x86_value) - float(qnnpack_value)
+    return {"metric": name, "qnnpack": float(qnnpack_value), "x86": float(x86_value),
+            "delta": delta, "delta_pp": delta * 100.0, "status": "ok",
+            "scale": METRIC_SCALE, "delta_definition": DELTA_DEFINITION,
+            "pp_conversion": PP_CONVERSION}
+
+
+def backend_parity_deltas(qnnpack_dataset_level: dict, x86_dataset_level: dict) -> dict:
+    """Difference every governed metric the clean evaluator already produced."""
+    return {name: metric_delta(name, qnnpack_dataset_level.get(name), x86_dataset_level.get(name))
+            for name in PARITY_METRICS}
+
+
+def validate_parity_request(*, stage: str, qnnpack_artifact: dict, x86_artifact: dict,
+                            manifest_sha256: str, expected_rows: int, max_samples=None) -> str:
+    """PRE-RUN gates. Returns the engine actually selected; refuses rather than approximating.
+
+    Deliberately does NOT decide `actual_rows` — that is only knowable after inference and is
+    checked by `finalize_parity_record`.
+    """
+    if stage not in INT8_STAGES:
+        _fail("parity_not_int8_stage",
+              f"backend parity is defined for {list(INT8_STAGES)}, got {stage!r}")
+    for label, art in (("qnnpack", qnnpack_artifact), ("x86", x86_artifact)):
+        if not art.get("stage"):
+            _fail("parity_artifact_stage_missing", f"the {label} artifact records no stage")
+    if qnnpack_artifact["stage"] != x86_artifact["stage"] != stage:
+        _fail("parity_stage_identity_mismatch",
+              f"stage identity differs: requested {stage!r}, qnnpack "
+              f"{qnnpack_artifact['stage']!r}, x86 {x86_artifact['stage']!r}")
+    for key in ("source_stage", "source_checkpoint_sha256"):
+        a, b = qnnpack_artifact.get(key), x86_artifact.get(key)
+        if a is not None and b is not None and a != b:
+            _fail("parity_source_identity_mismatch",
+                  f"{key} differs between the two artifacts ({a!r} vs {b!r}); they are not two "
+                  "representations of the same trained model")
+    if qnnpack_artifact.get("backend") not in (None, ACCURACY_BACKEND):
+        _fail("parity_accuracy_backend",
+              f"the authoritative accuracy artifact must be {ACCURACY_BACKEND!r}, got "
+              f"{qnnpack_artifact.get('backend')!r}")
+    if not manifest_sha256:
+        _fail("parity_manifest_required",
+              "the descriptive parity run must name the governed clean test manifest")
+    if expected_rows != OFFICIAL_ROWS:
+        _fail("parity_manifest_not_official",
+              f"the parity check runs on the full governed clean test split "
+              f"({OFFICIAL_ROWS} rows), got expected_rows={expected_rows}")
+    if max_samples is not None:
+        _fail("parity_capped_run",
+              "a capped or subsampled run cannot be presented as the descriptive backend-parity "
+              "result")
+    return x86_latency_copy_gate(stage)         # approved x86/fbgemm engine, or a loud refusal
+
+
+def parity_output_path(out_dir, stage: str):
+    """Where a parity record may be written — never inside an official clean-artifact directory."""
+    from src.eval.artifacts import ARTIFACT_FILES
+
+    directory = Path(out_dir)
+    present = [f for f in ARTIFACT_FILES if (directory / f).exists()]
+    if present:
+        _fail("parity_would_pollute_official_artifact",
+              f"{directory} holds official clean-evaluation payloads {present}; a descriptive "
+              "backend-parity record must not be written where statistics or robustness consumers "
+              "discover official stage scores")
+    return directory / PARITY_FILENAME.format(stage=stage)
+
+
+def finalize_parity_record(*, stage: str, engine: str, qnnpack_artifact: dict, x86_artifact: dict,
+                           manifest_sha256: str, expected_rows: int, actual_rows: int,
+                           qnnpack_dataset_level: dict, x86_dataset_level: dict,
+                           x86_translation: dict | None = None) -> dict:
+    """Assemble the descriptive parity record AFTER inference. Never an official stage result.
+
+    `actual_rows` is supplied by the completed run and must equal the expected manifest size; it is
+    never assumed in advance.
+    """
+    if actual_rows != expected_rows:
+        _fail("parity_row_count_mismatch",
+              f"evaluated {actual_rows} rows, the governed manifest expects {expected_rows}")
+    if engine not in (X86_LATENCY_BACKEND, "x86"):
+        _fail("parity_engine_not_approved",
+              f"{engine!r} is not an approved x86 engine; ONEDNN or QNNPACK execution can never be "
+              "reported as the x86 backend-parity result")
+
+    return {
+        "schema": PARITY_SCHEMA,
+        # ---- firewall: impossible to mistake for an official stage accuracy result ----
+        "evaluation_role": PARITY_EVALUATION_ROLE,
+        "measurement_role": MEASUREMENT_ROLE,
+        "primary_accuracy_artifact": ACCURACY_BACKEND,
+        "official_accuracy_backend": ACCURACY_BACKEND,
+        "comparison_backend": engine,
+        "inferential_use": False,
+        "robustness_use": False,
+        "model_selection_use": False,
+        "is_official_stage_accuracy": False,
+        "threshold": None,                 # the requirement is to DOCUMENT, not to gate
+        "is_pass_fail_gate": False,
+        # ---- identity ----
+        "stage": stage,
+        "qnnpack_artifact": qnnpack_artifact,
+        "x86_artifact": x86_artifact,
+        "x86_translation": x86_translation,
+        "manifest_sha256": manifest_sha256,
+        "expected_rows": expected_rows,
+        "actual_rows": actual_rows,
+        # ---- the documented difference ----
+        "metric_scale": METRIC_SCALE,
+        "delta_definition": DELTA_DEFINITION,
+        "pp_conversion": PP_CONVERSION,
+        "qnnpack_dataset_level": qnnpack_dataset_level,
+        "x86_dataset_level": x86_dataset_level,
+        "deltas": backend_parity_deltas(qnnpack_dataset_level, x86_dataset_level),
         "environment": environment(),
     }
 

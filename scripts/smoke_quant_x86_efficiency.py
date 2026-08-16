@@ -22,6 +22,7 @@ import torch  # noqa: E402
 
 from torch.ao.quantization.fake_quantize import FakeQuantize  # noqa: E402
 
+from src.eval import efficiency as eff  # noqa: E402
 from src.eval.efficiency import EfficiencyError, x86_latency_copy_gate  # noqa: E402
 from src.quant import qconfig as qc  # noqa: E402
 from src.quant import x86_latency as x86  # noqa: E402
@@ -443,6 +444,164 @@ def test_efficiency_integration() -> None:
           "serialized size stays with the QNNPACK accuracy artifact")
 
 
+# ---------------------------------------------------------------- 7. backend accuracy parity
+def _levels(miou=0.40, dice=0.55, macc=0.60, dis=0.30):
+    return {"all_class_miou": miou, "all_class_macro_dice": dice, "all_class_macc": macc,
+            "disease_only_miou": dis, "aacc_diagnostic": 0.9}
+
+
+def test_backend_parity() -> None:
+    q = _levels()
+    x = _levels(miou=0.3925, dice=0.5461, macc=0.5983, dis=0.2954)
+
+    # 10. deltas are correctly defined and scale-unambiguous
+    d = eff.backend_parity_deltas(q, x)
+    check("parity_covers_governed_metrics",
+          set(d) == set(eff.PARITY_METRICS)
+          and set(eff.PARITY_METRICS) == {"all_class_miou", "all_class_macro_dice",
+                                          "all_class_macc", "disease_only_miou"},
+          "mIoU, Dice, mAcc and disease-only reuse the evaluator's own reducers")
+    miou = d["all_class_miou"]
+    check("parity_delta_arithmetic",
+          abs(miou["delta"] - (0.3925 - 0.40)) < 1e-12
+          and abs(miou["delta_pp"] - (-0.75)) < 1e-9,
+          f"delta={miou['delta']:.6f} ({miou['delta_pp']:.4f} pp)")
+    check("parity_scale_declared_not_implied",
+          miou["scale"] == "fraction_0_1"
+          and miou["delta_definition"] == "x86 minus qnnpack"
+          and "delta * 100" in miou["pp_conversion"],
+          "fraction and percentage-point values carry explicit labels")
+    check("parity_undefined_metric_handled",
+          eff.metric_delta("all_class_miou", None, 0.4)["status"] == "undefined")
+    expect("parity_percentage_input_rejected", EfficiencyError, eff.metric_delta,
+           "all_class_miou", 40.0, 39.25)
+    expect("parity_unknown_metric_rejected", EfficiencyError, eff.metric_delta, "made_up", 0.1, 0.2)
+
+    # 11. no arbitrary numerical parity threshold exists anywhere
+    src = (REPO / "src/eval/efficiency.py").read_text(encoding="utf-8")
+    parity_src = src[src.index("PARITY_SCHEMA"):]
+    check("no_parity_threshold_constant",
+          not any(t in parity_src for t in ("TOLERANCE", "MAX_DELTA", "PARITY_LIMIT",
+                                            "ACCEPTABLE_DELTA")),
+          "the requirement is to document the difference, not to gate on it")
+
+    qa = {"stage": "E4", "backend": "qnnpack", "sha256": "a" * 64, "source_stage": "E1",
+          "source_checkpoint_sha256": "c" * 64}
+    xa = {"stage": "E4", "backend": "fbgemm", "source_stage": "E1",
+          "source_checkpoint_sha256": "c" * 64}
+
+    # 5/6/7/8. pre-run gates
+    expect("parity_requires_matching_stage_identity", EfficiencyError, eff.validate_parity_request,
+           stage="E4", qnnpack_artifact=qa, x86_artifact=dict(xa, stage="E7"),
+           manifest_sha256="m" * 64, expected_rows=1561)
+    expect("parity_requires_matching_source", EfficiencyError, eff.validate_parity_request,
+           stage="E4", qnnpack_artifact=qa,
+           x86_artifact=dict(xa, source_checkpoint_sha256="d" * 64),
+           manifest_sha256="m" * 64, expected_rows=1561)
+    expect("parity_requires_governed_manifest", EfficiencyError, eff.validate_parity_request,
+           stage="E4", qnnpack_artifact=qa, x86_artifact=xa, manifest_sha256="",
+           expected_rows=1561)
+    expect("parity_requires_full_test_split", EfficiencyError, eff.validate_parity_request,
+           stage="E4", qnnpack_artifact=qa, x86_artifact=xa, manifest_sha256="m" * 64,
+           expected_rows=200)
+    expect("parity_refuses_capped_run", EfficiencyError, eff.validate_parity_request,
+           stage="E4", qnnpack_artifact=qa, x86_artifact=xa, manifest_sha256="m" * 64,
+           expected_rows=1561, max_samples=50)
+    expect("parity_refuses_non_int8_stage", EfficiencyError, eff.validate_parity_request,
+           stage="E1", qnnpack_artifact=qa, x86_artifact=xa, manifest_sha256="m" * 64,
+           expected_rows=1561)
+    expect("parity_refuses_non_qnnpack_accuracy_artifact", EfficiencyError,
+           eff.validate_parity_request, stage="E4",
+           qnnpack_artifact=dict(qa, backend="fbgemm"), x86_artifact=xa,
+           manifest_sha256="m" * 64, expected_rows=1561)
+    # all gates satisfied -> still refuses, because this host has no approved x86 engine
+    try:
+        eff.validate_parity_request(stage="E4", qnnpack_artifact=qa, x86_artifact=xa,
+                                    manifest_sha256="m" * 64, expected_rows=1561)
+        check("parity_requires_approved_x86_backend", False, "accepted without an x86 engine")
+    except EfficiencyError as e:
+        check("parity_requires_approved_x86_backend", e.code == "x86_backend_unavailable",
+              f"local engines={list(torch.backends.quantized.supported_engines)}")
+
+    # 8. ONEDNN can never satisfy the registered x86 requirement
+    expect("onednn_cannot_finalize_parity", EfficiencyError, eff.finalize_parity_record,
+           stage="E4", engine="onednn", qnnpack_artifact=qa, x86_artifact=xa,
+           manifest_sha256="m" * 64, expected_rows=1561, actual_rows=1561,
+           qnnpack_dataset_level=q, x86_dataset_level=x)
+    expect("qnnpack_cannot_finalize_parity", EfficiencyError, eff.finalize_parity_record,
+           stage="E4", engine="qnnpack", qnnpack_artifact=qa, x86_artifact=xa,
+           manifest_sha256="m" * 64, expected_rows=1561, actual_rows=1561,
+           qnnpack_dataset_level=q, x86_dataset_level=x)
+    # actual_rows is never assumed
+    expect("parity_row_count_verified_after_inference", EfficiencyError,
+           eff.finalize_parity_record, stage="E4", engine="fbgemm", qnnpack_artifact=qa,
+           x86_artifact=xa, manifest_sha256="m" * 64, expected_rows=1561, actual_rows=1500,
+           qnnpack_dataset_level=q, x86_dataset_level=x)
+
+    rec = eff.finalize_parity_record(
+        stage="E4", engine="fbgemm", qnnpack_artifact=qa, x86_artifact=xa,
+        manifest_sha256="m" * 64, expected_rows=1561, actual_rows=1561,
+        qnnpack_dataset_level=q, x86_dataset_level=x,
+        x86_translation={"optimizer_steps_for_translation": 0})
+
+    # 2/3/4. firewall
+    check("parity_record_is_descriptive_only",
+          rec["evaluation_role"] == "descriptive_x86_backend_parity"
+          and rec["primary_accuracy_artifact"] == "qnnpack"
+          and rec["inferential_use"] is False and rec["robustness_use"] is False
+          and rec["model_selection_use"] is False
+          and rec["is_official_stage_accuracy"] is False)
+    check("parity_record_declares_no_gate",
+          rec["threshold"] is None and rec["is_pass_fail_gate"] is False)
+    check("parity_record_names_both_backends",
+          rec["official_accuracy_backend"] == "qnnpack" and rec["comparison_backend"] == "fbgemm")
+    check("parity_record_carries_identity",
+          rec["manifest_sha256"] == "m" * 64 and rec["expected_rows"] == rec["actual_rows"] == 1561
+          and rec["qnnpack_artifact"]["sha256"] == "a" * 64)
+    check("parity_record_documents_difference",
+          abs(rec["deltas"]["all_class_macro_dice"]["delta_pp"] - (-0.39)) < 1e-9
+          and rec["metric_scale"] == "fraction_0_1")
+    check("parity_schema_distinct_from_official",
+          rec["schema"] == "plantseg-backend-parity/1.0.0" and "artifact_status" not in rec,
+          "no official artifact_status field exists to be mistaken for a stage result")
+
+    # 12/3/4. stored separately; statistics/robustness ingestion cannot discover it
+    from src.eval.artifacts import ARTIFACT_FILES
+    from src.stats.ingest import IngestError, verify_run_manifest
+    out = TMP / "parity_out"
+    out.mkdir(parents=True, exist_ok=True)
+    target = eff.parity_output_path(out, "E4")
+    target.write_text(json.dumps(rec, indent=2, sort_keys=True), encoding="utf-8")
+    check("parity_written_to_its_own_file",
+          target.name == "backend_parity_E4.json"
+          and not any((out / f).exists() for f in ARTIFACT_FILES),
+          "never an official clean-evaluation payload")
+    expect("statistics_cannot_ingest_parity_record", IngestError, verify_run_manifest, out)
+
+    official = TMP / "official_out"
+    official.mkdir(parents=True, exist_ok=True)
+    (official / "summary.json").write_text("{}", encoding="utf-8")
+    expect("parity_refuses_official_artifact_dir", EfficiencyError, eff.parity_output_path,
+           official, "E4")
+
+    # 1. the normal QNNPACK evaluation role is untouched
+    from src.eval.stage_artifacts import OFFICIAL_BACKEND, resolve_stage_artifact
+    check("qnnpack_remains_official_int8_role",
+          OFFICIAL_BACKEND == "qnnpack"
+          and all(resolve_stage_artifact(s)["kind"] == "int8_artifact" for s in ("E4", "E7")),
+          "official INT8 accuracy path unchanged")
+
+    # 9. E5/E6 still obey the sidecar rules
+    from scripts.evaluate_backend_parity import build_parser as parity_parser
+    ns = parity_parser().parse_args(["--stage", "E5", "--out-dir", str(out),
+                                     "--provenance", str(TMP / "p.json")])
+    check("parity_cli_defaults_to_refusal", not (ns.real_run and ns.confirm_real_run),
+          "real parity run is explicitly gated")
+    from scripts.evaluate_backend_parity import main as parity_main
+    rc = parity_main(["--stage", "E5", "--out-dir", str(out), "--provenance", str(TMP / "p.json")])
+    check("parity_cli_refuses_without_confirmation", rc == 2)
+
+
 def main() -> int:
     print("=" * 78)
     print("X86 EFFICIENCY QUANT SMOKE — synthetic; no backend, no dataset, no checkpoint, no timing")
@@ -450,7 +609,8 @@ def main() -> int:
     print(f"temp: {TMP}")
     print("=" * 78)
     for fn in (test_qconfig, test_backend, test_identity, test_stages, test_qat_translation,
-               test_runner_sidecar, test_calibration, test_efficiency_integration):
+               test_runner_sidecar, test_calibration, test_efficiency_integration,
+               test_backend_parity):
         print(f"\n--- {fn.__name__} ---")
         fn()
     print("\n[CHECKS]")
