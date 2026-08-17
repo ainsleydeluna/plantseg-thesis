@@ -443,49 +443,67 @@ and governs):
   x86 qparams. E5/E6 are **not** re-trained under x86 to obtain a latency artifact, and the x86
   artifact must never be described as x86-QAT-trained.
 
-**Remaining real-run values — analysis, recommendation, and what stays PILOT-SELECTED**
+**Remaining real-run values — what is LOCKED and what stays PILOT-SELECTED**
 
-*E5/E6 QAT controls* (`configs/quant.py['qat_real_run_recommendation']`,
-`status = RECOMMENDED_PENDING_AUTHORIZATION`). Every one of these must be **identical for E5 and E6**
-— the stages may differ only in source checkpoint and distillation history. The launcher continues to
-require each value explicitly and defaults none of them:
+*E5/E6 QAT controls — LOCKED* (`configs/quant.py['qat_real_run']`, `status = LOCKED`). These are
+**thesis implementation choices**, authorized as such; they are **not** values specified by
+Krishnamoorthi, Jacob or any other source and must never be cited as though they were. Every entry
+applies **identically to E5 and E6**, so the stages differ only in source checkpoint and distillation
+history. A real launch still supplies each explicitly — the runner defaults none of them.
 
-| control | recommended | basis |
+| control | value | rationale |
 |---|---|---|
-| batch size | **16** | the registered E1/E2/E3 recipe — **but see the conflict below** |
-| weight decay | **1e-4** | same recipe — **but see the conflict below** |
-| max epochs | **15** | the methodology's own "~15", read as a **cap**: early stopping on val mIoU plus best-val-mIoU selection mean it bounds rather than targets the run |
-| early-stop patience | **3** validations | no source value; bounded impact, because the reported model is the best-val-mIoU checkpoint regardless, so patience only decides how long to keep looking |
-| BN freeze | **0.65** of budget | literal lower endpoint of the registered "~65-70%" window |
-| observer freeze | **0.70** of budget | literal upper endpoint — "shortly after BN freeze" becomes an explicit 5%-of-budget gap with the required ordering |
+| **physical** batch size | **16** | preserves the registered student-training scale rather than adding another E5/E6 difference |
+| weight decay | **1e-4** | preserves the registered student regularization scale |
+| max epochs | **15** | converts the methodology's "~15 epochs" into a reproducible **maximum** budget |
+| early-stop patience | **3** validation checks | makes the already-required early stopping executable; best-val-mIoU checkpoint selection stays a separate mechanism |
+| BN-statistics freeze | **0.65** of planned optimizer steps | lower registered endpoint of the methodology's 65–70% window |
+| observer freeze | **0.70** of planned optimizer steps | places observer freezing shortly afterwards |
 
-**Recorded conflict, not silently resolved.** Batch size and weight decay are *recommendations that
-would overturn a position already recorded in the runner*: B4's QAT table has **no** batch-size and
-**no** weight-decay row, and `src/quant/runner.py` states that the 16/1e-4 belong to B2's student SGD
-recipe while accepting "any finite weight decay ≥ 0, including 0". Inheriting them is a defensible
-consistency argument, but adopting it is a **change of recorded position** and therefore needs explicit
-authorization rather than a silent edit. Until then the values stay operator-supplied and unenforced
-(`enforced_at_launch = false`).
+**Batch semantics.** 16 is a **physical** batch. Gradient accumulation is deliberately **not**
+introduced: fake-quant observers and BatchNorm statistics are batch-sensitive, so accumulated
+micro-batches are not equivalent to one true batch of 16. The GPU must accommodate the registered
+batch; if it genuinely cannot, that is an explicit experiment-design issue, not a silent change of
+batch semantics.
 
-*Gradient clipping — PILOT-SELECTED, not guessed.* Chapter 3 says "global-norm, throughout" and names
-no threshold; open_questions **D2/D-A** already resolved E1 as intentionally **unclipped** for exactly
-that reason, and no primary source (KD, CWD, or the quantization literature) fixes a numeric
-`max_norm` for this setup — ImageNet-scale prescriptions must not be transplanted onto a ~5.3k-image
-fine-tune. Inventing a number would also create a **confound**: E1 unclipped against E2/E3/E5/E6
-clipped means those comparisons differ in two ways, not one.
+**Freeze points and early-stop safety.** Freezes are **optimizer-step fractions** of the planned
+budget, rounded as `round(total_iters * pct)`, floored at step 1, with the observer freeze clamped
+never to precede the BN freeze. Fake quantization runs from step 0. A QAT run must not end before its
+quantization schedule has executed, so **early-stop patience accrues only after observer freeze**;
+best-checkpoint tracking still begins at the first validation. Without that guard a patience of 3 with
+per-epoch validation could terminate around epoch 3–4, before the 65%/70% freezes.
 
-One preregistered pilot (`configs/e1_student.py['grad_clip_pilot']`) therefore selects a **single**
-rule applied identically to **E2, E3, E5 and E6**: candidates **{none, 1.0, 5.0}** — `none` is a
-first-class candidate so the rule can match E1 — on **train/validation only**, seed **42**,
-dataset-level validation mIoU, ties preferring `none` and then the smaller `max_norm`. It runs as a
-shortened **E2** run per candidate (the cheapest stage that exercises distillation gradients), is
-labelled **HYPERPARAMETER SELECTION / PILOT**, and is excluded from test evaluation, robustness,
-hypothesis testing and the statistics family. `status` stays `PILOT_REQUIRED` and no number is written
-into any config until the pilot freezes it; the E2/E3 and E5/E6 launchers keep refusing an absent,
-zero, negative or non-finite value exactly as before, so nothing can start from an implicit threshold.
+*Gradient clipping — TWO SEPARATE, STILL-UNRESOLVED DECISIONS.* Chapter 3 requires global-norm
+clipping throughout distillation training **and** during QAT, and the launchers require a positive
+finite `max_norm`, so **"no clipping" is not a candidate** for these stages. E1's separately resolved
+unclipped status (D2/D-A) is **not** permission to leave the distilled stages unclipped, and E1 is not
+reopened here. Distillation and QAT are different optimization regimes and no source establishes that
+one numeric norm should serve both, so they are selected independently:
 
-`λ_logit` is unchanged — its existing validation sweep {0.25, 0.5, 1, 2, 4}, seed 42, validation-only
-selection remains the governing procedure and is not decided here.
+| decision | applies to | candidates | selection |
+|---|---|---|---|
+| `DISTILLATION_GRAD_CLIP_NORM` (`configs/distill.py`) | **E2, E3** (same value) | {1.0, 5.0} | pilot on **E2**, λ_logit held at **1.0**, 8,000 iters (10% of official) with validation every 1,000 |
+| `QAT_GRAD_CLIP_NORM` (`configs/quant.py`) | **E5, E6** (same value) | {1.0, 5.0} | pilot on **E5** from the official E1 FP32 checkpoint, 5 epochs (official max stays 15) |
+
+Both: seed **42**, **train + validation only, TEST prohibited**, labelled
+**HYPERPARAMETER SELECTION / PILOT**, excluded from test evaluation, robustness, hypothesis testing
+and the statistics family, and frozen before the corresponding official runs. Selection rule for each:
+reject a candidate whose training becomes non-finite or unstable; otherwise take the higher
+dataset-level validation mIoU under the identical pilot budget; on a tie within the repository's
+existing validation tie/noise rule prefer **5.0** as the less intrusive threshold. No new significance
+test is invented. The QAT decision never inherits the distillation result.
+
+**Decision order for E2/E3:** select `DISTILLATION_GRAD_CLIP_NORM` → freeze it → run the existing
+λ_logit sweep → freeze λ_logit → official E2/E3 runs. Fixing λ at the grid centre during the clipping
+pilot avoids a 2 × 5 Cartesian search while staying inside the registered grid.
+
+`λ_logit` is unchanged — {0.25, 0.5, 1, 2, 4}, seed 42, validation-only, boundary winner reported
+rather than extending the grid. It is not decided here.
+
+**Carry forward (manuscript, not resolved here).** Chapter 3 describes E1/E2/E3 as sharing an identical
+recipe and attributes their differences to the distillation objectives, yet applies clipping only to
+the distillation stages. That wording needs reconciling; execution is governed by the repository
+decisions above.
 
 **Official experiment environment (Chapter III reproducibility materials)**
 Four artifacts, with distinct and non-interchangeable roles:

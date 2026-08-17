@@ -34,37 +34,23 @@ E1_STUDENT = {
     # Scope note: E1=this recipe with no distillation; E2/E3 add distill terms on top (see configs/distill.py).
     "shared_by": ("E1", "E2", "E3"),
 
-    # ---------------------------------------------------------------- clipping decision (PREREGISTERED)
-    # THE PROBLEM. Chapter 3 says "global-norm, throughout" and names no threshold, so D2/D-A resolved
-    # E1 as intentionally UNCLIPPED rather than inventing a number. The E2/E3 and E5/E6 launchers
-    # meanwhile REQUIRE an explicit positive max_norm. Left as-is that produces a real confound: E1
-    # would run unclipped while every distilled/quantized stage ran clipped, so E1-vs-E2, E1-vs-E3 and
-    # E1-vs-E6 would differ in TWO ways instead of one.
+    # ---------------------------------------------------------------- clipping scope note
+    # E1 stays UNCLIPPED: open_questions D2/D-A resolved that, and this task does not reopen it.
+    # Chapter 3 requires global-norm clipping for the DISTILLATION stages and for QAT, so the clipped
+    # stages carry their own separate, independently selected thresholds:
+    #   * E2/E3  -> DISTILL["distillation_grad_clip_pilot"]  (configs/distill.py)
+    #   * E5/E6  -> QUANT["qat_grad_clip_pilot"]             (configs/quant.py)
+    # Those two are DIFFERENT optimization regimes and are not required to share a numeric threshold.
     #
-    # WHY NOT JUST PICK A NUMBER. No authoritative source fixes one — not Chapter 3 (D2), not the
-    # contract (method family only), and not the KD/CWD/quantization primary papers, whose reported
-    # recipes cover optimizer/schedule/temperature/loss weights rather than a clipping threshold.
-    # Krishnamoorthi's ImageNet-scale step counts must not be transplanted literally onto a ~5.3k-image
-    # PlantSeg fine-tune (source-hierarchy rule), and a guessed threshold would silently become an
-    # unregistered experimental variable.
-    #
-    # THE DECISION. One preregistered pilot selects ONE clipping rule, which is then frozen and applied
-    # IDENTICALLY to every stage that trains (E2, E3, E5, E6). "No clipping" is a first-class candidate
-    # precisely so the rule can match E1's already-resolved deviation and remove the confound.
-    "grad_clip_pilot": {
-        "status": "PILOT_REQUIRED",          # no value is selected yet; launchers must keep refusing
-        "question": "one global-norm clipping rule shared by every training stage",
-        "candidates": ("none", 1.0, 5.0),    # 'none' = unclipped, matching E1 (D2/D-A)
-        "splits_used": ("train", "val"),     # TEST is never touched by any selection procedure
-        "test_used_for_selection": False,
-        "seed": 42,
-        "selection_metric": "dataset-level validation mIoU",
-        "tie_rule": "prefer 'none' (matches E1, minimises confounding), then the smaller max_norm",
-        "run_on": "E2",                      # cheapest stage that actually exercises distillation grads
-        "applies_to": ("E2", "E3", "E5", "E6"),
-        "budget": "one shortened E2 run per candidate, identical iteration budget and seed",
-        "label": "HYPERPARAMETER SELECTION / PILOT",   # never an official E2 result
-        "freeze_before": ("E2", "E3", "E5", "E6"),
-        "excluded_from": ("test evaluation", "robustness", "hypothesis testing", "statistics family"),
+    # CARRY FORWARD (manuscript, not resolved here): Chapter 3 describes E1/E2/E3 as sharing an
+    # identical recipe and attributes their differences to the distillation objectives, yet applies
+    # clipping only to the distillation stages. That wording needs reconciling; execution is governed
+    # by the repository decision above.
+    "grad_clip_scope": {
+        "e1": "unclipped (D2/D-A)",
+        "e2_e3": "DISTILL['distillation_grad_clip_pilot']",
+        "e5_e6": "QUANT['qat_grad_clip_pilot']",
+        "shared_numeric_threshold_required": False,
+        "manuscript_reconciliation_pending": True,
     },
 }

@@ -198,11 +198,21 @@ class EarlyStopper:
         self.num_bad = 0
         self.triggered = False
 
-    def update(self, miou: float, step: int) -> bool:
-        """Record a validation result. Returns True when it improved on the best so far."""
+    def update(self, miou: float, step: int, *, stop_eligible: bool = True) -> bool:
+        """Record a validation result. Returns True when it improved on the best so far.
+
+        `stop_eligible=False` keeps BEST-CHECKPOINT tracking running while refusing to accrue
+        patience. A QAT run must not be able to terminate before its quantization schedule has
+        executed: with a 15-epoch budget and per-epoch validation, an unguarded patience of 3 could
+        stop around epoch 3-4, i.e. long before the BN freeze at 65% and the observer freeze at 70% of
+        the planned optimizer steps. Early-stop eligibility therefore begins only after observer
+        freezing, while the best-mIoU checkpoint is still tracked from the first validation onward.
+        """
         if miou > self.best:
             self.best, self.best_step, self.num_bad = miou, step, 0
             return True
+        if not stop_eligible:
+            return False
         self.num_bad += 1
         if self.num_bad >= self.patience:
             self.triggered = True
@@ -344,6 +354,9 @@ def run_qat(stage: dict, args, model, source_meta: dict, out_dir: Path, backend:
     # The TEST split is never constructed here.
     iters_per_epoch = len(train_loader)
     total_iters = iters_per_epoch * args.epochs
+    # Freeze points are OPTIMIZER-STEP fractions of the planned budget, not rounded epoch prose.
+    # Rounding convention: `round(total_iters * pct)` (Python banker's rounding), floored at step 1,
+    # and the observer freeze is additionally clamped to never precede the BN freeze.
     bn_freeze_at = bn_freeze_iteration(total_iters, args.bn_freeze_pct)
     obs_freeze_at = max(bn_freeze_at, int(round(total_iters * args.observer_freeze_pct)))
 
@@ -373,7 +386,9 @@ def run_qat(stage: dict, args, model, source_meta: dict, out_dir: Path, backend:
         if it % iters_per_epoch == 0 or it == total_iters:
             completed_epochs = math.ceil(it / iters_per_epoch)
             all_miou, _, _, _ = validate(prepared, val_loader, device, NUM_CLASSES, None)
-            if stopper.update(all_miou, it):      # selection = best all-class val mIoU
+            # Best-checkpoint tracking runs from the first validation; patience accrues only once the
+            # observer freeze has happened, so the quantization schedule always executes in full.
+            if stopper.update(all_miou, it, stop_eligible=it >= obs_freeze_at):
                 best_state = copy.deepcopy(prepared.state_dict())
             prepared.train()
             if stopper.should_stop:               # patience exhausted -> stop early, keep the best

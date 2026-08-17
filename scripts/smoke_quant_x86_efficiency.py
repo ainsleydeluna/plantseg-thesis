@@ -416,8 +416,11 @@ def test_runner_sidecar() -> None:
           '"quantization": "qat", "num_classes": NUM_CLASSES,' in src
           and '"model": converted.state_dict()' in src,
           "existing E5/E6 consumers keep the same primary artifact")
+    # Matched without the argument list so adding a keyword (e.g. early-stop eligibility) cannot fail
+    # this check: the invariant is that best-val-mIoU improvement still gates the checkpoint copy and
+    # that the best state is reloaded before conversion, not the exact call text.
     check("selection_semantics_preserved",
-          "if stopper.update(all_miou, it):" in src
+          "stopper.update(all_miou, it" in src
           and "best_state = copy.deepcopy(prepared.state_dict())" in src
           and "prepared.load_state_dict(best_state)" in src,
           "best all-class validation mIoU selection untouched")

@@ -34,4 +34,46 @@ DISTILL = {
 
     # Combined E3 objective
     "e3_total_loss": "L_CE + L_Dice + lambda_logit*L_LogitKD + 50*L_CWD_feat + 3*L_CWD_logit",
+
+    # ---------------------------------------------------- E2/E3 gradient clipping (PREREGISTERED)
+    # Chapter 3 requires global-norm clipping THROUGHOUT distillation training but names no threshold,
+    # and no primary source supplies one (the KD/CWD papers report optimizer, schedule, temperature and
+    # loss weights, not a clipping norm). "No clipping" is NOT a candidate: the methodology mandates
+    # clipping for these stages, and the committed E2/E3 launcher requires a positive finite max_norm.
+    # E1's separately resolved unclipped status (D2/D-A) is not permission to leave E2/E3 unclipped.
+    #
+    # This decision is INDEPENDENT of the QAT one (QUANT["qat_grad_clip_pilot"]): distillation and QAT
+    # are different optimization regimes, and nothing establishes that one numeric norm should serve
+    # both. E2 and E3 must nevertheless use the SAME selected value, or E2-vs-E3 is confounded.
+    "distillation_grad_clip_pilot": {
+        "name": "DISTILLATION_GRAD_CLIP_NORM",
+        "status": "PILOT_REQUIRED",              # unresolved; official E2/E3 launches must refuse
+        "selected_value": None,
+        "candidates": (1.0, 5.0),                # both positive finite; no 'none' option
+        "applies_to": ("E2", "E3"),
+        "run_on": "E2",                          # cheapest stage exercising distillation gradients
+        "seed": 42,
+        "splits_used": ("train", "val"),
+        "test_used_for_selection": False,
+        # λ is HELD FIXED at the centre of the preregistered λ grid during this pilot, which avoids a
+        # 2 x 5 Cartesian clipping-by-λ search while keeping the pilot inside the registered grid.
+        "lambda_logit_during_pilot": 1.0,
+        # Shortened budget, identical for both candidates and clearly distinct from the official
+        # 80,000-iteration run, so a pilot artifact can never be mistaken for an official E2 result.
+        "pilot_budget_iters": 8000,              # 10% of the official 80,000
+        "pilot_val_interval": 1000,              # 8 validation points per candidate
+        "official_budget_iters": 80000,          # for contrast only; the pilot never runs this long
+        "selection_rule": (
+            "1) reject a candidate whose training becomes non-finite or numerically unstable; "
+            "2) otherwise pick the higher dataset-level validation mIoU under the identical pilot "
+            "budget; 3) on a tie within the repository's existing validation tie/noise rule prefer "
+            "5.0 as the LESS INTRUSIVE clipping threshold."),
+        "no_new_significance_test": True,        # reuses the existing tie/noise rule; invents no test
+        "decision_order": ("select DISTILLATION_GRAD_CLIP_NORM", "freeze it",
+                           "run the existing lambda_logit sweep", "freeze lambda_logit",
+                           "official E2/E3 runs"),
+        "label": "HYPERPARAMETER SELECTION / PILOT",
+        "freeze_before": ("E2", "E3"),
+        "excluded_from": ("test evaluation", "robustness", "hypothesis testing", "statistics family"),
+    },
 }

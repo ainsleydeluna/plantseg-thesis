@@ -34,49 +34,81 @@ QUANT = {
     },
 
     # ---------------------------------------------------------------- E5/E6 real-run controls
-    # RECOMMENDATION, NOT YET AUTHORITATIVE. A real QAT launch must supply these explicitly, and the
-    # runner deliberately refuses to default them (src/quant/runner.py::unresolved_qat_values). What
-    # is recorded here is the analysis of WHICH value each control should take and, critically, that
-    # every one of them must be IDENTICAL for E5 and E6 — the two stages may differ only in source
-    # checkpoint and distillation history, never in arbitrary QAT tuning, or E5-vs-E6 stops being a
-    # controlled comparison (`shared_by`).
+    # LOCKED. These are THESIS IMPLEMENTATION CHOICES, explicitly authorized as such — they are NOT
+    # values specified by Krishnamoorthi, Jacob, or any other source, and must never be cited as
+    # though they were. Every entry applies IDENTICALLY to E5 and E6 (`shared_by`), so the two stages
+    # differ only in source checkpoint and distillation history rather than in QAT tuning.
     #
-    # STATUS is "RECOMMENDED_PENDING_AUTHORIZATION" rather than locked because two entries would
-    # overturn a decision already recorded in the runner: B4's QAT table has NO batch-size and NO
-    # weight-decay row, and the runner explicitly notes that the 1e-4/16 belong to B2's student SGD
-    # recipe, accepting "any finite >= 0" weight decay including 0. Inheriting them here is a
-    # defensible consistency argument, but it is a CHANGE of that recorded position, so it is proposed
-    # rather than silently applied.
-    "qat_real_run_recommendation": {
-        "status": "RECOMMENDED_PENDING_AUTHORIZATION",
+    # A real launch still supplies each value explicitly; the runner defaults none of them.
+    "qat_real_run": {
+        "status": "LOCKED",
+        "basis": "thesis implementation choice (authorized); not specified by the source papers",
 
-        # Consistency with the registered E1/E2/E3 recipe. NOTE the conflict described above.
-        "batch_size": 16,                    # = E1_STUDENT["batch_size"]
-        "weight_decay": 1e-4,                # = E1_STUDENT["weight_decay"]; B4 has no such row
-        "overturns_recorded_position": ("batch_size", "weight_decay"),
+        # PHYSICAL batch size — not an effective/accumulated one. Gradient accumulation is deliberately
+        # NOT introduced: fake-quant observers and BatchNorm statistics are batch-sensitive, so N
+        # accumulated micro-batches are not equivalent to one true batch of N. Preserves the registered
+        # student-training scale instead of adding another E5/E6 difference.
+        "batch_size_physical": 16,
+        "gradient_accumulation": None,        # never silently enabled; see docs note
+        "batch_semantics": "physical batch of 16; if it cannot fit, that is an experiment-design issue",
 
-        # The methodology's own "~15 epochs" read as a MAXIMUM budget, not a target: early stopping on
-        # validation mIoU decides the actual length and selection is best-val-mIoU regardless, so 15
-        # bounds the run rather than tuning it.
+        # Preserves the registered student regularization scale rather than introducing a new one.
+        "weight_decay": 1e-4,
+
+        # Converts the methodology's "~15 epochs" into a reproducible MAXIMUM budget. Early stopping
+        # decides the actual length; best-val-mIoU selection remains a separate mechanism.
         "max_epochs": 15,
 
-        # Bounded impact by construction — the reported model is the best-val-mIoU checkpoint, so
-        # patience only decides how long to keep looking, never which weights win.
-        "early_stop_patience": 3,            # validations (= epochs at this cadence)
+        # Makes the already-required early stopping executable. Counted in validation checks.
+        "early_stop_patience": 3,
 
-        # The literal endpoints of the contract's registered "~65-70%" window, so nothing is invented
-        # inside the range and "observer freeze shortly after BN freeze" becomes an explicit
-        # 5%-of-budget gap with the required ordering.
+        # Optimizer-step FRACTIONS of the planned budget (not rounded epoch prose). 0.65 is the lower
+        # registered endpoint of the methodology's 65-70% BN-freeze window; 0.70 places observer
+        # freezing shortly afterwards. Rounding convention: round(total_iters * pct), floored at step 1,
+        # with the observer freeze clamped never to precede the BN freeze.
         "bn_freeze_pct": 0.65,
         "observer_freeze_pct": 0.70,
+        "freeze_rounding": "round(total_iters * pct), min step 1, observer >= bn",
 
-        # See `grad_clip_pilot` in configs/e1_student.py: no authoritative source fixes a numeric
-        # max_norm and E1 is already resolved as unclipped (open_questions D2/D-A), so the rule is
-        # pilot-selected and then applied identically to every training stage.
+        # A QAT run must not end before its quantization schedule has run. Patience therefore accrues
+        # only after observer freeze; best-checkpoint tracking still starts at the first validation.
+        "fake_quant_start": "step 0",
+        "early_stop_eligible_after": "observer_freeze",
+
+        # The QAT clipping threshold is NOT part of this locked set — see `qat_grad_clip_pilot`.
         "grad_clip": "PILOT_REQUIRED",
 
         "shared_by": ("E5", "E6"),
-        "enforced_at_launch": False,         # the runner still requires each value explicitly
+    },
+
+    # ---------------------------------------------------- E5/E6 gradient clipping (PREREGISTERED)
+    # INDEPENDENT of the distillation decision (DISTILL["distillation_grad_clip_pilot"]). QAT and
+    # distillation are different optimization regimes and no source establishes that one numeric norm
+    # should serve both, so the two are selected separately. E5 and E6 must share the SAME selected
+    # value. "No clipping" is not a candidate: the methodology mandates global-norm clipping for QAT.
+    "qat_grad_clip_pilot": {
+        "name": "QAT_GRAD_CLIP_NORM",
+        "status": "PILOT_REQUIRED",              # unresolved; official E5/E6 launches must refuse
+        "selected_value": None,
+        "candidates": (1.0, 5.0),                # both positive finite
+        "applies_to": ("E5", "E6"),
+        "run_on": "E5",
+        "source_checkpoint": "official E1 FP32 checkpoint",
+        "seed": 42,
+        "splits_used": ("train", "val"),
+        "test_used_for_selection": False,
+        "pilot_budget_epochs": 5,                # shortened; the official maximum stays 15
+        "official_max_epochs": 15,
+        "selection_rule": (
+            "1) reject a candidate whose training becomes non-finite or numerically unstable; "
+            "2) otherwise pick the higher dataset-level validation mIoU under the identical pilot "
+            "budget; 3) on a tie within the repository's existing validation tie/noise rule prefer "
+            "5.0 as the LESS INTRUSIVE clipping threshold."),
+        "no_new_significance_test": True,
+        "inherits_distillation_value": False,    # never auto-reused from the E2/E3 decision
+        "label": "HYPERPARAMETER SELECTION / PILOT",
+        "freeze_before": ("E5", "E6"),
+        "excluded_from": ("test evaluation", "robustness", "hypothesis testing", "statistics family"),
     },
 
     # INT8 Post-Training Quantization (E4 from E1; E7 from E3 head-removed; same calib subset)
