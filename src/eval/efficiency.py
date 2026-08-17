@@ -350,20 +350,47 @@ def measure_latency(model, *, input_shape=INPUT_SHAPE, warmup: int = WARMUP_FORW
 
 
 # ------------------------------------------------------------------ memory
+def rss_source() -> str:
+    """Which RSS mechanism this interpreter will actually use. Recorded, never assumed."""
+    try:
+        import resource  # noqa: F401
+        unit = "KiB->bytes" if sys.platform.startswith("linux") else "bytes"
+        return f"resource.getrusage(RUSAGE_SELF).ru_maxrss [{unit}]"
+    except ImportError:
+        pass
+    try:
+        import psutil  # noqa: F401
+        return "psutil.Process().memory_info().rss [bytes]"
+    except ImportError:
+        return "unavailable"
+
+
 def rss_bytes(sampler=None) -> int:
     """Resident set size in BYTES.
 
-    `resource.getrusage` is Unix-only (and its `ru_maxrss` unit differs across platforms: KiB on
-    Linux, bytes on macOS), so psutil RSS is used where available because it is bytes everywhere.
+    The contract names `resource.getrusage` / psutil RSS. Both are supported, and the ORDER matters
+    for the official stack: `requirements.lock` does not pin psutil, so the official Linux
+    environment has `resource` but not psutil. `resource` is therefore tried first on Unix and psutil
+    is the fallback.
+
+    `ru_maxrss` units differ by platform — KiB on Linux, bytes on macOS — so the Linux value is
+    converted to bytes explicitly rather than reported in whatever unit the OS chose.
     """
     if sampler is not None:
         return int(sampler())
     try:
+        import resource
+        peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        # Linux reports KiB; macOS reports bytes.
+        return int(peak * 1024) if sys.platform.startswith("linux") else int(peak)
+    except ImportError:
+        pass
+    try:
         import psutil
     except ImportError:
         _fail("memory_sampler_unavailable",
-              "NEEDS OFFICIAL PROFILING ENVIRONMENT: psutil is unavailable and must not be "
-              "installed as a side effect; pass sampler= to inject one")
+              "NEEDS OFFICIAL PROFILING ENVIRONMENT: neither `resource` (Unix) nor psutil is "
+              "available, so RSS cannot be sampled; pass sampler= to inject one")
     return int(psutil.Process().memory_info().rss)
 
 
@@ -385,7 +412,7 @@ def memory_delta(baseline_bytes: int, peak_bytes: int) -> dict:
         "negative_delta": delta < 0,
         "clamped": False,
         "units": "bytes",
-        "source": "psutil.Process().memory_info().rss",
+        "source": rss_source(),
         "platform": platform.platform(),
     }
 

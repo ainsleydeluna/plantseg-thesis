@@ -186,13 +186,28 @@ def test_flops() -> None:
     expect("quantized_model_refused_for_flops", EfficiencyError, eff.profile_macs,
            FakePackedNet(), counter=fake_counter)
 
-    # real counter path: fvcore is absent here and must defer, never install
-    try:
-        eff.profile_macs(net)
-        check("fvcore_absence_defers_cleanly", False, "fvcore unexpectedly present")
-    except EfficiencyError as e:
-        check("fvcore_absence_defers_cleanly", e.code == "fvcore_unavailable"
-              and "NEEDS OFFICIAL PROFILING ENVIRONMENT" in str(e), e.code)
+    # Real counter path, environment-aware. Where fvcore is absent it must defer without installing;
+    # where the REGISTERED fvcore is present (the official image) it must actually execute and return
+    # a MAC count with the 2x FLOP conversion applied.
+    import importlib.util
+
+    if importlib.util.find_spec("fvcore") is None:
+        try:
+            eff.profile_macs(net)
+            check("fvcore_path_behaves_for_this_environment", False, "expected a deferral")
+        except EfficiencyError as e:
+            check("fvcore_path_behaves_for_this_environment",
+                  e.code == "fvcore_unavailable"
+                  and "NEEDS OFFICIAL PROFILING ENVIRONMENT" in str(e),
+                  "absent -> defers cleanly, installs nothing")
+    else:
+        real = eff.profile_macs(net)
+        check("fvcore_path_behaves_for_this_environment",
+              real["profiler"] == "fvcore" and isinstance(real["macs"], int) and real["macs"] > 0
+              and real["flops_2x_mac"] == 2 * real["macs"]
+              and real["input_shape"] == [1, 3, 512, 512],
+              f"registered fvcore {real['profiler_version']} executed: {real['macs']} MACs "
+              "(toy net; NOT thesis evidence)")
 
 
 # ---------------------------------------------------------------- 5. latency
@@ -280,12 +295,19 @@ def test_int8_roles() -> None:
     # SUPERSEDED: E5/E6 were categorically blocked at this gate. They are now reconstructible by
     # zero-training translation of the pre-convert QAT sidecar, so the gate admits the STAGE and the
     # no-fabrication guarantee moved to build time — asserted here so coverage is not lost.
-    try:
-        eff.x86_latency_copy_gate("E5")
-        check("x86_qat_stage_admitted_then_gated", False, "gate did not refuse")
-    except EfficiencyError as e:
-        check("x86_qat_stage_admitted_then_gated", e.code == "x86_backend_unavailable",
-              "stage is eligible; this host simply has no x86 engine")
+    # E5 is an eligible STAGE; whether the gate then succeeds depends on the host's engines. Both
+    # outcomes are asserted so this holds on the dev box and inside the official image alike.
+    if {"x86", "fbgemm"} & supported:
+        check("x86_qat_stage_admitted_then_gated",
+              eff.x86_latency_copy_gate("E5") in ("x86", "fbgemm"),
+              "stage eligible and an approved x86 engine is present")
+    else:
+        try:
+            eff.x86_latency_copy_gate("E5")
+            check("x86_qat_stage_admitted_then_gated", False, "gate did not refuse")
+        except EfficiencyError as e:
+            check("x86_qat_stage_admitted_then_gated", e.code == "x86_backend_unavailable",
+                  "stage is eligible; this host simply has no x86 engine")
 
     from src.quant.x86_latency import X86LatencyCopyError, build_x86_latency_copy
     try:

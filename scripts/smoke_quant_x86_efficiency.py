@@ -34,6 +34,12 @@ from src.quant.stages import QUANT_STAGES, SHARED_CALIBRATION_STAGES  # noqa: E4
 TMP = Path(tempfile.mkdtemp(prefix="smoke_x86_eff_"))
 results: list[tuple[str, bool, str]] = []
 
+# Whether THIS host can actually run the registered x86 latency backend. The development box exposes
+# only onednn; the official image supplies x86/fbgemm. Backend-dependent assertions below branch on
+# this so the same suite proves the refusal contract on one host and the real execution path on the
+# other, instead of hardcoding either environment.
+X86_ENGINE_AVAILABLE = bool({"x86", "fbgemm"} & set(torch.backends.quantized.supported_engines))
+
 
 def check(name: str, ok: bool, detail: str = "") -> None:
     results.append((name, bool(ok), detail))
@@ -133,21 +139,26 @@ def test_backend() -> None:
     check("onednn_not_approved", "onednn" not in qc.X86_BACKENDS)
     check("qnnpack_not_approved_for_latency", "qnnpack" not in qc.X86_BACKENDS)
 
-    if not ({"x86", "fbgemm"} & set(supported)):
-        expect("unavailable_x86_backend_refused", qc.QuantBackendUnavailable, qc.select_x86_backend)
-        check("local_host_has_no_x86_backend", True, f"supported_engines={supported}")
-    else:  # pragma: no cover - not this host
+    # Environment-aware by design. The development host exposes only onednn, while the official
+    # image supplies x86/fbgemm; the SELECTOR CONTRACT must hold either way, so both branches are
+    # asserted rather than encoding one host's capabilities.
+    if X86_ENGINE_AVAILABLE:
         engine = qc.select_x86_backend()
-        check("selected_engine_takes_effect",
-              torch.backends.quantized.engine == engine and engine in qc.X86_BACKENDS, engine)
-        check("local_host_has_no_x86_backend", False, "host unexpectedly exposes x86/fbgemm")
-
-    try:
-        qc.select_x86_backend()
-    except qc.QuantBackendUnavailable as e:
-        check("refusal_names_reason",
-              "onednn" in str(e) and "qnnpack" in str(e) and "refused" in str(e).lower(),
-              "explains why neither substitute is accepted")
+        check("approved_x86_engine_selected",
+              engine in qc.X86_BACKENDS and torch.backends.quantized.engine == engine,
+              f"selected {engine!r} and the assignment took effect")
+        check("selector_never_returns_a_substitute", engine not in ("onednn", "qnnpack"),
+              f"supported_engines={supported}")
+    else:
+        expect("unavailable_x86_backend_refused", qc.QuantBackendUnavailable, qc.select_x86_backend)
+        check("selector_never_returns_a_substitute", True,
+              f"no approved engine here; supported_engines={supported}")
+        try:
+            qc.select_x86_backend()
+        except qc.QuantBackendUnavailable as e:
+            check("refusal_names_reason",
+                  "onednn" in str(e) and "qnnpack" in str(e) and "refused" in str(e).lower(),
+                  "explains why neither substitute is accepted")
 
 
 # ---------------------------------------------------------------- 3. artifact identity
@@ -194,10 +205,20 @@ def test_stages() -> None:
           "E1/E3 sources untouched")
 
     net = TinyStudent()
-    # PTQ stages route to the x86 PTQ configuration (backend selection refused on this host)
+    # PTQ stages route to the x86 PTQ configuration. Where the approved engine exists the copy is
+    # actually BUILT and converted; where it does not, construction must refuse.
     for stage in ("E4", "E7"):
-        expect(f"{stage.lower()}_ptq_routes_to_x86_backend", qc.QuantBackendUnavailable,
-               x86.build_x86_latency_copy, stage, net)
+        if X86_ENGINE_AVAILABLE:
+            copy_ = x86.build_x86_latency_copy(stage, net, calibration_batches=[
+                torch.randn(1, 3, 32, 32)])
+            packed = [m for m in copy_.modules() if hasattr(m, "_packed_params")]
+            check(f"{stage.lower()}_ptq_x86_copy_built",
+                  bool(packed) and torch.backends.quantized.engine in qc.X86_BACKENDS,
+                  f"converted INT8 under {torch.backends.quantized.engine!r}, "
+                  f"{len(packed)} packed module(s)")
+        else:
+            expect(f"{stage.lower()}_ptq_x86_copy_built", qc.QuantBackendUnavailable,
+                   x86.build_x86_latency_copy, stage, net)
     # QAT stages refuse without the sidecar, BEFORE any backend question, and never fabricate one
     for stage in ("E5", "E6"):
         expect(f"{stage.lower()}_qat_copy_refused_without_sidecar", x86.X86LatencyCopyError,
@@ -340,9 +361,27 @@ def test_qat_translation() -> None:
           x86.assert_trained_state_preserved(prepared6, sidecar6["model_state_dict"]) == []
           and report6["optimizer_steps_for_translation"] == 0)
 
-    # conversion still demands a real x86 engine, so an onednn-packed model can never be emitted
-    expect("convert_requires_x86_engine", x86.X86LatencyCopyError, x86.build_x86_latency_copy,
-           "E5", TinyStudent(), sidecar=sidecar, select_backend=False)
+    # Conversion demands a real x86 engine. With `select_backend=False` the active engine is whatever
+    # the process last set, so this asserts the guard rather than the ambient state: force a
+    # non-approved engine and require refusal, then (where possible) prove the real build succeeds.
+    saved_engine = torch.backends.quantized.engine
+    try:
+        torch.backends.quantized.engine = "onednn"
+        expect("convert_requires_x86_engine", x86.X86LatencyCopyError, x86.build_x86_latency_copy,
+               "E5", TinyStudent(), sidecar=sidecar, select_backend=False)
+    finally:
+        torch.backends.quantized.engine = saved_engine
+
+    if X86_ENGINE_AVAILABLE:
+        e5_copy = x86.build_x86_latency_copy("E5", TinyStudent(), sidecar=sidecar)
+        packed = [m for m in e5_copy.modules() if hasattr(m, "_packed_params")]
+        check("e5_x86_latency_copy_built_from_sidecar",
+              bool(packed) and torch.backends.quantized.engine in qc.X86_BACKENDS,
+              f"zero-training translation converted under "
+              f"{torch.backends.quantized.engine!r}, {len(packed)} packed module(s)")
+    else:
+        check("e5_x86_latency_copy_built_from_sidecar", True,
+              "no approved x86 engine on this host; conversion correctly unavailable")
 
     # sidecar loading validation
     good = TMP / "e5_qat_state.pt"
@@ -414,29 +453,29 @@ def test_calibration() -> None:
 
 # ---------------------------------------------------------------- 6. efficiency integration
 def test_efficiency_integration() -> None:
-    # QNNPACK timing can never be reported as the registered x86 measurement
-    expect("qnnpack_timing_not_reportable_as_x86", EfficiencyError, x86_latency_copy_gate, "E4")
-    try:
-        x86_latency_copy_gate("E4")
-    except EfficiencyError as e:
-        check("x86_gate_refuses_without_backend", e.code == "x86_backend_unavailable",
-              "no approved x86 engine on this host")
-    # SUPERSEDED: E5/E6 used to be categorically blocked at this gate. They are now reconstructible
-    # by sidecar translation, so the gate must let them through the STAGE check and refuse only on
-    # the backend — the sidecar requirement is enforced where the copy is actually built.
-    expect("x86_gate_refuses_qat_stage_without_backend", EfficiencyError,
-           x86_latency_copy_gate, "E5")
-    try:
-        x86_latency_copy_gate("E6")
-    except EfficiencyError as e:
-        check("x86_gate_admits_qat_stage_then_checks_backend",
-              e.code == "x86_backend_unavailable", e.code)
+    # The gate must admit every INT8 stage and then resolve an APPROVED engine — or refuse. E5/E6 are
+    # no longer categorically blocked (sidecar translation covers them); the sidecar requirement is
+    # enforced where the copy is actually built.
+    for stage in ("E4", "E5", "E6", "E7"):
+        if X86_ENGINE_AVAILABLE:
+            engine = x86_latency_copy_gate(stage)
+            check(f"x86_gate_resolves_engine_for_{stage.lower()}",
+                  engine in qc.X86_BACKENDS and engine not in ("onednn", "qnnpack"), engine)
+        else:
+            try:
+                x86_latency_copy_gate(stage)
+                check(f"x86_gate_resolves_engine_for_{stage.lower()}", False, "gate did not refuse")
+            except EfficiencyError as e:
+                check(f"x86_gate_resolves_engine_for_{stage.lower()}",
+                      e.code == "x86_backend_unavailable", e.code)
     expect("x86_gate_refuses_non_int8_stage", EfficiencyError, x86_latency_copy_gate, "E1")
 
+    # ONEDNN is never an approved x86 identity, and the gate never hands it back even where the
+    # engine list contains it.
     check("onednn_never_official_x86_evidence",
           "onednn" not in qc.X86_BACKENDS
-          and torch.backends.quantized.engine != "x86",
-          f"local engines={list(torch.backends.quantized.supported_engines)}")
+          and (not X86_ENGINE_AVAILABLE or x86_latency_copy_gate("E4") != "onednn"),
+          f"engines={list(torch.backends.quantized.supported_engines)}")
 
     runner = (REPO / "scripts/profile_efficiency.py").read_text(encoding="utf-8")
     check("size_not_switched_to_latency_copy",
@@ -514,14 +553,22 @@ def test_backend_parity() -> None:
            eff.validate_parity_request, stage="E4",
            qnnpack_artifact=dict(qa, backend="fbgemm"), x86_artifact=xa,
            manifest_sha256="m" * 64, expected_rows=1561)
-    # all gates satisfied -> still refuses, because this host has no approved x86 engine
-    try:
-        eff.validate_parity_request(stage="E4", qnnpack_artifact=qa, x86_artifact=xa,
-                                    manifest_sha256="m" * 64, expected_rows=1561)
-        check("parity_requires_approved_x86_backend", False, "accepted without an x86 engine")
-    except EfficiencyError as e:
-        check("parity_requires_approved_x86_backend", e.code == "x86_backend_unavailable",
-              f"local engines={list(torch.backends.quantized.supported_engines)}")
+    # With every pre-run gate satisfied, the request resolves to an APPROVED x86 engine where one
+    # exists and refuses where none does — the parity result can never be produced on a substitute.
+    if X86_ENGINE_AVAILABLE:
+        engine = eff.validate_parity_request(stage="E4", qnnpack_artifact=qa, x86_artifact=xa,
+                                             manifest_sha256="m" * 64, expected_rows=1561)
+        check("parity_requires_approved_x86_backend",
+              engine in qc.X86_BACKENDS and engine not in ("onednn", "qnnpack"),
+              f"resolved comparison backend {engine!r}")
+    else:
+        try:
+            eff.validate_parity_request(stage="E4", qnnpack_artifact=qa, x86_artifact=xa,
+                                        manifest_sha256="m" * 64, expected_rows=1561)
+            check("parity_requires_approved_x86_backend", False, "accepted without an x86 engine")
+        except EfficiencyError as e:
+            check("parity_requires_approved_x86_backend", e.code == "x86_backend_unavailable",
+                  f"engines={list(torch.backends.quantized.supported_engines)}")
 
     # 8. ONEDNN can never satisfy the registered x86 requirement
     expect("onednn_cannot_finalize_parity", EfficiencyError, eff.finalize_parity_record,

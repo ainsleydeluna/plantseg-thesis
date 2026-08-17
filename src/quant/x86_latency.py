@@ -156,6 +156,39 @@ def _recompute_x86_qparams(prepared: nn.Module) -> int:
     return updated
 
 
+def _copy_trained_state(prepared: nn.Module, incoming: dict) -> tuple[int, list[str]]:
+    """Copy trained tensors into the prepared model BY NAME, bypassing `load_state_dict`.
+
+    WHY NOT `load_state_dict`. A freshly `prepare_qat`-ed model has EMPTY per-channel observer
+    buffers (`min_val`/`max_val` start at shape [0] and are sized on first observation), while the
+    trained sidecar carries them at [out_channels]. PyTorch's per-channel observer reconciles that
+    inside `_load_from_state_dict`, but the path is version-gated on the state dict's `_metadata` —
+    and `_metadata` is an ATTRIBUTE of the returned OrderedDict, not an entry, so it does not survive
+    `torch.save` + `torch.load(weights_only=True)`. On the registered torch 2.1 the observer then
+    falls back to the LEGACY `min_vals`/`max_vals` names, reporting the modern buffers as both size
+    mismatches and missing keys. torch 2.9 happened to tolerate it; torch 2.1 does not.
+
+    Copying by name is version-independent and strictly more explicit: shapes are aligned where the
+    target buffer is resizable, and every value still comes from the trained state. Nothing is
+    synthesised, and `assert_trained_state_preserved` re-verifies the result afterwards.
+    """
+    targets = dict(prepared.named_parameters())
+    targets.update(dict(prepared.named_buffers()))
+    copied, unexpected = 0, []
+    for key, value in incoming.items():
+        target = targets.get(key)
+        if target is None:
+            unexpected.append(key)
+            continue
+        if not torch.is_tensor(value) or not torch.is_tensor(target):
+            continue
+        if target.shape != value.shape:
+            target.resize_(value.shape)
+        target.copy_(value)
+        copied += 1
+    return copied, unexpected
+
+
 @torch.no_grad()
 def translate_qat_state_to_x86(stage: str, model: nn.Module, sidecar: dict, *,
                                select_backend: bool = True) -> tuple[nn.Module, dict]:
@@ -182,13 +215,16 @@ def translate_qat_state_to_x86(stage: str, model: nn.Module, sidecar: dict, *,
 
     carried = {k: v for k, v in source_state.items() if not _is_qparam(k)}
     skipped = sorted(k for k in source_state if _is_qparam(k))
-    missing, unexpected = prepared.load_state_dict(carried, strict=False)
+    copied, unexpected = _copy_trained_state(prepared, carried)
     if unexpected:
         raise X86LatencyCopyError(
             "qat_sidecar_key_mismatch",
             f"sidecar carries {len(unexpected)} key(s) the x86-prepared model does not define, "
-            f"e.g. {list(unexpected)[:3]}; the two preparations are not structurally identical")
-    unexplained = [k for k in missing if not _is_qparam(k)]
+            f"e.g. {unexpected[:3]}; the two preparations are not structurally identical")
+
+    # every non-qparam tensor the x86 model defines must have been supplied by the sidecar
+    expected = {k for k in prepared.state_dict() if not _is_qparam(k)}
+    unexplained = sorted(expected - set(carried))
     if unexplained:
         raise X86LatencyCopyError(
             "qat_sidecar_incomplete",
@@ -205,6 +241,7 @@ def translate_qat_state_to_x86(stage: str, model: nn.Module, sidecar: dict, *,
 
     report = {
         "translated_from": QAT_SIDECAR_ROLE,
+        "trained_tensors_copied": copied,
         "qparams_recomputed": updated,
         "qparams_skipped_from_source": len(skipped),
         "carried_tensors": len(carried),

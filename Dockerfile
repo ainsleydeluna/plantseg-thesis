@@ -27,6 +27,9 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # Native libraries the registered wheels dlopen at import time:
 #   libgl1 + libglib2.0-0  -> opencv-python 4.8.1.78 (imported by mmcv/mmsegmentation)
 #   libgomp1               -> OpenMP runtime used by torch and scikit-image
+#   git                    -> LOAD-BEARING, not convenience: src/eval/artifacts.py records the commit
+#                             and the governed-path porcelain in every official artifact, so official
+#                             evaluation cannot be finalised without it.
 # NOTE: apt package versions follow the pinned base digest rather than being individually pinned;
 # that residual non-determinism is recorded in docs/runpod_environment.md.
 RUN apt-get update \
@@ -34,6 +37,7 @@ RUN apt-get update \
       libgl1 \
       libglib2.0-0 \
       libgomp1 \
+      git \
  && apt-get clean \
  && rm -rf /var/lib/apt/lists/*
 

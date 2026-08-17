@@ -80,6 +80,27 @@ On RunPod, attach the volume containing `plantseg_data/plantseg` and keep
 `PLANTSEG_DATA_ROOT=/workspace/plantseg_data/plantseg`. Checkpoints are written **outside** the
 repository (`--ckpt-dir /workspace/e1_ckpts`), which `train_e1.py` hard-guards.
 
+## 4b — Two run-time prerequisites the image deliberately does not carry
+
+The image ships **software only**. Two committed surfaces need more than that, and both were
+confirmed by running the suite inside the container:
+
+1. **A git checkout is required for artifact provenance.** `src/eval/artifacts.py` records the commit
+   and the governed-path porcelain in every official artifact, so it shells out to `git`. The binary
+   is installed in the image, but the build context deliberately excludes `.git`, so the image's
+   copied source is **not** a repository. `scripts/smoke_eval_stage_artifacts.py` and
+   `scripts/smoke_eval_contract.py` therefore fail inside the bare image with
+   `fatal: not a git repository` and pass on a checkout. For official runs, provide the code as a
+   **git checkout** — mount the repository (or clone it) at `/workspace/plantseg-thesis` — rather than
+   relying on the baked copy.
+2. **The dataset must be mounted for anything that builds a dataloader.** `PlantSegDataset` requires
+   the split directories to exist, so even `train_e1.py --dry-run` (whose weights and compute are
+   synthetic) constructs real dataloaders and refuses with `dataset root does not exist` in a
+   dataset-free container. Mount `plantseg_data` as in step 4 before running it.
+
+Neither is an implementation defect; both are properties of a deliberately dataset-free,
+history-free image.
+
 ## 5 — Official GPU preflight
 
 ```bash
@@ -132,9 +153,23 @@ backend and the **fbgemm/x86** CPU-proxy latency backend are present. Locally on
 available, which is what blocked the E4–E7 INT8 artifacts and the x86 latency copy. Those blockers
 are environmental, not architectural, and this image resolves them.
 
-This is **build evidence only**. It is not the official environment validation: no GPU was involved,
-so `full_experiment_environment_validated` stays `false`. Local Docker image IDs are not portable
-identifiers — record your own via step 3 for each official run.
+**Registered-stack CPU integration.** The committed synthetic/dry-run suites were then executed
+*inside* this image (source mounted from the checkout, pinned upstream corruption reference mounted,
+no GPU, no dataset, no training). Every code-level suite passes —
+`smoke_quant_x86_efficiency` 102/102 · `smoke_efficiency` 82/82 (registered fvcore actually
+executing) · `smoke_quant_runners` 77/77 · `smoke_quant_e4_e5` 58/58 · `smoke_quant_e6_e7` 37/37 ·
+`smoke_eval_int8` 32/32 · `smoke_corruption_vendor` **87/87 including the 40/40 zero-tolerance
+corruption grid** · `smoke_evaluate_corruptions` 25/25 · `smoke_eval_robustness` 59/59 ·
+`smoke_eval_teacher` 38/38. The only non-passing items are the two prerequisites in §4b.
+
+On this stack the backend-dependent paths run for real instead of being skipped: the E4/E7 x86 PTQ
+copies and the E5/E6 zero-training sidecar translation are **built and converted** under an approved
+`x86`/`fbgemm` engine. A few suite counts differ from the Windows development box because those
+branches now take the real-backend path rather than the unavailable-backend path.
+
+This is **build and CPU-integration evidence only**. It is not the official environment validation: no
+GPU was involved, so `full_experiment_environment_validated` stays `false`. Local Docker image IDs are
+not portable identifiers — record your own via step 3 for each official run.
 
 ## Known residual gaps
 

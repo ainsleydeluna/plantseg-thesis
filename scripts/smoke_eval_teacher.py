@@ -200,7 +200,24 @@ def test_loading() -> None:
     # the real builder path fails loudly without the teacher stack
     from src.distill.teacher import TeacherStackMissing
     expect("missing_teacher_stack_fails_loudly", TeacherStackMissing, load_teacher_model, resolved)
-    check("still_no_mmseg_imported", "mmseg" not in sys.modules)
+    # SUPERSEDED: this used to assert mmseg was STILL absent from sys.modules after deliberately
+    # invoking the teacher loader. That only held on a machine without the teacher stack; inside the
+    # official image mmseg is installed and the loader legitimately imports it, so the old assertion
+    # failed on a correct environment.
+    #
+    # The invariant that actually matters is that ORDINARY STUDENT/EVAL imports never pull the MMSeg
+    # stack. A fresh subprocess proves that regardless of whether mmseg is installed, which the
+    # in-process check above cannot do once a teacher call has run.
+    import subprocess
+
+    probe = ("import sys; import src.models.student, src.eval.model_loading, src.eval.evaluate; "
+             "print(int(any(m in sys.modules for m in ('mmseg', 'mmcv', 'mmengine'))))")
+    proc = subprocess.run([sys.executable, "-B", "-c", probe], cwd=str(REPO),
+                          capture_output=True, text=True)
+    check("student_paths_never_import_mmseg",
+          proc.returncode == 0 and proc.stdout.strip() == "0",
+          "fresh interpreter: student/eval imports pull no mmseg/mmcv/mmengine"
+          if proc.returncode == 0 else proc.stderr.strip()[:120])
 
 
 # ---------------------------------------------------------------- 4. CLI + safety

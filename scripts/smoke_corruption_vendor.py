@@ -74,7 +74,9 @@ def upstream_path():
     override = os.environ.get("PLANTSEG_UPSTREAM_CORRUPTIONS")
     if override:
         return override if os.path.isfile(override) else None
-    dirs = sorted(glob.glob(os.path.join(os.environ["TEMP"], "iccvendor_*")))
+    # tempfile.gettempdir() rather than os.environ["TEMP"]: TEMP is a Windows variable and indexing
+    # it raised KeyError on Linux, where this suite also has to run.
+    dirs = sorted(glob.glob(os.path.join(tempfile.gettempdir(), "iccvendor_*")))
     if not dirs:
         return None
     p = os.path.join(dirs[-1], "imagecorruptions-1.1.2", "imagecorruptions", "corruptions.py")
