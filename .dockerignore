@@ -1,0 +1,59 @@
+# Build context for the official Linux/RunPod experiment image.
+#
+# DENY BY DEFAULT, then re-include exactly what the runtime needs. An allow-list is used on purpose:
+# a deny-list silently ships whatever it forgets, and this repository sits next to datasets,
+# checkpoints and a protected reference PDF.
+
+**
+
+# ---- source the runtime actually imports ----
+!src/**
+!configs/**
+!scripts/**
+
+# ---- environment specifications ----
+!requirements-runpod.lock
+!requirements-runpod.in
+!requirements.lock
+!requirements-e1.txt
+
+# ---- the only docs read at runtime (src/eval/artifacts.py, src/stats/artifact.py) ----
+!docs/IMPLEMENTATION_CONTRACT.md
+!docs/EVALUATION_CONTRACT.md
+!docs/STATISTICAL_ANALYSIS_CONTRACT.md
+
+# ---- re-exclusions that must win regardless of the allow-list above ----
+# PROTECTED: never copy, read or hash the reference PDF.
+docs/reference/**
+# datasets and model artifacts stay outside the image (mounted at run time)
+data/**
+datasets/**
+plantseg_data/**
+weights/**
+outputs/**
+**/*.pt
+**/*.pth
+**/*.ckpt
+**/*.onnx
+**/*.zip
+**/*.tar
+**/*.tar.gz
+**/*.7z
+**/*.rar
+# secrets / credentials / keys
+**/.env
+**/*.pem
+**/*.key
+**/id_rsa*
+**/id_ed25519*
+**/.ssh/**
+**/.netrc
+**/.aws/**
+**/*credentials*
+**/*secret*
+# build noise
+**/__pycache__/**
+**/*.pyc
+.git/**
+.github/**
+reports/**

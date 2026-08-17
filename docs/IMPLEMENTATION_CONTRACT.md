@@ -443,6 +443,43 @@ and governs):
   x86 qparams. E5/E6 are **not** re-trained under x86 to obtain a latency artifact, and the x86
   artifact must never be described as x86-QAT-trained.
 
+**Official experiment environment (Chapter III reproducibility materials)**
+Four artifacts, with distinct and non-interchangeable roles:
+
+| artifact | role |
+|---|---|
+| `requirements.lock` | human-readable **exact-version registry** — the version authority |
+| `requirements-runpod.in` | resolver **input**, derived verbatim from the registry minus Windows-only wheels |
+| `requirements-runpod.lock` | **hash-verified** Linux x86-64 / CPython 3.11 install lock (78 distributions, 78 `--hash=sha256:` constraints) |
+| `Dockerfile` + `.dockerignore` | the **container specification**; base pinned by immutable digest |
+
+- **Interpreter/base:** `python:3.11-slim-bookworm` @
+  `sha256:2e32f7d302adc1c37428355c1e646897c0c53f4fd60b6a551245fb90ee129f91` (Python 3.11.16, glibc
+  2.36). The historical `pytorch/pytorch:2.1.0-cuda12.1-*` images are **rejected** — the upstream
+  v2.1.0 Dockerfile defaults to `ARG PYTHON_VERSION=3.8` and the published tags do not ship Python
+  3.11, so they would violate the registered interpreter.
+- **Binary reproducibility, never source builds:** the cu121 torch/torchvision wheels and
+  `mmcv-2.1.0-cp311-cp311-manylinux1_x86_64.whl` (OpenMMLab `cu121/torch2.1.0` index) exist for
+  exactly this combination, so **MMCV is never compiled**. `pip install --require-hashes` makes a
+  CPU-only torch, a newer torch, a NumPy upgrade, an MMCV source build or a silent "latest"
+  resolution a hard failure rather than a wrong experiment.
+- **Hash provenance:** every hash came from the actual resolved artifact — pip's own resolution
+  report on Linux, plus two artifacts whose index publishes no hash fragment which were downloaded
+  and hashed directly (and confirmed identical to the PyPI copies). No hash is hand-written.
+- **Preflight:** `scripts/preflight_environment.py` is the single executable authority, with
+  `--mode image` (software identity; CPU-only, runs in `docker build`) and `--mode gpu` (the official
+  preflight; fails unless a real CUDA device is present and records GPU/CPU/driver metadata). A
+  CPU-only host can never satisfy the official mode.
+- **Image vs run:** the image defines **software**; the run record defines **hardware**. No GPU model
+  is baked in. Dataset and checkpoints are mounted, never baked — `.dockerignore` denies by default
+  and re-excludes datasets, checkpoints, archives, keys and the protected `docs/reference/`.
+- **Two states, never conflated:** *container specification complete* (current) versus *full official
+  experiment environment executably validated* — the latter requires an actual build plus a passing
+  `--mode gpu` run, and until then `full_experiment_environment_validated = false`. Residual gap:
+  apt package versions follow the pinned base digest rather than being individually pinned.
+
+Full procedure: [runpod_environment.md](runpod_environment.md).
+
 **Corruption dependency pins — REGISTERED and EXECUTABLY VALIDATED (corruption closure only)**
 The corrupted bytes depend on three libraries: **numpy** (all corruptions), **Pillow**
 (`jpeg_compression`), **scikit-image** (`brightness`). The registered pins, taken from
@@ -489,10 +526,8 @@ interpreter remains development evidence only.
   scikit-image's own runtime dependencies). `validation_scope = corruption_dependency_closure_only`.
 - **NOT validated:** the full official experiment environment —
   `full_experiment_environment_validated = false`. torch 2.1.0+cu121, torchvision 0.16.0,
-  mmsegmentation 1.2.2, mmcv 2.1.0, fvcore, CUDA and the RunPod container were **not** reproduced.
-  Chapter III's reproducibility materials also require a committed **Dockerfile / container
-  environment**, which the repository still lacks. The Chapter III environment-reproducibility
-  requirement is therefore **not** complete.
+  mmsegmentation 1.2.2, mmcv 2.1.0, fvcore, CUDA and the RunPod container are now **specified**
+  (see *Official experiment environment* below) but have not been executably validated together.
 
 Generating the official 31,220-item cache remains a **separate** operation: it reads the PlantSeg
 test split and produces a large governed artifact. This validation only removes the
