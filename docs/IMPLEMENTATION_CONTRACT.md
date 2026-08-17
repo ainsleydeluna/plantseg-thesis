@@ -443,6 +443,50 @@ and governs):
   x86 qparams. E5/E6 are **not** re-trained under x86 to obtain a latency artifact, and the x86
   artifact must never be described as x86-QAT-trained.
 
+**Remaining real-run values — analysis, recommendation, and what stays PILOT-SELECTED**
+
+*E5/E6 QAT controls* (`configs/quant.py['qat_real_run_recommendation']`,
+`status = RECOMMENDED_PENDING_AUTHORIZATION`). Every one of these must be **identical for E5 and E6**
+— the stages may differ only in source checkpoint and distillation history. The launcher continues to
+require each value explicitly and defaults none of them:
+
+| control | recommended | basis |
+|---|---|---|
+| batch size | **16** | the registered E1/E2/E3 recipe — **but see the conflict below** |
+| weight decay | **1e-4** | same recipe — **but see the conflict below** |
+| max epochs | **15** | the methodology's own "~15", read as a **cap**: early stopping on val mIoU plus best-val-mIoU selection mean it bounds rather than targets the run |
+| early-stop patience | **3** validations | no source value; bounded impact, because the reported model is the best-val-mIoU checkpoint regardless, so patience only decides how long to keep looking |
+| BN freeze | **0.65** of budget | literal lower endpoint of the registered "~65-70%" window |
+| observer freeze | **0.70** of budget | literal upper endpoint — "shortly after BN freeze" becomes an explicit 5%-of-budget gap with the required ordering |
+
+**Recorded conflict, not silently resolved.** Batch size and weight decay are *recommendations that
+would overturn a position already recorded in the runner*: B4's QAT table has **no** batch-size and
+**no** weight-decay row, and `src/quant/runner.py` states that the 16/1e-4 belong to B2's student SGD
+recipe while accepting "any finite weight decay ≥ 0, including 0". Inheriting them is a defensible
+consistency argument, but adopting it is a **change of recorded position** and therefore needs explicit
+authorization rather than a silent edit. Until then the values stay operator-supplied and unenforced
+(`enforced_at_launch = false`).
+
+*Gradient clipping — PILOT-SELECTED, not guessed.* Chapter 3 says "global-norm, throughout" and names
+no threshold; open_questions **D2/D-A** already resolved E1 as intentionally **unclipped** for exactly
+that reason, and no primary source (KD, CWD, or the quantization literature) fixes a numeric
+`max_norm` for this setup — ImageNet-scale prescriptions must not be transplanted onto a ~5.3k-image
+fine-tune. Inventing a number would also create a **confound**: E1 unclipped against E2/E3/E5/E6
+clipped means those comparisons differ in two ways, not one.
+
+One preregistered pilot (`configs/e1_student.py['grad_clip_pilot']`) therefore selects a **single**
+rule applied identically to **E2, E3, E5 and E6**: candidates **{none, 1.0, 5.0}** — `none` is a
+first-class candidate so the rule can match E1 — on **train/validation only**, seed **42**,
+dataset-level validation mIoU, ties preferring `none` and then the smaller `max_norm`. It runs as a
+shortened **E2** run per candidate (the cheapest stage that exercises distillation gradients), is
+labelled **HYPERPARAMETER SELECTION / PILOT**, and is excluded from test evaluation, robustness,
+hypothesis testing and the statistics family. `status` stays `PILOT_REQUIRED` and no number is written
+into any config until the pilot freezes it; the E2/E3 and E5/E6 launchers keep refusing an absent,
+zero, negative or non-finite value exactly as before, so nothing can start from an implicit threshold.
+
+`λ_logit` is unchanged — its existing validation sweep {0.25, 0.5, 1, 2, 4}, seed 42, validation-only
+selection remains the governing procedure and is not decided here.
+
 **Official experiment environment (Chapter III reproducibility materials)**
 Four artifacts, with distinct and non-interchangeable roles:
 
