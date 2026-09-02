@@ -191,6 +191,65 @@ pending the PlantSeg repo's official convention. `[empirical; ch3 Table 3.1; ctx
 | Normalization | **T²/C**, with **C = 320** (MSCAN-B stride-16 Stage-3 channel count) | `[ch3]` |
 | Projection head | training-only 1×1 conv: student **160-ch C5 → teacher 320-ch**; removed before E6/E7 via state_dict edit prior to observer insertion | `[ch3]` |
 | Ignore handling | validity mask downsampled to stride-16; channel-wise spatial softmax + KL restricted to valid locations | `[ch3]` |
+
+#### B3 — spatial grid of each distillation term `[project; B32/F8, 2026-09-01]`
+ch3 pins *which pixels* enter the Logit-KD KL ("averaged over valid pixels only") but **not which
+grid**. B32 pins the grid. This is an implementation resolution of a genuine ch3 gap, not a change
+to a `[ch3]`-traced value.
+
+| Term | Grid | Validity mask | Note |
+|---|---|---|---|
+| Logit-KD KL | **OS8 64×64** | 64×64, min-pooled | **changed by B32** — was an upsampled 512×512 |
+| `L_CWD_logit` | **OS8 64×64** | 64×64, **shared** with Logit-KD | already OS8 pre-B32; unchanged |
+| `L_CWD_feat` | stride-16 32×32 | 32×32, min-pooled | unchanged |
+| `L_CE`, `L_Dice` | full 512×512 | full-resolution target | **unchanged — the supervised path is not touched** |
+
+Both the student head and the SegNeXt LightHamHead emit logits natively at 64×64 for a 512×512
+input, so neither side is resampled. The old path upsampled both, putting **98.4%** of the KL on
+interpolants; because interpolation happens in *logit* space before the softmax
+(`softmax(interp(z)) ≠ interp(softmax(z))`), the soft targets were distorted rather than repeated.
+
+- **Valid-population cost [empirical, measured, 60 train samples]:** the Logit-KD valid population
+  is a strict subset of CE's and is **1.29% smaller in relative terms** (mean valid fraction 0.7096
+  at 64×64 vs 0.7189 at 512×512). `L_CWD_feat` at 32×32 loses 3.14%. Conservative all-valid
+  min-pooling penalises letterboxed images ~3× more than near-square ones in relative terms (1.94%
+  vs 0.62% of valid locations), but the absolute effect is under 2% everywhere; the large absolute
+  gap between those groups is **padding**, which CE sees identically.
+- **Zero-valid cells are unreachable by construction**, not merely unobserved: 0 of 60 samples, and
+  it would require aspect ratio > 64 (widest observed 2.42). No guard was added.
+- **λ_logit magnitude shift [empirical, measured — UPPER BOUND]:** the KD term's magnitude changed
+  by **1.95×** and its gradient contribution by **1.76×**. Measured against a *random synthetic*
+  teacher, the worst case for spatial smoothness, so this is an **upper bound** — a real trained
+  SegNeXt-B should shift it less. `CANNOT-VERIFY-LOCALLY`; re-measure on the pod.
+- **Consequence for the λ sweep:** the preregistered grid `{0.25, 0.5, 1, 2, 4}` is geometric with
+  ratio 2, so ~1.95× is about **one grid step**. The grid still brackets a sensible optimum and
+  needs **no re-centring** — F11 is intact — but the expected optimum sits roughly one step lower,
+  and **a λ selected under the old semantics is not transferable**. Ch4 must state that the sweep
+  ran under OS8 semantics.
+- **Machine-checkable guard `[project; B32c-2]`:** `configs/distill.py` defines
+  `LOGIT_KD_SEMANTICS = "logitkd@os8-64x64-of-512"`. Every E2/E3 checkpoint and a
+  `<stage>_run_meta.jsonl` record it. `--lambda-semantics` is optional but checked when supplied;
+  a mismatch refuses unless `--allow-semantics-mismatch` is passed, and that override is stamped
+  into both artifacts so a non-comparable run stays identifiable without the terminal.
+
+#### E2/E3 peak memory `[project; B32c-3, INFERRED from a MEASURED activation set]`
+Retained-activation bytes MEASURED via `saved_tensors_hooks` at batch 2 and scaled ×8 (the graph is
+fixed-shape, so retained bytes are exactly linear in batch); parameters/gradients/momentum exact.
+
+| | E2 | E3 |
+|---|---|---|
+| activations + static, **pre-B32** | 13.63 GB | 13.78 GB |
+| activations + static, **post-B32** | **10.04 GB** | **10.20 GB** |
+
+The **frozen teacher retains nothing** — `FrozenTeacher.forward` is `@torch.no_grad()` — so its cost
+is a transient working set bounded at **~0.3–0.55 GB**, not an activation graph. The dominant costs
+are the student's own retained activations (4.47 GB) and the CE+Dice term (5.62 GB), both at full
+512×512, both unchanged by B32 and inherent to the locked batch-16/512² recipe.
+
+**E2/E3 therefore cost only marginally more than E1 itself.** Adding allocator overhead (+5–15%),
+the teacher transient, cuDNN workspace and backward temporaries gives an **INFERRED 11–14 GB** peak
+on CUDA at batch 16. This is **not a GO** — settle it on the pod with
+`torch.cuda.max_memory_allocated()`.
 | E3 total loss | `L_CE + L_Dice + λ_logit·L_LogitKD + 50·L_CWD_feat + 3·L_CWD_logit` | `[ch3]` |
 | Optional control | α_CWD sensitivity sweep {25, 50, 100} at 1 seed — optional, else fixed 50 per Shu 2021 | `[ch3 §C]` |
 

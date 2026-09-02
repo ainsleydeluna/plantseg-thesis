@@ -85,6 +85,30 @@ valid E1 run but not a byte-reproduction. It must be reported as resumed if it p
 result. No code change is proposed to make order recoverable: doing so would require persisting
 sampler position and is not required by any source. `[project; B31-2]`
 
+### D28 — the λ_logit semantics boundary — ✅ RESOLVED `[project]` (B32/F8 + B32c-2)
+ch3 pins *which pixels* enter the Logit-KD KL but not *which grid*. B32 pinned it to the head's
+native OS8 64×64. Because λ_logit weights that term, **its numeric value is only meaningful relative
+to the grid the term is computed on**, and the move changed the term's magnitude by **1.95×**
+(MEASURED against a synthetic teacher, therefore an **upper bound**; gradient contribution 1.76×).
+
+The preregistered grid `{0.25, 0.5, 1, 2, 4}` is geometric with ratio 2, so ~1.95× is about **one
+grid step**. Resolution: **the grid is NOT re-centred.** It still brackets a sensible optimum, and
+ch3 already handles a boundary winner ("reported as such rather than the grid being extended"), so
+F11's preregistration is intact. The optimum is expected roughly one step lower than it would have
+been under the old semantics.
+
+**A λ selected under one semantics is not consumable under the other.** Guarded, not just
+documented: `configs/distill.py` defines `LOGIT_KD_SEMANTICS = "logitkd@os8-64x64-of-512"` (and
+records the superseded `"logitkd@full-512x512-upsampled"`); every E2/E3 checkpoint and a
+`<stage>_run_meta.jsonl` carry it; `--lambda-semantics` is optional but checked when declared, and a
+mismatch refuses unless `--allow-semantics-mismatch` is passed — with that override stamped durably
+into both artifacts. Declaring is optional by design: the sweep runs *produce* the tag rather than
+consume it, so requiring it there would add friction at the point of lowest risk; the risk is a λ
+read out of a Ch4 table months later and passed to a re-run.
+
+**Ch4 obligation:** state that the λ sweep ran under OS8 semantics, and report λ with its tag.
+`[ch3 §C.1; project; B32/B32c]`
+
 ### D27 — scaffold check coverage under resume — ✅ RESOLVED `[project]`
 B31c V1 asked whether a resumed run can report success while exercising fewer checks than a fresh
 run. It could, in two ways, both now closed or made visible:
