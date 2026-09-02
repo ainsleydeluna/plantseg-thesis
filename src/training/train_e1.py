@@ -19,9 +19,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import random
+import subprocess
 import sys
 import tempfile
+import time
+from collections import deque
 from pathlib import Path
+
+import numpy as np
 
 REPO = Path(__file__).resolve().parents[2]
 if str(REPO) not in sys.path:
@@ -92,10 +99,42 @@ def resolve_ckpt_dir(ckpt_dir_arg: str | None) -> Path:
     return ckpt_dir
 
 
+def _atomic_save(payload: dict, path: Path) -> str:
+    """Write to `<final>.tmp` in the SAME directory, then os.replace().
+
+    Same-directory is required: os.replace is only atomic within one filesystem. A kill mid-write
+    destroys the .tmp and leaves the previous good checkpoint at `path` untouched.
+    """
+    tmp = path.with_name(path.name + ".tmp")
+    torch.save(payload, tmp)
+    os.replace(tmp, path)          # atomic on POSIX and on NTFS
+    return str(path)
+
+
+def _rng_state(train_loader) -> dict:
+    """Full RNG snapshot: python / numpy / torch / torch.cuda + the DataLoader generator."""
+    return {
+        "python": random.getstate(),
+        "numpy": np.random.get_state(),
+        "torch": torch.get_rng_state(),
+        "torch_cuda": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else [],
+        "loader_generator": train_loader.generator.get_state(),
+    }
+
+
+def _restore_rng(state: dict, train_loader) -> None:
+    random.setstate(state["python"])
+    np.random.set_state(state["numpy"])
+    torch.set_rng_state(state["torch"])
+    if torch.cuda.is_available() and state.get("torch_cuda"):
+        torch.cuda.set_rng_state_all(state["torch_cuda"])
+    train_loader.generator.set_state(state["loader_generator"])
+
+
 def save_checkpoint(ckpt_dir: Path, student, optimizer, scheduler, sched_name: str,
                     it: int, best_miou: float) -> str:
     path = _assert_outside_repo(Path(ckpt_dir)) / f"e1_student_best_iter{it}.pt"
-    torch.save({
+    return _atomic_save({
         "iter": it,
         "model_state_dict": student.state_dict(),
         "optimizer_state_dict": optimizer.state_dict(),
@@ -104,7 +143,95 @@ def save_checkpoint(ckpt_dir: Path, student, optimizer, scheduler, sched_name: s
         "best_val_miou_all_class": best_miou,
         "num_classes": NUM_CLASSES,
     }, path)
+
+
+def save_last(ckpt_dir: Path, student, optimizer, scheduler, sched_name: str,
+              it: int, best_miou: float, best_ckpt, train_loader, prev_lr) -> str:
+    """Periodic resume point. Same fields as `best` PLUS the RNG state needed to continue.
+
+    `prev_lr` is the LR of iteration `it`. Carrying it lets a resumed run compare its FIRST
+    iteration against the last iteration of the previous segment, so a k-segment run leaves zero
+    unverified LR transitions (V1).
+    """
+    path = _assert_outside_repo(Path(ckpt_dir)) / "last.pt"
+    return _atomic_save({
+        "iter": it,
+        "model_state_dict": student.state_dict(),
+        "optimizer_state_dict": optimizer.state_dict(),
+        "scheduler_state_dict": scheduler.state_dict(),
+        "scheduler": sched_name,
+        "best_val_miou_all_class": best_miou,
+        "best_ckpt": best_ckpt,
+        "num_classes": NUM_CLASSES,
+        "rng_state": _rng_state(train_loader),
+        "prev_lr": prev_lr,
+    }, path)
+
+
+TRACE_KEEP = 50          # lr values retained at each end for the stdout summary (B31-9)
+
+
+def write_best_pointer(ckpt_dir: Path, best_ckpt, best_miou: float) -> str:
+    """Record the current best so downstream tooling never has to glob/parse filenames."""
+    path = _assert_outside_repo(Path(ckpt_dir)) / "best.json"
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps({"best_ckpt": best_ckpt,
+                               "best_val_miou_all_class": best_miou}, indent=2),
+                   encoding="utf-8")
+    os.replace(tmp, path)
     return str(path)
+
+
+def prune_checkpoints(ckpt_dir: Path, keep: int, best_ckpt) -> list:
+    """Keep the `keep` newest best-checkpoints; never touch last.pt, best.json, or the current best.
+
+    Without this, every val improvement leaves a ~24 MB file behind for the whole 80k run.
+    """
+    d = _assert_outside_repo(Path(ckpt_dir))
+    cks = sorted(d.glob("e1_student_best_iter*.pt"), key=lambda q: q.stat().st_mtime)
+    protect = {Path(best_ckpt).name} if best_ckpt else set()
+    removed = []
+    for q in cks[:-keep] if keep > 0 else []:
+        if q.name in protect:
+            continue
+        try:
+            q.unlink()
+            removed.append(q.name)
+        except OSError:
+            pass
+    return removed
+
+
+def _jsonl(path: Path, rec: dict) -> None:
+    """Append ONE JSON object as a line. Opened per write so a pod kill cannot lose buffered rows;
+    append mode makes it resume-safe (a resumed run continues the same file)."""
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+
+def per_class_iou(cm: torch.Tensor):
+    """Per-class IoU from the SAME confusion matrix `validate()` already returned.
+
+    Mirrors `miou_from_confusion`'s UNION-present rule (EVALUATION_CONTRACT 3.1) WITHOUT touching
+    src/eval/metrics.py: eligible iff `UN_c = GT_c + PR_c - TP_c > 0`. Nothing is re-accumulated and
+    no inference is re-run. The macro mean over eligible classes must equal miou_from_confusion(cm)
+    exactly — asserted in the B31-7 acceptance test, which is the guard against this helper drifting
+    away from the frozen metric.
+    """
+    tp = torch.diag(cm).float()
+    gt = cm.sum(1).float()
+    pr = cm.sum(0).float()
+    un = gt + pr - tp
+    return tp / un.clamp_min(1e-9), un > 0
+
+
+def _git_head() -> str:
+    try:
+        r = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPO, capture_output=True,
+                           text=True, timeout=15)
+        return r.stdout.strip() if r.returncode == 0 else "UNKNOWN"
+    except Exception:  # noqa: BLE001
+        return "UNKNOWN"
 
 
 @torch.no_grad()
@@ -134,7 +261,9 @@ def validate(student, val_loader, device, num_classes: int, max_val_batches: int
 # --------------------------------------------------------------------------------------------------
 def run(*, mode: str, device: str, pretrained, batch_size: int, max_iters: int, val_interval: int,
         max_val_batches: int | None, num_workers: int, ckpt_dir_arg: str | None,
-        grad_clip_norm: float | None, log_every: int, seed: int) -> int:
+        grad_clip_norm: float | None, log_every: int, seed: int,
+        resume: str | None = None, ckpt_interval: int = 2000,
+        jsonl_name: str = "e1_telemetry.jsonl", keep_ckpts: int = 3) -> int:
     set_seed(seed)
     dev = torch.device(device)
     print(f"[mode] {mode.upper()} | torch {torch.__version__} | device={dev} | "
@@ -152,7 +281,10 @@ def run(*, mode: str, device: str, pretrained, batch_size: int, max_iters: int, 
           f"(pretrained arg={pretrained!r})")
 
     # --- data ---
-    train_loader = build_dataloader("train", batch_size, num_workers=num_workers)
+    # persistent workers on TRAIN only: the pool lives for all 80k iters, whereas val runs ~20 times
+    # and the respawn cost there is noise against holding a second worker pool resident (B31-5 Q1).
+    train_loader = build_dataloader("train", batch_size, num_workers=num_workers,
+                                    persistent_workers=num_workers > 0)
     val_loader = build_dataloader("val", batch_size, num_workers=num_workers)
     print(f"[data] train_index={len(train_loader.dataset)} val_index={len(val_loader.dataset)} "
           f"(index globbed; only the batches pulled below are decoded)")
@@ -177,24 +309,82 @@ def run(*, mode: str, device: str, pretrained, batch_size: int, max_iters: int, 
     ckpt_dir = resolve_ckpt_dir(ckpt_dir_arg)
     print(f"[ckpt] dir={ckpt_dir} (verified OUTSIDE repo)")
 
+    # --- persistent telemetry (B31-7). Lives beside the checkpoints, NEVER inside the repo. ---
+    jsonl_path = ckpt_dir / jsonl_name
+    _jsonl(jsonl_path, {
+        "event": "run_meta", "wall_clock": time.time(), "mode": mode, "seed": seed,
+        "git_head": _git_head(), "torch": torch.__version__, "numpy": np.__version__,
+        "device": str(dev), "cuda_available": torch.cuda.is_available(),
+        "gpu_name": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
+        "num_workers": num_workers, "batch_size": batch_size, "max_iters": max_iters,
+        "val_interval": val_interval, "max_val_batches": max_val_batches,
+        "ckpt_interval": ckpt_interval, "resumed_from": resume,
+        "num_classes": NUM_CLASSES, "ignore_index": IGNORE_INDEX,
+        "learning_rate": E1_STUDENT["learning_rate"], "momentum": E1_STUDENT["momentum"],
+        "weight_decay": E1_STUDENT["weight_decay"], "lr_power": E1_STUDENT["lr_power"],
+        "poly_horizon": E1_STUDENT["iterations"], "grad_clip_norm": grad_clip_norm,
+        "used_pretrained": student.used_pretrained, "params": n_params,
+    })
+    print(f"[jsonl] telemetry -> {jsonl_path}")
+
     checks: dict[str, bool] = {}
     best_miou = float("-inf")
     best_ckpt = None
     first_batch_meta = None
-    lr_trace: list[float] = []
-    train_iter = cycle(train_loader)
+    lr_head: list = []                  # first TRACE_KEEP lr values
+    lr_tail: deque = deque(maxlen=TRACE_KEEP)   # last TRACE_KEEP lr values
+    lr_monotonic, prev_lr, n_lr, n_lr_pairs = True, None, 0, 0
 
-    for it in range(1, max_iters + 1):
+    # --- resume (optional) ---
+    start_iter = 1
+    if resume:
+        ck = torch.load(resume, map_location=dev, weights_only=False)
+        student.load_state_dict(ck["model_state_dict"])
+        optimizer.load_state_dict(ck["optimizer_state_dict"])
+        scheduler.load_state_dict(ck["scheduler_state_dict"])
+        best_miou = ck.get("best_val_miou_all_class", float("-inf"))
+        best_ckpt = ck.get("best_ckpt")
+        if "rng_state" in ck:
+            _restore_rng(ck["rng_state"], train_loader)
+        # Carry the previous segment's final LR so the monotonicity check spans the resume
+        # boundary. Without this a k-segment run leaves k-1 transitions unverified (V1).
+        prev_lr = ck.get("prev_lr")
+        start_iter = int(ck["iter"]) + 1
+        print(f"[resume] from {resume} | resuming at iter={start_iter} "
+              f"lr={optimizer.param_groups[0]['lr']:.8e} best_all_class_miou={best_miou:.5f} "
+              f"prev_lr={'None (pre-B31c checkpoint)' if prev_lr is None else '%.17g' % prev_lr}")
+        print("[resume] WARNING: data-order continuity is NOT restored. The training loop consumes "
+              "an infinite `cycle(train_loader)`; the position within the current epoch is not "
+              "recoverable, so the post-resume sample order differs from an uninterrupted run. RNG "
+              "streams ARE restored, so augmentation remains reproducible from this point onward. "
+              "A resumed run is NOT bitwise-identical to an uninterrupted one.")
+
+    if start_iter > max_iters:
+        print(f"[resume] nothing to do: the checkpoint is already at iter {start_iter - 1}, which "
+              f"meets or exceeds --max-iters {max_iters}. Raise --max-iters to continue training, "
+              f"or resume from an earlier checkpoint. No iterations were run and no checkpoint was "
+              f"written.")
+        # Distinct token: zero checks were exercised, so this must not read as a checked PASS.
+        # Exit 0 because "nothing to do" is not an error.
+        print("\n[CHECKS] 0/6 exercised, 6 skipped (no iterations ran)")
+        print(f"RESULT: NOOP (already complete at iter {start_iter - 1})")
+        return 0
+
+    train_iter = cycle(train_loader)
+    first_it = start_iter
+    t_prev = time.time()
+
+    for it in range(start_iter, max_iters + 1):
         img, mask = next(train_iter)
         img, mask = img.to(dev), mask.to(dev)
-        if it == 1:
+        if it == first_it:
             first_batch_meta = (tuple(img.shape), str(img.dtype), tuple(mask.shape), str(mask.dtype))
             checks["batch_shapes"] = (img.shape[1:] == (3, 512, 512) and img.dtype == torch.float32
                                       and mask.shape[1:] == (512, 512) and mask.dtype == torch.int64)
 
         optimizer.zero_grad(set_to_none=True)
         logits = student(img)
-        if it == 1:
+        if it == first_it:
             checks["logits_shape"] = tuple(logits.shape) == (img.shape[0], NUM_CLASSES, 512, 512)
         ce = criterion.ce(logits, mask)
         dice = criterion.dice(logits, mask)
@@ -205,7 +395,7 @@ def run(*, mode: str, device: str, pretrained, batch_size: int, max_iters: int, 
                 f"dice={dice.item():.4f}. Aborting the real E1 run to avoid poisoning the model "
                 "or wasting compute.")
 
-        if it == 1:
+        if it == first_it:
             checks["loss_finite"] = bool(torch.isfinite(loss)) and loss.dim() == 0
             p0 = next(p for p in student.parameters() if p.requires_grad)
             before = p0.detach().clone()
@@ -216,18 +406,49 @@ def run(*, mode: str, device: str, pretrained, batch_size: int, max_iters: int, 
         optimizer.step()
         scheduler.step()                              # step ONCE per iteration, after optimizer
         lr = optimizer.param_groups[0]["lr"]
-        lr_trace.append(lr)
+        # B31-9: bounded retention. The monotonicity check is done STREAMING so it still
+        # covers every consecutive pair -- only the stdout summary is truncated. The full
+        # curve lives in the JSONL, not in a 1.4 MB print.
+        if len(lr_head) < TRACE_KEEP:
+            lr_head.append(lr)
+        lr_tail.append(lr)
+        if prev_lr is not None:
+            n_lr_pairs += 1                    # count of transitions ACTUALLY compared
+            if lr > prev_lr + 1e-12:
+                lr_monotonic = False
+        prev_lr, n_lr = lr, n_lr + 1
 
-        if it == 1:
+        if it == first_it:
             checks["optimizer_step"] = bool((p0.detach() - before).abs().sum().item() > 0.0)
+
+        now = time.time()
+        _jsonl(jsonl_path, {
+            "event": "train", "iter": it, "loss": float(loss.item()), "ce": float(ce.item()),
+            "dice": float(dice.item()), "lr": lr, "wall_clock": now,
+            "iter_seconds": now - t_prev,
+            "samples_per_sec": (batch_size / (now - t_prev)) if now > t_prev else None,
+        })
+        t_prev = now
 
         if it % log_every == 0 or it == max_iters:
             print(f"[iter {it:>4}/{max_iters}] loss={loss.item():.4f} ce={ce.item():.4f} "
                   f"dice={dice.item():.4f} lr={lr:.8e}")
 
         if it % val_interval == 0 or it == max_iters:
+            t_val0 = time.time()
             all_miou, disease_miou, cm, nvb = validate(student, val_loader, dev, NUM_CLASSES,
                                                        max_val_batches)
+            val_seconds = time.time() - t_val0
+            iou_vec, eligible = per_class_iou(cm)
+            _jsonl(jsonl_path, {
+                "event": "val", "iter": it, "all_class_miou": all_miou,
+                "disease_only_miou_PROVISIONAL": disease_miou,
+                "per_class_iou": [round(float(x), 8) for x in iou_vec.tolist()],
+                "per_class_eligible": [bool(x) for x in eligible.tolist()],
+                "n_eligible_classes": int(eligible.sum()), "val_batches": nvb,
+                "val_total_px": int(cm.sum()), "val_seconds": val_seconds,
+                "wall_clock": time.time(),
+            })
             checks["val_cm_accumulated"] = (tuple(cm.shape) == (NUM_CLASSES, NUM_CLASSES)
                                             and int(cm.sum()) > 0 and nvb >= 1)
             print(f"[val  {it:>4}/{max_iters}] cm_batches={nvb} cm_total_px={int(cm.sum())} "
@@ -236,24 +457,52 @@ def run(*, mode: str, device: str, pretrained, batch_size: int, max_iters: int, 
                 best_miou = all_miou
                 best_ckpt = save_checkpoint(ckpt_dir, student, optimizer, scheduler, sched_name,
                                             it, best_miou)
+                write_best_pointer(ckpt_dir, best_ckpt, best_miou)
+                pruned = prune_checkpoints(ckpt_dir, keep_ckpts, best_ckpt)
                 print(f"[ckpt {it:>4}/{max_iters}] new best all_class_miou={best_miou:.5f} "
-                      f"-> {best_ckpt}")
+                      f"-> {best_ckpt}"
+                      + (f" | pruned {len(pruned)} old ckpt(s)" if pruned else ""))
 
-    # scheduler sanity: per-iteration poly decay is monotonically non-increasing
-    checks["lr_non_increasing"] = all(lr_trace[i + 1] <= lr_trace[i] + 1e-12
-                                      for i in range(len(lr_trace) - 1))
+        # periodic resume point (atomic; carries RNG state). Independent of best-val improvement.
+        if it % ckpt_interval == 0 or it == max_iters:
+            last_path = save_last(ckpt_dir, student, optimizer, scheduler, sched_name,
+                                  it, best_miou, best_ckpt, train_loader, prev_lr)
+            print(f"[last {it:>4}/{max_iters}] resume point -> {last_path}")
+
+    # scheduler sanity: per-iteration poly decay is monotonically non-increasing (streamed above)
+    checks["lr_non_increasing"] = lr_monotonic
 
     hard = ["batch_shapes", "logits_shape", "loss_finite", "optimizer_step",
             "val_cm_accumulated", "lr_non_increasing"]
-    passed = all(checks.get(k, False) for k in hard)
+    # `all([]) is True` must never print as PASS: with no transition actually compared the
+    # monotonicity check is vacuous, so report it SKIPPED. Not fatal -- a legitimate one-iteration
+    # resume is not a defect -- but it must be visible (V1).
+    skipped = {"lr_non_increasing"} if n_lr_pairs == 0 else set()
+    exercised = [k for k in hard if k not in skipped]
+    passed = all(checks.get(k, False) for k in exercised)
     print("\n[CHECKS]")
     for k in hard:
-        print(f"  {k:18}: {'PASS' if checks.get(k) else 'FAIL'}")
+        if k in skipped:
+            print(f"  {k:18}: SKIPPED (0 LR transitions compared; {n_lr} LR value(s) seen)")
+        else:
+            print(f"  {k:18}: {'PASS' if checks.get(k) else 'FAIL'}")
+    print(f"[CHECKS] {len(exercised)}/{len(hard)} exercised, {len(skipped)} skipped")
+    print(f"[summary] lr_transitions_compared={n_lr_pairs} "
+          f"(spans the resume boundary when resuming from a checkpoint carrying prev_lr)")
     print(f"[summary] first_batch={first_batch_meta}")
-    print(f"[summary] lr_trace={['%.8e' % x for x in lr_trace]}")
+    _h = ['%.8e' % x for x in lr_head]
+    _t = ['%.8e' % x for x in lr_tail]
+    print(f"[summary] lr_trace n={n_lr} (bounded print: first {len(_h)} / last {len(_t)}; "
+          f"full curve in {jsonl_path.name})")
+    print(f"[summary] lr_head={_h}")
+    if n_lr > len(_h):
+        print(f"[summary] lr_tail={_t}")
     print(f"[summary] best_all_class_val_miou={best_miou:.5f} best_ckpt={best_ckpt}")
     print(f"[summary] used_pretrained={student.used_pretrained} (no download in dry-run)")
-    print(f"\nRESULT: {'PASS' if passed else 'FAIL'}")
+    # The exercised/skipped counts ride on the RESULT line itself so that a full run, a
+    # reduced-coverage run and a NOOP are all distinguishable from the LAST line alone (V1).
+    print(f"\nRESULT: {'PASS' if passed else 'FAIL'} "
+          f"({len(exercised)}/{len(hard)} checks exercised, {len(skipped)} skipped)")
     return 0 if passed else 1
 
 
@@ -276,8 +525,17 @@ def parse_args(argv=None):
     p.add_argument("--max-val-batches", type=int, default=None)
     p.add_argument("--num-workers", type=int, default=None)
     p.add_argument("--ckpt-dir", default=None, help="out-of-repo dir; auto temp dir if omitted")
+    p.add_argument("--resume", default=None,
+                   help="path to a last.pt resume point; restores model/optimizer/scheduler/RNG "
+                        "and continues from the saved iter (data ORDER is not restored)")
+    p.add_argument("--ckpt-interval", type=int, default=2000,
+                   help="write a periodic last.pt resume point every N iters (default 2000)")
     p.add_argument("--grad-clip-norm", type=float, default=None,
                    help="global-norm clip; omitted by default (no concrete E1 value)")
+    p.add_argument("--jsonl-name", default="e1_telemetry.jsonl",
+                   help="telemetry filename written inside --ckpt-dir (never inside the repo)")
+    p.add_argument("--keep-ckpts", type=int, default=3,
+                   help="rolling best-checkpoint retention; best + last.pt are always kept")
     p.add_argument("--log-every", type=int, default=1)
     p.add_argument("--seed", type=int, default=42)
     return p.parse_args(argv)
@@ -335,12 +593,16 @@ def main(argv=None) -> int:
         max_iters = args.max_iters or E1_STUDENT["iterations"]
         val_interval = args.val_interval or E1_STUDENT["val_interval"]
         max_val_batches = args.max_val_batches            # None -> full val
-        num_workers = args.num_workers if args.num_workers is not None else 4
+        # B31-5: data loading, not the GPU, bounded E1 throughput at the old default of 4.
+        default_workers = min(max((os.cpu_count() or 4) - 2, 1), 12)
+        num_workers = args.num_workers if args.num_workers is not None else default_workers
 
     return run(mode=mode, device=device, pretrained=pretrained, batch_size=batch_size,
                max_iters=max_iters, val_interval=val_interval, max_val_batches=max_val_batches,
                num_workers=num_workers, ckpt_dir_arg=args.ckpt_dir,
-               grad_clip_norm=args.grad_clip_norm, log_every=args.log_every, seed=args.seed)
+               grad_clip_norm=args.grad_clip_norm, log_every=args.log_every, seed=args.seed,
+               resume=args.resume, ckpt_interval=args.ckpt_interval,
+               jsonl_name=args.jsonl_name, keep_ckpts=args.keep_ckpts)
 
 
 if __name__ == "__main__":
