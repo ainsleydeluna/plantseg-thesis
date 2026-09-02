@@ -26,6 +26,11 @@ if str(REPO) not in sys.path:
 MOBILENET_CKPT = "mobilenet_v3_large-5c1a4163.pth"      # torchvision IMAGENET1K_V2 backbone file
 IMAGENET_ALIAS = "torchvision MobileNet_V3_Large_Weights.IMAGENET1K_V2"
 
+# Highest CUDA compute capability the PINNED stack can emit kernels for. torch 2.1.0+cu121 ships
+# cubins/PTX for sm_50..sm_90 only; a Blackwell-class device (sm_100/sm_120) has no compatible
+# kernel and fails at the FIRST kernel launch, after the pod is already provisioned and paid for.
+MAX_SM = (9, 0)
+
 
 def _run(cmd, timeout=120):
     try:
@@ -124,6 +129,27 @@ def main() -> int:
     print(f"  cuda_version        : {cuda_ver}")
     print(f"  gpu_count           : {gpu_count}")
     print(f"  gpu_names           : {gpu_names}")
+
+    # Compute-capability gate: FAIL (not warn) above MAX_SM — the pinned stack has no kernel.
+    gpu_caps = [torch.cuda.get_device_capability(i) for i in range(gpu_count)] if cuda else []
+    unsupported = [(i, gpu_names[i], gpu_caps[i]) for i in range(gpu_count)
+                   if gpu_caps[i] > MAX_SM]
+    cap_ok = not unsupported
+    print(f"  gpu_capabilities    : {[f'sm_{a}{b}' for a, b in gpu_caps]} "
+          f"(max supported by the pinned stack: sm_{MAX_SM[0]}{MAX_SM[1]})")
+    if not cuda:
+        print("  capability_gate     : SKIPPED (no CUDA device visible)")
+    elif cap_ok:
+        print("  capability_gate     : PASS")
+    else:
+        for i, name, (a, b) in unsupported:
+            print(f"  capability_gate     : FAIL — cuda:{i} '{name}' is sm_{a}{b}, above the "
+                  f"sm_{MAX_SM[0]}{MAX_SM[1]} ceiling of torch {torch_ver} / "
+                  f"torchvision {tv_ver}. Blackwell-class pods (RTX 5090, RTX Pro 6000, B200, "
+                  f"B300) are INCOMPATIBLE with the pinned stack and will abort at the first "
+                  f"CUDA kernel launch. Choose an Ada/Hopper/Ampere pod (sm_80–sm_90, e.g. "
+                  f"A100 / H100 / L40S / RTX 4090) or re-pin the stack.")
+
     print(f"  cudnn_available     : {cudnn_avail}")
     print(f"  cudnn_version       : {cudnn_ver}")
     print(f"  cpu_count(logical)  : {os.cpu_count()}")
@@ -220,17 +246,79 @@ def main() -> int:
     print(f"  repo_.pt_files   : {repo_pt}  (MUST be empty)")
     print(f"  no_repo_checkpoint : {len(repo_pt) == 0}")
 
+    # (17b) dataset: root resolves, all six split dirs exist, per-split PAIR counts match the
+    # single source of truth in configs/data.py. Index/stat only — NO image is decoded.
+    # Without this, verify_env could print "OK for real E1 training" and the run would then die
+    # inside PlantSegDataset.__init__ after the pod was already provisioned.
+    print("\n[17b] dataset (root / split dirs / per-split pair counts vs configs/data.py SPLIT_SIZES)")
+    from configs.data import DATA as DATA_CFG, SPLIT_SIZES, SPLIT_TOTAL
+    ds_root = Path(DATA_CFG["root"])
+    ds_problems, ds_counts = [], {}
+    print(f"  PLANTSEG_DATA_ROOT env : {os.environ.get('PLANTSEG_DATA_ROOT', '(unset -> default)')}")
+    print(f"  resolved root          : {ds_root}")
+    if not ds_root.is_dir():
+        ds_problems.append(f"dataset root does not exist or is not a directory: {ds_root}")
+    else:
+        for sp in ("train", "val", "test"):
+            img_dir, mask_dir = ds_root / "images" / sp, ds_root / "annotations" / sp
+            if not img_dir.is_dir():
+                ds_problems.append(f"missing image dir: {img_dir}")
+                continue
+            if not mask_dir.is_dir():
+                ds_problems.append(f"missing annotation dir: {mask_dir}")
+                continue
+            imgs = [p for p in img_dir.iterdir()
+                    if p.is_file() and p.suffix.lower() in (".jpg", ".jpeg")]
+            pairs = sum(1 for p in imgs if (mask_dir / f"{p.stem}.png").exists())
+            expected = SPLIT_SIZES[sp]
+            ds_counts[sp] = pairs
+            print(f"  {sp:<5}: images={len(imgs):<6} pairs={pairs:<6} expected={expected:<6} "
+                  f"{'OK' if pairs == expected else 'MISMATCH'}")
+            if len(imgs) != pairs:
+                ds_problems.append(
+                    f"split={sp}: {len(imgs) - pairs} image(s) have no matching <stem>.png mask")
+            if pairs != expected:
+                ds_problems.append(
+                    f"split={sp}: pair count {pairs} != expected {expected} "
+                    f"(delta {pairs - expected:+d})")
+    total = sum(ds_counts.values())
+    if ds_counts:
+        print(f"  total: {total} (expected {SPLIT_TOTAL}) "
+              f"{'OK' if total == SPLIT_TOTAL else 'MISMATCH'}")
+        if total != SPLIT_TOTAL:
+            ds_problems.append(f"total pair count {total} != SPLIT_TOTAL {SPLIT_TOTAL}")
+    dataset_ok = not ds_problems
+    print(f"  dataset_ok             : {dataset_ok}")
+    for p in ds_problems:
+        print(f"    - {p}")
+
     # (18) verdict
     print("\n[18] VERDICT")
-    real_ready = cuda and gpu_count >= 1 and student_ok and dry_ok
+    real_ready = cuda and gpu_count >= 1 and student_ok and dry_ok and cap_ok and dataset_ok
     if not (student_ok and dry_ok):
         verdict, label = "FAIL", "NOT OK for real E1 training (E1 scaffold not runnable on this machine)"
+    elif not cap_ok:
+        verdict, label = "FAIL", ("NOT OK for real E1 training (GPU compute capability exceeds the "
+                                  "pinned stack's sm_90 ceiling)")
+    elif not dataset_ok:
+        verdict, label = "FAIL", "NOT OK for real E1 training (dataset verification failed)"
     elif real_ready:
         verdict, label = "PASS", "OK for real E1 training"
     else:
         verdict, label = "PARTIAL", "OK for DRY-RUN only; NOT OK for real E1 training"
 
     blockers = []
+    if not dataset_ok:
+        blockers.append(
+            f"Dataset verification failed under root {ds_root}: " + "; ".join(ds_problems)
+            + ". Fix the upload/extraction (or PLANTSEG_DATA_ROOT) before launching — the real run "
+              "would otherwise abort inside PlantSegDataset.__init__.")
+    if not cap_ok:
+        blockers.append(
+            "GPU compute capability above sm_90: "
+            + "; ".join(f"cuda:{i} '{n}' = sm_{a}{b}" for i, n, (a, b) in unsupported)
+            + f". torch {torch_ver} ships sm_50..sm_90 only. Re-provision on an Ampere/Ada/Hopper "
+              "pod (A100 / H100 / L40S / RTX 4090) or re-pin torch+cu.")
     if not cuda:
         blockers.append(f"No CUDA GPU (torch.cuda.is_available()=False; local torch is CPU-only "
                         f"build '{torch_ver}'). Real E1 (80k iters @ bs16/512^2) needs a GPU.")
