@@ -13,6 +13,20 @@ import os
 # current development machine (behavior unchanged). See reports/e1_runpod_launch_runbook.md.
 DEFAULT_PLANTSEG_DATA_ROOT = r"C:\Users\admin\plantseg_data\plantseg"
 
+# ------------------------------------------------------------------ split sizes (single source of truth)
+# COUNTED from the pre-partitioned folders on disk (B16: zero identifier overlap across partitions);
+# re-verified 2026-09-01 by reports/pre_e1_launch_audit.md E15. These values are AUTHORITATIVE.
+# ch3's 5,442 / 778 / 1,554 is a known arithmetic artifact of applying a nominal 70/10/20 ratio to
+# 7,774 (7774*0.70 = 5441.8); the actual official split is 69.0 / 10.9 / 20.1%. The manuscript is
+# under correction — do NOT edit these constants to match it.
+SPLIT_SIZES = {"train": 5367, "val": 846, "test": 1561}     # [empirical, counted]
+SPLIT_TOTAL = 7774                                          # [empirical, counted]
+
+if sum(SPLIT_SIZES.values()) != SPLIT_TOTAL:
+    raise RuntimeError(
+        f"configs/data.py is internally inconsistent: sum(SPLIT_SIZES)={sum(SPLIT_SIZES.values())} "
+        f"!= SPLIT_TOTAL={SPLIT_TOTAL}")
+
 DATA = {
     # Root (extracted dataset path) — verified to exist; see reports/dataset_location_log.md.
     # PLANTSEG_DATA_ROOT env var overrides this when set; otherwise the Windows default is used.
@@ -31,8 +45,8 @@ DATA = {
         "dirs": ("images/{split}", "annotations/{split}"),  # use folders, NOT annotation_*.json
         "names": ("train", "val", "test"),
         "files": ("annotation_train.json", "annotation_val.json", "annotation_test.json"),  # COCO; not used for split
-        "sizes": {"train": 5367, "val": 846, "test": 1561},  # [empirical]
-        "test_count": 1561,                      # per-image metric unit count
+        "sizes": SPLIT_SIZES,                    # [empirical] single source of truth: SPLIT_SIZES above
+        "test_count": SPLIT_SIZES["test"],       # per-image metric unit count
         "integrity_check": "zero identifier overlap across partitions (verified)",
     },
 

@@ -23,7 +23,7 @@ if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
 from configs.augment import AUGMENT          # noqa: E402
-from configs.data import DATA                # noqa: E402
+from configs.data import DATA, SPLIT_SIZES, SPLIT_TOTAL  # noqa: E402
 from src.seeds import SEED                   # noqa: E402
 
 from .transforms import core_preprocess, finalize, train_preprocess  # noqa: E402
@@ -61,12 +61,21 @@ class PlantSegDataset(Dataset):
         if not self.pairs:
             raise RuntimeError(f"no image/mask pairs found for split={split} under {root}")
         # Guard against silent under/over-count vs the locked PlantSeg split sizes (configs/data.py).
-        expected = DATA.get("splits", {}).get("sizes", {}).get(split)
-        if expected is not None and len(self.pairs) != expected:
+        # An unregistered split is a HARD error: a missing/renamed key must never silently disable
+        # this guard (the previous `.get()` chain defaulted to None and skipped the check entirely).
+        if split not in SPLIT_SIZES:
             raise RuntimeError(
-                f"split={split} pair count {len(self.pairs)} != locked expected {expected} "
-                f"(configs/data.py DATA['splits']['sizes']); check the dataset upload/extraction "
-                f"under {root}")
+                f"split={split!r} has no registered expected count in configs/data.py SPLIT_SIZES "
+                f"(registered: {sorted(SPLIT_SIZES)}); refusing to load an unverified split")
+        expected = SPLIT_SIZES[split]
+        if len(self.pairs) != expected:
+            raise RuntimeError(
+                f"split={split} pair count MISMATCH: expected {expected}, actual {len(self.pairs)} "
+                f"(delta {len(self.pairs) - expected:+d}). All splits expected {dict(SPLIT_SIZES)}, "
+                f"total {SPLIT_TOTAL}. Check the dataset upload/extraction under {root}.\n"
+                f"NOTE: the COUNTED values in configs/data.py SPLIT_SIZES are AUTHORITATIVE. ch3's "
+                f"5,442/778/1,554 is a known arithmetic artifact (nominal 70/10/20 applied to 7,774) "
+                f"and is under correction in the manuscript — do NOT edit SPLIT_SIZES to match it.")
         self.aug_params = AUGMENT
 
     def __len__(self) -> int:
@@ -94,11 +103,27 @@ def _seed_worker(worker_id: int) -> None:
     random.seed(s)
 
 
-def build_dataloader(split: str, batch_size: int, num_workers: int = 0) -> DataLoader:
-    """train shuffles; val/test do not. Seeded generator + worker_init_fn => deterministic (seed 42)."""
+PREFETCH_FACTOR = 4          # batches pre-staged per worker (B31-5)
+
+
+def build_dataloader(split: str, batch_size: int, num_workers: int = 0,
+                     persistent_workers: bool = False) -> DataLoader:
+    """train shuffles; val/test do not. Seeded generator + worker_init_fn => deterministic (seed 42).
+
+    `persistent_workers` is opt-in and intended for the TRAIN loader only: it keeps the worker pool
+    (and its decoded-image buffers) alive for the whole run, which is worth it across 80k iterations
+    but not across the 20 validation passes. `prefetch_factor`/`persistent_workers` are only legal
+    when num_workers > 0 — PyTorch raises otherwise, and the dry-run path uses num_workers=0 — so
+    both are passed conditionally. `pin_memory` is gated on CUDA: it is a no-op without a device and
+    emits a warning, so gating keeps the CPU dry-run output clean.
+    """
     dataset = PlantSegDataset(split)
     generator = torch.Generator()
     generator.manual_seed(SEED)
+    extra = {}
+    if num_workers > 0:
+        extra["prefetch_factor"] = PREFETCH_FACTOR
+        extra["persistent_workers"] = persistent_workers
     return DataLoader(
         dataset,
         batch_size=batch_size,
@@ -106,5 +131,10 @@ def build_dataloader(split: str, batch_size: int, num_workers: int = 0) -> DataL
         num_workers=num_workers,
         generator=generator,
         worker_init_fn=_seed_worker,
-        drop_last=False,
+        # TRAIN only: 5367 % 16 = 7, so every epoch would otherwise end on a ragged 7-sample batch,
+        # perturbing BatchNorm statistics and the Dice term's per-batch class-presence set.
+        # val/test keep drop_last=False — dropping evaluation samples would corrupt the metric.
+        drop_last=(split == "train"),
+        pin_memory=torch.cuda.is_available(),
+        **extra,
     )
