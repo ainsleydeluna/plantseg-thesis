@@ -245,6 +245,74 @@ pending the PlantSeg repo's official convention. `[empirical; ch3 Table 3.1; ctx
 - Multi-seed plan: three-seed validation planned for **E1 and E3** (the two extra seed values =
   `NEED_TO_CONFIRM`); E4/E7 recomputed per seed; E5/E6 fine-tuned per seed where compute permits;
   Teacher trained once; E2 repetition optional `[ch3 §F]`.
+- **`num_workers` is a REPRODUCIBILITY-RELEVANT parameter and must be reported alongside seed 42**
+  `[project; empirical, measured 2026-09-01 — B31-5/A1]`. Seed 42 alone does **not** determine the
+  realized augmentation sequence. Measured on a fixed 8-sample / 4-batch train subset
+  (`shuffle=False`, identical seed), three distinct augmentation streams were observed:
+
+  | `num_workers` | first two sample digests | stream |
+  |---|---|---|
+  | 0 | `140c8c720c8bc712`, `a26114baf0d446c8` | A |
+  | 2 | `6c772db174314e67`, `f4109cb73ece4509` | B |
+  | 4, 8 | `6c772db174314e67`, `f4109cb73ece4509` | B (first 2 batches) → C (later batches) |
+
+  Mechanism: at `num_workers=0` the per-sample augmentation seed is drawn from the main-process
+  NumPy stream; at `num_workers>0` each worker is seeded from `torch.initial_seed()` and batch *b*
+  is served by worker *b* mod `num_workers`, so the seed a given sample receives depends on the
+  worker count. The `{4, 8}` agreement above is a **probe artifact** — with `num_workers >= n_batches`
+  every batch draws a distinct fresh worker. That condition never holds at real scale
+  (**335 batches/epoch vs 12 workers**), so in the real run each `num_workers` value yields a
+  distinct realized sequence.
+- **Consequence:** the B31-5 change of the real-run default from `4` to `min(cpu_count-2, 12)`
+  changes the realized augmentation *sequence*. It does **not** change the augmentation
+  *distribution*, the recipe, or any locked hyperparameter, and cross-process reproducibility at a
+  fixed `num_workers` is preserved (measured byte-identical across two independent processes).
+  Runs are comparable in distribution; they are not bitwise-comparable across different
+  `num_workers`. Record the value in Ch4 with the seed.
+- **Manuscript gap (for correction outside this repo):** ch3 §D's reproducibility paragraph pins
+  seed 42, the cuDNN flags, `use_deterministic_algorithms(True, warn_only=True)` and
+  `CUBLAS_WORKSPACE_CONFIG`, but is silent on `num_workers`. As written it is **under-specified**:
+  two runs satisfying every stated condition can still differ. `[project]`
+- **Resume is NOT bitwise-identical to an uninterrupted run** — documented deviation, same register
+  as D-A `[project; B31-2]`. `--resume` restores model / optimizer / scheduler / RNG state
+  (`torch`, `torch.cuda`, `numpy`, python `random`, and the DataLoader generator) and the LR curve
+  continues **exactly** (checkpoint-recorded LR matches the analytic 80,000-iteration
+  `PolynomialLR` curve at full float64 precision). Data **order** is not recoverable: the loop
+  consumes an infinite `cycle(train_loader)` and the position within the current epoch is not
+  persisted. A resumed run is therefore a valid E1 run but not a byte-reproduction of an
+  uninterrupted one, and must be reported as resumed if used for a headline result.
+- **LR-monotonicity coverage across resume** `[project; B31c V1]`: `last.pt` carries `prev_lr`, so a
+  *k*-segment run leaves **zero** unverified LR transitions (measured: a 3-segment 9-iteration run
+  compared 2+3+3 = 8 of 8 transitions). When **no** transition is compared (a one-iteration fresh
+  run) the check reports `SKIPPED`, never a vacuous `PASS`. The scaffold's final line carries
+  `RESULT: <PASS|FAIL> (n/6 checks exercised, m skipped)`, and a resume with nothing left to do
+  prints the distinct token `RESULT: NOOP`.
+
+#### E1 runtime defaults introduced by B31 `[project; authorised 2026-09-01]`
+These are **operational** parameters. None of them touches a `[ch3]`-traced method value.
+
+| Parameter | Value | Note |
+|---|---|---|
+| `--ckpt-interval` | **2000** | periodic atomic `last.pt` resume point |
+| `--keep-ckpts` | **3** | rolling best-checkpoint retention (best + `last.pt` always kept) |
+| `prefetch_factor` | **4** | train and val, only when `num_workers > 0` |
+| `persistent_workers` | **True, TRAIN only** | val respawns per validation (~20 times); avoids a second resident worker pool |
+| `pin_memory` | gated on `torch.cuda.is_available()` | uniform across train/val |
+| `num_workers` (real run) | **`min(cpu_count-2, 12)`** | reproducibility-relevant — see above |
+| `drop_last` | **True, TRAIN only** | val/test keep every sample; dropping eval samples would corrupt the metric |
+| telemetry | `e1_telemetry.jsonl` in `--ckpt-dir` | append-mode, resume-safe, never inside the repo |
+
+- **Iterations per epoch = 335** under `drop_last=True` (5,367 train / batch 16; 7 samples dropped
+  per epoch and reshuffled into the next), giving **238.806 epochs** at the locked 80,000 iterations
+  `[empirical, measured]`.
+- **`_dom_nonignore_ratio` uses `np.bincount`, not `np.unique`** `[project; B31-6]`. This is an
+  **exact-equivalence optimisation, not a behaviour change**: verified bit-identical on 216 masks
+  including all-ignore, single-class, all-background, empty, and in-domain labels above
+  `num_classes`. It is **2.2x faster in-function** (0.838 → 0.374 ms on a realistic 512² mask) but
+  only **1.03x mean / 1.12x median end-to-end** on `train_preprocess`, because the crop stage is one
+  of seven. It is **not a throughput lever** — the throughput lever is `num_workers`. The new code
+  is additionally *stricter* than the old: a label > 255 now raises instead of being silently
+  counted.
 
 | Library | Version | Source |
 |---|---|---|

@@ -62,6 +62,46 @@ family, not a numeric value. `[ch3 §C; D2; D-A]`
 
 ---
 
+## Resolved 2026-09-01 (B31 / B31c) — E1 launch-blocking fixes and their recorded deviations
+
+### D25 — `num_workers` is a reproducibility parameter — ✅ RESOLVED `[empirical, measured]`
+Seed 42 alone does **not** determine the realized augmentation sequence. Measured on a fixed
+8-sample / 4-batch train subset at identical seed, `num_workers ∈ {0, 2, 4, 8}` produced **three**
+distinct streams (`{0}`, `{2}`, `{4,8}`); the `{4,8}` tie is a probe artifact of
+`num_workers >= n_batches` and does not hold at real scale (335 batches/epoch vs 12 workers).
+Cross-process reproducibility **at a fixed `num_workers`** is preserved and was re-measured
+byte-identical after the B31-5 loader change. Resolution: `num_workers` is pinned as a **reported**
+parameter alongside seed 42 in Ch4, and the B31-5 default change (4 → `min(cpu_count-2, 12)`) is
+recorded as changing the realized sequence but not the distribution or any locked value.
+**Manuscript follow-up (outside this repo):** ch3 §D's reproducibility paragraph is under-specified
+as written — it pins seeds, cuDNN flags and `CUBLAS_WORKSPACE_CONFIG` but not `num_workers`, so two
+runs satisfying every stated condition can still differ. `[ch3 §D; project; B31-5/A1]`
+
+### D26 — resume is not bitwise-identical to an uninterrupted run — ✅ RESOLVED as a documented deviation `[project]`
+Same register as D-A. `--resume` restores model, optimizer, scheduler and all RNG state, and the LR
+curve continues exactly (verified at full float64 against the analytic 80k `PolynomialLR` curve).
+Data **order** is not recoverable under the infinite `cycle(train_loader)`, so a resumed run is a
+valid E1 run but not a byte-reproduction. It must be reported as resumed if it produces a headline
+result. No code change is proposed to make order recoverable: doing so would require persisting
+sampler position and is not required by any source. `[project; B31-2]`
+
+### D27 — scaffold check coverage under resume — ✅ RESOLVED `[project]`
+B31c V1 asked whether a resumed run can report success while exercising fewer checks than a fresh
+run. It could, in two ways, both now closed or made visible:
+1. **LR transitions across a resume boundary were unverified.** `last.pt` now carries `prev_lr`; a
+   *k*-segment run leaves **zero** unverified transitions (measured 8/8 on a 3-segment run).
+2. **`all([]) is True` printed as `PASS`** when no transition was compared. It now reports
+   `SKIPPED`. Deliberately **not fatal** — a legitimate one-iteration resume is not a defect, and
+   failing it would make the preflight brittle for no gain.
+3. **The already-complete resume path** ran zero checks and printed `RESULT: PASS`. It now prints
+   the distinct token `RESULT: NOOP (already complete at iter N)` with exit 0.
+Every outcome is distinguishable from the **last line of stdout alone** via
+`RESULT: <PASS|FAIL> (n/6 checks exercised, m skipped)`. `scripts/preflight_e1.py` asserts the
+exercised count, not merely the exit code. **Residual:** a fresh one-iteration run still legitimately
+exercises 5/6; this is visible, not silent. `[project; B31c V1]`
+
+---
+
 ## Resolved 2026-07-26 (A0) — evaluation metric semantics + result-artifact contract
 
 Full specification: **[EVALUATION_CONTRACT.md](EVALUATION_CONTRACT.md)** (frozen). Summarised here because
