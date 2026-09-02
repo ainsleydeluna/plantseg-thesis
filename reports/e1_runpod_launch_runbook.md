@@ -1,5 +1,12 @@
 # B28 — E1 RunPod/GPU Launch Runbook
 
+> ## ⛔ SUPERSEDED (2026-09-01, B31c) — DO NOT LAUNCH FROM THIS DOCUMENT
+> Use **[e1_launch_runbook_v2.md](e1_launch_runbook_v2.md)** instead.
+> This v1 predates `--resume`, `--ckpt-interval`, `--num-workers`, `--jsonl-name`, `--keep-ckpts`,
+> the CUDA compute-capability gate, the dataset check in `verify_env.py`, and
+> `scripts/preflight_e1.py`. Its launch command is missing flags the run now needs, and it has no
+> preemption/resume playbook. Retained unchanged for history only.
+
 Operational runbook for launching the **real E1 training run** on a RunPod/GPU box. **This document is
 instructions only** — no training, download, install, or GPU use was performed to produce it, and no
 code/config was changed. All repo-side audit/decision blockers are resolved; the real run is gated only by
