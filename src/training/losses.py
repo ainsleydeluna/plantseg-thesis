@@ -91,15 +91,37 @@ class CombinedCEDiceLoss(nn.Module):
 
 
 def logit_kd_kl(student_logits: torch.Tensor, teacher_logits: torch.Tensor,
-                target: torch.Tensor, T: float = 4.0, ignore_index: int = IGNORE_INDEX) -> torch.Tensor:
-    """Hinton-style KL on temperature-softened outputs, averaged over valid (non-ignore) pixels (E2/E3).
+                valid_mask: torch.Tensor, T: float = 4.0) -> torch.Tensor:
+    """Hinton-style KL on temperature-softened outputs, averaged over valid locations (E2/E3).
+
+    Computed at the LOGIT MAP'S OWN grid — OS8 (64x64 for a 512x512 input), the resolution both the
+    student head and the SegNeXt LightHamHead emit natively (B32/F8). It is NOT computed on
+    upsampled copies: bilinear interpolation happens in LOGIT space, and
+    `softmax(interp(z)) != interp(softmax(z))`, so an upsampled KL evaluates ~98% of its positions
+    on interpolants that distort the soft targets rather than merely repeating them.
+
+    `valid_mask` is a bool [B,h,w] mask ALREADY at the logits' resolution — build it with
+    `downsample_validity(target, student_logits.shape[-2:])`. It is passed in rather than derived
+    from the full-resolution target because the previous signature silently accepted a 512x512
+    target regardless of the logits' grid, which is exactly the ambiguity that let the resolutions
+    drift apart. The shape is checked below so a mismatch fails loudly instead of broadcasting.
+
+    The mean reduction is UNCHANGED from the pre-B32 implementation: the term is a mean over valid
+    locations, so its magnitude is preserved when the valid population drops from ~262k to ~4k, and
+    the preregistered lambda_logit grid {0.25, 0.5, 1, 2, 4} stays on-scale.
 
     lambda_logit (the weight on this term relative to CE) is NEED_TO_CONFIRM (validation sweep).
     """
-    valid = (target != ignore_index).float()                  # [B,H,W]
+    expected = (student_logits.shape[0],) + tuple(student_logits.shape[-2:])
+    if tuple(valid_mask.shape) != expected:
+        raise ValueError(
+            f"valid_mask shape {tuple(valid_mask.shape)} does not match the logits grid {expected}; "
+            f"pass downsample_validity(target, student_logits.shape[-2:]) — the mask must be at the "
+            f"SAME resolution as the logits, not the full-resolution target")
+    valid = valid_mask.float()                                # [B,h,w]
     s_logp = F.log_softmax(student_logits / T, dim=1)
     t_prob = F.softmax(teacher_logits / T, dim=1)
-    kl = F.kl_div(s_logp, t_prob, reduction="none").sum(dim=1)  # [B,H,W]
+    kl = F.kl_div(s_logp, t_prob, reduction="none").sum(dim=1)  # [B,h,w]
     kl = kl * (T * T)                                          # T^2 absorbed into the term
     denom = valid.sum().clamp_min(1.0)
     return (kl * valid).sum() / denom

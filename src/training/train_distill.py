@@ -179,10 +179,15 @@ def distillation_losses(*, stage: dict, logits, head_logits, c5, mask, teacher_o
                          f"{logits.shape[1]}")
 
     # --- Logit KD (E2 and E3, unchanged between them per contract B3) ---
-    t_logits_full = (t_logits if t_logits.shape[-2:] == logits.shape[-2:]
-                     else F.interpolate(t_logits, size=logits.shape[-2:], mode="bilinear",
-                                        align_corners=False))
-    l_kd = logit_kd_kl(logits, t_logits_full, mask, T=T_LOGIT, ignore_index=IGNORE_INDEX)
+    # B32/F8: computed on the head's NATIVE OS8 map, not on upsampled copies. The student's
+    # `head_logits` and the teacher's LightHamHead output are both 64x64 for a 512x512 input, so
+    # neither side is resampled and no interpolation artifact enters the soft targets. The validity
+    # mask is downsampled to that same grid and SHARED with the CWD logit term below.
+    valid_os8 = downsample_validity(mask, head_logits.shape[-2:], ignore_index=IGNORE_INDEX)
+    t_logits_os8 = (t_logits if t_logits.shape[-2:] == head_logits.shape[-2:]
+                    else F.interpolate(t_logits, size=head_logits.shape[-2:], mode="bilinear",
+                                       align_corners=False))
+    l_kd = logit_kd_kl(head_logits, t_logits_os8, valid_os8, T=T_LOGIT)
     total = total + ramp * lambda_logit * l_kd
     parts["logit_kd"] = float(l_kd.detach())
 
@@ -201,10 +206,9 @@ def distillation_losses(*, stage: dict, logits, head_logits, c5, mask, teacher_o
     parts["cwd_feat"] = float(l_feat.detach())
 
     # --- CWD logit term: on the head's native OS8 logit map (no projection needed, same C) ---
-    t_logits_os8 = (t_logits if t_logits.shape[-2:] == head_logits.shape[-2:]
-                    else F.interpolate(t_logits, size=head_logits.shape[-2:], mode="bilinear",
-                                       align_corners=False))
-    valid_os8 = downsample_validity(mask, head_logits.shape[-2:], ignore_index=IGNORE_INDEX)
+    # This term was ALREADY at OS8 before B32 (B32-5: REFUTED, unchanged). It now reuses the
+    # `t_logits_os8` and `valid_os8` computed once for the Logit-KD term above — same grid, same
+    # mask, one min-pool instead of two.
     # channels_norm defaults to this map's own channel count (116 classes) — 320 is the FEATURE-map
     # normalisation only and must never be hard-coded here.
     l_logit_map = cwd_channelwise_kl(head_logits, t_logits_os8, valid_os8, T=T_CWD)
@@ -320,7 +324,12 @@ def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeach
                                                          for p in g["params"]}
                                                         & teacher.parameter_ids())
 
-        teacher_out = teacher(model_input, feat_size=c5.shape[-2:])
+        # B32/F8: request the teacher's logits on the student head's NATIVE OS8 grid. The SegNeXt
+        # LightHamHead already emits 64x64 for a 512x512 input (stock in_index=[1,2,3], resized to
+        # inputs[0] = stride-8), so this is currently a no-op — but it makes the resolution contract
+        # explicit and load-bearing if the teacher config ever changes.
+        teacher_out = teacher(model_input, logits_size=head_logits.shape[-2:],
+                              feat_size=c5.shape[-2:])
         if it == 1:
             checks["teacher_same_augmented_input"] = model_input is img
 

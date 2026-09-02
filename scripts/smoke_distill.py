@@ -60,7 +60,9 @@ def test_logit_kd() -> None:
     target = torch.randint(0, NC, (b, h, w))
     target[0, 0, :] = IGNORE                               # an ignored row
 
-    loss = logit_kd_kl(student, teacher, target, T=4.0, ignore_index=IGNORE)
+    # B32: the mask is downsampled to the LOGITS' grid and passed in explicitly.
+    valid = downsample_validity(target, student.shape[-2:], ignore_index=IGNORE)
+    loss = logit_kd_kl(student, teacher, valid, T=4.0)
     check("kd_scalar_finite", loss.dim() == 0 and bool(torch.isfinite(loss)), f"loss={loss.item():.4f}")
 
     loss.backward()
@@ -73,15 +75,15 @@ def test_logit_kd() -> None:
     t2 = teacher.clone()
     s2[0, :, 0, :] += 12.0
     t2[0, :, 0, :] -= 7.0
-    base = logit_kd_kl(student.detach(), teacher, target, T=4.0, ignore_index=IGNORE)
-    pert = logit_kd_kl(s2, t2, target, T=4.0, ignore_index=IGNORE)
+    base = logit_kd_kl(student.detach(), teacher, valid, T=4.0)
+    pert = logit_kd_kl(s2, t2, valid, T=4.0)
     check("kd_ignore_index_invariant", torch.allclose(base, pert, atol=1e-6),
           f"base={base.item():.6f} perturbed={pert.item():.6f}")
 
     # spatial alignment is explicit: a coarser teacher is resampled before the loss
     t_small = torch.randn(b, NC, h // 2, w // 2)
     t_up = F.interpolate(t_small, size=(h, w), mode="bilinear", align_corners=False)
-    aligned = logit_kd_kl(student.detach(), t_up, target, T=4.0, ignore_index=IGNORE)
+    aligned = logit_kd_kl(student.detach(), t_up, valid, T=4.0)
     check("kd_spatial_alignment", aligned.dim() == 0 and bool(torch.isfinite(aligned)),
           f"teacher {tuple(t_small.shape[-2:])} -> {tuple(t_up.shape[-2:])}")
 

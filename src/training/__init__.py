@@ -6,6 +6,7 @@ from .losses import (
     WeightedCrossEntropyLoss,
     compute_class_weights,
     cwd_channelwise_kl,
+    downsample_validity,
     logit_kd_kl,
 )
 
@@ -16,4 +17,5 @@ __all__ = [
     "compute_class_weights",
     "logit_kd_kl",
     "cwd_channelwise_kl",
+    "downsample_validity",
 ]

@@ -21,7 +21,8 @@ from src.seeds import set_seed  # noqa: E402
 from src.data import NUM_CLASSES, build_dataloader  # noqa: E402
 from src.models import build_student  # noqa: E402
 from src.training import (  # noqa: E402
-    CombinedCEDiceLoss, SoftDiceLoss, WeightedCrossEntropyLoss, compute_class_weights, logit_kd_kl,
+    CombinedCEDiceLoss, SoftDiceLoss, WeightedCrossEntropyLoss, compute_class_weights,
+    downsample_validity, logit_kd_kl,
 )
 from src.eval import all_class_miou, confusion_matrix, disease_only_miou, per_image_miou  # noqa: E402
 
@@ -60,7 +61,9 @@ def main() -> int:
         dice = SoftDiceLoss()(logits, mask)
         combined = CombinedCEDiceLoss(weight=weights)(logits, mask)
         teacher = torch.randn_like(logits)  # dummy teacher (smoke only)
-        kd = logit_kd_kl(logits, teacher, mask, T=4.0)
+        # B32: mask downsampled to the logits' grid (here they already match at 512x512).
+        kd_valid = downsample_validity(mask, logits.shape[-2:])
+        kd = logit_kd_kl(logits, teacher, kd_valid, T=4.0)
     print(f"[loss] CE={ce.item():.4f}  Dice={dice.item():.4f}  CE+Dice={combined.item():.4f}  "
           f"logitKD-KL(T=4, dummy teacher)={kd.item():.4f}")
     for name, v in [("CE", ce), ("Dice", dice), ("CE+Dice", combined), ("logitKD-KL", kd)]:
