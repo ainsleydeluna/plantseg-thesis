@@ -112,11 +112,25 @@ def _resize_long_side(img_pil: Image.Image, mask_pil: Image.Image, target_long: 
 
 
 def _dom_nonignore_ratio(mask_np: np.ndarray) -> float:
-    """Dominant NON-ignore class pixel fraction (255 excluded); 1.0 if the crop is all-ignore."""
-    vals, cnts = np.unique(mask_np, return_counts=True)
-    cnts = cnts[vals != MASK_IGNORE]
-    tot = int(cnts.sum())
-    return float(cnts.max() / tot) if tot > 0 else 1.0
+    """Dominant NON-ignore class pixel fraction (255 excluded); 1.0 if the crop is all-ignore.
+
+    bincount, not unique: np.unique SORTS ~262k elements on every crop attempt (up to 10 attempts
+    per sample), measured at 35.9% of crop time (B30 P7). bincount is one O(n) pass into fixed bins.
+
+    The label domain is BOUNDED, not asserted: `minlength=256` makes the result exactly 256 long for
+    every in-domain mask, so a longer result means some label exceeded 255. That check is free —
+    bincount already computed the max — whereas an explicit `mask.max()` assertion would add another
+    full pass over the array and give back part of what this fix buys. Negative labels raise inside
+    bincount itself.
+    """
+    counts = np.bincount(mask_np.ravel(), minlength=256)
+    if counts.size > 256:
+        raise ValueError(
+            f"mask label out of domain: found {counts.size - 1} > 255; valid labels are 0..115 "
+            f"plus the ignore label {MASK_IGNORE}")
+    counts[MASK_IGNORE] = 0                       # drop ignore; background (0) still counts
+    tot = int(counts.sum())
+    return float(counts.max() / tot) if tot > 0 else 1.0
 
 
 def _random_crop_pad_512(img_np: np.ndarray, mask_np: np.ndarray, rng: np.random.RandomState,
