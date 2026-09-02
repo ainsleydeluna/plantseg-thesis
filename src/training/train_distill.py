@@ -30,6 +30,7 @@ No quantization path exists in this file: no QuantStub prepare/convert, no QAT, 
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import sys
 from pathlib import Path
@@ -42,7 +43,8 @@ import torch  # noqa: E402
 import torch.nn.functional as F  # noqa: E402
 
 from configs.data import DATA                                      # noqa: E402
-from configs.distill import DISTILL                                # noqa: E402
+from configs.distill import (DISTILL, LOGIT_KD_SEMANTICS,          # noqa: E402
+                             LOGIT_KD_SEMANTICS_SUPERSEDED)
 from configs.e1_student import E1_STUDENT                          # noqa: E402
 from src.data import NUM_CLASSES, build_dataloader                 # noqa: E402
 from src.distill.cwd_projection import build_cwd_projection        # noqa: E402
@@ -98,6 +100,33 @@ def grad_clip_gate_error(value: float | None) -> str | None:
     return None
 
 
+def lambda_semantics_gate_error(declared, override: bool) -> str | None:
+    """Validate a DECLARED lambda_logit semantics tag against the one this code implements (B32c-2).
+
+    lambda_logit weights the Logit-KD term, so its numeric value only means anything relative to the
+    SPATIAL GRID that term is computed on. B32/F8 moved that grid from an upsampled 512x512 to the
+    head's native OS8 64x64 and the term's magnitude changed by ~1.95x — about one step of the
+    preregistered geometric grid {0.25, 0.5, 1, 2, 4}. A lambda read out of a Ch4 table months from
+    now and passed to a re-run under different semantics is silently wrong, not loudly wrong.
+
+    Declaring the tag is OPTIONAL: the sweep runs PRODUCE the tag rather than consume it, so
+    requiring it there would add friction at the point of lowest risk. But once declared it is
+    checked, and a mismatch refuses unless explicitly overridden.
+    """
+    if declared is None or override:
+        return None
+    if declared == LOGIT_KD_SEMANTICS:
+        return None
+    superseded = " (a SUPERSEDED pre-B32 tag)" if declared in LOGIT_KD_SEMANTICS_SUPERSEDED else ""
+    return (f"--lambda-semantics {declared!r}{superseded} does not match the semantics this code "
+            f"implements, {LOGIT_KD_SEMANTICS!r}. lambda_logit is not transferable across Logit-KD "
+            f"resolutions: B32/F8 moved the KL from an upsampled 512x512 grid to the head's native "
+            f"OS8 64x64 and the term's magnitude changed by ~1.95x (MEASURED, synthetic-teacher "
+            f"UPPER BOUND), which is about one step of the {LAMBDA_SWEEP} grid. Re-select lambda "
+            f"under the current semantics, or pass --allow-semantics-mismatch to proceed anyway "
+            f"(the override is recorded in the checkpoint and the run_meta file).")
+
+
 def resolve_stage(stage: str) -> dict:
     """Map a stage key to its distillation composition. E2 = Logit KD only; E3 = Logit KD + CWD."""
     key = str(stage).lower()
@@ -107,7 +136,8 @@ def resolve_stage(stage: str) -> dict:
 
 
 def save_distill_checkpoint(ckpt_dir: Path, stage: dict, student, projection, optimizer, scheduler,
-                            sched_name: str, it: int, best_miou: float, teacher_provenance) -> str:
+                            sched_name: str, it: int, best_miou: float, teacher_provenance,
+                            semantics_declared=None, semantics_override: bool = False) -> str:
     """Write an E2/E3 checkpoint.
 
     `model_state_dict` holds the student ONLY — the training-only CWD projection goes under
@@ -128,6 +158,11 @@ def save_distill_checkpoint(ckpt_dir: Path, stage: dict, student, projection, op
         "num_classes": NUM_CLASSES,
         "teacher_provenance": None if teacher_provenance is None else teacher_provenance.as_dict(),
         CWD_PROJECTION_KEY: None if projection is None else projection.state_dict(),
+        # B32c-2: the semantics lambda_logit was measured under travels WITH the artifact, so a
+        # mismatched run stays identifiable from its checkpoint alone once the terminal is gone.
+        "logit_kd_semantics": LOGIT_KD_SEMANTICS,
+        "logit_kd_semantics_declared": semantics_declared,
+        "logit_kd_semantics_override_used": bool(semantics_override),
     }
     torch.save(payload, path)
     return str(path)
@@ -220,6 +255,7 @@ def distillation_losses(*, stage: dict, logits, head_logits, c5, mask, teacher_o
 def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeacher,
         lambda_logit: float, batch_size: int, max_iters: int, val_interval: int,
         max_val_batches: int | None, num_workers: int, ckpt_dir_arg: str | None,
+        semantics_declared=None, semantics_override: bool = False,
         grad_clip_norm: float | None, log_every: int, seed: int) -> int:
     set_seed(seed)
     dev = torch.device(device)
@@ -297,6 +333,34 @@ def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeach
 
     ckpt_dir = resolve_ckpt_dir(ckpt_dir_arg)
     print(f"[ckpt] dir={ckpt_dir} (verified OUTSIDE repo)")
+
+    # B32c-2: one run_meta line recording the semantics lambda_logit is being used under. Not the
+    # full E1 telemetry stack — a provenance guard, so a mismatched run stays identifiable from its
+    # artifacts alone long after the terminal is gone.
+    meta_path = _assert_outside_repo(Path(ckpt_dir)) / f"{stage['key']}_run_meta.jsonl"
+    with open(meta_path, "a", encoding="utf-8") as _f:
+        _f.write(json.dumps({
+            "event": "run_meta", "stage": stage["name"], "mode": mode, "seed": seed,
+            "lambda_logit": lambda_logit,
+            "logit_kd_semantics": LOGIT_KD_SEMANTICS,
+            "logit_kd_semantics_declared": semantics_declared,
+            "logit_kd_semantics_override_used": bool(semantics_override),
+            "logit_kd_grid": "os8 64x64 (head-native, no upsample)",
+            "cwd_logit_grid": "os8 64x64 (shared validity mask)",
+            "cwd_feat_grid": "stride-16 32x32",
+            "supervised_grid": "full 512x512",
+            "T_logit": T_LOGIT, "T_cwd": T_CWD, "alpha_cwd": ALPHA_CWD_FEAT,
+            "beta_cwd": BETA_CWD_LOGIT, "cwd_C": CWD_C_FEAT,
+            "lambda_sweep_grid": list(LAMBDA_SWEEP),
+            "batch_size": batch_size, "max_iters": max_iters, "num_classes": NUM_CLASSES,
+        }) + "\n")
+    print(f"[semantics] logit_kd={LOGIT_KD_SEMANTICS} declared={semantics_declared} "
+          f"override={bool(semantics_override)} -> {meta_path.name}")
+    if semantics_override:
+        print("[semantics] *** OVERRIDE ACTIVE: --allow-semantics-mismatch was used. This run's "
+              "lambda_logit was selected under DIFFERENT Logit-KD semantics and its results are "
+              "NOT comparable to runs without the override. Recorded in the checkpoint payload and "
+              f"in {meta_path.name}. ***")
 
     checks: dict[str, bool] = {}
     best_miou = float("-inf")
@@ -389,7 +453,8 @@ def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeach
                 best_miou = all_miou
                 best_ckpt = save_distill_checkpoint(ckpt_dir, stage, student, projection, optimizer,
                                                     scheduler, sched_name, it, best_miou,
-                                                    teacher.provenance)
+                                                    teacher.provenance, semantics_declared,
+                                                    semantics_override)
                 print(f"[ckpt {it:>4}/{max_iters}] new best all_class_miou={best_miou:.5f} "
                       f"-> {best_ckpt}")
 
@@ -421,6 +486,15 @@ def parse_args(argv=None, stage_default: str | None = None):
     p.add_argument("--teacher-ckpt", default=None,
                    help="path to the fine-tuned SegNeXt-B teacher checkpoint (required for a real run)")
     p.add_argument("--teacher-config", default=None, help="optional mmseg config path for the teacher")
+    p.add_argument("--lambda-semantics", default=None,
+                   help="OPTIONAL: the Logit-KD semantics tag the supplied --lambda-logit was "
+                        "SELECTED under. If given it must match this code's tag; a mismatch "
+                        "refuses unless --allow-semantics-mismatch is also passed. Declaring it is "
+                        "how a lambda read out of a table months later gets checked, not trusted.")
+    p.add_argument("--allow-semantics-mismatch", action="store_true",
+                   help="proceed despite a --lambda-semantics mismatch. The override is STAMPED "
+                        "into the checkpoint payload and the run_meta file, so the run stays "
+                        "identifiable as non-comparable from its artifacts alone.")
     p.add_argument("--lambda-logit", type=float, default=None,
                    help=f"Logit-KD weight; contract leaves it NEED_TO_CONFIRM (sweep {LAMBDA_SWEEP})")
     p.add_argument("--device", default=None)
@@ -487,6 +561,11 @@ def main(argv=None, stage_default: str | None = None) -> int:
         if clip_error is not None:
             print(f"REFUSING to start the real {stage['name']} run: {clip_error}", file=sys.stderr)
             return 2
+        sem_error = lambda_semantics_gate_error(args.lambda_semantics,
+                                                args.allow_semantics_mismatch)
+        if sem_error is not None:
+            print(f"REFUSING to start the real {stage['name']} run: {sem_error}", file=sys.stderr)
+            return 2
         teacher = load_frozen_teacher(args.teacher_ckpt, config_path=args.teacher_config)
         init = args.init or "imagenet"
         pretrained = False if init == "none" else E1_STUDENT["init_weights"]
@@ -519,7 +598,9 @@ def main(argv=None, stage_default: str | None = None) -> int:
                lambda_logit=lambda_logit, batch_size=batch_size, max_iters=max_iters,
                val_interval=val_interval, max_val_batches=max_val_batches,
                num_workers=num_workers, ckpt_dir_arg=args.ckpt_dir,
-               grad_clip_norm=args.grad_clip_norm, log_every=args.log_every, seed=args.seed)
+               grad_clip_norm=args.grad_clip_norm, log_every=args.log_every, seed=args.seed,
+               semantics_declared=args.lambda_semantics,
+               semantics_override=bool(args.allow_semantics_mismatch))
 
 
 if __name__ == "__main__":

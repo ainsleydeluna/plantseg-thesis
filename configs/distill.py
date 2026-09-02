@@ -4,6 +4,23 @@
 # kept as the literal NEED_TO_CONFIRM string per source hierarchy (rule 5).
 # Analysis/config artifact only — contains NO training logic.
 
+# ---------------------------------------------------------------- lambda_logit semantics tag (B32)
+# lambda_logit weights the Logit-KD term, so its numeric value is only meaningful RELATIVE TO THE
+# SPATIAL GRID that term is computed on. B32/F8 moved that grid from an upsampled 512x512 to the
+# head's native OS8 64x64, and the term's magnitude changed by ~1.95x (MEASURED over 20 real samples
+# against a SYNTHETIC teacher, so an UPPER BOUND — a real smooth SegNeXt-B should shift it less).
+# The preregistered grid {0.25, 0.5, 1, 2, 4} is geometric with ratio 2, so ~1.95x is about ONE grid
+# step: the grid still brackets a sensible optimum, but the optimum sits roughly one step lower and
+# a lambda selected under the OLD semantics is NOT transferable to the new one.
+#
+# The tag is deliberately self-describing — "the Logit-KD KL was computed at output stride 8, on a
+# 64x64 grid, from a 512x512 input" — so a reader six months from now needs no decoder ring.
+LOGIT_KD_SEMANTICS = "logitkd@os8-64x64-of-512"
+
+# Superseded semantics. A lambda measured under any of these must NEVER be consumed under the
+# current tag without an explicit, recorded override.
+LOGIT_KD_SEMANTICS_SUPERSEDED = ("logitkd@full-512x512-upsampled",)   # pre-B32
+
 DISTILL = {
     # E2: response-level Logit KD
     "logit_kd": {
