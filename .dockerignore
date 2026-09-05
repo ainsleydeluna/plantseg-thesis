@@ -57,3 +57,9 @@ outputs/**
 .git/**
 .github/**
 reports/**
+
+# ---- LAST WORD: the one reports/ file the runtime hard-depends on ----
+# .dockerignore is LAST-MATCH-WINS, so this MUST stay below `reports/**` or it is overridden.
+# Not a report: the B18a CE class-weight vector loaded by train_e1.py:49,55,293 through a fail-closed
+# loader. Re-included by exact path so the rest of reports/ stays out of the image.
+!reports/e1_class_weights.json

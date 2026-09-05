@@ -63,6 +63,11 @@ COPY scripts ./scripts
 COPY docs/IMPLEMENTATION_CONTRACT.md docs/EVALUATION_CONTRACT.md docs/STATISTICAL_ANALYSIS_CONTRACT.md ./docs/
 # readable version registry, kept for provenance reporting inside the container
 COPY requirements.lock requirements-e1.txt ./
+# The ONE reports/ artifact the runtime hard-depends on: the B18a CE class-weight vector that
+# train_e1.py:49,55,293 loads UNCONDITIONALLY through a fail-closed loader. Without it the real E1 run
+# aborts at loss construction and preflight_e1.py NO-GOs at stage 1/5. Copied by exact path, never
+# reports/ wholesale; this also creates reports/ for verify_class_weights_pod.py to write into.
+COPY reports/e1_class_weights.json ./reports/
 
 # Dataset root is MOUNTED, never baked. No dataset, checkpoint, key or secret is in this image.
 ENV PLANTSEG_DATA_ROOT=/workspace/plantseg_data/plantseg \
@@ -71,5 +76,12 @@ ENV PLANTSEG_DATA_ROOT=/workspace/plantseg_data/plantseg \
 # Fail the BUILD if the installed stack does not match the registered versions. Image mode does not
 # require a GPU, so this works on a CPU-only builder; the GPU preflight is a separate run-time mode.
 RUN python -B scripts/preflight_environment.py --mode image
+
+# Commit provenance. Declared LAST on purpose: an ARG invalidates every layer after it, so placing
+# this above the pip layer would force a full ~8.6 GB reinstall on every new commit. Ch4 cites the
+# image DIGEST, and a digest with no revision label cannot be traced back to a tree without external
+# notes — this makes the image self-identifying.
+ARG GIT_COMMIT
+LABEL org.opencontainers.image.revision="${GIT_COMMIT}"
 
 CMD ["/bin/bash"]
