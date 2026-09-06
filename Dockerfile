@@ -27,9 +27,15 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # Native libraries the registered wheels dlopen at import time:
 #   libgl1 + libglib2.0-0  -> opencv-python 4.8.1.78 (imported by mmcv/mmsegmentation)
 #   libgomp1               -> OpenMP runtime used by torch and scikit-image
-#   git                    -> LOAD-BEARING, not convenience: src/eval/artifacts.py records the commit
-#                             and the governed-path porcelain in every official artifact, so official
-#                             evaluation cannot be finalised without it.
+#   git                    -> present for tooling that shells out to it. NOTE (B40/B41): this image
+#                             does NOT carry a .git directory (.dockerignore excludes it), so the git
+#                             BINARY alone does not make official evaluation possible here:
+#                             src/eval/artifacts.py needs the porcelain of a real working tree to
+#                             prove governed_paths_clean, and it correctly RAISES without one. An
+#                             earlier version of this comment claimed git made official evaluation
+#                             finalisable in-image; that was false and is corrected here. Official
+#                             evaluation requires a real checkout (mount or clone); TRAINING is
+#                             unaffected and records its commit from PLANTSEG_GIT_COMMIT below.
 # NOTE: apt package versions follow the pinned base digest rather than being individually pinned;
 # that residual non-determinism is recorded in docs/runpod_environment.md.
 RUN apt-get update \
@@ -83,5 +89,11 @@ RUN python -B scripts/preflight_environment.py --mode image
 # notes — this makes the image self-identifying.
 ARG GIT_COMMIT
 LABEL org.opencontainers.image.revision="${GIT_COMMIT}"
+# The LABEL is readable only from OUTSIDE (docker inspect). A process INSIDE the container cannot
+# read its own labels, and .git is excluded, so without this ENV the training loop has no way to name
+# the commit it is running and every run_meta row records "UNKNOWN" (B40 #19). The image digest
+# cannot be baked in at all -- it is the hash of the config that would have to contain it -- so it is
+# supplied at `docker run` via PLANTSEG_IMAGE_DIGEST and recorded as absent when unset.
+ENV PLANTSEG_GIT_COMMIT=${GIT_COMMIT}
 
 CMD ["/bin/bash"]

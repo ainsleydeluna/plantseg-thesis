@@ -225,13 +225,47 @@ def per_class_iou(cm: torch.Tensor):
     return tp / un.clamp_min(1e-9), un > 0
 
 
-def _git_head() -> str:
+def _git_provenance() -> tuple[str, str]:
+    """Resolve the source commit AND say where it came from. Returns (commit, source).
+
+    The two sources are not equally trustworthy and the artifact must not conflate them:
+
+      "git_checkout" -- read from a live `git rev-parse HEAD`. Proves both what was built and the
+                        tree the code is actually running from.
+      "image_env"    -- PLANTSEG_GIT_COMMIT, baked into the image at build time (Dockerfile). Proves
+                        what was BUILT. It cannot detect a working tree modified after the build,
+                        because inside the image there is no working tree to modify.
+      "unavailable"  -- neither was obtainable; commit is "UNKNOWN".
+
+    The env var is preferred over the subprocess because in the official image `.git` is absent and
+    the subprocess would silently yield "UNKNOWN" (B40 #19) -- an unattributable run_meta row is the
+    exact failure this resolves. Where a real checkout exists, that path still wins: the local branch
+    below is tried first whenever the env var is unset.
+    """
+    env = os.environ.get("PLANTSEG_GIT_COMMIT", "").strip()
+    if env:
+        return env, "image_env"
     try:
         r = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPO, capture_output=True,
                            text=True, timeout=15)
-        return r.stdout.strip() if r.returncode == 0 else "UNKNOWN"
+        if r.returncode == 0 and r.stdout.strip():
+            return r.stdout.strip(), "git_checkout"
     except Exception:  # noqa: BLE001
-        return "UNKNOWN"
+        pass
+    return "UNKNOWN", "unavailable"
+
+
+def _image_digest() -> str | None:
+    """The running image's registry digest, or None when it was not supplied.
+
+    A digest cannot be baked into the image it identifies -- it is the hash of the config that would
+    have to contain it -- so it can only arrive from outside:
+        docker run -e PLANTSEG_IMAGE_DIGEST=sha256:... ...
+    Absence is recorded as JSON null, never as "" or a guess: a run whose image is unknown must say
+    so, because a fabricated digest is worse than a missing one.
+    """
+    v = os.environ.get("PLANTSEG_IMAGE_DIGEST", "").strip()
+    return v or None
 
 
 @torch.no_grad()
@@ -311,9 +345,14 @@ def run(*, mode: str, device: str, pretrained, batch_size: int, max_iters: int, 
 
     # --- persistent telemetry (B31-7). Lives beside the checkpoints, NEVER inside the repo. ---
     jsonl_path = ckpt_dir / jsonl_name
+    git_head, git_head_source = _git_provenance()
+    image_digest = _image_digest()
+    print(f"[provenance] git_head={git_head} (source={git_head_source}) "
+          f"image_digest={image_digest if image_digest else 'ABSENT (PLANTSEG_IMAGE_DIGEST unset)'}")
     _jsonl(jsonl_path, {
         "event": "run_meta", "wall_clock": time.time(), "mode": mode, "seed": seed,
-        "git_head": _git_head(), "torch": torch.__version__, "numpy": np.__version__,
+        "git_head": git_head, "git_head_source": git_head_source, "image_digest": image_digest,
+        "torch": torch.__version__, "numpy": np.__version__,
         "device": str(dev), "cuda_available": torch.cuda.is_available(),
         "gpu_name": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
         "num_workers": num_workers, "batch_size": batch_size, "max_iters": max_iters,

@@ -110,7 +110,18 @@ def git_porcelain_bytes(repo: Path) -> bytes:
         cwd=str(repo), capture_output=True, check=False)
     if proc.returncode != 0:
         raise ArtifactRequestError(
-            f"git status failed ({proc.returncode}): {proc.stderr.decode('utf-8', 'replace')[:200]}")
+            f"git status failed ({proc.returncode}): "
+            f"{proc.stderr.decode('utf-8', 'replace')[:200]}\n"
+            "BY DESIGN: inside the official container image there is no .git directory, so this "
+            "porcelain cannot be read. It is not decoration -- it is the only evidence that the "
+            "governed paths were clean at EVALUATION time, and write_artifact() refuses an "
+            "'official' artifact without it. A commit baked in at build time cannot substitute: it "
+            "describes what was BUILT, not the tree being evaluated.\n"
+            "REMEDY: give the evaluation stage a real checkout (mount the repository into the "
+            "container, or clone it there). Running evaluation on a machine with a checkout works "
+            "unchanged.\n"
+            "DO NOT weaken or bypass this check to make the error go away -- that converts an "
+            "unprovable provenance claim into a false one.")
     return proc.stdout
 
 
@@ -136,7 +147,19 @@ def git_commit(repo: Path) -> str:
     proc = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(repo),
                           capture_output=True, check=False)
     if proc.returncode != 0:
-        raise ArtifactRequestError("git rev-parse HEAD failed")
+        raise ArtifactRequestError(
+            "git rev-parse HEAD failed.\n"
+            "BY DESIGN: inside the official container image there is no .git directory. This "
+            "function deliberately does NOT fall back to the PLANTSEG_GIT_COMMIT environment "
+            "variable that the training loop uses: training records provenance best-effort and "
+            "degrades, whereas an OFFICIAL artifact must prove it, and the companion check "
+            "(git_porcelain_bytes -> governed_paths_clean) has no env-var equivalent at all. "
+            "Accepting a baked commit here while that check still fails would produce a half-"
+            "verified artifact that claims more than it can show.\n"
+            "REMEDY: give the evaluation stage a real checkout (mount the repository into the "
+            "container, or clone it there). Running evaluation on a machine with a checkout works "
+            "unchanged.\n"
+            "DO NOT weaken or bypass this check to make the error go away.")
     return proc.stdout.decode().strip()
 
 
