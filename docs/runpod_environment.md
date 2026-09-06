@@ -42,8 +42,16 @@ runtime they need; the GPU itself comes from the host runtime.
 ## 1 — Build the image
 
 ```bash
-docker build -t plantseg-thesis:official .
+scripts/build_and_push_image.sh              # build, verify, push
+scripts/build_and_push_image.sh --build-only # build + verify, no push
 ```
+
+**This script is the only supported build path.** It derives the commit from `git rev-parse HEAD`,
+refuses to build when any governed path is dirty or when HEAD is not on `origin`, verifies the
+revision label and the class-weight gate stage before pushing, and never handles credentials. A raw
+`docker build` is what produced the superseded image in §3: hand-built, hand-tagged, with its revision
+label applied on the CLI and no record of the procedure, it drifted 19 commits behind HEAD while still
+looking authoritative.
 
 The build fails if the installed stack drifts: `pip install --require-hashes` rejects any unpinned or
 altered artifact, and the final layer runs the image-mode preflight.
@@ -65,6 +73,31 @@ docker image inspect plantseg-thesis:official --format '{{json .RepoDigests}}'
 ```
 
 Put the resulting image ID/digest in the run provenance of every official artifact.
+
+### Authoritative image — provision BY DIGEST
+
+**Every official run provisions from this digest:**
+
+    ghcr.io/ainsleydeluna/plantseg-thesis
+      @sha256:0572c1166980d11ea0eef86aa7c2eb76b5ae6961ae406a77bbda9bcc66cedbe6
+
+Built from repo commit `28d1038a4b36caf02736b190dc3e032f181b7bb5`. Verification:
+`reports/b38_docker_image.md` §8.
+
+**Provision by digest, never by tag.** `:official` is a moving pointer that the next official build
+reassigns, so a run recorded against `:official` cannot be reproduced later. A digest is
+content-addressed and cannot change meaning:
+
+```bash
+docker pull ghcr.io/ainsleydeluna/plantseg-thesis@sha256:0572c1166980d11ea0eef86aa7c2eb76b5ae6961ae406a77bbda9bcc66cedbe6
+```
+
+> **SUPERSEDED — do not use.** `sha256:5f5dba46b8668949dc166bfbe7acc6db0fc90beba746b425d5e057183adbf9d2`
+> (tags `:148af2c`, `:runpod-preflight-2026-08-17`) is still on the registry and still pullable, but
+> **must not provision any run.** It predates `scripts/preflight_e1.py` entirely — the E1 pre-flight
+> gate did not exist when it was built — along with the B31/B31c training-loop hardening and the
+> B31-5/A1 augmentation-RNG fix. It is left in place deliberately so an old note citing it resolves to
+> something clearly marked superseded rather than to nothing.
 
 ## 4 — Start on a GPU-capable runtime, dataset mounted externally
 

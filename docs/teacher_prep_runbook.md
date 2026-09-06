@@ -91,7 +91,7 @@ pre-train gate verifies the teacher hook returns this 320-ch stride-16 feature (
 Pinned stack `[IMPLEMENTATION_CONTRACT.md §B6; requirements.lock]`: Python 3.11 · torch 2.1.0+cu121 ·
 torchvision 0.16.0 · **MMSegmentation 1.2.2** · **mmcv 2.1.0** · numpy 1.26.4 · mmengine 0.10.7.
 
-Order matters because of the compat blocker in step 4:
+Order matters — install mmcv before mmsegmentation:
 
 1. Create the Python 3.11 env.
 2. Install the pinned training stack:
@@ -100,16 +100,23 @@ Order matters because of the compat blocker in step 4:
 3. Install the **mmcv 2.1.0 prebuilt wheel** from the OpenMMLab index (matches torch 2.1.0 / cu121):
    `pip install mmcv==2.1.0 -f https://download.openmmlab.com/mmcv/dist/cu121/torch2.1.0/index.html`
 4. Install `mmsegmentation==1.2.2` (+ `mmengine`, `openmim`).
-5. **COMPAT BLOCKER — apply the mmseg assertion fix BEFORE any mmseg import** (including `mim` and the
-   init test):
-   - mmseg 1.2.2's `mmseg/__init__.py` upper-bounds mmcv **below 2.1.0**, so it **rejects** the pinned
-     mmcv **2.1.0** at import.
-   - **Fix:** open the installed `mmseg/__init__.py`, read the actual constant, and relax the upper bound
-     `MMCV_MAX` from `'2.1.0'` → `'2.2.0'` (single-line edit).
-   - > **This is NOT a stack bump.** mmcv itself stays **2.1.0** (the pinned, wheel-available version). Only
-     > mmseg's *upper-bound check* is relaxed so it accepts 2.1.0. This does not violate
-     > `[context.md:34]` "NEVER bump the locked stack." Read the file first and confirm the exact constant
-     > name/value before editing (`[context.md:45]` — read the source, don't assume).
+5. **No mmseg compatibility patch is required.** *(Corrected 2026-09-06 — this step previously
+   instructed a manual `MMCV_MAX` edit; that instruction was wrong for this pin and has been removed.)*
+   - The former step claimed mmseg 1.2.2 upper-bounds mmcv **below 2.1.0** and told you to relax
+     `MMCV_MAX` from `'2.1.0'` → `'2.2.0'` by hand. **The premise is false for mmseg 1.2.2**, which
+     ships `MMCV_MAX = '2.2.0'` already — the pinned mmcv **2.1.0** is admitted unmodified.
+   - Verified inside the official image, addressed by digest
+     (`ghcr.io/ainsleydeluna/plantseg-thesis@sha256:0572c116…`): `MMCV_MIN = '2.0.0rc4'`,
+     `MMCV_MAX = '2.2.0'`, and `import mmseg` succeeds with mmcv 2.1.0 including compiled ops.
+     Evidence: `reports/b38_docker_image.md` §5.3.
+   - **Do not edit `mmseg/__init__.py`.** Editing an installed package to fix a problem it does not
+     have would make the environment differ from the pinned stack for no reason.
+   - > **If you already applied the old instruction, your environment now differs from the pin.** The
+     > edit is inert (it rewrites `'2.2.0'` to `'2.2.0'`) only if the constant was already correct;
+     > any other result means the file was modified away from the released package. Restore it with
+     > `pip install --force-reinstall --no-deps mmsegmentation==1.2.2` and re-read the constant before
+     > continuing. The original instruction's own advice — read the source, don't assume
+     > (`[context.md:45]`) — is what would have caught this; the on-disk value was simply never read.
 6. Download the init config + checkpoint into git-ignored `weights/`:
    `mim download mmsegmentation --config segnext_mscan-b_1xb16-adamw-160k_ade20k-512x512 --dest weights/`
    Capture the printed `.pth` URL.
@@ -245,6 +252,7 @@ The teacher and every student stage **must** share these, or distillation/compar
 ### Open items carried by this runbook (`NEED_TO_CONFIRM` — fill at execution, never guess)
 - Init `.pth` **SHA256** + **download date** + exact resolved URL (from the `mim download` log).
 - `scripts/test_teacher_init.py` **PASS/FAIL** result in the pinned env.
-- Exact mmseg `MMCV_MAX` constant value on disk (read before editing to 2.2.0).
+- ~~Exact mmseg `MMCV_MAX` constant value on disk~~ — **RESOLVED 2026-09-06:** `'2.2.0'`, verified in
+  the official image by digest; no edit required (see §4.5).
 - Final RunPod **A6000** pod type / CUDA image (reported in Ch4).
 - Recovered teacher mIoU (produced by the fine-tune run; out of preparation scope).
