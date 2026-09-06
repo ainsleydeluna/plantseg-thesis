@@ -79,25 +79,44 @@ Put the resulting image ID/digest in the run provenance of every official artifa
 **Every official run provisions from this digest:**
 
     ghcr.io/ainsleydeluna/plantseg-thesis
-      @sha256:0572c1166980d11ea0eef86aa7c2eb76b5ae6961ae406a77bbda9bcc66cedbe6
+      @sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf
 
-Built from repo commit `28d1038a4b36caf02736b190dc3e032f181b7bb5`. Verification:
-`reports/b38_docker_image.md` §8.
+Built from repo commit `f77d05d7b35187bf0da7e7b94a629549fe2e1c05`. Verification:
+`reports/b41_runtime_provenance.md` §5.
 
 **Provision by digest, never by tag.** `:official` is a moving pointer that the next official build
 reassigns, so a run recorded against `:official` cannot be reproduced later. A digest is
 content-addressed and cannot change meaning:
 
 ```bash
-docker pull ghcr.io/ainsleydeluna/plantseg-thesis@sha256:0572c1166980d11ea0eef86aa7c2eb76b5ae6961ae406a77bbda9bcc66cedbe6
+docker pull ghcr.io/ainsleydeluna/plantseg-thesis@sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf
 ```
 
-> **SUPERSEDED — do not use.** `sha256:5f5dba46b8668949dc166bfbe7acc6db0fc90beba746b425d5e057183adbf9d2`
-> (tags `:148af2c`, `:runpod-preflight-2026-08-17`) is still on the registry and still pullable, but
-> **must not provision any run.** It predates `scripts/preflight_e1.py` entirely — the E1 pre-flight
-> gate did not exist when it was built — along with the B31/B31c training-loop hardening and the
-> B31-5/A1 augmentation-RNG fix. It is left in place deliberately so an old note citing it resolves to
-> something clearly marked superseded rather than to nothing.
+**Pass the digest back in at run time.** The image cannot know its own digest — a digest is the hash
+of the config that would have to contain it — so the training loop reads it from an environment
+variable and records `image_digest: null` when it is absent. Always supply it:
+
+```bash
+docker run --rm --gpus all \
+  -e PLANTSEG_IMAGE_DIGEST=sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf \
+  -v /host/plantseg_data:/workspace/plantseg_data:ro \
+  ghcr.io/ainsleydeluna/plantseg-thesis@sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf bash
+```
+
+The commit needs no such flag: it is baked in as `PLANTSEG_GIT_COMMIT` and appears in every
+`run_meta` row alongside `git_head_source` (`image_env` in-container, `git_checkout` from a real
+checkout).
+
+### Superseded images — do not provision from these
+
+Each remains **on the registry and pullable, deliberately**: a digest cited in an old note must
+resolve to something clearly marked superseded rather than to nothing. This list grows; append, never
+delete.
+
+| digest | tags | built from | superseded because |
+|---|---|---|---|
+| `sha256:5f5dba46b8668949dc166bfbe7acc6db0fc90beba746b425d5e057183adbf9d2` | `:148af2c`, `:runpod-preflight-2026-08-17` | `148af2c9b30ffc78e7e2f4d0b9ff55cd40948607` | **Predates `scripts/preflight_e1.py` entirely** — the E1 pre-flight gate did not exist when it was built — along with the B31/B31c training-loop hardening and the B31-5/A1 augmentation-RNG fix. |
+| `sha256:0572c1166980d11ea0eef86aa7c2eb76b5ae6961ae406a77bbda9bcc66cedbe6` | `:28d1038a4b36…`, formerly `:official` | `28d1038a4b36caf02736b190dc3e032f181b7bb5` | **No runtime provenance.** `.git` is absent from the image and this build had no `PLANTSEG_GIT_COMMIT`, so `_git_head()` returned `"UNKNOWN"` and no image-digest field existed: every `run_meta` row it produced would be unattributable to a commit or an image (B40 #19, fixed in B41). |
 
 ## 4 — Start on a GPU-capable runtime, dataset mounted externally
 
