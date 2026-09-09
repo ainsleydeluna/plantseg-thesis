@@ -97,11 +97,16 @@ of the config that would have to contain it — so the training loop reads it fr
 variable and records `image_digest: null` when it is absent. Always supply it:
 
 ```bash
-docker run --rm --gpus all \
+docker run --rm -it --gpus all \
   -e PLANTSEG_IMAGE_DIGEST=sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf \
   -v /host/plantseg_data:/workspace/plantseg_data:ro \
   ghcr.io/ainsleydeluna/plantseg-thesis@sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf bash
 ```
+
+`-it` is load-bearing, not cosmetic, and this block omitted it until B42. The image ends in
+`CMD ["/bin/bash"]`; without a TTY that shell reads EOF on stdin and exits 0 immediately, so the
+command returns instead of giving you a prompt. Step 4 below has always carried the flag — these two
+blocks now agree.
 
 The commit needs no such flag: it is baked in as `PLANTSEG_GIT_COMMIT` and appears in every
 `run_meta` row alongside `git_head_source` (`image_env` in-container, `git_checkout` from a real
@@ -152,6 +157,31 @@ confirmed by running the suite inside the container:
 
 Neither is an implementation defect; both are properties of a deliberately dataset-free,
 history-free image.
+
+## 4c — Three RunPod platform behaviours the image does not control
+
+Established on a RunPod pod on 2026-09-09; see
+[reports/b42_pod_gpu_validation.md](../reports/b42_pod_gpu_validation.md) §3. None is an image
+defect — `docker run -it` gives a shell directly — but all three cost a provisioned, paid pod if met
+for the first time on the day of a launch.
+
+1. **The pod needs an explicit Start command.** RunPod starts the container non-interactively, so
+   `CMD ["/bin/bash"]` reads EOF and exits 0 at once. RunPod's supervisor restarts it, and the pod
+   log fills with `start container … : begin` roughly every 16 seconds while no shell is ever
+   reachable. Set the pod template's **Start command** to `sleep infinity`. A healthy pod logs that
+   line **once** and then goes quiet — silence is the pass signal, since `sleep` prints nothing.
+   This alters nothing the run records: `run_meta` reads `PLANTSEG_GIT_COMMIT` (baked) and
+   `PLANTSEG_IMAGE_DIGEST` (supplied), neither of which depends on `CMD`, and no package is touched.
+2. **The web terminal does not attach to this image.** Enabling it silently reverts to off: the
+   `python:3.11-slim-bookworm` base carries no `openssh-server` and none of the startup tooling
+   RunPod's own templates bake in. Use RunPod's **proxied SSH** instead — register a public key on
+   the pod and connect with `ssh <pod-id>-<hash>@ssh.runpod.io -i ~/.ssh/id_ed25519`. It needs
+   neither a public IP nor an exposed TCP port. That proxy carries **no SCP or SFTP**, so retrieve
+   artifacts with `runpodctl send`, or print small text files and copy them out.
+3. **There is no `docker run -e` on RunPod**, so the digest of step 3 is supplied through the pod
+   template's **Environment variables**: `PLANTSEG_IMAGE_DIGEST` = the full value *including* the
+   `sha256:` prefix. Omit it and `image_digest` is recorded absent exactly as step 3 warns, on a pod
+   that otherwise looks healthy.
 
 ## 5 — Official GPU preflight
 

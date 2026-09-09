@@ -612,6 +612,25 @@ I did **not** independently verify the claim that `torch 2.1.0+cu121` ships only
 — that is a property of the pinned wheel, not of this repo. The pod command in section 7
 settles it in one line.
 
+> **ADDENDUM (B42, 2026-09-09) — both halves of this finding are now closed.** This audit was a
+> read-only pass at HEAD `148af2c`; the text above is left as written and this note supersedes it.
+> Evidence: [b42_pod_gpu_validation.md](b42_pod_gpu_validation.md).
+>
+> - **The missing gate was added after this audit**, by **B31-3/4** (`bc5f644`, "CUDA
+>   compute-capability gate and dataset verification in verify_env"). `scripts/verify_env.py:32`
+>   defines `MAX_SM = (9, 0)` and `:133-146` hard-**FAIL**s above it, feeding the `[18] VERDICT`
+>   block. So "`torch.cuda.get_device_capability` is called nowhere in the repository" was accurate
+>   at `148af2c` and is false from `bc5f644` onward. Observed on the pod:
+>   `gpu_capabilities : ['sm_89'] (max supported by the pinned stack: sm_90)` and
+>   `capability_gate : PASS`. An sm_100/sm_120 device now fails stage 2/5 of `preflight_e1.py`
+>   rather than reaching a kernel launch.
+> - **The arch-list claim is now MEASURED, not inferred.** On the pinned stack,
+>   `torch.cuda.get_arch_list()` → `['sm_50', 'sm_60', 'sm_70', 'sm_75', 'sm_80', 'sm_86', 'sm_90']`
+>   — exactly the claimed set. Note additionally that **no `compute_*` entry is present**: the build
+>   embeds no PTX, so there is no JIT fallback path. A Blackwell-class device has neither a matching
+>   cubin nor PTX to compile from, which raises this finding's failure prediction from inference to
+>   measurement.
+
 ### F11 — CONFIRMED
 
 **ch3, verbatim** (the sweep protocol; see E13a for the full passage):

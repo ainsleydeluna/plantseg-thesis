@@ -40,6 +40,14 @@ stack) / `requirements.lock` (full pinned stack), `reports/platform_verify.md` a
 ## 3. RunPod setup checklist (run ON the GPU pod)
 > Linux shell on the pod. Do **not** run any history-modifying git commands (no force-push, no rewrite).
 
+> **Before you can run anything below, you need a shell — and on the official image that takes two
+> RunPod-specific settings.** The pod template needs a **Start command** of `sleep infinity` (else the
+> container exits instantly and restart-loops), and the **web terminal does not attach** to this
+> image — use RunPod's proxied SSH. Both, plus supplying `PLANTSEG_IMAGE_DIGEST` as a template
+> environment variable, are documented at
+> [docs/runpod_environment.md](../docs/runpod_environment.md) §4c. Steps 3.2–3.3 below describe the
+> pre-image conda/venv install path and are superseded when provisioning from the official image.
+
 ```bash
 # 3.1 Clone + checkout the exact baseline
 cd /workspace
