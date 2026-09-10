@@ -4,11 +4,12 @@
 Tiny synthetic logits + mask (with 255 ignore). Forward CE + Dice, then ONE tiny backward as a
 gradient smoke check (no optimizer, no loop, no scheduler, no checkpoint — NOT training). Verifies
 finite loss + finite gradients, and that perturbing logits at 255 positions leaves CE and Dice
-unchanged (ignore-255 correctness). Writes reports/loss_smoke.md.
+unchanged (ignore-255 correctness). Writes reports/loss_smoke.md unless --no-report is passed.
 """
 
 from __future__ import annotations
 
+import argparse
 import sys
 from pathlib import Path
 
@@ -39,7 +40,12 @@ def write_report(path: Path, title: str, body: list[str], checks: list[tuple[str
     path.write_text("\n".join(md), encoding="utf-8")
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description="Loss smoke test (B11b).")
+    ap.add_argument("--no-report", action="store_true",
+                    help="run the checks but do not write reports/loss_smoke.md "
+                         "(for callers that must not dirty the worktree, e.g. preflight_e1.py)")
+    args = ap.parse_args(argv)
     set_seed()
     body: list[str] = []
     checks: list[tuple[str, bool]] = []
@@ -95,10 +101,13 @@ def main() -> int:
     all_ok = all(ok for _, ok in checks)
     out(f"[{'PASS' if all_ok else 'FAIL'}] loss smoke test")
 
-    write_report(REPO / "reports" / "loss_smoke.md", "Loss smoke test — B11b", body, checks, all_ok,
-                 ["real CE class weights — batch/None here; full train-set weights NEED_TO_CONFIRM",
-                  "logit KD weight (lambda_logit) — NEED_TO_CONFIRM (validation sweep)",
-                  "reduce_zero_label — NEED_TO_CONFIRM"])
+    if args.no_report:
+        print("[no-report] reports/loss_smoke.md not written (--no-report)")
+    else:
+        write_report(REPO / "reports" / "loss_smoke.md", "Loss smoke test — B11b", body, checks, all_ok,
+                     ["real CE class weights — batch/None here; full train-set weights NEED_TO_CONFIRM",
+                      "logit KD weight (lambda_logit) — NEED_TO_CONFIRM (validation sweep)",
+                      "reduce_zero_label — NEED_TO_CONFIRM"])
     return 0 if all_ok else 1
 
 

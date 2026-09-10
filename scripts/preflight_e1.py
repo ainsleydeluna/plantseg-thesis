@@ -14,14 +14,19 @@ at stage 1 below:
                                         its CONTENT. Runs first because it is the cheapest check
                                         here (one JSON read) and guards an artifact E1 hard-depends
                                         on.
-  2. scripts/verify_env.py            — platform, pinned versions, the B31-3 CUDA compute-capability
+  2. scripts/smoke_loss.py            — ch3 Table 3.1 gate 5, E1 half: CE and Dice are unchanged
+                                        when logits at ignore-255 positions are perturbed. CPU-only
+                                        and synthetic, so it runs before the environment and dataset
+                                        stages. Invoked with --no-report: the gate asserts the
+                                        checks and writes nothing into the repo.
+  3. scripts/verify_env.py            — platform, pinned versions, the B31-3 CUDA compute-capability
                                         gate (sm<=9.0) and the B31-4 dataset verification.
-  3. scripts/smoke_dataloader.py      — one train + one val batch: shapes, dtypes, label range.
-  4. scripts/smoke_aug_stochasticity.py — augmentation varies across epochs, val is bit-identical,
+  4. scripts/smoke_dataloader.py      — one train + one val batch: shapes, dtypes, label range.
+  5. scripts/smoke_aug_stochasticity.py — augmentation varies across epochs, val is bit-identical,
                                         seeds reproduce across processes. On the pod this doubles as
                                         the R5 PINNED-STACK re-measurement: the observed seed
                                         sequence is compared against the B30 §9 baseline.
-  5. src/training/train_e1.py --dry-run — the end-to-end scaffold floor.
+  6. src/training/train_e1.py --dry-run — the end-to-end scaffold floor.
 
 Stage 1 is a REPO-ARTIFACT check, not a dataset check: it proves the committed weight vector is the
 one B18a computed. It does NOT prove the pod's dataset matches the histogram those weights came from
@@ -209,13 +214,20 @@ def check_class_weights(path=CLASS_WEIGHTS_JSON):
 
 
 def stage_class_weights(_dev):
-    t0 = _banner("1/5 — CE class-weight artifact (B34b Tier 1)")
+    t0 = _banner("1/6 — CE class-weight artifact (B34b Tier 1)")
     ok, detail = check_class_weights()
     return ok, detail, time.time() - t0
 
 
+def stage_loss(_dev):
+    r, secs = _run([PY, str(REPO / "scripts" / "smoke_loss.py"), "--no-report"],
+                   "2/6 — smoke_loss.py  (ch3 Table 3.1 gate 5: CE/Dice ignore-255)")
+    ok = r.returncode == 0 and "[PASS] loss smoke test" in r.stdout
+    return ok, f"exit={r.returncode}", secs
+
+
 def stage_verify_env(dev_rehearsal):
-    r, secs = _run([PY, str(REPO / "scripts" / "verify_env.py")], "2/5 — verify_env.py")
+    r, secs = _run([PY, str(REPO / "scripts" / "verify_env.py")], "3/6 — verify_env.py")
     # verify_env returns 0 regardless of verdict, so the RESULT line is the authority.
     line = next((x for x in reversed(r.stdout.splitlines()) if x.startswith("RESULT:")), "")
     verdict = line.split("RESULT:", 1)[1].split("|")[0].strip() if line else "UNKNOWN"
@@ -228,14 +240,14 @@ def stage_verify_env(dev_rehearsal):
 
 def stage_dataloader(_dev):
     r, secs = _run([PY, str(REPO / "scripts" / "smoke_dataloader.py")],
-                   "3/5 — smoke_dataloader.py")
+                   "4/6 — smoke_dataloader.py")
     ok = r.returncode == 0 and "[PASS] dataloader smoke test" in r.stdout
     return ok, f"exit={r.returncode}", secs
 
 
 def stage_stochasticity(_dev):
     r, secs = _run([PY, str(REPO / "scripts" / "smoke_aug_stochasticity.py")],
-                   "4/5 — smoke_aug_stochasticity.py  (R5 pinned-stack seed re-measurement)")
+                   "5/6 — smoke_aug_stochasticity.py  (R5 pinned-stack seed re-measurement)")
     if r.returncode != 0 or "RESULT: PASS" not in r.stdout:
         return False, f"exit={r.returncode}, gate did not pass", secs
 
@@ -260,7 +272,7 @@ def stage_stochasticity(_dev):
 
 def stage_dryrun(_dev):
     r, secs = _run([PY, str(REPO / "src" / "training" / "train_e1.py"), "--dry-run"],
-                   "5/5 — train_e1.py --dry-run")
+                   "6/6 — train_e1.py --dry-run")
     line = next((x for x in reversed(r.stdout.splitlines()) if x.startswith("RESULT:")), "")
     print(f"\n--- final line: {line!r} ---")
     if r.returncode != 0:
@@ -282,6 +294,7 @@ def stage_dryrun(_dev):
 
 STAGES = [
     ("class_weights", stage_class_weights),
+    ("smoke_loss", stage_loss),
     ("verify_env", stage_verify_env),
     ("smoke_dataloader", stage_dataloader),
     ("smoke_aug_stochasticity", stage_stochasticity),
