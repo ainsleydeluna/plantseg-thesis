@@ -199,6 +199,73 @@ Dockerfile. For each official run capture: image ID/digest · GPU model and coun
 runtime · CPU model and core count · RAM · RunPod pod type and region · torch thread settings ·
 the `--mode gpu` preflight JSON.
 
+## 7 — Record the ImageNet backbone the run actually used
+
+The registered stack pins 78 distributions by full `sha256`, the base image by immutable digest, and
+the container by digest. The MobileNetV3 ImageNet initialisation is **not** pinned that way: it is
+fetched from `download.pytorch.org` at first use into the torch-hub cache. It is the only unpinned
+input that determines a run's starting state.
+
+**What protection already exists.** `src/models/student.py:52-55` resolves
+`MobileNet_V3_Large_Weights.IMAGENET1K_V2`, whose URL ends in `mobilenet_v3_large-5c1a4163.pth`
+(recorded at `scripts/verify_env.py:26`). The `-5c1a4163` suffix is `torch.hub`'s hash-prefix
+convention — `HASH_REGEX = r'-([a-f0-9]*)\.'` — and `download_url_to_file()` checks that the file's
+SHA256 begins with it when `check_hash=True`.
+
+**What that is and is not.** Eight hex characters is **32 bits**, against a stack that pins
+everything else by full SHA256. And the prefix is **shipped by torchvision inside its own URL** — it
+is not a value this repository pinned. It is therefore a **transport-integrity check, not a
+provenance pin**: it confirms the bytes match what the installed torchvision points at, not that
+they match what E1 was registered against. Whether torchvision 0.16.0 passes `check_hash=True` at
+all is `[UNVERIFIED]` — settle it with the second command below rather than assuming either way.
+
+**The cache is empty on every fresh pod**, so the first real launch on any pod fetches this file
+again. Each capture is a record of what that URL served, on that date, from that image.
+
+Run this once the first real launch has populated the cache, and paste the output into the run
+record:
+
+```bash
+python - <<'EOF'
+import datetime, hashlib, json, os, pathlib, torch, torchvision
+from torchvision.models import MobileNet_V3_Large_Weights as W
+p = pathlib.Path(torch.hub.get_dir()) / "checkpoints" / "mobilenet_v3_large-5c1a4163.pth"
+h = hashlib.sha256(p.read_bytes()).hexdigest()
+prefix = p.name.rsplit("-", 1)[1].split(".")[0]
+print(json.dumps({
+    "captured_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    "image_digest": os.environ.get("PLANTSEG_IMAGE_DIGEST", "UNSET"),
+    "git_commit": os.environ.get("PLANTSEG_GIT_COMMIT", "UNSET"),
+    "file": p.name,
+    "size_bytes": p.stat().st_size,
+    "sha256": h,
+    "url": W.IMAGENET1K_V2.url,
+    "torchvision": torchvision.__version__,
+    "url_hash_prefix": prefix,
+    "full_hash_starts_with_prefix": h.startswith(prefix),
+}, indent=2))
+EOF
+```
+
+`captured_utc` and `image_digest` are what keep a future mismatch diagnosable. Without them a
+changed hash is ambiguous between "torchvision started serving something else" and "we captured on a
+different image."
+
+Settle the `[UNVERIFIED]` item in the same session — this needs the pod, since torchvision is not
+installed on a docs-only checkout:
+
+```bash
+python -c "import inspect, torchvision.models._api as a; print(inspect.getsource(a.WeightsEnum.get_state_dict))"
+```
+
+**Verification against a pinned value on later runs is not implemented**, and cannot be added from
+here: any such check lives in `src/**` or `scripts/**`, both **governed paths**. The two candidate
+shapes are described in
+[reports/b46_imagenet_init_provenance.md](../reports/b46_imagenet_init_provenance.md) §4. Note the
+ordering this forces — the hash cannot be pinned until a real run has downloaded the file, so **at
+least one official run is trained before the pin exists.** That is a documented condition of the
+first seed, not a blocker for it.
+
 ## Regenerating the hashed lock
 
 Run on Linux x86-64 (hashes come from the actual resolved artifacts — never hand-written):
@@ -259,5 +326,8 @@ not portable identifiers — record your own via step 3 for each official run.
   determinism would need a Debian snapshot mirror.
 - **No GPU run has been performed.** The image builds and passes image-mode preflight, but the
   official environment requires a passing `--mode gpu` on a real accelerator.
+  **SUPERSEDED (B46, 2026-09-10):** closed. `--mode gpu` passed **37/37** on an RTX 4090 on
+  2026-09-09 and `scripts/preflight_e1.py` returned **`VERDICT: GO`** —
+  [reports/b42_pod_gpu_validation.md](../reports/b42_pod_gpu_validation.md) §4.
 - fvcore is specified but its real profiling execution is still pending.
 - The teacher (MMSeg) stack is installed but teacher fine-tuning has not been run in this image.
