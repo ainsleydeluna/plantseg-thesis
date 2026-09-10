@@ -15,8 +15,8 @@ later.** See [CLAUDE.md](../../CLAUDE.md) and [ai_guardrails.md](../ai_guardrail
 - **Files to inspect:** <list>
 
 ## Report format — produce exactly these sections
-**A. Pre-flight git confirmation** — table: branch / latest commit / staged / only-dirty-file, each with expected vs actual.
-**B. Files inspected** — the read-only set (note `reference.pdf` not opened).
+**A. Pre-flight git confirmation** — table: branch / latest commit / staged / only-dirty-file, each with expected vs actual **and the command the "actual" came from**. Paste the raw output of those commands beneath the table. A row whose "actual" cannot be traced to a pasted output is not evidence — an environment summary or injected session context is not the same as having run the check.
+**B. Files inspected** — the read-only set. For the protected path, cite the `git status --porcelain -- docs/reference/` output pasted in section A; it must show no staged entry, and must be unchanged if re-run at the end of the pass. That `reference.pdf` was not **opened** cannot be shown by any command — state it as an **attestation** and label it one.
 **C. PASS / WARN / BLOCKER table** — one row per checked area with a verdict.
 **D. Exact findings** — each with `file_path:line` references and a concrete failure scenario / rationale.
 **E. Must fix before next phase** — blocking items only (empty if none).

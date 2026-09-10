@@ -47,7 +47,8 @@ Canonical list in [CLAUDE.md](../CLAUDE.md): FP32 MobileNetV3-Large + LR-ASPP; n
 ## 7. How to report final results
 Every task ends with a concise report.
 - **Read-only audits:** use the [B31 review template](task_templates/B31_review_template.md) (sections A–H).
-- **Fixes/changes:** include **files changed** (exact paths) · **verification commands + results** (CPU-only unless approved) · **commit hash** + pushed branch (if any) · **final `git status`** · confirmation that `docs/reference/reference.pdf` remains dirty/unstaged/untouched and no unrelated files changed.
+- **Fixes/changes:** include **files changed** (exact paths) · **verification commands + results** (CPU-only unless approved) · **commit hash** + pushed branch (if any) · **final `git status`** · confirmation that no unrelated files changed · and the protected-path check below.
+- **The protected-path check is two pasted command outputs, not a sentence.** Run `git status --porcelain -- docs/reference/` at the **start** of the task and paste that output; run it again at the end and paste that one too. The check is a comparison between the two blocks *in the same report* — never against a remembered state, and never a written claim that they match. Neither block may show a staged entry (any first-column character other than a space or `?`). That `reference.pdf` was never **opened** cannot be shown by any command: state that separately and label it an **attestation**, so a reader can tell which half carries evidence and which carries only good faith.
 
 ## 8. Expected final git status
 Judge the end state against the status you recorded at the **start** of the task, not against a fixed
