@@ -744,6 +744,48 @@ home is [IMPLEMENTATION_CONTRACT.md](IMPLEMENTATION_CONTRACT.md), a **governed p
 
 ---
 
+### D30 — the INFERRED 11–14 GB VRAM band is falsified for every student stage under determinism `[project; B48]`
+[IMPLEMENTATION_CONTRACT.md](IMPLEMENTATION_CONTRACT.md)`:249-252` records an **INFERRED 11–14 GB**
+peak on CUDA at batch 16 for E2/E3 and says of it: "This is **not a GO** — settle it on the pod with
+`torch.cuda.max_memory_allocated()`." [B48](../reports/b48_e1_oom_investigation.md) §2 did exactly
+that, for E1.
+
+**Measured** (RTX 4090, batch 16, 512², `num_classes=116`): **20.667 GiB** with
+`use_deterministic_algorithms(True)` as [src/seeds.py](../src/seeds.py)`:37` sets it, **17.014 GiB**
+without. The band's *component* estimates are not the problem — its omitted categories are. It
+accounts for allocator overhead, the teacher transient, cuDNN workspace and backward temporaries,
+but not for the **12.658 GiB forward transient** determinism introduces by rerouting
+`F.interpolate` to `torch._decomp.decompositions.upsample_bilinear2d_vec`. That one omitted term is
+larger than the entire inferred band.
+
+**This generalizes past E1.** The transient scales with `num_classes × H × W × batch` at the final
+upsample, none of which is stage-specific: E1, E2, E3, E5 and E6 all carry the same 116-class 512×512
+head at batch 16. **Every student stage needs a 48 GB card**, not E1 alone.
+[b32c_closeout.md](../reports/b32c_closeout.md)`:17` — that a 24 GB → 48 GB switch "looks to have
+been wrong even before B32" — is superseded on measurement.
+
+- **How it gets resolved:** a session explicitly approved to edit governed paths corrects
+  `IMPLEMENTATION_CONTRACT.md:249-252` (the INFERRED band → the measured figure with its determinism
+  condition) and `:393`, whose Compute row still reads "RunPod RTX 4090 (~$0.34/hr)" — a card now
+  measured as unable to reach iteration 2 of E1.
+- **Not in scope of that fix:** whether E2/E3 add materially *on top of* E1's 20.667 GiB. B32c's
+  teacher-transient reasoning is untouched by this and stays INFERRED until measured on the pod.
+
+---
+
+### D31 — `write_report`'s generation date is hardcoded `[project; B47]`
+[scripts/smoke_loss.py](../scripts/smoke_loss.py)`:36` emits `_Generated: 2026-06-27 by
+scripts/smoke_loss.py …_` as a string literal, so every `reports/loss_smoke.md` it writes claims that
+date regardless of when it ran. B47 added `--no-report` to stop the gate dirtying the worktree and
+deliberately left this alone, as it fell outside that session's narrow governed-path scope.
+
+- **How it gets resolved:** a session explicitly approved to edit governed paths replaces the literal
+  with the run's own date. `scripts/` is governed (`AGENTS.md` rule 8).
+- **Severity:** cosmetic, but misleading in the wrong direction — the file is a provenance artifact,
+  and a wrong date in a provenance artifact reads as authoritative later.
+
+---
+
 ## NEED_TO_CONFIRM (not stated in any source; filled by selection/measurement, never guessed)
 
 ### 3. `λ_logit` (Logit-KD weight)
