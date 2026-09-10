@@ -85,6 +85,21 @@ valid E1 run but not a byte-reproduction. It must be reported as resumed if it p
 result. No code change is proposed to make order recoverable: doing so would require persisting
 sampler position and is not required by any source. `[project; B31-2]`
 
+> **SUPERSEDED FOR OFFICIAL RUNS (B44, 2026-09-09) — a tightening under changed cost, not a
+> correction.** D26 balanced a real trade: salvage the compute already spent against carrying an
+> asterisk on a headline result. That balance held while a lost run meant many GPU-hours at
+> Secure-tier prices. Under the B44 tier decision
+> ([reports/b42_pod_gpu_validation.md](../reports/b42_pod_gpu_validation.md) §7) seed-replicated runs
+> go on Community Cloud, where losing a full 13-hour seed costs roughly **$4.40** at ~$0.34/hr
+> `[INFERRED — no interruption rate has been measured]`. At that price the trade no longer balances,
+> so official runs discard and relaunch from iteration 0. The rule lives at `AGENTS.md`
+> § E1 invariants.
+>
+> **What D26 still governs:** every non-official resumed run — debugging, rehearsals, and the
+> *k*-segment resume verification behind D27. Its disclosure requirement is unchanged for those, and
+> the `prev_lr` machinery D27 added remains live tooling, scoped out of official runs rather than
+> retired. `--resume` is not removed from `train_e1.py`.
+
 ### D28 — the λ_logit semantics boundary — ✅ RESOLVED `[project]` (B32/F8 + B32c-2)
 ch3 pins *which pixels* enter the Logit-KD KL but not *which grid*. B32 pinned it to the head's
 native OS8 64×64. Because λ_logit weights that term, **its numeric value is only meaningful relative
@@ -708,6 +723,24 @@ narrow exception: it adds a level-scoped top-level value vocabulary to the exist
 field name (§12.4.3). No A3b implementation and no statistics artifact existed when these details were
 frozen. Cross-references: D21, D23. **D22 (deferred pooled robustness estimand) is unchanged and is
 not reopened.**
+
+---
+
+## Open — pending a governed-path session
+
+### D29 — the no-resume rule's contract-level home is not yet settled `[project; B44]`
+The rule ("official runs of any stage are never launched or continued with `--resume`", `AGENTS.md`
+§ E1 invariants) currently lives **operationally** in `AGENTS.md` and in the preemption playbook at
+[reports/e1_launch_runbook_v2.md](../reports/e1_launch_runbook_v2.md) §5. Its durable methodological
+home is [IMPLEMENTATION_CONTRACT.md](IMPLEMENTATION_CONTRACT.md), a **governed path**
+(`AGENTS.md` rule 8), which was out of scope for the B44 session.
+
+- **How it gets resolved:** a session explicitly approved to edit governed paths adds it to the
+  implementation contract, after which `AGENTS.md` can cite the contract rather than carrying the
+  statement itself.
+- **Also pending:** ch3 will need to reflect it. The manuscript reproducibility follow-up at
+  `docs/open_questions.md:76-78` pins seeds and cuDNN flags but does not address interruption
+  handling at all.
 
 ---
 

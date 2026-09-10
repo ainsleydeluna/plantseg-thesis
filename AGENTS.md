@@ -69,6 +69,7 @@ further changes.
 - **Disease-only mIoU is provisional/reporting only** — never the checkpoint criterion.
 - E1 install file = **`requirements-e1.txt`** (student-only; NO mmcv/mmseg/teacher stack).
 - Real E1 requires **`--real-run` AND `--confirm-real-run`**, requires **CUDA** (hard-aborts on CPU). Dry-run stays CPU/random/no-download.
+- **Official runs of any stage — teacher fine-tune, E1, E2, E3, E5, E6 — are never launched or continued with `--resume`.** If a run is interrupted, discard the partial run and relaunch from iteration 0 with the same seed, into a **fresh `--ckpt-dir`** (`train_e1.py:205-209` opens the telemetry JSONL in append mode, so relaunching into the dead run's directory silently interleaves two runs). `train_e1.py:395` warns a resumed run is **NOT bitwise-identical** to an uninterrupted one — data-order continuity is unrecoverable under the infinite `cycle(train_loader)`. E1 is the baseline every later stage is measured against, and `scripts/preflight_e1.py` hard-gates on seed-sequence identity. Supersedes [docs/open_questions.md](docs/open_questions.md) D26 **for official runs**; D26's disclosure requirement continues to govern non-official resumed runs, and `--resume` remains available for debugging and rehearsals.
 
 ## Where things live
 - E1 launch: [reports/e1_runpod_launch_runbook.md](reports/e1_runpod_launch_runbook.md)

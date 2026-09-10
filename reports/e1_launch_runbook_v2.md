@@ -192,22 +192,56 @@ cat /workspace/e1_ckpts/best.json
 **cannot** corrupt it. If you see a stray `last.pt.tmp`, that is the interrupted write — delete it;
 `last.pt` itself is the previous good state.
 
-### Step 2 — resume
+For an **official** run this step is now forensics, not a prelude to resuming: it records how far the
+attempt got before you discard it. Step 2 explains why.
+
+### Step 2 — discard the partial run and relaunch from iteration 0
+
+**Official runs are never resumed** (`AGENTS.md` § E1 invariants). Move the dead run's directory
+aside first. This is the step that is easy to skip at 3am and the one that silently corrupts the
+record:
+
+```bash
+ts=$(date -u +%Y%m%dT%H%M%SZ)
+mv /workspace/e1_ckpts /workspace/e1_ckpts.aborted-$ts
+mkdir -p /workspace/e1_ckpts
+[ -z "$(ls -A /workspace/e1_ckpts)" ] || { echo "STOP: not empty"; exit 1; }
+echo "clear"
+```
+
+That guard must print `clear`, and it exits non-zero if it does not — a guard that reports failure
+without signalling it is no guard at all. `train_e1.py:205-209` opens the telemetry JSONL in
+**append** mode — deliberately, so a *resumed* run continues one file — which means relaunching into
+the dead run's directory appends the new run's rows onto the old with iterations restarting at 1, in
+a single file, with nothing to signal it. `prune_checkpoints` (`keep_ckpts=3`) would likewise mix
+the two runs' best-checkpoints.
+
+`mkdir -p` is required, not tidiness: the shell opens the `>>` redirect target below **before**
+Python starts, so `resolve_ckpt_dir()` creating the directory comes too late. The old resume block
+worked only because resuming implies the directory already exists — exactly the assumption
+discard-and-relaunch breaks.
+
+Then relaunch with the original command, byte-identical, with no `--resume`:
 
 ```bash
 nohup python src/training/train_e1.py \
   --real-run --confirm-real-run --init imagenet \
   --ckpt-dir /workspace/e1_ckpts \
-  --resume /workspace/e1_ckpts/last.pt \
   --seed 42 --log-every 50 \
   >> /workspace/e1_ckpts/e1_stdout.log 2>&1 &
 ```
 
-Keep every other flag identical to the original launch. `--resume` restores model, optimizer,
-scheduler, and all RNG state (`torch`, `torch.cuda`, `numpy`, python `random`, DataLoader
-generator), and continues from `iter + 1`.
+Before launching, confirm `--seed` matches the aborted run's `run_meta` row rather than your memory
+of it: `head -1 /workspace/e1_ckpts.aborted-$ts/e1_telemetry.jsonl`. Relaunching the same stage under
+a different seed produces a run that looks official and is not: it will pass every gate, write a
+well-formed telemetry record, and silently duplicate or omit a seed in the three-seed set. Nothing
+downstream detects it — the seed identity check in `preflight_e1.py` verifies the RNG sequence for
+whatever seed it is given, not that the seed is the one the run plan called for.
 
-### Step 3 — read the resume warning and know what it means
+Keep the aborted directory. It holds the telemetry and checkpoints of a run that happened and is the
+evidence for how far the attempt got. Do not commit it (`ai_guardrails.md` §2).
+
+### Step 3 — why official runs don't resume, and when `--resume` is still right
 
 ```
 [resume] WARNING: data-order continuity is NOT restored. ...
@@ -223,17 +257,26 @@ zero unverified transitions).
 `cycle(train_loader)` and the sampler position is not persisted, so post-resume sample order differs
 from an uninterrupted run.
 
-**What that means for the thesis:** a resumed run is a valid E1 run, but it is not a byte
-reproduction of an uninterrupted one. **If a resumed run produces a headline result, report it as
-resumed.** See `docs/open_questions.md` D26.
+**Why that settles it for an official run:** E1 is the baseline every later stage is measured
+against, and `scripts/preflight_e1.py` hard-gates on seed-sequence identity. A resumed official run
+would carry a permanent asterisk to save compute worth about **$4.40** at Community rates — the full
+13-hour run at ~$0.34/hr `[INFERRED]`. Relaunching costs only that.
+
+**`--resume` remains correct for non-official work** — debugging, rehearsals, and the *k*-segment
+resume verification behind `docs/open_questions.md` D27. There D26's disclosure requirement still
+applies: report a resumed run as resumed. `--resume` is not removed from `train_e1.py`.
 
 ### Common preemption mistakes
 
 | Mistake | Consequence |
 |---|---|
-| Omitting `--resume` | starts from iteration 1, silently — you lose everything and won't notice for hours |
-| Resuming from `e1_student_best_iter*.pt` | those carry no RNG state; **resume from `last.pt`** |
-| Changing `--num-workers` on resume | changes the realized augmentation sequence mid-run |
+| **Resuming an official run** with `--resume` | not bitwise-identical to an uninterrupted run; carries a permanent asterisk and is no longer a clean baseline. Forbidden — `AGENTS.md` § E1 invariants |
+| **Relaunching into the dead run's `--ckpt-dir`** | `train_e1.py:205-209` appends telemetry, so two runs interleave in one JSONL with iterations restarting at 1, silently. Move the directory aside first (Step 2) |
+| **Relaunching under a different `--seed`** | produces a run that looks official and is not; passes every gate and silently duplicates or omits a seed in the three-seed set. Confirm the seed from the aborted run's `run_meta` row, not memory |
+| **Omitting `--resume` on a NON-official run** (debugging, rehearsal) | starts from iteration 1 silently — you lose the partial run. For official runs this is the required behaviour; see Step 2 |
+| Deleting the aborted directory | destroys the record of how far the attempt got; keep it as `e1_ckpts.aborted-<ts>` |
+| Resuming from `e1_student_best_iter*.pt` | carries no RNG state; for a **non-official** resume use `last.pt` |
+| Changing `--num-workers` on relaunch | changes the realized augmentation sequence; keep every flag identical to the original launch |
 | Overwriting the log with `>` instead of `>>` | destroys the pre-preemption stdout |
 | `RESULT: NOOP (already complete at iter N)` | `last.pt` is already at/past `--max-iters`; nothing ran. Not an error |
 

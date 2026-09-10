@@ -211,7 +211,7 @@ avoids a boundary-rounding exclusion.
 
 ---
 
-## 7. Community Cloud is not suitable for the real E1 runs
+## 7. Community Cloud is not suitable for the real E1 runs — SUPERSEDED by B44 (see note at end)
 
 Resume **is** supported (`--resume`, with `last.pt` written every `--ckpt-interval 2000`), and it
 restores model, optimizer, scheduler and RNG state. But `src/training/train_e1.py:395` prints its own
@@ -234,6 +234,32 @@ about **$12 for three uninterrupted runs** — cheap relative to an interrupted 
 **Recommendation:** run E1 ×3 (and E3 ×3) on **Secure Cloud**. Community remains right for
 preflights and probes, where an interruption costs minutes. `[operational judgement — not a ch3
 requirement]`
+
+> **SUPERSEDED (B44, 2026-09-09) — the tier split below replaces the blanket recommendation above.**
+> The reasoning above is left intact and is not withdrawn: it correctly identified that an
+> interrupted official run carries a permanent asterisk. What changed is the remedy. B44 records a
+> **no-resume rule** (`AGENTS.md` § E1 invariants): an interrupted official run is discarded and
+> relaunched from iteration 0 rather than resumed. That removes the methodological consequence on
+> **any** tier, for $0. Tier choice only lowers the *probability* of interruption and cannot
+> eliminate host failures, so the two are not substitutes — the rule ranks first and the tier split
+> is secondary.
+>
+> **The decision, `[operational judgement — not a ch3 requirement]`:**
+>
+> - **Seed-replicated runs (E1 ×3, E3 ×3, E5/E6) run on Community Cloud.** With the no-resume rule in
+>   force, an interruption costs only the GPU-time already burned — roughly **$2** for a seed dying
+>   mid-run, or about **$4.40** for a full 13-hour seed lost outright, at ~$0.34/hr
+>   `[INFERRED]`. These runs are independently repeatable, so losing one does not block the others.
+> - **The teacher fine-tune runs on Secure Cloud.** It is a single ~15-hour unattended run with no
+>   seed replication, and E2 and E3 are blocked until it lands. The premium is roughly **$1.35** for
+>   that run at A40 rates `[INFERRED]`. It is the one job whose interruption costs calendar time that
+>   cannot be parallelised around.
+>
+> **The tier decision rests on an unmeasured interruption rate.** No Community reclamation rate has
+> been measured. The single data point in §3.4 came from *stopping a pod* — a known-avoidable user
+> action — not from a mid-run reclamation, so it is not evidence about the rate at all. Every cost
+> figure above is `[INFERRED]`. **The first E1 seed on Community is the measurement.** If it is
+> reclaimed mid-run, that is the first real datum and the split should be re-examined against it.
 
 ---
 
