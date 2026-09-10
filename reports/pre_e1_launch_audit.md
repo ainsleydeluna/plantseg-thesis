@@ -55,7 +55,7 @@ loader nondeterminism.
 | F4 | No pin_memory/persistent_workers/prefetch_factor; nw=4 → data-bound | **CONFIRMED** | `dataset.py:102-110`, `train_e1.py:338`; P4 = 88.3 ms/sample MEASURED |
 | F5 | `use_deterministic_algorithms` / `CUBLAS_WORKSPACE_CONFIG` missing | **REFUTED** | `seeds.py:26` and `seeds.py:37` — both present |
 | F6 | train `drop_last=False` → ragged final batch | **CONFIRMED** | `dataset.py:109`; P5: 5367 mod 16 = **7**, 336 iters/epoch |
-| F7 | bilinear interpolate + AdaptiveAvgPool2d have no deterministic CUDA backward | **PARTIALLY-CONFIRMED** / CUDA part CANNOT-VERIFY-LOCALLY | Both ops on train path (`student.py:83,99,149`); P6 finds **9** pools, not 1 |
+| F7 | bilinear interpolate + AdaptiveAvgPool2d have no deterministic CUDA backward | **PARTIALLY-CONFIRMED** / CUDA part CANNOT-VERIFY-LOCALLY → **resolved on-pod 2026-09-10, not as predicted — see [B48](b48_e1_oom_investigation.md) §4** | Both ops on train path (`student.py:83,99,149`); P6 finds **9** pools, not 1 |
 | F8 | Logit-KD / CWD-logit resolution unpinned in ch3 + contract | **PARTIALLY-CONFIRMED** | ch3 pins pixels not grid; contract §B3 says stride-16, code uses OS8 |
 | F9 | No teacher forward/integration code; weights/ empty; NEED_TO_CONFIRM remain | **PARTIALLY-CONFIRMED** (core claim REFUTED) | `segnext_teacher.py:183,195`, `teacher.py:122` exist; `weights/` **is** empty |
 | F10 | `verify_env.py` has no CUDA compute-capability gate | **CONFIRMED** | `verify_env.py:115-130`, `:225` — no `get_device_capability` anywhere |
@@ -4005,6 +4005,18 @@ except RuntimeError as e:
 `adaptive_avg_pool2d_backward_cuda` confirms F7's structural claim on the pinned stack.
 `STRICT: no error raised` refutes it. Either way the E1 run is **unaffected**, because E1 uses
 `warn_only=True` per ch3 — this probe only tells you whether the warning list will be noisy.
+
+> **[SUPERSEDED 2026-09-10 — see [B48](b48_e1_oom_investigation.md) §4.]** The final sentence above
+> is wrong. The first real E1 launch died at iteration 2 with a CUDA OOM caused by exactly this
+> finding, so the run was not "unaffected" and the consequence was not warning noise. The error is
+> that this paragraph assumes one mechanism where there are two: an op with a deterministic
+> alternative is **silently rerouted** to it — `F.interpolate` never warned, `functional.py:4018`
+> substituted `torch._decomp.decompositions.upsample_bilinear2d_vec`, and `warn_only` is
+> irrelevant on that path — at a **measured 12.658 GiB** cost; only an op with *no* alternative
+> warns, and the op that warned was `nll_loss2d_forward_out_cuda_template` (the CE forward), which
+> F7 does not name. Note also that the probe above uses `batch 2`, where the decomposition costs
+> roughly 2 GiB and is invisible; running it would not have surfaced this. The original text is
+> left intact so the reasoning error stays recognisable.
 
 ### 7.2 F10 — does the pod's GPU fall outside the pinned wheel's compiled SM list?
 
