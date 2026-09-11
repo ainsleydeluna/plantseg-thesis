@@ -224,7 +224,7 @@ The measured options, retained as the basis for the decision:
 
 | | Change | Peak vs available | Cost |
 |---|---|---|---|
-| **A** | 48 GB card inside the sm_90 ceiling, nothing else | 20.67 of ~45+ | New rental; no code, config, or methodology change. E1 invariants untouched. |
+| **A** | 48 GB card on the ALLOW list ([e1_launch_runbook_v2.md](e1_launch_runbook_v2.md)`:41-51`), nothing else | 20.67 of ~45 | New rental; no code, config, or methodology change. E1 invariants untouched. |
 | **B** | Disable or narrow `use_deterministic_algorithms` | 17.01 of 23.02 → **6.0 GiB margin** | Governed edit to `src/seeds.py:37`. Trades the deterministic upsample backward that contract B6 assumes — but see §5 on what the flag is currently delivering. Also removes the decomposition's per-iteration time cost (§8). A narrower variant (scoping the flag around the final upsample only) is a `src/models/student.py` edit. |
 | **C** | `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` | 20.67 of 23.02 → **2.35 GiB margin** | Environment only, no code change. Targets exactly the 1.97 GiB of §3. Thinnest margin: ~10% at a hard floor, held for 80,000 iterations, with the val↔train transition re-shuffling the pool every 4,000. |
 
@@ -241,6 +241,44 @@ full-resolution forwards**, each carrying the decomposition transient, every 4,0
 `[MEASURED]` validation's *peak* is below training's, because `validate` is `@torch.no_grad()`
 ([src/training/train_e1.py](../src/training/train_e1.py)`:271`) and moves predictions to CPU before
 the confusion matrix (`:282`); the objection is fragmentation across 53 allocations, not peak.
+
+**Correction (2026-09-11) — the pricing premise above is wrong.** This section records RTX A6000 at
+~$0.33/hr and A40 at ~$0.35/hr as the candidates, and concludes that "a 48 GB card was available at
+or below the rate of the 24 GB card that just failed, so doubling VRAM cost nothing." Neither card
+was offered in the region actually deployed into. Those rates were **an upstream assertion taken on
+trust, not a figure this session derived**: they came from a listing pasted for a different region,
+were generalised to availability without that being checked, and were written into this record
+without being verified against what was on offer. **Measured at deploy time:** the cheapest
+ALLOW-listed 48 GB card available was **RTX 6000 Ada at $0.74/hr**, against the RTX 4090's
+**$0.34/hr**. L40 at $0.69 was cheaper still but is not on the ALLOW list, and its 9 vCPU resolves
+`num_workers` to 7 rather than 12 ([src/training/train_e1.py](../src/training/train_e1.py)`:636`),
+changing a reproducibility-relevant parameter ([IMPLEMENTATION_CONTRACT.md](../docs/IMPLEMENTATION_CONTRACT.md)`:307`).
+**Option A is a premium, not a free substitution.** The card actually taken was the **L40S at
+$0.79/hr** — chosen over the cheaper RTX 6000 Ada for its 24 vCPU, since 14 vCPU and 24 vCPU both
+resolve `num_workers` to 12 but the wider margin is safer if the container reports the allocation
+rather than the host. That is **2.3x** the RTX 4090's rate, about **$18 across three 13-hour
+seeds** ($0.74 would have been 2.2x and ~$16). The decision stands on the corrected numbers; it was
+taken on a false premise, and the original text is left in place so that stays visible.
+
+**Correction (2026-09-11) — row A's original wording.** It read "48 GB card inside the sm_90
+ceiling" because this session concluded no GPU ALLOW list existed, having searched
+`docs/runpod_environment.md`, `b42_pod_gpu_validation.md` and `scripts/verify_env.py` but not the
+launch runbook. One exists at [e1_launch_runbook_v2.md](e1_launch_runbook_v2.md)`:41-51`, with
+explicit ALLOW and DENY tables. The capability gate at `scripts/verify_env.py:32` remains what
+enforces the ceiling; the list is the operator-facing shortlist that would have saved the search.
+
+**Both corrections are the same failure mode**, and two in one session make it a pattern worth
+recording rather than leaving in conversation: a repo-adjacent fact was asserted rather than
+verified — the first by taking an upstream rate card on trust, the second by treating an incomplete
+search as proof of absence. Neither is a measurement error; every `[MEASURED]` figure in §2 and §3
+stands. But both put unverified claims into a record whose whole value is that its claims are
+checkable.
+
+**"48 GB" is a rate-card figure, not a hardware one `[MEASURED]`.** The L40S reports **46068 MiB =
+45.0 GiB** usable. That gap applies to every "48 GB" card on the ALLOW list, not only this one, and
+it matters for sizing: against §2's 16.342 GiB decomposition transient and 20.667 GiB full-step
+peak, real headroom is **~24 GiB, not the ~27 GiB the marketing number implies**. A future reader
+sizing a card from a rate card would be working from capacity the hardware does not deliver.
 
 ## 8. Not measured — steady-state throughput
 
