@@ -786,6 +786,58 @@ deliberately left this alone, as it fell outside that session's narrow governed-
 
 ---
 
+### D32 — `IMPLEMENTATION_CONTRACT.md:327-330` asserts more than its evidence supports `[project; B48]`
+The contract's only bitwise claim about *runs* is a parenthetical at `:328`:
+
+> cross-process reproducibility at a fixed `num_workers` is preserved (measured byte-identical
+> across two independent processes).
+
+**What was actually measured** is the *augmentation stream*: an 8-sample / 4-batch train subset with
+`shuffle=False`, compared by sample digest, tagged `[project; empirical, measured 2026-09-01 —
+B31-5/A1]` at `:308-316`. That is CPU, data-side, and it **predates the project's first GPU
+execution** (2026-09-09, B42). No cross-process comparison of a CUDA training run has ever been
+performed. As written the sentence reads as a property of training results.
+
+**ch3 does not make this claim**, so there is no manuscript exposure — the defect is the contract's
+alone. ch3 §D states that "floating-point variation may remain across GPU classes and compiled CUDA
+kernels" and specifies "mean ± SD reported across completed seeds" rather than bitwise agreement.
+
+**The repo already knows how to write this claim correctly.** `:705-708` scopes its byte-identity
+flag to "the corruption closure", backs it with a 40/40 zero-tolerance grid, splits registration
+from validation into two flags rather than one Boolean, and adds that the flag is "a **historical
+record**, not a claim about whatever interpreter happens to be running." Every other byte/bit claim
+in the two contracts (`:335 :368 :465 :688 :705`) is similarly scoped. `:328` is a localized defect,
+not a house style — which is why the fix is a narrowing rather than a rewrite.
+
+- **How it gets resolved:** a session explicitly approved to edit governed paths replaces the
+  `- **Consequence:**` bullet and appends one new bullet after it:
+
+```markdown
+- **Consequence:** the B31-5 change of the real-run default from `4` to `min(cpu_count-2, 12)`
+  changes the realized augmentation *sequence*. It does **not** change the augmentation
+  *distribution*, the recipe, or any locked hyperparameter. **Measured:** at a fixed
+  `num_workers` the *augmentation stream* is byte-identical across two independent processes —
+  8-sample / 4-batch train subset, `shuffle=False`, CPU `[B31-5/A1, 2026-09-01]`. **Not
+  measured:** no cross-process comparison of a CUDA training run exists, and that measurement
+  predates the project's first GPU execution (2026-09-09, B42). Runs are comparable in
+  distribution; they are not bitwise-comparable across different `num_workers`. Record the value
+  in Ch4 with the seed. Compare `:705-708`, which scopes and dates its own byte-identity flag.
+- **Bitwise identity of training *results* is not claimed, and ch3 does not claim it** `[ch3 §D]`.
+  ch3 §D states that "floating-point variation may remain across GPU classes and compiled CUDA
+  kernels", and specifies "mean ± SD reported across completed seeds" rather than bitwise
+  agreement. A live instance: `nll_loss2d_forward_out_cuda_template` has no deterministic CUDA
+  implementation and runs under `warn_only=True` — see
+  [B48](../reports/b48_e1_oom_investigation.md) §5. Whether that reaches gradients through the
+  weighted mean-reduction's `total_weight`, or only the logged scalar, is `[UNRESOLVED]` pending
+  an on-pod gradient comparison.
+```
+
+- **Blocking on nothing:** the narrowing is correct regardless of how the `total_weight` question
+  resolves. The gradient probe decides only whether a further sentence is needed saying results are
+  not bitwise reproducible on CUDA — which ch3's carve-out already accommodates either way.
+
+---
+
 ## NEED_TO_CONFIRM (not stated in any source; filled by selection/measurement, never guessed)
 
 ### 3. `λ_logit` (Logit-KD weight)
