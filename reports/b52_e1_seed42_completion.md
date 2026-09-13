@@ -519,11 +519,27 @@ The caveat covers variation **across GPU classes and compiled CUDA kernels**. Th
 reaches it, and a panel member could as reasonably read the sentence as addressing cross-hardware
 variation only.
 
-**Recorded as partially accommodating. Full coverage is not asserted.** Proposed minimal-change
-extension, for the governed-path workflow — add same-device run-to-run variation to the clause's
-scope, e.g. *"…may remain across GPU classes and compiled CUDA kernels, and between repeated runs
-on the same device where an operation has no deterministic implementation."* That is a manuscript
-edit and is **not** made here.
+**Recorded as partially accommodating. Full coverage is not asserted.**
+
+A minimal-change extension to the clause is queued as a governed manuscript edit (G6). **No
+wording is drafted here**, deliberately — see the blocking dependency below. What the extension
+must satisfy:
+
+- **Scope** — same-device, same-process, run-to-run variation, stated as distinct from the
+  existing caveat's cross-GPU-class framing rather than folded into it.
+- **Cause** — a named training-path operation with no deterministic CUDA implementation in torch
+  2.1.0, on the authority of PyTorch's own warning text rather than on observed variation.
+- **Must NOT claim** — that evaluation is affected. That is **unresolved** (§6.8(b)), and an
+  extension asserting it would over-reach in the opposite direction from the current clause.
+- **Evidence it must cite** — `e1_stdout.log:14`; `grad_probe.log:8,19`; the 3 ULP / 2.9e-7
+  relative / on-grid magnitude (§6.5); ch3 §D pp. 121–122 as the text being extended.
+
+**Blocking dependency — do not draft this early.** The final wording depends on the
+twice-evaluate-a-fixed-checkpoint attestation queued for the val rehearsal (§6.8(c), N12). Until
+that attestation returns, it is not known whether the extension should say that reported metrics
+*are* reproducible from the released checkpoint or must stay silent on evaluation. Wording written
+before the result would have to be rewritten after it, and a draft sitting in the repository
+invites exactly that. The specification above is the deliverable until N12 lands.
 
 Note that ch3 §D already makes **no bitwise claim** about results, and its mean ± SD across
 completed seeds is the reporting mechanism into which this variation is subsumed: 2–3 ULP is orders
@@ -741,10 +757,19 @@ Albumentations and uses NumPy/PIL transforms only.
 from the library named in ch3 §D.** Every augmentation *semantic* in the B2 table is implemented as
 specified; only the named library differs.
 
-This is **not** a pending version string — it is a governed decision, and it is **not taken in this
-report**. It needs the governed-path workflow (`docs/IMPLEMENTATION_CONTRACT.md` and a ch3 edit with
-a Ctrl+F table). Noted for that decision: retrofitting Albumentations into the code would invalidate
-a completed 23-hour run and every seed after it.
+This is **not** a pending version string — it is a governed decision (G5), and it is **not taken in
+this report**. It needs the governed-path workflow (`docs/IMPLEMENTATION_CONTRACT.md` and a ch3 edit
+with a Ctrl+F table). The facts a decision-maker needs, with no conclusion attached:
+
+- E1 seed 42 was trained with the hand-written NumPy/PIL transform stack at commit `f77d05d7`.
+- Any change to the augmentation implementation makes subsequent stages **non-comparable** to E1
+  seed 42 unless E1 is re-run.
+- An E1 re-run costs **~23.0 h of A40 time per seed** (§4.1).
+
+Note on wording, because an earlier draft of this report got it wrong: a change to the augmentation
+stack would **not** *invalidate* the completed run. E1 seed 42 remains a valid record of what it
+was — trained under the transform stack at `f77d05d7`, fully provenanced. The exposure is
+**cross-stage comparability**, not validity.
 
 Also worth stating plainly: the teacher / E2–E3 manifest **does not exist yet**, so albumentations
 there is not `NEED_TO_CONFIRM` in the "we don't know" sense — it is simply **not yet specified**.
