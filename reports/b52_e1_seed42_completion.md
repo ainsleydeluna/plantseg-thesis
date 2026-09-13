@@ -844,6 +844,17 @@ manuscript edits, which are the operator's half and plan-gated the same way.
 | G5 | Albumentations — B2 names the library, E1 ran NumPy/PIL; decide library-name edit vs code retrofit | §9.1; `docs/IMPLEMENTATION_CONTRACT.md` B2 |
 | G6 | ch3 §D pp. 121–122 — extend the floating-point caveat to same-device run-to-run variation | §6.7 (manuscript) |
 | G7 | NTC-8 test half — index 42 has zero test GT under union-present eligibility; settle **before** the single test campaign, not during it | §7.1; `src/eval/metrics.py`; `docs/EVALUATION_CONTRACT.md` |
+| G8 *(raised as N18)* | Set `CUBLAS_WORKSPACE_CONFIG=:4096:8` as a Dockerfile `ENV` so the value is attested by the image, not only by source ordering — **default is DON'T**, see §11.3 | `Dockerfile` (no `ENTRYPOINT`; `ENV` at `:79`/`:97`) |
+| G9 *(raised as N19)* | Assert the ordering in `set_seed` instead of depending on it, so a caller that touches CUDA before seeding fails loudly — see §11.3 | `src/seeds.py` |
+
+**Why G8 and G9 are classified governed.** Not because `Dockerfile` or the assertion site sit on
+rule 8's path list — `Dockerfile` does **not**, and that read should not be inverted later into
+"the Dockerfile is a governed path." G8 is governed because its *consequence* clears the bar: the
+image digest `sha256:b80b645d…866aaf` is attested in ways-of-working, in `step0.log`, and in ch3's
+reproducibility record, so rebuilding it mid-campaign means E1 seed 42 and every subsequent stage
+ran under **different attested environments** — the same comparability hazard as G5. G9 is governed
+for the plainer reason that `src/seeds.py` **is** inside `src/**`, which rule 8 names directly; it
+was raised as non-governed and is reclassified here on that basis.
 
 ### 11.2 Non-governed — `reports/`, runbooks, `docs/open_questions.md`, `docs/runpod_environment.md`
 
@@ -865,3 +876,47 @@ manuscript edits, which are the operator's half and plan-gated the same way.
 | N14 | Replace "Download provenance is manual (no URL/SHA/date captured)" with the Zenodo URL and md5 `9358a66d…`, captured 2026-09-11 | `reports/dataset_download_log.md:78` |
 | N15 | §3.1's table lists **4** pre-flight stages; `preflight_e1.py` at `f77d05d7` runs **5** (`class_weights` is missing) | `reports/e1_launch_runbook_v2.md:88-97` |
 | N16 | Rebuild the campaign cost estimate from the measured per-run cost, then decide Secure vs Community for the remaining stages | §3.2 |
+| N17 | **Verification discipline** — never adjudicate an absence with an instrument whose coverage of the adjudicated string was not established; rule text and the three instances at §11.4 | methodology; ledger in B53 |
+
+### 11.3 The cuBLAS ordering dependency — G8 and G9 are two answers to one problem
+
+`CUBLAS_WORKSPACE_CONFIG` is set in-process at `src/seeds.py:26`, and `set_seed(seed)` is the first
+statement of `run()` at `train_e1.py:301`, ahead of `torch.device(...)` at `:302` and the first
+device transfer at `:309`. The configuration is therefore correct **by ordering**, and nothing in
+the current training path violates it. The exposure is that the ordering is a convention, not an
+enforced invariant: a future caller that touches CUDA before seeding would silently lose cuBLAS
+determinism, with no error and no log line.
+
+**G8 — bake it into the image. Default is DON'T.** An `ENV` line removes the ordering dependency
+outright, but buys only that, and costs an image rebuild and a new digest mid-campaign (see the
+classification note in §11.1). **Recorded default: no change.** Revisit only if the campaign needs
+a rebuild for some other reason, in which case the `ENV` line rides along at zero marginal cost.
+
+**G9 — assert the ordering instead. The cheaper answer, and the one to prefer.** In `set_seed`:
+`assert os.environ.get("CUBLAS_WORKSPACE_CONFIG") == ":4096:8"` and
+`assert torch.cuda.is_initialized() is False`. No rebuild, no digest change, and no behavioural
+change on the current correct path — only a loud failure on an incorrect one. Two implementation
+notes for whoever takes it: the CUDA-initialised assertion must sit **before** `:32-33`'s
+`torch.cuda.manual_seed*` calls rather than after, and although `set_seed`'s numerical behaviour is
+unchanged, editing `src/seeds.py` changes the commit recorded in provenance, so seeds 2 and 3 would
+run at a different `git_head` from seed 42's `f77d05d7`.
+
+### 11.4 N17 — the rule, and the three instances that produced it
+
+**Rule.** Before recording an absence, state which instrument was used and why its coverage
+includes the adjudicated string. **If coverage cannot be established, record "not determinable
+from X" rather than "absent."**
+
+The failure class is broader than grep: *adjudicating an absence using an instrument whose coverage
+of the adjudicated string was never established.* Three shapes, all seen this session:
+
+| Shape | Instance |
+|---|---|
+| A pattern that never contained the adjudicated string | the `CUBLAS_WORKSPACE_CONFIG` grep — it reported "not present in `src/`" while the value sat at `src/seeds.py:26` (§6.6) |
+| An instrument that truncated its own output | the gradient probe's `rows[:3]` — a fourth distinct `total_weight` existed and was not printed (§6.5) |
+| A field read from one artifact when a second artifact held it | `44.43 GiB` — absent from `step0.log`, present in `grad_probe.log`'s P0 header (§3.1) |
+
+A fourth shape was **avoided** rather than committed: reading the absence of any further
+nondeterminism warning as exoneration of the backbone forward, where the warning deduplication
+regime is unverified (§6.4). That one was caught before publication, which is the difference worth
+recording.
