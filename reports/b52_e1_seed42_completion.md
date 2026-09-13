@@ -847,14 +847,23 @@ manuscript edits, which are the operator's half and plan-gated the same way.
 | G8 *(raised as N18)* | Set `CUBLAS_WORKSPACE_CONFIG=:4096:8` as a Dockerfile `ENV` so the value is attested by the image, not only by source ordering — **default is DON'T**, see §11.3 | `Dockerfile` (no `ENTRYPOINT`; `ENV` at `:79`/`:97`) |
 | G9 *(raised as N19)* | Assert the ordering in `set_seed` instead of depending on it, so a caller that touches CUDA before seeding fails loudly — see §11.3 | `src/seeds.py` |
 
-**Why G8 and G9 are classified governed.** Not because `Dockerfile` or the assertion site sit on
-rule 8's path list — `Dockerfile` does **not**, and that read should not be inverted later into
-"the Dockerfile is a governed path." G8 is governed because its *consequence* clears the bar: the
-image digest `sha256:b80b645d…866aaf` is attested in ways-of-working, in `step0.log`, and in ch3's
-reproducibility record, so rebuilding it mid-campaign means E1 seed 42 and every subsequent stage
-ran under **different attested environments** — the same comparability hazard as G5. G9 is governed
-for the plainer reason that `src/seeds.py` **is** inside `src/**`, which rule 8 names directly; it
-was raised as non-governed and is reclassified here on that basis.
+**How G8 and G9 are classified — the path list is a floor, not a ceiling.**
+
+> Anything on rule 8's path list is governed **regardless of consequence**. Consequence can only
+> **ADD** items to the governed set; it can never remove one. Applying consequence-classification
+> to something already on the list would invert the rule into an escape hatch.
+
+Applied here:
+
+- **G9 is governed by the path list alone.** `src/seeds.py` is inside `src/**`, which rule 8 names
+  directly. That settles it, and no consequence argument is needed or admissible. G9 was raised as
+  non-governed and is reclassified on that basis.
+- **G8 is governed by consequence, because the path list does not reach it.** `Dockerfile` is
+  **not** on rule 8's list — and that read must not be inverted later into "the Dockerfile is a
+  governed path." G8 clears the bar on effect: the image digest `sha256:b80b645d…866aaf` is
+  attested in ways-of-working, in `step0.log`, and in ch3's reproducibility record, so rebuilding
+  it mid-campaign means E1 seed 42 and every subsequent stage ran under **different attested
+  environments** — the same comparability hazard as G5.
 
 ### 11.2 Non-governed — `reports/`, runbooks, `docs/open_questions.md`, `docs/runpod_environment.md`
 
@@ -877,6 +886,7 @@ was raised as non-governed and is reclassified here on that basis.
 | N15 | §3.1's table lists **4** pre-flight stages; `preflight_e1.py` at `f77d05d7` runs **5** (`class_weights` is missing) | `reports/e1_launch_runbook_v2.md:88-97` |
 | N16 | Rebuild the campaign cost estimate from the measured per-run cost, then decide Secure vs Community for the remaining stages | §3.2 |
 | N17 | **Verification discipline** — never adjudicate an absence with an instrument whose coverage of the adjudicated string was not established; rule text and the three instances at §11.4 | methodology; ledger in B53 |
+| N20 | Recover pattern-ledger instances 1, 2 and 4 from repo history, at the commits where those corrections landed — B53 §5 carries them as gaps rather than reconstructions | `git log`; B53 §5 |
 
 ### 11.3 The cuBLAS ordering dependency — G8 and G9 are two answers to one problem
 
@@ -895,11 +905,19 @@ a rebuild for some other reason, in which case the `ENV` line rides along at zer
 **G9 — assert the ordering instead. The cheaper answer, and the one to prefer.** In `set_seed`:
 `assert os.environ.get("CUBLAS_WORKSPACE_CONFIG") == ":4096:8"` and
 `assert torch.cuda.is_initialized() is False`. No rebuild, no digest change, and no behavioural
-change on the current correct path — only a loud failure on an incorrect one. Two implementation
-notes for whoever takes it: the CUDA-initialised assertion must sit **before** `:32-33`'s
-`torch.cuda.manual_seed*` calls rather than after, and although `set_seed`'s numerical behaviour is
-unchanged, editing `src/seeds.py` changes the commit recorded in provenance, so seeds 2 and 3 would
-run at a different `git_head` from seed 42's `f77d05d7`.
+change on the current correct path — only a loud failure on an incorrect one. Implementation note:
+the CUDA-initialised assertion must sit **before** `:32-33`'s `torch.cuda.manual_seed*` calls
+rather than after.
+
+**G5, G8 and G9 are one family: mid-campaign attestation changes.** Each leaves the *numbers*
+alone and moves what the run is *attested against* — G5 the augmentation stack, G8 the image
+digest, G9 the provenance commit. G9 belongs here despite being assertion-only: editing
+`src/seeds.py` changes the commit recorded in `run_meta`, so seeds 2 and 3 would run at a different
+`git_head` from seed 42's `f77d05d7` even though numerical behaviour is identical.
+
+**Shared default for all three: do not land mid-campaign.** Sequence them together, and take any
+of them only when another change has already forced a commit, a rebuild, or a re-run — at which
+point it rides along at zero marginal cost.
 
 ### 11.4 N17 — the rule, and the three instances that produced it
 
