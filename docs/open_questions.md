@@ -853,10 +853,48 @@ not a house style — which is why the fix is a narrowing rather than a rewrite.
 - **When:** conditional, post-E6.
 
 ### 5. Library versions without pinned numbers
-- **Albumentations:** "version pinned in the reproducibility manifest" but no number given → confirm from
-  the actual `requirements.lock` / environment manifest once present. `[ch3 §D; ctx]`
-- **statsmodels:** no version stated → confirm from the manifest. `[ch3 §D; ctx]`
-- **Resolution:** read the pinned `requirements.lock` / Dockerfile when committed to the repo.
+> **[UPDATED 2026-09-13 — N2, after the E1 seed 42 run.]** The two halves resolved differently: one was
+> a version question and is closed; the other was never a version question and is escalated.
+
+- **statsmodels: RESOLVED — `0.14.6`.** Pinned at `requirements.lock:63`,
+  `requirements-runpod.lock:162`, and `requirements-runpod.in:62`, and confirmed live on the E1 pod by
+  `verify_env`: `statsmodels : actual=0.14.6  pinned=0.14.6`. **The lock files are the authority**;
+  the pod reading corroborates them, it does not replace them. `[ch3 §D; ctx]`
+- **Albumentations: NOT a version question. ESCALATED to G5** (governed decision — see
+  [reports/b52_e1_seed42_completion.md](../reports/b52_e1_seed42_completion.md) §9.1 and §11.1).
+  There is no version to confirm, because there is no dependency: E1 seed 42 trained at `f77d05d7`
+  with the hand-written NumPy/PIL stack at `src/data/transforms.py`, and albumentations appears in no
+  lock file. What remains is a **naming** decision across manuscript and contract, not a pin.
+  `[ch3 §D; ctx]`
+- **Version authority for the E1 seed 42 run.** `e1_pip_freeze.txt` was **never captured** (B52 §8.4),
+  so the lock files stand alone as the version record for that run. They are the **as-pinned**
+  authority and must not be presented as an **as-installed** record — no freeze exists to corroborate
+  them beyond the per-package `verify_env` checks that did run.
+
+**Where the albumentations naming actually stands `[MEASURED 2026-09-13]`** — the repo side is
+already reconciled and only the manuscript and contract still name the library:
+
+| Site | State |
+|---|---|
+| `configs/augment.py:13` | **Already reconciled** by D3 (2026-07-01): `"library": "hand-written NumPy/PIL transforms"`, with `:9-12` recording why. Non-governed, done. |
+| `src/data/transforms.py:15` | "No Albumentations dependency — params come from `configs/augment.py`; ops use numpy/PIL/torch". |
+| `requirements-e1.txt:10-11` | opencv-python and albumentations explicitly **EXCLUDED**. |
+| `docs/IMPLEMENTATION_CONTRACT.md:173` | Still `\| Library \| Albumentations (joint image+mask) \| [ch3 §D] \|` — **governed, G5's scope.** |
+| `docs/IMPLEMENTATION_CONTRACT.md:390`, `:766` | Still carry the albumentations *version* as `NEED_TO_CONFIRM` — **governed**, and superseded by the finding above; G5 should retire them rather than fill them. |
+| `docs/reference/context.md:50,112` | Names Albumentations; reference material, not a governed path. |
+| ch3 §D | Still names Albumentations. Manuscript half of G5. |
+
+**Correction to a cross-reference.** `reports/claude_web_alignment_handoff.md:170-172` states that
+`configs/augment.py` names Albumentations via `"library": "Albumentations"`. That was true when the
+handoff was written and is **stale as of D3 (2026-07-01)**; the key now reads
+`"hand-written NumPy/PIL transforms"`. The handoff's substantive point — that semantics match while
+the named library does not — still holds for the contract and the manuscript. *Instrument: a
+case-insensitive grep for `albumentation` across `configs/`, `src/`, `docs/` and `requirements*`,
+which covers the adjudicated string `"library": "Albumentations"`; the only matches in `configs/`
+are the explanatory comments at `:9-12`.*
+
+**N2 records and cross-references only. G5 is not decided here** — it is a governed decision
+requiring a plan and an explicit go.
 
 ### 6. Additional seed values (multi-seed runs)
 - **Resolution:** three-seed validation is planned for **E1 and E3**; the two seeds beyond **42** are not
