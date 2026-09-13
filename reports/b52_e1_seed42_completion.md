@@ -846,6 +846,8 @@ manuscript edits, which are the operator's half and plan-gated the same way.
 | G7 | NTC-8 test half — index 42 has zero test GT under union-present eligibility; settle **before** the single test campaign, not during it | §7.1; `src/eval/metrics.py`; `docs/EVALUATION_CONTRACT.md` |
 | G8 *(raised as N18)* | Set `CUBLAS_WORKSPACE_CONFIG=:4096:8` as a Dockerfile `ENV` so the value is attested by the image, not only by source ordering — **default is DON'T**, see §11.3 | `Dockerfile` (no `ENTRYPOINT`; `ENV` at `:79`/`:97`) |
 | G9 *(raised as N19)* | Assert the ordering in `set_seed` instead of depending on it, so a caller that touches CUDA before seeding fails loudly — see §11.3 | `src/seeds.py` |
+| G10 | Reconcile the MMSeg 0.x config spelling to the operative 1.x name — a wording lag, not a conflict, but both sites are on the path list | `docs/IMPLEMENTATION_CONTRACT.md:123`; `configs/teacher_finetune.py:9`; B54 §5.1 |
+| G11 *(raised as N21)* | `test_teacher_init.py:28`'s module-scope `import numpy` sits outside the guard at `:54-60`, so a missing-dependency environment gets a bare traceback and exit 1 instead of the intended exit 2 with guidance | `scripts/test_teacher_init.py`; B54 §2.4 |
 
 **How G8 and G9 are classified — the path list is a floor, not a ceiling.**
 
