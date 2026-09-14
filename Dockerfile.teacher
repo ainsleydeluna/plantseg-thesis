@@ -1,0 +1,61 @@
+# Teacher-stage image — the E1 image plus exactly one package.
+#
+# BUILT FROM THE ATTESTED E1 DIGEST, not from base with an amended lock. That makes the student
+# stack bit-identical BY CONSTRUCTION: every package E1 ran against is inherited, never re-resolved,
+# so no resolver drift can silently separate the student and teacher environments. Rebuilding from
+# base with the corrected lock would produce an environment INTENDED to match and verified only as
+# far as someone checks -- the weaker guarantee, and the one whose cost this image exists to fix.
+# ch3 can state the relationship in one sentence: "teacher image = student image + N packages",
+# with N enumerable and auditable.
+#
+# WHY THIS IMAGE EXISTS. mmsegmentation 1.2.2 cannot be imported in the E1 image. ftfy is an
+# UNDECLARED runtime dependency -- mmseg's core requires_dist is five packages and ftfy is
+# extras-only -- yet mmseg/utils/__init__.py:18 -> tokenizer.py:13 imports it at module scope on the
+# core path. Every model class therefore fails to register and MODELS.module_dict is empty.
+# See reports/b55_teacher_acquisition.md.
+#
+# THE E1 DIGEST IS NOT REBUILT AND NOT REPLACED. E1 seed 42 is attested against it and seeds 2 and 3
+# must run against the same bytes.
+FROM ghcr.io/ainsleydeluna/plantseg-thesis@sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf
+
+WORKDIR /workspace/plantseg-thesis
+
+# Same --require-hashes discipline as the base: pip refuses any unpinned requirement or altered
+# artifact. The delta lives in its own lock file rather than an inline `pip install ftfy`, which
+# would be the single unhashed artifact in an otherwise hash-locked image.
+COPY requirements-teacher.lock ./
+RUN python -m pip install --require-hashes --no-cache-dir -r requirements-teacher.lock
+
+# BUILD-TIME VERIFICATION AT IMPORT AND REGISTRY LEVEL — the point of this image, not a nicety.
+#
+# The E1 image passed every version check while mmseg.models was unimportable, because a version
+# check imports the TOP-LEVEL module only. Undeclared dependencies are structurally invisible to
+# specification-level checks -- no lock, pin or resolver can see them -- and surface only at import
+# time. So the check belongs where imports happen, and at build time, where failure is cheapest: a
+# regression fails THIS BUILD instead of a rented GPU pod.
+RUN python -B -c "\
+import mmseg, mmseg.models, mmseg.apis; \
+from mmengine.registry import init_default_scope; \
+from mmseg.registry import MODELS; \
+init_default_scope('mmseg'); \
+n = len(MODELS.module_dict); \
+print(f'mmseg {mmseg.__version__} imports; MODELS registry entries = {n}'); \
+assert n > 0, 'MODELS registry is EMPTY -- mmseg.models did not register'"
+
+# Commit provenance — RE-DECLARED TO CORRECT AN INHERITED WRONG VALUE.
+#
+# The base image DOES set PLANTSEG_GIT_COMMIT (Dockerfile:90,97), and it holds f77d05d7: B48's
+# captured run recorded `[provenance] git_head=f77d05d7... (source=image_env)`, and
+# src/training/train_e1.py:245-247 returns "image_env" only when the variable is non-empty. Without
+# the re-declaration below this image would inherit f77d05d7 and every teacher run_meta row would
+# name the E1 commit rather than the commit this image was built from.
+#
+# (The PLANTSEG_GIT_COMMIT=[<unset>] seen in E1's step0.log came from a deliberate
+# `unset PLANTSEG_GIT_COMMIT` in the operator's checkout block -- B52 §2.2 -- not from the base
+# image failing to set it.)
+ARG GIT_COMMIT
+LABEL org.opencontainers.image.revision="${GIT_COMMIT}"
+LABEL org.opencontainers.image.base.digest="sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf"
+ENV PLANTSEG_GIT_COMMIT=${GIT_COMMIT}
+
+CMD ["/bin/bash"]

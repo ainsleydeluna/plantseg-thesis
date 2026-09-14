@@ -841,7 +841,7 @@ manuscript edits, which are the operator's half and plan-gated the same way.
 | G2 | D30 — the INFERRED 11–14 GB VRAM band is falsified for every student stage under determinism | `docs/open_questions.md:747` |
 | G3 | D31 — `write_report`'s generation date is hardcoded | `docs/open_questions.md:776`; `scripts/smoke_loss.py:36` |
 | G4 | D32 — `IMPLEMENTATION_CONTRACT.md:327-330` asserts more than its evidence supports | `docs/open_questions.md:789` |
-| G5 | Albumentations — B2 names the library, E1 ran NumPy/PIL; decide library-name edit vs code retrofit | §9.1; `docs/IMPLEMENTATION_CONTRACT.md` B2 |
+| G5 | Albumentations — B2 names the library, E1 ran NumPy/PIL; decide library-name edit vs code retrofit. *Data point, not a decision:* mmseg itself guards `albumentations` in `try`/`except` at `datasets/transforms/transforms.py:23-24`, so upstream tolerates its absence too | §9.1; `docs/IMPLEMENTATION_CONTRACT.md` B2; [B55](b55_teacher_acquisition.md) §2.5 |
 | G6 | ch3 §D pp. 121–122 — extend the floating-point caveat to same-device run-to-run variation | §6.7 (manuscript) |
 | G7 | NTC-8 test half — index 42 has zero test GT under union-present eligibility; settle **before** the single test campaign, not during it | §7.1; `src/eval/metrics.py`; `docs/EVALUATION_CONTRACT.md` |
 | G8 *(raised as N18)* | Set `CUBLAS_WORKSPACE_CONFIG=:4096:8` as a Dockerfile `ENV` so the value is attested by the image, not only by source ordering — **default is DON'T**, see §11.3 | `Dockerfile` (no `ENTRYPOINT`; `ENV` at `:79`/`:97`) |

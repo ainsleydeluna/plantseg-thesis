@@ -144,16 +144,37 @@ same layer-1 verification gap as §3, present at lock-generation time.
 **This predicts further gaps in lazily-imported paths**, because nothing ever exercised them. It is
 the mechanism most likely to bite again during the KD stages.
 
-Two candidate explanations remain, and **neither is determinable from this container** (mmseg is not
-installed here):
-
-1. `mmsegmentation 1.2.2` declares `ftfy` as a runtime dependency, and the source environment was
-   assembled in a way that skipped it (e.g. `--no-deps`, or a partially-populated cache).
-2. `mmsegmentation` does **not** declare it — `ftfy` is an undeclared or extras-only dependency that
-   `mmseg/utils/tokenizer.py` imports anyway, in which case *no* resolver would have caught it.
-
-**One line settles it on the next pod:** `pip show mmsegmentation` and read the `Requires:` field.
-That is G12's first diagnostic, because the two answers imply very different audits.
+> **[RESOLVED 2026-09-14 — candidate 2 confirmed, candidate 1 refuted.]** Settled from PyPI
+> metadata without a pod. `mmsegmentation 1.2.2`'s **core** `requires_dist` is exactly five
+> packages — `matplotlib`, `numpy`, `packaging`, `prettytable`, `scipy`. **`ftfy` appears only
+> under the `all` / `multimodal` / `tests` extras.** So `pip install mmsegmentation==1.2.2` never
+> installs it, and **no resolver could have caught this**. The lock was not defective; pinning
+> discipline would not have helped.
+>
+> This is an upstream packaging defect in mmsegmentation 1.2.2: a `multimodal`-extra dependency is
+> imported unconditionally on the **core** import path (`mmseg/utils/__init__.py:18` →
+> `tokenizer.py:13`). `regex` is the extra's other member and is present only by accident of the
+> snapshot, which is why `ftfy` alone surfaced.
+>
+> **The "further gaps in lazily-imported paths" prediction is REFUTED for this stack**, by a
+> complete AST scan of all three wheels (mmsegmentation hash-verified as
+> `dadf62bba00a65947d71b08471bc1fe2fee8e2d6eb740381eecd03991e204b47`):
+>
+> | Package | Unsatisfied imports | **Unguarded, module-scope** |
+> |---|---|---|
+> | mmsegmentation 1.2.2 (997 files) | 10 | **1 — `ftfy`** |
+> | mmengine 0.10.7 | 0 | **0** |
+> | mmcv 2.1.0 | 5 (`parrots`) | **0** — all inside `if TORCH_VERSION == 'parrots'` |
+>
+> The nine other mmseg cases are `try`/`except`-guarded or nested in function bodies:
+> `albumentations`, `cityscapesscripts`, `dsdl`, `ldm`, `mmdet`, `nibabel`, `osgeo`, `timm`, and
+> `transformers` (nested at `tokenizer.py:218`, not the module header). **`ftfy` is the entire
+> gap**, and G12's package addition is exactly one package.
+>
+> *Instrument limits:* the scanner treats `if` bodies as top level, which is why the five `parrots`
+> sites were flagged — each was read and confirmed version-gated. It covers **imports**, not runtime
+> attribute access on a name guarded to `None`; for the SegNeXt/MSCAN-B + LightHamHead build path,
+> none of the guarded packages are reached.
 
 ### 2.6 Nothing was installed to work around it
 
@@ -199,6 +220,13 @@ layers**, each requiring its own test:
 
 **`verify_env` tested layer 1. B54 claimed layer 4.** Two layers of unexamined inference between
 instrument and conclusion.
+
+> **[CORRECTION 2026-09-14 — layer 4 was never at risk.]** The `mmsegmentation-1.2.2-py3-none-any.whl`
+> (hash-verified) **does ship `mmseg/.mim/configs/` and `mmseg/.mim/tools/`**, including
+> `.mim/configs/segnext/`. So `mmseg::` config resolution was never in question, the VRAM probe's
+> **exit-3 branch could not have fired**, and **layer 4 was fine throughout**. The break was at
+> layer 2 and only at layer 2. Stated here as a fact about the wheel so it is not re-litigated: the
+> wheel is not incomplete, and the `mmseg::`-resolution concern aimed at a risk that does not exist.
 
 **Rule, added to N17:** *when adjudicating "X is available", name the capability being claimed and
 test at that layer.* A pass at a lower layer is not evidence about a higher one.
@@ -393,7 +421,8 @@ Written here so it is not reconstructed later. **Order is load-bearing.**
 | 2 | **Registry check (N23)** — `import mmseg.models; len(MODELS.module_dict)` | The check this session was missing. Seconds. If `entries: 0`, the image is still broken — **stop and terminate**, do not proceed |
 | 3 | **VRAM probe (Appendix A)** — resolves G2 | The **first substantive action**, before download or anything else, because it gates card choice for the 40k run |
 | 4 | `pip show mmsegmentation` → `Requires:` | Settles §2.5's two candidate mechanisms |
-| 5 | MMEngine determinism echo | Settles §6.3's two branches, and therefore G8 |
+| 5 | MMEngine determinism echo **plus `inspect.getsource(set_random_seed)`** | The env-var print proves the cuBLAS half; only the source read shows whether `use_deterministic_algorithms` is called. Settles §6.3's two branches, and therefore G8 |
+| 5b | **NMF seed check — build the model TWICE IN ONE PROCESS** at the same seed and `torch.equal` LightHamHead's NMF/Hamburger tensors | Same-process is load-bearing: a fresh process reseeds identically and would mask the failure. Tests the PRIOR question — NMF init happens during model construction, which under the Runner follows `set_random_seed`, so `randomness=` may already cover it and config `:358`'s `NEED_TO_CONFIRM` may be stale. Only if the tensors differ is explicit seeding code needed |
 | 6 | Harness smoke (`test_teacher_init.py`, expect exit 2 *file-not-found*) | Now able to reach its real pass condition |
 | 7 | Download → hash → init test → 116-class key audit (Appendix B) | Steps 3–6 of the original sequence |
 
@@ -540,7 +569,7 @@ guard did its job.
 
 | # | Item |
 |---|---|
-| **G12** | Add `ftfy` (and audit the rest of the `mmsegmentation 1.2.2` dependency closure — §2.5) and build a **second, teacher-only image FROM the E1 digest** (§6.2). The E1 digest must not change while seeds 2/3 are outstanding. G8's inclusion depends on G14. |
+| **G12** | **EDIT MADE 2026-09-14, awaiting build.** Add `ftfy==6.3.0` and build a **teacher-only image FROM the E1 digest** (§6.2). **The lock was NOT defective:** `ftfy` is an *undeclared* runtime dependency — mmseg 1.2.2's core `requires_dist` is five packages and `ftfy` is extras-only, yet `mmseg/utils/__init__.py:18` → `tokenizer.py:13` imports it unconditionally. No resolver could have caught it, and **pinning discipline would not have helped — only an import-level or registry-level check would.** Audit complete (§2.5): `ftfy` is the *only* unguarded gap across mmseg, mmengine and mmcv. `6.3.0` is the earliest release whose `wcwidth` requirement is unpinned — ≤ 6.2.3 pins `<0.3.0`, conflicting with the pinned `0.8.1`, which is **not** moved. Files: `requirements-runpod.in`, `requirements-runpod.lock`, `requirements-teacher.lock`, `Dockerfile.teacher`. The E1 digest must not change while seeds 2/3 are outstanding. G8's inclusion depends on G14. |
 | **G13** | `scripts/verify_env.py:61-73` tests layer 1 only. Extend the mmseg/mmcv check to import a **registration-forcing submodule** (`mmseg.models`) and assert `len(MODELS.module_dict) > 0`, so version-present is never again read as usable (§3.1). |
 | **G14** | **Teacher determinism gap.** No repository code calls `set_seed` on the teacher path; it is seeded only by MMEngine's `randomness=dict(seed=42, deterministic=True)`. Establish whether MMEngine 0.10.7 sets `CUBLAS_WORKSPACE_CONFIG`; if not, ch3 §D's four-measure claim does not hold for the teacher stage and must be either fixed or amended (§6.3). **Blocks the G8 ruling.** |
 
@@ -548,7 +577,7 @@ guard did its job.
 
 | # | Item | Priority |
 |---|---|---|
-| **N23** | Add the registry check (`import mmseg.models`, `len(MODELS.module_dict)`) to step 0. One line; would have caught this before the pod was rented | **PROMOTED — ahead of the cosmetic queue items** (§3.2) |
+| **N23** | Registry check (`import mmseg.models`, `len(MODELS.module_dict) > 0`). **Superseded in its strongest form by G12's BUILD-TIME assertion** in `Dockerfile.teacher`. The general remedy is not a fix for `ftfy` specifically: undeclared dependencies are **structurally invisible to specification-level checks** and surface only at import time, so the check belongs where imports happen — **at build, where failure is cheapest.** Adding it to step 0 catches the defect only *after* a pod is rented; keep it there as defence in depth, not as the remedy | **PROMOTED** (§3.2) |
 | **N22** | Record in the runbook that a RunPod volume at `/workspace` **shadows** the image's source tree, so a clone at the image commit is always required (§4) | normal |
 | **N24** | `scripts/launch_teacher_finetune.py` does not invoke `runner.train()` — the teacher stage needs code as well as an image (§6.4) | normal |
 

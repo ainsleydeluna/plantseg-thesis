@@ -13,6 +13,7 @@ cycler==0.12.1
 filelock==3.14.0
 fonttools==4.63.0
 fsspec==2026.4.0
+ftfy==6.3.0
 fvcore==0.1.5.post20221221
 idna==3.18
 ImageIO==2.37.3

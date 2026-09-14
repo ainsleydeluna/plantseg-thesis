@@ -1,0 +1,24 @@
+# Teacher-image delta over the E1 image sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf
+#
+# This file is the literal expression of "teacher image = student image + N packages". N is 1.
+# Dockerfile.teacher builds FROM the E1 digest and installs ONLY this file, so the student stack is
+# inherited bit-for-bit and never re-resolved.
+#
+# WHY ftfy IS HERE. mmsegmentation 1.2.2 does not declare it. Its core requires_dist is five
+# packages -- matplotlib, numpy, packaging, prettytable, scipy -- and ftfy appears only under the
+# all / multimodal / tests extras. But mmseg/utils/__init__.py:18 imports .tokenizer
+# unconditionally and mmseg/utils/tokenizer.py:13 does `import ftfy` at module scope, on the core
+# import path. So `pip install mmsegmentation==1.2.2` never installs it, every model class fails to
+# register, and MODELS.module_dict is empty. No resolver could have caught this.
+# Full account: reports/b55_teacher_acquisition.md.
+#
+# WHY 6.3.0 AND NOT 6.2.x. wcwidth is already pinned at 0.8.1 in the base image. Every ftfy release
+# up to and including 6.2.3 pins `wcwidth>=0.2.12,<0.3.0`, which conflicts with 0.8.1 and would fail
+# the --require-hashes resolution. 6.3.0 is the EARLIEST release whose wcwidth requirement is
+# unpinned, so it is the minimum drift from mmseg 1.2.2's era that is installable here. wcwidth is
+# therefore NOT moved.
+#
+# --require-hashes is kept on the delta deliberately: an unhashed inline `pip install ftfy` in the
+# Dockerfile would be the one unpinned artifact in an otherwise hash-locked image.
+ftfy==6.3.0 \
+    --hash=sha256:17aca296801f44142e3ff2c16f93fbf6a87609ebb3704a9a41dd5d4903396caf
