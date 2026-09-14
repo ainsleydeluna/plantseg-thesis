@@ -18,13 +18,20 @@
 !requirements-e1.txt
 
 # ---- teacher image (Dockerfile.teacher) ----
-# The deny-by-default `**` above excludes these from the build context, so `COPY
-# requirements-teacher.lock ./` cannot see the file and the teacher build fails at that layer.
-# Dockerfile.teacher itself is re-included too: BuildKit transfers the `-f` file through a separate
-# context so this is probably redundant, but "probably" is not a property worth relying on for one
-# line. Neither file is copied into the E1 image, which names its inputs explicitly.
+# The deny-by-default `**` above excluded this, so `COPY requirements-teacher.lock ./` had nothing
+# to resolve and the teacher build failed at Dockerfile.teacher:26 with
+# `"/requirements-teacher.lock": not found`.
+#
+# This is the ONLY path Dockerfile.teacher reads from the context: it has exactly one COPY and no
+# ADD. Its RUN layers use packages already installed in the base image.
+#
+# Dockerfile.teacher itself is deliberately NOT re-included. It does not need to be: the failing
+# build reported an error at `Dockerfile.teacher:26` while transferring a 2 B context, so BuildKit
+# had read the file without it being in the context at all — `-f` supplies it through a separate
+# dockerfile context. Measured, not assumed, so no exception is added for it.
+#
+# Not copied into the E1 image, which names its inputs explicitly.
 !requirements-teacher.lock
-!Dockerfile.teacher
 
 # ---- the only docs read at runtime (src/eval/artifacts.py, src/stats/artifact.py) ----
 !docs/IMPLEMENTATION_CONTRACT.md
