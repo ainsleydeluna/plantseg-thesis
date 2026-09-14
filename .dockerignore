@@ -17,6 +17,15 @@
 !requirements.lock
 !requirements-e1.txt
 
+# ---- teacher image (Dockerfile.teacher) ----
+# The deny-by-default `**` above excludes these from the build context, so `COPY
+# requirements-teacher.lock ./` cannot see the file and the teacher build fails at that layer.
+# Dockerfile.teacher itself is re-included too: BuildKit transfers the `-f` file through a separate
+# context so this is probably redundant, but "probably" is not a property worth relying on for one
+# line. Neither file is copied into the E1 image, which names its inputs explicitly.
+!requirements-teacher.lock
+!Dockerfile.teacher
+
 # ---- the only docs read at runtime (src/eval/artifacts.py, src/stats/artifact.py) ----
 !docs/IMPLEMENTATION_CONTRACT.md
 !docs/EVALUATION_CONTRACT.md
