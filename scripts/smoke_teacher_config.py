@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
-"""Static verification of the SegNeXt-B teacher fine-tune config. No mmseg, no GPU, no training.
+"""Verification of the SegNeXt-B teacher fine-tune config through MMEngine's own loader.
 
-The config is plain Python (dicts, strings, `_base_` as a list of strings), so it can be `exec`'d and
-inspected directly without MMSegmentation installed. Nothing here builds a model, reads the dataset,
-downloads a checkpoint or trains anything — it asserts that the locked B1 recipe is what the file
-actually says, and that no student-stage setting leaked into the teacher.
+The config is loaded with `mmengine.config.Config.fromfile` — the call `mmseg.apis.init_model` makes — from
+the repository root, and the checks run on the MERGED config (the thesis deltas plus everything `_base_`
+supplies), so a config the production loader cannot parse fails here. CPU only: nothing here builds a model,
+reads the dataset, opens a checkpoint, uses the network or trains anything. It asserts that the locked B1
+recipe is what the loaded config actually says, and that no student-stage setting leaked into the teacher.
+Needs mmengine 0.10.7 + mmsegmentation 1.2.2 (the teacher stack).
+
+Exit codes: 0 all checks pass · 1 the config does not load or a check fails · 2 mmengine is not importable.
 """
 from __future__ import annotations
 
+import ast
 import io
 import json
 import os
@@ -49,15 +54,26 @@ def strip_comments(src: str) -> str:
     return "".join(out)
 
 
+def config_types(obj):
+    """Every `type` value anywhere in a merged config (nested dicts and lists)."""
+    if isinstance(obj, dict):
+        yield obj.get("type")
+        for value in obj.values():
+            yield from config_types(value)
+    elif isinstance(obj, (list, tuple)):
+        for value in obj:
+            yield from config_types(value)
+
+
 def load_config(env: dict[str, str] | None = None) -> dict:
-    """exec the config in an isolated namespace, optionally with env vars applied."""
+    """Load the MERGED config through mmengine's Config.fromfile, optionally with env vars applied."""
+    from mmengine.config import Config
+
     saved = {k: os.environ.get(k) for k in (env or {})}
     try:
         for k, v in (env or {}).items():
             os.environ[k] = v
-        ns: dict = {}
-        exec(compile(CONFIG.read_text(encoding="utf-8"), str(CONFIG), "exec"), ns)
-        return ns
+        return Config.fromfile(str(CONFIG)).to_dict()
     finally:
         for k, v in saved.items():
             if v is None:
@@ -67,15 +83,31 @@ def load_config(env: dict[str, str] | None = None) -> dict:
 
 
 def main() -> int:
+    try:
+        import mmengine
+    except ImportError as e:
+        print(f"ENVIRONMENT: mmengine is not importable ({e}). Run inside the teacher stack "
+              "(mmengine 0.10.7 + mmsegmentation 1.2.2), e.g. the plantseg-teacher image.")
+        return 2
+    # Load from the repository root, as launches do: mmengine decides whether a file is a `_base_` config or
+    # a lazy-import config relative to the working directory, so a load from elsewhere can pass while the
+    # operational load fails.
+    os.chdir(REPO)
+
     print("=" * 78)
-    print("TEACHER FINE-TUNE CONFIG — static verification (no mmseg, no GPU, no training)")
-    print(f"config: {CONFIG.relative_to(REPO)}")
+    print("TEACHER FINE-TUNE CONFIG — verification through mmengine Config.fromfile (CPU only)")
+    print(f"config: {CONFIG.relative_to(REPO)} | mmengine {mmengine.__version__} | cwd: {Path.cwd()}")
     print("=" * 78)
 
     src = CONFIG.read_text(encoding="utf-8")
     code = strip_comments(src)          # token scans run against CODE ONLY, never the comments
-    cfg = load_config()
-    check("config_is_valid_python", isinstance(cfg, dict) and "model" in cfg)
+    try:
+        cfg = load_config()
+    except Exception as e:  # noqa: BLE001 — any loader failure is the finding; report it verbatim
+        print(f"\n[LOAD] Config.fromfile failed: {type(e).__name__}: {e}")
+        print("\nRESULT: FAIL (the config does not load through mmengine)")
+        return 1
+    check("config_loads_via_mmengine_config_fromfile", "model" in cfg, f"cwd={Path.cwd()}")
 
     # ---- provenance classification (A3) ----
     check("classified_thesis_derived", cfg["PROTOCOL_CLASSIFICATION"] == "thesis-derived",
@@ -138,7 +170,8 @@ def main() -> int:
     # ---- normalization ----
     norms = [cfg["norm_cfg"]["type"], cfg["model"]["backbone"]["norm_cfg"]["type"]]
     check("norm_is_BN", norms == ["BN", "BN"], str(norms))
-    check("no_syncbn_anywhere", "SyncBN" not in code)
+    check("no_syncbn_anywhere", "SyncBN" not in code and "SyncBN" not in set(config_types(cfg)),
+          "delta code and every type in the merged config, including what _base_ supplies")
 
     # ---- optimizer / schedule ----
     opt = cfg["optim_wrapper"]["optimizer"]
@@ -228,6 +261,8 @@ def main() -> int:
     check("work_dir_is_external_and_env_driven",
           cfg["TEACHER_WORK_DIR_ENV"] == "TEACHER_WORK_DIR"
           and cfg["work_dir"] == cfg["WORK_DIR_UNSET_SENTINEL"])
+    external = load_config({"TEACHER_WORK_DIR": "/ext/teacher_work"})
+    check("work_dir_resolves_from_env", external["work_dir"] == "/ext/teacher_work", external["work_dir"])
 
     # ---- determinism ----
     check("seed_42_deterministic",
@@ -248,9 +283,25 @@ def main() -> int:
     check("packsegimputs_pipeline_end",
           cfg["train_pipeline"][-1]["type"] == "PackSegInputs"
           and cfg["test_pipeline"][-1]["type"] == "PackSegInputs")
+    # `_base_` is consumed by the merge, so its declaration is read from the source; the merged model
+    # shows what the installed `mmseg::` base actually resolves to.
+    loader_stmts = [n for n in ast.parse(src).body
+                    if isinstance(n, (ast.Import, ast.ImportFrom, ast.With))
+                    or (isinstance(n, ast.Assign)
+                        and any(isinstance(t, ast.Name) and t.id == "_base_" for t in n.targets))]
+    base_stmts = [n for n in loader_stmts if isinstance(n, ast.Assign)]
+    check("base_precedes_every_import", bool(loader_stmts) and loader_stmts[0] in base_stmts,
+          "keeps _base_ ahead of every import, so mmengine treats the file as a _base_ config from any cwd")
+    base = ast.literal_eval(base_stmts[0].value) if len(base_stmts) == 1 else None
     check("base_is_pinned_stock_segnext_b",
-          cfg["_base_"] == ["mmseg::segnext/segnext_mscan-b_1xb16-adamw-160k_ade20k-512x512.py"],
-          str(cfg["_base_"]))
+          base == ["mmseg::segnext/segnext_mscan-b_1xb16-adamw-160k_ade20k-512x512.py"], str(base))
+    model = cfg["model"]
+    check("merged_model_is_segnext_mscan_b",
+          model["type"] == "EncoderDecoder" and model["backbone"]["type"] == "MSCAN"
+          and list(model["backbone"]["embed_dims"]) == [64, 128, 320, 512]
+          and list(model["backbone"]["depths"]) == [3, 3, 12, 3]
+          and model["decode_head"]["type"] == "LightHamHead",
+          "SegNeXt-B as resolved: MSCAN [64,128,320,512] / [3,3,12,3] + LightHamHead")
 
     # ---- no student-stage leakage ----
     for token in ("kd", "KD", "cwd", "CWD", "distill", "quant", "QAT", "PTQ", "lambda_logit",

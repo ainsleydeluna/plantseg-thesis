@@ -39,9 +39,9 @@
 # the thesis's pre-registered AdamW recipe instead, so a run of this file is NOT an exact
 # reproduction of the published 42.05 protocol and must never be described as one.
 
-import os
-
 _base_ = ['mmseg::segnext/segnext_mscan-b_1xb16-adamw-160k_ade20k-512x512.py']
+
+import os
 
 # Machine-checkable provenance markers (asserted by scripts/smoke_teacher_config.py).
 PROTOCOL_CLASSIFICATION = 'thesis-derived'
