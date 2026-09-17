@@ -42,6 +42,15 @@ n = len(MODELS.module_dict); \
 print(f'mmseg {mmseg.__version__} imports; MODELS registry entries = {n}'); \
 assert n > 0, 'MODELS registry is EMPTY -- mmseg.models did not register'"
 
+# cuBLAS determinism setting (G8), declared by the IMAGE rather than by launch code.
+#
+# Nothing on the teacher path sets it: MMEngine's deterministic=True does not, and the teacher never
+# calls src/seeds.py (reports/b56_teacher_survey.md §3.5). Contract B6 requires it before CUDA
+# initialization; the selected G18 TeacherRunner design asserts it and never creates it (B58 §9-10).
+# The E1 image deliberately stays without it (B52 §11.3). Declared below both RUN layers so their
+# build cache is reused.
+ENV CUBLAS_WORKSPACE_CONFIG=:4096:8
+
 # Commit provenance — RE-DECLARED TO CORRECT AN INHERITED WRONG VALUE.
 #
 # The base image DOES set PLANTSEG_GIT_COMMIT (Dockerfile:90,97), and it holds f77d05d7: B48's
