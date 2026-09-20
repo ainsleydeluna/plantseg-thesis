@@ -112,6 +112,42 @@ The commit needs no such flag: it is baked in as `PLANTSEG_GIT_COMMIT` and appea
 `run_meta` row alongside `git_head_source` (`image_env` in-container, `git_checkout` from a real
 checkout).
 
+### Authoritative TEACHER-stage image — provision BY DIGEST
+
+The teacher stage runs from a **different image**: the E1 digest above plus exactly one package
+(`ftfy==6.3.0`), without which `mmseg.models` cannot import and the MODELS registry is empty
+(`reports/b55_teacher_acquisition.md`). It is built FROM the E1 digest, never rebuilt from base, so
+the student stack is bit-identical by construction.
+
+    ghcr.io/ainsleydeluna/plantseg-thesis
+      @sha256:cb413304e2445e5c8ac3786f7a370f2ed05a07d11843b11687bb9eb23dc32c2b
+
+| Property | Value |
+|---|---|
+| OCI index digest | `sha256:cb413304e2445e5c8ac3786f7a370f2ed05a07d11843b11687bb9eb23dc32c2b` |
+| Tag (pointer only — provision by digest) | `ghcr.io/ainsleydeluna/plantseg-thesis:teacher-48bccc70caef4b8e252ffd11182c001f0f4368f5` |
+| `org.opencontainers.image.revision` | `48bccc70caef4b8e252ffd11182c001f0f4368f5` |
+| `org.opencontainers.image.base.digest` | `sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf` |
+| Platform | `linux/amd64` |
+| `CUBLAS_WORKSPACE_CONFIG` | `:4096:8` — **declared by the image**, see below |
+| `PLANTSEG_GIT_COMMIT` | `48bccc70caef4b8e252ffd11182c001f0f4368f5` |
+
+Published and verified 2026-09-20 through a fresh anonymous registry token: tag resolution, digest
+resolution and config-blob fetch all succeeded, and the digest agreed three ways — push output,
+the registry's `docker-content-digest` header, and a SHA-256 recomputed from the fetched index body.
+The index also carries an `unknown/unknown` buildx attestation manifest alongside `linux/amd64`, as
+built.
+
+**Why `CUBLAS_WORKSPACE_CONFIG` is an image `ENV` and not a launch flag.** Contract B6 requires the
+value to be in place *before CUDA initialization*, and §4c below records that **there is no
+`docker run -e` on RunPod** — environment variables come from the pod template. An image-declared
+`ENV` is therefore the only mechanism that guarantees the value is present at interpreter start
+without depending on an operator filling a template field correctly. `TeacherRunner` **asserts** the
+value and never creates it, so a missing declaration fails the run closed rather than silently
+running non-deterministically.
+
+**The image digest fixes the software environment, not the code that runs.** See §4b item 3.
+
 ### Superseded images — do not provision from these
 
 Each remains **on the registry and pullable, deliberately**: a digest cited in an old note must
@@ -137,9 +173,9 @@ On RunPod, attach the volume containing `plantseg_data/plantseg` and keep
 `PLANTSEG_DATA_ROOT=/workspace/plantseg_data/plantseg`. Checkpoints are written **outside** the
 repository (`--ckpt-dir /workspace/e1_ckpts`), which `train_e1.py` hard-guards.
 
-## 4b — Two run-time prerequisites the image deliberately does not carry
+## 4b — Three run-time prerequisites the image deliberately does not carry
 
-The image ships **software only**. Two committed surfaces need more than that, and both were
+The image ships **software only**. Three committed surfaces need more than that; the first two were
 confirmed by running the suite inside the container:
 
 1. **A git checkout is required for artifact provenance.** `src/eval/artifacts.py` records the commit
@@ -154,9 +190,37 @@ confirmed by running the suite inside the container:
    the split directories to exist, so even `train_e1.py --dry-run` (whose weights and compute are
    synthetic) constructs real dataloaders and refuses with `dataset root does not exist` in a
    dataset-free container. Mount `plantseg_data` as in step 4 before running it.
+3. **The baked source is both shadowed and stale — always run from a fresh checkout.** Two
+   independent facts, either of which alone would be sufficient:
+   - **Shadowing.** RunPod mounts a network volume at `/workspace`, which hides whatever the image
+     `COPY`'d to `/workspace/plantseg-thesis`. On the B55 pod that directory was empty while
+     site-packages — which live outside the mount, in `/usr/local/lib/python3.11/site-packages` —
+     were intact. Reading `COPY src ./src` in a Dockerfile establishes what is in the *image layer*
+     and nothing about what is *visible at runtime* (`reports/b55_teacher_acquisition.md` §4).
+   - **Staleness.** `Dockerfile.teacher` re-copies **no source**: it inherits `src/` and `scripts/`
+     from the E1 base, so the teacher image's baked code is that of commit `f77d05d7…` and contains
+     neither `src/training/teacher_runner.py`, nor the launcher's `--launch` path, nor the G16
+     config-ordering fix. Its `PLANTSEG_GIT_COMMIT` names the commit the **image was built from**,
+     not the source inside it.
 
-Neither is an implementation defect; both are properties of a deliberately dataset-free,
-history-free image.
+**Container identity and runtime-source identity are two different things, and both must be
+recorded.** The image digest fixes the software environment; a detached checkout fixes the code. For
+the teacher stage the pair is:
+
+| | Identity |
+|---|---|
+| **Container / environment** | `ghcr.io/ainsleydeluna/plantseg-thesis@sha256:cb413304e2445e5c8ac3786f7a370f2ed05a07d11843b11687bb9eb23dc32c2b` (revision label `48bccc70caef…4368f5`, `CUBLAS_WORKSPACE_CONFIG=:4096:8` by image `ENV`) |
+| **Runtime source (G20)** | detached checkout `0bb69961dfedcb4d00ff42990a6543f5dda505ec` — the commit that carries the G18 production source |
+
+The image revision label does **not** attest which source bytes execute — the runtime file hashes do.
+`src/training/teacher_runner.py` hashes its own resolved `__file__` before importing torch, the
+launcher hashes itself and the config, and all three land in `teacher_launch_provenance.json`, which
+is what a reader should compare against the committed bytes. For the teacher stage the active
+runtime checkout and its expected hashes are specified in
+[docs/teacher_prep_runbook.md](teacher_prep_runbook.md) §4a.
+
+None is an implementation defect; all three are properties of a deliberately dataset-free,
+history-free image running under a mounted volume.
 
 ## 4c — Three RunPod platform behaviours the image does not control
 

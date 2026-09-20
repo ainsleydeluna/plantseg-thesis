@@ -86,7 +86,20 @@ pre-train gate verifies the teacher hook returns this 320-ch stride-16 feature (
 
 ---
 
-## 4. Environment & install order (pinned env; run later, not now)
+## 4. Environment & install order — ⛔ SUPERSEDED (historical evidence only)
+
+> ## ⛔ SUPERSEDED — DO NOT EXECUTE FOR CURRENT TEACHER RUNS
+>
+> The manual `requirements.lock` / mmcv / MMSegmentation installation procedure below is retained
+> **only as historical preparation evidence**. It is now known to produce a broken environment:
+> `mmsegmentation` 1.2.2 imports `ftfy` on its core path while declaring it extras-only, so every
+> model class fails to register and `MODELS.module_dict` is empty
+> ([reports/b55_teacher_acquisition.md](../reports/b55_teacher_acquisition.md)). No lock, pin or
+> resolver can see an undeclared dependency.
+>
+> **Current teacher provisioning must use the digest-pinned teacher image and the active execution
+> procedure in [§4a](#4a--active-teacher-provisioning-and-execution-supersedes-4) below.**
+> Image and provisioning authority: [docs/runpod_environment.md](runpod_environment.md).
 
 Pinned stack `[IMPLEMENTATION_CONTRACT.md §B6; requirements.lock]`: Python 3.11 · torch 2.1.0+cu121 ·
 torchvision 0.16.0 · **MMSegmentation 1.2.2** · **mmcv 2.1.0** · numpy 1.26.4 · mmengine 0.10.7.
@@ -109,6 +122,11 @@ Order matters — install mmcv before mmsegmentation:
      (`ghcr.io/ainsleydeluna/plantseg-thesis@sha256:0572c116…`): `MMCV_MIN = '2.0.0rc4'`,
      `MMCV_MAX = '2.2.0'`, and `import mmseg` succeeds with mmcv 2.1.0 including compiled ops.
      Evidence: `reports/b38_docker_image.md` §5.3.
+   - > **Citation note (2026-09-20).** `@sha256:0572c116…` is listed under **"Superseded images — do
+     > not provision from these"** in [docs/runpod_environment.md](runpod_environment.md) (it has no
+     > runtime provenance). It remains a valid *evidence point* for the constant that was read from
+     > disk inside it, and the `MMCV_MAX = '2.2.0'` conclusion above stands unchanged — but that
+     > digest **must not be used for current provisioning**.
    - **Do not edit `mmseg/__init__.py`.** Editing an installed package to fix a problem it does not
      have would make the environment differ from the pinned stack for no reason.
    - > **If you already applied the old instruction, your environment now differs from the pin.** The
@@ -124,6 +142,132 @@ Order matters — install mmcv before mmsegmentation:
    (see §8).
 8. Record the resolved URL, `sha256sum` of the `.pth`, and the UTC date into
    [teacher_init_source.md](teacher_init_source.md) (fills its `NEED_TO_CONFIRM` rows).
+
+---
+
+## 4a — ACTIVE teacher provisioning and execution (supersedes §4)
+
+**Two identities, recorded separately.** The image fixes the software environment; the checkout fixes
+the code that runs. Neither substitutes for the other, and the image's revision label does **not**
+tell you which source bytes executed.
+
+| | Identity |
+|---|---|
+| **Container / environment** | `ghcr.io/ainsleydeluna/plantseg-thesis@sha256:cb413304e2445e5c8ac3786f7a370f2ed05a07d11843b11687bb9eb23dc32c2b` |
+| **Runtime source (G20)** | detached checkout `0bb69961dfedcb4d00ff42990a6543f5dda505ec` |
+
+The image's own baked `src/`/`scripts/` are **older than the runtime source** — they come from the E1
+base at `f77d05d7…` and contain no `teacher_runner.py` — and on RunPod the `/workspace` volume can
+shadow them entirely. Both reasons point the same way: run from the checkout, never from the image.
+Background: [docs/runpod_environment.md](runpod_environment.md) §4b item 3.
+
+**1 — Provision/pull the teacher image BY DIGEST.**
+
+```bash
+docker pull ghcr.io/ainsleydeluna/plantseg-thesis@sha256:cb413304e2445e5c8ac3786f7a370f2ed05a07d11843b11687bb9eb23dc32c2b
+```
+
+Never by tag: `teacher-48bccc70caef…` is a pointer and may be reassigned; a digest cannot change
+meaning. The image declares `CUBLAS_WORKSPACE_CONFIG=:4096:8` itself — do not set it by hand, and do
+not rely on a pod-template field for it.
+
+**2 — Inspect the mount and the checkout location.**
+
+```bash
+mount | grep -w /workspace
+ls -la /workspace/plantseg-thesis 2>&1
+```
+
+On a fresh volume `/workspace/plantseg-thesis` may be **absent or empty** — that is the expected
+starting point, not a defect. It is **not** required to be empty: if it already exists and is
+non-empty, do **not** reuse it blindly.
+
+**3 — Refuse an ambiguous pre-existing source state.** If the directory is non-empty, establish what
+it is before anything else: is it a git repository (`git -C /workspace/plantseg-thesis rev-parse
+HEAD`), at which commit, and is it clean? **If source identity cannot be established safely — no
+`.git`, unknown commit, dirty governed paths, or a mixture of trees — STOP.** Do not clone over it,
+do not `git clean` it, and do not proceed on the assumption that it is current. Move it aside or
+provision a fresh volume.
+
+**4 — Guarded fresh clone.**
+
+```bash
+git clone <repo-url> /workspace/plantseg-thesis
+cd /workspace/plantseg-thesis
+```
+
+**5 — Check out the runtime commit, detached.**
+
+```bash
+git checkout --detach 0bb69961dfedcb4d00ff42990a6543f5dda505ec
+```
+
+**6 — Require the exact HEAD literal.**
+
+```bash
+git rev-parse HEAD     # must print exactly:
+                       # 0bb69961dfedcb4d00ff42990a6543f5dda505ec
+```
+
+A different value — including any later commit — means STOP, not "close enough".
+
+**7 — Require the governed runtime paths clean**, with explicit pathspecs:
+
+```bash
+git status --porcelain -- src configs scripts requirements-e1.txt requirements.lock \
+  requirements-runpod.lock requirements-teacher.lock requirements-runpod.in
+```
+
+Empty output is the pass condition.
+
+**8 — Verify the three runtime-critical files by SHA-256.** These are the bytes that decide
+determinism behaviour, so they are checked directly rather than inferred from the commit:
+
+```bash
+sha256sum src/training/teacher_runner.py \
+          scripts/launch_teacher_finetune.py \
+          configs/teacher/segnext_mscan-b_1xb16-adamw-40k_plantseg116-512x512.py
+```
+
+| File | Expected SHA-256 |
+|---|---|
+| `src/training/teacher_runner.py` | `72206af7e00939bd02f69c99fc5f428adeca10911d657e72279dce784c1a2d0e` |
+| `scripts/launch_teacher_finetune.py` | `5857527622ea3dc4b12fc316a410e8144eb06ffa5199e002ad1b3c957c89ac7e` |
+| `configs/teacher/segnext_mscan-b_1xb16-adamw-40k_plantseg116-512x512.py` | `510b212b0ea36782baf47980cf10884f79e6798e2332366b51f6a206d5911ab5` |
+
+`.gitattributes` is `* text=auto eol=lf`, so a checkout has LF endings on every platform and these
+values are portable. The config hash independently matches the reordered config adjudicated in
+[reports/b58_teacher_runner_adjudication.md](../reports/b58_teacher_runner_adjudication.md) §1, so the
+shipped G16 fix is byte-identical to the prototype that was evaluated.
+
+**Runtime provenance must agree with these bytes.** `teacher_runner.py` hashes its own resolved
+`__file__` before importing torch (`MODULE_PROVENANCE`), the launcher hashes itself
+(`LAUNCHER_SHA256`) and the config (`config_sha256`), and all three are written to
+`teacher_launch_provenance.json` in the work dir. After launch, compare that file's
+`teacher_runner_module.sha256`, `launcher.sha256` and `config.sha256` against the table above. A
+mismatch means the process imported something other than this checkout — the exact failure this step
+exists to catch — and the run is not attributable.
+
+**9 — No stale bytecode.** A `__pycache__` left by an earlier checkout can shadow a module you just
+replaced. Ensure the fresh clone carries none, and invoke every command with `python -B` so the run
+writes none either — the same discipline used throughout
+[docs/runpod_environment.md](runpod_environment.md) and the B42/B56/B57 evidence runs:
+
+```bash
+find /workspace/plantseg-thesis -name __pycache__ -type d    # expect no output on a fresh clone
+python -B scripts/launch_teacher_finetune.py ...
+```
+
+**10 — Execute the teacher path from this checkout, never from the image-baked source.** Run with
+`/workspace/plantseg-thesis` as the working directory (the config loader is CWD-sensitive) and
+confirm `PYTHONPATH` resolves there. The launcher is triple-gated — `--real-run`,
+`--confirm-real-run`, and a CUDA gate that refuses `--skip-cuda-probe` on the `--launch` path — and
+`--launch` additionally requires `CUBLAS_WORKSPACE_CONFIG` to have been **inherited** from the
+process environment, which is what step 1's image supplies.
+
+> **Not covered by this section.** Checkpoint readiness (the gated `mim` download, hash verification,
+> init/load test and 116-class key audit) and G20's first-forward CUDA attestation are separate gates
+> and are not closed by following the steps above.
 
 ---
 
@@ -237,6 +381,7 @@ The teacher and every student stage **must** share these, or distillation/compar
 
 | Topic | Authority in repo |
 |---|---|
+| Image / pod provisioning | [docs/runpod_environment.md](runpod_environment.md) |
 | Locked B1 recipe / B6 versions | [IMPLEMENTATION_CONTRACT.md](IMPLEMENTATION_CONTRACT.md) §(d) B1, §B6 |
 | B1 config artifact (analysis only) | [configs/teacher_finetune.py](../configs/teacher_finetune.py) |
 | Class space / split / `reduce_zero_label` | [configs/data.py](../configs/data.py) |
