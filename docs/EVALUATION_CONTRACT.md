@@ -32,6 +32,23 @@ Every number below is `[empirical]`, established by the committed B16 audit set 
 | FLAG-F image | `apple_black_rot_google_0001` has 0 COCO polygons but a **valid mask `{0, 1}`** | `test_mask_value_audit.md` §4 |
 | Stem uniqueness | duplicate stems **0/0**; zero cross-split overlap | `dataset_report.md` §"Counts & identifiers" |
 
+> **Evidence scope `[B59 A12, 2026-09-21]`.** The "one disease class per image" and "background
+> present" rows above are **raw-mask** audits at native resolution. The per-image metrics in §3.2
+> are computed on the **final 512×512 canvas** (`core_preprocess`: nearest-neighbour resize, long
+> side 512, then pad 255). Nearest-neighbour downsampling could in principle remove a tiny lesion.
+>
+> - **VAL — verified on the final canvas, 2026-09-21:**
+>   - 846/846 images through `core_preprocess`: **0/846** canvases with zero disease pixels.
+>   - Smallest canvas lesion 259 px; 3 images under 500 px.
+>   - Exactly one disease class per canvas, unchanged from the raw mask; background present 846/846.
+>   - Scratch instrument; results embedded in `reports/b59_pre_runpod_reconciliation.md`.
+> - **TEST — NOT verified on the canvas.** TEST was deliberately not accessed.
+>
+> The handling of a TEST image whose final canvas holds zero disease pixels is a **METHODOLOGY
+> DECISION OPEN**. Candidates are the current abort rule (§3.3), or a pre-registered exclusion using
+> an identical eligibility set across models, reporting *k* excluded and *n*_eff. It must be
+> registered before the single test campaign. Until amended, **§3.3 stands unchanged**.
+
 ### The `1,554` value is NOT a count — never use it
 
 `context.md:107` says "official 70/10/20 (~1,554 test)". That is **7,774 × 0.20 = 1,554.8**, i.e. nominal
@@ -230,6 +247,11 @@ preregistered rule safe.
 **Expected defined-score counts on the official test split: 1,561 / 1,561 for BOTH per-image vectors.**
 Every test mask contains background *and* exactly one disease class, so neither vector can be undefined.
 Any `null` on test is a **data-integrity failure that must abort the run**, not a row to skip quietly.
+
+> *Scope note `[B59 A12]`:* the "every test mask contains … exactly one disease class" premise is a
+> raw-mask fact. Survival on the final 512 canvas is verified for VAL only (0/846 lost). The rule above
+> is unchanged. Whether to replace it with a pre-registered exclusion rule is a **METHODOLOGY DECISION
+> OPEN** (see §0 evidence-scope note).
 
 ---
 

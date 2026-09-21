@@ -25,8 +25,13 @@ TEACHER_FINETUNE = {
     # Loss
     "loss": "cross_entropy",
 
-    # Success criterion (protocol match, not max accuracy)
-    "success_criterion": "recover 42.05% mIoU within +/-1.5-2.0 pp",
+    # Success criterion — METHODOLOGY DECISION OPEN (B59 B3, 2026-09-21). This recipe is a
+    # THESIS-DERIVED SegNeXt-B teacher configuration (AdamW + ADE20K init). It is NOT the Wei et al.
+    # (2026) protocol that produced 42.05 (Wei: SGD lr 1e-3, momentum 0.9, wd 5e-4), so ch3's
+    # "recover 42.05% within +/-1.5-2.0 pp" is not a protocol-match test. Wei 42.05 mIoU / 56.30 mAcc /
+    # ~28M params are contextual published values only.
+    "success_criterion": "NEED_TO_CONFIRM - teacher acceptance band is a methodology decision open",
+    "published_reference_values": "Wei 2026: 42.05 mIoU / 56.30 mAcc / ~28M params (contextual only)",
 
     # Role
     "role": "descriptive upper-bound reference only (not deployed, not an inferential comparator)",

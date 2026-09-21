@@ -48,7 +48,7 @@ evaluated on the **PlantSeg** in-the-wild plant-disease segmentation benchmark `
 
 | Stage | Starts from | Adds / does | Main comparison |
 |---|---|---|---|
-| **Teacher** | ADE20K-pretrained SegNeXt-B / MSCAN-B (MMSeg zoo) | Fine-tune on PlantSeg → recover ~42.05% mIoU ref. **Not deployed.** | Teacher vs E6 (descriptive only) |
+| **Teacher** | ADE20K-pretrained SegNeXt-B / MSCAN-B (MMSeg zoo) | Fine-tune on PlantSeg — **thesis-derived SegNeXt-B teacher configuration**; Wei (2026) 42.05% mIoU is a contextual published value only (see B1). **Not deployed.** | Teacher vs E6 (descriptive only) |
 | **E1** | ImageNet-pretrained quantizable MobileNetV3-L | FP32 baseline — no KD, no quant (anchor baseline) | E1 vs E2; E1 vs E3; E1 vs E6 |
 | **E2** | E1 init (trained independently) | + **Logit KD** | E1 vs E2 |
 | **E3** | E1 init (trained independently) | + **Logit KD + CWD** (**proposed FP32 student**) | E2 vs E3 |
@@ -61,6 +61,10 @@ evaluated on the **PlantSeg** in-the-wild plant-disease segmentation benchmark `
 - **E6-KD** is a *pre-registered contingency arm*, not a locked stage: run only if the E3→E6
   clean-test mIoU drop exceeds **1.0 pp**; reinstates frozen teacher with **reduced** distillation
   weights during QAT `[ch3 §C, §F]`.
+  **METHODOLOGY DECISION OPEN `[B59 C4]`:** as written, this trigger reads the held-out TEST split
+  to decide whether to train an additional model, which the TEST policy forbids. It must be
+  replaced (validation-based trigger, or E6-KD pre-registered as a fixed arm) before E6. The
+  reduced weights stay `NEED_TO_CONFIRM`. No replacement is chosen here.
 - All stages share the **same official 70/10/20 split, preprocessing, 512×512 resolution, normalization,
   mask formatting, metrics, and corruption settings**; only the compression component varies `[ch3 §C]`.
 - All training runs are **iteration-matched (80,000 iters)**, not wall-clock- or FLOPs-matched `[ch3 §C]`.
@@ -132,7 +136,32 @@ pending the PlantSeg repo's official convention. `[empirical; ch3 Table 3.1; ctx
 | Batch size | **16** | `[ch3]` |
 | Crop | **512×512** | `[ch3]` |
 | Loss | cross-entropy | `[ch3]` |
-| Success criterion | recover 42.05% mIoU within **±1.5–2.0 pp** (protocol match, not max accuracy) | `[ch3]` |
+| Success criterion | **`NEED_TO_CONFIRM` — METHODOLOGY DECISION OPEN (teacher acceptance band).** ch3 states "recover 42.05% within ±1.5–2.0 pp" as *protocol matching*, but this recipe is not the Wei protocol (see provenance note below), so that band is not a protocol-match test. Wei 42.05 mIoU / 56.30 mAcc / ~28M params are **contextual published values only**. | `[ch3; B59 B3]` |
+
+> **Provenance — THESIS-DERIVED SEGNeXt-B TEACHER CONFIGURATION `[B59 B1–B4, 2026-09-21]`.**
+> ch3 attributes the AdamW 6e-5 / wd 0.01 / head lr_mult 10 / poly / 40k recipe to "the Wei et al.
+> (2026) PlantSeg repository configuration that produced the published 42.05% benchmark". That
+> attribution is **incorrect**:
+> - The Wei paper reports its benchmark trained with **SGD, lr 0.001, momentum 0.9, weight decay
+>   0.0005, cross-entropy, batch 16**.
+> - The public PlantSeg repository (pinned commit `1a3dd4d9…`) ships **no MSCAN-B PlantSeg config**.
+>   Its SegNeXt T/L PlantSeg configs use an **ImageNet-pretrained** MSCAN backbone with AdamW 6e-5.
+>
+> The rows above are therefore a thesis-derived configuration, informed by Guo et al. (2022) and the
+> public PlantSeg SegNeXt-family conventions. It must never be described as an exact reproduction of
+> the published 42.05. **ADE20K initialization is unchanged** — it is ch3's explicit design choice.
+>
+> Implementation details ch3 does not state (source-derived; `configs/teacher/…plantseg116-512x512.py`):
+> - LinearLR warmup of 1,500 iterations;
+> - PolyLR power 1.0, with its end horizon-corrected from the public 160k to 40k;
+> - validation every 10,000 iterations.
+>
+> They are part of the teacher protocol that still has to be locked. **METHODOLOGY DECISION OPEN:**
+> - teacher train augmentation (the public family pipeline includes full PhotoMetricDistortion);
+> - teacher train/eval scaling (train `RandomResize((2048,512))` vs eval long side 512);
+> - NMF/Hamburger RNG control (`NEED_TO_CONFIRM`).
+>
+> See `reports/b59_pre_runpod_reconciliation.md`.
 
 ### B2 — Student training (E1 / E2 / E3 shared recipe) `[ch3 §C "E1"]`
 | Param | Value | Source |
@@ -147,16 +176,21 @@ pending the PlantSeg repo's official convention. `[empirical; ch3 Table 3.1; ctx
 | Validation interval | every **4,000** iters | `[ch3]` |
 | Checkpoint selection | **best validation-mIoU — all-class val mIoU (D1)** | `[ch3; D1]` |
 | Distillation-weight ramp (E2/E3) | linear **0 → target over first epoch** | `[ch3]` |
-| Gradient clipping | global-norm, throughout | `[ch3]` |
+| Gradient clipping | ch3 p.104 places it in the distillation-stage sentence: "During the distillation stages … global-norm gradient clipping is applied throughout". **E1: none**, consistent with ch3. **E2/E3: METHODOLOGY DECISION OPEN** — ch3 also requires E1/E2/E3 to share an identical recipe except for the distillation terms; see §(f) "Gradient clipping" and B59 C2. | `[ch3; B59 A5/C2]` |
 | Teacher in loop (E2/E3) | eval mode, online, consumes **identical augmented input** as student | `[ch3]` |
 | Optional control | extended-schedule E2 (~160,000 iters, 1 seed) — optional, future work if not run | `[ch3 §C]` |
 
-> **[D-A/D2 RESOLVED — unclipped-E1 deviation]** Chapter 3 specifies global-norm clipping "throughout"
-> (the row above) but does not specify a numeric `max_norm`. To avoid inventing an unsupported value, E1
-> proceeds with `grad_clip_max_norm=None` as an **explicit documented deviation**. The
-> `src/training/train_e1.py` hook remains config/CLI-available through `--grad-clip-norm` if divergence is
-> observed. This does **not** alter the `[ch3]`-traced method row; it records the accepted implementation
-> deviation for E1. See `docs/open_questions.md` D2. `[D2; D-A]`
+> **[D-A/D2 RESOLVED — E1 unclipped; RECLASSIFIED 2026-09-21 as consistent with ch3, not a deviation]**
+> E1 runs with `grad_clip_max_norm=None`, which the completed E1 seed-42 run used. The
+> `src/training/train_e1.py` hook remains config/CLI-available through `--grad-clip-norm`.
+>
+> This note originally (2026-07-01) called unclipped E1 an "explicit documented deviation" from a
+> clipping "throughout" requirement. On re-reading, ch3 p.104 attaches clipping to **the
+> distillation stages**, not to E1. Unclipped E1 is therefore not a deviation, and no E1 rerun follows
+> from it `[B59 A5]`.
+>
+> Whether E2/E3 are clipped remains a **METHODOLOGY DECISION OPEN** (§(f)). See
+> `docs/open_questions.md` D2. `[D2; D-A; B59]`
 
 ### B2 — Augmentation (train split only) `[ch3 §E.2.c]`
 | Component | Value | Source |
@@ -170,7 +204,8 @@ pending the PlantSeg repo's official convention. `[empirical; ch3 Table 3.1; ctx
 | Photometric (image-only) | hue **±0.015**, saturation factor **[0.8, 1.2]**, p = 0.5 | `[ch3]` |
 | Brightness / contrast | **excluded** (diagnostic color + overlap with brightness/fog corruptions) | `[ch3]` |
 | Blur / noise / JPEG aug | **excluded** (data-contamination prohibition — overlap with eval corruptions) | `[ch3]` |
-| Library | Albumentations (joint image+mask) | `[ch3 §D]` |
+| Library | **Hand-written NumPy/PIL transforms** (`src/data/transforms.py`; `configs/augment.py` `"library"`). ch3 §D names Albumentations; E1 seed 42 trained without it. The augmentation *semantics* above are implemented; only the library differs. Manuscript wording to become behaviour-specific `[B52 §9.1; B59 A3]` | `[ch3 §D; project]` |
+| Implemented order (train only) | EXIF(image) → aspect-preserving resize of the **unpadded** image to long side 512·r, r~U[0.75, 2.0] → rotation ±10°, p 0.5 → random 512×512 crop, padding (random placement; image fill [124,116,104], mask 255) where the scaled image is smaller → cat_max_ratio 0.95 (≤10 attempts, lowest-dominance fallback) → flips → hue/sat, p 0.5. ch3 §E.2.b says training augmentations are "applied after padding"; E1 instead pads inside the crop. Recorded as a **non-material implementation difference** — scale, rotation-before-crop, crop size, cat_max_ratio, flips and photometric semantics all match `[B59 A2]` | `[project; src/data/transforms.py:166-186]` |
 | Class weighting | class-aware √ inverse-frequency (see B5) | `[ch3]` |
 
 ### B3 — Distillation
@@ -179,7 +214,7 @@ pending the PlantSeg repo's official convention. `[empirical; ch3 Table 3.1; ctx
 |---|---|---|
 | Loss | CE + KL on temperature-softened outputs | `[ch3]` |
 | Temperature `T_Logit` | **4** | `[ch3]` |
-| Weight `λ_logit` | **`NEED_TO_CONFIRM`** — selected via validation sweep over **{0.25, 0.5, 1, 2, 4}** at seed 42; reported in Ch4; reused **unchanged** in E3 | `[ch3]` |
+| Weight `λ_logit` | **`NEED_TO_CONFIRM`** — selected via validation sweep over **{0.25, 0.5, 1, 2, 4}** at seed 42; reported in Ch4; reused **unchanged** in E3. **METHODOLOGY DECISION OPEN:** the sweep's per-candidate run length and the "validation-set noise band" used for tie-breaking are not specified — register both before the first sweep candidate `[B59 C3]` | `[ch3]` |
 | KL averaging | over valid (non-255) pixels only | `[ch3]` |
 
 **CWD (E3, Shu 2021)** `[ch3 §C "E3"]`
@@ -188,7 +223,7 @@ pending the PlantSeg repo's official convention. `[empirical; ch3 Table 3.1; ctx
 | Temperature `T_CWD` | **4** | `[ch3]` |
 | Feature-map weight `α_CWD` | **50** (stride-16 C5 map) | `[ch3]` |
 | Logit-map weight `β_CWD` | **3** | `[ch3]` |
-| Normalization | **T²/C**, with **C = 320** (MSCAN-B stride-16 Stage-3 channel count) | `[ch3]` |
+| Normalization | **T²/C**, with **C = the channel count of the map being distilled** (Shu et al. 2021, Eq. 4): **C = 320** for the stride-16 feature term (MSCAN-B Stage-3); **C = 116** for the logit-map term. Implemented at `src/training/train_distill.py:239` (`channels_norm=320`) and `:249` (default = map's own 116). ch3 names only the 320 case. | `[ch3; Shu 2021; B59 C1]` |
 | Projection head | training-only 1×1 conv: student **160-ch C5 → teacher 320-ch**; removed before E6/E7 via state_dict edit prior to observer insertion | `[ch3]` |
 | Ignore handling | validity mask downsampled to stride-16; channel-wise spatial softmax + KL restricted to valid locations | `[ch3]` |
 
@@ -266,14 +301,14 @@ on CUDA at batch 16. This is **not a GO** — settle it on the pod with
 | Observer freeze | shortly after BN freeze | `[ch3]` |
 | Gradient clipping | global-norm | `[ch3]` |
 | Weight EMA | **none** (instantaneous weights quantize better) | `[ch3]` |
-| Checkpoint selection | best val mIoU | `[ch3]` |
+| Checkpoint selection | best val mIoU (as implemented in `configs/quant.py`). **METHODOLOGY DECISION OPEN:** ch3 contradicts itself — the E5 text selects the QAT model by best validation mIoU, while §E.2.d says the INT8 stages (E4–E7) use the final post-quantization checkpoint with no validation selection. Lock before E5 `[B59 D5]` | `[ch3]` |
 | Distillation during QAT | **none** (E5/E6 supervised-only) | `[ch3]` |
 | Weight quant | **per-channel symmetric INT8**, all conv layers | `[ch3]` |
 | Activation quant | **per-tensor asymmetric UINT8** (full 8-bit range for QNNPACK/ARM) | `[ch3]` |
 | Fusion | Conv-BN-ReLU via `fuse_modules` before observer insertion | `[ch3]` |
 | Hard-Swish / Hardsigmoid | quantized as **standalone** ops | `[ch3]` |
 | Source ckpt | E5 ← E1; **E6 ← E3 (CWD head removed)**; E6 uses identical config as E5 | `[ch3]` |
-| E6-KD reduced weights | `NEED_TO_CONFIRM` (reduced relative to E3 values; only if drop > 1.0 pp) | `[ch3]` |
+| E6-KD reduced weights | `NEED_TO_CONFIRM` (reduced relative to E3 values). The trigger itself is a **METHODOLOGY DECISION OPEN** — see §(b) and B59 C4 | `[ch3]` |
 
 **INT8 PTQ (E4 / E7)** `[ch3 §C "E4"/"E7", §E.1]`
 | Param | Value | Source |
@@ -303,7 +338,9 @@ on CUDA at batch 16. This is **not a GO** — settle it on the pod with
   `use_deterministic_algorithms(True, warn_only=True)`, `CUBLAS_WORKSPACE_CONFIG=:4096:8` `[ch3; ctx]`.
 - Multi-seed plan: three-seed validation planned for **E1 and E3** (the two extra seed values =
   `NEED_TO_CONFIRM`); E4/E7 recomputed per seed; E5/E6 fine-tuned per seed where compute permits;
-  Teacher trained once; E2 repetition optional `[ch3 §F]`.
+  Teacher trained once; E2 repetition optional `[ch3 §F]`. **METHODOLOGY DECISION OPEN:** ch3
+  §C.2 calls multi-seed validation "optional due to compute constraints", while §D/§F plan three
+  seeds for E1 and E3 — whether the extra seeds are an obligation is not locked `[B59 D4]`.
 - **`num_workers` is a REPRODUCIBILITY-RELEVANT parameter and must be reported alongside seed 42**
   `[project; empirical, measured 2026-09-01 — B31-5/A1]`. Seed 42 alone does **not** determine the
   realized augmentation sequence. Measured on a fixed 8-sample / 4-batch train subset
@@ -387,10 +424,12 @@ These are **operational** parameters. None of them touches a `[ch3]`-traced meth
 | OpenCV | 4.8.1 | `[ch3; ctx]` |
 | fvcore | 0.1.5.post20221221 | `[ch3; ctx]` |
 | imagecorruptions | vendored **1.1.2** (`np.float_`→`np.float64` patched) | `[ctx]` |
-| Albumentations | `NEED_TO_CONFIRM` (pinned in manifest, no number given) | `[ch3; ctx]` |
-| statsmodels | `NEED_TO_CONFIRM` (no version given) | `[ch3; ctx]` |
+| Albumentations | **not applicable** — no Albumentations dependency; E1 uses NumPy/PIL transforms (`requirements-e1.txt:10-11`) `[B52 §9.1; B59 A3]` | `[ch3; ctx]` |
+| statsmodels | **0.14.6** (`requirements.lock:63`; confirmed on the E1 pod by `verify_env`) | `[requirements.lock; open_questions #5]` |
+| mmengine | **0.10.7** — teacher/MMSeg runtime (`requirements.lock:30`, `requirements-runpod.lock:96`, `requirements-runpod.in:31`); excluded from `requirements-e1.txt` as teacher-only. ch3's version list omits it `[G19]` | `[requirements.lock; requirements-runpod.lock]` |
+| ftfy | **6.3.0** — teacher image only (`requirements-teacher.lock:23`; also `requirements-runpod.in:16`, `requirements-runpod.lock:66`); `mmseg.models` cannot register without it (B55). ch3's version list omits it | `[requirements-teacher.lock; B55]` |
 | Quant backend | eager-mode `torch.ao.quantization`, **QNNPACK** | `[ch3; ctx]` |
-| Compute | RunPod RTX 4090 (~$0.34/hr); exact pod/CPU = `NEED_TO_CONFIRM`, reported in Ch4 | `[ctx; ch3 §D]` |
+| Compute | RunPod; **ch3 locks no GPU model** ("the exact hardware used for each stage is reported"). E1 seed 42 ran on an **NVIDIA A40 (48 GB), Secure Cloud** (B52). An **RTX 4090 (24 GB) was measured unable to run E1** under the registered determinism policy: 20.667 GiB peak, OOM at iteration 2 (B48; D30). The teacher GPU is `NEED_TO_CONFIRM` and is chosen only after a measured batch-16 deterministic-policy VRAM reading (G2). Per-stage hardware and cost are reported in Ch4 | `[ch3 §D; B48; B52; B59 A4]` |
 
 ---
 
@@ -518,6 +557,9 @@ These are **operational** parameters. None of them touches a `[ch3]`-traced meth
   from the **same** bootstrap distribution.
 - **E6-KD contingency trigger** (stricter, distinct): run if the **observed** clean E3→E6 mIoU drop
   is **> 1.0 pp**; equality does not trigger. No p-value, not a Holm test.
+  **METHODOLOGY DECISION OPEN `[B59 C4]`:** this reads the clean TEST split to decide whether
+  to train another model. It must be amended before E6 — validation-based trigger, or a fixed
+  pre-registered arm. The rule above is recorded as written, not endorsed.
 
 **Effect sizes (reported with each test)**
 - matched-pairs **rank-biserial r_rb** = `(R₊ − R₋)/(R₊ + R₋)` with Pratt ranking (zeros are ranked
@@ -599,6 +641,15 @@ never to precede the BN freeze. Fake quantization runs from step 0. A QAT run mu
 quantization schedule has executed, so **early-stop patience accrues only after observer freeze**;
 best-checkpoint tracking still begins at the first validation. Without that guard a patience of 3 with
 per-epoch validation could terminate around epoch 3–4, before the 65%/70% freezes.
+
+> **METHODOLOGY DECISION OPEN `[B59 C2, 2026-09-21]`.** The paragraph below records the
+> preregistered reading (PREREGISTRATION U3/U4): clipping is mandatory for E2/E3 and E5/E6, and
+> "no clipping" is excluded. That reading is **not settled** for E2/E3. ch3 places clipping in the
+> distillation stages, but also states that E1/E2/E3 share an identical recipe that differs only in
+> the distillation terms. Clipping only E2/E3 would therefore change the recipe that E1 comparisons
+> depend on. Whether E2/E3 are clipped at all — and, if so, the `max_norm` — must be decided
+> explicitly before the first E2 run. Nothing here selects an option, and the committed launcher
+> gate is unchanged. The QAT half (E5/E6) is tracked separately.
 
 *Gradient clipping — TWO SEPARATE, STILL-UNRESOLVED DECISIONS.* Chapter 3 requires global-norm
 clipping throughout distillation training **and** during QAT, and the launchers require a positive
@@ -762,10 +813,27 @@ Full detail + resolution mechanism in [open_questions.md](open_questions.md); fu
 
 **NEED_TO_CONFIRM (not stated in any source; filled by experiment/selection, never guessed):**
 - `λ_logit` — validation sweep over {0.25, 0.5, 1, 2, 4}, reported Ch4.
-- E6-KD reduced distillation weights (only if contingency triggers).
-- Albumentations version; statsmodels version.
-- Multi-seed values beyond seed 42 (for E1/E3 three-seed runs).
-- Final RunPod pod type / GPU / CPU model / CUDA image (reported Ch4).
+- E6-KD reduced distillation weights (the trigger itself is a METHODOLOGY DECISION OPEN — B59 C4).
+- ~~Albumentations version; statsmodels version.~~ Resolved: statsmodels **0.14.6**; Albumentations
+  **not applicable** (no dependency) — see §(d) B6 `[B52 §9; B59 A3]`.
+- Multi-seed values beyond seed 42 (for E1/E3 three-seed runs); whether the extra seeds are
+  obligatory is itself a METHODOLOGY DECISION OPEN (B59 D4).
+- Final RunPod pod type / GPU / CPU model / CUDA image (reported Ch4). E1 seed 42 = A40 Secure (B52);
+  teacher GPU pending a measured batch-16 VRAM reading (G2).
+- **METHODOLOGY DECISIONS OPEN, registered by B59 (2026-09-21):**
+  - E2/E3 clipping and `max_norm`;
+  - teacher augmentation;
+  - teacher train/eval scaling;
+  - NMF/Hamburger RNG control;
+  - teacher acceptance band;
+  - λ sweep run length and noise band;
+  - E6-KD trigger and weights;
+  - multi-seed obligation;
+  - QAT checkpoint rule;
+  - handling of a TEST mask whose final 512 canvas holds zero disease pixels;
+  - whether the official teacher preflight may count TEST filenames.
+
+  Detail: `reports/b59_pre_runpod_reconciliation.md`; `docs/open_questions.md`.
 - Teacher recovered mIoU and all student result numbers (E1–E7 outcomes) — produced by training, out of Week-1 scope.
 
 **Pre-training verification gates (mandatory, Table 3.1, before any E1 training) `[ch3; ctx]`:**

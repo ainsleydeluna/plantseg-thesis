@@ -33,6 +33,9 @@ are recorded here; neither is hidden, and nothing external "corrects" ch3.
 | **§A / §F, stated three separate times** | *"E6 is considered non-inferior to E3 if the lower bound of the paired BCa 95 % confidence interval (B = 10,000) … exceeds −2.0 percentage points. **This check is reported separately from the eight-test Holm-Bonferroni superiority family.**"* |
 | **§F robustness** | *"The one inferential robustness test uses per-image mIoU-C values from E1 and E6 … subject to the same Holm-Bonferroni correction applied across all 8 inferential tests."* |
 | **§F H₁c** | *"tested by two paired comparisons: E4 vs E5 (undistilled) and E7 vs E6 (distilled), **both contributing to the family-wise Holm-Bonferroni correction over all 8 inferential tests**."* |
+| **§F.1.d decision criteria** *(added B59, 2026-09-21)* | Enumerates the eight explicitly: E1 vs E2; E2 vs E3; E4 vs E5; E7 vs E6; E4 vs E7; E5 vs E6; E1 vs E6; and "one robustness inferential test, E1 vs E6, based on per-image mIoU-C. These total eight tests". It matches the frozen family exactly. |
+| **Table 3.6, E3 vs E6 row** *(added B59, 2026-09-21 — previously unrecorded here)* | Lists **"Wilcoxon signed-rank, one-tailed (primary); paired t-test (sensitivity); Holm-Bonferroni correction across all 8 inferential tests"** for E3 vs E6. This contradicts §F.1.d's enumeration and the three explicit "reported separately" statements. So the earlier wording "Table 3.6 governs" is correct only for Table 3.6's **E1 vs E3** row; its **E3 vs E6** row is itself inconsistent. |
+| **Chapter I, §F conceptual framework** *(added B59)* | Speaks of **"ten planned pairwise comparisons"** (Table 1.2), including E1 vs E3, E3 vs E6 and Teacher vs E6. |
 
 **Arithmetic check:** the family is stated everywhere to contain **eight** members, and is
 independently described as **seven clean per-image comparisons plus one per-image mIoU-C
@@ -43,6 +46,13 @@ eight-test structure in the same chapter.
 **formal hypothesis statements**, the explicit **"seven clean + one robustness"** structure, and the
 **repeated explicit exclusions** govern the ambiguous §B summary sentence. The §B sentence is
 recorded as loose prose, not as a competing specification.
+
+> *Clarification `[B59 D1, 2026-09-21]` — the frozen eight-member family is unchanged.* Its strongest
+> single anchor is **§F.1.d's explicit eight-test enumeration**, together with the "seven per-image
+> mIoU + one per-image mIoU-C" structure and the three "reported separately" statements. Table 3.6
+> supports the E1→E3 exclusion but **not** the E3→E6 exclusion, because its E3-vs-E6 row names a
+> Holm-corrected Wilcoxon. Chapter I's "ten comparisons" wording is likewise superseded. Both are
+> manuscript errors to correct; neither changes the family.
 
 ### 0.2 Sample size
 
@@ -167,6 +177,20 @@ the `candidate − baseline` direction.
 
 **Official execution must occur on the pinned stack (§10).** Development smokes may run on the dev
 stack but must record themselves as non-official.
+
+> **Manuscript formula vs the frozen call `[B59 D2, 2026-09-21]` — the call governs.**
+>
+> - **ch3 p.143** writes the large-sample z with μ = n(n+1)/4 and σ² = n(n+1)(2n+1)/24 − Σ(t³−t)/48.
+>   It says that under Pratt the zero differences are ranked and then excluded from R⁺/R⁻,
+>   "preserving their contribution to the variance".
+> - **Pinned SciPy 1.11.4** does something different for `zero_method="pratt"`
+>   (`scipy/stats/_morestats.py:4129-4133`). It applies Cureton's (1967) adjustment, *removing* the
+>   zero-rank block from both moments:
+>   `mn -= n_zero*(n_zero+1)*0.25` and `se -= n_zero*(n_zero+1)*(2*n_zero+1)`, before `se = sqrt(se/24)`.
+> - The hand formula as printed does not match this. The frozen `scipy.stats.wilcoxon(...)` call above
+>   is authoritative; the implementation never recreates z by hand.
+> - The ch3 formula needs manuscript correction, citing SciPy's Pratt/Cureton behaviour. No
+>   inferential setting changes.
 
 ---
 
@@ -639,6 +663,16 @@ than, the 2.0-point margin used for the formal E3-versus-E6 non-inferiority deci
 
 Four concepts are kept strictly separate: observed-drop contingency · formal non-inferiority · clean
 superiority · robustness superiority.
+
+> **METHODOLOGY DECISION OPEN `[B59 C4, 2026-09-21]`.** As frozen, `observed_drop` is computed from
+> the **clean TEST** split. Its only consequence is whether an additional model (E6-KD) is trained —
+> a TEST-informed training decision, which the thesis TEST policy prohibits. Two candidates are
+> recorded without choosing between them:
+> - a validation-based trigger;
+> - E6-KD pre-registered as a fixed additional arm, independent of TEST.
+>
+> One must be registered before E6. Until then the §12.4.10 schema field is retained as written, but it
+> must not be used to launch E6-KD. The reduced E6-KD weights remain `NEED_TO_CONFIRM`.
 
 ---
 

@@ -18,6 +18,22 @@ The reproducibility envelope for every official PlantSeg experiment. Four artifa
   **not** happened, so `full_experiment_environment_validated` remains `false`. A Dockerfile that
   merely exists is not validation.
 
+> **[STATUS UPDATE 2026-09-21 — B59; the paragraph above is historical.]** Per "Known residual gaps"
+> below, the **E1 image** passed `--mode gpu` 37/37 on 2026-09-09 (B42/B46), and E1 seed 42 then
+> completed on an A40 (B52).
+>
+> **[UPDATED 2026-09-21 — G20 PASS]** The **teacher image** (`sha256:cb413304…`) has now run on CUDA:
+> the G20 development canary passed on a RunPod RTX A5000 (B59 §11). That covered:
+> - Step 0;
+> - P1N (deterministic cuBLAS failure, as expected) and P1G8 (success);
+> - TeacherRunner first-call assertions;
+> - first-train and first-val determinism attestation;
+> - one real CUDA train step and one validation step.
+>
+> This is **development-canary evidence only**, at batch 1. It does not validate the official teacher
+> run, and its batch-1 peak (2.64 GB train / 2.14 GB val) does **not** determine batch-16 teacher VRAM
+> (G2 open). This note does not change the code-level `full_experiment_environment_validated` flag.
+
 Separately validated already: the **corruption dependency closure** (Python 3.11 · numpy 1.26.4 ·
 Pillow 12.3.0 · scikit-image 0.23.2), executably verified in `0b58050`. That is a strictly smaller
 claim than the full environment, and the container preflight re-asserts it inside the image.

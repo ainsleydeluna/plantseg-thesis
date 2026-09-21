@@ -23,9 +23,14 @@
   "all training runs iteration-matched at 80,000 iters" rule `[IMPLEMENTATION_CONTRACT.md:66]`. That rule
   governs the **E1–E7 comparison set**; the teacher is descriptive and is *not* iteration-matched to the
   students. Do **not** "fix" 40k to 80k.
-- Success = **protocol match, not maximum accuracy**: recover **42.05% mIoU within ±1.5–2.0 pp**
-  `[teacher_finetune.py:29; IMPLEMENTATION_CONTRACT.md:135]`. The 42.05% is the Wei et al. (2026)
-  contextual SegNeXt-B benchmark number — a **descriptive target**, not an inferential comparator.
+- **THESIS-DERIVED SEGNeXt-B TEACHER CONFIGURATION** `[B59 B1–B3, 2026-09-21]`. This teacher
+  recipe (ADE20K init + AdamW 6e-5) is **not** the Wei et al. (2026) protocol that produced the
+  published 42.05% (Wei: SGD lr 1e-3, momentum 0.9, wd 5e-4). It must not be described as a
+  reproduction of that number. Wei **42.05% mIoU / 56.30% mAcc / ~28M params** are **contextual
+  published values only** — never an inferential comparator.
+- Success criterion: **`NEED_TO_CONFIRM` — METHODOLOGY DECISION OPEN (teacher acceptance band).**
+  The earlier wording "protocol match — recover 42.05% within ±1.5–2.0 pp" presumed a protocol
+  match that does not exist. Whether any acceptance band applies is not yet decided.
 
 ---
 
@@ -71,7 +76,7 @@
 | Backbone | `backbone.init_cfg` | **`None`** — do **not** re-pull the IN-1K backbone; the full ADE20K weights arrive via `load_from` (§5) | verified fact |
 | Backbone (inherited, for verification) | `embed_dims / depths / drop_path_rate` | `[64,128,320,512] / [3,3,12,3] / 0.1` | verified `[zoo]` |
 | Head (inherited, for verification) | LightHamHead `channels / ham_channels` | `512 / 512` (MSCAN-B) | verified `[zoo]` |
-| Head — determinism | NMF / Hamburger (`ham_kwargs`) seed | **set explicitly** (LightHamHead NMF is random-init + eval-seed-sensitive) — see §6 | `[ch3 §D; verified]` |
+| Head — determinism | NMF / Hamburger randomness | **`NEED_TO_CONFIRM` — METHODOLOGY DECISION OPEN.** MMSeg exposes no NMF seed key. The inherited `ham_kwargs.rand_init=True` makes `NMF2D._build_bases` draw `torch.rand` from the **CPU default generator on every forward, eval included** (mmseg 1.2.2 `ham_head.py:89-90,123`). No control is implemented; see §6 and B59 B9 | `[pinned source; B56 §5.6; B59]` |
 | Optim | optimizer | **AdamW**, `lr=6e-5`, `weight_decay=0.01`, `betas=(0.9,0.999)` | `[ch3; teacher_finetune.py:13-16]` |
 | Optim | paramwise | **decode-head `lr_mult=10`** | `[ch3; teacher_finetune.py:17]` |
 | Sched | policy / iters | **poly**, **40,000** iters | `[ch3; teacher_finetune.py:20-21]` |
@@ -266,8 +271,21 @@ confirm `PYTHONPATH` resolves there. The launcher is triple-gated — `--real-ru
 process environment, which is what step 1's image supplies.
 
 > **Not covered by this section.** Checkpoint readiness (the gated `mim` download, hash verification,
-> init/load test and 116-class key audit) and G20's first-forward CUDA attestation are separate gates
-> and are not closed by following the steps above.
+> init/load test and 116-class key audit) is a separate gate and is not closed by following the steps
+> above. **G20's first-forward CUDA attestation is CLOSED — G20 PASS, 2026-09-21** (B59 §11), with the
+> runtime commit and hashes above. G20 does not replace the official run's own first-train and
+> first-validation attestations.
+>
+> **Operational findings from the G20 pod (apply to the official run):**
+> - **The image's `PYTHONPATH` points at stale baked source.** It is `/workspace/plantseg-thesis`, the
+>   image-baked, non-git copy. On the G20 pod that directory existed and was *not* a git checkout, so
+>   step 3 applied. The checkout went to a fresh path, and `PYTHONPATH` (and the canary's `G20_REPO`)
+>   were set to it. Confirm that the launcher and `teacher_runner.py` resolve from the checkout — both
+>   hash themselves into `teacher_launch_provenance.json`.
+> - **RunPod's proxied SSH (`…@ssh.runpod.io`) is PTY-only and has no exec, SCP or SFTP.** Scripted work
+>   needs `ssh -tt` with a stdin script. Move files as hash-verified base64.
+> - **The image lacks `pgrep`, `ps` and `free`.** `/proc/uptime` reports *host* uptime.
+> - **Read pod environment variables by explicit name only.** A `RUNPOD_API_KEY` is injected (B53 §5.1).
 
 ---
 
@@ -299,22 +317,48 @@ The re-head is a **runner-level weight load**, not a resume and not backbone `in
   single GPU is at best a no-op wrapper and at worst a launch/eval hazard; the contract mandates plain BN.
   If a merged/inherited config still yields SyncBN modules, convert with
   `mmengine`'s `revert_sync_batchnorm` before training.
-- **Set the NMF (Hamburger) seed.** LightHamHead's Hamburger/NMF block is **random-initialized** and its
-  evaluation is **seed-sensitive**; without a fixed NMF seed, eval mIoU is non-reproducible across runs.
-  Fix it alongside the global seed 42 (§11).
+- **NMF (Hamburger) randomness — `NEED_TO_CONFIRM`, METHODOLOGY DECISION OPEN.** An earlier
+  version of this bullet said "set the NMF seed". No such control exists or is implemented.
+  - **Pinned source.** With the inherited `rand_init=True`, every decode-head forward — training
+    **and** evaluation — draws fresh NMF bases via `torch.rand((B*S, D, R))` on the CPU default
+    generator (mmseg 1.2.2 `ham_head.py:89-90,123`, sha256 `eb2f0963…`).
+  - **Measured on CPU (B59, scratch).** Setup: real SegNeXt-B, random-init weights, fixed input, eval
+    mode.
+    - Each eval forward consumes exactly one `torch.rand((1,512,16))`.
+    - 20 repeated forwards gave 20 distinct outputs (max |Δlogit| 0.137 against a max |logit| of 0.554).
+    - Resetting the CPU RNG before each forward reproduces the output bitwise.
+    - The same image at two batch positions gets different outputs.
+    - Random-init magnitudes are **not** a proxy for the trained teacher; re-measure on the real
+      checkpoint.
+  - **Consequence.** Validation mIoU, `save_best` checkpoint selection, and E2/E3 soft targets
+    depend on RNG state and batch composition.
+  - A control policy must be chosen and verified **before** the official teacher run; none is chosen
+    here.
 
 ---
 
-## 7. GPU sizing rationale — A6000, not 4090, for the teacher
+## 7. GPU sizing — `NEED_TO_CONFIRM` until measured
 
-- ADE20K MSCAN-B at **batch-16 / 512²** peaks around **~31 GB**, which **exceeds the RTX 4090's 24 GB**.
-- **The teacher fine-tune therefore requires an A6000 (48 GB)** (or equivalent ≥ ~32 GB card).
-- **E1 (and the rest of the student pipeline) is unaffected** — student-only, fits the 4090, and **stays on
-  the RTX 4090** `[e1_runpod_launch_runbook.md]`.
-- The repo's blanket "RunPod RTX 4090" line `[IMPLEMENTATION_CONTRACT.md:265; context.md:56]` is
-  **student/E1-scoped**; it does not cover the teacher. Provision the **A6000** for B1 specifically.
-- Reducing `batch_size` or `crop` to fit 24 GB would change the **locked** B1 recipe — do **not** do that
+> **[CORRECTED 2026-09-21 — B59 A4/B14.]** This section previously stated three things:
+> - the teacher "peaks around ~31 GB" and "requires an A6000";
+> - E1 "fits the 4090 and stays on the RTX 4090";
+> - the repo's "RunPod RTX 4090" line was student-scoped.
+>
+> The first is an **unmeasured estimate**, not provisioning evidence. The second was **refuted by
+> measurement**: E1 peaks at **20.667 GiB** under the registered determinism policy and OOM'd at
+> iteration 2 on an RTX 4090 (B48; D30). E1 seed 42 ran on an **A40 48 GB, Secure Cloud** (B52).
+
+- **Teacher VRAM is not measured.** The deterministic bilinear-upsample reroute that dominated E1's
+  peak (D30) also applies to the teacher's loss-path resize to 512×512 at 116 classes. Estimates
+  therefore cannot size the card.
+- **The official teacher GPU is chosen only after a real batch-16, 512², deterministic-policy VRAM
+  measurement** (G2), under the same five determinism states the official run will have.
+- The G20 canary runs at batch 1 and says **nothing** about the official teacher's VRAM. Its measured
+  batch-1 peaks on an RTX A5000 (train **2.64 GB**, val **2.14 GB**; B59 §11) do **not** determine
+  batch-16 teacher VRAM.
+- Reducing `batch_size` or `crop` to fit a smaller card would change the B1 recipe. Do **not** do that
   without separate approval; treat any such change as a flagged deviation.
+- ch3 locks no GPU model; report the actual hardware per stage.
 
 ---
 
@@ -335,13 +379,15 @@ ignore-label unit tests; **teacher hook returns the stride-16 MSCAN-B Stage-3 32
 
 ## 9. Expected mIoU trajectory & success criterion
 
-- **Start:** stock ADE20K SegNeXt-B ≈ **48.03% mIoU (SS)** / 49.68% (MS) `[teacher_init_source.md:15]`.
-- **Land:** **~42.05% mIoU ± 1.5–2.0 pp** (all-class PlantSeg) `[teacher_finetune.py:29]`.
-- The drop from ADE20K→PlantSeg is expected: 150-class scene parsing → 116-class in-the-wild disease
-  segmentation with a large small-lesion regime `[Wei; ch3]`.
-- **Success = protocol match, not peak accuracy.** Landing inside ±1.5–2.0 pp of 42.05% confirms the recipe
-  reproduces the descriptive upper-bound. The 42.05% is Wei's contextual benchmark, used as a **target**,
-  never as an inferential comparator `[ch3 §A]`.
+- **Start:** stock ADE20K SegNeXt-B ≈ **48.03% mIoU (SS)** / 49.68% (MS) on ADE20K `[teacher_init_source.md:15]`.
+- **Contextual published value:** Wei et al. (2026) report **42.05% mIoU / 56.30% mAcc / ~28M params**
+  for SegNeXt MSCAN-B on PlantSeg. That value was produced under a different protocol (SGD lr 1e-3,
+  momentum 0.9, wd 5e-4; the paper's own preprocessing and evaluation scale). It is context for
+  interpreting the teacher's result, **not a reproduction target** `[Wei; EVALUATION_CONTRACT §2.4; B59 B2]`.
+- **Success criterion: `NEED_TO_CONFIRM` — METHODOLOGY DECISION OPEN.** The former "protocol match —
+  land within ±1.5–2.0 pp of 42.05%" framing presumed an exact Wei protocol. This recipe is
+  thesis-derived, so that band cannot confirm a protocol. Whether any acceptance band applies, and on
+  which split, is not yet decided.
 
 ---
 
@@ -369,11 +415,24 @@ The teacher and every student stage **must** share these, or distillation/compar
   `[data.py:22-25; empirical]`.
 - **Dataset:** the same **7,774-image** PlantSeg set (Zenodo **10.5281/zenodo.17719108**, CC BY-NC 4.0),
   **70/10/20** split = **train 5,367 / val 846 / test 1,561** `[Wei; empirical]`.
-- **Preprocessing:** 512×512, aspect-preserving resize + pad, ImageNet mean/std normalization,
-  **`ignore_index = 255`** excluded from loss & metrics `[data.py; ch3]`.
+- **Preprocessing (evaluation / core):** 512×512, aspect-preserving resize + pad, ImageNet mean/std
+  normalization, **`ignore_index = 255`** excluded from loss & metrics `[data.py; ch3]`.
+  - The teacher's **val/test** pipeline matches this: long side 512, pad after normalisation.
+  - Official teacher evaluation runs through the repository evaluator on the same `core_preprocess`
+    canvas as the students (`src/eval/model_loading.py` `TeacherEvalModel`).
+  - The teacher's **training** pipeline does **not** follow the student recipe. It uses
+    `RandomResize((2048,512), ratio 0.5–2.0)` (short side ≈ 512·r), `RandomCrop(cat_max_ratio=0.75)`,
+    flip, and full `PhotoMetricDistortion`, including brightness and contrast.
+  - Teacher augmentation and teacher train/eval scaling are each a **METHODOLOGY DECISION OPEN**
+    (B59 B5/B6); nothing is changed here.
+  - **Input equivalence verified on CPU (B59 C).** The KD path feeds the student's normalized RGB
+    tensor through `extract_feat`, bypassing `SegDataPreProcessor` (0 calls). It matches MMSeg's own
+    data path on the same pixels to 2.4e-7 at the input and ~3e-6 relative at Stage-3 and the logits.
+    Channel reversal and double normalisation are detected as clearly non-equivalent.
 - **Determinism:** **seed 42** across `torch`/`numpy`/`random`; before CUDA init set
   `cudnn.deterministic=True`, `cudnn.benchmark=False`, `use_deterministic_algorithms(True, warn_only=True)`,
-  `CUBLAS_WORKSPACE_CONFIG=:4096:8` `[ch3 §D; ctx]` — **plus the NMF seed** (§6).
+  `CUBLAS_WORKSPACE_CONFIG=:4096:8` `[ch3 §D; ctx]`. The NMF/Hamburger RNG control is
+  **`NEED_TO_CONFIRM`** (§6).
 
 ---
 
@@ -399,5 +458,16 @@ The teacher and every student stage **must** share these, or distillation/compar
 - `scripts/test_teacher_init.py` **PASS/FAIL** result in the pinned env.
 - ~~Exact mmseg `MMCV_MAX` constant value on disk~~ — **RESOLVED 2026-09-06:** `'2.2.0'`, verified in
   the official image by digest; no edit required (see §4.5).
-- Final RunPod **A6000** pod type / CUDA image (reported in Ch4).
+- Final teacher GPU / pod type — chosen only after a measured batch-16 deterministic-policy VRAM
+  reading (G2; §7). Reported in Ch4.
 - Recovered teacher mIoU (produced by the fine-tune run; out of preparation scope).
+- **METHODOLOGY DECISIONS OPEN (B59):**
+  - teacher acceptance band (§1, §9);
+  - teacher train augmentation;
+  - teacher train/eval scaling (§11);
+  - NMF/Hamburger RNG control (§6);
+  - lock of the source-derived schedule details (warmup 1,500, poly power 1.0, horizon 40k);
+  - whether the official preflight may count TEST filenames (`check_splits`).
+- **Verified on CPU (B59, scratch).** On the real, randomly initialised MSCAN-B, the adapter's
+  Stage-3 tap is backbone output index 2, identical to `norm3`, shape 1×320×32×32 at stride 16 for a
+  512² input. The stage-removed and wrong-stride negative controls raise.

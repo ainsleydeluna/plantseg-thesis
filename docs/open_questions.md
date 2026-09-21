@@ -52,8 +52,14 @@ Source tags as in the contract.
 - **Minor data-quality note:** 12/7,774 masks (0.15%) have a disease value off by one from their
   `Metadata` `Index` (logged in the report) — does not affect the num_classes/background conclusion.
 
-### D2 — E1 gradient clipping `max_norm` — ✅ RESOLVED (D-A: unclipped-E1 deviation, 2026-07-01)
-**D2 / D-A RESOLVED:** E1 will proceed unclipped as an explicit documented deviation from Chapter 3's
+### D2 — E1 gradient clipping `max_norm` — ✅ RESOLVED (D-A, 2026-07-01); **RECLASSIFIED 2026-09-21: E1 unclipped is consistent with ch3, not a deviation**
+> **[B59 A5, 2026-09-21]** ch3 p.104 places global-norm clipping in the sentence about **the
+> distillation stages** ("During the distillation stages … global-norm gradient clipping is applied
+> throughout"). It does not attach clipping to E1. Unclipped E1 is therefore **not** a deviation from
+> ch3, and nothing about it motivates an E1 rerun. The original 2026-07-01 wording is kept below as
+> history. Whether **E2/E3** are clipped is a separate **METHODOLOGY DECISION OPEN** (B59 C2).
+
+**D2 / D-A RESOLVED (original 2026-07-01 wording):** E1 will proceed unclipped as an explicit documented deviation from Chapter 3's
 value-less "global-norm, throughout" wording. The existing `src/training/train_e1.py` hook remains
 available through `--grad-clip-norm` if divergence or instability is observed, but no numeric `max_norm` is
 chosen by default. This resolves the pre-real-E1 decision gate without changing training code.
@@ -279,6 +285,11 @@ The value **≈1,554 is ratio arithmetic** (7,774 × 0.20) originating in `[ctx:
 `dataset_report.json` as *"empirical split is authoritative"*. Expected defined per-image scores on test =
 **1,561/1,561** for both vectors; **no exclusions are preregistered**, so any undefined score is a
 data-integrity failure that must abort the run.
+
+> **[B59 A12, 2026-09-21]** That expectation rests on **raw-mask** audits. On the **final 512 canvas**
+> the metric actually uses, **VAL is verified: 0/846** masks lose their disease pixels (min 259 px).
+> TEST was not accessed. Handling a canvas-empty TEST mask is a **METHODOLOGY DECISION OPEN** — see M10
+> below. The abort rule stands until amended.
 
 ---
 
@@ -838,6 +849,75 @@ not a house style — which is why the fix is a narrowing rather than a rewrite.
 
 ---
 
+## Open — methodology decisions registered by B59 (2026-09-21)
+
+Registered by [reports/b59_pre_runpod_reconciliation.md](../reports/b59_pre_runpod_reconciliation.md).
+**Every item below is a METHODOLOGY DECISION OPEN.**
+- Candidates are listed; **none is chosen, and no experiment behaviour was changed.**
+- Each needs an explicit human decision before the stage it blocks.
+- None blocked the G20 development canary, which has since **PASSED** (below).
+
+### G20 — development CUDA canary — ✅ PASS (2026-09-21) `[MEASURED; B59 §11]`
+
+The teacher G18 seam was exercised on a real GPU. Setup:
+- RunPod RTX A5000, 24 GB, driver 580.159.04, `CA-MTL-1`;
+- image `sha256:cb413304…`;
+- runtime checkout `0bb6996`, whose three runtime-critical hashes matched;
+- canary `68b8bd00…`;
+- random-init SegNeXt-B, `load_from=None`, batch 1, 2 TRAIN + 2 VAL images.
+
+**Measured:**
+- Step 0 **PASS**.
+- **P1N** raised the documented deterministic-cuBLAS error. **P1G8** completed with the image-supplied
+  `:4096:8`.
+- TeacherRunner first-call assertions **PASS**: CUDA was uninitialised before the runner, and the pre-CUDA
+  marker was set.
+- First-train and first-val attestation **PASS**: deterministic algorithms on, `warn_only=True`, cuDNN
+  deterministic, cuDNN benchmark **off**, cuBLAS `:4096:8`, seed 42.
+- One real CUDA train step and one real CUDA validation step completed.
+- A `_histc_cuda` nondeterminism **warning** was observed in mmseg `IoUMetric` under `warn_only=True`
+  (B56 site 3, now confirmed on CUDA). No `nll_loss2d` alert was observed; that is not adjudicated as
+  an absence.
+- No TEST on the pod or in the payload. No checkpoint load, download or artifact.
+- The pre/post `git status --ignored` inventory was identical (empty).
+- **Batch-1 peak memory:** train **2.64 GB**, val **2.14 GB**. This does **NOT** determine batch-16
+  teacher VRAM — **G2 remains open**.
+- The one-sample random-init validation mIoU (0.0000) is a **non-thesis diagnostic** only.
+
+**Evidence:** `C:\Users\admin\plantseg_runs\g20_canary_20260921\g20_evidence_bundle.tgz`, sha256
+`415dd7d7…eeaf`.
+
+**Consequences:**
+- The historical "G20 OPEN" entries (B52 §11.1, B58 §15) are superseded here and in B59 §11. They were
+  not edited.
+- **OFFICIAL TEACHER = NO-GO.** The remaining blockers, in dependency order, are in B59 §12.
+
+| # | Decision | Candidates on record (none selected) | Blocks |
+|---|---|---|---|
+| M1 | **E2/E3 gradient clipping and `max_norm`.** ch3 places clipping in the distillation stages but also requires E1/E2/E3 to share an identical recipe except for the distillation terms. The preregistered reading (PREREGISTRATION U3; `configs/distill.py`) makes clipping mandatory with a {1.0, 5.0} pilot. | (a) keep the preregistered pilot; (b) E1/E2/E3 all unclipped, i.e. a formal amendment; (c) another explicitly justified rule. `max_norm` stays `NEED_TO_CONFIRM` | first E2 run |
+| M2 | **Teacher train augmentation.** The live config uses the public SegNeXt-family pipeline, including full `PhotoMetricDistortion` (brightness, contrast). The student recipe excludes brightness and contrast because of the robustness corruptions. Guo et al. (2022) list only flip, scale and crop. | (A) keep the full upstream pipeline; (B) teacher geometry + hue/saturation only; (C) no teacher photometric augmentation | official teacher |
+| M3 | **Teacher train/eval scaling.** Train `RandomResize((2048,512), 0.5–2.0)` makes the short side ≈ 512·r. Eval (thesis parity) makes the long side 512; for a 4:3 image that equals r ≈ 0.75 of the train scale. | decide together with M2 | official teacher |
+| M4 | **NMF/Hamburger RNG control.** `rand_init=True` draws `torch.rand` from the CPU generator on every forward, eval included. Measured on CPU (B59 A): outputs vary with RNG state and with batch position; a CPU RNG reset reproduces them bitwise. | options to evaluate: keep and disclose; seeded eval-time draws; `rand_init=False`. Each would need verification on the real checkpoint | official teacher (hard blocker); also E2/E3 soft targets |
+| M5 | **Teacher acceptance band and protocol lock.** The ch3 "±1.5–2.0 pp of 42.05%" band presumed the Wei protocol, which this thesis-derived recipe is not. Also unlocked: the source-derived schedule details (LinearLR warmup 1,500; poly power 1.0; horizon 40k; val every 10k). | `NEED_TO_CONFIRM` | official teacher |
+| M6 | **λ_logit sweep run length and validation noise/tie band.** The grid {0.25, 0.5, 1, 2, 4} is preregistered; per-candidate run length and the "noise band" are not. E1's late-curve oscillation (~0.72 pp over 64k–80k, B52 §5) is evidence only. | `NEED_TO_CONFIRM`; no externally suggested value adopted | first E2 sweep candidate |
+| M7 | **E6-KD trigger and weights.** The trigger reads the clean TEST E3→E6 drop, making it a TEST-informed training decision. Frozen as written in the contract, the stats contract §9.3 and PREREGISTRATION §6. | (A) validation-based trigger; (B) E6-KD pre-registered as a fixed additional arm. Reduced weights `NEED_TO_CONFIRM` | E6 |
+| M8 | **Multi-seed obligation.** ch3 §C.2 says "optional due to compute constraints"; §D/§F plan three seeds for E1 and E3. | `NEED_TO_CONFIRM` (extra seed values too) | E1 seeds 2–3 / E3 planning |
+| M9 | **QAT checkpoint rule.** ch3 E5 says best validation mIoU; ch3 §E.2.d says the INT8 stages use the final post-quantization checkpoint with no validation selection. Live `configs/quant.py` uses best-val. | `NEED_TO_CONFIRM` | E5 |
+| M10 | **TEST image whose final 512 canvas has zero disease pixels.** VAL verified 0/846 (min 259 px); TEST not accessed. The current rule is abort (EVALUATION_CONTRACT §3.3). | (a) keep abort; (b) pre-register exclusion with an identical eligibility set across models, reporting *k* and *n*_eff | single TEST campaign |
+| M11 | **Official teacher preflight counts TEST filenames.** `check_splits` counts file names only and never opens contents. G20 skips it. | keep as a data-integrity count / drop TEST from the count | official teacher preflight |
+| M12 | **Teacher checkpoint selection under M4.** `save_best='mIoU'` on VAL depends on RNG state while M4 is open. | follows M4 | official teacher |
+
+**Verified evidence recorded with this register (not decisions):**
+- VAL final-canvas zero-disease check: 0/846.
+- E1 KEEP — NO RERUN: no training-affecting defect found.
+- Real MSCAN-B Stage-3 tap: 1×320×32×32, stride 16, `norm3`.
+- Teacher KD input equivalence: PASS, with negative controls detected.
+- NMF RNG consumption and variability: measured on CPU with random-init weights.
+
+All in B59.
+
+---
+
 ## NEED_TO_CONFIRM (not stated in any source; filled by selection/measurement, never guessed)
 
 ### 3. `λ_logit` (Logit-KD weight)
@@ -850,6 +930,8 @@ not a house style — which is why the fix is a narrowing rather than a rewrite.
 - **Resolution:** only relevant **if** the contingency triggers (E3→E6 clean mIoU drop > 1.0 pp); weights
   set **below** their E3 values so soft targets do not override INT8 adaptation. Exact reduced values
   `NEED_TO_CONFIRM`. `[ch3 §C "E6"]`
+- **[B59 C4, 2026-09-21] The trigger itself is a METHODOLOGY DECISION OPEN.** As written it reads the
+  clean TEST split to decide whether to train an additional model — see M7 below.
 - **When:** conditional, post-E6.
 
 ### 5. Library versions without pinned numbers
@@ -899,12 +981,20 @@ requiring a plan and an explicit go.
 ### 6. Additional seed values (multi-seed runs)
 - **Resolution:** three-seed validation is planned for **E1 and E3**; the two seeds beyond **42** are not
   specified ("all seeds used are reported in the appendix") → confirm at run time. `[ch3 §F]`
+- **[B59 D4]** Whether the extra seeds are an *obligation* is itself open. ch3 §C.2 calls multi-seed
+  validation "optional due to compute constraints", while §D/§F plan it. See M8.
 - **When:** if/when multi-seed runs execute (compute-permitting; out of Week-1 scope).
 
 ### 7. RunPod hardware specifics
 - **Resolution:** final pod type, GPU model, VRAM, CPU model + thread count, CUDA/container image, storage,
   and per-stage GPU-hours/cost are "reported in Chapter 4". `[ctx]` names RunPod **RTX 4090 (~$0.34/hr)** as
   the working assumption; treat exact values as `NEED_TO_CONFIRM` until logged. `[ch3 §D; ctx]`
+- **[B59 A4, 2026-09-21] The RTX 4090 working assumption is stale.** ch3 locks no GPU model.
+  - E1 seed 42 ran on an **A40 48 GB, Secure Cloud, $0.49/hr operator-recorded** (B52).
+  - The RTX 4090 was **measured unable to run E1** under the determinism policy: 20.667 GiB peak, OOM at
+    iteration 2 (B48; D30). The A40 was therefore necessary, not a deviation.
+  - Teacher GPU: `NEED_TO_CONFIRM` until a measured batch-16 deterministic-policy VRAM reading (G2).
+  - Secure Cloud is preferred after the Community UVM host faults (B53).
 
 ### 8. Citation details (DOIs / venues / years) in reference.pdf
 - **Resolution:** `[ctx]` warns two divergent citation lists exist historically — **never fabricate** a
@@ -914,7 +1004,10 @@ requiring a plan and an explicit go.
 
 ### 9. All experimental result numbers (teacher recovered mIoU; E1–E7 accuracy/efficiency/robustness)
 - **Resolution:** produced by training/evaluation runs — **out of Week-1 scope** (analysis/setup/docs/smoke
-  tests only). Teacher success criterion is recovery of 42.05% within ±1.5–2.0 pp. `[ch3]`
+  tests only). ~~Teacher success criterion is recovery of 42.05% within ±1.5–2.0 pp.~~ **[B59 B3,
+  2026-09-21]** The teacher success criterion is `NEED_TO_CONFIRM` (M5). The recipe is a
+  **thesis-derived SegNeXt-B teacher configuration**, not the Wei protocol that produced 42.05%. Wei
+  42.05 mIoU / 56.30 mAcc / ~28M are contextual published values only. `[ch3; Wei; B59]`
 
 ---
 
