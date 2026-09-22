@@ -855,6 +855,10 @@ Registered by [reports/b59_pre_runpod_reconciliation.md](../reports/b59_pre_runp
 **[UPDATED 2026-09-22 — B60]** **M2, M3, M5 and M11 are now LOCKED** by
 [reports/b60_teacher_methodology_lock.md](../reports/b60_teacher_methodology_lock.md). The decisions are
 recorded, but **not yet implemented in runtime code**; they are implemented together at B60 §9 step H.
+**[UPDATED 2026-09-22 — B61]** **M4 and M12 are now LOCKED, and a new item M13 is registered and
+LOCKED**, by [reports/b61_teacher_nmf_checkpoint_selection_lock.md](../reports/b61_teacher_nmf_checkpoint_selection_lock.md).
+All seven teacher locks (M2, M3, M4, M5, M11, M12, M13) are implemented together in the unified governed
+runtime change (B61 §9 step 2); none is in runtime code yet.
 **Every other item below remains a METHODOLOGY DECISION OPEN.**
 - For open items, candidates are listed; **none is chosen, and no experiment behaviour was changed.**
 - Each open item needs an explicit human decision before the stage it blocks.
@@ -895,21 +899,24 @@ The teacher G18 seam was exercised on a real GPU. Setup:
   not edited.
 - **OFFICIAL TEACHER = NO-GO.** The remaining blockers, in dependency order, were listed in B59 §12.
   **[UPDATED 2026-09-22]** That list is superseded by the approved sequence in B60 §9 (steps A–M).
+  **[UPDATED 2026-09-22 — B61]** Steps A–E of B60 §9 are complete (record, commit/push, checkpoint
+  approval, checkpoint readiness **PASS**, real-checkpoint M4 measurement); the remaining chain is B61 §9.
 
 | # | Decision | Candidates on record (none selected for OPEN items) | Blocks / status |
 |---|---|---|---|
 | M1 | **E2/E3 gradient clipping and `max_norm`.** ch3 places clipping in the distillation stages but also requires E1/E2/E3 to share an identical recipe except for the distillation terms. The preregistered reading (PREREGISTRATION U3; `configs/distill.py`) makes clipping mandatory with a {1.0, 5.0} pilot. | (a) keep the preregistered pilot; (b) E1/E2/E3 all unclipped, i.e. a formal amendment; (c) another explicitly justified rule. `max_norm` stays `NEED_TO_CONFIRM` | first E2 run |
 | M2 | ✅ **LOCKED 2026-09-22 (B60 §3) — teacher train augmentation.** Semantic parity with the E1–E3 recipe: rotation ±10° with p 0.5, before the crop (image fill ImageNet mean, mask 255); 512 crop with cat_max_ratio 0.95; independent horizontal and vertical flips, each p 0.5; image-only hue ±0.015 and saturation [0.8, 1.2], jointly p 0.5. **No** brightness, contrast, blur, noise or JPEG, so `PhotoMetricDistortion` is not in the teacher recipe. Unweighted CE. Guo supports only flip, scale and crop; the rest is manuscript-specified for the student and thesis-derived for the teacher. Parity is semantic, not code, draw or RNG identity. | *(was: full upstream / geometry + hue-sat / geometry only; alternatives rejected in B60 §6)* | runtime pending (B60 step H) |
 | M3 | ✅ **LOCKED 2026-09-22 (B60 §4) — teacher train/eval scaling.** Train: long side = 512·r, r ~ U[0.75, 2.0], applied to the unpadded image, then crop/pad to 512. Clean VAL evaluation: long side 512 + thesis padding, scored by the thesis evaluator. The upstream short-side pipeline is historical context only. | *(decided with M2)* | runtime pending (B60 step H) |
-| M4 | **NMF/Hamburger RNG control.** `rand_init=True` draws `torch.rand` from the CPU generator on every forward, eval included. Measured on CPU (B59 A): outputs vary with RNG state and with batch position; a CPU RNG reset reproduces them bitwise. | options to evaluate: keep and disclose; seeded eval-time draws; `rand_init=False`. Each would need verification on the real checkpoint | official teacher (hard blocker); also E2/E3 soft targets |
-| M5 | ✅ **LOCKED 2026-09-22 (B60 §2) — teacher classification, schedule, readiness.**<br>**Classification.** A thesis-derived SegNeXt-B / MSCAN-B teacher. Wei 42.05 / 56.30 / ~28M are contextual values only (not a target, band, protocol-match criterion or retraining trigger), and the ±1.5–2.0 pp rule has no authority.<br>**Schedule.** AdamW 6e-5, wd 0.01, betas (0.9, 0.999), head lr_mult 10; LinearLR warmup 1,500 (start 1e-6); PolyLR power 1.0, end 40,000; 40,000 iterations; batch 16; 512²; unweighted CE; validation every 4,000 iterations, VAL only.<br>**Selection.** Best VAL all-class mIoU is the intent; the operational rule is M12.<br>**Readiness R1–R4.** R3 is a controlled deterministic re-evaluation under the M4-locked rule, VAL all-class mIoU > 0.36314016580581665 with no margin. It is an operational floor, not an independent estimate. Failure → STOP and escalate. | *(band / Wei-SGD retrain / none / 10k interval rejected — B60 §6)* | runtime pending (B60 step H); R3 needs M4 |
+| M4 | ✅ **LOCKED 2026-09-22 (B61 §4) — NMF/Hamburger RNG control: random NMF, preserved and isolated.** `rand_init = True` everywhere.<br>**M4-T (teacher training).** Upstream fresh bases on every training forward from the run's seeded global CPU stream; no freezing or keying.<br>**M4-V (every complete evaluation pass: VAL selection, R3, final evaluation).** Save caller CPU RNG → dedicated NMF stream from seed 42 → whole split in a frozen deterministic order, batch 1, fresh basis per image → restore caller RNG exactly. Manifest/order persisted or hash-attested; changing order, batch size or seed breaks comparability unless disclosed and rerun.<br>**M4-KD (frozen teacher, E2/E3).** Private NMF stream initialised once from seed 42; per forward: save caller → install private → forward → capture advanced → restore caller. Never reset per batch.<br>**Evidence.** Real checkpoint: 20/20 distinct outputs, 26.0% mean pixel change, ~20% pre-classifier change (MEASURED, B61 §2); Hamburger ablation favours random init (PRIMARY). | *(rejected: `rand_init=False` / fixed basis; per-forward identical reset; K-draw averaging; image-keyed bases G — B61 §5)* | runtime pending (B61 §9 step 2) |
+| M5 | ✅ **LOCKED 2026-09-22 (B60 §2) — teacher classification, schedule, readiness.**<br>**Classification.** A thesis-derived SegNeXt-B / MSCAN-B teacher. Wei 42.05 / 56.30 / ~28M are contextual values only (not a target, band, protocol-match criterion or retraining trigger), and the ±1.5–2.0 pp rule has no authority.<br>**Schedule.** AdamW 6e-5, wd 0.01, betas (0.9, 0.999), head lr_mult 10; LinearLR warmup 1,500 (start 1e-6); PolyLR power 1.0, end 40,000; 40,000 iterations; batch 16; 512²; unweighted CE; validation every 4,000 iterations, VAL only.<br>**Selection.** Best VAL all-class mIoU is the intent; the operational rule is M12.<br>**Readiness R1–R4.** R3 is a controlled deterministic re-evaluation under the M4-locked rule, VAL all-class mIoU > 0.36314016580581665 with no margin. It is an operational floor, not an independent estimate. Failure → STOP and escalate. | *(band / Wei-SGD retrain / none / 10k interval rejected — B60 §6)* | runtime pending (B60 step H); R3 needs M4 — **M4 and M12 locked (B61)** |
 | M6 | **λ_logit sweep run length and validation noise/tie band.** The grid {0.25, 0.5, 1, 2, 4} is preregistered; per-candidate run length and the "noise band" are not. E1's late-curve oscillation (~0.72 pp over 64k–80k, B52 §5) is evidence only. | `NEED_TO_CONFIRM`; no externally suggested value adopted | first E2 sweep candidate |
 | M7 | **E6-KD trigger and weights.** The trigger reads the clean TEST E3→E6 drop, making it a TEST-informed training decision. Frozen as written in the contract, the stats contract §9.3 and PREREGISTRATION §6. | (A) validation-based trigger; (B) E6-KD pre-registered as a fixed additional arm. Reduced weights `NEED_TO_CONFIRM` | E6 |
 | M8 | **Multi-seed obligation.** ch3 §C.2 says "optional due to compute constraints"; §D/§F plan three seeds for E1 and E3. | `NEED_TO_CONFIRM` (extra seed values too) | E1 seeds 2–3 / E3 planning |
 | M9 | **QAT checkpoint rule.** ch3 E5 says best validation mIoU; ch3 §E.2.d says the INT8 stages use the final post-quantization checkpoint with no validation selection. Live `configs/quant.py` uses best-val. | `NEED_TO_CONFIRM` | E5 |
 | M10 | **TEST image whose final 512 canvas has zero disease pixels.** VAL verified 0/846 (min 259 px); TEST not accessed. The current rule is abort (EVALUATION_CONTRACT §3.3). | (a) keep abort; (b) pre-register exclusion with an identical eligibility set across models, reporting *k* and *n*_eff | single TEST campaign |
 | M11 | ✅ **LOCKED 2026-09-22 (B60 §5) — development data isolation.**<br>**Which runs.** The official teacher, E2 and E3.<br>**Rule.** Data roots are staged with TRAIN + VAL only; in the **configured data root**, `images/test` and `annotations/test` must be absent. Preflight verifies 5,367 / 846 and fails closed if the TEST paths exist. No TEST enumeration, counting or inspection during development; no active `test_dataloader`, `test_evaluator` or `test_cfg`.<br>**Scope.** The configured data root, not the host.<br>**TEST integrity.** Checked only after the final TEST unlock. | *(filename count / enumeration ban only — rejected, B60 §6)* | runtime pending (B60 step H) |
-| M12 | **Teacher checkpoint selection under M4 — still OPEN.** `save_best='mIoU'` on VAL depends on RNG state while M4 is open. The best-VAL all-class *intent* is recorded (B60 §2.3); the operational rule is not. | follows M4 | official teacher |
+| M12 | ✅ **LOCKED 2026-09-22 (B61 §6) — teacher checkpoint selection.** Validations at 4k, 8k, …, 40k, each under M4-V (seed 42 per full VAL pass; same frozen manifest and order; batch 1; no shuffle; same preprocessing; same all-class dataset-level mIoU; caller RNG restored).<br>**Rule.** Numerically highest VAL all-class mIoU (full precision); exactly equal stored values → earliest iteration; no tolerance band; no TEST; no training extension.<br>**Persist.** Iteration, all-class mIoU, disease-only where reported, NMF seed, manifest hash/order identity; selected iteration and checkpoint SHA-256.<br>**R3.** Controlled re-evaluation of the selected checkpoint under M4-V; > 0.36314016580581665, no margin; failure → STOP. Not required to be byte-identical to the MMSeg selection metric. | *(was: follows M4)* | runtime pending (B61 §9 step 2) |
+| M13 | ✅ **NEW — LOCKED 2026-09-22 (B61 §7) — teacher CE ignore/padding normalisation.** Teacher decode-head CE uses `avg_non_ignore = True`, `ignore_index = 255`: ignore/padded pixels enter neither the numerator nor the mean denominator (mean over valid pixels). Class weighting unchanged (unweighted, M5).<br>**Finding.** With the MMSeg default `avg_non_ignore=False`, ignored pixels have zero loss and gradient but stay in the denominator, so the loss scales with the padded fraction (MEASURED); this conflicts with ch3 p.128 and differs from E1's valid-pixel mean.<br>A thesis-derived correction, not a claim about Wei or upstream SegNeXt. | *(alternative: keep the MMSeg default — rejected)* | **must be implemented before the official teacher run** (B61 §9 step 2) |
 
 **Verified evidence recorded with this register (not decisions):**
 - VAL final-canvas zero-disease check: 0/846.
@@ -919,6 +926,14 @@ The teacher G18 seam was exercised on a real GPU. Setup:
 - NMF RNG consumption and variability: measured on CPU with random-init weights.
 
 All in B59.
+
+**[B61, 2026-09-22]** Also recorded (evidence, not decisions):
+- ADE20K SegNeXt-B checkpoint readiness **PASS**: SHA-256 `647a0cda…40ef1`, stock init test PASS
+  (0 missing / 0 unexpected), 150 → 116 audit PASS (only `conv_seg` re-initialised).
+- NMF variability re-measured on the **real** checkpoint, including batch/order behaviour and the control
+  alternatives P1–P4 and P2b.
+
+Both in B61 §1–§2, with external evidence manifests.
 
 ---
 
@@ -1015,6 +1030,8 @@ requiring a plan and an explicit go.
   **[UPDATED 2026-09-22 — B60]** M5 is now **LOCKED**. Teacher acceptance is the **readiness rule
   R1–R4**, not a published-value band. R3 requires the teacher's VAL all-class mIoU to exceed E1's
   0.36314016580581665 under a controlled deterministic re-evaluation, after M4. `[B60 §2]`
+  **[UPDATED 2026-09-22 — B61]** M4 is **LOCKED**: that re-evaluation uses the M4-V rule, on the
+  checkpoint selected under M12 (EVALUATION_CONTRACT §7.3). `[B61 §4, §6]`
 
 ---
 

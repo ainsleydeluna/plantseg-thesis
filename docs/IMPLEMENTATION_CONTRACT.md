@@ -140,8 +140,10 @@ pending the PlantSeg repo's official convention. `[empirical; ch3 Table 3.1; ctx
 | Warmup (LOCKED, M5) | LinearLR, 1,500 iterations, `start_factor` 1e-6 | `[REPO-UP; B60 §2.2]` |
 | Poly (LOCKED, M5) | PolyLR power **1.0**, **end 40,000** (full decay over the run) | `[REPO-UP power; THESIS-DERIVED end; B60]` |
 | Validation (LOCKED, M5) | every **4,000** iterations, **VAL only**; no TEST consultation | `[REPO-UP MMSeg schedule_40k; MS by analogy; B60]` |
-| Checkpoint selection | intended: best VAL all-class mIoU. **Operational rule OPEN — M12**, after M4 | `[B60 §2.3]` |
+| Checkpoint selection (LOCKED, M12) | validations at 4k, 8k, …, 40k, each under **M4-V**. Select the **numerically highest VAL all-class mIoU**; exactly equal stored values → **earliest iteration**; no tolerance/noise-band tie rule; no TEST; no training extension. Persist per validation: iteration, all-class mIoU (full precision — not MMSeg's 2-decimal summary), disease-only where reported, NMF seed, VAL manifest hash/order identity; plus the selected iteration and checkpoint SHA-256. R3 follows under M4-V on the selected checkpoint; it need not be byte-identical to the MMSeg selection metric | `[B61 §6; B60 §2.3]` |
+| NMF / Hamburger (LOCKED, M4) | **`rand_init = True`**, randomness preserved but isolated. **M4-T** training: upstream fresh bases from the run's seeded global CPU stream. **M4-V** every complete evaluation pass (VAL selection, R3, final evaluation): save caller CPU RNG → dedicated NMF stream from **seed 42** → whole split in a frozen deterministic order, **batch 1**, fresh basis per image → restore caller RNG exactly; manifest/order persisted or hash-attested. **M4-KD** frozen teacher in E2/E3: private NMF stream initialised **once** from seed 42; per forward save caller → install private → forward → capture advanced → restore caller; never reset per batch. Not adopted: `rand_init=False`, a fixed basis, multi-draw averaging, image-keyed bases | `[PRIMARY Hamburger App. F; UPSTREAM; MEASURED B61 §2; THESIS-DERIVED; B61 §4]` |
 | Loss weighting (LOCKED, M5) | **unweighted** CE; student class weights are not imported | `[ch3; B60]` |
+| CE ignore normalisation (LOCKED, M13) | teacher decode-head CE **`avg_non_ignore = True`**, `ignore_index = 255`: ignore/padded pixels enter neither the numerator nor the mean denominator (mean over valid pixels). Thesis-derived correction of the MMSeg default; implemented before the official teacher run | `[MS ch3 p.128; MEASURED B61 §7; REPO E1 losses.py:53; THESIS-DERIVED]` |
 | Train augmentation (LOCKED, M2) | **semantic parity with the E1–E3 recipe.** Rotation ±10° with p 0.5, before the crop (image fill ImageNet mean, mask 255); 512 crop with cat_max_ratio 0.95; independent horizontal and vertical flips, each p 0.5; image-only hue ±0.015 and saturation [0.8, 1.2], jointly p 0.5. **No** brightness, contrast, blur, noise or JPEG (no `PhotoMetricDistortion`). Parity is semantic; code, draws and RNG need not be identical | `[MS student recipe; PRIMARY only for flip/scale/crop; THESIS-DERIVED for the teacher; B60 §3]` |
 | Train scale (LOCKED, M3) | long side = 512·r, r ~ U[0.75, 2.0], applied to the unpadded image, then crop/pad to 512. Clean VAL evaluation stays long side 512 + pad (thesis evaluator) | `[MS student recipe; THESIS-DERIVED for the teacher; B60 §4]` |
 | Data isolation (LOCKED, M11) | configured data root staged with **TRAIN + VAL only**; `images/test` and `annotations/test` absent; preflight checks 5,367 / 846 and **fails closed** if TEST paths exist. No active `test_dataloader`, `test_evaluator` or `test_cfg`. Scope = the configured data root, not the host. Applies to the teacher, E2 and E3 | `[MS TEST policy; B60 §5]` |
@@ -152,9 +154,13 @@ pending the PlantSeg repo's official convention. `[empirical; ch3 Table 3.1; ctx
 > - the upstream short-side pipeline with `PhotoMetricDistortion`;
 > - `VAL_INTERVAL` 10,000;
 > - active TEST surfaces;
-> - a TEST filename count.
+> - a TEST filename count;
+> - **[B61]** no M4 NMF RNG isolation (`NMF_SEED_CONTROL = 'NEED_TO_CONFIRM'`), the default
+>   `avg_non_ignore=False` (M13), and a checkpoint interval of 10,000 with `save_best='mIoU'` on MMSeg's
+>   rounded summary value (M12).
 >
 > The locks above govern. **The current runtime must not be used for an official teacher run.**
+> Implementation is the unified governed change of B61 §9 step 2.
 
 > **Provenance — THESIS-DERIVED SEGNeXt-B TEACHER CONFIGURATION `[B59 B1–B4, 2026-09-21]`.**
 > ch3 attributes the AdamW 6e-5 / wd 0.01 / head lr_mult 10 / poly / 40k recipe to "the Wei et al.
@@ -179,10 +185,14 @@ pending the PlantSeg repo's official convention. `[empirical; ch3 Table 3.1; ctx
 > configuration whose validation ran on the TEST split; MMSeg's own 40k schedule uses 4,000.
 >
 > - **LOCKED:** teacher train augmentation (M2) and teacher train/eval scaling (M3), in the rows above.
-> - **Still METHODOLOGY DECISION OPEN:** NMF/Hamburger RNG control (**M4**, `NEED_TO_CONFIRM`) and the
->   operational checkpoint-selection rule (**M12**).
+> - ~~**Still METHODOLOGY DECISION OPEN:** NMF/Hamburger RNG control (**M4**, `NEED_TO_CONFIRM`) and the
+>   operational checkpoint-selection rule (**M12**).~~ **[UPDATED 2026-09-22 — B61]** **LOCKED:** NMF/Hamburger
+>   control (**M4**), checkpoint selection (**M12**) and the new teacher CE ignore normalisation (**M13**),
+>   in the rows above. ADE20K checkpoint readiness **PASS** (SHA-256 `647a0cda…40ef1`; B61 §1;
+>   `docs/teacher_init_source.md`).
 >
-> See `reports/b59_pre_runpod_reconciliation.md` and `reports/b60_teacher_methodology_lock.md`.
+> See `reports/b59_pre_runpod_reconciliation.md`, `reports/b60_teacher_methodology_lock.md` and
+> `reports/b61_teacher_nmf_checkpoint_selection_lock.md`.
 
 ### B2 — Student training (E1 / E2 / E3 shared recipe) `[ch3 §C "E1"]`
 | Param | Value | Source |
@@ -847,17 +857,20 @@ Full detail + resolution mechanism in [open_questions.md](open_questions.md); fu
     - teacher train/eval scaling (M3);
     - teacher acceptance band / readiness and schedule (M5);
     - TEST filenames in the teacher preflight (M11), replaced by TRAIN/VAL-only data roots.
+  - **LOCKED by B61 (2026-09-22), decision recorded, runtime not yet implemented:**
+    - NMF/Hamburger RNG control (M4): `rand_init=True`, isolated streams M4-T / M4-V / M4-KD;
+    - teacher checkpoint selection under M4 (M12);
+    - teacher CE ignore normalisation, `avg_non_ignore=True` (M13, new).
   - **Still OPEN:**
     - E2/E3 clipping and `max_norm` (M1);
-    - NMF/Hamburger RNG control (M4);
     - λ sweep run length and noise band (M6);
     - E6-KD trigger and weights (M7);
     - multi-seed obligation (M8);
     - QAT checkpoint rule (M9);
-    - handling of a TEST mask whose final 512 canvas holds zero disease pixels (M10);
-    - teacher checkpoint selection under M4 (M12).
+    - handling of a TEST mask whose final 512 canvas holds zero disease pixels (M10).
 
-  Detail: `reports/b59_pre_runpod_reconciliation.md`; `docs/open_questions.md`.
+  Detail: `reports/b59_pre_runpod_reconciliation.md`; `reports/b61_teacher_nmf_checkpoint_selection_lock.md`;
+  `docs/open_questions.md`.
 - Teacher recovered mIoU and all student result numbers (E1–E7 outcomes) — produced by training, out of Week-1 scope.
 
 **Pre-training verification gates (mandatory, Table 3.1, before any E1 training) `[ch3; ctx]`:**

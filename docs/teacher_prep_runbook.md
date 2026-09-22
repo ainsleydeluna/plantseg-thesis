@@ -38,7 +38,8 @@
   - **R3, after M4:** a controlled deterministic re-evaluation under the M4-locked evaluation rule.
     The teacher's VAL all-class mIoU must be **> 0.36314016580581665** (E1 run of record), with no
     margin. It is an operational floor on the same VAL used for selection, not an independent
-    estimate.
+    estimate. **[B61]** M4 is locked: R3 uses **M4-V** (§6) on the checkpoint selected under **M12**
+    (§3).
   - **R4:** the Stage-3 tap and the input-equivalence guard pass on the trained teacher.
   - **If R3 fails:** STOP and escalate (no retraining, search, band relaxation or TEST).
 
@@ -51,14 +52,15 @@
 | Init type | **FULL MMSeg ADE20K model** (decode head + backbone), **not** an IN-1K backbone-only load | verified |
 | MMSeg 1.x config name (canonical) | `segnext_mscan-b_1xb16-adamw-160k_ade20k-512x512` | verified `[teacher_init_source.md:10; test_teacher_init.py:32]` |
 | Checkpoint `.pth` filename | `segnext_mscan-b_1x16_512x512_adamw_160k_ade20k_20230209_172053-b6f6c70c.pth` | verified `[zoo]` |
-| Checkpoint URL host/path | `https://download.openmmlab.com/mmsegmentation/v0.5/segnext/…` (resolved by `mim`) | verified host `[zoo]` |
+| Checkpoint URL | `https://download.openmmlab.com/mmsegmentation/v0.5/segnext/segnext_mscan-b_1x16_512x512_adamw_160k_ade20k/segnext_mscan-b_1x16_512x512_adamw_160k_ade20k_20230209_172053-b6f6c70c.pth` (official metafile, pinned and upstream v1.2.2; HTTP 200, no redirect) | **verified `[B61 §1]`** |
 | IN-1K backbone (**fallback only**) | `mscan_b_20230227-3ab7d230.pth` — used *only* if the full ADE20K model is unavailable | verified `[zoo]` |
 | Stock `num_classes` | **150** (ADE20K) — re-headed to 116 at load (see §5) | verified |
 | Params | **~27.6M** (contract benchmark rounds to 28M) | verified `[test_teacher_init.py:34]` |
 | Reported ADE20K mIoU | **48.03 (SS) / 49.68 (MS)** | verified `[teacher_init_source.md:15]` |
 | Source / license | OpenMMLab MMSegmentation model zoo, **Apache-2.0** | verified |
-| SHA256 of the `.pth` | `NEED_TO_CONFIRM` — `sha256sum weights/<file>.pth` at download | pending |
-| Download date | `NEED_TO_CONFIRM` — `date -u +%Y-%m-%d` at download | pending |
+| SHA256 of the `.pth` | **`647a0cda7678a35396689a4f8e9fddc33a088d8b539195d0dc97485ab8640ef1`** (110,977,141 bytes; MD5 = server Content-MD5). The filename suffix is **not** the SHA-256 prefix — see B61 §1 | **MEASURED `[B61 §1]`** |
+| Download date | **2026-09-22** (02:46:54–02:50:45 UTC), `curl` over HTTPS to an **out-of-repo** evidence folder (location recorded in B61 §1), not `weights/` | **MEASURED `[B61 §1]`** |
+| Readiness | stock 150-class init test **PASS** (0 missing / 0 unexpected, `conv_seg` 150); 150 → 116 audit **PASS** (only `conv_seg` re-initialised; 852/854 tensors bitwise-loaded) | **MEASURED `[B61 §1]`** |
 
 > **Shorthand note.** `configs/teacher_finetune.py:9` and `IMPLEMENTATION_CONTRACT.md:123` use the loose
 > alias `segnext_mscan-b_512x512_160k_ade20k` ("or equivalent"). That is an **alias**, not a valid MMSeg
@@ -66,7 +68,8 @@
 > `docs/teacher_init_source.md`) is what `mim download` resolves. Do not pass the alias to `mim`.
 
 > **The downloaded checkpoint is never edited.** Re-heading 150→116 happens at load time in the runner
-> (§5); `weights/*.pth` are treated as read-only, git-ignored inputs.
+> (§5). ~~`weights/*.pth` are treated as read-only, git-ignored inputs.~~ **[B61]** The checkpoint is a
+> read-only input kept **outside the repository** and passed via `SEGNEXT_ADE20K_CKPT` (§5).
 
 ---
 
@@ -86,28 +89,33 @@
 | Backbone | `backbone.init_cfg` | **`None`** — do **not** re-pull the IN-1K backbone; the full ADE20K weights arrive via `load_from` (§5) | verified fact |
 | Backbone (inherited, for verification) | `embed_dims / depths / drop_path_rate` | `[64,128,320,512] / [3,3,12,3] / 0.1` | verified `[zoo]` |
 | Head (inherited, for verification) | LightHamHead `channels / ham_channels` | `512 / 512` (MSCAN-B) | verified `[zoo]` |
-| Head — determinism | NMF / Hamburger randomness | **`NEED_TO_CONFIRM` — METHODOLOGY DECISION OPEN.** MMSeg exposes no NMF seed key. The inherited `ham_kwargs.rand_init=True` makes `NMF2D._build_bases` draw `torch.rand` from the **CPU default generator on every forward, eval included** (mmseg 1.2.2 `ham_head.py:89-90,123`). No control is implemented; see §6 and B59 B9 | `[pinned source; B56 §5.6; B59]` |
+| Head — determinism (LOCKED, M4) | NMF / Hamburger randomness | ~~`NEED_TO_CONFIRM` — METHODOLOGY DECISION OPEN.~~ **LOCKED (B61):** keep the inherited **`ham_kwargs.rand_init=True`** (`NMF2D._build_bases` draws `torch.rand` from the CPU default generator on every forward; mmseg 1.2.2 `ham_head.py:89-90,123`). **M4-T** training: upstream. **M4-V** every evaluation pass: dedicated NMF stream from seed 42, frozen order, batch 1, caller RNG restored. **M4-KD**: private stream seeded once, caller RNG untouched. Not yet implemented; see §6 | `[pinned source; MEASURED B61 §2; B61 §4]` |
 | Optim | optimizer | **AdamW**, `lr=6e-5`, `weight_decay=0.01`, `betas=(0.9,0.999)` | `[ch3; teacher_finetune.py:13-16]` |
 | Optim | paramwise | **decode-head `lr_mult=10`** | `[ch3; teacher_finetune.py:17]` |
 | Sched | policy / iters | **poly**, **40,000** iters | `[ch3; teacher_finetune.py:20-21]` |
 | Sched (LOCKED, M5) | warmup / poly | LinearLR **1,500** iterations (start 1e-6), then PolyLR power **1.0**, end **40,000** | `[B60 §2.2]` |
-| Val (LOCKED, M5) | cadence / split | every **4,000** iterations, **VAL only**. Intended selection is best VAL all-class mIoU; the operational rule is **M12, OPEN** | `[B60 §2.2–2.3]` |
+| Val (LOCKED, M5) | cadence / split | every **4,000** iterations, **VAL only**. Intended selection is best VAL all-class mIoU; the operational rule is **M12, LOCKED (B61)** — row below | `[B60 §2.2–2.3]` |
+| Selection (LOCKED, M12) | checkpoint selection | validations at 4k…40k, each under M4-V (VAL `batch_size=1`, no shuffle, frozen manifest). Highest **full-precision** VAL all-class mIoU; exact tie → earliest iteration; no tolerance band. Checkpoint interval must cover every validation (4,000). Persist iteration, mIoU, disease-only where reported, NMF seed, manifest hash; selected iteration + checkpoint SHA-256 | `[B61 §6]` |
 | Data | `batch_size` (train dataloader) | **16** (single GPU) | `[ch3; teacher_finetune.py:22]` |
 | Data | crop | **512×512** | `[ch3; teacher_finetune.py:23]` |
 | Aug (LOCKED, M2) | train augmentation | **Semantic parity with E1–E3.** Rotation ±10° with p 0.5, before the crop (ImageNet-mean / 255 fill); crop 512 with cat_max_ratio 0.95; independent horizontal and vertical flips, each p 0.5; image-only hue ±0.015 and saturation [0.8, 1.2], jointly p 0.5. **No** brightness, contrast, blur, noise or JPEG (no `PhotoMetricDistortion`) | `[B60 §3]` |
 | Scale (LOCKED, M3) | train scale | long side = 512·r, r ~ U[0.75, 2.0], applied to the unpadded image, then crop/pad to 512. Evaluation: long side 512 + pad | `[B60 §4]` |
 | Data (LOCKED, M11) | data root | configured root staged with **TRAIN + VAL only**; `images/test` and `annotations/test` absent. The preflight fails closed otherwise. No active TEST dataloader, evaluator or cfg | `[B60 §5]` |
 | Loss | `decode_head.loss_decode` | **cross-entropy**, **unweighted** (teacher recipe is CE-only; unlike the student's B5 weighted CE+Dice) | `[ch3; teacher_finetune.py:26; B60]` |
+| Loss (LOCKED, M13) | CE ignore normalisation | **`avg_non_ignore=True`**, `ignore_index=255`: padded/ignored pixels enter neither numerator nor denominator (mean over valid pixels, like E1). The MMSeg default `False` keeps them in the denominator (MEASURED). Must be implemented before the official run | `[ch3 p.128; B61 §7]` |
 
 > **Locked vs implemented (B60 §10).** The LOCKED rows are decisions. The current runtime config
 > (`510b212b…`) and launcher (`58575276…`) still carry the old pipeline:
 > - `RandomResize((2048,512))`, `cat_max_ratio` 0.75, horizontal flip only, `PhotoMetricDistortion`;
 > - `VAL_INTERVAL` 10,000;
 > - active TEST surfaces;
-> - a TEST filename count.
+> - a TEST filename count;
+> - **[B61]** no NMF stream isolation (`NMF_SEED_CONTROL = 'NEED_TO_CONFIRM'`), `avg_non_ignore` default
+>   `False`, checkpoint interval 10,000 and `save_best='mIoU'` on the rounded summary value.
 >
-> These are implemented together with M4/M12 at **B60 §9 step H**. **Until then the runtime must not be
-> used for an official teacher run.**
+> ~~These are implemented together with M4/M12 at **B60 §9 step H**.~~ **[B61]** All seven locks (M2,
+> M3, M4, M5, M11, M12, M13) are implemented together in the unified governed change of **B61 §9 step
+> 2**. **Until then the runtime must not be used for an official teacher run.**
 | Runtime | seed | **42** + determinism flags (§11) | `[ch3 §D; ctx]` |
 
 **CWD tap (for downstream E3, recorded here so the teacher config exposes it):** the teacher **stride-16
@@ -324,7 +332,12 @@ process environment, which is what step 1's image supplies.
 
 The re-head is a **runner-level weight load**, not a resume and not backbone `init_cfg`:
 
-- Set **`load_from = weights/<ADE20K .pth>`** at the runner/config top level. This loads the full ADE20K
+- ~~Set **`load_from = weights/<ADE20K .pth>`** at the runner/config top level.~~ **[B61]** The ADE20K
+  checkpoint stays **outside the Git repository**. Supply its approved external absolute path through the
+  **`SEGNEXT_ADE20K_CKPT`** environment variable; the runtime config resolves `load_from` from that
+  variable. Do **not** copy the checkpoint into the repository's `weights/`, and do **not** use an
+  in-repo checkpoint path for the official run. The file must match SHA-256
+  `647a0cda7678a35396689a4f8e9fddc33a088d8b539195d0dc97485ab8640ef1` (B61 §1). This loads the full ADE20K
   model as the fine-tune starting point.
 - Do **not** use `resume` (that would also restore optimizer/iteration state) and do **not** route the
   ADE20K weights through `backbone.init_cfg` (which loads the backbone only). Set
@@ -348,8 +361,10 @@ The re-head is a **runner-level weight load**, not a resume and not backbone `in
   single GPU is at best a no-op wrapper and at worst a launch/eval hazard; the contract mandates plain BN.
   If a merged/inherited config still yields SyncBN modules, convert with
   `mmengine`'s `revert_sync_batchnorm` before training.
-- **NMF (Hamburger) randomness — `NEED_TO_CONFIRM`, METHODOLOGY DECISION OPEN.** An earlier
-  version of this bullet said "set the NMF seed". No such control exists or is implemented.
+- **NMF (Hamburger) randomness — LOCKED (M4, B61).** ~~`NEED_TO_CONFIRM`, METHODOLOGY DECISION OPEN.~~
+  The locked policy is in the **LOCKED — M4** sub-bullet below; the sub-bullets before it are the
+  historical evidence trail. An earlier version of this bullet said "set the NMF seed". No such control
+  exists in upstream, and the M4 control is not yet implemented in runtime code.
   - **Pinned source.** With the inherited `rand_init=True`, every decode-head forward — training
     **and** evaluation — draws fresh NMF bases via `torch.rand((B*S, D, R))` on the CPU default
     generator (mmseg 1.2.2 `ham_head.py:89-90,123`, sha256 `eb2f0963…`).
@@ -363,8 +378,23 @@ The re-head is a **runner-level weight load**, not a resume and not backbone `in
       checkpoint.
   - **Consequence.** Validation mIoU, `save_best` checkpoint selection, and E2/E3 soft targets
     depend on RNG state and batch composition.
-  - A control policy must be chosen and verified **before** the official teacher run; none is chosen
-    here.
+  - ~~A control policy must be chosen and verified **before** the official teacher run; none is chosen
+    here.~~
+  - **[B61, 2026-09-22] Re-measured on the real ADE20K checkpoint (stock 150-class, same VAL image).**
+    20/20 distinct outputs; max |Δlogit| 22.28 against 74.91; the predicted class changes on 26.0% of
+    valid pixels on average (B59 random init: 10.7%); ~20% relative change at the pre-classifier
+    feature. An image's basis is fixed by its offset in the CPU stream since seeding: order matters,
+    batch size does not. `[MEASURED; B61 §2]`
+  - **LOCKED — M4 (B61 §4): random NMF, preserved and isolated.** `rand_init=True` everywhere.
+    - **M4-T, training:** upstream fresh bases from the run's seeded global CPU stream.
+    - **M4-V, every complete evaluation pass** (VAL selection, R3, final evaluation): save the caller
+      CPU RNG → dedicated NMF stream from seed 42 → whole split in a frozen order, batch 1, fresh basis
+      per image → restore the caller RNG exactly. Manifest/order persisted or hash-attested.
+    - **M4-KD, frozen teacher in E2/E3:** a private NMF stream initialised once from seed 42; around
+      each forward save caller → install private → forward → capture advanced → restore caller.
+    - **Implementation requirements:** the dedicated stream is consumed by NMF only (install it around
+      the teacher decode forwards); seed it from a CPU generator state, never `torch.manual_seed`
+      (which also seeds CUDA). Not implemented until the unified runtime change (B61 §9 step 2).
 
 ---
 
@@ -401,6 +431,12 @@ loads into the **stock num_classes=150** model with **zero missing AND zero unex
 `decode_head.conv_seg.out_channels == 150`. This validates that the *download* is the exact stock ADE20K
 model before any re-heading.
 
+**[B61, 2026-09-22] Result: PASS.** Run at HEAD `161e735` in the pinned image, CPU, `--network none`,
+with explicit config/checkpoint paths (the default `weights/` discovery was not used): `RESULT: PASS`,
+exit 0; missing 0 / unexpected 0; `conv_seg` 150; 27,636,310 parameters. The separate 150 → 116 audit
+of the thesis load path also passed: only `decode_head.conv_seg.{weight,bias}` mismatch and stay at fresh
+init; 852/854 tensors load bitwise. G11 did not affect this run. `[MEASURED; B61 §1]`
+
 **Table 3.1 pre-train gates (mandatory before any training) `[ch3; ctx]`:** mask class count via
 `np.unique`; image↔mask pairing; split integrity (zero ID overlap); mask values ⊆ class set ∪ {255};
 ignore-label unit tests; **teacher hook returns the stride-16 MSCAN-B Stage-3 320-ch feature** (the CWD
@@ -420,6 +456,7 @@ ignore-label unit tests; **teacher hook returns the stride-16 MSCAN-B Stage-3 32
   and it is superseded. The R3 floor compares the teacher's VAL all-class mIoU with E1's
   0.36314016580581665, using the same metric implementation and canvas, under the M4-locked evaluation
   rule. Report the gap and disease-only mIoU. Wei's 42.05 stays contextual.
+  **[B61]** The M4-locked evaluation rule is **M4-V** (§6); the checkpoint is chosen under **M12** (§3).
 
 ---
 
@@ -468,7 +505,10 @@ The teacher and every student stage **must** share these, or distillation/compar
 - **Determinism:** **seed 42** across `torch`/`numpy`/`random`; before CUDA init set
   `cudnn.deterministic=True`, `cudnn.benchmark=False`, `use_deterministic_algorithms(True, warn_only=True)`,
   `CUBLAS_WORKSPACE_CONFIG=:4096:8` `[ch3 §D; ctx]`. The NMF/Hamburger RNG control is
-  **`NEED_TO_CONFIRM`** (§6).
+  ~~**`NEED_TO_CONFIRM`**~~ **LOCKED (M4, B61)**: M4-T for the teacher, and M4-KD for the frozen teacher
+  in E2/E3, whose private NMF stream leaves the student's RNG untouched (§6).
+- **Teacher CE normalisation (M13, B61):** `avg_non_ignore=True`, so the teacher averages CE over valid
+  pixels, as the student does (§3).
 
 ---
 
@@ -490,8 +530,11 @@ The teacher and every student stage **must** share these, or distillation/compar
 ---
 
 ### Open items carried by this runbook (`NEED_TO_CONFIRM` — fill at execution, never guess)
-- Init `.pth` **SHA256** + **download date** + exact resolved URL (from the `mim download` log).
-- `scripts/test_teacher_init.py` **PASS/FAIL** result in the pinned env.
+- ~~Init `.pth` **SHA256** + **download date** + exact resolved URL (from the `mim download` log).~~
+  **RESOLVED 2026-09-22 (B61 §1):** SHA-256 `647a0cda…40ef1`, downloaded 2026-09-22 from the official
+  URL (§2) by `curl` to an out-of-repo evidence folder.
+- ~~`scripts/test_teacher_init.py` **PASS/FAIL** result in the pinned env.~~ **RESOLVED: PASS** (§8;
+  B61 §1).
 - ~~Exact mmseg `MMCV_MAX` constant value on disk~~ — **RESOLVED 2026-09-06:** `'2.2.0'`, verified in
   the official image by digest; no edit required (see §4.5).
 - Final teacher GPU / pod type — chosen only after a measured batch-16 deterministic-policy VRAM
@@ -504,9 +547,11 @@ The teacher and every student stage **must** share these, or distillation/compar
     - teacher train/eval scaling (M3; §3, §11);
     - schedule details: warmup 1,500, poly power 1.0, end 40,000, validation every 4,000 (M5);
     - TRAIN/VAL-only data root replacing the TEST filename count (M11; §3, §4a).
-  - **Still OPEN:**
-    - NMF/Hamburger RNG control (M4; §6);
-    - the operational checkpoint-selection rule (M12).
+  - ~~**Still OPEN:** NMF/Hamburger RNG control (M4; §6); the operational checkpoint-selection rule
+    (M12).~~ **[B61, 2026-09-22] LOCKED, runtime pending B61 §9 step 2:**
+    - NMF/Hamburger RNG control, M4-T / M4-V / M4-KD (M4; §6);
+    - the operational checkpoint-selection rule (M12; §3);
+    - teacher CE ignore normalisation, `avg_non_ignore=True` (M13, new; §3).
 - **Verified on CPU (B59, scratch).** On the real, randomly initialised MSCAN-B, the adapter's
   Stage-3 tap is backbone output index 2, identical to `norm3`, shape 1×320×32×32 at stride 16 for a
   512² input. The stage-removed and wrong-stride negative controls raise.

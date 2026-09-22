@@ -9,8 +9,15 @@ a **thesis-derived SegNeXt-B teacher configuration** (descriptive upper-bound on
 > **[CORRECTED 2026-09-21 — B59 B3.]** This page previously stated a "target 42.05% mIoU within ±1.5–2.0
 > pp (protocol match)". The thesis recipe (AdamW + ADE20K init) is not the Wei et al. (2026) protocol
 > that produced 42.05% (SGD lr 1e-3, momentum 0.9, wd 5e-4). Wei's 42.05 mIoU / 56.30 mAcc / ~28M are
-> **contextual published values only**. The teacher acceptance band is `NEED_TO_CONFIRM` — a
-> **METHODOLOGY DECISION OPEN**.
+> **contextual published values only**. ~~The teacher acceptance band is `NEED_TO_CONFIRM` — a
+> **METHODOLOGY DECISION OPEN**.~~
+>
+> **[UPDATED 2026-09-22 — B60/B61]** The previous acceptance-band wording is superseded. M5 is
+> **LOCKED**: teacher readiness uses the rule R1–R4 of
+> [IMPLEMENTATION_CONTRACT.md](IMPLEMENTATION_CONTRACT.md) §B1 /
+> [B60](../reports/b60_teacher_methodology_lock.md) §2, not a published-value acceptance band. The
+> ADE20K initialisation checkpoint has also passed the separately gated checkpoint-readiness audit
+> recorded in [B61](../reports/b61_teacher_nmf_checkpoint_selection_lock.md) §1.
 
 ## What was checked (2026-06-27)
 
@@ -28,7 +35,8 @@ released artifacts are the **dataset** and **baseline code/configs**, not traine
 
 **Plan:** in-house fine-tune of the teacher (B1) during **Jul 13–26**, using the ADE20K-pretrained
 SegNeXt-B / MSCAN-B init from the MMSegmentation model zoo (`segnext_mscan-b_512x512_160k_ade20k`),
-following the B1 recipe; success criterion **`NEED_TO_CONFIRM`** (see the correction note above).
+following the B1 recipe; success criterion ~~**`NEED_TO_CONFIRM`**~~ **readiness rule R1–R4 (M5, B60)**
+(see the correction note above).
 
 _Re-check trigger:_ if a checkpoint is later published (repo Releases / Hugging Face / Zenodo), switch
 the plan to **download + verify** instead of fine-tuning.

@@ -542,8 +542,9 @@ rule above already guarantees that no code, config, or governing contract differ
 Disease-only mIoU (§3.1) is reported alongside it.
 
 - **How it is produced.** A **controlled deterministic re-evaluation under the M4-locked evaluation
-  rule.** The NMF/Hamburger control is `NEED_TO_CONFIRM` until M4 is locked, and R3 cannot run before
-  then.
+  rule.** ~~The NMF/Hamburger control is `NEED_TO_CONFIRM` until M4 is locked, and R3 cannot run before
+  then.~~ **[UPDATED 2026-09-22 — B61]** M4 is locked: R3 uses the **M4-V** rule of §7.3 on the checkpoint
+  selected under M12. The runtime is not yet implemented, so R3 still cannot run.
 - **Comparator.** E1's run-of-record VAL all-class mIoU, **0.36314016580581665**. It was produced by the
   same metric implementation (`miou_from_confusion`, union-present) on the same VAL canvas.
 - **Rule.** The teacher value must be strictly greater, with no margin.
@@ -564,6 +565,43 @@ Disease-only mIoU (§3.1) is reported alongside it.
   after the final TEST unlock**.
 - **Over time:** forward-looking. E1 is unaffected, because its training path constructed TRAIN and VAL
   datasets only.
+
+### 7.3 Teacher NMF evaluation rule (M4-V) and checkpoint selection (M12) `[B61, 2026-09-22]`
+
+**Decision locked; runtime not yet implemented.** Recorded by
+[reports/b61_teacher_nmf_checkpoint_selection_lock.md](../reports/b61_teacher_nmf_checkpoint_selection_lock.md).
+
+**Why a rule is needed.** The teacher's LightHamHead keeps upstream `rand_init=True`, so every forward
+draws fresh NMF bases from the CPU generator. On the real ADE20K checkpoint, 20 repeated forwards gave 20
+distinct outputs, with the predicted class changing on 26.0% of valid pixels on average and ~20% relative
+change at the pre-classifier feature (MEASURED, B61 §2). An evaluation must not depend on accidental
+global RNG state.
+
+**M4-V — applies to every complete teacher evaluation pass:** the VAL checkpoint-selection validations,
+R3, and the final descriptive teacher evaluation.
+1. Save the caller/global CPU RNG state.
+2. Initialise the dedicated NMF sequence from **seed 42**.
+3. Evaluate the entire split in a **frozen deterministic sample order**.
+4. **Batch size 1.**
+5. `rand_init=True` draws a fresh basis for each image, as upstream.
+6. After the complete pass, restore the caller/global CPU RNG state exactly.
+
+The manifest/order is persisted or hash-attested. Changing the manifest/order, batch size or seed
+invalidates comparability unless explicitly disclosed and rerun consistently. The dedicated stream is
+consumed by NMF only, and is seeded without touching the CUDA generators (B61 §4).
+
+**M12 — teacher checkpoint selection.**
+- Validations at 4,000, 8,000, …, 40,000 iterations, each under M4-V, with the same frozen VAL manifest
+  and order, no shuffle, the same preprocessing and the same all-class dataset-level mIoU computation.
+- Select the **numerically highest** VAL all-class mIoU. Exactly equal stored values → the **earliest
+  iteration**. No tolerance/noise-band tie rule, no TEST, no training extension because of the result.
+- The compared value is the full-precision all-class mIoU, not MMSeg's two-decimal summary.
+- Persist per validation: iteration, all-class mIoU, disease-only mIoU where reported, NMF seed, VAL
+  manifest hash/order identity; and the selected iteration and checkpoint SHA-256.
+
+**R3 under M4-V.** R3 (§7.2) re-evaluates the selected checkpoint once under M4-V with this contract's
+evaluator. Its value is **not required to be byte-identical** to the MMSeg selection metric, unless both
+are proven to use the exact same evaluation implementation.
 
 ---
 

@@ -8,13 +8,13 @@ in-house teacher fine-tune (B1). **Not trained, not fine-tuned, not modified** b
 | Field | Value |
 |---|---|
 | MMSeg 1.x config name | `segnext_mscan-b_1xb16-adamw-160k_ade20k-512x512` |
-| Exact `.pth` URL (resolved by `mim`) | `NEED_TO_CONFIRM` (paste from the `mim download` log) |
-| SHA256 of the `.pth` | `NEED_TO_CONFIRM` (`sha256sum weights/<file>.pth`) |
-| Download date | `NEED_TO_CONFIRM` |
+| Exact `.pth` URL | **`https://download.openmmlab.com/mmsegmentation/v0.5/segnext/segnext_mscan-b_1x16_512x512_adamw_160k_ade20k/segnext_mscan-b_1x16_512x512_adamw_160k_ade20k_20230209_172053-b6f6c70c.pth`** — from the official `metafile.yaml` (pinned mmseg 1.2.2, byte-identical to upstream tag v1.2.2); HTTP 200, 0 redirects `[B61 §1]` |
+| SHA256 of the `.pth` | **`647a0cda7678a35396689a4f8e9fddc33a088d8b539195d0dc97485ab8640ef1`** (110,977,141 bytes; MD5 `53b45828…7c79` = server Content-MD5). The filename suffix `b6f6c70c` is **not** the SHA-256 prefix; no official SHA-256 exists, so this is the first record (trust-on-first-use) `[B61 §1]` |
+| Download date | **2026-09-22** (02:46:54–02:50:45 UTC), `curl` over HTTPS, stored **outside the repo** in `C:\Users\admin\plantseg_runs\teacher_checkpoint_readiness_20260922\checkpoint\` (evidence `SHA256SUMS` `3b80d584…d998`) |
 | MMSeg version (download + test env) | **1.2.2** (pinned; mmcv 2.1.0, torch 2.1.0) |
 | Reported ADE20K mIoU | **48.03 (SS) / 49.68 (MS)** |
-| Source / license | **OpenMMLab** (MMSegmentation model zoo), **Apache-2.0** |
-| Init-test result (`scripts/test_teacher_init.py`) | `NEED_TO_CONFIRM` (PASS/FAIL) — harness **not yet verified**, see [B54](../reports/b54_teacher_prerequisites.md) §2.4 |
+| Source / license | **OpenMMLab** (MMSegmentation model zoo), **Apache-2.0** (code licence; no weights-specific licence is stated) |
+| Init-test result (`scripts/test_teacher_init.py`) | ~~`NEED_TO_CONFIRM` (PASS/FAIL) — harness **not yet verified**~~ **PASS (2026-09-22)**: pinned image, CPU, `--network none`, explicit paths; missing 0 / unexpected 0; `conv_seg` 150; 27,636,310 params. 150 → 116 audit also PASS (only `conv_seg` re-initialised) `[B61 §1]` |
 
 > **Config-name reconciliation `[B54 2026-09-13]`.** The name in row 1 is the **operative** one: it is
 > what `mim` resolves and what every executable site uses — `src/distill/segnext_teacher.py:35`,
@@ -32,6 +32,17 @@ in-house teacher fine-tune (B1). **Not trained, not fine-tuned, not modified** b
 > rather than being upgraded on an untested claim. It is closable in one CPU-only command inside the
 > pinned environment, **before** any download: `exit 2` with "config/checkpoint not found" is itself
 > proof the harness runs. B54 §2.4 records the import-guard defect as queue item G11.
+>
+> **[UPDATED 2026-09-22 — B61]** Closed by measurement. In the pinned image numpy is present, so G11 does
+> not affect the run, and the harness passed on the real checkpoint (the init-test row above). G11 itself stays queued as a
+> governed fix.
+
+> **How the fields were actually filled `[B61 §1]`.** The procedure below was **not** used: its
+> `--dest weights/` would put the checkpoint inside the repository, and it also downloads a config file,
+> whereas only the one checkpoint was authorised (the stock config ships in the pinned package). The checkpoint was
+> fetched once with `curl` from the official URL into the external evidence folder, hashed there, and
+> tested with `python scripts/test_teacher_init.py <stock config> <checkpoint>` against the stock config
+> shipped in the pinned mmseg package. The block below is kept as the original plan.
 
 > **Re-init note:** the stock checkpoint's classifier `decode_head.conv_seg` is sized for **150 ADE20K
 > classes**. Before teacher fine-tuning it will be **re-initialized to the empirically verified PlantSeg

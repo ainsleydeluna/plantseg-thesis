@@ -95,8 +95,20 @@ Source: [reports/b60_teacher_methodology_lock.md](../reports/b60_teacher_methodo
 | 14d | **Validation interval.** The runtime config's "10,000 — public schedule_40k.py" is PlantSeg's file, which validated on TEST. MMSeg 1.2.2's own `schedule_40k.py` uses 4,000. | runtime config comment vs upstream sources | DOCUMENTATION GAP (mis-cited source) → **LOCKED (M5)** | Every 4,000 iterations, VAL only |
 | 14e | **TEST during teacher preflight.** `check_splits` counts TEST filenames. | TEST policy vs launcher | METHODOLOGY DECISION → **LOCKED (M11)** | TRAIN/VAL-only configured data root with a fail-closed TEST-absence assertion; applies to the teacher, E2 and E3 |
 
-**Still open:** M4 (NMF/Hamburger control) and M12 (operational checkpoint selection). The manuscript
-amendments are listed in B60 §11 and are not yet made.
+~~**Still open:** M4 (NMF/Hamburger control) and M12 (operational checkpoint selection).~~
+**[UPDATED 2026-09-22 — B61]** M4 and M12 are now LOCKED (§15). The manuscript amendments are listed in
+B60 §11 and are not yet made.
+
+## 15. Teacher NMF, checkpoint-selection and CE-normalisation locks — B61 (2026-09-22)
+
+Source: [reports/b61_teacher_nmf_checkpoint_selection_lock.md](../reports/b61_teacher_nmf_checkpoint_selection_lock.md).
+
+| # | Conflict | Sources | Class | Standing |
+|---|---|---|---|---|
+| 15a | **NMF evaluation randomness.** ch3 is silent. Upstream `rand_init=True` makes every forward draw fresh bases from the CPU generator; on the real checkpoint 20/20 forwards differ (26.0% mean pixel change). The MMSeg README advises a test-time seed; the Hamburger ablation favours random init. | ch3 (silent) vs pinned `ham_head.py` vs Hamburger App. F vs MMSeg README | METHODOLOGY DECISION → **LOCKED (M4)** | `rand_init=True` kept; M4-T upstream; M4-V pass-level seed-42 dedicated stream with caller-RNG restore, frozen order, batch 1; M4-KD private stream seeded once. `rand_init=False`, fixed basis, K-draw averaging and image-keyed bases rejected |
+| 15b | **Operational checkpoint selection.** B60 recorded the best-VAL intent only; `save_best='mIoU'` depended on RNG state, and MMSeg's `IoUMetric` rounds its summary to two decimals. | B60 §2.3 vs pinned `iou_metric.py:136` / `checkpoint_hook.py:123` | METHODOLOGY DECISION → **LOCKED (M12)** | 10 validations (4k…40k) under M4-V; numerically highest full-precision all-class mIoU; exact tie → earliest; no tolerance band; persisted selection record; R3 under M4-V |
+| 15c | **Padding in the teacher loss.** ch3 p.128: the 255 padding is excluded "from all loss calculations". MMSeg CE default `avg_non_ignore=False` gives ignored pixels zero loss but keeps them in the mean denominator; E1 averages over valid pixels. | ch3 p.128 vs pinned `cross_entropy_loss.py` vs `src/training/losses.py:53` | RUNTIME/METHODOLOGY CONFLICT → **LOCKED (M13, new)** | teacher CE `avg_non_ignore=True`, `ignore_index=255`; implemented before the official teacher run. Thesis-derived correction, not a claim about Wei or upstream |
+| 15d | **Checkpoint filename suffix.** `b6f6c70c` is not the SHA-256 prefix of the official bytes (`647a0cda…`). | OpenMMLab naming convention vs measured bytes and Last-Modified 2023-02-24 | DOCUMENTATION NOTE (upstream re-upload, INFERRED) | Not a blocker. Measured SHA-256 recorded (trust-on-first-use, server MD5 match); the suffix is not used as verification |
 
 ---
 
