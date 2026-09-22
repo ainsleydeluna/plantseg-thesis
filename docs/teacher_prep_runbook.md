@@ -66,6 +66,8 @@
 > alias `segnext_mscan-b_512x512_160k_ade20k` ("or equivalent"). That is an **alias**, not a valid MMSeg
 > 1.x config id. The canonical name above (already correct in `scripts/test_teacher_init.py` and
 > `docs/teacher_init_source.md`) is what `mim download` resolves. Do not pass the alias to `mim`.
+> **[B62] G10 closed:** `configs/teacher_finetune.py` and the contract's B1 row now carry the MMSeg 1.x
+> identity, filename and SHA-256.
 
 > **The downloaded checkpoint is never edited.** Re-heading 150→116 happens at load time in the runner
 > (§5). ~~`weights/*.pth` are treated as read-only, git-ignored inputs.~~ **[B61]** The checkpoint is a
@@ -89,7 +91,7 @@
 | Backbone | `backbone.init_cfg` | **`None`** — do **not** re-pull the IN-1K backbone; the full ADE20K weights arrive via `load_from` (§5) | verified fact |
 | Backbone (inherited, for verification) | `embed_dims / depths / drop_path_rate` | `[64,128,320,512] / [3,3,12,3] / 0.1` | verified `[zoo]` |
 | Head (inherited, for verification) | LightHamHead `channels / ham_channels` | `512 / 512` (MSCAN-B) | verified `[zoo]` |
-| Head — determinism (LOCKED, M4) | NMF / Hamburger randomness | ~~`NEED_TO_CONFIRM` — METHODOLOGY DECISION OPEN.~~ **LOCKED (B61):** keep the inherited **`ham_kwargs.rand_init=True`** (`NMF2D._build_bases` draws `torch.rand` from the CPU default generator on every forward; mmseg 1.2.2 `ham_head.py:89-90,123`). **M4-T** training: upstream. **M4-V** every evaluation pass: dedicated NMF stream from seed 42, frozen order, batch 1, caller RNG restored. **M4-KD**: private stream seeded once, caller RNG untouched. Not yet implemented; see §6 | `[pinned source; MEASURED B61 §2; B61 §4]` |
+| Head — determinism (LOCKED, M4) | NMF / Hamburger randomness | ~~`NEED_TO_CONFIRM` — METHODOLOGY DECISION OPEN.~~ **LOCKED (B61):** keep the inherited **`ham_kwargs.rand_init=True`** (`NMF2D._build_bases` draws `torch.rand` from the CPU default generator on every forward; mmseg 1.2.2 `ham_head.py:89-90,123`). **M4-T** training: upstream. **M4-V** every evaluation pass: dedicated NMF stream from seed 42, frozen order, batch 1, caller RNG restored. **M4-KD**: private stream seeded once, caller RNG untouched. **Implemented (B62)**; see §6 | `[pinned source; MEASURED B61 §2; B61 §4]` |
 | Optim | optimizer | **AdamW**, `lr=6e-5`, `weight_decay=0.01`, `betas=(0.9,0.999)` | `[ch3; teacher_finetune.py:13-16]` |
 | Optim | paramwise | **decode-head `lr_mult=10`** | `[ch3; teacher_finetune.py:17]` |
 | Sched | policy / iters | **poly**, **40,000** iters | `[ch3; teacher_finetune.py:20-21]` |
@@ -102,7 +104,7 @@
 | Scale (LOCKED, M3) | train scale | long side = 512·r, r ~ U[0.75, 2.0], applied to the unpadded image, then crop/pad to 512. Evaluation: long side 512 + pad | `[B60 §4]` |
 | Data (LOCKED, M11) | data root | configured root staged with **TRAIN + VAL only**; `images/test` and `annotations/test` absent. The preflight fails closed otherwise. No active TEST dataloader, evaluator or cfg | `[B60 §5]` |
 | Loss | `decode_head.loss_decode` | **cross-entropy**, **unweighted** (teacher recipe is CE-only; unlike the student's B5 weighted CE+Dice) | `[ch3; teacher_finetune.py:26; B60]` |
-| Loss (LOCKED, M13) | CE ignore normalisation | **`avg_non_ignore=True`**, `ignore_index=255`: padded/ignored pixels enter neither numerator nor denominator (mean over valid pixels, like E1). The MMSeg default `False` keeps them in the denominator (MEASURED). Must be implemented before the official run | `[ch3 p.128; B61 §7]` |
+| Loss (LOCKED, M13) | CE ignore normalisation | **`avg_non_ignore=True`**, `ignore_index=255`: padded/ignored pixels enter neither numerator nor denominator (mean over valid pixels, like E1). The MMSeg default `False` keeps them in the denominator (MEASURED). Must be implemented before the official run — **implemented (B62)** | `[ch3 p.128; B61 §7]` |
 
 > **Locked vs implemented (B60 §10).** The LOCKED rows are decisions. The current runtime config
 > (`510b212b…`) and launcher (`58575276…`) still carry the old pipeline:
@@ -116,6 +118,10 @@
 > ~~These are implemented together with M4/M12 at **B60 §9 step H**.~~ **[B61]** All seven locks (M2,
 > M3, M4, M5, M11, M12, M13) are implemented together in the unified governed change of **B61 §9 step
 > 2**. **Until then the runtime must not be used for an official teacher run.**
+>
+> **[UPDATED 2026-09-22 — B62]** Implemented in the B62 working tree and CPU-validated
+> (`reports/b62_teacher_runtime_reconciliation.md`); pending review and commit, the new hash freeze (§4a
+> step 8) and a G20-style CUDA re-canary. The pre-B62 runtime above is superseded.
 | Runtime | seed | **42** + determinism flags (§11) | `[ch3 §D; ctx]` |
 
 **CWD tap (for downstream E3, recorded here so the teacher config exposes it):** the teacher **stride-16
@@ -258,8 +264,14 @@ git status --porcelain -- src configs scripts requirements-e1.txt requirements.l
 
 Empty output is the pass condition.
 
-**8 — Verify the three runtime-critical files by SHA-256.** These are the bytes that decide
+**8 — Verify the runtime-critical files by SHA-256.** These are the bytes that decide
 determinism behaviour, so they are checked directly rather than inferred from the commit:
+
+> **[B62] The table below is SUPERSEDED — historical (pre-B62, the G20 canary runtime).** B62 changes the
+> config and the launcher and adds `src/training/teacher_components.py`, `src/distill/nmf_stream.py` and
+> `src/data/isolation.py` to the runtime-critical set; `teacher_runner.py` is unchanged. The new expected
+> values are recorded **at the B62 freeze, after the commit**, and a G20-style CUDA re-canary must pass on
+> those bytes before any official launch. Do not launch against this table.
 
 ```bash
 sha256sum src/training/teacher_runner.py \
@@ -299,8 +311,11 @@ python -B scripts/launch_teacher_finetune.py ...
 **Data root for the OFFICIAL run (M11, LOCKED — B60 §5).** Stage the configured `PLANTSEG_DATA_ROOT`
 with **TRAIN and VAL only**. `images/test` and `annotations/test` must be absent there, and the
 (step-H) preflight fails closed if they exist. Do not enumerate, count or inspect TEST at any point
-during development. The scope is the configured data root, not the whole host. The current launcher
-still counts TEST filenames; that is replaced at B60 step H.
+during development. The scope is the configured data root, not the whole host. ~~The current launcher
+still counts TEST filenames; that is replaced at B60 step H.~~ **[B62]** The launcher (and the E2/E3
+real-run gate) now use `src/data/isolation.py`: existence checks only on `images/test`,
+`annotations/test` and `annotation_test.json` (the third an approved B62 safeguard), TRAIN/VAL counted
+by name, TEST never listed or counted.
 
 **10 — Execute the teacher path from this checkout, never from the image-baked source.** Run with
 `/workspace/plantseg-thesis` as the working directory (the config loader is CWD-sensitive) and
@@ -364,7 +379,9 @@ The re-head is a **runner-level weight load**, not a resume and not backbone `in
 - **NMF (Hamburger) randomness — LOCKED (M4, B61).** ~~`NEED_TO_CONFIRM`, METHODOLOGY DECISION OPEN.~~
   The locked policy is in the **LOCKED — M4** sub-bullet below; the sub-bullets before it are the
   historical evidence trail. An earlier version of this bullet said "set the NMF seed". No such control
-  exists in upstream, and the M4 control is not yet implemented in runtime code.
+  exists in upstream. **[B62]** The M4 control is implemented (`IsolatedNMF2D` /
+  `TeacherNMFEvalStreamHook` in `src/training/teacher_components.py`; M4-KD in the frozen-teacher adapter);
+  freeze and re-canary pending.
   - **Pinned source.** With the inherited `rand_init=True`, every decode-head forward — training
     **and** evaluation — draws fresh NMF bases via `torch.rand((B*S, D, R))` on the CPU default
     generator (mmseg 1.2.2 `ham_head.py:89-90,123`, sha256 `eb2f0963…`).
@@ -394,7 +411,8 @@ The re-head is a **runner-level weight load**, not a resume and not backbone `in
       each forward save caller → install private → forward → capture advanced → restore caller.
     - **Implementation requirements:** the dedicated stream is consumed by NMF only (install it around
       the teacher decode forwards); seed it from a CPU generator state, never `torch.manual_seed`
-      (which also seeds CUDA). Not implemented until the unified runtime change (B61 §9 step 2).
+      (which also seeds CUDA). **[B62] Implemented** (`src/distill/nmf_stream.py`: the swap surrounds only
+      the upstream `_build_bases` call; seeding via a CPU `torch.Generator`).
 
 ---
 
@@ -496,8 +514,8 @@ The teacher and every student stage **must** share these, or distillation/compar
   - **[UPDATED 2026-09-22 — B60]** Teacher augmentation (**M2**) and teacher train/eval scaling
     (**M3**) are now **LOCKED** to **semantic parity with the student recipe**: long side 512·r with
     r ~ U[0.75, 2.0]; rotation; crop with cat_max_ratio 0.95; horizontal and vertical flips; hue and
-    saturation; no brightness, contrast, blur, noise or JPEG (§3 table). The runtime change is deferred
-    to the unified implementation (B60 §9 step H).
+    saturation; no brightness, contrast, blur, noise or JPEG (§3 table). **[B62] Implemented** by reusing
+    `src/data/transforms.train_preprocess` / `core_preprocess` through thin MMSeg transforms.
   - **Input equivalence verified on CPU (B59 C).** The KD path feeds the student's normalized RGB
     tensor through `extract_feat`, bypassing `SegDataPreProcessor` (0 calls). It matches MMSeg's own
     data path on the same pixels to 2.4e-7 at the input and ~3e-6 relative at Stage-3 and the logits.
@@ -541,14 +559,14 @@ The teacher and every student stage **must** share these, or distillation/compar
   reading (G2; §7). Reported in Ch4.
 - Recovered teacher mIoU (produced by the fine-tune run; out of preparation scope).
 - **METHODOLOGY DECISIONS (B59), status as of B60 (2026-09-22):**
-  - **LOCKED, runtime pending step H:**
+  - **LOCKED; runtime implemented by B62 (freeze + re-canary pending):**
     - teacher acceptance / readiness (M5; §1, §9);
     - teacher train augmentation (M2; §3);
     - teacher train/eval scaling (M3; §3, §11);
     - schedule details: warmup 1,500, poly power 1.0, end 40,000, validation every 4,000 (M5);
     - TRAIN/VAL-only data root replacing the TEST filename count (M11; §3, §4a).
   - ~~**Still OPEN:** NMF/Hamburger RNG control (M4; §6); the operational checkpoint-selection rule
-    (M12).~~ **[B61, 2026-09-22] LOCKED, runtime pending B61 §9 step 2:**
+    (M12).~~ **[B61, 2026-09-22] LOCKED; runtime implemented by B62 (freeze + re-canary pending):**
     - NMF/Hamburger RNG control, M4-T / M4-V / M4-KD (M4; §6);
     - the operational checkpoint-selection rule (M12; §3);
     - teacher CE ignore normalisation, `avg_non_ignore=True` (M13, new; §3).

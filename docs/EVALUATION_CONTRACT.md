@@ -531,7 +531,7 @@ rule above already guarantees that no code, config, or governing contract differ
 
 ### 7.2 Teacher readiness evaluation (M5-R3) and development data isolation (M11) `[B60, 2026-09-22]`
 
-**Decision locked; runtime not yet implemented.** Recorded by
+**Decision locked; runtime implemented by B62 (pending commit, freeze and CUDA re-canary).** Recorded by
 [reports/b60_teacher_methodology_lock.md](../reports/b60_teacher_methodology_lock.md).
 
 **R3 evaluation semantics.** The teacher readiness number is the **dataset-level all-class mIoU of §3.1**:
@@ -544,7 +544,9 @@ Disease-only mIoU (§3.1) is reported alongside it.
 - **How it is produced.** A **controlled deterministic re-evaluation under the M4-locked evaluation
   rule.** ~~The NMF/Hamburger control is `NEED_TO_CONFIRM` until M4 is locked, and R3 cannot run before
   then.~~ **[UPDATED 2026-09-22 — B61]** M4 is locked: R3 uses the **M4-V** rule of §7.3 on the checkpoint
-  selected under M12. The runtime is not yet implemented, so R3 still cannot run.
+  selected under M12. **[B62]** Implemented as `scripts/teacher_readiness_r3.py` (evaluator artifact
+  `artifact_status = provisional`; readiness record `teacher_r3_readiness.json`). R3 runs only after the
+  official teacher run.
 - **Comparator.** E1's run-of-record VAL all-class mIoU, **0.36314016580581665**. It was produced by the
   same metric implementation (`miou_from_confusion`, union-present) on the same VAL canvas.
 - **Rule.** The teacher value must be strictly greater, with no margin.
@@ -560,6 +562,8 @@ Disease-only mIoU (§3.1) is reported alongside it.
 - **Where:** in the **configured data root**, `images/test` and `annotations/test` must be absent.
   Preflight verifies TRAIN 5,367 and VAL 846 and fails closed if the TEST paths exist.
 - **Never during development:** TEST is not enumerated, counted or inspected.
+- **[B62] Runtime check:** `src/data/isolation.py` fails closed if `images/test`, `annotations/test` or
+  `annotation_test.json` exists in the staged root (existence only; the third is an approved B62 safeguard).
 - **Scope:** the configured, staged data root only, not the whole host.
 - **Official TEST integrity** (the 1,561-row manifest and row-count guards of §5–§7) is verified **only
   after the final TEST unlock**.
@@ -568,7 +572,7 @@ Disease-only mIoU (§3.1) is reported alongside it.
 
 ### 7.3 Teacher NMF evaluation rule (M4-V) and checkpoint selection (M12) `[B61, 2026-09-22]`
 
-**Decision locked; runtime not yet implemented.** Recorded by
+**Decision locked; runtime implemented by B62 (pending commit, freeze and CUDA re-canary).** Recorded by
 [reports/b61_teacher_nmf_checkpoint_selection_lock.md](../reports/b61_teacher_nmf_checkpoint_selection_lock.md).
 
 **Why a rule is needed.** The teacher's LightHamHead keeps upstream `rand_init=True`, so every forward

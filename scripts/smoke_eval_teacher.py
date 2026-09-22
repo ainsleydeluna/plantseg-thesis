@@ -100,9 +100,14 @@ def student_ckpt(name: str = "e1.pt") -> Path:
     return p
 
 
+TEACHER_CONFIG = REPO / "configs" / "teacher" / "segnext_mscan-b_1xb16-adamw-40k_plantseg116-512x512.py"
+
+
 def args_for(**kw):
+    # B62: the teacher role requires --teacher-config and M4-V's --batch-size 1.
     base = dict(stage="teacher", model_role="teacher", precision="fp32", split="val",
-                out_dir=str(TMP / "out"), artifact_status="smoke", device="cpu", batch_size=2)
+                out_dir=str(TMP / "out"), artifact_status="smoke", device="cpu", batch_size=1,
+                teacher_config=str(TEACHER_CONFIG))
     base.update(kw)
     argv = []
     for k, v in base.items():
@@ -199,7 +204,13 @@ def test_loading() -> None:
 
     # the real builder path fails loudly without the teacher stack
     from src.distill.teacher import TeacherStackMissing
-    expect("missing_teacher_stack_fails_loudly", TeacherStackMissing, load_teacher_model, resolved)
+    expect("missing_teacher_stack_fails_loudly", TeacherStackMissing, load_teacher_model, resolved,
+           config_path=str(TEACHER_CONFIG))
+    # B62: the real (non-stub) path needs the thesis teacher config, whose head implements M4-V.
+    expect("real_teacher_requires_config", CheckpointError, load_teacher_model, resolved)
+    stub_model, _ = load_teacher_model(resolved, builder=stub_builder)
+    check("stub_teacher_has_no_nmf_stream", stub_model.nmf_policy is None,
+          "a model without NMF has nothing to isolate; real runs require a stream")
     # SUPERSEDED: this used to assert mmseg was STILL absent from sys.modules after deliberately
     # invoking the teacher loader. That only held on a machine without the teacher stack; inside the
     # official image mmseg is installed and the loader legitimately imports it, so the old assertion
@@ -228,6 +239,13 @@ def test_cli_and_safety() -> None:
     expect("teacher_random_init_refused", CliError, validate_cli_args,
            args_for(random_init=True))
     expect("teacher_without_checkpoint_refused", CliError, validate_cli_args, args_for())
+    expect("teacher_without_config_refused", CliError, validate_cli_args,
+           args_for(checkpoint=str(tk), teacher_config=None))
+    expect("teacher_batch_size_2_refused_m4v", CliError, validate_cli_args,
+           args_for(checkpoint=str(tk), batch_size=2))
+    validate_cli_args(args_for(stage="E1", model_role="student", checkpoint=str(tk),
+                               batch_size=2, teacher_config=None))
+    check("student_cli_unaffected_by_m4v", True, "student role: any batch size, no teacher config")
     expect("teacher_int8_precision_refused", CliError, validate_cli_args,
            args_for(precision="int8_ptq", checkpoint=str(tk)))
     expect("teacher_stage_role_mismatch_refused", CliError, validate_cli_args,

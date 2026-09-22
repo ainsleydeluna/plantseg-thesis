@@ -5,7 +5,8 @@ The config is loaded with `mmengine.config.Config.fromfile` — the call `mmseg.
 the repository root, and the checks run on the MERGED config (the thesis deltas plus everything `_base_`
 supplies), so a config the production loader cannot parse fails here. CPU only: nothing here builds a model,
 reads the dataset, opens a checkpoint, uses the network or trains anything. It asserts that the locked B1
-recipe is what the loaded config actually says, and that no student-stage setting leaked into the teacher.
+recipe and every B60/B61 lock (M2-M5, M11-M13; implemented by B62) are what the loaded config actually says,
+and that no student-stage setting leaked into the teacher.
 Needs mmengine 0.10.7 + mmsegmentation 1.2.2 (the teacher stack).
 
 Exit codes: 0 all checks pass · 1 the config does not load or a check fails · 2 mmengine is not importable.
@@ -137,15 +138,21 @@ def main() -> int:
           and cfg["data_preprocessor"]["seg_pad_val"] == 255)
     check("background_index_0", cfg["BACKGROUND_INDEX"] == 0)
 
-    # ---- dataset ----
-    for split, loader in (("train", "train_dataloader"), ("val", "val_dataloader"),
-                          ("test", "test_dataloader")):
+    # ---- dataset (M11: TRAIN and VAL only; no active TEST surface) ----
+    for split, loader in (("train", "train_dataloader"), ("val", "val_dataloader")):
         ds = cfg[loader]["dataset"]
         check(f"{split}_reduce_zero_label_false", ds["reduce_zero_label"] is False)
         check(f"{split}_uses_{split}_split",
               ds["data_prefix"] == {"img_path": f"images/{split}",
                                     "seg_map_path": f"annotations/{split}"},
               str(ds["data_prefix"]))
+    check("m11_no_active_test_surface",
+          cfg["test_dataloader"] is None and cfg["test_evaluator"] is None and cfg["test_cfg"] is None,
+          "test_dataloader / test_evaluator / test_cfg are all None (MMEngine all-or-none rule)")
+    check("m11_no_test_pipeline_or_tta",
+          cfg["test_pipeline"] is None and cfg.get("tta_pipeline") is None,
+          "the inherited upstream (2048, 512) pipelines are removed")
+    check("m11_no_test_path_anywhere_in_code", "images/test" not in code and "annotations/test" not in code)
     check("plantseg_data_root_env_is_used",
           cfg["PLANTSEG_DATA_ROOT_ENV"] == "PLANTSEG_DATA_ROOT"
           and "os.environ.get(PLANTSEG_DATA_ROOT_ENV" in src)
@@ -156,13 +163,29 @@ def main() -> int:
     for bad in ("C:\\Users", "C:/Users", "/workspace/plantseg", "plantseg_data/plantseg"):
         check(f"no_hardcoded_path_{bad[:12]!r}", bad not in code)
 
-    # ---- test split must not reach training or model selection ----
+    # ---- M12: full-precision same-pass selection; the test split never reaches selection ----
     ckpt_hook = cfg["default_hooks"]["checkpoint"]
-    check("checkpoint_selection_on_val_miou",
-          ckpt_hook["save_best"] == "mIoU" and ckpt_hook["rule"] == "greater")
-    check("val_interval_drives_selection",
-          cfg["train_cfg"]["val_interval"] == cfg["VAL_INTERVAL"]
-          and ckpt_hook["interval"] == cfg["VAL_INTERVAL"])
+    check("m12_selects_on_full_precision_key",
+          ckpt_hook["save_best"] == "mIoU_full" and cfg["SELECTION_KEY"] == "mIoU_full"
+          and ckpt_hook["rule"] == "greater", "never the 2-decimal display 'mIoU'")
+    check("m12_checkpoint_every_validation",
+          cfg["train_cfg"]["val_interval"] == cfg["VAL_INTERVAL"] == 4000
+          and ckpt_hook["interval"] == cfg["VAL_INTERVAL"] and ckpt_hook["by_epoch"] is False)
+    check("m12_all_ten_checkpoints_retained", ckpt_hook["max_keep_ckpts"] == -1,
+          "explicit -1: the full 4k..40k selection trail is kept")
+    check("m12_same_pass_thesis_metric",
+          cfg["val_evaluator"]["type"] == "ThesisConfusionMIoUMetric"
+          and cfg["val_evaluator"]["num_classes"] == 116 and cfg["val_evaluator"]["ignore_index"] == 255
+          and cfg["val_evaluator"]["background_index"] == 0)
+    check("m12_selection_record_hook_registered",
+          [h["type"] for h in cfg["custom_hooks"]] == ["TeacherInitCompatibilityHook",
+                                                        "TeacherNMFEvalStreamHook",
+                                                        "TeacherSelectionRecordHook"],
+          str([h["type"] for h in cfg["custom_hooks"]]))
+    check("m4v_val_batch_1_frozen_order",
+          cfg["val_dataloader"]["batch_size"] == 1
+          and cfg["val_dataloader"]["sampler"]["type"] == "DefaultSampler"
+          and cfg["val_dataloader"]["sampler"]["shuffle"] is False)
     check("test_split_not_in_train_or_val_path",
           "test" not in str(cfg["train_dataloader"]["dataset"]["data_prefix"])
           and "test" not in str(cfg["val_dataloader"]["dataset"]["data_prefix"]))
@@ -194,57 +217,81 @@ def main() -> int:
     lin = [s for s in cfg["param_scheduler"] if s["type"] == "LinearLR"][0]
     check("poly_ends_at_max_iters", poly["end"] == 40000 and poly["end"] != 160000,
           "horizon corrected from the public family's stale end=160000")
-    check("poly_power_is_source_backed_1_0", cfg["POLY_POWER"] == 1.0 and poly["power"] == 1.0,
-          "public PlantSeg SegNeXt-family override, not schedule_40k.py's 0.9")
-    check("warmup_1500_source_backed",
-          cfg["WARMUP_ITERS"] == 1500 and lin["begin"] == 0 and lin["end"] == 1500)
+    check("m5_poly_power_1_0", cfg["POLY_POWER"] == 1.0 and poly["power"] == 1.0
+          and poly["begin"] == 1500 and poly["eta_min"] == 0.0,
+          "not schedule_40k.py's 0.9")
+    check("m5_warmup_1500_from_1e-6",
+          cfg["WARMUP_ITERS"] == 1500 and lin["begin"] == 0 and lin["end"] == 1500
+          and lin["start_factor"] == 1e-6)
     check("poly_horizon_choice_is_labelled",
           cfg["POLY_END_SOURCE"] == "horizon-corrected-to-max-iters", cfg["POLY_END_SOURCE"])
-    check("val_interval_is_source_backed_10000", cfg["VAL_INTERVAL"] == 10000,
-          "public schedule_40k.py cadence, not an unlabelled 4000")
+    check("m5_val_interval_4000", cfg["VAL_INTERVAL"] == 4000, "B60 M5; not the TEST-selected 10000")
     check("batch_size_16", cfg["train_dataloader"]["batch_size"] == 16,
           str(cfg["train_dataloader"]["batch_size"]))
     check("crop_512x512", tuple(cfg["crop_size"]) == (512, 512)
           and tuple(cfg["data_preprocessor"]["size"]) == (512, 512))
 
-    # ---- core preprocessing parity (runbook §11) vs teacher-specific augmentation (A5) ----
-    check("core_preprocessing_labelled_thesis_parity",
-          cfg["CORE_PREPROCESSING_SOURCE"] == "thesis-parity-runbook-s11")
-    resize = [t for t in cfg["test_pipeline"] if t["type"] == "Resize"][0]
-    check("eval_resize_makes_long_side_512",
-          tuple(resize["scale"]) == (512, 512) and resize["keep_ratio"] is True,
-          "aspect-preserving long-side->512, NOT the upstream (2048,512) short-side scale")
+    # ---- M3 core preprocessing canvas + M2 augmentation (both reuse src/data/transforms.py) ----
+    check("m3_core_preprocessing_labelled",
+          cfg["CORE_PREPROCESSING_SOURCE"] == "M3:src/data/transforms.core_preprocess")
+    check("m3_val_pipeline_is_thesis_canvas",
+          [t["type"] for t in cfg["val_dataloader"]["dataset"]["pipeline"]]
+          == ["ThesisTeacherEvalTransform", "PackSegInputs"],
+          "core_preprocess canvas; semantics proven in smoke_teacher_pipeline")
     dp = cfg["data_preprocessor"]
     check("imagenet_mean_std_match_student",
           dp["mean"] == [123.675, 116.28, 103.53] and dp["std"] == [58.395, 57.12, 57.375],
           "configs/data.py (0.485,0.456,0.406)/(0.229,0.224,0.225) x 255")
-    check("image_pad_is_imagenet_mean_equivalent",
-          cfg["PAD_MODE"] == "imagenet-mean-equivalent-post-normalisation" and dp["pad_val"] == 0,
-          "SegDataPreProcessor normalises then pads, so pad_val=0 == mean padding in raw space")
+    check("m3_pad_applied_by_thesis_transform",
+          cfg["PAD_MODE"] == "thesis-canvas-8bit-imagenet-mean-pad-applied-by-transform"
+          and dp["test_cfg"] is None and dp["pad_val"] == 0,
+          "the transforms emit the padded 512x512 canvas; no evaluation-time padding")
     check("seg_pad_is_ignore_index", dp["seg_pad_val"] == 255)
 
-    aug = {t["type"]: t for t in cfg["train_pipeline"]}
-    check("augmentation_source_labelled",
-          cfg["AUGMENTATION_SOURCE"] == "public-plantseg-segnext-family",
-          "teacher-specific; §11 governs core preprocessing only")
-    check("augmentation_matches_public_family",
-          tuple(aug["RandomResize"]["scale"]) == (2048, 512)
-          and tuple(aug["RandomResize"]["ratio_range"]) == (0.5, 2.0)
-          and tuple(aug["RandomCrop"]["crop_size"]) == (512, 512)
-          and aug["RandomCrop"]["cat_max_ratio"] == 0.75
-          and aug["RandomFlip"]["prob"] == 0.5
-          and "PhotoMetricDistortion" in aug)
-    check("student_only_augmentation_not_imposed",
-          "rotation" not in code and "vertical" not in code and "saturation" not in code,
-          "no E1 vertical flip / +-10deg rotation / hue-saturation added to the teacher")
-    check("nmf_seed_control_marked_unresolved",
-          cfg["NMF_SEED_CONTROL"] == "NEED_TO_CONFIRM")
+    check("m2_augmentation_source_labelled",
+          cfg["AUGMENTATION_SOURCE"] == "M2:src/data/transforms.train_preprocess+configs/augment.AUGMENT")
+    check("m2_train_pipeline_reuses_e1_recipe",
+          [t["type"] for t in cfg["train_pipeline"]] == ["ThesisTeacherTrainTransform", "PackSegInputs"])
+    upstream = {"PhotoMetricDistortion", "RandomResize", "RandomCrop", "RandomFlip", "Resize",
+                "LoadImageFromFile", "LoadAnnotations", "RandomRotate"}
+    found = sorted(upstream & set(t for t in config_types(cfg) if isinstance(t, str)))
+    check("m2_no_upstream_augmentation_anywhere", found == [],
+          "no PhotoMetricDistortion / short-side RandomResize anywhere in the merged config" if not found
+          else str(found))
+    from configs.augment import AUGMENT
+    rrc, rot, photo = AUGMENT["random_resized_crop"], AUGMENT["rotation"], AUGMENT["photometric"]
+    check("m2_m3_recipe_values_match_locks",
+          tuple(rrc["scale_range"]) == (0.75, 2.0) and tuple(rrc["size"]) == (512, 512)
+          and rrc["cat_max_ratio"] == 0.95 and rrc["aspect_ratio_preserved"] is True
+          and rot == {"degrees": 10, "p": 0.5, "apply": "before_crop", "image_fill": "imagenet_mean",
+                      "mask_fill": 255}
+          and AUGMENT["horizontal_flip_p"] == 0.5 and AUGMENT["vertical_flip_p"] == 0.5
+          and photo == {"hue": 0.015, "saturation_factor": (0.8, 1.2), "p": 0.5}
+          and set(AUGMENT["excluded"]) == {"brightness", "contrast", "blur", "noise", "jpeg"},
+          "configs/augment.AUGMENT == B60 M2/M3")
+
+    # ---- M4: upstream NMF algorithm kept, isolated for evaluation and the frozen teacher ----
+    head = cfg["model"]["decode_head"]
+    check("m4_isolated_nmf_head", head["type"] == "IsolatedNMFLightHamHead"
+          and head["ham_kwargs"]["rand_init"] is True, "rand_init=True retained (upstream algorithm)")
+    check("m4_policy_marker", cfg["M4_NMF_POLICY"]["seed"] == 42 == cfg["M4_NMF_SEED"]
+          and cfg["M4_NMF_POLICY"]["train"] == "M4-T" and cfg["M4_NMF_POLICY"]["val_and_final_eval"] == "M4-V")
+    check("m4v_hook_seed_42", [h for h in cfg["custom_hooks"]
+                               if h["type"] == "TeacherNMFEvalStreamHook"][0]["seed"] == 42)
+    check("m4_no_fake_ham_seed_key", "seed" not in head["ham_kwargs"],
+          "MMSeg has no NMF seed key; the control lives in IsolatedNMF2D, not a silently ignored key")
+    check("custom_imports_registers_components",
+          cfg["custom_imports"]["imports"] == ["src.training.teacher_components"]
+          and cfg["custom_imports"]["allow_failed_imports"] is False)
 
     # ---- loss: cross-entropy ONLY ----
     loss = cfg["model"]["decode_head"]["loss_decode"]
     check("loss_is_cross_entropy_only",
           isinstance(loss, dict) and loss["type"] == "CrossEntropyLoss"
           and loss["use_sigmoid"] is False, str(loss))
+    check("m13_avg_non_ignore_true", loss.get("avg_non_ignore") is True,
+          "ignore/padded pixels leave both numerator and denominator (B61 M13)")
+    check("m5_m13_unweighted", "class_weight" not in loss, "no class weighting in the teacher CE")
     check("no_dice_in_teacher_loss", "Dice" not in code and "dice" not in code,
           "CE+Dice belongs to the student stages")
 
@@ -257,6 +304,23 @@ def main() -> int:
     resolved = load_config({"SEGNEXT_ADE20K_CKPT": "/ext/weights/segnext_ade20k.pth"})
     check("ade20k_ckpt_resolves_from_env",
           resolved["load_from"] == "/ext/weights/segnext_ade20k.pth")
+    ident = cfg["ADE20K_INIT_IDENTITY"]
+    check("ade20k_identity_is_readiness_checkpoint",
+          cfg["EXPECTED_ADE20K_SHA256"] == ident["sha256"]
+          == "647a0cda7678a35396689a4f8e9fddc33a088d8b539195d0dc97485ab8640ef1"
+          and ident["config"] == "segnext_mscan-b_1xb16-adamw-160k_ade20k-512x512"
+          and ident["filename"] == "segnext_mscan-b_1x16_512x512_adamw_160k_ade20k_20230209_172053-b6f6c70c.pth"
+          and tuple(ident["classifier_only_mismatch"]) == ("decode_head.conv_seg.weight",
+                                                           "decode_head.conv_seg.bias"))
+    from configs.teacher_finetune import TEACHER_FINETUNE
+    init = TEACHER_FINETUNE["init_checkpoint"]
+    check("g10_metadata_uses_mmseg1x_identity",
+          init["config"] == ident["config"] and init["filename"] == ident["filename"]
+          and init["sha256"] == ident["sha256"]
+          and "segnext_mscan-b_512x512_160k_ade20k" not in str(TEACHER_FINETUNE),
+          "configs/teacher_finetune.py: no 0.x alias")
+    check("m5_metadata_readiness_rule", "R1-R4" in TEACHER_FINETUNE["success_criterion"]
+          and "NEED_TO_CONFIRM" not in str(TEACHER_FINETUNE))
     check("resume_disabled", cfg["resume"] is False, "load_from, not resume (runbook §5)")
     check("work_dir_is_external_and_env_driven",
           cfg["TEACHER_WORK_DIR_ENV"] == "TEACHER_WORK_DIR"
@@ -268,9 +332,8 @@ def main() -> int:
     check("seed_42_deterministic",
           cfg["randomness"]["seed"] == 42 and cfg["randomness"]["deterministic"] is True,
           str(cfg["randomness"]))
-    check("nmf_seed_documented_not_faked",
-          "NEED_TO_CONFIRM" in src and "ham_head.py" in src,
-          "no invented ham_kwargs seed key")
+    check("nmf_control_not_a_placeholder", "NMF_SEED_CONTROL" not in code,
+          "the NEED_TO_CONFIRM placeholder is replaced by the implemented M4 policy")
 
     # ---- MMSeg 1.x conventions, no 0.x leakage ----
     for key in ("optim_wrapper", "param_scheduler", "train_dataloader", "val_dataloader",
@@ -282,7 +345,7 @@ def main() -> int:
     check("iter_based_train_loop", cfg["train_cfg"]["type"] == "IterBasedTrainLoop")
     check("packsegimputs_pipeline_end",
           cfg["train_pipeline"][-1]["type"] == "PackSegInputs"
-          and cfg["test_pipeline"][-1]["type"] == "PackSegInputs")
+          and cfg["val_dataloader"]["dataset"]["pipeline"][-1]["type"] == "PackSegInputs")
     # `_base_` is consumed by the merge, so its declaration is read from the source; the merged model
     # shows what the installed `mmseg::` base actually resolves to.
     loader_stmts = [n for n in ast.parse(src).body
@@ -300,8 +363,12 @@ def main() -> int:
           model["type"] == "EncoderDecoder" and model["backbone"]["type"] == "MSCAN"
           and list(model["backbone"]["embed_dims"]) == [64, 128, 320, 512]
           and list(model["backbone"]["depths"]) == [3, 3, 12, 3]
-          and model["decode_head"]["type"] == "LightHamHead",
-          "SegNeXt-B as resolved: MSCAN [64,128,320,512] / [3,3,12,3] + LightHamHead")
+          and model["decode_head"]["type"] == "IsolatedNMFLightHamHead",
+          "SegNeXt-B as resolved: MSCAN [64,128,320,512] / [3,3,12,3] + LightHamHead (M4-isolated)")
+    import scripts.launch_teacher_finetune as launcher
+    from mmengine.config import Config
+    problems = launcher.check_locked_config(Config.fromfile(str(CONFIG)))
+    check("launcher_locked_config_check_passes", problems == [], "; ".join(problems))
 
     # ---- no student-stage leakage ----
     for token in ("kd", "KD", "cwd", "CWD", "distill", "quant", "QAT", "PTQ", "lambda_logit",

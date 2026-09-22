@@ -24,6 +24,8 @@ in-house teacher fine-tune (B1). **Not trained, not fine-tuned, not modified** b
 > `configs/teacher_finetune.py:9`. The contract's "(or equivalent)" admits the 1.x name, so this is a
 > **wording lag, not a conflict**, and nothing runs against a forbidden name. The fix is queued as
 > **G10, governed** — both sites sit on rule 8's path list, and harmlessness is not a route off it.
+> **[UPDATED 2026-09-22 — B62] G10 closed:** `configs/teacher_finetune.py` now records the 1.x config name,
+> exact filename and SHA-256, and the contract's B1 row carries the same identity.
 >
 > **On row 4 (init-test result).** The harness was run on 2026-09-13 and could not be verified: this
 > repository checkout has no numpy, torch or MM stack, so `scripts/test_teacher_init.py` aborted at
@@ -36,6 +38,9 @@ in-house teacher fine-tune (B1). **Not trained, not fine-tuned, not modified** b
 > **[UPDATED 2026-09-22 — B61]** Closed by measurement. In the pinned image numpy is present, so G11 does
 > not affect the run, and the harness passed on the real checkpoint (the init-test row above). G11 itself stays queued as a
 > governed fix.
+> **[UPDATED 2026-09-22 — B62] G11 closed:** every third-party import is inside the guard (exit 2 with
+> guidance, even without numpy); the checkpoint comes from explicit arguments or `SEGNEXT_ADE20K_CKPT`; there
+> is no repository `weights/` fallback; an in-repo checkpoint and a SHA-256 mismatch are refused.
 
 > **How the fields were actually filled `[B61 §1]`.** The procedure below was **not** used: its
 > `--dest weights/` would put the checkpoint inside the repository, and it also downloads a config file,

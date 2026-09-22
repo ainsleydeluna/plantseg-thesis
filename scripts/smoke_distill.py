@@ -12,6 +12,10 @@ checkpoint projection isolation · real-run safety gates · absence of any quant
 """
 from __future__ import annotations
 
+import contextlib
+import io
+import os
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -49,6 +53,26 @@ def run_main(argv: list[str], stage: str) -> int:
         return distill_main(argv, stage_default=stage)
     except SystemExit as e:                       # argparse errors exit(2) rather than returning
         return int(e.code) if e.code is not None else 0
+
+
+def run_main_stderr(argv: list[str], stage: str) -> tuple[int, str]:
+    """`run_main`, also returning stderr, so a refusal can be attributed to the gate that made it."""
+    buf = io.StringIO()
+    with contextlib.redirect_stderr(buf):
+        rc = run_main(argv, stage)
+    return rc, buf.getvalue()
+
+
+def staged_trainval_root(n: int = 2) -> Path:
+    """A synthetic TRAIN/VAL-only staged root (empty named files; nothing is ever decoded)."""
+    root = Path(tempfile.mkdtemp(prefix="smoke_distill_root_"))
+    for split in ("train", "val"):
+        (root / "images" / split).mkdir(parents=True)
+        (root / "annotations" / split).mkdir(parents=True)
+        for i in range(n):
+            (root / "images" / split / f"s{i}.jpg").touch()
+            (root / "annotations" / split / f"s{i}.png").touch()
+    return root
 
 
 # ---------------------------------------------------------------- 1. Logit KD
@@ -410,6 +434,24 @@ def test_checkpoint_isolation() -> None:
 
 # ---------------------------------------------------------------- 7. safety gates
 def test_safety_gates() -> None:
+    # The real-run path starts with the M11 TRAIN/VAL-only check on DATA["root"]. Point it at a
+    # SYNTHETIC staged root for the whole section, so no gate ever looks at the real dataset, and
+    # every refusal below is attributable to the gate that is meant to make it.
+    import src.data.isolation as isolation
+    import src.training.train_distill as td
+    staged = staged_trainval_root()
+    saved_root, saved_counts = td.DATA["root"], dict(isolation.DEFAULT_EXPECTED_COUNTS)
+    td.DATA["root"] = str(staged)
+    isolation.DEFAULT_EXPECTED_COUNTS.update({"train": 2, "val": 2})
+    try:
+        _safety_gates_on_staged_root(staged)
+    finally:
+        td.DATA["root"] = saved_root
+        isolation.DEFAULT_EXPECTED_COUNTS.clear()
+        isolation.DEFAULT_EXPECTED_COUNTS.update(saved_counts)
+
+
+def _safety_gates_on_staged_root(staged: Path) -> None:
     # Every gate must return BEFORE any dataloader/teacher is built (no dataset access here).
     check("gate_real_without_confirm", run_main(["--real-run"], "e2") == 2)
     check("gate_confirm_without_real", run_main(["--confirm-real-run"], "e2") == 2)
@@ -417,7 +459,41 @@ def test_safety_gates() -> None:
     # No CUDA locally -> the real run must refuse before touching data or the teacher.
     cpu_argv = ["--real-run", "--confirm-real-run"] + ([] if not torch.cuda.is_available()
                                                        else ["--device", "cpu"])
-    check("gate_real_refuses_cpu", run_main(cpu_argv, "e2") == 2)
+    rc, err = run_main_stderr(cpu_argv, "e2")
+    check("gate_real_refuses_cpu", rc == 2 and "on CPU" in err, err.strip()[-120:])
+
+    # --- M11: the E2/E3 real-run root must hold TRAIN and VAL only (existence check only) ---
+    listed: list[str] = []
+    real_scandir, real_listdir = os.scandir, os.listdir
+
+    def spy_scandir(p="."):
+        listed.append(str(p))
+        return real_scandir(p)
+
+    def spy_listdir(p="."):
+        listed.append(str(p))
+        return real_listdir(p)
+
+    for surface in ("images/test", "annotations/test", "annotation_test.json"):
+        target = staged.joinpath(*surface.split("/"))
+        if surface.endswith(".json"):
+            target.touch()
+        else:
+            target.mkdir(parents=True)
+            (target / "trap.jpg").touch()
+        os.scandir, os.listdir = spy_scandir, spy_listdir
+        try:
+            rc, err = run_main_stderr(cpu_argv, "e2")
+        finally:
+            os.scandir, os.listdir = real_scandir, real_listdir
+        check(f"gate_m11_refuses_{surface.replace('/', '_').replace('.', '_')}",
+              rc == 2 and "[test_split_present]" in err, err.strip()[-120:])
+        shutil.rmtree(target) if target.is_dir() else target.unlink()
+    check("gate_m11_never_lists_test_contents",
+          not [p for p in listed if "test" in Path(p).name], str(listed))
+    rc, err = run_main_stderr(cpu_argv, "e2")
+    check("gate_m11_clean_root_proceeds_to_cuda_gate", rc == 2 and "on CPU" in err
+          and "test_split_present" not in err, err.strip()[-120:])
 
     # --- real E2/E3 are hard-gated on an explicit global-norm clipping threshold ---
     # `--device cuda` gets past the CUDA gate on this CPU box so the LATER gates can be isolated;

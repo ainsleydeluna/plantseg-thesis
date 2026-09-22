@@ -4,6 +4,7 @@ from .cwd_projection import STUDENT_C5_CH, TEACHER_STRIDE16_CH, build_cwd_projec
 from .export import (CWD_PROJECTION_KEY, CWDProjectionLeak, assert_clean_student_state,
                      deployment_student_state, find_projection_keys, strip_cwd_projection)
 from .features import StudentTaps
+from .nmf_stream import M4_NMF_SEED, NMFStream, NMFStreamError, attach_nmf_stream
 from .segnext_teacher import (PLANTSEG_CONFIG_STEM, STAGE3_CHANNELS, STAGE3_STRIDE,
                               STOCK_INIT_CONFIG_STEM, SegNeXtTeacherAdapter,
                               TeacherArchitectureMismatch, TeacherCheckpointInvalid,
@@ -16,6 +17,7 @@ from .teacher import (FrozenTeacher, MockTeacher, TeacherCheckpointMissing, Teac
 __all__ = [
     "build_cwd_projection", "STUDENT_C5_CH", "TEACHER_STRIDE16_CH",
     "StudentTaps",
+    "M4_NMF_SEED", "NMFStream", "NMFStreamError", "attach_nmf_stream",
     "FrozenTeacher", "MockTeacher", "TeacherOutput", "TeacherProvenance",
     "TeacherCheckpointMissing", "TeacherStackMissing",
     "build_mmseg_teacher", "load_frozen_teacher", "require_teacher_checkpoint",

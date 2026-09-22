@@ -124,7 +124,7 @@ pending the PlantSeg repo's official convention. `[empirical; ch3 Table 3.1; ctx
 ### B1 — Teacher fine-tune `[ch3 §C, Table 3.2/3.5]`
 | Param | Value | Source |
 |---|---|---|
-| Base / init | SegNeXt-B / MSCAN-B, ADE20K-pretrained; MMSeg zoo ckpt `segnext_mscan-b_512x512_160k_ade20k` (or equivalent) | `[ch3 §D]` |
+| Base / init | SegNeXt-B / MSCAN-B, ADE20K-pretrained; MMSeg zoo ckpt ~~`segnext_mscan-b_512x512_160k_ade20k` (or equivalent)~~ **[G10 closed, B62]** MMSeg 1.x `segnext_mscan-b_1xb16-adamw-160k_ade20k-512x512`, file `segnext_mscan-b_1x16_512x512_adamw_160k_ade20k_20230209_172053-b6f6c70c.pth`, SHA-256 `647a0cda…40ef1` (readiness PASS, B61 §1); ch3's name is the 0.x spelling of the same model | `[ch3 §D; B61 §1]` |
 | Framework | MMSegmentation 1.2.2 + mmcv 2.1.0 | `[ch3 §D; ctx]` |
 | Optimizer | AdamW | `[ch3]` |
 | Learning rate | **6e-5** | `[ch3]` |
@@ -161,6 +161,11 @@ pending the PlantSeg repo's official convention. `[empirical; ch3 Table 3.1; ctx
 >
 > The locks above govern. **The current runtime must not be used for an official teacher run.**
 > Implementation is the unified governed change of B61 §9 step 2.
+>
+> **[UPDATED 2026-09-22 — B62]** Implemented in the B62 working tree (config, launcher, KD adapter,
+> evaluator, smokes; `reports/b62_teacher_runtime_reconciliation.md`), CPU-validated, **pending review and
+> commit, the new runtime hash freeze and a G20-style CUDA re-canary**. The pre-B62 runtime
+> (`510b212b…`, `58575276…`) is superseded and must not be used for an official run.
 
 > **Provenance — THESIS-DERIVED SEGNeXt-B TEACHER CONFIGURATION `[B59 B1–B4, 2026-09-21]`.**
 > ch3 attributes the AdamW 6e-5 / wd 0.01 / head lr_mult 10 / poly / 40k recipe to "the Wei et al.
@@ -852,12 +857,12 @@ Full detail + resolution mechanism in [open_questions.md](open_questions.md); fu
 - Final RunPod pod type / GPU / CPU model / CUDA image (reported Ch4). E1 seed 42 = A40 Secure (B52);
   teacher GPU pending a measured batch-16 VRAM reading (G2).
 - **METHODOLOGY DECISIONS registered by B59 (2026-09-21):**
-  - **LOCKED by B60 (2026-09-22), decision recorded, runtime not yet implemented:**
+  - **LOCKED by B60 (2026-09-22); runtime implemented by B62 (pending commit, freeze and re-canary):**
     - teacher augmentation (M2);
     - teacher train/eval scaling (M3);
     - teacher acceptance band / readiness and schedule (M5);
     - TEST filenames in the teacher preflight (M11), replaced by TRAIN/VAL-only data roots.
-  - **LOCKED by B61 (2026-09-22), decision recorded, runtime not yet implemented:**
+  - **LOCKED by B61 (2026-09-22); runtime implemented by B62 (pending commit, freeze and re-canary):**
     - NMF/Hamburger RNG control (M4): `rand_init=True`, isolated streams M4-T / M4-V / M4-KD;
     - teacher checkpoint selection under M4 (M12);
     - teacher CE ignore normalisation, `avg_non_ignore=True` (M13, new).

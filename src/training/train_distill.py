@@ -47,9 +47,11 @@ from configs.distill import (DISTILL, LOGIT_KD_SEMANTICS,          # noqa: E402
                              LOGIT_KD_SEMANTICS_SUPERSEDED)
 from configs.e1_student import E1_STUDENT                          # noqa: E402
 from src.data import NUM_CLASSES, build_dataloader                 # noqa: E402
+from src.data.isolation import TrainValIsolationError, assert_trainval_only_root  # noqa: E402
 from src.distill.cwd_projection import build_cwd_projection        # noqa: E402
 from src.distill.export import CWD_PROJECTION_KEY, assert_clean_student_state  # noqa: E402
 from src.distill.features import StudentTaps                       # noqa: E402
+from src.distill.nmf_stream import M4_NMF_SEED                     # noqa: E402
 from src.distill.teacher import (FrozenTeacher, MockTeacher,       # noqa: E402
                                  TeacherCheckpointMissing, load_frozen_teacher,
                                  require_teacher_checkpoint)
@@ -68,6 +70,9 @@ ALPHA_CWD_FEAT = DISTILL["cwd"]["alpha_cwd_feature_map"]   # 50
 BETA_CWD_LOGIT = DISTILL["cwd"]["beta_cwd_logit_map"]      # 3
 CWD_C_FEAT = DISTILL["cwd"]["C"]               # 320 (MSCAN-B stride-16 Stage-3)
 LAMBDA_SWEEP = DISTILL["logit_kd"]["lambda_logit_sweep_grid"]
+# The thesis teacher config (B62): its IsolatedNMFLightHamHead is what lets the frozen teacher honour M4-KD.
+DEFAULT_TEACHER_CONFIG = (REPO / "configs" / "teacher"
+                          / "segnext_mscan-b_1xb16-adamw-40k_plantseg116-512x512.py")
 
 STAGES: dict[str, dict] = {
     "e2": {"name": "E2", "logit_kd": True, "cwd": False,
@@ -279,6 +284,14 @@ def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeach
     if teacher.trainable_parameters():
         raise RuntimeError("teacher has trainable parameters — it must be frozen for distillation")
     is_mock = getattr(teacher.teacher, "is_mock", False)
+    # M4-KD (B61 §4): one private NMF stream, seeded 42 ONCE for the whole run and advancing across
+    # teacher calls. Only the NMF basis draw consumes it, so the student's CPU RNG is never perturbed;
+    # E2 and E3 see the same NMF sequence when their teacher-call order is the same.
+    teacher_nmf = teacher.begin_nmf_stream("M4-KD", M4_NMF_SEED)
+    if mode == "real" and teacher_nmf is None:
+        raise RuntimeError("M4-KD: the real teacher exposes no isolated NMF stream; build it from the "
+                           "thesis teacher config (IsolatedNMFLightHamHead)")
+    print(f"[teacher] NMF control: {teacher_nmf if teacher_nmf is not None else 'none (MockTeacher has no NMF)'}")
     n_teacher_params = sum(p.numel() for p in teacher.teacher.parameters())
     print(f"[teacher] frozen=True eval=True params={n_teacher_params:,} trainable_params=0 "
           f"mock={is_mock} "
@@ -353,6 +366,7 @@ def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeach
             "beta_cwd": BETA_CWD_LOGIT, "cwd_C": CWD_C_FEAT,
             "lambda_sweep_grid": list(LAMBDA_SWEEP),
             "batch_size": batch_size, "max_iters": max_iters, "num_classes": NUM_CLASSES,
+            "teacher_nmf": teacher_nmf,
         }) + "\n")
     print(f"[semantics] logit_kd={LOGIT_KD_SEMANTICS} declared={semantics_declared} "
           f"override={bool(semantics_override)} -> {meta_path.name}")
@@ -485,7 +499,9 @@ def parse_args(argv=None, stage_default: str | None = None):
     p.add_argument("--confirm-real-run", action="store_true", help="explicit confirmation gate")
     p.add_argument("--teacher-ckpt", default=None,
                    help="path to the fine-tuned SegNeXt-B teacher checkpoint (required for a real run)")
-    p.add_argument("--teacher-config", default=None, help="optional mmseg config path for the teacher")
+    p.add_argument("--teacher-config", default=None,
+                   help="teacher mmseg config (default: the thesis teacher config, whose "
+                        "IsolatedNMFLightHamHead implements M4-KD)")
     p.add_argument("--lambda-semantics", default=None,
                    help="OPTIONAL: the Logit-KD semantics tag the supplied --lambda-logit was "
                         "SELECTED under. If given it must match this code's tag; a mismatch "
@@ -540,6 +556,14 @@ def main(argv=None, stage_default: str | None = None) -> int:
                   f"{stage['name']} run requires --real-run --confirm-real-run.")
 
     if mode == "real":
+        # M11 (B60 §5): the E2/E3 data root must be staged with TRAIN and VAL only. TEST surfaces are
+        # checked for existence only — never opened, listed or counted.
+        try:
+            isolation = assert_trainval_only_root(Path(DATA["root"]))
+        except TrainValIsolationError as e:
+            print(f"REFUSING to start the real {stage['name']} run: [{e.code}] {e}", file=sys.stderr)
+            return 2
+        print(f"[data] M11 TRAIN/VAL-only root verified: {isolation['counts']}")
         device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
         if not str(device).startswith("cuda"):
             reason = ("--device cpu was passed" if args.device == "cpu"
@@ -566,7 +590,8 @@ def main(argv=None, stage_default: str | None = None) -> int:
         if sem_error is not None:
             print(f"REFUSING to start the real {stage['name']} run: {sem_error}", file=sys.stderr)
             return 2
-        teacher = load_frozen_teacher(args.teacher_ckpt, config_path=args.teacher_config)
+        teacher = load_frozen_teacher(args.teacher_ckpt,
+                                      config_path=args.teacher_config or str(DEFAULT_TEACHER_CONFIG))
         init = args.init or "imagenet"
         pretrained = False if init == "none" else E1_STUDENT["init_weights"]
         batch_size = args.batch_size or E1_STUDENT["batch_size"]
@@ -581,7 +606,8 @@ def main(argv=None, stage_default: str | None = None) -> int:
             print("[init] --init imagenet ignored in dry-run (forcing random init, no download).")
         pretrained = False
         if args.teacher_ckpt:
-            teacher = load_frozen_teacher(args.teacher_ckpt, config_path=args.teacher_config)
+            teacher = load_frozen_teacher(
+                args.teacher_ckpt, config_path=args.teacher_config or str(DEFAULT_TEACHER_CONFIG))
         else:
             print("[teacher] DRY-RUN uses an EXPLICIT MockTeacher (random, weight-free). This is a "
                   "smoke substitute and is refused by the real-run path, which requires "

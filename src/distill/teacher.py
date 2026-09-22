@@ -106,6 +106,19 @@ class FrozenTeacher(nn.Module):
         """Identity of every teacher parameter, for the optimizer-disjointness assertion."""
         return {id(p) for p in self.teacher.parameters()}
 
+    def begin_nmf_stream(self, policy: str, seed: int = 42) -> dict | None:
+        """Start the teacher's private NMF stream (M4-KD once per E2/E3 run; M4-V per evaluation pass).
+
+        Returns the stream description, or None when the wrapped module has no NMF to isolate (the
+        explicit MockTeacher). A real run must require a non-None result.
+        """
+        begin = getattr(self.teacher, "begin_nmf_stream", None)
+        return None if begin is None else begin(policy, seed)
+
+    def nmf_stream_state(self) -> dict | None:
+        stream = getattr(self.teacher, "nmf_stream", None)
+        return None if stream is None else stream.describe()
+
     @staticmethod
     def _unpack(out) -> tuple[torch.Tensor, torch.Tensor | None]:
         if isinstance(out, torch.Tensor):

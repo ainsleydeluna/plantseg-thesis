@@ -13,10 +13,13 @@
 # CWD, no QAT and no PTQ; those belong to the student stages (configs/distill.py, configs/quant.py).
 # The teacher objective is cross-entropy ONLY — the student's CE+Dice (B5) is deliberately NOT used.
 #
-# TEST SPLIT — `test_dataloader` below exists solely so the inherited ADE20K test config is replaced
-# rather than left dangling, and for a later descriptive evaluation. It is NEVER touched by
-# `runner.train()`: training reads images/train, and validation + checkpoint selection
-# (`save_best='mIoU'`) read images/val only. The public PlantSeg repository points its
+# METHODOLOGY LOCKS IMPLEMENTED HERE (B62): M2 augmentation, M3 scale, M4 NMF control, M5 schedule,
+# M11 TRAIN/VAL-only isolation, M12 checkpoint selection, M13 CE ignore normalisation
+# (reports/b60_teacher_methodology_lock.md, reports/b61_teacher_nmf_checkpoint_selection_lock.md).
+#
+# TEST SPLIT (M11) — there is no active TEST surface: `test_dataloader`, `test_evaluator` and
+# `test_cfg` are None, and the staged data root holds TRAIN and VAL only. Training reads images/train;
+# validation and checkpoint selection read images/val. The public PlantSeg repository points its
 # `val_dataloader` at the TEST split; that behaviour is deliberately NOT copied.
 #
 # ============================================================================================
@@ -27,11 +30,11 @@
 # 40k and MSCAN-T PlantSeg 40k only; run.sh launches the L config). This file is therefore composed:
 #
 #   * MSCAN-B architecture/base  <- public SegNeXt MSCAN-B **ADE20K** config (via `_base_`)
-#   * SegNeXt-on-PlantSeg conventions <- public PlantSeg SegNeXt-family configs (train augmentation)
-#   * optimization recipe        <- THESIS-locked B1 recipe (pre-registered; runbook §3)
+#   * train augmentation + scale <- THESIS M2/M3: the E1-E3 recipe, reused from src/data/transforms.py
+#   * optimization recipe        <- THESIS-locked B1 recipe (M5)
 #   * 116-class output space     <- THESIS (configs/plantseg_class_map.json)
-#   * train/val/test discipline  <- THESIS (val for selection; test held out)
-#   * core preprocessing         <- THESIS (runbook §11 teacher-student parity)
+#   * train/val discipline       <- THESIS M11 (TRAIN/VAL-only root; VAL for selection)
+#   * core preprocessing         <- THESIS M3 (src/data/transforms.core_preprocess canvas)
 #
 # The published PlantSeg benchmark for SegNeXt MSCAN-B is 42.05% mIoU / 56.30% mAcc / 28M params.
 # That number is a CONTEXTUAL REFERENCE ONLY. The paper reports all benchmark methods trained with
@@ -43,13 +46,20 @@ _base_ = ['mmseg::segnext/segnext_mscan-b_1xb16-adamw-160k_ade20k-512x512.py']
 
 import os
 
+# B62 thesis components: M2/M3 transforms, the M4 isolated-NMF head, the M12 metric and hooks
+# (src/training/teacher_components.py). The repository root must be importable; the launcher, the
+# evaluator and the E2/E3 entry points put it on sys.path.
+custom_imports = dict(imports=['src.training.teacher_components'], allow_failed_imports=False)
+
 # Machine-checkable provenance markers (asserted by scripts/smoke_teacher_config.py).
 PROTOCOL_CLASSIFICATION = 'thesis-derived'
 PUBLIC_PLANTSEG_SOURCE_COMMIT = '1a3dd4d9224bcc97a5850af7dd1c423abc24eae0'
 PUBLISHED_MSCAN_B_REFERENCE = dict(miou=42.05, macc=56.30, params_m=28, role='contextual-reference-only')
 PUBLISHED_BENCHMARK_OPTIMIZER = 'SGD lr=1e-3 momentum=0.9 wd=5e-4 (paper) — NOT used here'
-AUGMENTATION_SOURCE = 'public-plantseg-segnext-family'   # teacher-specific; §11 governs preprocessing only
-CORE_PREPROCESSING_SOURCE = 'thesis-parity-runbook-s11'
+AUGMENTATION_SOURCE = 'M2:src/data/transforms.train_preprocess+configs/augment.AUGMENT'
+CORE_PREPROCESSING_SOURCE = 'M3:src/data/transforms.core_preprocess'
+METHODOLOGY_LOCKS = dict(M2='B60 §3', M3='B60 §4', M4='B61 §4', M5='B60 §2', M11='B60 §5',
+                         M12='B61 §6', M13='B61 §7')
 
 # --------------------------------------------------------------------------------------------
 # Class space — verbatim from configs/plantseg_class_map.json (upstream
@@ -199,32 +209,31 @@ _dataset_common = dict(
     reduce_zero_label=False,
 )
 
-# TRAIN AUGMENTATION — teacher-specific, taken from the public PlantSeg SegNeXt-family configs.
-# Runbook §11 mandates teacher/student parity for CORE PREPROCESSING only; it says nothing about
-# augmentation, so the student's B2 recipe (vertical flip, +/-10 deg rotation, hue/saturation) is
-# deliberately NOT imposed here. Every value below is source-backed, not invented.
+# TRAIN — M2 augmentation + M3 train scale (B60 §3-§4): SEMANTIC PARITY with the E1-E3 recipe, by
+# reusing it. `ThesisTeacherTrainTransform` calls src/data/transforms.train_preprocess with
+# configs/augment.AUGMENT: long side = round(512*r), r ~ U[0.75, 2.0] on the unpadded image ->
+# rotation +/-10 deg (p 0.5, before the crop; image fill = ImageNet mean, mask fill = 255) ->
+# 512x512 crop/pad with cat_max_ratio 0.95 -> independent H and V flips (p 0.5 each) -> image-only
+# hue +/-0.015 and saturation [0.8, 1.2], jointly p 0.5. No brightness, contrast, blur, noise or
+# JPEG, so no PhotoMetricDistortion. Bilinear image / nearest mask throughout.
 train_pipeline = [
-    dict(type='LoadImageFromFile'),
-    dict(type='LoadAnnotations', reduce_zero_label=False),
-    dict(type='RandomResize', scale=(2048, 512), ratio_range=(0.5, 2.0), keep_ratio=True),
-    dict(type='RandomCrop', crop_size=crop_size, cat_max_ratio=0.75),
-    dict(type='RandomFlip', prob=0.5),
-    dict(type='PhotoMetricDistortion'),
+    dict(type='ThesisTeacherTrainTransform'),
     dict(type='PackSegInputs'),
 ]
 
-# VAL/TEST CORE PREPROCESSING — thesis parity (runbook §11: "512x512, aspect-preserving resize +
-# pad, ImageNet mean/std normalization"). `scale=(512, 512)` with keep_ratio makes the LONG side 512
-# (mmcv rescales by min(512/long, 512/short)), matching configs/data.py's "aspect-ratio preserving,
-# long side -> 512". Padding to 512x512 is done by the data preprocessor below.
-# NOTE the deliberate difference from the upstream PlantSeg/ADE20K eval scale (2048, 512), which
-# would make the SHORT side 512 and does NOT match the thesis contract.
-test_pipeline = [
-    dict(type='LoadImageFromFile'),
-    dict(type='Resize', scale=crop_size, keep_ratio=True),
-    dict(type='LoadAnnotations', reduce_zero_label=False),
+# VAL — M3 clean evaluation: src/data/transforms.core_preprocess, the thesis evaluator's canvas.
+# Long side 512 (bilinear image, nearest mask), symmetric pad to 512x512 (image 8-bit ImageNet mean,
+# mask 255). The transform sets ori_shape = img_shape = (512, 512), so predictions are NOT resized
+# back to the original image and the metric scores exactly the thesis canvas. (The previous
+# Resize-before-LoadAnnotations pipeline scored at original resolution; it is gone.)
+val_pipeline = [
+    dict(type='ThesisTeacherEvalTransform'),
     dict(type='PackSegInputs'),
 ]
+# No MMSeg test/inference pipeline for the teacher: the inherited upstream short-side (2048, 512)
+# pipelines are removed. Teacher evaluation outside training uses the thesis evaluator (M4-V).
+test_pipeline = None
+tta_pipeline = None
 
 train_dataloader = dict(
     batch_size=16,                 # effective batch size 16, single GPU
@@ -237,6 +246,7 @@ train_dataloader = dict(
         pipeline=train_pipeline),
 )
 
+# M4-V needs batch_size 1 and a frozen sequential order (BaseSegDataset sorts by img_path).
 val_dataloader = dict(
     batch_size=1,
     num_workers=4,
@@ -245,40 +255,33 @@ val_dataloader = dict(
     dataset=dict(
         **_dataset_common,
         data_prefix=dict(img_path='images/val', seg_map_path='annotations/val'),
-        pipeline=test_pipeline),
+        pipeline=val_pipeline),
 )
 
-# Later descriptive evaluation ONLY — never read by training or checkpoint selection.
-test_dataloader = dict(
-    batch_size=1,
-    num_workers=4,
-    persistent_workers=True,
-    sampler=dict(type='DefaultSampler', shuffle=False),
-    dataset=dict(
-        **_dataset_common,
-        data_prefix=dict(img_path='images/test', seg_map_path='annotations/test'),
-        pipeline=test_pipeline),
-)
+# M11: no active TEST surface. MMEngine requires the three to be all None or all set
+# (runner.py:351); None replaces the inherited ADE20K test config during the merge.
+test_dataloader = None
+test_evaluator = None
+test_cfg = None
 
-val_evaluator = dict(type='IoUMetric', iou_metrics=['mIoU'])
-test_evaluator = dict(type='IoUMetric', iou_metrics=['mIoU'])
+# M12: full-precision, same-pass, union-present all-class VAL mIoU (src/eval/metrics.py, E1's reducer).
+# Keys: 'mIoU_full' (selection), 'mIoU_disease_full', 'mIoU' (percent, 2 decimals, display only).
+SELECTION_KEY = 'mIoU_full'
+val_evaluator = dict(type='ThesisConfusionMIoUMetric', num_classes=NUM_CLASSES,
+                     ignore_index=IGNORE_INDEX, background_index=BACKGROUND_INDEX)
 
 # --------------------------------------------------------------------------------------------
 # Model deltas — plain BN (never SyncBN), 116-class head, CE-only loss, no competing backbone init
 # --------------------------------------------------------------------------------------------
 norm_cfg = dict(type='BN', requires_grad=True)
 
-# CORE PREPROCESSING — thesis parity (runbook §11).
-# mean/std are configs/data.py's (0.485,0.456,0.406)/(0.229,0.224,0.225) expressed in 0-255 terms.
-#
-# IMAGE PADDING: `SegDataPreProcessor` NORMALISES FIRST and pads afterwards (`stack_batch` runs on
-# already-normalised tensors), so `pad_val=0` fills the pad region with zero IN NORMALISED SPACE —
-# which is exactly "padded with the ImageNet mean" in raw space, i.e. configs/data.py's
-# image_pad_value (124,116,104). This is NOT a scalar-zero raw-pixel pad. The only difference from
-# the student is the student's 8-bit rounding of the mean (124 vs 123.675, 116 vs 116.28, 104 vs
-# 103.53), which lands the student's pad at ~(+0.006,-0.005,+0.008) normalised instead of exactly 0
-# — and the pad region is masked out by seg_pad_val=255 anyway, so it enters neither loss nor metric.
-PAD_MODE = 'imagenet-mean-equivalent-post-normalisation'
+# CORE PREPROCESSING — normalisation only. mean/std are configs/data.py's
+# (0.485,0.456,0.406)/(0.229,0.224,0.225) in 0-255 terms; the student's finalize() computes the same
+# values (B59 §C: 2.4e-7). The thesis transforms already emit the padded 512x512 canvas — image
+# padded with the 8-bit ImageNet mean (124,116,104), exactly as the student pads, and mask padded
+# with 255 — so the preprocessor's own padding is a no-op in training and disabled at evaluation
+# (test_cfg=None). The pad region carries label 255 and enters neither loss nor metric.
+PAD_MODE = 'thesis-canvas-8bit-imagenet-mean-pad-applied-by-transform'
 data_preprocessor = dict(
     type='SegDataPreProcessor',
     mean=[123.675, 116.28, 103.53],
@@ -287,6 +290,7 @@ data_preprocessor = dict(
     pad_val=0,
     seg_pad_val=IGNORE_INDEX,
     size=crop_size,
+    test_cfg=None,
 )
 
 model = dict(
@@ -296,9 +300,16 @@ model = dict(
     # full ADE20K segmentation model arrives via `load_from` (runbook §5).
     backbone=dict(norm_cfg=norm_cfg, init_cfg=None),
     decode_head=dict(
+        # M4: the upstream LightHamHead with its NMF basis draw routed through IsolatedNMF2D. The
+        # algorithm is unchanged (ham_kwargs.rand_init=True, inherited); only the RNG source of the
+        # draw can be switched to a private stream for evaluation (M4-V) and KD (M4-KD).
+        type='IsolatedNMFLightHamHead',
         num_classes=NUM_CLASSES,
         ignore_index=IGNORE_INDEX,
-        loss_decode=dict(type='CrossEntropyLoss', use_sigmoid=False, loss_weight=1.0),
+        # M13: ignore/padded pixels enter neither the numerator nor the denominator of the CE mean.
+        # Unweighted (M5): no class_weight.
+        loss_decode=dict(type='CrossEntropyLoss', use_sigmoid=False, loss_weight=1.0,
+                         avg_non_ignore=True),
     ),
 )
 
@@ -315,14 +326,12 @@ optim_wrapper = dict(
     }),
 )
 
-# Schedule. The runbook pins only "poly, 40,000 iters" (§3) — it fixes neither the power, the warmup
-# nor the validation cadence, so each is resolved from the strongest source-backed teacher evidence
-# and made explicit here rather than left implicit.
-MAX_ITERS = 40000        # THESIS-locked (runbook §3); teacher is EXEMPT from the 80k student budget
-WARMUP_ITERS = 1500      # source-backed: public PlantSeg SegNeXt-family LinearLR warmup 0 -> 1500
-POLY_POWER = 1.0         # source-backed: public PlantSeg SegNeXt-family override (NOT the 0.9 of the
-                         # generic schedule_40k.py base)
-VAL_INTERVAL = 10000     # source-backed: public schedule_40k.py val/checkpoint interval
+# Schedule — LOCKED (M5, B60 §2.2). The paramwise decay_mult=0 for pos_block/norm above is the
+# upstream SegNeXt convention (identical in the inherited base); M5 does not conflict with it.
+MAX_ITERS = 40000        # M5; the teacher is EXEMPT from the 80k student budget
+WARMUP_ITERS = 1500      # M5: LinearLR 0 -> 1500, start_factor 1e-6
+POLY_POWER = 1.0         # M5: PolyLR power 1.0 (NOT the 0.9 of the generic schedule_40k.py base)
+VAL_INTERVAL = 4000      # M5: validation AND checkpoint every 4,000 iterations -> 10 validations (M12)
 
 # HORIZON CORRECTION, stated openly: the public SegNeXt PlantSeg override leaves `end=160000`
 # (carried over from the 160k ADE20K schedule) while its train loop stops at 40k, so the poly decay
@@ -337,30 +346,54 @@ param_scheduler = [
 
 train_cfg = dict(type='IterBasedTrainLoop', max_iters=MAX_ITERS, val_interval=VAL_INTERVAL)
 val_cfg = dict(type='ValLoop')
-test_cfg = dict(type='TestLoop')
+# (test_cfg is None — M11; see the dataloader section above.)
 
 default_hooks = dict(
     logger=dict(type='LoggerHook', interval=50, log_metric_by_epoch=False),
-    # Checkpoint selection is on VALIDATION mIoU. The test split never participates.
-    checkpoint=dict(type='CheckpointHook', by_epoch=False, interval=VAL_INTERVAL,
-                    save_best='mIoU', rule='greater'),
+    # M12: select on the FULL-PRECISION VAL all-class mIoU ('mIoU_full'), never on the 2-decimal
+    # display value. rule='greater' compares strictly (checkpoint_hook.py:123), so an exact tie keeps
+    # the earliest iteration. max_keep_ckpts=-1 keeps all ten 4k checkpoints (the full selection
+    # trail). The TEST split never participates.
+    checkpoint=dict(type='CheckpointHook', by_epoch=False, interval=VAL_INTERVAL, max_keep_ckpts=-1,
+                    save_last=True, save_best=SELECTION_KEY, rule='greater'),
 )
+
+# B62 hooks: the 150->116 classifier-only load rule, M4-V for every validation pass, and the M12
+# selection record cross-checked against CheckpointHook (all in src/training/teacher_components.py).
+M4_NMF_SEED = 42
+custom_hooks = [
+    dict(type='TeacherInitCompatibilityHook'),
+    dict(type='TeacherNMFEvalStreamHook', seed=M4_NMF_SEED),
+    dict(type='TeacherSelectionRecordHook', key=SELECTION_KEY, disease_key='mIoU_disease_full'),
+]
 
 # --------------------------------------------------------------------------------------------
 # Determinism, initialization and output paths
 # --------------------------------------------------------------------------------------------
 randomness = dict(seed=42, deterministic=True)
 
-# NMF / Hamburger randomness: MMSeg's LightHamHead exposes NO seed key of its own. It is governed by
-# the global torch RNG seeded above, inside mmseg/models/decode_heads/ham_head.py :: NMF2D._build_bases.
-# A dedicated control remains NEED_TO_CONFIRM, to be settled against the pinned stack; it is
-# deliberately NOT faked as a config key MMSeg would silently ignore.
-NMF_SEED_CONTROL = 'NEED_TO_CONFIRM'
+# M4 (B61 §4) — NMF/Hamburger randomness is PRESERVED (rand_init=True, inherited) and ISOLATED:
+#   M4-T  training: upstream fresh bases from the run's seeded global CPU stream (unchanged);
+#   M4-V  every validation pass: private CPU stream seeded 42, batch 1, frozen order, caller RNG
+#         restored (TeacherNMFEvalStreamHook);
+#   M4-KD frozen E2/E3 teacher: private CPU stream seeded 42 once per run, advancing across calls.
+# The private stream's only consumer is the NMF basis draw; it is seeded through a CPU
+# torch.Generator, never torch.manual_seed (which also reseeds CUDA).
+M4_NMF_POLICY = dict(algorithm='rand_init=True (upstream)', train='M4-T', val_and_final_eval='M4-V',
+                     frozen_teacher_e2_e3='private stream seeded once per run', seed=M4_NMF_SEED)
 
-# REQUIRED external ADE20K initialization. No silent random init and no in-run download: if the env
-# var is unset the sentinel below is not a real path, so the launch fails loudly.
+# REQUIRED external ADE20K initialization, OUTSIDE the repository. No silent random init and no in-run
+# download: if the env var is unset the sentinel below is not a real path, so the launch fails loudly.
+# The launcher verifies the file's SHA-256 against EXPECTED_ADE20K_SHA256 before anything is built.
 SEGNEXT_ADE20K_CKPT_ENV = 'SEGNEXT_ADE20K_CKPT'
 ADE20K_CKPT_UNSET_SENTINEL = 'NEED_TO_CONFIRM__SET_SEGNEXT_ADE20K_CKPT'
+EXPECTED_ADE20K_SHA256 = '647a0cda7678a35396689a4f8e9fddc33a088d8b539195d0dc97485ab8640ef1'
+ADE20K_INIT_IDENTITY = dict(
+    config='segnext_mscan-b_1xb16-adamw-160k_ade20k-512x512',
+    filename='segnext_mscan-b_1x16_512x512_adamw_160k_ade20k_20230209_172053-b6f6c70c.pth',
+    sha256=EXPECTED_ADE20K_SHA256,
+    classifier_only_mismatch=('decode_head.conv_seg.weight', 'decode_head.conv_seg.bias'),
+    readiness='B61 §1')
 load_from = os.environ.get(SEGNEXT_ADE20K_CKPT_ENV, ADE20K_CKPT_UNSET_SENTINEL)
 resume = False
 

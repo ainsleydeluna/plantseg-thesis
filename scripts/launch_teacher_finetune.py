@@ -7,20 +7,28 @@ every non-framework precondition is proven before MMSegmentation is imported or 
 
 FAILURE ORDER is deliberate so that each guard is independently testable on a CPU box:
 
-    authorization -> config -> data root -> split dirs -> split counts -> init checkpoint
-                  -> work dir (absolute, OUTSIDE the repo) -> CUDA -> provenance
+    authorization -> config -> data root -> TRAIN/VAL-only isolation (M11) -> init checkpoint
+                  (outside the repo, SHA-256 verified) -> work dir (absolute, OUTSIDE the repo)
+                  -> CUDA -> provenance
 
 Every failure raises `PreflightError` with a distinct `code`, and `main()` maps that to exit 2. The
 unauthorized path returns before ANY dataset access, checkpoint hashing, work-dir creation, mmseg
 import or CUDA initialization.
 
+M11 (B60 §5): the staged data root must hold TRAIN and VAL only. The TEST surfaces
+`images/test`, `annotations/test` and `annotation_test.json` are checked for EXISTENCE ONLY and must
+be absent; nothing under them is opened, listed, counted or hashed. TRAIN and VAL are counted by name.
+
 Without `--launch`, nothing here decodes an image, reads a mask, downloads a checkpoint, allocates a
 CUDA tensor, or launches training: the gate stops at ready-to-launch and reports.
 
-`--launch` (G18) refuses `--skip-cuda-probe` and adds a gate at each end of that order:
-`CUBLAS_WORKSPACE_CONFIG` must be inherited as ':4096:8' before the gates run, and the loaded config
-must name what they validated after they pass. It then writes `teacher_launch_provenance.json`,
-builds `TeacherRunner.from_cfg(cfg)`, registers the determinism attestation hook and calls `train()`.
+`--launch` (G18) refuses `--skip-cuda-probe` and adds gates at each end of that order:
+`CUBLAS_WORKSPACE_CONFIG` must be inherited as ':4096:8' before the gates run; the governed paths
+(EVALUATION_CONTRACT §7.1, the same prefixes the evaluator uses) must carry no uncommitted change —
+the rest of the worktree, including the protected docs/reference/reference.pdf, is not consulted; and
+the loaded config must name what the gates validated and carry every B60/B61 lock (M2-M5, M11-M13).
+It then writes `teacher_launch_provenance.json`, builds `TeacherRunner.from_cfg(cfg)`, registers the
+determinism attestation hook and calls `train()`.
 On this path the CUDA gate does not query device names: `torch.cuda.get_device_name` initializes CUDA,
 and the policy has to be established first. MMEngine's environment log records the names after
 `TeacherRunner.set_randomness`.
@@ -53,6 +61,8 @@ if str(REPO) not in sys.path:
 # Reused unmodified from the audited E1 loop — one out-of-repo guard, not a second implementation —
 # and its declared-image-digest reader.
 from src.training.train_e1 import _assert_outside_repo, _image_digest  # noqa: E402
+# M11: the shared TRAIN/VAL-only staged-root check (also used by the E2/E3 real-run gate).
+from src.data.isolation import TrainValIsolationError, assert_trainval_only_root  # noqa: E402
 
 DEFAULT_CONFIG = (REPO / "configs" / "teacher"
                   / "segnext_mscan-b_1xb16-adamw-40k_plantseg116-512x512.py")
@@ -60,11 +70,29 @@ DATA_ROOT_ENV = "PLANTSEG_DATA_ROOT"
 INIT_CKPT_ENV = "SEGNEXT_ADE20K_CKPT"
 WORK_DIR_ENV = "TEACHER_WORK_DIR"
 
-SPLIT_COUNTS = {"train": 5367, "val": 846, "test": 1561}
-IMAGE_SUFFIXES = (".jpg", ".jpeg")
-MASK_SUFFIX = ".png"
+SPLIT_COUNTS = {"train": 5367, "val": 846}          # M11: TRAIN/VAL only; TEST is never counted
 SENTINEL_MARKER = "NEED_TO_CONFIRM"
 PUBLIC_PLANTSEG_SOURCE_COMMIT = "1a3dd4d9224bcc97a5850af7dd1c423abc24eae0"
+
+# ADE20K initialization identity (B61 §1: readiness PASS). The SHA-256 is verified before launch.
+EXPECTED_ADE20K_SHA256 = "647a0cda7678a35396689a4f8e9fddc33a088d8b539195d0dc97485ab8640ef1"
+ADE20K_INIT_CONFIG = "segnext_mscan-b_1xb16-adamw-160k_ade20k-512x512"
+ADE20K_INIT_FILENAME = "segnext_mscan-b_1x16_512x512_adamw_160k_ade20k_20230209_172053-b6f6c70c.pth"
+STOCK_CONFIG_RELPATH = (".mim", "configs", "segnext", f"{ADE20K_INIT_CONFIG}.py")
+
+# The locked methodology this launcher enforces and records (B60, B61).
+LOCKED_POLICY = {
+    "M2_augmentation": "E1-E3 recipe reused: src/data/transforms.train_preprocess + configs/augment.AUGMENT",
+    "M3_scale": "train long side round(512*r), r~U[0.75,2.0]; evaluation long side 512 + pad 512x512",
+    "M4_nmf": "rand_init=True; M4-T upstream in training; M4-V private CPU stream seed 42 per val pass, "
+              "batch 1, frozen order, caller RNG restored",
+    "M5_schedule": "AdamW 6e-5 wd 0.01 betas (0.9,0.999) head lr_mult 10; LinearLR 1500 from 1e-6; "
+                   "PolyLR power 1.0 to 40000; batch 16; crop 512; val and checkpoint every 4000",
+    "M11_isolation": "TRAIN/VAL-only staged root; no active test_dataloader/test_evaluator/test_cfg",
+    "M12_selection": "highest full-precision VAL all-class mIoU (mIoU_full) over 4k..40k; exact tie -> "
+                     "earliest; same-pass metric; records in teacher_selection_records.jsonl",
+    "M13_loss": "unweighted CrossEntropyLoss, ignore_index=255, avg_non_ignore=True",
+}
 
 
 class PreflightError(RuntimeError):
@@ -111,24 +139,23 @@ def check_data_root(value: str | None) -> Path:
 
 
 def check_splits(root: Path) -> dict:
-    """Verify the six split dirs and their pair counts. Names only — no image or mask is opened."""
-    counts: dict[str, dict[str, int]] = {}
-    for split in ("train", "val", "test"):
-        img_dir, mask_dir = root / "images" / split, root / "annotations" / split
-        for d in (img_dir, mask_dir):
-            if not d.is_dir():
-                raise PreflightError("split_dir_missing", f"missing split directory: {d}")
-        n_img = sum(1 for e in os.scandir(img_dir)
-                    if e.is_file() and os.path.splitext(e.name)[1].lower() in IMAGE_SUFFIXES)
-        n_mask = sum(1 for e in os.scandir(mask_dir)
-                     if e.is_file() and os.path.splitext(e.name)[1] == MASK_SUFFIX)
-        expected = SPLIT_COUNTS[split]
-        if n_img != expected or n_mask != expected:
-            raise PreflightError(
-                "split_count_mismatch",
-                f"split {split}: {n_img} images / {n_mask} masks, expected {expected} of each")
-        counts[split] = {"images": n_img, "masks": n_mask}
-    return counts
+    """M11: TEST surfaces absent (existence only), then TRAIN/VAL pair counts by name. No image or
+    mask is opened, and nothing under a TEST path is ever listed or counted."""
+    try:
+        return assert_trainval_only_root(root, SPLIT_COUNTS)
+    except TrainValIsolationError as e:
+        raise PreflightError(e.code, str(e)) from e
+
+
+def _stock_config_identity() -> dict:
+    """Locate and hash the pinned stock SegNeXt-B ADE20K config without importing mmseg."""
+    import importlib.util
+    spec = importlib.util.find_spec("mmseg")
+    if spec is None or not spec.submodule_search_locations:
+        return {"name": ADE20K_INIT_CONFIG, "path": None, "sha256": None}
+    path = Path(list(spec.submodule_search_locations)[0]).joinpath(*STOCK_CONFIG_RELPATH)
+    return {"name": ADE20K_INIT_CONFIG, "path": str(path) if path.is_file() else None,
+            "sha256": _sha256(path) if path.is_file() else None}
 
 
 def check_init_checkpoint(value: str | None) -> dict:
@@ -149,7 +176,17 @@ def check_init_checkpoint(value: str | None) -> dict:
     except RuntimeError as e:
         raise PreflightError("init_ckpt_inside_repo",
                              f"checkpoints must live outside the repository: {e}") from e
-    return {"path": str(resolved), "sha256": _sha256(resolved), "bytes": resolved.stat().st_size}
+    sha = _sha256(resolved)
+    if sha != EXPECTED_ADE20K_SHA256:
+        raise PreflightError("init_ckpt_sha_mismatch",
+                             f"ADE20K initialization checkpoint {resolved} has sha256 {sha}; the "
+                             f"readiness-verified checkpoint is {EXPECTED_ADE20K_SHA256} (B61 §1).")
+    return {"path": str(resolved), "sha256": sha, "expected_sha256": EXPECTED_ADE20K_SHA256,
+            "sha256_verified": True, "bytes": resolved.stat().st_size,
+            "filename": resolved.name, "expected_filename": ADE20K_INIT_FILENAME,
+            "stock_config": _stock_config_identity(),
+            "classifier_only_rule": "only decode_head.conv_seg.{weight,bias} may differ (150 -> 116); "
+                                    "enforced at load by TeacherInitCompatibilityHook"}
 
 
 def check_work_dir(value: str | None, create: bool = False) -> Path:
@@ -195,7 +232,7 @@ def _optional_version(dist: str) -> str | None:
         return None
 
 
-def build_provenance(*, config_path: Path, config_sha: str, data_root: Path, counts: dict,
+def build_provenance(*, config_path: Path, config_sha: str, data_root: Path, isolation: dict,
                      init_ckpt: dict, work_dir: Path, cuda: dict | None) -> dict:
     import torch
     return {
@@ -206,23 +243,22 @@ def build_provenance(*, config_path: Path, config_sha: str, data_root: Path, cou
         "config_path": str(config_path),
         "config_sha256": config_sha,
         "plantseg_root": str(data_root),
-        "split_counts": counts,
+        "split_counts": isolation["counts"],             # TRAIN and VAL only (M11)
+        "test_isolation": {"surfaces": isolation["test_surfaces"], "method": isolation["method"]},
         "ade20k_init_checkpoint": init_ckpt,
         "work_dir": str(work_dir),
         "seed": 42,
         "optimizer": "AdamW lr=6e-5 wd=0.01 betas=(0.9,0.999) head_lr_mult=10",
         "max_iters": 40000,
-        "val_interval": 10000,
-        "preprocessing": "512x512 aspect-preserving resize + ImageNet-mean-equivalent pad "
-                         "(post-normalisation), ignore_index=255",
-        "augmentation_source": "public-plantseg-segnext-family",
-        "loss": "CrossEntropyLoss only",
-        "checkpoint_selection": "validation mIoU (test split never used)",
-        "versions": {                       # None where genuinely unavailable — never fabricated
+        "val_interval": 4000,
+        "checkpoint_interval": 4000,
+        "locked_policy": LOCKED_POLICY,
+        "versions": {                       # the installed version, or None where absent — never assumed
             "python": sys.version.split()[0],
             "torch": torch.__version__,
             "mmsegmentation": _optional_version("mmsegmentation"),
             "mmcv": _optional_version("mmcv"),
+            "mmengine": _optional_version("mmengine"),
         },
         "cuda": cuda,
         "recorded_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -233,12 +269,12 @@ def preflight(args, record_gpu_names: bool = True) -> dict:
     """Run every gate in order. Raises `PreflightError` on the first failure."""
     config_path, config_sha = check_config(args.config)
     data_root = check_data_root(args.data_root)
-    counts = check_splits(data_root)
+    isolation = check_splits(data_root)
     init_ckpt = check_init_checkpoint(args.init_ckpt)
     work_dir = check_work_dir(args.work_dir, create=args.create_work_dir)
     cuda = None if args.skip_cuda_probe else check_cuda(record_gpu_names)
     return build_provenance(config_path=config_path, config_sha=config_sha, data_root=data_root,
-                            counts=counts, init_ckpt=init_ckpt, work_dir=work_dir, cuda=cuda)
+                            isolation=isolation, init_ckpt=init_ckpt, work_dir=work_dir, cuda=cuda)
 
 
 # ---------------------------------------------------------------- G18: --launch only
@@ -280,6 +316,86 @@ def _checkout_head() -> dict:
     return {"commit": r.stdout.strip(), "error": None}
 
 
+def governed_violations(porcelain: bytes | None = None) -> list[str]:
+    """Governed paths (EVALUATION_CONTRACT §7.1) with uncommitted or untracked changes.
+
+    Reuses the evaluator's authority (`src.eval.artifacts.GOVERNED_PREFIXES` and its porcelain reader)
+    rather than a second path vocabulary. Only those prefixes are consulted, so the permanently dirty,
+    protected docs/reference/reference.pdf never affects the result (it is never opened either).
+    """
+    from src.eval.artifacts import GOVERNED_PREFIXES, git_porcelain_bytes, parse_porcelain_paths
+    raw = git_porcelain_bytes(REPO) if porcelain is None else porcelain
+    return sorted(p for p in parse_porcelain_paths(raw) if any(p.startswith(g) for g in GOVERNED_PREFIXES))
+
+
+def check_governed_clean(porcelain: bytes | None = None) -> dict:
+    """Official-launch gate: the runtime that trains must be exactly the committed runtime."""
+    from src.eval.artifacts import GOVERNED_PREFIXES
+    try:
+        violations = governed_violations(porcelain)
+    except Exception as e:  # noqa: BLE001 — an unreadable state is not a clean state
+        raise PreflightError("governed_state_unprovable",
+                             f"cannot read the governed-path state of {REPO}: {e}") from e
+    if violations:
+        raise PreflightError("governed_paths_dirty",
+                             "the official launch requires committed governed paths; uncommitted: "
+                             + ", ".join(violations))
+    return {"governed_paths_clean": True, "governed_prefixes": list(GOVERNED_PREFIXES)}
+
+
+def check_locked_config(cfg) -> list[str]:
+    """Every B60/B61 lock the merged config must carry (M2-M5, M11-M13). Returns the problems found."""
+    problems: list[str] = []
+
+    def want(label: str, actual, expected) -> None:
+        if actual != expected:
+            problems.append(f"{label}={actual!r} (expected {expected!r})")
+
+    head = cfg.model.decode_head
+    want("decode_head.type", head.get("type"), "IsolatedNMFLightHamHead")          # M4
+    want("decode_head.ham_kwargs.rand_init", head.get("ham_kwargs", {}).get("rand_init"), True)
+    want("decode_head.num_classes", head.get("num_classes"), 116)
+    want("decode_head.ignore_index", head.get("ignore_index"), 255)
+    loss = head.get("loss_decode", {})
+    want("loss_decode.type", loss.get("type"), "CrossEntropyLoss")                   # M13
+    want("loss_decode.use_sigmoid", loss.get("use_sigmoid"), False)
+    want("loss_decode.avg_non_ignore", loss.get("avg_non_ignore"), True)
+    want("loss_decode.class_weight", loss.get("class_weight"), None)
+    want("train_pipeline", [t.get("type") for t in cfg.train_dataloader.dataset.pipeline],
+         ["ThesisTeacherTrainTransform", "PackSegInputs"])                            # M2/M3
+    want("val_pipeline", [t.get("type") for t in cfg.val_dataloader.dataset.pipeline],
+         ["ThesisTeacherEvalTransform", "PackSegInputs"])
+    want("train_dataloader.batch_size", cfg.train_dataloader.get("batch_size"), 16)   # M5
+    want("val_dataloader.batch_size", cfg.val_dataloader.get("batch_size"), 1)       # M4-V
+    sampler = cfg.val_dataloader.get("sampler", {})
+    want("val_dataloader.sampler", {k: sampler.get(k) for k in ("type", "shuffle")},
+         {"type": "DefaultSampler", "shuffle": False})
+    for key in ("test_dataloader", "test_evaluator", "test_cfg"):                     # M11
+        want(key, cfg.get(key), None)
+    want("train_cfg", {k: cfg.train_cfg.get(k) for k in ("type", "max_iters", "val_interval")},
+         {"type": "IterBasedTrainLoop", "max_iters": 40000, "val_interval": 4000})
+    opt = cfg.optim_wrapper.optimizer
+    want("optimizer", {k: opt.get(k) for k in ("type", "lr", "weight_decay", "betas")},
+         {"type": "AdamW", "lr": 6e-5, "weight_decay": 0.01, "betas": (0.9, 0.999)})
+    want("paramwise.head.lr_mult",
+         cfg.optim_wrapper.get("paramwise_cfg", {}).get("custom_keys", {}).get("head", {}).get("lr_mult"), 10.0)
+    sched = [{k: s.get(k) for k in ("type", "begin", "end", "start_factor", "power", "eta_min", "by_epoch")
+              if k in s} for s in cfg.param_scheduler]
+    want("param_scheduler", sched,
+         [{"type": "LinearLR", "begin": 0, "end": 1500, "start_factor": 1e-6, "by_epoch": False},
+          {"type": "PolyLR", "begin": 1500, "end": 40000, "power": 1.0, "eta_min": 0.0, "by_epoch": False}])
+    ckpt = cfg.default_hooks.checkpoint                                               # M12
+    want("checkpoint", {k: ckpt.get(k) for k in ("type", "by_epoch", "interval", "max_keep_ckpts",
+                                                 "save_best", "rule")},
+         {"type": "CheckpointHook", "by_epoch": False, "interval": 4000, "max_keep_ckpts": -1,
+          "save_best": "mIoU_full", "rule": "greater"})
+    want("val_evaluator.type", cfg.val_evaluator.get("type"), "ThesisConfusionMIoUMetric")
+    want("custom_hooks", [h.get("type") for h in cfg.get("custom_hooks", [])],
+         ["TeacherInitCompatibilityHook", "TeacherNMFEvalStreamHook", "TeacherSelectionRecordHook"])
+    want("EXPECTED_ADE20K_SHA256", cfg.get("EXPECTED_ADE20K_SHA256"), EXPECTED_ADE20K_SHA256)
+    return problems
+
+
 def load_launch_config(provenance: dict):
     """Load the config as MMEngine will, and prove it names what the gates validated."""
     from mmengine.config import Config
@@ -288,7 +404,7 @@ def load_launch_config(provenance: dict):
     def resolves_to(value, expected: str) -> bool:
         return isinstance(value, str) and bool(value) and Path(value).resolve() == Path(expected)
 
-    problems = []
+    problems = check_locked_config(cfg)
     if cfg.get("randomness") != dict(seed=42, deterministic=True):
         problems.append(f"randomness={cfg.get('randomness')!r} (contract B6: seed 42, deterministic)")
     if cfg.get("resume") is not False:
@@ -310,9 +426,10 @@ def load_launch_config(provenance: dict):
     return cfg
 
 
-def launch(cfg, provenance: dict) -> int:
+def launch(cfg, provenance: dict, governed: dict) -> int:
     """Write the launch record, then TeacherRunner.from_cfg(cfg) -> attestation hook -> train()."""
     import torch
+    from src.training.teacher_components import COMPONENTS_PROVENANCE, reused_module_hashes
     from src.training.teacher_runner import (MODULE_PROVENANCE, TeacherDeterminismAttestationHook,
                                              TeacherRunner)
     readable, at_exec = _exec_environ_value(CUBLAS_ENV)
@@ -324,7 +441,10 @@ def launch(cfg, provenance: dict) -> int:
         "exec_environ_readable": readable,
         "launcher": {"path": str(LAUNCHER_PATH), "sha256": LAUNCHER_SHA256},
         "teacher_runner_module": MODULE_PROVENANCE,
+        "teacher_components_module": COMPONENTS_PROVENANCE,
+        "runtime_module_sha256": reused_module_hashes(),
         "config": {"path": provenance["config_path"], "sha256": provenance["config_sha256"]},
+        "governed_paths": governed,
         "checkout_git_head": _checkout_head(),
         "image_env_plantseg_git_commit": os.environ.get("PLANTSEG_GIT_COMMIT"),
         "image_digest_declared": _image_digest(),
@@ -383,8 +503,10 @@ def main(argv=None) -> int:
         return 2
 
     try:
+        governed = None
         if args.launch:
             check_inherited_cublas()
+            governed = check_governed_clean()
         provenance = preflight(args, record_gpu_names=not args.launch)
         cfg = load_launch_config(provenance) if args.launch else None
     except PreflightError as e:
@@ -392,7 +514,7 @@ def main(argv=None) -> int:
         return 2
 
     if args.launch:
-        return launch(cfg, provenance)
+        return launch(cfg, provenance, governed)
 
     work_dir = Path(provenance["work_dir"])
     if args.create_work_dir:

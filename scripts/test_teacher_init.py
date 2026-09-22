@@ -2,68 +2,99 @@
 """Sanity-check the ADE20K-pretrained SegNeXt-B / MSCAN-B teacher INIT checkpoint.
 
 READ-ONLY: this does NOT train, fine-tune, or modify the checkpoint. It only loads
-the downloaded config + checkpoint, runs one dummy forward, and verifies the
+the stock config + checkpoint, runs one dummy forward, and verifies the
 checkpoint matches the stock ADE20K (num_classes=150) architecture exactly.
 
 Run inside the PINNED MMSegmentation env (torch 2.1.0, mmcv 2.1.0, mmseg 1.2.2).
-Obtain the config + checkpoint first:
+The checkpoint lives OUTSIDE the repository (B61 §1; runbook §5). Nothing is downloaded and there is
+no repository `weights/` fallback (G11, B62):
 
-  mim download mmsegmentation \\
-    --config segnext_mscan-b_1xb16-adamw-160k_ade20k-512x512 --dest weights/
+  python scripts/test_teacher_init.py                               # $SEGNEXT_ADE20K_CKPT + stock config
+  python scripts/test_teacher_init.py <config.py> <checkpoint.pth>  # explicit paths
+  python scripts/test_teacher_init.py --expect-sha256 ANY ...       # skip the identity check (diagnostics)
 
-Usage:
-  python scripts/test_teacher_init.py                 # auto-discover in weights/
-  python scripts/test_teacher_init.py <config.py> <checkpoint.pth>
+The config defaults to the stock `segnext_mscan-b_1xb16-adamw-160k_ade20k-512x512.py` shipped in
+the pinned mmseg package. The checkpoint's SHA-256 must equal the readiness-verified value unless
+`--expect-sha256` says otherwise.
 
 PASS iff: init_model loads, one dummy forward runs, the checkpoint state_dict
 loads into the stock num_classes=150 model with ZERO missing AND ZERO unexpected
 keys, and decode_head.conv_seg has 150 out-channels.
+
+Exit codes: 0 PASS · 1 FAIL · 2 environment / input refused (stack missing, file missing,
+checkpoint inside the repository, SHA-256 mismatch).
 """
 
 from __future__ import annotations
 
+import argparse
+import hashlib
+import os
 import sys
 from pathlib import Path
 
-import numpy as np
-
 REPO = Path(__file__).resolve().parents[1]
-WEIGHTS = REPO / "weights"
 CONFIG_STEM = "segnext_mscan-b_1xb16-adamw-160k_ade20k-512x512"
+CKPT_ENV = "SEGNEXT_ADE20K_CKPT"
+EXPECTED_SHA256 = "647a0cda7678a35396689a4f8e9fddc33a088d8b539195d0dc97485ab8640ef1"   # B61 §1
 EXPECTED_NUM_CLASSES = 150
 EXPECTED_PARAMS_M = 27.6  # sanity reference only
 
 
-def _find_one(patterns: list[str]):
-    for pat in patterns:
-        hits = sorted(WEIGHTS.glob(pat))
-        if hits:
-            return hits[0]
-    return None
+def _sha256(path: Path, chunk: int = 1 << 20) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for block in iter(lambda: fh.read(chunk), b""):
+            h.update(block)
+    return h.hexdigest()
 
 
-def resolve_paths(argv: list[str]):
-    if len(argv) >= 3:
-        return Path(argv[1]), Path(argv[2])
-    cfg = _find_one([f"{CONFIG_STEM}.py", "segnext_mscan-b*ade20k*.py", "*.py"])
-    ckpt = _find_one(["segnext_mscan-b*ade20k*.pth", "segnext_mscan-b*.pth", "*.pth"])
-    return cfg, ckpt
+def resolve_paths(args, mmseg_dir: Path):
+    """Explicit arguments, else $SEGNEXT_ADE20K_CKPT and the pinned stock config. Never weights/."""
+    ckpt = args.checkpoint or os.environ.get(CKPT_ENV)
+    cfg = args.config or str(mmseg_dir / ".mim" / "configs" / "segnext" / f"{CONFIG_STEM}.py")
+    return (Path(cfg) if cfg else None), (Path(ckpt) if ckpt else None)
 
 
-def main() -> int:
+def main(argv=None) -> int:
+    p = argparse.ArgumentParser(description="Stock ADE20K SegNeXt-B init sanity check (read-only).")
+    p.add_argument("config", nargs="?", default=None, help="stock config (default: pinned mmseg copy)")
+    p.add_argument("checkpoint", nargs="?", default=None, help=f"checkpoint (default: ${CKPT_ENV})")
+    p.add_argument("--expect-sha256", default=EXPECTED_SHA256,
+                   help="required checkpoint SHA-256 (default: the readiness value); ANY skips the check")
+    args = p.parse_args(argv)
+
+    # G11: EVERY third-party import sits inside the guard, so a missing stack exits 2 with guidance
+    # instead of a bare traceback.
     try:
-        from mmseg.apis import inference_model, init_model
+        import numpy as np
+        import mmseg
         from mmengine.runner import CheckpointLoader
+        from mmseg.apis import inference_model, init_model
     except Exception as e:  # noqa: BLE001
         print(f"FAIL: MMSegmentation env not importable ({type(e).__name__}: {e}).")
         print("      Run inside the pinned env: torch 2.1.0, mmcv 2.1.0, mmseg 1.2.2.")
         return 2
 
-    cfg_path, ckpt_path = resolve_paths(sys.argv)
-    if not (cfg_path and ckpt_path and cfg_path.exists() and ckpt_path.exists()):
-        print(f"FAIL: config/checkpoint not found in {WEIGHTS} (cfg={cfg_path}, ckpt={ckpt_path}).")
-        print("      Run the `mim download ... --dest weights/` step first.")
+    cfg_path, ckpt_path = resolve_paths(args, Path(mmseg.__file__).resolve().parent)
+    if ckpt_path is None:
+        print(f"FAIL: no checkpoint given. Pass <config> <checkpoint> or set ${CKPT_ENV} to the "
+              "out-of-repo ADE20K checkpoint. There is no repository weights/ fallback.")
         return 2
+    if not (cfg_path and cfg_path.is_file() and ckpt_path.is_file()):
+        print(f"FAIL: config/checkpoint not found (cfg={cfg_path}, ckpt={ckpt_path}).")
+        return 2
+    resolved = ckpt_path.resolve()
+    if resolved == REPO or REPO in resolved.parents:
+        print(f"FAIL: refusing a checkpoint inside the repository: {resolved}. The ADE20K checkpoint "
+              "lives outside the Git repository (runbook §5).")
+        return 2
+    if args.expect_sha256 != "ANY":
+        sha = _sha256(resolved)
+        if sha != args.expect_sha256:
+            print(f"FAIL: checkpoint sha256 {sha} != expected {args.expect_sha256} (B61 §1 readiness).")
+            return 2
+        print(f"[identity] sha256 = {sha} (matches the readiness-verified checkpoint)")
     print(f"[paths] config     = {cfg_path}")
     print(f"[paths] checkpoint = {ckpt_path}")
 

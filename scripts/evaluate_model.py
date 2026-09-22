@@ -66,6 +66,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--corruption-severity", type=int, default=None)
     p.add_argument("--out-dir", required=True)
     p.add_argument("--checkpoint", default=None)
+    p.add_argument("--teacher-config", default=None,
+                   help="thesis teacher mmseg config (required for --model-role teacher; its "
+                        "IsolatedNMFLightHamHead implements M4-V)")
     p.add_argument("--provenance", default=None,
                    help="E4-E7 run-provenance JSON written by src/quant/runner.py (INT8 stages)")
     p.add_argument("--random-init", action="store_true")
@@ -104,6 +107,11 @@ def validate_cli_args(args) -> None:
                 "random teacher, and no ADE20K-only substitution)")
         if not args.checkpoint:
             raise CliError("the teacher stage requires --checkpoint")
+        if not getattr(args, "teacher_config", None):
+            raise CliError("the teacher stage requires --teacher-config (the thesis teacher config)")
+        # M4-V (B61 §4): one complete pass, batch size 1, frozen manifest order, NMF seed 42.
+        if args.batch_size != 1:
+            raise CliError(f"M4-V evaluates the teacher with --batch-size 1; got {args.batch_size}")
     if args.precision not in SUPPORTED_PRECISIONS:
         raise CliError(
             f"precision={args.precision!r} is not supported. Supported: {SUPPORTED_PRECISIONS}.")
@@ -255,7 +263,8 @@ def run(args, *, counters: Counters | None = None, teacher_builder=None) -> Path
         counters.model.append(("model", args.random_init))
     if args.model_role == "teacher":
         from src.eval.model_loading import load_teacher_model
-        model = load_teacher_model(resolved, builder=teacher_builder)[0]
+        model = load_teacher_model(resolved, builder=teacher_builder,
+                                   config_path=getattr(args, "teacher_config", None))[0]
     elif resolved is not None:
         from src.eval.model_loading import load_int8_student
         model = load_int8_student(resolved, require_qnnpack=True)[0]

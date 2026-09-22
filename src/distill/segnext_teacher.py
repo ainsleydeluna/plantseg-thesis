@@ -29,6 +29,7 @@ from typing import Callable, Sequence
 import torch
 import torch.nn as nn
 
+from .nmf_stream import M4_NMF_SEED, NMFStream, NMFStreamError, attach_nmf_stream, isolated_nmf_modules
 from .teacher import TeacherStackMissing
 
 # --- verified architecture constants (docs/teacher_prep_runbook.md §2-§3) ---
@@ -159,6 +160,41 @@ class SegNeXtTeacherAdapter(nn.Module):
         if not hasattr(model, "decode_head"):
             raise TeacherArchitectureMismatch("teacher model has no decode_head")
         self._verify_class_space()
+        # M4 (B61 §4): a stock NMF2D would draw its bases from the caller's global CPU stream. Only the
+        # thesis config's IsolatedNMFLightHamHead can honour M4-V / M4-KD, so a stock one fails closed.
+        stock_nmf = [m for m in model.modules() if type(m).__name__ == "NMF2D"]
+        if stock_nmf:
+            raise TeacherArchitectureMismatch(
+                "the teacher uses the stock NMF2D, which cannot isolate its random-basis draw (M4). "
+                "Build it from the thesis teacher config (decode head IsolatedNMFLightHamHead).")
+        self._n_isolated_nmf = len(isolated_nmf_modules(model))
+        self.nmf_stream = None
+
+    def begin_nmf_stream(self, policy: str, seed: int = M4_NMF_SEED) -> dict | None:
+        """Attach a fresh private NMF stream seeded `seed`.
+
+        M4-V: call once at the start of each complete evaluation pass (batch size 1, frozen order).
+        M4-KD: call once at the start of the E2/E3 run; the stream then advances across teacher calls
+        and is never reset per batch. Only the NMF basis draw consumes it; the caller's CPU RNG and
+        every CUDA generator are untouched.
+
+        Returns None for a model with no NMF at all (a synthetic stub): there is nothing to isolate.
+        A stock NMF2D never reaches here (refused at construction); real-run callers require non-None.
+        """
+        if self._n_isolated_nmf == 0:
+            return None
+        stream = NMFStream(seed, policy)
+        attach_nmf_stream(self.model, stream)            # exactly one isolated module, or fail closed
+        self.nmf_stream = stream
+        return stream.describe()
+
+    def end_nmf_stream(self) -> dict | None:
+        """Detach the stream (end of an evaluation pass). Returns its final description."""
+        if self.nmf_stream is None:
+            return None
+        attach_nmf_stream(self.model, None)
+        stream, self.nmf_stream = self.nmf_stream, None
+        return stream.describe()
 
     def _verify_class_space(self) -> None:
         head = self.model.decode_head
@@ -181,6 +217,12 @@ class SegNeXtTeacherAdapter(nn.Module):
         return self.model.backbone(x)
 
     def forward(self, x: torch.Tensor) -> dict:
+        if self._n_isolated_nmf and self.nmf_stream is None:
+            raise NMFStreamError(
+                "the frozen SegNeXt teacher has no NMF stream attached; call begin_nmf_stream('M4-KD') "
+                "once per E2/E3 run, or begin_nmf_stream('M4-V') per evaluation pass (M4, B61 §4)")
+        # Stage-3 extraction runs outside any RNG window; only the NMF basis draw inside
+        # decode_head.forward consumes the attached private stream.
         feats = self._stage_features(x)
         feat_s16 = select_stride16_feature(feats, tuple(x.shape[-2:]),
                                            self.stage3_channels, self.stage3_stride)

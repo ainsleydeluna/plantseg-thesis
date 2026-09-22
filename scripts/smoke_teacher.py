@@ -94,6 +94,33 @@ def stub_factory(_config_path, _ckpt_path):
     return StubSegNeXt()
 
 
+class StubIsolatedNMF(nn.Module):
+    """Stand-in for IsolatedNMF2D: one torch.rand basis draw per forward, routed through a stream."""
+    SUPPORTS_NMF_STREAM = True
+
+    def __init__(self):
+        super().__init__()
+        self.nmf_stream = None
+
+    def forward(self, x):
+        draw = lambda: torch.rand(x.shape[0], x.shape[1], 1, 1)  # noqa: E731 — the upstream-style draw
+        bases = draw() if self.nmf_stream is None else self.nmf_stream.draw(draw)
+        return x * bases
+
+
+class NMF2D(nn.Module):
+    """Named like the stock mmseg NMF2D: its draw cannot be isolated, so the adapter must refuse it."""
+
+
+class StubHamHead(StubLightHamHead):
+    def __init__(self, nmf: nn.Module | None = None, **kw):
+        super().__init__(**kw)
+        self.ham = nmf if nmf is not None else StubIsolatedNMF()
+
+    def forward(self, feats):
+        return self.conv_seg(self.ham(self.squeeze(feats[1])))
+
+
 def write_ckpt(name: str, payload) -> Path:
     p = TMP / name
     torch.save(payload, p)
@@ -281,13 +308,63 @@ def test_e3_integration() -> None:
           f"|optimizer|={len(opt_ids)} |teacher|={len(teacher.parameter_ids())}")
 
 
+def test_m4_nmf_stream() -> None:
+    """M4 (B61 §4) adapter semantics on stubs: stream-only draw, caller RNG untouched, fail closed."""
+    from src.distill import MockTeacher
+    expect_raises("m4_stock_nmf2d_refused", TeacherArchitectureMismatch,
+                  SegNeXtTeacherAdapter, StubSegNeXt(head=StubHamHead(nmf=NMF2D())))
+    adapter = SegNeXtTeacherAdapter(StubSegNeXt(head=StubHamHead()))
+    teacher = FrozenTeacher(adapter)
+    x = torch.randn(2, 3, 64, 64)
+    expect_raises("m4_forward_without_stream_refused", RuntimeError, teacher, x)
+
+    # No torch.manual_seed / CUDA seeding anywhere in the stream path.
+    seeding = {"torch.manual_seed": torch.manual_seed, "torch.cuda.manual_seed_all": torch.cuda.manual_seed_all,
+               "torch.cuda.manual_seed": torch.cuda.manual_seed}
+
+    def forbidden(*_a, **_k):
+        raise AssertionError("a global/CUDA seeding call was made")
+    torch.manual_seed(123)
+    caller = torch.get_rng_state()
+    torch.manual_seed, torch.cuda.manual_seed_all, torch.cuda.manual_seed = forbidden, forbidden, forbidden
+    try:
+        info = teacher.begin_nmf_stream("M4-KD", 42)
+        o1, o2 = teacher(x).logits, teacher(x).logits
+        seeded_ok = True
+    except AssertionError:
+        seeded_ok = False
+    finally:
+        torch.manual_seed = seeding["torch.manual_seed"]
+        torch.cuda.manual_seed_all = seeding["torch.cuda.manual_seed_all"]
+        torch.cuda.manual_seed = seeding["torch.cuda.manual_seed"]
+    check("m4_no_manual_seed_or_cuda_seeding", seeded_ok)
+    check("m4kd_begin_describes_stream", info["policy"] == "M4-KD" and info["seed"] == 42, str(info))
+    check("m4kd_caller_cpu_rng_untouched", torch.equal(caller, torch.get_rng_state()))
+    check("m4kd_stream_advances", teacher.nmf_stream_state()["draws"] == 2 and not torch.equal(o1, o2),
+          "fresh bases on successive calls; never reset per batch")
+    teacher.begin_nmf_stream("M4-KD", 42)
+    check("m4kd_replay_from_42_reproduces", torch.equal(teacher(x).logits, o1) and torch.equal(teacher(x).logits, o2))
+    from src.distill import NMFStream
+    fresh = NMFStream(42, "M4-V")
+    via_stream = fresh.draw(lambda: torch.rand(2, 512, 1, 1))
+    via_generator = torch.rand(2, 512, 1, 1, generator=torch.Generator().manual_seed(42))
+    check("m4_stream_equals_seed_42_generator", torch.equal(via_stream, via_generator),
+          "the private stream is the seed-42 CPU generator sequence")
+    ended = adapter.end_nmf_stream()
+    check("m4v_end_detaches", ended is not None and adapter.nmf_stream is None
+          and adapter.model.decode_head.ham.nmf_stream is None)
+    check("m4_no_nmf_model_has_nothing_to_isolate",
+          SegNeXtTeacherAdapter(StubSegNeXt()).begin_nmf_stream("M4-V") is None)
+    check("m4_mock_teacher_returns_none", FrozenTeacher(MockTeacher(NC)).begin_nmf_stream("M4-KD") is None)
+
+
 def main() -> int:
     print("=" * 78)
     print("SEGNEXT-B / MSCAN-B TEACHER ADAPTER SMOKE — stubs only; no mmseg, no GPU, no dataset")
     print(f"torch {torch.__version__} | temp dir {TMP}")
     print("=" * 78)
     for fn in (test_import_isolation, test_checkpoint_formats, test_stage3_resolution,
-               test_adapter, test_frozen_and_provenance, test_e3_integration):
+               test_adapter, test_frozen_and_provenance, test_e3_integration, test_m4_nmf_stream):
         print(f"\n--- {fn.__name__} ---")
         fn()
     print("\n[CHECKS]")

@@ -235,22 +235,38 @@ class TeacherEvalModel(torch.nn.Module):
         return logits
 
 
-def load_teacher_model(resolved: dict, *, builder=None, num_classes: int = FROZEN_NUM_CLASSES):
+def load_teacher_model(resolved: dict, *, builder=None, config_path: str | None = None,
+                       num_classes: int = FROZEN_NUM_CLASSES):
     """Build the frozen teacher from an ALREADY-VALIDATED resolved teacher artifact.
 
     `resolved` comes from `src.eval.stage_artifacts.validate_teacher_artifact`. `builder` is the
-    injectable teacher factory used by synthetic tests; when omitted the real MMSeg path is used and
-    raises `TeacherStackMissing` loudly if the teacher environment is absent. Nothing here downloads
-    or substitutes a model, and a random teacher is impossible: a validated checkpoint is required.
+    injectable teacher factory used by synthetic tests; when omitted the real MMSeg path is used,
+    which REQUIRES `config_path` (the thesis teacher config) and raises `TeacherStackMissing` loudly if
+    the teacher environment is absent. Nothing here downloads or substitutes a model, and a random
+    teacher is impossible: a validated checkpoint is required.
+
+    M4-V (B61 §4): one load serves ONE complete evaluation pass. The teacher's private NMF stream is
+    seeded 42 here, before the first forward; the caller runs the whole split once, batch size 1, in
+    the frozen manifest order. Only the NMF basis draw consumes the stream; the caller's CPU RNG and
+    every CUDA generator are untouched. The stream description is exposed as `model.nmf_policy`.
     """
+    from ..distill.nmf_stream import M4_NMF_SEED
     from ..distill.teacher import load_frozen_teacher
 
-    frozen = load_frozen_teacher(str(resolved["checkpoint_path"]), builder=builder)
+    if builder is None and not config_path:
+        raise CheckpointError("the real teacher evaluation requires the thesis teacher config "
+                              "(--teacher-config): its IsolatedNMFLightHamHead implements M4-V")
+    frozen = load_frozen_teacher(str(resolved["checkpoint_path"]), builder=builder,
+                                 config_path=config_path)
     if frozen.trainable_parameters():
         raise CheckpointError("teacher exposes trainable parameters; it must be frozen")
+    nmf = frozen.begin_nmf_stream("M4-V", M4_NMF_SEED)
+    if builder is None and nmf is None:
+        raise CheckpointError("M4-V: the real teacher exposes no isolated NMF stream")
     model = TeacherEvalModel(frozen, num_classes=num_classes).eval()
     for p in model.parameters():
         p.requires_grad_(False)
+    model.nmf_policy = nmf
     return model, resolved
 
 
