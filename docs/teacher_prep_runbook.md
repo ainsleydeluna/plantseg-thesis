@@ -28,9 +28,19 @@
   published 42.05% (Wei: SGD lr 1e-3, momentum 0.9, wd 5e-4). It must not be described as a
   reproduction of that number. Wei **42.05% mIoU / 56.30% mAcc / ~28M params** are **contextual
   published values only** — never an inferential comparator.
-- Success criterion: **`NEED_TO_CONFIRM` — METHODOLOGY DECISION OPEN (teacher acceptance band).**
-  The earlier wording "protocol match — recover 42.05% within ±1.5–2.0 pp" presumed a protocol
-  match that does not exist. Whether any acceptance band applies is not yet decided.
+- Success criterion: **LOCKED (M5, B60, 2026-09-22) — readiness rule R1–R4, not a published-value
+  band.** Wei's 42.05 / 56.30 / ~28M are contextual only: not a target, band, protocol-match criterion
+  or retraining trigger. The old "protocol match — recover 42.05% within ±1.5–2.0 pp" wording is
+  superseded.
+  - **R1 integrity:** preflight, first-train/first-val attestations, finite loss, 40,000 iterations,
+    no resume.
+  - **R2:** TRAIN/VAL only; no TEST.
+  - **R3, after M4:** a controlled deterministic re-evaluation under the M4-locked evaluation rule.
+    The teacher's VAL all-class mIoU must be **> 0.36314016580581665** (E1 run of record), with no
+    margin. It is an operational floor on the same VAL used for selection, not an independent
+    estimate.
+  - **R4:** the Stage-3 tap and the input-equivalence guard pass on the trained teacher.
+  - **If R3 fails:** STOP and escalate (no retraining, search, band relaxation or TEST).
 
 ---
 
@@ -80,9 +90,24 @@
 | Optim | optimizer | **AdamW**, `lr=6e-5`, `weight_decay=0.01`, `betas=(0.9,0.999)` | `[ch3; teacher_finetune.py:13-16]` |
 | Optim | paramwise | **decode-head `lr_mult=10`** | `[ch3; teacher_finetune.py:17]` |
 | Sched | policy / iters | **poly**, **40,000** iters | `[ch3; teacher_finetune.py:20-21]` |
+| Sched (LOCKED, M5) | warmup / poly | LinearLR **1,500** iterations (start 1e-6), then PolyLR power **1.0**, end **40,000** | `[B60 §2.2]` |
+| Val (LOCKED, M5) | cadence / split | every **4,000** iterations, **VAL only**. Intended selection is best VAL all-class mIoU; the operational rule is **M12, OPEN** | `[B60 §2.2–2.3]` |
 | Data | `batch_size` (train dataloader) | **16** (single GPU) | `[ch3; teacher_finetune.py:22]` |
 | Data | crop | **512×512** | `[ch3; teacher_finetune.py:23]` |
-| Loss | `decode_head.loss_decode` | **cross-entropy** (teacher recipe is CE-only; unlike the student's B5 CE+Dice) | `[ch3; teacher_finetune.py:26]` |
+| Aug (LOCKED, M2) | train augmentation | **Semantic parity with E1–E3.** Rotation ±10° with p 0.5, before the crop (ImageNet-mean / 255 fill); crop 512 with cat_max_ratio 0.95; independent horizontal and vertical flips, each p 0.5; image-only hue ±0.015 and saturation [0.8, 1.2], jointly p 0.5. **No** brightness, contrast, blur, noise or JPEG (no `PhotoMetricDistortion`) | `[B60 §3]` |
+| Scale (LOCKED, M3) | train scale | long side = 512·r, r ~ U[0.75, 2.0], applied to the unpadded image, then crop/pad to 512. Evaluation: long side 512 + pad | `[B60 §4]` |
+| Data (LOCKED, M11) | data root | configured root staged with **TRAIN + VAL only**; `images/test` and `annotations/test` absent. The preflight fails closed otherwise. No active TEST dataloader, evaluator or cfg | `[B60 §5]` |
+| Loss | `decode_head.loss_decode` | **cross-entropy**, **unweighted** (teacher recipe is CE-only; unlike the student's B5 weighted CE+Dice) | `[ch3; teacher_finetune.py:26; B60]` |
+
+> **Locked vs implemented (B60 §10).** The LOCKED rows are decisions. The current runtime config
+> (`510b212b…`) and launcher (`58575276…`) still carry the old pipeline:
+> - `RandomResize((2048,512))`, `cat_max_ratio` 0.75, horizontal flip only, `PhotoMetricDistortion`;
+> - `VAL_INTERVAL` 10,000;
+> - active TEST surfaces;
+> - a TEST filename count.
+>
+> These are implemented together with M4/M12 at **B60 §9 step H**. **Until then the runtime must not be
+> used for an official teacher run.**
 | Runtime | seed | **42** + determinism flags (§11) | `[ch3 §D; ctx]` |
 
 **CWD tap (for downstream E3, recorded here so the teacher config exposes it):** the teacher **stride-16
@@ -263,6 +288,12 @@ find /workspace/plantseg-thesis -name __pycache__ -type d    # expect no output 
 python -B scripts/launch_teacher_finetune.py ...
 ```
 
+**Data root for the OFFICIAL run (M11, LOCKED — B60 §5).** Stage the configured `PLANTSEG_DATA_ROOT`
+with **TRAIN and VAL only**. `images/test` and `annotations/test` must be absent there, and the
+(step-H) preflight fails closed if they exist. Do not enumerate, count or inspect TEST at any point
+during development. The scope is the configured data root, not the whole host. The current launcher
+still counts TEST filenames; that is replaced at B60 step H.
+
 **10 — Execute the teacher path from this checkout, never from the image-baked source.** Run with
 `/workspace/plantseg-thesis` as the working directory (the config loader is CWD-sensitive) and
 confirm `PYTHONPATH` resolves there. The launcher is triple-gated — `--real-run`,
@@ -384,10 +415,11 @@ ignore-label unit tests; **teacher hook returns the stride-16 MSCAN-B Stage-3 32
   for SegNeXt MSCAN-B on PlantSeg. That value was produced under a different protocol (SGD lr 1e-3,
   momentum 0.9, wd 5e-4; the paper's own preprocessing and evaluation scale). It is context for
   interpreting the teacher's result, **not a reproduction target** `[Wei; EVALUATION_CONTRACT §2.4; B59 B2]`.
-- **Success criterion: `NEED_TO_CONFIRM` — METHODOLOGY DECISION OPEN.** The former "protocol match —
-  land within ±1.5–2.0 pp of 42.05%" framing presumed an exact Wei protocol. This recipe is
-  thesis-derived, so that band cannot confirm a protocol. Whether any acceptance band applies, and on
-  which split, is not yet decided.
+- **Success criterion: LOCKED (M5, B60) — readiness rule R1–R4 (§1), evaluated on VAL only.** The
+  former "protocol match — land within ±1.5–2.0 pp of 42.05%" framing presumed an exact Wei protocol,
+  and it is superseded. The R3 floor compares the teacher's VAL all-class mIoU with E1's
+  0.36314016580581665, using the same metric implementation and canvas, under the M4-locked evaluation
+  rule. Report the gap and disease-only mIoU. Wei's 42.05 stays contextual.
 
 ---
 
@@ -420,11 +452,15 @@ The teacher and every student stage **must** share these, or distillation/compar
   - The teacher's **val/test** pipeline matches this: long side 512, pad after normalisation.
   - Official teacher evaluation runs through the repository evaluator on the same `core_preprocess`
     canvas as the students (`src/eval/model_loading.py` `TeacherEvalModel`).
-  - The teacher's **training** pipeline does **not** follow the student recipe. It uses
-    `RandomResize((2048,512), ratio 0.5–2.0)` (short side ≈ 512·r), `RandomCrop(cat_max_ratio=0.75)`,
-    flip, and full `PhotoMetricDistortion`, including brightness and contrast.
-  - Teacher augmentation and teacher train/eval scaling are each a **METHODOLOGY DECISION OPEN**
-    (B59 B5/B6); nothing is changed here.
+  - The teacher's **current runtime** training pipeline does **not** follow the student recipe. It
+    uses `RandomResize((2048,512), ratio 0.5–2.0)` (short side ≈ 512·r),
+    `RandomCrop(cat_max_ratio=0.75)`, flip, and full `PhotoMetricDistortion`, including brightness and
+    contrast.
+  - **[UPDATED 2026-09-22 — B60]** Teacher augmentation (**M2**) and teacher train/eval scaling
+    (**M3**) are now **LOCKED** to **semantic parity with the student recipe**: long side 512·r with
+    r ~ U[0.75, 2.0]; rotation; crop with cat_max_ratio 0.95; horizontal and vertical flips; hue and
+    saturation; no brightness, contrast, blur, noise or JPEG (§3 table). The runtime change is deferred
+    to the unified implementation (B60 §9 step H).
   - **Input equivalence verified on CPU (B59 C).** The KD path feeds the student's normalized RGB
     tensor through `extract_feat`, bypassing `SegDataPreProcessor` (0 calls). It matches MMSeg's own
     data path on the same pixels to 2.4e-7 at the input and ~3e-6 relative at Stage-3 and the logits.
@@ -461,13 +497,16 @@ The teacher and every student stage **must** share these, or distillation/compar
 - Final teacher GPU / pod type — chosen only after a measured batch-16 deterministic-policy VRAM
   reading (G2; §7). Reported in Ch4.
 - Recovered teacher mIoU (produced by the fine-tune run; out of preparation scope).
-- **METHODOLOGY DECISIONS OPEN (B59):**
-  - teacher acceptance band (§1, §9);
-  - teacher train augmentation;
-  - teacher train/eval scaling (§11);
-  - NMF/Hamburger RNG control (§6);
-  - lock of the source-derived schedule details (warmup 1,500, poly power 1.0, horizon 40k);
-  - whether the official preflight may count TEST filenames (`check_splits`).
+- **METHODOLOGY DECISIONS (B59), status as of B60 (2026-09-22):**
+  - **LOCKED, runtime pending step H:**
+    - teacher acceptance / readiness (M5; §1, §9);
+    - teacher train augmentation (M2; §3);
+    - teacher train/eval scaling (M3; §3, §11);
+    - schedule details: warmup 1,500, poly power 1.0, end 40,000, validation every 4,000 (M5);
+    - TRAIN/VAL-only data root replacing the TEST filename count (M11; §3, §4a).
+  - **Still OPEN:**
+    - NMF/Hamburger RNG control (M4; §6);
+    - the operational checkpoint-selection rule (M12).
 - **Verified on CPU (B59, scratch).** On the real, randomly initialised MSCAN-B, the adapter's
   Stage-3 tap is backbone output index 2, identical to `norm3`, shape 1×320×32×32 at stride 16 for a
   512² input. The stage-removed and wrong-stride negative controls raise.

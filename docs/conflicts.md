@@ -83,6 +83,21 @@ DETAIL · METHODOLOGY DECISION OPEN · VERIFIED MEASURED BEHAVIOUR.
 | 12 | **ch3 internal contradictions left open.** (a) clipping in the distillation stages vs an identical E1/E2/E3 recipe; (b) QAT best-val selection vs "final post-quantization checkpoint, no validation selection"; (c) multi-seed "optional" vs "three seeds planned"; (d) E6-KD triggered by a clean-TEST drop, which is TEST-informed. | ch3 | MANUSCRIPT ERROR + METHODOLOGY DECISION OPEN | Registered as M1, M9, M8, M7 in `open_questions.md`; nothing chosen |
 | 13 | **PREREGISTRATION items that a future amendment must address.** PREREGISTRATION.md is **not edited** (anchor `569cfbb`; its evidentiary value depends on staying unchanged). Items: §10 U3/U4 (clipping pilots, "no clipping" excluded) → M1; §6 (E6-KD clean-TEST trigger) → M7; §10 U8 (RTX 4090 working assumption) → stale by measurement (B48; B52); §10 U9 (NMF control) → M4, now with CPU measurement. | PREREGISTRATION vs later evidence | DOCUMENTATION GAP (amendment record) | Any amendment is recorded as a new, dated document or register entry, never by rewriting the preregistration |
 
+## 14. Teacher protocol locks — B60 (2026-09-22) resolves #5's open items by decision, not by silent reconciliation
+
+Source: [reports/b60_teacher_methodology_lock.md](../reports/b60_teacher_methodology_lock.md).
+
+| # | Conflict | Sources | Class | Standing |
+|---|---|---|---|---|
+| 14a | **Teacher acceptance.** ch3 p.102: "recover 42.05% within ±1.5–2.0 pp — protocol matching". | ch3 vs Wei paper (SGD) vs public PlantSeg code (AdamW; validation on TEST) | MANUSCRIPT ERROR → **LOCKED (M5)** | Readiness rule R1–R4 replaces the band. R3 is a controlled same-VAL operational floor (> E1 VAL 0.36314016580581665). Wei values contextual only. Historical records keep the old wording and are superseded |
+| 14b | **Teacher augmentation.** ch3 is silent for the teacher, while the runtime config uses the upstream family pipeline with `PhotoMetricDistortion`. | ch3 §E.2.c (student recipe + contamination rule) vs MMSeg generic ADE20K default vs Guo (flip/scale/crop only) | METHODOLOGY DECISION → **LOCKED (M2)** | Semantic parity with the E1–E3 recipe; no brightness, contrast, blur, noise or JPEG. The runtime is non-conformant until B60 step H |
+| 14c | **Teacher scale.** Upstream short-side scaling vs the thesis long-side evaluation. | MMSeg / PlantSeg configs vs ch3 pp.128–129 ("common spatial footing") | METHODOLOGY DECISION → **LOCKED (M3)** | Long side 512·r, r ~ U[0.75, 2.0]; evaluation long side 512 + pad |
+| 14d | **Validation interval.** The runtime config's "10,000 — public schedule_40k.py" is PlantSeg's file, which validated on TEST. MMSeg 1.2.2's own `schedule_40k.py` uses 4,000. | runtime config comment vs upstream sources | DOCUMENTATION GAP (mis-cited source) → **LOCKED (M5)** | Every 4,000 iterations, VAL only |
+| 14e | **TEST during teacher preflight.** `check_splits` counts TEST filenames. | TEST policy vs launcher | METHODOLOGY DECISION → **LOCKED (M11)** | TRAIN/VAL-only configured data root with a fail-closed TEST-absence assertion; applies to the teacher, E2 and E3 |
+
+**Still open:** M4 (NMF/Hamburger control) and M12 (operational checkpoint selection). The manuscript
+amendments are listed in B60 §11 and are not yet made.
+
 ---
 
 ## Consistency checks — values that AGREE across files (recorded so they are not re-litigated)

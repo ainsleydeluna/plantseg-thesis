@@ -529,6 +529,42 @@ be enumerated verbatim in `dirty_allowlisted[]` to permit `official`.
 with the standing `reference.pdf` policy and adds RunPod friction for no methodological gain; the scoped
 rule above already guarantees that no code, config, or governing contract differs from `repo_commit`.
 
+### 7.2 Teacher readiness evaluation (M5-R3) and development data isolation (M11) `[B60, 2026-09-22]`
+
+**Decision locked; runtime not yet implemented.** Recorded by
+[reports/b60_teacher_methodology_lock.md](../reports/b60_teacher_methodology_lock.md).
+
+**R3 evaluation semantics.** The teacher readiness number is the **dataset-level all-class mIoU of §3.1**:
+- union-present eligibility, one accumulated `CM`, `ignore_index = 255`;
+- computed by this contract's evaluator on the **VAL** split (846 rows), using the `core_preprocess` canvas;
+- for the teacher checkpoint selected on VAL.
+
+Disease-only mIoU (§3.1) is reported alongside it.
+
+- **How it is produced.** A **controlled deterministic re-evaluation under the M4-locked evaluation
+  rule.** The NMF/Hamburger control is `NEED_TO_CONFIRM` until M4 is locked, and R3 cannot run before
+  then.
+- **Comparator.** E1's run-of-record VAL all-class mIoU, **0.36314016580581665**. It was produced by the
+  same metric implementation (`miou_from_confusion`, union-present) on the same VAL canvas.
+- **Rule.** The teacher value must be strictly greater, with no margin.
+- **What it is not.** The same VAL partition took part in checkpoint selection, so R3 is an
+  **operational competence floor**. It is **not** an independent or fresh unbiased estimate, **not** an
+  inferential comparison, and **not** a thesis result. It enters no Holm family, no bootstrap and no
+  official statistics.
+- **Artifact.** Any R3 artifact is a VAL readiness record, never an official TEST artifact.
+
+**M11 development data isolation.**
+- **Which runs:** the official teacher, E2 and E3. Development and training data roots are staged with
+  **TRAIN and VAL only**.
+- **Where:** in the **configured data root**, `images/test` and `annotations/test` must be absent.
+  Preflight verifies TRAIN 5,367 and VAL 846 and fails closed if the TEST paths exist.
+- **Never during development:** TEST is not enumerated, counted or inspected.
+- **Scope:** the configured, staged data root only, not the whole host.
+- **Official TEST integrity** (the 1,561-row manifest and row-count guards of §5–§7) is verified **only
+  after the final TEST unlock**.
+- **Over time:** forward-looking. E1 is unaffected, because its training path constructed TRAIN and VAL
+  datasets only.
+
 ---
 
 ## 8. Implementation record — E1 validation correction (CLOSED, A1b 2026-07-26)

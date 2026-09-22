@@ -136,7 +136,25 @@ pending the PlantSeg repo's official convention. `[empirical; ch3 Table 3.1; ctx
 | Batch size | **16** | `[ch3]` |
 | Crop | **512×512** | `[ch3]` |
 | Loss | cross-entropy | `[ch3]` |
-| Success criterion | **`NEED_TO_CONFIRM` — METHODOLOGY DECISION OPEN (teacher acceptance band).** ch3 states "recover 42.05% within ±1.5–2.0 pp" as *protocol matching*, but this recipe is not the Wei protocol (see provenance note below), so that band is not a protocol-match test. Wei 42.05 mIoU / 56.30 mAcc / ~28M params are **contextual published values only**. | `[ch3; B59 B3]` |
+| Success criterion | **LOCKED (M5, B60, 2026-09-22): readiness rule R1–R4, not a published-value band.** Wei 42.05 mIoU / 56.30 mAcc / ~28M params are **contextual published values only**: not a reproduction target, acceptance band, protocol-match criterion or retraining trigger. The ch3 "±1.5–2.0 pp — protocol matching" rule has no methodological authority from 2026-09-22. **R1** integrity: official preflight, first-train/first-val attestations, finite loss, all 40,000 iterations, no resume. **R2** TRAIN/VAL only; TEST never consulted. **R3** after M4: a *controlled deterministic re-evaluation under the M4-locked evaluation rule*, by the thesis VAL evaluator (EVALUATION_CONTRACT §7.2); VAL all-class mIoU must be **strictly greater than 0.36314016580581665** (E1 run of record), with no margin; report the gap and disease-only mIoU. An operational competence floor on the same VAL used for selection, **not** an independent estimate or an inferential comparison. **R4** Stage-3 320 ch @ stride 16 and the input-equivalence guard pass on the trained teacher. **R3 failure → STOP and escalate** (no retraining, search, band relaxation or TEST) | `[B60 §2; ch3 roles; MEASURED E1]` |
+| Warmup (LOCKED, M5) | LinearLR, 1,500 iterations, `start_factor` 1e-6 | `[REPO-UP; B60 §2.2]` |
+| Poly (LOCKED, M5) | PolyLR power **1.0**, **end 40,000** (full decay over the run) | `[REPO-UP power; THESIS-DERIVED end; B60]` |
+| Validation (LOCKED, M5) | every **4,000** iterations, **VAL only**; no TEST consultation | `[REPO-UP MMSeg schedule_40k; MS by analogy; B60]` |
+| Checkpoint selection | intended: best VAL all-class mIoU. **Operational rule OPEN — M12**, after M4 | `[B60 §2.3]` |
+| Loss weighting (LOCKED, M5) | **unweighted** CE; student class weights are not imported | `[ch3; B60]` |
+| Train augmentation (LOCKED, M2) | **semantic parity with the E1–E3 recipe.** Rotation ±10° with p 0.5, before the crop (image fill ImageNet mean, mask 255); 512 crop with cat_max_ratio 0.95; independent horizontal and vertical flips, each p 0.5; image-only hue ±0.015 and saturation [0.8, 1.2], jointly p 0.5. **No** brightness, contrast, blur, noise or JPEG (no `PhotoMetricDistortion`). Parity is semantic; code, draws and RNG need not be identical | `[MS student recipe; PRIMARY only for flip/scale/crop; THESIS-DERIVED for the teacher; B60 §3]` |
+| Train scale (LOCKED, M3) | long side = 512·r, r ~ U[0.75, 2.0], applied to the unpadded image, then crop/pad to 512. Clean VAL evaluation stays long side 512 + pad (thesis evaluator) | `[MS student recipe; THESIS-DERIVED for the teacher; B60 §4]` |
+| Data isolation (LOCKED, M11) | configured data root staged with **TRAIN + VAL only**; `images/test` and `annotations/test` absent; preflight checks 5,367 / 846 and **fails closed** if TEST paths exist. No active `test_dataloader`, `test_evaluator` or `test_cfg`. Scope = the configured data root, not the host. Applies to the teacher, E2 and E3 | `[MS TEST policy; B60 §5]` |
+
+> **Runtime non-conformance, intentional until the unified implementation (B60 §9 step H, §10).** The
+> current runtime config (`510b212b…`), launcher (`58575276…`), smokes and `configs/teacher_finetune.py`
+> still carry the old teacher pipeline:
+> - the upstream short-side pipeline with `PhotoMetricDistortion`;
+> - `VAL_INTERVAL` 10,000;
+> - active TEST surfaces;
+> - a TEST filename count.
+>
+> The locks above govern. **The current runtime must not be used for an official teacher run.**
 
 > **Provenance — THESIS-DERIVED SEGNeXt-B TEACHER CONFIGURATION `[B59 B1–B4, 2026-09-21]`.**
 > ch3 attributes the AdamW 6e-5 / wd 0.01 / head lr_mult 10 / poly / 40k recipe to "the Wei et al.
@@ -156,12 +174,15 @@ pending the PlantSeg repo's official convention. `[empirical; ch3 Table 3.1; ctx
 > - PolyLR power 1.0, with its end horizon-corrected from the public 160k to 40k;
 > - validation every 10,000 iterations.
 >
-> They are part of the teacher protocol that still has to be locked. **METHODOLOGY DECISION OPEN:**
-> - teacher train augmentation (the public family pipeline includes full PhotoMetricDistortion);
-> - teacher train/eval scaling (train `RandomResize((2048,512))` vs eval long side 512);
-> - NMF/Hamburger RNG control (`NEED_TO_CONFIRM`).
+> **[UPDATED 2026-09-22 — B60]** The schedule details above are now **LOCKED (M5)**. The one change is
+> validation: **every 4,000 iterations**, replacing 10,000. PlantSeg's 10,000 came from an upstream
+> configuration whose validation ran on the TEST split; MMSeg's own 40k schedule uses 4,000.
 >
-> See `reports/b59_pre_runpod_reconciliation.md`.
+> - **LOCKED:** teacher train augmentation (M2) and teacher train/eval scaling (M3), in the rows above.
+> - **Still METHODOLOGY DECISION OPEN:** NMF/Hamburger RNG control (**M4**, `NEED_TO_CONFIRM`) and the
+>   operational checkpoint-selection rule (**M12**).
+>
+> See `reports/b59_pre_runpod_reconciliation.md` and `reports/b60_teacher_methodology_lock.md`.
 
 ### B2 — Student training (E1 / E2 / E3 shared recipe) `[ch3 §C "E1"]`
 | Param | Value | Source |
@@ -820,18 +841,21 @@ Full detail + resolution mechanism in [open_questions.md](open_questions.md); fu
   obligatory is itself a METHODOLOGY DECISION OPEN (B59 D4).
 - Final RunPod pod type / GPU / CPU model / CUDA image (reported Ch4). E1 seed 42 = A40 Secure (B52);
   teacher GPU pending a measured batch-16 VRAM reading (G2).
-- **METHODOLOGY DECISIONS OPEN, registered by B59 (2026-09-21):**
-  - E2/E3 clipping and `max_norm`;
-  - teacher augmentation;
-  - teacher train/eval scaling;
-  - NMF/Hamburger RNG control;
-  - teacher acceptance band;
-  - λ sweep run length and noise band;
-  - E6-KD trigger and weights;
-  - multi-seed obligation;
-  - QAT checkpoint rule;
-  - handling of a TEST mask whose final 512 canvas holds zero disease pixels;
-  - whether the official teacher preflight may count TEST filenames.
+- **METHODOLOGY DECISIONS registered by B59 (2026-09-21):**
+  - **LOCKED by B60 (2026-09-22), decision recorded, runtime not yet implemented:**
+    - teacher augmentation (M2);
+    - teacher train/eval scaling (M3);
+    - teacher acceptance band / readiness and schedule (M5);
+    - TEST filenames in the teacher preflight (M11), replaced by TRAIN/VAL-only data roots.
+  - **Still OPEN:**
+    - E2/E3 clipping and `max_norm` (M1);
+    - NMF/Hamburger RNG control (M4);
+    - λ sweep run length and noise band (M6);
+    - E6-KD trigger and weights (M7);
+    - multi-seed obligation (M8);
+    - QAT checkpoint rule (M9);
+    - handling of a TEST mask whose final 512 canvas holds zero disease pixels (M10);
+    - teacher checkpoint selection under M4 (M12).
 
   Detail: `reports/b59_pre_runpod_reconciliation.md`; `docs/open_questions.md`.
 - Teacher recovered mIoU and all student result numbers (E1–E7 outcomes) — produced by training, out of Week-1 scope.

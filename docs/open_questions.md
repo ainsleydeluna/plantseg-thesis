@@ -852,9 +852,12 @@ not a house style — which is why the fix is a narrowing rather than a rewrite.
 ## Open — methodology decisions registered by B59 (2026-09-21)
 
 Registered by [reports/b59_pre_runpod_reconciliation.md](../reports/b59_pre_runpod_reconciliation.md).
-**Every item below is a METHODOLOGY DECISION OPEN.**
-- Candidates are listed; **none is chosen, and no experiment behaviour was changed.**
-- Each needs an explicit human decision before the stage it blocks.
+**[UPDATED 2026-09-22 — B60]** **M2, M3, M5 and M11 are now LOCKED** by
+[reports/b60_teacher_methodology_lock.md](../reports/b60_teacher_methodology_lock.md). The decisions are
+recorded, but **not yet implemented in runtime code**; they are implemented together at B60 §9 step H.
+**Every other item below remains a METHODOLOGY DECISION OPEN.**
+- For open items, candidates are listed; **none is chosen, and no experiment behaviour was changed.**
+- Each open item needs an explicit human decision before the stage it blocks.
 - None blocked the G20 development canary, which has since **PASSED** (below).
 
 ### G20 — development CUDA canary — ✅ PASS (2026-09-21) `[MEASURED; B59 §11]`
@@ -890,22 +893,23 @@ The teacher G18 seam was exercised on a real GPU. Setup:
 **Consequences:**
 - The historical "G20 OPEN" entries (B52 §11.1, B58 §15) are superseded here and in B59 §11. They were
   not edited.
-- **OFFICIAL TEACHER = NO-GO.** The remaining blockers, in dependency order, are in B59 §12.
+- **OFFICIAL TEACHER = NO-GO.** The remaining blockers, in dependency order, were listed in B59 §12.
+  **[UPDATED 2026-09-22]** That list is superseded by the approved sequence in B60 §9 (steps A–M).
 
-| # | Decision | Candidates on record (none selected) | Blocks |
+| # | Decision | Candidates on record (none selected for OPEN items) | Blocks / status |
 |---|---|---|---|
 | M1 | **E2/E3 gradient clipping and `max_norm`.** ch3 places clipping in the distillation stages but also requires E1/E2/E3 to share an identical recipe except for the distillation terms. The preregistered reading (PREREGISTRATION U3; `configs/distill.py`) makes clipping mandatory with a {1.0, 5.0} pilot. | (a) keep the preregistered pilot; (b) E1/E2/E3 all unclipped, i.e. a formal amendment; (c) another explicitly justified rule. `max_norm` stays `NEED_TO_CONFIRM` | first E2 run |
-| M2 | **Teacher train augmentation.** The live config uses the public SegNeXt-family pipeline, including full `PhotoMetricDistortion` (brightness, contrast). The student recipe excludes brightness and contrast because of the robustness corruptions. Guo et al. (2022) list only flip, scale and crop. | (A) keep the full upstream pipeline; (B) teacher geometry + hue/saturation only; (C) no teacher photometric augmentation | official teacher |
-| M3 | **Teacher train/eval scaling.** Train `RandomResize((2048,512), 0.5–2.0)` makes the short side ≈ 512·r. Eval (thesis parity) makes the long side 512; for a 4:3 image that equals r ≈ 0.75 of the train scale. | decide together with M2 | official teacher |
+| M2 | ✅ **LOCKED 2026-09-22 (B60 §3) — teacher train augmentation.** Semantic parity with the E1–E3 recipe: rotation ±10° with p 0.5, before the crop (image fill ImageNet mean, mask 255); 512 crop with cat_max_ratio 0.95; independent horizontal and vertical flips, each p 0.5; image-only hue ±0.015 and saturation [0.8, 1.2], jointly p 0.5. **No** brightness, contrast, blur, noise or JPEG, so `PhotoMetricDistortion` is not in the teacher recipe. Unweighted CE. Guo supports only flip, scale and crop; the rest is manuscript-specified for the student and thesis-derived for the teacher. Parity is semantic, not code, draw or RNG identity. | *(was: full upstream / geometry + hue-sat / geometry only; alternatives rejected in B60 §6)* | runtime pending (B60 step H) |
+| M3 | ✅ **LOCKED 2026-09-22 (B60 §4) — teacher train/eval scaling.** Train: long side = 512·r, r ~ U[0.75, 2.0], applied to the unpadded image, then crop/pad to 512. Clean VAL evaluation: long side 512 + thesis padding, scored by the thesis evaluator. The upstream short-side pipeline is historical context only. | *(decided with M2)* | runtime pending (B60 step H) |
 | M4 | **NMF/Hamburger RNG control.** `rand_init=True` draws `torch.rand` from the CPU generator on every forward, eval included. Measured on CPU (B59 A): outputs vary with RNG state and with batch position; a CPU RNG reset reproduces them bitwise. | options to evaluate: keep and disclose; seeded eval-time draws; `rand_init=False`. Each would need verification on the real checkpoint | official teacher (hard blocker); also E2/E3 soft targets |
-| M5 | **Teacher acceptance band and protocol lock.** The ch3 "±1.5–2.0 pp of 42.05%" band presumed the Wei protocol, which this thesis-derived recipe is not. Also unlocked: the source-derived schedule details (LinearLR warmup 1,500; poly power 1.0; horizon 40k; val every 10k). | `NEED_TO_CONFIRM` | official teacher |
+| M5 | ✅ **LOCKED 2026-09-22 (B60 §2) — teacher classification, schedule, readiness.**<br>**Classification.** A thesis-derived SegNeXt-B / MSCAN-B teacher. Wei 42.05 / 56.30 / ~28M are contextual values only (not a target, band, protocol-match criterion or retraining trigger), and the ±1.5–2.0 pp rule has no authority.<br>**Schedule.** AdamW 6e-5, wd 0.01, betas (0.9, 0.999), head lr_mult 10; LinearLR warmup 1,500 (start 1e-6); PolyLR power 1.0, end 40,000; 40,000 iterations; batch 16; 512²; unweighted CE; validation every 4,000 iterations, VAL only.<br>**Selection.** Best VAL all-class mIoU is the intent; the operational rule is M12.<br>**Readiness R1–R4.** R3 is a controlled deterministic re-evaluation under the M4-locked rule, VAL all-class mIoU > 0.36314016580581665 with no margin. It is an operational floor, not an independent estimate. Failure → STOP and escalate. | *(band / Wei-SGD retrain / none / 10k interval rejected — B60 §6)* | runtime pending (B60 step H); R3 needs M4 |
 | M6 | **λ_logit sweep run length and validation noise/tie band.** The grid {0.25, 0.5, 1, 2, 4} is preregistered; per-candidate run length and the "noise band" are not. E1's late-curve oscillation (~0.72 pp over 64k–80k, B52 §5) is evidence only. | `NEED_TO_CONFIRM`; no externally suggested value adopted | first E2 sweep candidate |
 | M7 | **E6-KD trigger and weights.** The trigger reads the clean TEST E3→E6 drop, making it a TEST-informed training decision. Frozen as written in the contract, the stats contract §9.3 and PREREGISTRATION §6. | (A) validation-based trigger; (B) E6-KD pre-registered as a fixed additional arm. Reduced weights `NEED_TO_CONFIRM` | E6 |
 | M8 | **Multi-seed obligation.** ch3 §C.2 says "optional due to compute constraints"; §D/§F plan three seeds for E1 and E3. | `NEED_TO_CONFIRM` (extra seed values too) | E1 seeds 2–3 / E3 planning |
 | M9 | **QAT checkpoint rule.** ch3 E5 says best validation mIoU; ch3 §E.2.d says the INT8 stages use the final post-quantization checkpoint with no validation selection. Live `configs/quant.py` uses best-val. | `NEED_TO_CONFIRM` | E5 |
 | M10 | **TEST image whose final 512 canvas has zero disease pixels.** VAL verified 0/846 (min 259 px); TEST not accessed. The current rule is abort (EVALUATION_CONTRACT §3.3). | (a) keep abort; (b) pre-register exclusion with an identical eligibility set across models, reporting *k* and *n*_eff | single TEST campaign |
-| M11 | **Official teacher preflight counts TEST filenames.** `check_splits` counts file names only and never opens contents. G20 skips it. | keep as a data-integrity count / drop TEST from the count | official teacher preflight |
-| M12 | **Teacher checkpoint selection under M4.** `save_best='mIoU'` on VAL depends on RNG state while M4 is open. | follows M4 | official teacher |
+| M11 | ✅ **LOCKED 2026-09-22 (B60 §5) — development data isolation.**<br>**Which runs.** The official teacher, E2 and E3.<br>**Rule.** Data roots are staged with TRAIN + VAL only; in the **configured data root**, `images/test` and `annotations/test` must be absent. Preflight verifies 5,367 / 846 and fails closed if the TEST paths exist. No TEST enumeration, counting or inspection during development; no active `test_dataloader`, `test_evaluator` or `test_cfg`.<br>**Scope.** The configured data root, not the host.<br>**TEST integrity.** Checked only after the final TEST unlock. | *(filename count / enumeration ban only — rejected, B60 §6)* | runtime pending (B60 step H) |
+| M12 | **Teacher checkpoint selection under M4 — still OPEN.** `save_best='mIoU'` on VAL depends on RNG state while M4 is open. The best-VAL all-class *intent* is recorded (B60 §2.3); the operational rule is not. | follows M4 | official teacher |
 
 **Verified evidence recorded with this register (not decisions):**
 - VAL final-canvas zero-disease check: 0/846.
@@ -1008,6 +1012,9 @@ requiring a plan and an explicit go.
   2026-09-21]** The teacher success criterion is `NEED_TO_CONFIRM` (M5). The recipe is a
   **thesis-derived SegNeXt-B teacher configuration**, not the Wei protocol that produced 42.05%. Wei
   42.05 mIoU / 56.30 mAcc / ~28M are contextual published values only. `[ch3; Wei; B59]`
+  **[UPDATED 2026-09-22 — B60]** M5 is now **LOCKED**. Teacher acceptance is the **readiness rule
+  R1–R4**, not a published-value band. R3 requires the teacher's VAL all-class mIoU to exceed E1's
+  0.36314016580581665 under a controlled deterministic re-evaluation, after M4. `[B60 §2]`
 
 ---
 
