@@ -4,8 +4,7 @@
 Operator-support + conversion smoke ONLY (not latency, not training, no backward). Uses the existing
 student from src/models/student.py as-is (NO hacks). Targets QNNPACK; runs the SAME flow under the
 available engine as a CLEARLY-LABELED PROXY if QNNPACK is absent. Captures the EXACT exception on
-failure. Acceptable outcomes: PASS_CLEAN / PASS_WITH_DOCUMENTED_FALLBACK /
-HEAD_PASS_FULL_STUDENT_FAILS_DOCUMENTED.
+failure. Exit status: 0 only for a clean convert+forward (PASS_CLEAN); a failure exits 1 (DL-18).
 """
 
 from __future__ import annotations
@@ -80,11 +79,12 @@ def main() -> int:
     print(f"[FULL_STUDENT_OUTCOME] engine={engine} proxy={is_proxy} fusion_called={fused} "
           f"result={outcome} shape={shape} fail_stage={stage if err else 'n/a'}")
     # This script never asserts PASS for the full student unless it converts+forwards cleanly with
-    # no fallback. A documented failure is an acceptable B7 outcome (exit 0) so the log/doc are produced.
+    # no fallback. A failure is still printed with its stage and exact error, and exits 1 (DL-18);
+    # a clean convert+forward exits 0, labelled PROXY when the engine is not QNNPACK (as the head smoke).
     clean = (outcome == "PASS_CLEAN" and not is_proxy)
     print(f"[{'PASS_CLEAN' if clean else 'DOCUMENTED'}] full-student qnnpack smoke "
           f"({'PROXY' if is_proxy else 'QNNPACK'})")
-    return 0
+    return 0 if outcome == "PASS_CLEAN" else 1
 
 
 if __name__ == "__main__":
