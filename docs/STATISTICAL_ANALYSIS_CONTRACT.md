@@ -94,6 +94,13 @@ For every comparison, **`delta = candidate − baseline`**, and **positive favou
 - **Teacher** comparisons — descriptive upper bound only `[ch3]`.
 - **Dice, mAcc, aAcc, RPD, rCD, efficiency** metrics — descriptive only `[ch3]`.
 
+**[AM-14, 2026-09-23]** The inferential family is the eight tests listed at ch3 f.139. The primary test
+is a one-tailed Wilcoxon with Pratt zeros, the paired t-test is a sensitivity check, and the correction
+is Holm step-down. E3 vs E6 is assessed only by the paired-BCa non-inferiority check; E1 vs E3 is
+descriptive. B64 verified read-only that `src/stats` builds exactly this family
+(`src/stats/tests.py:29-35`, `:257-258`, `:306-351`; `src/stats/bootstrap.py:40-41`), so no code lane
+is needed. Under AM-1 the family uses the seed-42 models only.
+
 ---
 
 ## 2. The per-image mIoU-C inferential vector `[ch3]`
@@ -664,7 +671,13 @@ than, the 2.0-point margin used for the formal E3-versus-E6 non-inferiority deci
 Four concepts are kept strictly separate: observed-drop contingency · formal non-inferiority · clean
 superiority · robustness superiority.
 
-> **METHODOLOGY DECISION OPEN `[B59 C4, 2026-09-21]`.** As frozen, `observed_drop` is computed from
+> **[AMENDED 2026-09-23 — AM-3; resolves M7]** The E6-KD **launch trigger** is the E3 → E6 drop in
+> dataset-level **VAL** all-class mIoU, with E6 scored on the converted INT8 model: `> 0.010` at seed 42,
+> strictly. If triggered, E6-KD runs at seed 42 with the Logit-KD and CWD weights at 0.5× their E3
+> values, T unchanged; it is descriptive and outside the Holm family. The block above is retained only
+> as a descriptive clean-TEST observation and never launches a model. Code: lane L-AM3.
+
+> **METHODOLOGY DECISION OPEN `[B59 C4, 2026-09-21]` — superseded by AM-3 (2026-09-23).** As frozen, `observed_drop` is computed from
 > the **clean TEST** split. Its only consequence is whether an additional model (E6-KD) is trained —
 > a TEST-informed training decision, which the thesis TEST policy prohibits. Two candidates are
 > recorded without choosing between them:
@@ -673,6 +686,18 @@ superiority · robustness superiority.
 >
 > One must be registered before E6. Until then the §12.4.10 schema field is retained as written, but it
 > must not be used to launch E6-KD. The reduced E6-KD weights remain `NEED_TO_CONFIRM`.
+
+### 9.4 Seed stability `[AM-8, 2026-09-23]` — descriptive, at the single TEST evaluation
+
+Stable iff all three hold:
+- the seed-paired E1 → E3 dataset-level mIoU gain is **positive at all three seeds** (42, 43, 44);
+- its mean exceeds the larger of the across-seed standard deviations of E1 and E3;
+- the E3 → E6 drop is **below 2.0 percentage points at every seed**.
+
+A per-seed table of dataset-level effects is reported for every planned comparison, descriptively. The
+eight-test Holm family (§1) and the E3-vs-E6 non-inferiority check (§9.2) use the **seed-42 models
+only**. Seeds 43 and 44 enter only this criterion and the per-seed table. This criterion carries no
+p-value and is not a Holm test.
 
 ---
 
@@ -685,7 +710,8 @@ eight-test family, an official non-inferiority result, or any official thesis co
 
 Official clean-test comparisons additionally require: `split = test` · `actual_rows = expected_rows =`
 **1,561** · exact canonical image-ID set equality · no duplicate IDs · no case-folded ID collision ·
-no undefined primary per-image metric · **no random initialization** · verified artifact
+no undefined primary per-image metric (except the AM-5 zero-disease-ground-truth rows, which are excluded
+identically across models and counted; lane L-AM5) · **no random initialization** · verified artifact
 `MANIFEST.sha256` · compatible `schema_version` and `metric_protocol` · identical
 `split_manifest_sha256`, `class_map_sha256`, `preprocess_protocol`, class-space metadata, expected and
 actual row counts, and condition identity · **`metric_impl_sha256` equality**.

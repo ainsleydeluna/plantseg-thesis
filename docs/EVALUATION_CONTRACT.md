@@ -175,6 +175,7 @@ The thesis preprocessing protocol is **not** changed by this document.
 | Metric | Classes `S` | Eligibility | Formula (per eligible `c`, then unweighted mean) | Status |
 |---|---|---|---|---|
 | **all-class mIoU** | `{0..115}` | **union-present** | `TP_c / UN_c` | **HEADLINE / official** — benchmark-aligned formula |
+| all-class mIoU, GT-present **sensitivity** | `{0..115}` | **GT-present** (classes present in TEST ground truth) | `TP_c / UN_c` | **descriptive sensitivity only (AM-6)** — never headline; lane L-AM6 |
 | **all-class mAcc** | `{0..115}` | **GT-present** | `TP_c / GT_c` | descriptive — benchmark-aligned formula |
 | **all-class macro Dice (DSC)** | `{0..115}` | **union-present** (`GT_c + PR_c > 0` ⟺ `UN_c > 0`) | `2·TP_c / (GT_c + PR_c)` | descriptive — **thesis-internal extension, NOT a benchmark metric** |
 | **disease-only mIoU** | `{1..115}` | **union-present** | `TP_c / UN_c` | secondary, descriptive |
@@ -205,6 +206,8 @@ The thesis preprocessing protocol is **not** changed by this document.
 **Practical note (test split):** class 42 has zero test GT. If a model predicts it anywhere, it contributes
 `IoU = 0` to the union-present mean; if no model predicts it, it is dropped. **The eligible-class count is
 therefore model-dependent and MUST be recorded per run** (`n_eligible_*` fields, §5.3).
+**[AM-6, 2026-09-23]** The headline stays union-present; the GT-present sensitivity row above is reported
+beside it, descriptively ([PREREGISTRATION_AMENDMENTS.md](PREREGISTRATION_AMENDMENTS.md); resolves G7).
 
 ### 3.2 Per-image metrics (one `CM_i` per image)
 
@@ -252,6 +255,15 @@ Any `null` on test is a **data-integrity failure that must abort the run**, not 
 > raw-mask fact. Survival on the final 512 canvas is verified for VAL only (0/846 lost). The rule above
 > is unchanged. Whether to replace it with a pre-registered exclusion rule is a **METHODOLOGY DECISION
 > OPEN** (see §0 evidence-scope note).
+
+> **[AMENDED 2026-09-23 — AM-5; resolves M10]** The one permitted exception is this. A TEST image whose
+> evaluated mask has **no disease pixels** gets a `null` + `undefined_no_eligible_class` per-image
+> **disease-only** value. That row is excluded from per-image disease-only analyses (paired tests,
+> per-image effect sizes). The exclusion depends on ground truth only, so it is identical across models.
+> Such rows are counted and reported, and they stay in every dataset-level metric. Every other `null` on
+> TEST still aborts. Per-image mIoU-C is the mean of the image's per-image disease-class mIoU over its
+> 15 corrupted variants (five corruptions × severities 1–3), and the same exclusion applies. That mean
+> equals the nested severities-then-corruptions mean of STATISTICAL_ANALYSIS_CONTRACT §2. Code: lane L-AM5.
 
 ---
 
@@ -555,6 +567,10 @@ Disease-only mIoU (§3.1) is reported alongside it.
   inferential comparison, and **not** a thesis result. It enters no Holm family, no bootstrap and no
   official statistics.
 - **Artifact.** Any R3 artifact is a VAL readiness record, never an official TEST artifact.
+- **[AM-13, 2026-09-23] Published comparison.** At the single TEST evaluation the teacher is additionally
+  scored, descriptively, under the upstream PlantSeg protocol: the repository's aspect-ratio-preserving
+  resize, scored against original-resolution ground truth. That score, not the 512-canvas score, is the
+  one compared with the published 42.05%. Code: lane L-AM13 (TEST-time only).
 
 **M11 development data isolation.**
 - **Which runs:** the official teacher, E2 and E3. Development and training data roots are staged with
@@ -606,6 +622,10 @@ consumed by NMF only, and is seeded without touching the CUDA generators (B61 §
 **R3 under M4-V.** R3 (§7.2) re-evaluates the selected checkpoint once under M4-V with this contract's
 evaluator. Its value is **not required to be byte-identical** to the MMSeg selection metric, unless both
 are proven to use the exact same evaluation implementation.
+
+**[AM-3, AM-4, 2026-09-23] INT8 VAL scoring.** QAT checkpoint selection (AM-4) and the E6-KD trigger
+(AM-3) score VAL on the **converted INT8** (QNNPACK) model on CPU, not on the fake-quant model.
+Code: lanes L-AM4 and L-AM3.
 
 ---
 

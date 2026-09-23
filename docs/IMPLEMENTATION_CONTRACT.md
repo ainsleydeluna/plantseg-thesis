@@ -58,13 +58,13 @@ evaluated on the **PlantSeg** in-the-wild plant-disease segmentation benchmark `
 | **E7** | E3 checkpoint (**CWD head removed**) | **INT8 PTQ** | E7 vs E6; E4 vs E7 |
 
 - E4–E7 form a **2×2 quantization × distillation matrix** (PTQ vs QAT) × (undistilled E1 vs distilled E3) `[ch3 §A,C]`.
-- **E6-KD** is a *pre-registered contingency arm*, not a locked stage: run only if the E3→E6
-  clean-test mIoU drop exceeds **1.0 pp**; reinstates frozen teacher with **reduced** distillation
-  weights during QAT `[ch3 §C, §F]`.
-  **METHODOLOGY DECISION OPEN `[B59 C4]`:** as written, this trigger reads the held-out TEST split
-  to decide whether to train an additional model, which the TEST policy forbids. It must be
-  replaced (validation-based trigger, or E6-KD pre-registered as a fixed arm) before E6. The
-  reduced weights stay `NEED_TO_CONFIRM`. No replacement is chosen here.
+- **E6-KD** is a *pre-registered contingency arm*, not a locked stage `[ch3 §C, §F]`.
+  **[LOCKED 2026-09-23 — AM-3]** It runs only if the E3→E6 drop in dataset-level **VAL** all-class
+  mIoU, with E6 scored on the converted INT8 model, exceeds **1.0 pp at seed 42**. E6-KD then runs at
+  seed 42 with the Logit-KD and CWD weights at **0.5×** their E3 values, T unchanged; it is descriptive
+  and outside the Holm family. The clean-TEST trigger is withdrawn. *(Was: "run only if the E3→E6
+  clean-test mIoU drop exceeds 1.0 pp; reinstates frozen teacher with reduced distillation weights
+  during QAT", registered as a METHODOLOGY DECISION OPEN `[B59 C4]`.)*
 - All stages share the **same official 70/10/20 split, preprocessing, 512×512 resolution, normalization,
   mask formatting, metrics, and corruption settings**; only the compression component varies `[ch3 §C]`.
 - All training runs are **iteration-matched (80,000 iters)**, not wall-clock- or FLOPs-matched `[ch3 §C]`.
@@ -136,7 +136,7 @@ pending the PlantSeg repo's official convention. `[empirical; ch3 Table 3.1; ctx
 | Batch size | **16** | `[ch3]` |
 | Crop | **512×512** | `[ch3]` |
 | Loss | cross-entropy | `[ch3]` |
-| Success criterion | **LOCKED (M5, B60, 2026-09-22): readiness rule R1–R4, not a published-value band.** Wei 42.05 mIoU / 56.30 mAcc / ~28M params are **contextual published values only**: not a reproduction target, acceptance band, protocol-match criterion or retraining trigger. The ch3 "±1.5–2.0 pp — protocol matching" rule has no methodological authority from 2026-09-22. **R1** integrity: official preflight, first-train/first-val attestations, finite loss, all 40,000 iterations, no resume. **R2** TRAIN/VAL only; TEST never consulted. **R3** after M4: a *controlled deterministic re-evaluation under the M4-locked evaluation rule*, by the thesis VAL evaluator (EVALUATION_CONTRACT §7.2); VAL all-class mIoU must be **strictly greater than 0.36314016580581665** (E1 run of record), with no margin; report the gap and disease-only mIoU. An operational competence floor on the same VAL used for selection, **not** an independent estimate or an inferential comparison. **R4** Stage-3 320 ch @ stride 16 and the input-equivalence guard pass on the trained teacher. **R3 failure → STOP and escalate** (no retraining, search, band relaxation or TEST) | `[B60 §2; ch3 roles; MEASURED E1]` |
+| Success criterion | **LOCKED (M5, B60, 2026-09-22): readiness rule R1–R4, not a published-value band.** Wei 42.05 mIoU / 56.30 mAcc / ~28M params are **contextual published values only**: not a reproduction target, acceptance band, protocol-match criterion or retraining trigger. The ch3 "±1.5–2.0 pp — protocol matching" rule has no methodological authority from 2026-09-22. **R1** integrity: official preflight, first-train/first-val attestations, finite loss, all 40,000 iterations, no resume. **R2** TRAIN/VAL only; TEST never consulted. **R3** after M4: a *controlled deterministic re-evaluation under the M4-locked evaluation rule*, by the thesis VAL evaluator (EVALUATION_CONTRACT §7.2); VAL all-class mIoU must be **strictly greater than 0.36314016580581665** (E1 run of record), with no margin; report the gap and disease-only mIoU. An operational competence floor on the same VAL used for selection, **not** an independent estimate or an inferential comparison. **R4** Stage-3 320 ch @ stride 16 and the input-equivalence guard pass on the trained teacher. **R3 failure → STOP and escalate** (no retraining, search, band relaxation or TEST). **[AM-13]** The comparison with Wei's 42.05% is descriptive and made at TEST evaluation only, on the teacher's upstream-protocol score (lane L-AM13) | `[B60 §2; ch3 roles; MEASURED E1; AM-13]` |
 | Warmup (LOCKED, M5) | LinearLR, 1,500 iterations, `start_factor` 1e-6 | `[REPO-UP; B60 §2.2]` |
 | Poly (LOCKED, M5) | PolyLR power **1.0**, **end 40,000** (full decay over the run) | `[REPO-UP power; THESIS-DERIVED end; B60]` |
 | Validation (LOCKED, M5) | every **4,000** iterations, **VAL only**; no TEST consultation | `[REPO-UP MMSeg schedule_40k; MS by analogy; B60]` |
@@ -212,9 +212,9 @@ pending the PlantSeg repo's official convention. `[empirical; ch3 Table 3.1; ctx
 | Validation interval | every **4,000** iters | `[ch3]` |
 | Checkpoint selection | **best validation-mIoU — all-class val mIoU (D1)** | `[ch3; D1]` |
 | Distillation-weight ramp (E2/E3) | linear **0 → target over first epoch** | `[ch3]` |
-| Gradient clipping | ch3 p.104 places it in the distillation-stage sentence: "During the distillation stages … global-norm gradient clipping is applied throughout". **E1: none**, consistent with ch3. **E2/E3: METHODOLOGY DECISION OPEN** — ch3 also requires E1/E2/E3 to share an identical recipe except for the distillation terms; see §(f) "Gradient clipping" and B59 C2. | `[ch3; B59 A5/C2]` |
+| Gradient clipping | ch3 p.104 places it in the distillation-stage sentence: "During the distillation stages … global-norm gradient clipping is applied throughout". **LOCKED 2026-09-23 (AM-7): E1, E2 and E3 share one rule — no clipping** (E1 seed 42 logged no gradient norm). A NaN/divergence (as defined in AM-7) in any E2/E3 run stops the stage; one clipping rule is then adopted for all three and the FP32 stages are rerun. The E2/E3 launcher gate changes in lane L-AM7. *(Was: E1 none; E2/E3 METHODOLOGY DECISION OPEN, B59 C2.)* | `[ch3; B59 A5/C2; AM-7]` |
 | Teacher in loop (E2/E3) | eval mode, online, consumes **identical augmented input** as student | `[ch3]` |
-| Optional control | extended-schedule E2 (~160,000 iters, 1 seed) — optional, future work if not run | `[ch3 §C]` |
+| Optional control | extended-schedule E2 (~160,000 iters, 1 seed) — **not run; recorded as future work (AM-11)** | `[ch3 §C; AM-11]` |
 
 > **[D-A/D2 RESOLVED — E1 unclipped; RECLASSIFIED 2026-09-21 as consistent with ch3, not a deviation]**
 > E1 runs with `grad_clip_max_norm=None`, which the completed E1 seed-42 run used. The
@@ -250,7 +250,7 @@ pending the PlantSeg repo's official convention. `[empirical; ch3 Table 3.1; ctx
 |---|---|---|
 | Loss | CE + KL on temperature-softened outputs | `[ch3]` |
 | Temperature `T_Logit` | **4** | `[ch3]` |
-| Weight `λ_logit` | **`NEED_TO_CONFIRM`** — selected via validation sweep over **{0.25, 0.5, 1, 2, 4}** at seed 42; reported in Ch4; reused **unchanged** in E3. **METHODOLOGY DECISION OPEN:** the sweep's per-candidate run length and the "validation-set noise band" used for tie-breaking are not specified — register both before the first sweep candidate `[B59 C3]` | `[ch3]` |
+| Weight `λ_logit` | **`NEED_TO_CONFIRM`** — selected via validation sweep over **{0.25, 0.5, 1, 2, 4}** at seed 42; reported in Ch4; reused **unchanged** in E3. **LOCKED 2026-09-23 (AM-2):** 80,000 iterations per candidate; the highest VAL all-class mIoU (each candidate's best-checkpoint value) wins; candidates within 0.5 pp of the best are tied → smallest λ; a boundary winner is reported and the grid is not extended; the winner is E2 seed 42 `[B59 C3; AM-2]` | `[ch3]` |
 | KL averaging | over valid (non-255) pixels only | `[ch3]` |
 
 **CWD (E3, Shu 2021)** `[ch3 §C "E3"]`
@@ -322,7 +322,7 @@ the teacher transient, cuDNN workspace and backward temporaries gives an **INFER
 on CUDA at batch 16. This is **not a GO** — settle it on the pod with
 `torch.cuda.max_memory_allocated()`.
 | E3 total loss | `L_CE + L_Dice + λ_logit·L_LogitKD + 50·L_CWD_feat + 3·L_CWD_logit` | `[ch3]` |
-| Optional control | α_CWD sensitivity sweep {25, 50, 100} at 1 seed — optional, else fixed 50 per Shu 2021 | `[ch3 §C]` |
+| Optional control | α_CWD sensitivity sweep {25, 50, 100} — **not run; α_CWD fixed at 50 per Shu 2021; recorded as future work (AM-11)** | `[ch3 §C; AM-11]` |
 
 ### B4 — Quantization
 **INT8 QAT (E5 / E6)** `[ch3 §C "E5"/"E6", §D]`
@@ -331,32 +331,33 @@ on CUDA at batch 16. This is **not a GO** — settle it on the pod with
 | Backend / toolchain | **QNNPACK**, eager-mode `torch.ao.quantization` | `[ch3]` |
 | Optimizer | SGD, momentum **0.9** | `[ch3]` |
 | Learning rate | **3e-4** (3×10⁻⁴), **cosine** decay | `[ch3]` |
-| Epochs | **~15**, early-stop on val mIoU | `[ch3]` |
+| Epochs | **15, fixed; no early stopping** (AM-4; was "~15, early-stop on val mIoU") | `[ch3; AM-4]` |
 | Activation quant start | from **step 0**, moving-average range observers | `[ch3]` |
-| BN-stat freeze | after **~65–70%** of training | `[ch3]` |
-| Observer freeze | shortly after BN freeze | `[ch3]` |
+| BN-stat freeze | after **epoch 10** (AM-4; was "~65–70% of training") | `[ch3; AM-4]` |
+| Observer freeze | after **epoch 12** (AM-4; was "shortly after BN freeze") | `[ch3; AM-4]` |
 | Gradient clipping | global-norm | `[ch3]` |
 | Weight EMA | **none** (instantaneous weights quantize better) | `[ch3]` |
-| Checkpoint selection | best val mIoU (as implemented in `configs/quant.py`). **METHODOLOGY DECISION OPEN:** ch3 contradicts itself — the E5 text selects the QAT model by best validation mIoU, while §E.2.d says the INT8 stages (E4–E7) use the final post-quantization checkpoint with no validation selection. Lock before E5 `[B59 D5]` | `[ch3]` |
+| Checkpoint selection | **LOCKED 2026-09-23 (AM-4):** a checkpoint every epoch; after training each is converted (QNNPACK) and scored on VAL on CPU; the epoch with the highest converted VAL all-class mIoU is evaluated (ties → earlier). Code: lane L-AM4 (today `configs/quant.py` / `src/quant/runner.py` select the best fake-quant val mIoU with early stopping). *(Was: METHODOLOGY DECISION OPEN, B59 D5.)* | `[ch3; AM-4]` |
+| Supplementary diagnostic (AM-4) | each selected QAT model is also scored with fake quantization disabled (its FP32 weights after QAT), **descriptively** — separates extra fine-tuning from INT8 adaptation; lane L-AM4 | `[AM-4]` |
 | Distillation during QAT | **none** (E5/E6 supervised-only) | `[ch3]` |
 | Weight quant | **per-channel symmetric INT8**, all conv layers | `[ch3]` |
 | Activation quant | **per-tensor asymmetric UINT8** (full 8-bit range for QNNPACK/ARM) | `[ch3]` |
 | Fusion | Conv-BN-ReLU via `fuse_modules` before observer insertion | `[ch3]` |
 | Hard-Swish / Hardsigmoid | quantized as **standalone** ops | `[ch3]` |
 | Source ckpt | E5 ← E1; **E6 ← E3 (CWD head removed)**; E6 uses identical config as E5 | `[ch3]` |
-| E6-KD reduced weights | `NEED_TO_CONFIRM` (reduced relative to E3 values). The trigger itself is a **METHODOLOGY DECISION OPEN** — see §(b) and B59 C4 | `[ch3]` |
+| E6-KD reduced weights | **0.5×** the E3 Logit-KD and CWD weights, T unchanged; triggered on VAL (AM-3) *(was: `NEED_TO_CONFIRM`; trigger METHODOLOGY DECISION OPEN, B59 C4)* | `[ch3; AM-3]` |
 
 **INT8 PTQ (E4 / E7)** `[ch3 §C "E4"/"E7", §E.1]`
 | Param | Value | Source |
 |---|---|---|
 | Method | static INT8 (standard) | `[ch3]` |
-| Calibration set | **~128 images**, sampled with **seed 42** from training partition; no augmentation; same preprocessing as clean test; identifiers persisted as fixed list; **same subset for E4 and E7** | `[ch3]` |
+| Calibration set | **~128 images**, sampled with **seed 42** from training partition; no augmentation; same preprocessing as clean test; identifiers persisted as fixed list; **same subset for E4 and E7**; **one image per mini-batch** (AM-10) | `[ch3; AM-10]` |
 | Activation observer | histogram (minimizes quantization error) | `[ch3]` |
 | Weight observer | per-channel min/max | `[ch3]` |
 | Weight quant | per-channel symmetric INT8, all conv (per-channel depthwise essential) | `[ch3]` |
 | Activation quant | per-tensor asymmetric UINT8 | `[ch3]` |
 | Source ckpt | E4 ← E1; **E7 ← E3 (CWD head removed)** | `[ch3]` |
-| Calibration selection | configuration selected on **validation**, PTQ results reported on **test** | `[ch3]` |
+| Calibration selection | **fixed configuration (the registered qconfig); no validation-based calibration choice** (AM-10); PTQ results reported on **test** *(was: "configuration selected on validation")* | `[ch3; AM-10]` |
 
 ### B5 — Loss `[ch3 §C "E1", §C.1]`
 - **Supervised:** `L_sup = L_CE + L_Dice` (equal weight).
@@ -372,11 +373,13 @@ on CUDA at batch 16. This is **not a GO** — settle it on the pod with
 - **Seed = 42** across `torch`, `numpy`, python `random` `[ch3]`.
 - Determinism set **before CUDA init**: `cudnn.deterministic=True`, `cudnn.benchmark=False`,
   `use_deterministic_algorithms(True, warn_only=True)`, `CUBLAS_WORKSPACE_CONFIG=:4096:8` `[ch3; ctx]`.
-- Multi-seed plan: three-seed validation planned for **E1 and E3** (the two extra seed values =
-  `NEED_TO_CONFIRM`); E4/E7 recomputed per seed; E5/E6 fine-tuned per seed where compute permits;
-  Teacher trained once; E2 repetition optional `[ch3 §F]`. **METHODOLOGY DECISION OPEN:** ch3
-  §C.2 calls multi-seed validation "optional due to compute constraints", while §D/§F plan three
-  seeds for E1 and E3 — whether the extra seeds are an obligation is not locked `[B59 D4]`.
+- **Seeds — LOCKED 2026-09-23 (AM-1; resolves M8):** seeds **42 (primary), 43, 44** for **E1 and
+  E3**; E4/E7 recomputed per seed; E5/E6 once per seed, from their FP32 parent's seed; **E2 at seed 42;
+  seeds 43/44 optional, budget permitting, with λ fixed from the seed-42 sweep**; teacher trained once.
+  All training randomness, including data order and augmentation, derives from the run seed (B64 C1).
+  The Holm family and the E3-vs-E6 non-inferiority check use the seed-42 models only. *(Was: three-seed
+  validation planned for E1 and E3 with the extra values `NEED_TO_CONFIRM`; E5/E6 "where compute
+  permits"; E2 repetition optional; the obligation a METHODOLOGY DECISION OPEN `[B59 D4]`.)*
 - **`num_workers` is a REPRODUCIBILITY-RELEVANT parameter and must be reported alongside seed 42**
   `[project; empirical, measured 2026-09-01 — B31-5/A1]`. Seed 42 alone does **not** determine the
   realized augmentation sequence. Measured on a fixed 8-sample / 4-batch train subset
@@ -641,7 +644,7 @@ and governs):
   converted model — the best **pre-convert QAT state** (`*_qat_state.pt`,
   `quantization = "qat-train-state"`, `artifact_role = preconvert_qat_state`). It is explicitly
   **not** an accuracy, robustness, size or deployment artifact, and does not alter the official
-  converted-artifact schema or the best-validation selection rule. The x86 copy is produced from it
+  converted-artifact schema or the AM-4 selection rule. The x86 copy is produced from it
   by **translation only**: the same QAT-trained weights and the same learned activation-range
   evidence are carried over, x86 quantizer parameters are recomputed under the reduced range, and
   **zero optimizer steps / gradient updates** occur. QNNPACK activation qparams are never reused as
@@ -656,14 +659,20 @@ Krishnamoorthi, Jacob or any other source and must never be cited as though they
 applies **identically to E5 and E6**, so the stages differ only in source checkpoint and distillation
 history. A real launch still supplies each explicitly — the runner defaults none of them.
 
+> **[AMENDED 2026-09-23 — AM-4]** The schedule and selection rows below follow AM-4
+> ([PREREGISTRATION_AMENDMENTS.md](PREREGISTRATION_AMENDMENTS.md)). `configs/quant.py['qat_real_run']` and
+> `src/quant/runner.py` keep the pre-amendment values (patience 3, freezes at 0.65/0.70 of steps, best
+> fake-quant val mIoU) until lane L-AM4 changes the runner, the config and their smokes together.
+
 | control | value | rationale |
 |---|---|---|
 | **physical** batch size | **16** | preserves the registered student-training scale rather than adding another E5/E6 difference |
 | weight decay | **1e-4** | preserves the registered student regularization scale |
-| max epochs | **15** | converts the methodology's "~15 epochs" into a reproducible **maximum** budget |
-| early-stop patience | **3** validation checks | makes the already-required early stopping executable; best-val-mIoU checkpoint selection stays a separate mechanism |
-| BN-statistics freeze | **0.65** of planned optimizer steps | lower registered endpoint of the methodology's 65–70% window |
-| observer freeze | **0.70** of planned optimizer steps | places observer freezing shortly afterwards |
+| epochs | **15, fixed** (AM-4; was "max epochs 15") | no early stopping, so the full quantization schedule always runs |
+| early-stop patience | **none** (AM-4; was 3 validation checks) | withdrawn with early stopping |
+| BN-statistics freeze | **after epoch 10** (AM-4; was 0.65 of planned optimizer steps) | epoch boundary |
+| observer freeze | **after epoch 12** (AM-4; was 0.70 of planned optimizer steps) | epoch boundary |
+| checkpoint selection | **AM-4** — every epoch saved; each converted (QNNPACK) and scored on VAL on CPU; highest converted VAL all-class mIoU, ties → earlier epoch | selection on the deployed INT8 model |
 
 **Batch semantics.** 16 is a **physical** batch. Gradient accumulation is deliberately **not**
 introduced: fake-quant observers and BatchNorm statistics are batch-sensitive, so accumulated
@@ -671,12 +680,18 @@ micro-batches are not equivalent to one true batch of 16. The GPU must accommoda
 batch; if it genuinely cannot, that is an explicit experiment-design issue, not a silent change of
 batch semantics.
 
-**Freeze points and early-stop safety.** Freezes are **optimizer-step fractions** of the planned
-budget, rounded as `round(total_iters * pct)`, floored at step 1, with the observer freeze clamped
-never to precede the BN freeze. Fake quantization runs from step 0. A QAT run must not end before its
-quantization schedule has executed, so **early-stop patience accrues only after observer freeze**;
-best-checkpoint tracking still begins at the first validation. Without that guard a patience of 3 with
-per-epoch validation could terminate around epoch 3–4, before the 65%/70% freezes.
+**Freeze points [AMENDED — AM-4].** Freezes occur at epoch boundaries (BN statistics after epoch 10,
+observers after epoch 12). Fake quantization runs from step 0, and there is no early stopping, so the
+full 15-epoch schedule always runs. *(Was: optimizer-step fractions of the planned budget, rounded as
+`round(total_iters * pct)` and floored at step 1, with the observer freeze clamped never to precede the
+BN freeze, and early-stop patience accruing only after the observer freeze.)* Until lane L-AM4 lands,
+`src/quant/runner.py` still implements the pre-amendment fractions and patience.
+
+> **[AMENDED 2026-09-23 — AM-7]** E1, E2 and E3 share one rule: **no clipping** (E1 seed 42 logged no
+> gradient norm). A NaN/divergence (as defined in AM-7) in any E2/E3 run stops the stage; one clipping
+> rule is then adopted for all three and the FP32 stages are rerun. The `DISTILLATION_GRAD_CLIP_NORM`
+> pilot is **withdrawn**; the E5/E6 (QAT) row below is unchanged. The quote and the table that follow
+> are the pre-amendment record; the E2/E3 launcher gate changes in lane L-AM7.
 
 > **METHODOLOGY DECISION OPEN `[B59 C2, 2026-09-21]`.** The paragraph below records the
 > preregistered reading (PREREGISTRATION U3/U4): clipping is mandatory for E2/E3 and E5/E6, and
@@ -696,8 +711,8 @@ one numeric norm should serve both, so they are selected independently:
 
 | decision | applies to | candidates | selection |
 |---|---|---|---|
-| `DISTILLATION_GRAD_CLIP_NORM` (`configs/distill.py`) | **E2, E3** (same value) | {1.0, 5.0} | pilot on **E2**, λ_logit held at **1.0**, 8,000 iters (10% of official) with validation every 1,000 |
-| `QAT_GRAD_CLIP_NORM` (`configs/quant.py`) | **E5, E6** (same value) | {1.0, 5.0} | pilot on **E5** from the official E1 FP32 checkpoint, 5 epochs (official max stays 15) |
+| ~~`DISTILLATION_GRAD_CLIP_NORM` (`configs/distill.py`)~~ | ~~**E2, E3** (same value)~~ | ~~{1.0, 5.0}~~ | **WITHDRAWN (AM-7)** — ~~pilot on **E2**, λ_logit held at **1.0**, 8,000 iters (10% of official) with validation every 1,000~~ |
+| `QAT_GRAD_CLIP_NORM` (`configs/quant.py`) | **E5, E6** (same value) | {1.0, 5.0} | pilot on **E5** from the official E1 FP32 checkpoint, 5 epochs (official max stays 15); once L-AM4 lands, the pilot compares candidates on converted-model VAL mIoU (AM-4) |
 
 Both: seed **42**, **train + validation only, TEST prohibited**, labelled
 **HYPERPARAMETER SELECTION / PILOT**, excluded from test evaluation, robustness, hypothesis testing
@@ -707,12 +722,15 @@ dataset-level validation mIoU under the identical pilot budget; on a tie within 
 existing validation tie/noise rule prefer **5.0** as the less intrusive threshold. No new significance
 test is invented. The QAT decision never inherits the distillation result.
 
-**Decision order for E2/E3:** select `DISTILLATION_GRAD_CLIP_NORM` → freeze it → run the existing
-λ_logit sweep → freeze λ_logit → official E2/E3 runs. Fixing λ at the grid centre during the clipping
-pilot avoids a 2 × 5 Cartesian search while staying inside the registered grid.
+**Decision order for E2/E3:** ~~select `DISTILLATION_GRAD_CLIP_NORM` → freeze it →~~ run the existing
+λ_logit sweep → freeze λ_logit → official E2/E3 runs. **[AM-7]** The clipping pilot is withdrawn;
+**[AM-2]** fixes the sweep's budget and tie rule. ~~Fixing λ at the grid centre during the clipping
+pilot avoids a 2 × 5 Cartesian search while staying inside the registered grid.~~
 
 `λ_logit` is unchanged — {0.25, 0.5, 1, 2, 4}, seed 42, validation-only, boundary winner reported
-rather than extending the grid. It is not decided here.
+rather than extending the grid. It is not decided here. **[AM-2]** Budget 80,000 iterations per
+candidate; the highest VAL all-class mIoU (each candidate's best-checkpoint value) wins; candidates
+within 0.5 pp of the best are tied → smallest λ; the winner is E2 seed 42.
 
 **Carry forward (manuscript, not resolved here).** Chapter 3 describes E1/E2/E3 as sharing an identical
 recipe and attributes their differences to the distillation objectives, yet applies clipping only to
@@ -848,12 +866,12 @@ Full detail + resolution mechanism in [open_questions.md](open_questions.md); fu
    pending the PlantSeg repo's official convention.
 
 **NEED_TO_CONFIRM (not stated in any source; filled by experiment/selection, never guessed):**
-- `λ_logit` — validation sweep over {0.25, 0.5, 1, 2, 4}, reported Ch4.
-- E6-KD reduced distillation weights (the trigger itself is a METHODOLOGY DECISION OPEN — B59 C4).
+- `λ_logit` — validation sweep over {0.25, 0.5, 1, 2, 4}, reported Ch4. Budget and tie rule fixed by AM-2.
+- ~~E6-KD reduced distillation weights (the trigger itself is a METHODOLOGY DECISION OPEN — B59 C4).~~ **Resolved by AM-3:** 0.5× the E3 weights; VAL trigger.
 - ~~Albumentations version; statsmodels version.~~ Resolved: statsmodels **0.14.6**; Albumentations
   **not applicable** (no dependency) — see §(d) B6 `[B52 §9; B59 A3]`.
-- Multi-seed values beyond seed 42 (for E1/E3 three-seed runs); whether the extra seeds are
-  obligatory is itself a METHODOLOGY DECISION OPEN (B59 D4).
+- ~~Multi-seed values beyond seed 42 (for E1/E3 three-seed runs); whether the extra seeds are
+  obligatory is itself a METHODOLOGY DECISION OPEN (B59 D4).~~ **Resolved by AM-1:** seeds 43 and 44.
 - Final RunPod pod type / GPU / CPU model / CUDA image (reported Ch4). E1 seed 42 = A40 Secure (B52);
   teacher GPU pending a measured batch-16 VRAM reading (G2).
 - **METHODOLOGY DECISIONS registered by B59 (2026-09-21):**
@@ -866,13 +884,14 @@ Full detail + resolution mechanism in [open_questions.md](open_questions.md); fu
     - NMF/Hamburger RNG control (M4): `rand_init=True`, isolated streams M4-T / M4-V / M4-KD;
     - teacher checkpoint selection under M4 (M12);
     - teacher CE ignore normalisation, `avg_non_ignore=True` (M13, new).
-  - **Still OPEN:**
-    - E2/E3 clipping and `max_norm` (M1);
-    - λ sweep run length and noise band (M6);
-    - E6-KD trigger and weights (M7);
-    - multi-seed obligation (M8);
-    - QAT checkpoint rule (M9);
-    - handling of a TEST mask whose final 512 canvas holds zero disease pixels (M10).
+  - **LOCKED by B64 amendments (2026-09-23; [PREREGISTRATION_AMENDMENTS.md](PREREGISTRATION_AMENDMENTS.md)):**
+    - E1/E2/E3 clipping — one rule, no clipping (M1, AM-7);
+    - λ sweep run length and tie band — 80,000 iterations per candidate, 0.5 pp tie band (M6, AM-2);
+    - E6-KD trigger and weights — VAL trigger on converted E6, 0.5× weights (M7, AM-3);
+    - seeds — 42, 43, 44 (M8, AM-1);
+    - QAT schedule and checkpoint rule — 15 fixed epochs, converted-VAL selection (M9, AM-4);
+    - TEST images with zero disease pixels — excluded from per-image analyses, counted (M10, AM-5).
+  - **Still OPEN:** none.
 
   Detail: `reports/b59_pre_runpod_reconciliation.md`; `reports/b61_teacher_nmf_checkpoint_selection_lock.md`;
   `docs/open_questions.md`.

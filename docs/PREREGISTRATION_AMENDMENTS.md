@@ -1,0 +1,211 @@
+# Pre-registration amendments (dated)
+
+`docs/PREREGISTRATION.md` (added `fcc8acc`, anchor `569cfbb`, 2026-09-05) stays **frozen**. Its evidentiary
+value depends on never being edited (`docs/conflicts.md` #13). A change to a pre-registered commitment is
+recorded here instead. Each amendment is dated and numbered, names the register item it resolves, and
+leaves the original readable beside it.
+
+**Ordering evidence.** All amendments below are dated **2026-09-23** (B64). At that date:
+- the only completed thesis training run is **E1 seed 42**, scored on VALIDATION only
+  (`reports/b52_e1_seed42_completion.md`);
+- no teacher, E2–E7 or **TEST** result exists for any stage.
+
+| # | Resolves | Subject |
+|---|---|---|
+| AM-1 | M8; PREREGISTRATION §9, U5 | Seeds |
+| AM-2 | M6; PREREGISTRATION §7, U1 | λ_logit sweep budget and tie rule |
+| AM-3 | M7; PREREGISTRATION §6, U2 | E6-KD trigger and weights |
+| AM-4 | M9 | QAT schedule and checkpoint selection |
+| AM-5 | M10 | TEST images with zero disease pixels |
+| AM-6 | G7 | A class absent from TEST ground truth |
+| AM-7 | M1; PREREGISTRATION U3 | Gradient clipping for E1, E2 and E3 |
+| AM-8 | — | Seed-stability criterion and per-seed table |
+| AM-9 | — | **Withdrawn before recording** |
+| AM-10 | — | PTQ calibration |
+| AM-11 | — | Optional controls not run |
+| AM-12 | G5 | Augmentation library naming |
+| AM-13 | (record) | Teacher acceptance and the published comparison |
+| AM-14 | conflicts #9; PREREGISTRATION §12 disagreement 1 | The inferential family |
+
+Code that implements an amendment is named by lane (L-AM…). Until that lane lands, the committed runtime
+keeps its pre-amendment behaviour and its launch gates.
+
+## AM-1 — Seeds (resolves M8; amends PREREGISTRATION §9 and U5)
+
+Seeds **42 (primary), 43 and 44** for **E1 and E3**.
+- E4/E7 are recomputed per seed.
+- E5/E6 run once per seed and take the seed of their FP32 parent.
+- **E2 runs at seed 42.** Seeds 43 and 44 are optional, budget permitting, with λ fixed from the seed-42
+  sweep (ch3 f.136–137 treats E2 repetition as optional).
+- The teacher is trained once.
+
+All training randomness derives from the run seed, including data order and augmentation: the student
+DataLoader generator follows `--seed` (B64 C1).
+
+The frozen teacher's NMF inference stream stays seeded at 42 in every KD run (M4-KD), so teacher behaviour
+does not depend on the student seed. QAT seeding and determinism flags arrive in lane L-AM1q.
+
+The eight-test Holm family and the E3-vs-E6 non-inferiority check use the **seed-42 models only**. Seeds 43
+and 44 enter only AM-8 and the per-seed table.
+
+## AM-2 — λ_logit sweep (resolves M6; extends PREREGISTRATION §7 and U1)
+
+- **Grid and budget.** {0.25, 0.5, 1, 2, 4} at seed 42, with the **full 80,000 iterations per candidate**.
+- **Selection.** Select the highest dataset-level VAL all-class mIoU. A candidate's value is its
+  best-checkpoint VAL all-class mIoU (strict >, earliest tie, as E1).
+- **Ties.** Candidates within **0.5 percentage points** of the best are tied, and the tie goes to the
+  **smallest λ**.
+- **Boundary.** A boundary winner is reported as such; the grid is not extended.
+- **Reuse.** The winning run **is E2 seed 42**, and λ is reused unchanged in E3.
+
+## AM-3 — E6-KD trigger and weights (resolves M7; supersedes PREREGISTRATION §6 and U2)
+
+- **Trigger.** E6-KD runs if the E3 → E6 drop in dataset-level **VAL** all-class mIoU is **greater than
+  1.0 percentage point at seed 42**, with E6 scored on the **converted INT8** model.
+- **If triggered.** E6-KD runs at seed 42 only. The Logit-KD and CWD weights are **0.5×** their E3 values,
+  and T is unchanged. E6-KD is descriptive and outside the Holm family.
+- **Withdrawn.** The clean-TEST trigger. The `family.json` E6-KD block stays a descriptive TEST observation
+  and never launches a model.
+
+Code: lane L-AM3.
+
+## AM-4 — QAT (resolves M9)
+
+**Schedule.**
+- **15 epochs, fixed**, with no early stopping.
+- BN statistics are frozen after epoch 10, and observers after epoch 12.
+- Physical batch size **16** (`configs/quant.py` `qat_real_run.batch_size_physical`).
+
+**Selection.**
+- A checkpoint is saved every epoch.
+- After training, each checkpoint is converted (QNNPACK) and scored on VAL on CPU.
+- The evaluated checkpoint is the epoch with the highest converted VAL all-class mIoU; a tie goes to the
+  earlier epoch.
+
+**Supplementary, descriptive.** Each selected QAT model is also scored with fake quantization disabled (its
+FP32 weights after QAT). This separates extra fine-tuning from INT8 adaptation.
+
+**Clipping pilot.** The QAT clipping pilot (U4) stays as registered. Once L-AM4 lands, the pilot compares its
+candidates on converted-model VAL mIoU (AM-4's scoring).
+
+Code: lane L-AM4.
+
+## AM-5 — Zero-disease TEST images (resolves M10)
+
+- TEST images whose evaluated mask has **no disease pixels** are excluded from per-image disease-only
+  analyses: the paired tests and the per-image effect sizes.
+- Their count is reported. They remain in every dataset-level metric.
+- The exclusion depends on ground truth only, so the eligible set is identical across models.
+- **mIoU-C.** Per-image mIoU-C is the mean of the image's per-image disease-class mIoU over its 15 corrupted
+  variants (five corruptions × severities 1–3). The same exclusion applies.
+
+Code: lane L-AM5.
+
+## AM-6 — A class absent from TEST ground truth (resolves G7)
+
+The headline dataset-level mIoU uses the **union-present** convention: a class absent from TEST ground truth
+enters only if it is predicted. A sensitivity mIoU over the classes present in TEST ground truth is reported
+**descriptively**.
+
+Code: lane L-AM6.
+
+## AM-7 — Gradient clipping (resolves M1; withdraws PREREGISTRATION U3)
+
+**Rule.** One clipping rule for E1, E2 and E3.
+- If E1 seed 42 logged gradient norms: max_norm = the smallest value in the 1-2-5 series that is ≥ 1.5 ×
+  its maximum logged norm, applied to all three stages.
+- Otherwise: **no clipping** in any of the three.
+
+A NaN or divergence in any E2/E3 run stops the stage. One clipping rule is then adopted for all three, and
+the FP32 stages are rerun.
+
+**Divergence** means either of:
+- (a) any non-finite loss or gradient norm;
+- (b) after the distillation ramp, the 100-iteration mean total loss exceeding 5× its running minimum.
+
+Both are read from per-iteration telemetry. (b) becomes an in-trainer abort in lane L-AM7.
+
+**Branch applied: "Otherwise".** E1 seed 42 logged no per-iteration gradient norm. Its telemetry `train`
+rows carry `loss, ce, dice, lr, iter, iter_seconds, samples_per_sec, wall_clock`, and `run_meta.grad_clip_norm`
+is null (run directory verified 2026-09-23 against its `SHA256SUMS.txt`). E1, E2 and E3 are therefore
+**unclipped**. From B64 C1 onward, the E1 and KD trainers log the per-iteration total gradient norm.
+
+**Withdrawn.** The 8,000-iteration E2/E3 clip pilot (`DISTILLATION_GRAD_CLIP_NORM`).
+
+Code: lane L-AM7. The E2/E3 real-run launcher still requires `--grad-clip-norm` until that lane lands.
+
+## AM-8 — Seed stability (descriptive; reported at the single TEST evaluation)
+
+Stable iff all three hold:
+- the seed-paired E1 → E3 dataset-level mIoU gain is **positive at all three seeds**;
+- its mean exceeds the larger of the across-seed standard deviations of E1 and E3;
+- the E3 → E6 drop is **below 2.0 percentage points at every seed**.
+
+A per-seed table of dataset-level effects is reported for every planned comparison (descriptive).
+
+The eight-test Holm family and the E3-vs-E6 non-inferiority check use the seed-42 models only. Seeds 43 and
+44 enter only this criterion and the per-seed table.
+
+## AM-9 — Withdrawn before recording
+
+Latency and memory stay on the approved x86 path, with the fbgemm/x86 copy (ch3 f.154).
+
+## AM-10 — PTQ calibration
+
+- The configuration is fixed: the registered qconfig.
+- **128 TRAIN images, seed 42, one image per mini-batch.**
+- One identifier list is shared by E4 and E7.
+- There is no validation-based calibration choice.
+
+Code: lane L-AM10 (enforce a calibration batch of 1).
+
+## AM-11 — Optional controls
+
+The extended-schedule E2 and the α_CWD sensitivity sweep are **not run**. Both are recorded as future work.
+
+## AM-12 — Augmentation library (resolves G5)
+
+The augmentation library is described as the hand-written NumPy/PIL implementation (`src/data/transforms.py`).
+Code is unchanged.
+
+## AM-13 — Teacher acceptance (record)
+
+- **Acceptance.** Teacher acceptance is R3 on VAL: strictly greater than **0.36314016580581665**.
+- **Published comparison.** The comparison with the published 42.05% is descriptive and made at TEST
+  evaluation only.
+- **Upstream-protocol score.** At the single TEST evaluation the teacher is additionally scored under the
+  upstream PlantSeg protocol, descriptively. That protocol is the repository's aspect-ratio-preserving
+  resize, scored against original-resolution ground truth. That score, not the 512-canvas score, is the one
+  compared with 42.05%.
+
+Code: lane L-AM13.
+
+## AM-14 — The inferential family (resolves the family ambiguity, conflicts #9)
+
+The inferential family is the eight tests listed at ch3 f.139. The primary test is a one-tailed Wilcoxon with
+Pratt zeros; the paired t-test is a sensitivity check; correction is Holm step-down. E3 vs E6 is assessed only
+by the paired-BCa non-inferiority check. E1 vs E3 is descriptive.
+
+**Verified read-only, 2026-09-23 (B64). `src/stats` builds exactly this family.**
+- `CANONICAL_COMPARISON_IDS` (`src/stats/tests.py:32-35`) lists these eight in ch3's order.
+- The Holm input `primary_p` is the Wilcoxon p-value (`tests.py:257-258`), with the call pinned at
+  `tests.py:29-30` (`zero_method="pratt"`, `alternative="greater"`). The t-test never enters the family.
+- Holm is step-down with a strict boundary (`tests.py:306-351`).
+- E3 vs E6 exists only as the one-sided BCa non-inferiority task, and E1 vs E3 only as descriptive tasks
+  (`src/stats/bootstrap.py:40-41`, `:117-131`).
+
+No code lane is needed.
+
+## Status of PREREGISTRATION §10 items after these amendments
+
+| Item | Status |
+|---|---|
+| U1 | mechanism completed by AM-2; the value is still selected by the sweep |
+| U2 | AM-3 |
+| U3 | withdrawn by AM-7 |
+| U4 | unchanged (AM-4 fixes only its future scoring) |
+| U5 | AM-1 |
+| U6 | unchanged |
+| U7 | unchanged (D22 deferred) |
+| U8 | stale; hardware is logged at run time |
+| U9 | superseded by M4 (B61) |

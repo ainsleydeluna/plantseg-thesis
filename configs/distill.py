@@ -31,6 +31,14 @@ DISTILL = {
         "sweep_seed": 42,
         "kl_averaging": "valid (non-255) pixels only",
         "reused_unchanged_in_e3": True,
+        # AM-2 (docs/PREREGISTRATION_AMENDMENTS.md): sweep budget and tie rule. lambda_logit itself stays
+        # NEED_TO_CONFIRM above until the sweep selects it.
+        "lambda_sweep_iters_per_candidate": 80000,
+        "lambda_sweep_selection_value": "each candidate's best-checkpoint VAL all-class mIoU (strict >, earliest tie)",
+        "lambda_sweep_tie_band_pp": 0.5,
+        "lambda_sweep_tie_rule": "smallest lambda among candidates within 0.5 pp of the best",
+        "lambda_sweep_winner_is_e2_seed42": True,
+        "amended_by": "AM-2",
     },
 
     # E3: + Channel-Wise KD (Shu 2021)
@@ -52,6 +60,10 @@ DISTILL = {
     # Combined E3 objective
     "e3_total_loss": "L_CE + L_Dice + lambda_logit*L_LogitKD + 50*L_CWD_feat + 3*L_CWD_logit",
 
+    # ---------------------------------------------------- AMENDED 2026-09-23 by AM-7
+    # WITHDRAWN by AM-7 (docs/PREREGISTRATION_AMENDMENTS.md): E1, E2 and E3 share one rule, no clipping.
+    # The block below is the pre-amendment launcher surface until lane L-AM7 (train_distill real-run
+    # gate + smoke_realrun_decisions) lands; its values are deliberately left unchanged here.
     # ---------------------------------------------------- E2/E3 gradient clipping (PREREGISTERED)
     # Chapter 3 requires global-norm clipping THROUGHOUT distillation training but names no threshold,
     # and no primary source supplies one (the KD/CWD papers report optimizer, schedule, temperature and

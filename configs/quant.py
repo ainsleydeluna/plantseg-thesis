@@ -6,6 +6,11 @@
 # Analysis/config artifact only — contains NO training logic.
 
 QUANT = {
+    # AMENDED 2026-09-23 by AM-4 (docs/PREREGISTRATION_AMENDMENTS.md): 15 fixed epochs, no early stopping,
+    # BN freeze after epoch 10, observers after epoch 12, per-epoch checkpoints selected on converted
+    # (QNNPACK) VAL mIoU on CPU. The "qat" and "qat_real_run" values below remain the runtime surface
+    # (read by src/quant/runner.py and scripts/smoke_realrun_decisions.py) until lane L-AM4 changes the
+    # runner, these values and the smokes together.
     # INT8 Quantization-Aware Training (E5 from E1; E6 from E3 head-removed, identical config to E5)
     "qat": {
         "backend": "QNNPACK",
@@ -30,7 +35,8 @@ QUANT = {
         "standalone_ops": ("Hard-Swish", "Hardsigmoid"),
         "e5_from": "E1",
         "e6_from": "E3 (CWD head removed)",
-        "e6kd_reduced_weights": "NEED_TO_CONFIRM",   # contingency only if E3->E6 clean mIoU drop > 1.0 pp
+        # AM-3: triggered by the E3->E6 VAL drop (E6 converted INT8) > 1.0 pp at seed 42.
+        "e6kd_reduced_weights": "0.5x the E3 lambda_logit, alpha_cwd and beta_cwd; T unchanged (AM-3)",
     },
 
     # ---------------------------------------------------------------- E5/E6 real-run controls
@@ -126,7 +132,8 @@ QUANT = {
         "activation_quant": "per-tensor asymmetric UINT8",
         "e4_from": "E1",
         "e7_from": "E3 (CWD head removed)",
-        "selection": "config selected on validation, reported on test",
+        "selection": "fixed registered qconfig; no validation-based calibration choice (AM-10); reported on test",
+        "calibration_batch_size": 1,                 # AM-10: one image per mini-batch (enforced in lane L-AM10)
     },
 
     # Sigmoid FixedQParams fix for the LR-ASPP global-pool branch (gate before E4)
