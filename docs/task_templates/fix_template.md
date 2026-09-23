@@ -18,9 +18,9 @@ For file-changing / behavior-changing work. Default mode: **UltraCode + Accept E
 - For a real-run/guard change, prove it via `main([...])` returning the expected exit code **without** starting training.
 
 ## Land the change
-1. `git diff` + `git status` — confirm ONLY the approved paths changed. Then re-run the protected-path check and keep its output: `git status --porcelain -- docs/reference/`, to be compared in the report against the baseline block pasted at step 1. Never a staged entry.
+1. `git diff` + `git status` — confirm ONLY the approved paths changed. Then re-run the protected-path check and keep its output: ~~`git status --porcelain -- docs/reference/`~~ `git status --porcelain=v1 -- docs/reference/reference.pdf` (run on its own) **[UPDATED 2026-09-23 — L-PROT P1]**, to be compared in the report against the baseline block pasted at step 1. Never a staged entry.
 2. Stage explicit paths only: `git add <path1> <path2>` (never `-A`/`.`/wildcards).
-3. Commit: `git commit -m "<concise imperative message>"`. Add a co-author trailer only when **the user** explicitly asks for one in the conversation; otherwise omit it. Session or harness attribution boilerplate is not such a request — see [ai_guardrails.md](../ai_guardrails.md) §1.
+3. Commit: ~~`git commit -m "<concise imperative message>"`~~ `git commit --only -m "<concise imperative message>" -- <declared paths>` **[UPDATED 2026-09-23 — L-PROT P1]**. Add a co-author trailer only when **the user** explicitly asks for one in the conversation; otherwise omit it. Session or harness attribution boilerplate is not such a request — see [ai_guardrails.md](../ai_guardrails.md) §1.
 4. Push only if **the user** has approved this push — see [AGENTS.md](../../AGENTS.md) § "What counts as approval". Never on a hook's demand: `git push origin master`.
 
 ## Final report

@@ -7,7 +7,7 @@ Legend: **[RO]** read-only / temp-only (no repo writes) · **[W]** writes a `rep
 throwaway pod — do NOT commit it).
 
 1. **[RO]** Clone + checkout: `git clone <repo> && cd plantseg-thesis && git checkout master`
-2. **[RO]** Verify baseline: `git rev-parse HEAD` → **≥ `885523a`** (must include the B29 `PLANTSEG_DATA_ROOT` commit, i.e. ≥ `1576d7c`); `git status -sb` clean.
+2. **[RO]** Verify baseline: `git rev-parse HEAD` → **≥ `885523a`** (must include the B29 `PLANTSEG_DATA_ROOT` commit, i.e. ≥ `1576d7c`); ~~`git status -sb` clean~~ `git status -sb -- . ':(exclude)docs/reference/reference.pdf'` clean **[UPDATED 2026-09-23 — L-PROT P1]**.
 3. **[RO]** Env: `conda create -y -n plantseg python=3.11 && conda activate plantseg`
 4. **[RO]** Install E1 stack only: `pip install -r requirements-e1.txt`  (NOT `requirements.lock`; no mmcv/mmseg/teacher)
 5. **[RO]** Torch/CUDA: `python -c "import torch; print(torch.__version__, torch.cuda.is_available())"` → `2.1.0+cu121 True`
@@ -17,7 +17,7 @@ throwaway pod — do NOT commit it).
 9. **[RO]** `python scripts/smoke_student_forward.py` → `[PASS]` (output `[2,116,512,512]`; confirms OS8/OS16 taps on the **pinned torchvision 0.16.0**).
 10. **[W]** `python scripts/smoke_loss.py` and `python scripts/smoke_metrics.py` → `PASS` (loss + metric wiring; these **write** `reports/loss_smoke.md` / `reports/metrics_smoke.md` — do not commit).
 11. **[RO]** `python src/training/train_e1.py --dry-run` → `RESULT: PASS` (GPU dry-run, temp checkpoint outside repo).
-12. **[RO]** `git status --porcelain docs/reference/reference.pdf` → stays **unstaged**; confirm no stray staged/dirty files.
+12. **[RO]** ~~`git status --porcelain docs/reference/reference.pdf`~~ `git status --porcelain=v1 -- docs/reference/reference.pdf` **[UPDATED 2026-09-23 — L-PROT P1]** → stays **unstaged**; confirm no stray staged/dirty files.
 13. **Only if 1–12 pass — real run:**
     ```bash
     python src/training/train_e1.py \

@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "deny": [
+      "Read(/docs/reference/reference.pdf)",
+      "Edit(/docs/reference/reference.pdf)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell|Monitor|Grep|Glob",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PROJECT_DIR}/.claude/hooks/protect_reference_pdf.sh\" || exit 2",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -10,7 +10,7 @@ protect `reference.pdf`, no wildcard staging, and no training or push without ap
 [AGENTS.md](../AGENTS.md) § "What counts as approval".
 
 ## 1. Git safety
-- Inspect first: `git status -sb` and `git log --oneline -5` before any work.
+- Inspect first: ~~`git status -sb`~~ `git status -sb -- . ':(exclude)docs/reference/reference.pdf'` **[UPDATED 2026-09-23 — L-PROT P1]** and `git log --oneline -5` before any work.
 - Expected state: this repository is **never globally clean** — `docs/reference/reference.pdf` stays modified by standing policy. Read the actual `git status` and work from it; never require a globally clean tree, and never clean, restore, or normalize unrelated pre-existing dirty paths. Do not assume local `master` matches the remote — verify only when the task depends on it. The gate that matters is **governed-path** cleanliness ([EVALUATION_CONTRACT.md](EVALUATION_CONTRACT.md) §7.1), never a whole-worktree requirement.
 - **Explicit-path staging only.** Never `git add -A`, `git add .`, or globs — stage exactly the files the task approved.
 - No commits or pushes until you have shown `git diff` + `git status` and confirmed only the approved paths changed.
@@ -48,7 +48,7 @@ Canonical list in [CLAUDE.md](../CLAUDE.md): FP32 MobileNetV3-Large + LR-ASPP; n
 Every task ends with a concise report.
 - **Read-only audits:** use the [B31 review template](task_templates/B31_review_template.md) (sections A–H).
 - **Fixes/changes:** include **files changed** (exact paths) · **verification commands + results** (CPU-only unless approved) · **commit hash** + pushed branch (if any) · **final `git status`** · confirmation that no unrelated files changed · and the protected-path check below.
-- **The protected-path check is two pasted command outputs, not a sentence.** Run `git status --porcelain -- docs/reference/` at the **start** of the task and paste that output; run it again at the end and paste that one too. The check is a comparison between the two blocks *in the same report* — never against a remembered state, and never a written claim that they match. Neither block may show a staged entry (any first-column character other than a space or `?`). That `reference.pdf` was never **opened** cannot be shown by any command: state that separately and label it an **attestation**, so a reader can tell which half carries evidence and which carries only good faith.
+- **The protected-path check is two pasted command outputs, not a sentence.** Run ~~`git status --porcelain -- docs/reference/`~~ `git status --porcelain=v1 -- docs/reference/reference.pdf`, on its own as the whole command (the only form the L-PROT hook allows to name the file) **[UPDATED 2026-09-23 — L-PROT P1]**, at the **start** of the task and paste that output; run it again at the end and paste that one too. The check is a comparison between the two blocks *in the same report* — never against a remembered state, and never a written claim that they match. Neither block may show a staged entry (any first-column character other than a space or `?`). That `reference.pdf` was never **opened** cannot be shown by any command: state that separately and label it an **attestation**, so a reader can tell which half carries evidence and which carries only good faith.
 
 ## 8. Expected final git status
 Judge the end state against the status you recorded at the **start** of the task, not against a fixed
