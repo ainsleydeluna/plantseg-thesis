@@ -120,8 +120,12 @@
 > 2**. **Until then the runtime must not be used for an official teacher run.**
 >
 > **[UPDATED 2026-09-22 — B62]** Implemented in the B62 working tree and CPU-validated
-> (`reports/b62_teacher_runtime_reconciliation.md`); pending review and commit, the new hash freeze (§4a
-> step 8) and a G20-style CUDA re-canary. The pre-B62 runtime above is superseded.
+> (`reports/b62_teacher_runtime_reconciliation.md`); ~~pending review and commit, the new hash freeze (§4a
+> step 8) and a G20-style CUDA re-canary~~. The pre-B62 runtime above is superseded.
+> **[UPDATED 2026-09-23 — B62 freeze]** Committed and published as
+> `3c43f89686eb80674aaf300d1acc8c12abffe274`; its commit-based runtime hash freeze is recorded in §4a step 8.
+> The G20-style CUDA re-canary, G2, the official TRAIN/VAL preflight and an explicit teacher-training GO
+> are still pending. **OFFICIAL TEACHER = NO-GO.**
 | Runtime | seed | **42** + determinism flags (§11) | `[ch3 §D; ctx]` |
 
 **CWD tap (for downstream E3, recorded here so the teacher config exposes it):** the teacher **stride-16
@@ -198,7 +202,8 @@ tell you which source bytes executed.
 | | Identity |
 |---|---|
 | **Container / environment** | `ghcr.io/ainsleydeluna/plantseg-thesis@sha256:cb413304e2445e5c8ac3786f7a370f2ed05a07d11843b11687bb9eb23dc32c2b` |
-| **Runtime source (G20)** | detached checkout `0bb69961dfedcb4d00ff42990a6543f5dda505ec` |
+| **Runtime source — CURRENT (B62 commit-based freeze)** | detached checkout `3c43f89686eb80674aaf300d1acc8c12abffe274`, tree `875d520f93ca2e543c51948d1dbb3057bfd4baf5` |
+| ~~Runtime source (G20)~~ | **SUPERSEDED** — detached checkout `0bb69961dfedcb4d00ff42990a6543f5dda505ec`, the pre-B62 runtime the G20 canary ran on (historical) |
 
 The image's own baked `src/`/`scripts/` are **older than the runtime source** — they come from the E1
 base at `f77d05d7…` and contain no `teacher_runner.py` — and on RunPod the `/workspace` volume can
@@ -243,17 +248,21 @@ cd /workspace/plantseg-thesis
 **5 — Check out the runtime commit, detached.**
 
 ```bash
-git checkout --detach 0bb69961dfedcb4d00ff42990a6543f5dda505ec
+git checkout --detach 3c43f89686eb80674aaf300d1acc8c12abffe274
 ```
 
-**6 — Require the exact HEAD literal.**
+**6 — Require the exact HEAD and tree literals.**
 
 ```bash
-git rev-parse HEAD     # must print exactly:
-                       # 0bb69961dfedcb4d00ff42990a6543f5dda505ec
+git rev-parse HEAD          # must print exactly:
+                            # 3c43f89686eb80674aaf300d1acc8c12abffe274
+git rev-parse 'HEAD^{tree}' # must print exactly:
+                            # 875d520f93ca2e543c51948d1dbb3057bfd4baf5
 ```
 
-A different value — including any later commit — means STOP, not "close enough".
+A different value — including any later commit — means STOP, not "close enough". A later commit that
+changes only documentation is still not the runtime commit: check out `3c43f89…` itself. (The superseded
+G20 runtime commit was `0bb69961dfedcb4d00ff42990a6543f5dda505ec`.)
 
 **7 — Require the governed runtime paths clean**, with explicit pathspecs:
 
@@ -265,38 +274,107 @@ git status --porcelain -- src configs scripts requirements-e1.txt requirements.l
 Empty output is the pass condition.
 
 **8 — Verify the runtime-critical files by SHA-256.** These are the bytes that decide
-determinism behaviour, so they are checked directly rather than inferred from the commit:
+determinism behaviour, so they are checked directly rather than inferred from the commit.
 
-> **[B62] The table below is SUPERSEDED — historical (pre-B62, the G20 canary runtime).** B62 changes the
-> config and the launcher and adds `src/training/teacher_components.py`, `src/distill/nmf_stream.py` and
-> `src/data/isolation.py` to the runtime-critical set; `teacher_runner.py` is unchanged. The new expected
-> values are recorded **at the B62 freeze, after the commit**, and a G20-style CUDA re-canary must pass on
-> those bytes before any official launch. Do not launch against this table.
+**CURRENT — B62 commit-based freeze (2026-09-23).**
+
+| | |
+|---|---|
+| Freeze status | **COMMIT-BASED** |
+| Runtime commit | `3c43f89686eb80674aaf300d1acc8c12abffe274` (B62; parent `5ecdd843ab340e212ffa47c17732fb88cf1a68c9`) |
+| Commit tree | `875d520f93ca2e543c51948d1dbb3057bfd4baf5` |
+| Hash source | the exact file bytes stored in that commit's Git tree (`git show <commit>:<path>`), **not** working-tree bytes |
+
+**Scope.** The table has nine rows: the files whose bytes decide what the official teacher run does. It
+holds exactly the set the launch record hashes about itself, so every row can be compared after launch and
+every self-hash has a row. Each row's role:
+- `teacher_runner.py`: G18 determinism seam, unchanged by B62;
+- the launcher: M11, SHA and governed-clean gates, locked-config check, launch;
+- the teacher config;
+- `teacher_components.py`: the M2/M3 transforms, the M4 isolated NMF head, the M12 metric and hooks, and
+  the 150→116 init rule;
+- the E1 preprocessing it reuses, `transforms.py` and `augment.py`;
+- the M12 metric reducer, `metrics.py`;
+- the M4 NMF stream, `nmf_stream.py`;
+- the M11 isolation check, `isolation.py`.
 
 ```bash
 sha256sum src/training/teacher_runner.py \
           scripts/launch_teacher_finetune.py \
-          configs/teacher/segnext_mscan-b_1xb16-adamw-40k_plantseg116-512x512.py
+          configs/teacher/segnext_mscan-b_1xb16-adamw-40k_plantseg116-512x512.py \
+          src/training/teacher_components.py \
+          src/data/transforms.py \
+          configs/augment.py \
+          src/eval/metrics.py \
+          src/distill/nmf_stream.py \
+          src/data/isolation.py
 ```
 
-| File | Expected SHA-256 |
-|---|---|
-| `src/training/teacher_runner.py` | `72206af7e00939bd02f69c99fc5f428adeca10911d657e72279dce784c1a2d0e` |
-| `scripts/launch_teacher_finetune.py` | `5857527622ea3dc4b12fc316a410e8144eb06ffa5199e002ad1b3c957c89ac7e` |
-| `configs/teacher/segnext_mscan-b_1xb16-adamw-40k_plantseg116-512x512.py` | `510b212b0ea36782baf47980cf10884f79e6798e2332366b51f6a206d5911ab5` |
+| File | Expected SHA-256 (committed bytes) | Git blob | Role |
+|---|---|---|---|
+| `src/training/teacher_runner.py` | `72206af7e00939bd02f69c99fc5f428adeca10911d657e72279dce784c1a2d0e` | `7ceb85eb5a621ce0cc6ed0f1a357fd60f23e99a7` | G18 determinism seam |
+| `scripts/launch_teacher_finetune.py` | `47537c016bde8a0119c625a04b31fbf4227924ad7cb201062bffbad69e8419a1` | `98509d2351bd475064edca9fecf08aabd80cd363` | launch gates and launch |
+| `configs/teacher/segnext_mscan-b_1xb16-adamw-40k_plantseg116-512x512.py` | `1b94aa32a7d22be647d8e60a42daa1dd8dd756158b586feec6465385e299ae4a` | `3c6a7b28ebad5fce6187c307f87fd7fc91f81933` | official teacher config |
+| `src/training/teacher_components.py` | `1b46680c6d03982c84387cc3c3ea78eb14de7ec643ac3b55b1937ef7cbf63025` | `33a2b6980e93c615483236522d1294916ef3441b` | M2/M3/M4/M12 components, init rule |
+| `src/data/transforms.py` | `df920496cf8710442ae6311b7538c8d3f5d67152a06d0ec1f1c05afc3307193b` | `b68c1d25cbcedab22f89d45faac936471bdba98e` | M2/M3 preprocessing (reused E1) |
+| `configs/augment.py` | `8c450f30aedb20b213916d90c054c155906bf4ae49302b5c8d0aedfaf0b1dded` | `29061da522bd099c6e513bd6e7bede1487ad6238` | M2 augmentation parameters |
+| `src/eval/metrics.py` | `9898d6dc0ec68f15c8c90cebb5889914c0a2de2e3bd409c3fba9ba14e1be86d9` | `cbd5fa86db928529299a7dfff7c845137bda7e82` | M12 metric reducer |
+| `src/distill/nmf_stream.py` | `053e53cc441d58a2477affbd281331d7321dd2023e9f09c9f75010b9b36a64d4` | `f0a1d4fcda085e9a0e8bc769158b4baf89914a8e` | M4 private NMF stream |
+| `src/data/isolation.py` | `74a063313cc04c1e327dce22b0faa4ae3a9334a01e6cf7c58eb1bee13c2e5014` | `2f816dd7543779615402d0c03b950e55830805df` | M11 TRAIN/VAL-only check |
 
 `.gitattributes` is `* text=auto eol=lf`, so a checkout has LF endings on every platform and these
-values are portable. The config hash independently matches the reordered config adjudicated in
-[reports/b58_teacher_runner_adjudication.md](../reports/b58_teacher_runner_adjudication.md) §1, so the
-shipped G16 fix is byte-identical to the prototype that was evaluated.
+values are portable: they equal the committed blob bytes.
 
-**Runtime provenance must agree with these bytes.** `teacher_runner.py` hashes its own resolved
-`__file__` before importing torch (`MODULE_PROVENANCE`), the launcher hashes itself
-(`LAUNCHER_SHA256`) and the config (`config_sha256`), and all three are written to
-`teacher_launch_provenance.json` in the work dir. After launch, compare that file's
-`teacher_runner_module.sha256`, `launcher.sha256` and `config.sha256` against the table above. A
-mismatch means the process imported something other than this checkout — the exact failure this step
-exists to catch — and the run is not attributable.
+**Why nine files and not the whole source tree.**
+- **Commit-pinned imports.** Everything else the launch path imports is pinned by the runtime commit
+  (steps 5–6) and by the governed-path check (step 7). That is 21 more repository files: the E1 helpers the
+  launcher reuses from `train_e1.py` and what that module pulls in, the `src/distill/` package, and
+  `src/eval/artifacts.py` / `evaluate.py`, which supply the manifest identity and the governed-path reader.
+- **No import-time state changes.** An audit of those files' module-level statements at this commit found
+  only environment reads, `sys.path` inserts and a consistency assertion; nothing sets torch, numpy or
+  random state at import.
+- **Environment.** MMSegmentation, mmcv, mmengine and torch, including `ham_head.py`, are pinned by the
+  image digest above.
+- **Post-train R3.** `scripts/teacher_readiness_r3.py` and the thesis evaluator run from the same runtime
+  commit. The evaluator artifact records `repo_commit`, the governed-path state and `metric_impl_sha256`,
+  so R3 is anchored by that commit and verified at the R3 gate, not by this table.
+
+**Status of these bytes.**
+- **Passed:** B62 CPU validation, on the host and in the pinned image
+  (`reports/b62_teacher_runtime_reconciliation.md` §4, §11).
+- **Not yet passed:** the G20-style CUDA re-canary, G2 and the official TRAIN/VAL preflight. The re-canary
+  must pass on exactly these bytes before any official launch.
+- **This freeze does not claim** that the runtime has been verified on CUDA.
+- **OFFICIAL TEACHER = NO-GO.**
+
+**Runtime provenance must agree with these bytes.** The launch record `teacher_launch_provenance.json` in
+the work dir carries these self-hashes:
+- `teacher_runner.py` hashes its own resolved `__file__` before importing torch (`MODULE_PROVENANCE`);
+- the launcher hashes itself (`LAUNCHER_SHA256`) and the config (`config_sha256`);
+- `teacher_components.py` hashes itself (`COMPONENTS_PROVENANCE`);
+- `reused_module_hashes()` hashes the modules it relies on.
+
+After launch, compare these fields against the table above:
+- `teacher_runner_module.sha256`, `launcher.sha256` and `config.sha256`;
+- `teacher_components_module.sha256`;
+- every entry of `runtime_module_sha256`: `teacher_components`, `src/data/transforms.py`,
+  `configs/augment.py`, `src/eval/metrics.py`, `src/distill/nmf_stream.py` and `src/data/isolation.py`.
+
+A mismatch means the process imported something other than this checkout, which is the exact failure this
+step exists to catch, and the run is not attributable.
+
+> **SUPERSEDED — historical, pre-B62 (the G20 canary runtime at `0bb69961…`). Do not launch against this
+> table.** B62 changed the config and the launcher and added modules to the runtime-critical set, as
+> listed above.
+>
+> | File | SHA-256 at `0bb69961…` (superseded) |
+> |---|---|
+> | `src/training/teacher_runner.py` | `72206af7e00939bd02f69c99fc5f428adeca10911d657e72279dce784c1a2d0e` |
+> | `scripts/launch_teacher_finetune.py` | `5857527622ea3dc4b12fc316a410e8144eb06ffa5199e002ad1b3c957c89ac7e` |
+> | `configs/teacher/segnext_mscan-b_1xb16-adamw-40k_plantseg116-512x512.py` | `510b212b0ea36782baf47980cf10884f79e6798e2332366b51f6a206d5911ab5` |
+>
+> That config hash matched the reordered config adjudicated in
+> [reports/b58_teacher_runner_adjudication.md](../reports/b58_teacher_runner_adjudication.md) §1.
 
 **9 — No stale bytecode.** A `__pycache__` left by an earlier checkout can shadow a module you just
 replaced. Ensure the fresh clone carries none, and invoke every command with `python -B` so the run
@@ -326,8 +404,10 @@ process environment, which is what step 1's image supplies.
 
 > **Not covered by this section.** Checkpoint readiness (the gated `mim` download, hash verification,
 > init/load test and 116-class key audit) is a separate gate and is not closed by following the steps
-> above. **G20's first-forward CUDA attestation is CLOSED — G20 PASS, 2026-09-21** (B59 §11), with the
-> runtime commit and hashes above. G20 does not replace the official run's own first-train and
+> above. **G20's first-forward CUDA attestation is CLOSED — G20 PASS, 2026-09-21** (B59 §11), on the
+> **superseded** pre-B62 runtime `0bb69961…` and its hashes (the SUPERSEDED table in step 8). It does not
+> carry over to the B62 runtime: **a G20-style CUDA re-canary on `3c43f89…` has NOT yet been run** and must
+> pass before any official launch. G20 does not replace the official run's own first-train and
 > first-validation attestations.
 >
 > **Operational findings from the G20 pod (apply to the official run):**
@@ -381,7 +461,7 @@ The re-head is a **runner-level weight load**, not a resume and not backbone `in
   historical evidence trail. An earlier version of this bullet said "set the NMF seed". No such control
   exists in upstream. **[B62]** The M4 control is implemented (`IsolatedNMF2D` /
   `TeacherNMFEvalStreamHook` in `src/training/teacher_components.py`; M4-KD in the frozen-teacher adapter);
-  freeze and re-canary pending.
+  frozen at `3c43f89…` (§4a step 8); CUDA re-canary pending.
   - **Pinned source.** With the inherited `rand_init=True`, every decode-head forward — training
     **and** evaluation — draws fresh NMF bases via `torch.rand((B*S, D, R))` on the CPU default
     generator (mmseg 1.2.2 `ham_head.py:89-90,123`, sha256 `eb2f0963…`).
@@ -559,14 +639,15 @@ The teacher and every student stage **must** share these, or distillation/compar
   reading (G2; §7). Reported in Ch4.
 - Recovered teacher mIoU (produced by the fine-tune run; out of preparation scope).
 - **METHODOLOGY DECISIONS (B59), status as of B60 (2026-09-22):**
-  - **LOCKED; runtime implemented by B62 (freeze + re-canary pending):**
+  - **LOCKED; runtime implemented by B62 (frozen at `3c43f89…`; CUDA re-canary pending):**
     - teacher acceptance / readiness (M5; §1, §9);
     - teacher train augmentation (M2; §3);
     - teacher train/eval scaling (M3; §3, §11);
     - schedule details: warmup 1,500, poly power 1.0, end 40,000, validation every 4,000 (M5);
     - TRAIN/VAL-only data root replacing the TEST filename count (M11; §3, §4a).
   - ~~**Still OPEN:** NMF/Hamburger RNG control (M4; §6); the operational checkpoint-selection rule
-    (M12).~~ **[B61, 2026-09-22] LOCKED; runtime implemented by B62 (freeze + re-canary pending):**
+    (M12).~~ **[B61, 2026-09-22] LOCKED; runtime implemented by B62 (frozen at `3c43f89…`; CUDA re-canary
+    pending):**
     - NMF/Hamburger RNG control, M4-T / M4-V / M4-KD (M4; §6);
     - the operational checkpoint-selection rule (M12; §3);
     - teacher CE ignore normalisation, `avg_non_ignore=True` (M13, new; §3).
