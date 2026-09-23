@@ -6,7 +6,7 @@ safe order. Full detail: ~~[reports/e1_runpod_launch_runbook.md](../../reports/e
 Legend: **[RO]** read-only / temp-only (no repo writes) · **[W]** writes a `reports/*.md` (fine on the
 throwaway pod — do NOT commit it).
 
-1. **[RO]** Clone + checkout: `git clone <repo> && cd plantseg-thesis && git checkout master`
+1. **[RO]** Clone + checkout: ~~`git clone <repo> && cd plantseg-thesis && git checkout master`~~ `git clone <repo> && cd plantseg-thesis && git checkout claude/keen-curie-u4a8ig` (the canonical branch; AGENTS.md:10) **[UPDATED 2026-09-23 — B64 C6]**
 2. **[RO]** Verify baseline: `git rev-parse HEAD` → **≥ `885523a`** (must include the B29 `PLANTSEG_DATA_ROOT` commit, i.e. ≥ `1576d7c`); ~~`git status -sb` clean~~ `git status -sb -- . ':(exclude)docs/reference/reference.pdf'` clean **[UPDATED 2026-09-23 — L-PROT P1]**.
 3. **[RO]** Env: `conda create -y -n plantseg python=3.11 && conda activate plantseg`
 4. **[RO]** Install E1 stack only: `pip install -r requirements-e1.txt`  (NOT `requirements.lock`; no mmcv/mmseg/teacher)

@@ -26,6 +26,7 @@ leaves the original readable beside it.
 | AM-12 | G5 | Augmentation library naming |
 | AM-13 | (record) | Teacher acceptance and the published comparison |
 | AM-14 | conflicts #9; PREREGISTRATION §12 disagreement 1 | The inferential family |
+| AM-15 | DL-14 (completes AM-11) | Contingencies not invoked |
 
 Code that implements an amendment is named by lane (L-AM…). Until that lane lands, the committed runtime
 keeps its pre-amendment behaviour and its launch gates.
@@ -195,6 +196,11 @@ by the paired-BCa non-inferiority check. E1 vs E3 is descriptive.
   (`src/stats/bootstrap.py:40-41`, `:117-131`).
 
 No code lane is needed.
+
+## AM-15 — Contingencies not invoked (completes DL-14)
+The DIST fallback and the 'E2 as distilled deliverable' switch are not invoked under any outcome: E6 is
+always built from E3, and E3 is reported whatever its result against E2. Dated 2026-09-23; no teacher,
+E2–E7 or TEST result exists.
 
 ## Status of PREREGISTRATION §10 items after these amendments
 

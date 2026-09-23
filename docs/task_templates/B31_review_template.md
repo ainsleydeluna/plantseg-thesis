@@ -6,7 +6,7 @@ later.** See [CLAUDE.md](../../CLAUDE.md) and [ai_guardrails.md](../ai_guardrail
 ## Standing rules for a review pass
 - Read-only: **inspect → report only**. No edits, commits, pushes, training, downloads, installs, GPU, or dataset changes.
 - Protect `docs/reference/reference.pdf` (never open/stage/modify).
-- Start by confirming git state: branch `master` and HEAD ≥ the `885523a` safety floor, then read the **actual** `git status` and report from what it shows — never require a globally clean worktree, leave unrelated pre-existing dirty paths untouched, and do not assume local `master` matches the remote (verify only if this review depends on it). Confirming state is read-only: nothing is edited or staged.
+- Start by confirming git state: ~~branch `master`~~ branch `claude/keen-curie-u4a8ig` (`master` is fast-forwarded to it at every push; AGENTS.md:10) **[UPDATED 2026-09-23 — B64 C6]** and HEAD ≥ the `885523a` safety floor, then read the **actual** `git status` and report from what it shows — never require a globally clean worktree, leave unrelated pre-existing dirty paths untouched, and do not assume local `master` matches the remote (verify only if this review depends on it). Confirming state is read-only: nothing is edited or staged.
 
 ## Fill-in scope (state these in the task prompt)
 - **Task goal:** <what subsystem/behavior is being audited>

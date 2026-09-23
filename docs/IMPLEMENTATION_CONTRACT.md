@@ -413,7 +413,7 @@ peak on CUDA at batch 16", which omitted that transient.)*
   measured:** no cross-process comparison of a CUDA training run exists, and that measurement
   predates the project's first GPU execution (2026-09-09, B42). Runs are comparable in
   distribution; they are not bitwise-comparable across different `num_workers`. Record the value
-  in Ch4 with the seed. Compare `:825-837`, which scopes and dates its own byte-identity flag.
+  in Ch4 with the seed. Compare ~~`:825-837`~~ §(f), **Corruption dependency pins — REGISTERED and EXECUTABLY VALIDATED (corruption closure only)**, the "Two phases, never collapsed into one Boolean" flag block **[UPDATED 2026-09-23 — B64 C6]**, which scopes and dates its own byte-identity flag.
 - **Bitwise identity of training *results* is not claimed, and ch3 does not claim it** `[ch3 §D]`.
   ch3 §D states that "floating-point variation may remain across GPU classes and compiled CUDA
   kernels", and specifies "mean ± SD reported across completed seeds" rather than bitwise

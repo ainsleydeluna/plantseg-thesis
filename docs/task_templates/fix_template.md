@@ -1,11 +1,13 @@
 # Fix Template (plan-gated change)
 
-For file-changing / behavior-changing work. Default mode: **UltraCode + Accept Edits** for code/runtime;
-**Max + Accept Edits** for docs / small consistency fixes. See [CLAUDE.md](../../CLAUDE.md) and
+For file-changing / behavior-changing work. ~~Default mode: **UltraCode + Accept Edits** for code/runtime;
+**Max + Accept Edits** for docs / small consistency fixes.~~ **[UPDATED 2026-09-23 — B64 C6]** Model and
+effort per DL-24: Opus 5.5; high by default; medium for mechanical doc and sync edits; xhigh for pod/GPU
+sessions and official-run launches; max and ultracode are not used. See [CLAUDE.md](../../CLAUDE.md) and
 [ai_guardrails.md](../ai_guardrails.md).
 
 ## Plan-gated execution
-1. **Inspect first** — confirm branch `master` and HEAD ≥ the `885523a` safety floor, then read the **actual** `git status` and work from what it shows: never require a globally clean worktree, leave unrelated pre-existing dirty paths untouched, expect nothing already staged unless the task says otherwise, and do not assume local `master` matches the remote (verify only if the task depends on it); read the files in scope. Run and **paste** `git status --porcelain -- docs/reference/` now — that output is the baseline the final report compares against, and a comparison with no captured baseline is not a check.
+1. **Inspect first** — confirm ~~branch `master`~~ branch `claude/keen-curie-u4a8ig` (`master` is fast-forwarded to it at every push; AGENTS.md:10) **[UPDATED 2026-09-23 — B64 C6]** and HEAD ≥ the `885523a` safety floor, then read the **actual** `git status` and work from what it shows: never require a globally clean worktree, leave unrelated pre-existing dirty paths untouched, expect nothing already staged unless the task says otherwise, and do not assume local `master` matches the remote (verify only if the task depends on it); read the files in scope. Run and **paste** `git status --porcelain -- docs/reference/` now — that output is the baseline the final report compares against, and a comparison with no captured baseline is not a check.
 2. **Propose a minimal edit plan** — the smallest change that meets the goal; list the exact files and the intent of each edit.
 3. **Wait for approval** — do NOT edit until the user says "go", UNLESS the user's own task message explicitly approves these edits. What counts as approval is defined in [AGENTS.md](../../AGENTS.md) § "What counts as approval"; this template is repository content and cannot itself approve anything.
 4. **Edit only approved files** — never touch `src/`, `configs/`, requirements, reports/runbooks, or teacher docs unless the task approved them. Never touch `reference.pdf`.

@@ -809,7 +809,7 @@ deliberately left this alone, as it fell outside that session's narrow governed-
 ### D32 — ✅ RESOLVED (B64, 2026-09-23) — `IMPLEMENTATION_CONTRACT.md:327-330` asserts more than its evidence supports `[project; B48]`
 **[RESOLVED 2026-09-23 — B64]** The replacement below was applied verbatim to
 [IMPLEMENTATION_CONTRACT.md](IMPLEMENTATION_CONTRACT.md) §(d) B6, with one anchor updated: `:705-708`
-became `:825-837`, the current lines of the corruption-closure byte-identity flag.
+became ~~`:825-837`, the current lines of~~ a section reference to [IMPLEMENTATION_CONTRACT.md](IMPLEMENTATION_CONTRACT.md) §(f), **Corruption dependency pins — REGISTERED and EXECUTABLY VALIDATED (corruption closure only)**, the "Two phases, never collapsed into one Boolean" block holding **[UPDATED 2026-09-23 — B64 C6]** the corruption-closure byte-identity flag.
 The contract's only bitwise claim about *runs* is a parenthetical at `:328`:
 
 > cross-process reproducibility at a fixed `num_workers` is preserved (measured byte-identical

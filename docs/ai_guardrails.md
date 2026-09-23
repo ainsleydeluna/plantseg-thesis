@@ -40,9 +40,10 @@ protect `reference.pdf`, no wildcard staging, and no training or push without ap
 ## 5. Thesis methodology invariants (E1)
 Canonical list in [CLAUDE.md](../CLAUDE.md): FP32 MobileNetV3-Large + LR-ASPP; no teacher/KD/CWD/QAT/PTQ; `num_classes=116`; background 0; diseases 1–115; `reduce_zero_label=False`; `ignore_index=255` pad-only; `PLANTSEG_DATA_ROOT` portable root; out-of-repo checkpoints; all-class mIoU checkpoint criterion; disease-only mIoU provisional/reporting.
 
-## 6. When to use Max vs UltraCode
-- **Max + Accept Edits:** documentation, read-only audits, runbooks, small consistency/cleanup fixes (stale placeholders, wording), template authoring.
-- **UltraCode + Accept Edits:** behavior-changing code, runtime debugging, RunPod training/debug, and any change to dataset/model/loss/metric/training-loop/quantization logic. Use plan-gated execution (inspect → propose → wait for go / self-verify if pre-approved).
+## 6. ~~When to use Max vs UltraCode~~ Model and effort **[UPDATED 2026-09-23 — B64 C6]**
+- ~~**Max + Accept Edits:** documentation, read-only audits, runbooks, small consistency/cleanup fixes (stale placeholders, wording), template authoring.~~
+- ~~**UltraCode + Accept Edits:** behavior-changing code, runtime debugging, RunPod training/debug, and any change to dataset/model/loss/metric/training-loop/quantization logic. Use plan-gated execution (inspect → propose → wait for go / self-verify if pre-approved).~~
+- **[UPDATED 2026-09-23 — B64 C6]** Model and effort (DL-24): Opus 5.5 everywhere. Claude Code: high by default; medium for mechanical doc and sync edits; xhigh for pod/GPU sessions and official-run launches; max and ultracode are not used; workflows and subagent fan-outs only when a prompt asks for one. Web chat: High by default; Max for deep audits. Plan-gated execution (inspect → propose → wait for go) is unchanged.
 
 ## 7. How to report final results
 Every task ends with a concise report.

@@ -82,7 +82,7 @@ For every comparison, **`delta = candidate − baseline`**, and **positive favou
 | 5 | `accuracy_e4_e7` | E4 | E7 | clean per-image disease-only mIoU | `[ch3]` H₁d support |
 | 6 | `accuracy_e5_e6` | E5 | E6 | clean per-image disease-only mIoU | `[ch3]` 2×2 ablation |
 | 7 | `accuracy_e1_e6` | E1 | E6 | clean per-image disease-only mIoU | `[ch3]` H₁d (ii) |
-| 8 | `robustness_e1_e6` | E1 | E6 | **per-image mIoU-C** | `[ch3]` H₁d (iii) |
+| 8 | `robustness_e1_e6` | E1 | E6 | **per-image mIoU-C** | `[ch3]` H₁d (iii). **[UPDATED 2026-09-23 — B64 C6]** Reported as accuracy on corrupted images; robustness claims come only from RPD/rCD (DL-16). The ID `robustness_e1_e6` is kept for artifact compatibility. |
 
 ### Explicitly EXCLUDED from the primary family
 
