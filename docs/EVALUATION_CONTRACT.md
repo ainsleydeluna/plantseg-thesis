@@ -543,7 +543,7 @@ rule above already guarantees that no code, config, or governing contract differ
 
 ### 7.2 Teacher readiness evaluation (M5-R3) and development data isolation (M11) `[B60, 2026-09-22]`
 
-**Decision locked; runtime implemented by B62 (pending commit, freeze and CUDA re-canary).** Recorded by
+**Decision locked; runtime implemented by B62 (committed `3c43f89`; frozen, runbook §4a; CUDA re-canary pending).** Recorded by
 [reports/b60_teacher_methodology_lock.md](../reports/b60_teacher_methodology_lock.md).
 
 **R3 evaluation semantics.** The teacher readiness number is the **dataset-level all-class mIoU of §3.1**:
@@ -588,7 +588,7 @@ Disease-only mIoU (§3.1) is reported alongside it.
 
 ### 7.3 Teacher NMF evaluation rule (M4-V) and checkpoint selection (M12) `[B61, 2026-09-22]`
 
-**Decision locked; runtime implemented by B62 (pending commit, freeze and CUDA re-canary).** Recorded by
+**Decision locked; runtime implemented by B62 (committed `3c43f89`; frozen, runbook §4a; CUDA re-canary pending).** Recorded by
 [reports/b61_teacher_nmf_checkpoint_selection_lock.md](../reports/b61_teacher_nmf_checkpoint_selection_lock.md).
 
 **Why a rule is needed.** The teacher's LightHamHead keeps upstream `rand_init=True`, so every forward

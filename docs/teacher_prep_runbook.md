@@ -124,7 +124,7 @@
 > step 8) and a G20-style CUDA re-canary~~. The pre-B62 runtime above is superseded.
 > **[UPDATED 2026-09-23 — B62 freeze]** Committed and published as
 > `3c43f89686eb80674aaf300d1acc8c12abffe274`; its commit-based runtime hash freeze is recorded in §4a step 8.
-> The G20-style CUDA re-canary, G2, the official TRAIN/VAL preflight and an explicit teacher-training GO
+> The G20-style CUDA re-canary, G21, the official TRAIN/VAL preflight and an explicit teacher-training GO
 > are still pending. **OFFICIAL TEACHER = NO-GO.**
 | Runtime | seed | **42** + determinism flags (§11) | `[ch3 §D; ctx]` |
 
@@ -342,7 +342,7 @@ values are portable: they equal the committed blob bytes.
 **Status of these bytes.**
 - **Passed:** B62 CPU validation, on the host and in the pinned image
   (`reports/b62_teacher_runtime_reconciliation.md` §4, §11).
-- **Not yet passed:** the G20-style CUDA re-canary, G2 and the official TRAIN/VAL preflight. The re-canary
+- **Not yet passed:** the G20-style CUDA re-canary, G21 and the official TRAIN/VAL preflight. The re-canary
   must pass on exactly these bytes before any official launch.
 - **This freeze does not claim** that the runtime has been verified on CUDA.
 - **OFFICIAL TEACHER = NO-GO.**
@@ -511,7 +511,7 @@ The re-head is a **runner-level weight load**, not a resume and not backbone `in
   peak (D30) also applies to the teacher's loss-path resize to 512×512 at 116 classes. Estimates
   therefore cannot size the card.
 - **The official teacher GPU is chosen only after a real batch-16, 512², deterministic-policy VRAM
-  measurement** (G2), under the same five determinism states the official run will have.
+  measurement** (G21), under the same five determinism states the official run will have.
 - The G20 canary runs at batch 1 and says **nothing** about the official teacher's VRAM. Its measured
   batch-1 peaks on an RTX A5000 (train **2.64 GB**, val **2.14 GB**; B59 §11) do **not** determine
   batch-16 teacher VRAM.
@@ -636,7 +636,7 @@ The teacher and every student stage **must** share these, or distillation/compar
 - ~~Exact mmseg `MMCV_MAX` constant value on disk~~ — **RESOLVED 2026-09-06:** `'2.2.0'`, verified in
   the official image by digest; no edit required (see §4.5).
 - Final teacher GPU / pod type — chosen only after a measured batch-16 deterministic-policy VRAM
-  reading (G2; §7). Reported in Ch4.
+  reading (G21; §7). Reported in Ch4.
 - Recovered teacher mIoU (produced by the fine-tune run; out of preparation scope).
 - **METHODOLOGY DECISIONS (B59), status as of B60 (2026-09-22):**
   - **LOCKED; runtime implemented by B62 (frozen at `3c43f89…`; CUDA re-canary pending):**

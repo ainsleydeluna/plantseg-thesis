@@ -7,7 +7,7 @@
 
 ## Project identity
 - **Project:** THESIS2 — `plantseg-thesis`. Resource-constrained plant-lesion segmentation (knowledge distillation + INT8 quantization); the current focus is the **E1 FP32 student baseline**.
-- **Branch:** `master`. The checkout is location-independent — never hard-code a repository path.
+- **Branch:** work happens on `claude/keen-curie-u4a8ig`; at every push `master` is fast-forwarded to the same commit, so the two never diverge. The checkout is location-independent — never hard-code a repository path.
 - **E1 safety floor:** HEAD must include **`885523a`** ("harden E1 training safety"). This is a durable *minimum* baseline, not a pin to any current HEAD.
 
 ## What counts as approval
@@ -72,7 +72,7 @@ further changes.
 - **Official runs of any stage — teacher fine-tune, E1, E2, E3, E5, E6 — are never launched or continued with `--resume`.** If a run is interrupted, discard the partial run and relaunch from iteration 0 with the same seed, into a **fresh `--ckpt-dir`** (`train_e1.py:205-209` opens the telemetry JSONL in append mode, so relaunching into the dead run's directory silently interleaves two runs). `train_e1.py:395` warns a resumed run is **NOT bitwise-identical** to an uninterrupted one — data-order continuity is unrecoverable under the infinite `cycle(train_loader)`. E1 is the baseline every later stage is measured against, and `scripts/preflight_e1.py` hard-gates on seed-sequence identity. Supersedes [docs/open_questions.md](docs/open_questions.md) D26 **for official runs**; D26's disclosure requirement continues to govern non-official resumed runs, and `--resume` remains available for debugging and rehearsals.
 
 ## Where things live
-- E1 launch: [reports/e1_runpod_launch_runbook.md](reports/e1_runpod_launch_runbook.md)
+- E1 launch: [reports/e1_launch_runbook_v2.md](reports/e1_launch_runbook_v2.md) (v1 `e1_runpod_launch_runbook.md` is superseded)
 - RunPod pre-flight checklist: [docs/task_templates/runpod_preflight_template.md](docs/task_templates/runpod_preflight_template.md)
 - Teacher prep (separate A6000 workflow, NOT for E1): [docs/teacher_prep_runbook.md](docs/teacher_prep_runbook.md)
 - Locked configs/methodology: [docs/IMPLEMENTATION_CONTRACT.md](docs/IMPLEMENTATION_CONTRACT.md) · open items: [docs/open_questions.md](docs/open_questions.md)

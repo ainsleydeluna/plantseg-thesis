@@ -32,7 +32,7 @@ The reproducibility envelope for every official PlantSeg experiment. Four artifa
 >
 > This is **development-canary evidence only**, at batch 1. It does not validate the official teacher
 > run, and its batch-1 peak (2.64 GB train / 2.14 GB val) does **not** determine batch-16 teacher VRAM
-> (G2 open). This note does not change the code-level `full_experiment_environment_validated` flag.
+> (G21 open). This note does not change the code-level `full_experiment_environment_validated` flag.
 
 Separately validated already: the **corruption dependency closure** (Python 3.11 · numpy 1.26.4 ·
 Pillow 12.3.0 · scikit-image 0.23.2), executably verified in `0b58050`. That is a strictly smaller

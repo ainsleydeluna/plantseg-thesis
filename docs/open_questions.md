@@ -739,7 +739,9 @@ not reopened.**
 
 ## Open — pending a governed-path session
 
-### D29 — the no-resume rule's contract-level home is not yet settled `[project; B44]`
+### D29 — ✅ RESOLVED (B64, 2026-09-23) — the no-resume rule's contract-level home `[project; B44]`
+**[RESOLVED 2026-09-23 — B64]** The rule now lives in [IMPLEMENTATION_CONTRACT.md](IMPLEMENTATION_CONTRACT.md)
+§(d) B6 ("No-resume rule for official runs"). The ch3 half below is a manuscript item and is unchanged.
 The rule ("official runs of any stage are never launched or continued with `--resume`", `AGENTS.md`
 § E1 invariants) currently lives **operationally** in `AGENTS.md` and in the preemption playbook at
 [reports/e1_launch_runbook_v2.md](../reports/e1_launch_runbook_v2.md) §5. Its durable methodological
@@ -755,7 +757,10 @@ home is [IMPLEMENTATION_CONTRACT.md](IMPLEMENTATION_CONTRACT.md), a **governed p
 
 ---
 
-### D30 — the INFERRED 11–14 GB VRAM band is falsified for every student stage under determinism `[project; B48]`
+### D30 — ✅ RESOLVED (B64, 2026-09-23) — the INFERRED 11–14 GB VRAM band is falsified for every student stage under determinism `[project; B48]`
+**[RESOLVED 2026-09-23 — B64]** [IMPLEMENTATION_CONTRACT.md](IMPLEMENTATION_CONTRACT.md) §(d) B3
+"E2/E3 peak memory" now states the measured E1 figure (20.667 GiB with determinism) instead of the
+INFERRED band. The Compute row was already corrected by B59 (A40; RTX 4090 measured unable).
 [IMPLEMENTATION_CONTRACT.md](IMPLEMENTATION_CONTRACT.md)`:249-252` records an **INFERRED 11–14 GB**
 peak on CUDA at batch 16 for E2/E3 and says of it: "This is **not a GO** — settle it on the pod with
 `torch.cuda.max_memory_allocated()`." [B48](../reports/b48_e1_oom_investigation.md) §2 did exactly
@@ -797,7 +802,10 @@ deliberately left this alone, as it fell outside that session's narrow governed-
 
 ---
 
-### D32 — `IMPLEMENTATION_CONTRACT.md:327-330` asserts more than its evidence supports `[project; B48]`
+### D32 — ✅ RESOLVED (B64, 2026-09-23) — `IMPLEMENTATION_CONTRACT.md:327-330` asserts more than its evidence supports `[project; B48]`
+**[RESOLVED 2026-09-23 — B64]** The replacement below was applied verbatim to
+[IMPLEMENTATION_CONTRACT.md](IMPLEMENTATION_CONTRACT.md) §(d) B6, with one anchor updated: `:705-708`
+became `:825-837`, the current lines of the corruption-closure byte-identity flag.
 The contract's only bitwise claim about *runs* is a parenthetical at `:328`:
 
 > cross-process reproducibility at a fixed `num_workers` is preserved (measured byte-identical
@@ -849,6 +857,20 @@ not a house style — which is why the fix is a narrowing rather than a rewrite.
 
 ---
 
+### D33 — `smoke_stats_bootstrap` pins the `STATISTICAL_ANALYSIS_CONTRACT.md` digest from `9267ffe` `[project; B64]`
+D33 — smoke_stats_bootstrap pins the STATISTICAL_ANALYSIS_CONTRACT.md digest from 9267ffe. It has
+been stale since B59 (5ae4ec7), so its contract-digest check fails: a known failure (KF-1), not a
+regression. Resolution: re-pin once, in the lane that brings src/stats in line with the amended
+contract (L-AM3 + L-AM5), in the same commit that re-verifies the code against it. Until then,
+every Phase B treats that single check as KF-1, and all other checks must pass.
+
+- **Evidence `[MEASURED 2026-09-23, B64]`:** the pin (`scripts/smoke_stats_bootstrap.py`, check
+  "repository-baseline contract digest matches the checkpoint") is `d53c87dc…`, the `9267ffe` contract.
+  The contract at `5ae4ec7` hashes to `d8a7f121…`; run against that committed contract the smoke gives
+  the same single `[FAIL]` and passes every other check. After B64 C3 it is 152/153.
+
+---
+
 ## Open — methodology decisions registered by B59 (2026-09-21)
 
 Registered by [reports/b59_pre_runpod_reconciliation.md](../reports/b59_pre_runpod_reconciliation.md).
@@ -861,7 +883,10 @@ All seven teacher locks (M2, M3, M4, M5, M11, M12, M13) are implemented together
 runtime change (B61 §9 step 2); none is in runtime code yet.
 **[UPDATED 2026-09-22 — B62]** All seven are now implemented in the B62 working tree and CPU-validated
 ([reports/b62_teacher_runtime_reconciliation.md](../reports/b62_teacher_runtime_reconciliation.md));
-pending review and commit, the runtime hash freeze and a G20-style CUDA re-canary.
+~~pending review and commit, the runtime hash freeze and a G20-style CUDA re-canary.~~
+**[UPDATED 2026-09-23 — B64]** Committed in `3c43f89` and pushed; runtime hashes frozen at that commit
+(`docs/teacher_prep_runbook.md` §4a step 8). Pending: the G20-style CUDA re-canary, G21 (teacher batch-16
+VRAM), the official TRAIN/VAL preflight and an explicit teacher-training GO.
 **[UPDATED 2026-09-23 — B64]** M1 and M6–M10 are now **LOCKED** by [PREREGISTRATION_AMENDMENTS.md](PREREGISTRATION_AMENDMENTS.md) (AM-7, AM-2, AM-3, AM-1, AM-4, AM-5). No methodology decision in this register remains open; the code that implements each is named in its row. *(Was: "Every other item below remains a METHODOLOGY DECISION OPEN.")*
 - For open items, candidates are listed; **none is chosen, and no experiment behaviour was changed.**
 - Each open item needs an explicit human decision before the stage it blocks.
@@ -891,7 +916,11 @@ The teacher G18 seam was exercised on a real GPU. Setup:
 - No TEST on the pod or in the payload. No checkpoint load, download or artifact.
 - The pre/post `git status --ignored` inventory was identical (empty).
 - **Batch-1 peak memory:** train **2.64 GB**, val **2.14 GB**. This does **NOT** determine batch-16
-  teacher VRAM — **G2 remains open**.
+  teacher VRAM — **G21 remains open**.
+  **[ERRATUM 2026-09-23 — B64]** Since B54 the teacher batch-16 VRAM measurement has been called "G2",
+  but [reports/b52_e1_seed42_completion.md](../reports/b52_e1_seed42_completion.md) §11.1 already defines
+  G2 as D30. It is renamed **G21** in every live document. Historical reports keep "G2"; read it as G21
+  wherever it means teacher VRAM.
 - The one-sample random-init validation mIoU (0.0000) is a **non-thesis diagnostic** only.
 
 **Evidence:** `C:\Users\admin\plantseg_runs\g20_canary_20260921\g20_evidence_bundle.tgz`, sha256
@@ -1021,7 +1050,7 @@ requiring a plan and an explicit go.
   - E1 seed 42 ran on an **A40 48 GB, Secure Cloud, $0.49/hr operator-recorded** (B52).
   - The RTX 4090 was **measured unable to run E1** under the determinism policy: 20.667 GiB peak, OOM at
     iteration 2 (B48; D30). The A40 was therefore necessary, not a deviation.
-  - Teacher GPU: `NEED_TO_CONFIRM` until a measured batch-16 deterministic-policy VRAM reading (G2).
+  - Teacher GPU: `NEED_TO_CONFIRM` until a measured batch-16 deterministic-policy VRAM reading (G21).
   - Secure Cloud is preferred after the Community UVM host faults (B53).
 
 ### 8. Citation details (DOIs / venues / years) in reference.pdf

@@ -163,9 +163,12 @@ pending the PlantSeg repo's official convention. `[empirical; ch3 Table 3.1; ctx
 > Implementation is the unified governed change of B61 §9 step 2.
 >
 > **[UPDATED 2026-09-22 — B62]** Implemented in the B62 working tree (config, launcher, KD adapter,
-> evaluator, smokes; `reports/b62_teacher_runtime_reconciliation.md`), CPU-validated, **pending review and
-> commit, the new runtime hash freeze and a G20-style CUDA re-canary**. The pre-B62 runtime
+> evaluator, smokes; `reports/b62_teacher_runtime_reconciliation.md`), CPU-validated, ~~**pending review and
+> commit, the new runtime hash freeze and a G20-style CUDA re-canary**~~. The pre-B62 runtime
 > (`510b212b…`, `58575276…`) is superseded and must not be used for an official run.
+> **[UPDATED 2026-09-23 — B64]** Committed in `3c43f89` and pushed; runtime hashes frozen at that commit
+> (`docs/teacher_prep_runbook.md` §4a step 8). Pending: the G20-style CUDA re-canary, G21 (teacher
+> batch-16 VRAM), the official TRAIN/VAL preflight and an explicit teacher-training GO.
 
 > **Provenance — THESIS-DERIVED SEGNeXt-B TEACHER CONFIGURATION `[B59 B1–B4, 2026-09-21]`.**
 > ch3 attributes the AdamW 6e-5 / wd 0.01 / head lr_mult 10 / poly / 40k recipe to "the Wei et al.
@@ -317,10 +320,12 @@ is a transient working set bounded at **~0.3–0.55 GB**, not an activation grap
 are the student's own retained activations (4.47 GB) and the CE+Dice term (5.62 GB), both at full
 512×512, both unchanged by B32 and inherent to the locked batch-16/512² recipe.
 
-**E2/E3 therefore cost only marginally more than E1 itself.** Adding allocator overhead (+5–15%),
-the teacher transient, cuDNN workspace and backward temporaries gives an **INFERRED 11–14 GB** peak
-on CUDA at batch 16. This is **not a GO** — settle it on the pod with
-`torch.cuda.max_memory_allocated()`.
+**Measured for E1 (B48 §2; closes D30):** 20.667 GiB peak at batch 16, 512², 116 classes under
+`use_deterministic_algorithms(True)` (17.014 GiB without). The determinism reroute of `F.interpolate`
+adds a 12.658 GiB forward transient that scales with num_classes × H × W × batch, so every student
+stage needs a 48 GB-class card. Whether E2/E3 add materially on top of E1 stays INFERRED until measured
+on the pod. *(Was: "E2/E3 therefore cost only marginally more than E1 itself … an INFERRED 11–14 GB
+peak on CUDA at batch 16", which omitted that transient.)*
 | E3 total loss | `L_CE + L_Dice + λ_logit·L_LogitKD + 50·L_CWD_feat + 3·L_CWD_logit` | `[ch3]` |
 | Optional control | α_CWD sensitivity sweep {25, 50, 100} — **not run; α_CWD fixed at 50 per Shu 2021; recorded as future work (AM-11)** | `[ch3 §C; AM-11]` |
 
@@ -400,10 +405,21 @@ on CUDA at batch 16. This is **not a GO** — settle it on the pod with
   distinct realized sequence.
 - **Consequence:** the B31-5 change of the real-run default from `4` to `min(cpu_count-2, 12)`
   changes the realized augmentation *sequence*. It does **not** change the augmentation
-  *distribution*, the recipe, or any locked hyperparameter, and cross-process reproducibility at a
-  fixed `num_workers` is preserved (measured byte-identical across two independent processes).
-  Runs are comparable in distribution; they are not bitwise-comparable across different
-  `num_workers`. Record the value in Ch4 with the seed.
+  *distribution*, the recipe, or any locked hyperparameter. **Measured:** at a fixed
+  `num_workers` the *augmentation stream* is byte-identical across two independent processes —
+  8-sample / 4-batch train subset, `shuffle=False`, CPU `[B31-5/A1, 2026-09-01]`. **Not
+  measured:** no cross-process comparison of a CUDA training run exists, and that measurement
+  predates the project's first GPU execution (2026-09-09, B42). Runs are comparable in
+  distribution; they are not bitwise-comparable across different `num_workers`. Record the value
+  in Ch4 with the seed. Compare `:825-837`, which scopes and dates its own byte-identity flag.
+- **Bitwise identity of training *results* is not claimed, and ch3 does not claim it** `[ch3 §D]`.
+  ch3 §D states that "floating-point variation may remain across GPU classes and compiled CUDA
+  kernels", and specifies "mean ± SD reported across completed seeds" rather than bitwise
+  agreement. A live instance: `nll_loss2d_forward_out_cuda_template` has no deterministic CUDA
+  implementation and runs under `warn_only=True` — see
+  [B48](../reports/b48_e1_oom_investigation.md) §5. Whether that reaches gradients through the
+  weighted mean-reduction's `total_weight`, or only the logged scalar, is `[UNRESOLVED]` pending
+  an on-pod gradient comparison.
 - **Manuscript gap (for correction outside this repo):** ch3 §D's reproducibility paragraph pins
   seed 42, the cuDNN flags, `use_deterministic_algorithms(True, warn_only=True)` and
   `CUBLAS_WORKSPACE_CONFIG`, but is silent on `num_workers`. As written it is **under-specified**:
@@ -416,6 +432,11 @@ on CUDA at batch 16. This is **not a GO** — settle it on the pod with
   consumes an infinite `cycle(train_loader)` and the position within the current epoch is not
   persisted. A resumed run is therefore a valid E1 run but not a byte-reproduction of an
   uninterrupted one, and must be reported as resumed if used for a headline result.
+- **No-resume rule for official runs** `[project; B44; closes D29]`: official runs of any stage
+  (teacher, E1, E2, E3, E5, E6) are never launched or continued with `--resume`. An interrupted
+  official run is discarded and relaunched from iteration 0 with the same seed into a fresh
+  `--ckpt-dir`. `--resume` stays available for debugging and rehearsals; a non-official resumed run
+  discloses it (D26).
 - **LR-monotonicity coverage across resume** `[project; B31c V1]`: `last.pt` carries `prev_lr`, so a
   *k*-segment run leaves **zero** unverified LR transitions (measured: a 3-segment 9-iteration run
   compared 2+3+3 = 8 of 8 transitions). When **no** transition is compared (a one-iteration fresh
@@ -468,7 +489,7 @@ These are **operational** parameters. None of them touches a `[ch3]`-traced meth
 | mmengine | **0.10.7** — teacher/MMSeg runtime (`requirements.lock:30`, `requirements-runpod.lock:96`, `requirements-runpod.in:31`); excluded from `requirements-e1.txt` as teacher-only. ch3's version list omits it `[G19]` | `[requirements.lock; requirements-runpod.lock]` |
 | ftfy | **6.3.0** — teacher image only (`requirements-teacher.lock:23`; also `requirements-runpod.in:16`, `requirements-runpod.lock:66`); `mmseg.models` cannot register without it (B55). ch3's version list omits it | `[requirements-teacher.lock; B55]` |
 | Quant backend | eager-mode `torch.ao.quantization`, **QNNPACK** | `[ch3; ctx]` |
-| Compute | RunPod; **ch3 locks no GPU model** ("the exact hardware used for each stage is reported"). E1 seed 42 ran on an **NVIDIA A40 (48 GB), Secure Cloud** (B52). An **RTX 4090 (24 GB) was measured unable to run E1** under the registered determinism policy: 20.667 GiB peak, OOM at iteration 2 (B48; D30). The teacher GPU is `NEED_TO_CONFIRM` and is chosen only after a measured batch-16 deterministic-policy VRAM reading (G2). Per-stage hardware and cost are reported in Ch4 | `[ch3 §D; B48; B52; B59 A4]` |
+| Compute | RunPod; **ch3 locks no GPU model** ("the exact hardware used for each stage is reported"). E1 seed 42 ran on an **NVIDIA A40 (48 GB), Secure Cloud** (B52). An **RTX 4090 (24 GB) was measured unable to run E1** under the registered determinism policy: 20.667 GiB peak, OOM at iteration 2 (B48; D30). The teacher GPU is `NEED_TO_CONFIRM` and is chosen only after a measured batch-16 deterministic-policy VRAM reading (G21). Per-stage hardware and cost are reported in Ch4 | `[ch3 §D; B48; B52; B59 A4]` |
 
 ---
 
@@ -502,7 +523,7 @@ These are **operational** parameters. None of them touches a `[ch3]`-traced meth
 
 **Accuracy**
 - **Primary inferential unit:** per-image **disease-only mIoU** (115 disease classes = mask values **1–115**;
-  **background = index 0 excluded** [empirical; residual `NEED_TO_CONFIRM` on the formal convention];
+  **background = index 0 excluded** [confirmed by the official PlantSeg METAINFO; open_questions #2 RESOLVED];
   per-image absent-class exclusion; 255 always excluded).
 - **Dataset-level all-class mIoU:** TP/FP/FN accumulated per class over the whole test set, macro-averaged;
   basis for **non-inferiority + bootstrap**; matches PlantSeg benchmark reporting.
@@ -860,10 +881,11 @@ Full detail + resolution mechanism in [open_questions.md](open_questions.md); fu
 - **EXIF**: `ImageOps.exif_transpose` on images (never masks) is mandatory before pairing/transform.
 
 **OPEN / NEED_TO_CONFIRM remaining (do not guess):**
-2. **Disease-only / background convention** — empirically background = **index 0** (exclude for disease-only
+2. ~~**Disease-only / background convention** — empirically background = **index 0** (exclude for disease-only
    mIoU; diseases 1–115), but no literal "background" category is named in the dataset files (COCO
    `categories` empty), so `reduce_zero_label` and the formal disease-only exclusion stay **NEED_TO_CONFIRM**
-   pending the PlantSeg repo's official convention.
+   pending the PlantSeg repo's official convention.~~ **RESOLVED (D1 + A0-FIX 2026-07-26)** — index 0 is the
+   non-disease slot and 1–115 are the diseases (official PlantSeg METAINFO); see open_questions #2.
 
 **NEED_TO_CONFIRM (not stated in any source; filled by experiment/selection, never guessed):**
 - `λ_logit` — validation sweep over {0.25, 0.5, 1, 2, 4}, reported Ch4. Budget and tie rule fixed by AM-2.
@@ -873,14 +895,14 @@ Full detail + resolution mechanism in [open_questions.md](open_questions.md); fu
 - ~~Multi-seed values beyond seed 42 (for E1/E3 three-seed runs); whether the extra seeds are
   obligatory is itself a METHODOLOGY DECISION OPEN (B59 D4).~~ **Resolved by AM-1:** seeds 43 and 44.
 - Final RunPod pod type / GPU / CPU model / CUDA image (reported Ch4). E1 seed 42 = A40 Secure (B52);
-  teacher GPU pending a measured batch-16 VRAM reading (G2).
+  teacher GPU pending a measured batch-16 VRAM reading (G21).
 - **METHODOLOGY DECISIONS registered by B59 (2026-09-21):**
-  - **LOCKED by B60 (2026-09-22); runtime implemented by B62 (pending commit, freeze and re-canary):**
+  - **LOCKED by B60 (2026-09-22); runtime implemented by B62 (committed `3c43f89`; frozen, runbook §4a; CUDA re-canary pending):**
     - teacher augmentation (M2);
     - teacher train/eval scaling (M3);
     - teacher acceptance band / readiness and schedule (M5);
     - TEST filenames in the teacher preflight (M11), replaced by TRAIN/VAL-only data roots.
-  - **LOCKED by B61 (2026-09-22); runtime implemented by B62 (pending commit, freeze and re-canary):**
+  - **LOCKED by B61 (2026-09-22); runtime implemented by B62 (committed `3c43f89`; frozen, runbook §4a; CUDA re-canary pending):**
     - NMF/Hamburger RNG control (M4): `rand_init=True`, isolated streams M4-T / M4-V / M4-KD;
     - teacher checkpoint selection under M4 (M12);
     - teacher CE ignore normalisation, `avg_non_ignore=True` (M13, new).
