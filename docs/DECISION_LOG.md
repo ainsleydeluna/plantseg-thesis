@@ -17,14 +17,16 @@ only through B-SYNC packets, or by the task that implements an entry (Status/Whe
   must pass.
 7 Later B-SYNC packets list only the entry IDs they add, change or drop.
 
-## Current plan (as of 0d86f83)
-- Teacher (critical path): runtime frozen at 3c43f89 (a51a092) → pod session B65 (DL-19) → web
-  audit → typed GO → official teacher run → R3 on VAL.
-- E1 seeds 43/44: seed fix live (2dc1fde); AM-7 no-clip branch → launch prompt B66.
+## Current plan (as of aa3823f)
+- Teacher (critical path): runtime frozen at 3c43f89 (a51a092) → pod session B65, teacher image only
+  (DL-19) → web audit → typed GO → official teacher run → R3 on VAL.
+- B66: DL-17 and N10 (E1 gradient probe), then E1 seeds 43/44; seed fix live (2dc1fde); AM-7 no-clip
+  branch.
 - Code lanes the amendments require: before the λ sweep, L-AM7; before E4–E6, L-AM1q, L-AM4 and
-  L-AM10; before TEST, L-AM3, L-AM5 (with the KF-1 re-pin), L-AM6, L-AM8 and L-AM13; L-PROT (DL-26) done
-  (4da20cd).
-- Quantization: DL-17 and DL-18 in B65; then E4 and E5 on E1 seed 42; per seed later.
+  L-AM10; before TEST, L-AM3, L-AM5 (with the KF-1 re-pin), L-AM6, L-AM8, L-AM13 and L-EVAL-DET (DL-17);
+  L-PROT (DL-26) done (4da20cd).
+- Quantization: DL-18 runs locally before E4 (B65 Phase B); DL-17 in B66; then E4 and E5 on E1 seed 42;
+  per seed later.
 - KD: after teacher acceptance → λ sweep (DL-06) → E3 ×3 (+ E2 43/44 if budget) → E6/E7 per seed.
 - TEST: one unlock, after every stage is final, the harness is frozen and every lane above is
   IMPLEMENTED.
@@ -49,11 +51,11 @@ only through B-SYNC packets, or by the task that implements an entry (Status/Whe
 | DL-14 | RECORDED 8084671 (AM-11) and 74ee587 (AM-15) | Not invoked or not run: the DIST fallback and the "E2 as deliverable" switch (AM-15: E6 is always built from E3, and E3 is reported whatever its result against E2); the extended-schedule E2 and the α_CWD sweep (AM-11). | AMENDMENTS AM-11, AM-15 | yes |
 | DL-15 | DROPPED | Not adopted: two-sided tests; ARM-native latency (the approved x86 fbgemm-copy path stays; AM-9 withdrawn); λ-grid shrink; seed-averaged Wilcoxon; the 'robustly supported' replication rule across all eight tests; the per-image clean-minus-corrupted descriptive comparison; Ch1 motivation rewrite; H₁d rewording. | AMENDMENTS AM-9 (withdrawn slot) | no |
 | DL-16 | DECIDED | Reporting: the E1 vs E6 mIoU-C test is described as accuracy on corrupted images; robustness claims come only from RPD/rCD; Ch5 discusses Wei's 10.22% against E1's baseline. The code ID robustness_e1_e6 is kept for artifact compatibility. | Ch4/Ch5 drafting; STATS note (74ee587) | no |
-| DL-17 | DECIDED | Before E4–E7: the local E1 seed-42 checkpoint (sha256 cf0879f7007dfacbd0d510085ff28a4b47ee845ddb8fd599611d74109e1d6a03, MEASURED in B64) is re-scored on VAL in the pinned image twice; both runs must match bitwise and reproduce 0.36314 within float tolerance (N11/N12). | B65 | no |
-| DL-18 | DECIDED | Before E4: QNNPACK real-engine smokes (LR-ASPP head and full student) in the pinned image, including a check that every converted conv weight is per-channel, and the U6 Sigmoid FixedQParams check. | B65 | no |
-| DL-19 | DECIDED (freeze done: a51a092) | Teacher GO chain: runtime frozen at 3c43f89 → one pod session B65 (CUDA re-canary; batch-16 teacher VRAM, G21; throughput incl. a worker-count check; TRAIN/VAL-only preflight; DL-17; DL-18) → web audit → typed GO. Canary, preflight and official run all check out 3c43f89; the image's baked PYTHONPATH is stale and is overridden as in B62. | B65 | no |
+| DL-17 | DECIDED | Before E4–E7, in the B66 pod (pinned student image, GPU) and before the seed-43/44 launches: the local E1 seed-42 checkpoint (sha256 cf0879f7007dfacbd0d510085ff28a4b47ee845ddb8fd599611d74109e1d6a03) is re-scored on VAL twice at batch 16. Pass: the two runs are bitwise identical, and the absolute difference from 0.36314016580581665 is at most 1e-4; a difference between 1e-6 and 1e-4 is recorded, not a failure. Eval-path determinism flags: lane L-EVAL-DET before TEST. | B66 | no |
+| DL-18 | DECIDED | Before E4, run locally in the pinned student image (Docker, CPU; QNNPACK is a CPU engine). A new probe using the registered PTQ qconfig asserts every converted conv weight is per-channel and records, through a runtime hook, whether the LR-ASPP Sigmoid runs quantized or through a float fallback. The probe fails (non-zero exit) only on a conversion error, a conv weight that isn't per-channel, a quantized engine other than qnnpack, or a run that doesn't complete. A float fallback is not a failure; it resolves U6. If the Sigmoid runs quantized, its output scale and zero_point are recorded as U6's values; if it falls back, the fallback is recorded and reported in the E4–E7 quantization coverage and Ch4. The full-student QNNPACK smoke's exit-code bug is fixed in the same commit. | B65 Phase B (local) | no |
+| DL-19 | DECIDED (freeze done: a51a092) | Teacher GO chain: runtime frozen at 3c43f89 → one pod session B65, teacher image only. Partial clone with sparse checkout that never fetches the protected file (step 0 verifies HEAD 3c43f89, file absent, status clean, nine freeze hashes). Re-canary = shortened production config at 3c43f89 with every production hook (harness rewritten for the 3c43f89 API, validated offline in the local teacher image). Batch-16 teacher VRAM (G21); throughput incl. a worker-count check; TRAIN/VAL-only preflight (verify_env.py and preflight_e1.py never run there); PYTHONPATH override as in B62; A40 48 GB on Secure Cloud unless evidence says otherwise → web audit → typed GO. | B65 | no |
 | DL-20 | DECIDED | Manuscript: Ch1–3 stay the approved plan; only the errata in THESIS2_manuscript_fixes_v2.1 are applied (101 rows plus references). Methodology changes are documented in Ch4 from entries with Ch4 = yes. | web layer | no |
-| DL-21 | DECIDED | Official runs: image pinned by digest (E1 seeds: sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf); no-resume rule (IMPLEMENTATION_CONTRACT, D29 closed in 0d86f83); checkpoint sha256 captured on the pod before download, a step the B65 and B66 runbooks add (B52 N9). | runbooks (B65, B66); IMPLEMENTATION_CONTRACT | no |
+| DL-21 | DECIDED | Official runs: image pinned by digest (E1 seeds: sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf); pods use the DL-19 partial clone; no-resume rule (IMPLEMENTATION_CONTRACT, D29 closed in 0d86f83); checkpoint sha256 captured on the pod before download (B52 N9); B66 uses a TRAIN/VAL-only preflight path. | runbooks (B65, B66); IMPLEMENTATION_CONTRACT | no |
 | DL-22 | RECORDED 8084671 (AM-12) | The augmentation library is the NumPy/PIL implementation; described as such in Ch4; code unchanged. | AMENDMENTS AM-12 | yes |
 | DL-23 | DECIDED | Workflow: capsule-first; tiers T0/T1/T2; reports carry MEASURED / REPO-PROVEN / INFERRED / NOT DETERMINABLE labels; official runs, TEST unlock and pushes each need a separate typed GO. | this file | no |
 | DL-24 | DECIDED | Model and effort: Opus 5.5 everywhere. Claude Code: high by default; medium for mechanical doc and sync edits; xhigh for pod/GPU sessions and official-run launches; max and ultracode are not used; workflows and subagent fan-outs only when a prompt asks for one. Web chat: High by default; Max for deep audits. | prompt headers; CLAUDE.md, ai_guardrails.md, fix_template.md (74ee587) | no |
@@ -67,7 +69,9 @@ only through B-SYNC packets, or by the task that implements an entry (Status/Whe
 All recorded in 8084671 (2026-09-23): AM-1 → DL-05; AM-2 → DL-06; AM-3 → DL-07; AM-4 → DL-09;
 AM-5/AM-6 → DL-12; AM-7 → DL-04; AM-8 → DL-13; AM-9 → withdrawn (DL-15); AM-10 → DL-10;
 AM-11 → DL-14; AM-12 → DL-22; AM-13 → DL-08; AM-14 → DL-11.
+AM-15 → DL-14 (74ee587).
 
 ## History
 - 2026-09-23 · CP-001 to CP-003 (consolidated initial load; CP-001 was never applied separately) · DL-01 to DL-26
 - 2026-09-23 · CP-004 · DL-13, DL-14, DL-16, DL-21, DL-24, DL-26; current plan
+- 2026-09-23 · CP-005 · DL-17, DL-18, DL-19, DL-21; current plan; amendment map
