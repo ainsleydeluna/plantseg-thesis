@@ -107,8 +107,13 @@ PREFETCH_FACTOR = 4          # batches pre-staged per worker (B31-5)
 
 
 def build_dataloader(split: str, batch_size: int, num_workers: int = 0,
-                     persistent_workers: bool = False) -> DataLoader:
-    """train shuffles; val/test do not. Seeded generator + worker_init_fn => deterministic (seed 42).
+                     persistent_workers: bool = False, seed: int = SEED) -> DataLoader:
+    """train shuffles; val/test do not. Seeded generator + worker_init_fn => deterministic.
+
+    `seed` seeds the loader generator, which fixes the shuffle order and every worker's base seed and,
+    through `_seed_worker`, the per-sample augmentation stream. Training entry points pass the run's
+    `--seed`; the default is `src.seeds.SEED` (42), so a caller that passes no seed gets exactly the
+    pre-B64 loader.
 
     `persistent_workers` is opt-in and intended for the TRAIN loader only: it keeps the worker pool
     (and its decoded-image buffers) alive for the whole run, which is worth it across 80k iterations
@@ -119,7 +124,7 @@ def build_dataloader(split: str, batch_size: int, num_workers: int = 0,
     """
     dataset = PlantSegDataset(split)
     generator = torch.Generator()
-    generator.manual_seed(SEED)
+    generator.manual_seed(seed)
     extra = {}
     if num_workers > 0:
         extra["prefetch_factor"] = PREFETCH_FACTOR

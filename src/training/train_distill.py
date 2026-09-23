@@ -61,7 +61,8 @@ from src.training.losses import (CombinedCEDiceLoss, cwd_channelwise_kl,  # noqa
                                  downsample_validity, logit_kd_kl)
 # Reuse the audited E1 mechanics verbatim rather than re-implementing them.
 from src.training.train_e1 import (build_scheduler, cycle, load_ce_weights,  # noqa: E402
-                                   resolve_ckpt_dir, validate, _assert_outside_repo)
+                                   resolve_ckpt_dir, total_grad_norm, validate,
+                                   _assert_outside_repo, _jsonl)
 
 IGNORE_INDEX = DATA["ignore_index"]            # 255
 T_LOGIT = DISTILL["logit_kd"]["T_logit"]       # 4
@@ -306,8 +307,8 @@ def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeach
               f"params={sum(p.numel() for p in projection.parameters()):,} "
               f"(TRAINING-ONLY; stored separately, absent from model_state_dict)")
 
-    train_loader = build_dataloader("train", batch_size, num_workers=num_workers)
-    val_loader = build_dataloader("val", batch_size, num_workers=num_workers)
+    train_loader = build_dataloader("train", batch_size, num_workers=num_workers, seed=seed)
+    val_loader = build_dataloader("val", batch_size, num_workers=num_workers, seed=seed)
     print(f"[data] train_index={len(train_loader.dataset)} val_index={len(val_loader.dataset)} "
           "(train+val only; the TEST split is never built here)")
 
@@ -351,6 +352,8 @@ def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeach
     # full E1 telemetry stack — a provenance guard, so a mismatched run stays identifiable from its
     # artifacts alone long after the terminal is gone.
     meta_path = _assert_outside_repo(Path(ckpt_dir)) / f"{stage['key']}_run_meta.jsonl"
+    # Per-iteration telemetry beside the checkpoints, never inside the repo (append mode, like E1's).
+    telemetry_path = meta_path.with_name(f"{stage['key']}_telemetry.jsonl")
     with open(meta_path, "a", encoding="utf-8") as _f:
         _f.write(json.dumps({
             "event": "run_meta", "stage": stage["name"], "mode": mode, "seed": seed,
@@ -435,6 +438,7 @@ def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeach
             before = p0.detach().clone()
 
         loss.backward()
+        grad_norm = total_grad_norm(trainable)   # telemetry only; measured BEFORE any clipping
         if grad_clip_norm is not None:
             # global-norm clipping over the student (+ E3 projection), every iteration ("throughout")
             total_norm = torch.nn.utils.clip_grad_norm_(trainable, grad_clip_norm)
@@ -445,6 +449,9 @@ def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeach
         optimizer.step()
         scheduler.step()
         lr_trace.append(optimizer.param_groups[0]["lr"])
+        _jsonl(telemetry_path, {"event": "train", "iter": it, "loss": float(loss.item()),
+                                "sup": float(sup.item()), **parts, "ramp": ramp,
+                                "lr": lr_trace[-1], "grad_norm": grad_norm})
 
         if it == 1:
             checks["optimizer_step"] = bool((p0.detach() - before).abs().sum().item() > 0.0)

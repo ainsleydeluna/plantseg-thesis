@@ -318,8 +318,8 @@ def run(*, mode: str, device: str, pretrained, batch_size: int, max_iters: int, 
     # persistent workers on TRAIN only: the pool lives for all 80k iters, whereas val runs ~20 times
     # and the respawn cost there is noise against holding a second worker pool resident (B31-5 Q1).
     train_loader = build_dataloader("train", batch_size, num_workers=num_workers,
-                                    persistent_workers=num_workers > 0)
-    val_loader = build_dataloader("val", batch_size, num_workers=num_workers)
+                                    persistent_workers=num_workers > 0, seed=seed)
+    val_loader = build_dataloader("val", batch_size, num_workers=num_workers, seed=seed)
     print(f"[data] train_index={len(train_loader.dataset)} val_index={len(val_loader.dataset)} "
           f"(index globbed; only the batches pulled below are decoded)")
 
@@ -440,6 +440,7 @@ def run(*, mode: str, device: str, pretrained, batch_size: int, max_iters: int, 
             before = p0.detach().clone()
 
         loss.backward()
+        grad_norm = total_grad_norm(student.parameters())   # telemetry only; gradients untouched
         if grad_clip_norm is not None:
             torch.nn.utils.clip_grad_norm_(student.parameters(), grad_clip_norm)
         optimizer.step()
@@ -463,7 +464,7 @@ def run(*, mode: str, device: str, pretrained, batch_size: int, max_iters: int, 
         now = time.time()
         _jsonl(jsonl_path, {
             "event": "train", "iter": it, "loss": float(loss.item()), "ce": float(ce.item()),
-            "dice": float(dice.item()), "lr": lr, "wall_clock": now,
+            "dice": float(dice.item()), "lr": lr, "grad_norm": grad_norm, "wall_clock": now,
             "iter_seconds": now - t_prev,
             "samples_per_sec": (batch_size / (now - t_prev)) if now > t_prev else None,
         })
@@ -543,6 +544,17 @@ def run(*, mode: str, device: str, pretrained, batch_size: int, max_iters: int, 
     print(f"\nRESULT: {'PASS' if passed else 'FAIL'} "
           f"({len(exercised)}/{len(hard)} checks exercised, {len(skipped)} skipped)")
     return 0 if passed else 1
+
+
+def total_grad_norm(parameters) -> float:
+    """Global L2 norm over all parameter gradients: the quantity `clip_grad_norm_` compares with
+    `max_norm` (norm_type 2). READ-ONLY. Gradients are never scaled; `clip_grad_norm_` itself rescales
+    them in place even when no clipping is wanted. Telemetry for the clipping rule (B64, AM-7).
+    """
+    norms = [p.grad.detach().norm(2) for p in parameters if p.grad is not None]
+    if not norms:
+        return 0.0
+    return float(torch.linalg.vector_norm(torch.stack(norms), 2).item())
 
 
 # --------------------------------------------------------------------------------------------------
