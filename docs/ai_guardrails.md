@@ -27,7 +27,7 @@ protect `reference.pdf`, no wildcard staging, and no training or push without ap
 ## 3. RunPod safety
 - Pod paths are separate and outside the repo: repo `/workspace/plantseg-thesis`, dataset `/workspace/plantseg_data/plantseg`, checkpoints `/workspace/e1_ckpts`.
 - `export PLANTSEG_DATA_ROOT=/workspace/plantseg_data/plantseg` before any dataloader use.
-- E1 install = `pip install -r requirements-e1.txt` (student stack; NO mmcv/mmseg/teacher — that is the separate A6000 teacher workflow).
+- E1 install = `pip install -r requirements-e1.txt` (student stack; NO mmcv/mmseg/teacher — that is the separate ~~A6000 teacher workflow~~ teacher workflow (GPU per G21, not yet chosen) **[UPDATED 2026-09-23 — B64 C5]**).
 - Run the full pre-flight ([task_templates/runpod_preflight_template.md](task_templates/runpod_preflight_template.md)) before the real run. **Report-writing** smokes (`smoke_loss.py`, `smoke_metrics.py`, `verify_plantseg_dataset.py`) are fine on the pod but must not be committed.
 - Real run is triple-gated: `--real-run` + `--confirm-real-run` + CUDA present (hard-abort on CPU). Do not push from the pod.
 

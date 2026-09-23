@@ -74,6 +74,6 @@ further changes.
 ## Where things live
 - E1 launch: [reports/e1_launch_runbook_v2.md](reports/e1_launch_runbook_v2.md) (v1 `e1_runpod_launch_runbook.md` is superseded)
 - RunPod pre-flight checklist: [docs/task_templates/runpod_preflight_template.md](docs/task_templates/runpod_preflight_template.md)
-- Teacher prep (separate A6000 workflow, NOT for E1): [docs/teacher_prep_runbook.md](docs/teacher_prep_runbook.md)
+- Teacher prep (separate ~~A6000 workflow~~ teacher workflow (GPU per G21, not yet chosen) **[UPDATED 2026-09-23 — B64 C5]**, NOT for E1): [docs/teacher_prep_runbook.md](docs/teacher_prep_runbook.md)
 - Locked configs/methodology: [docs/IMPLEMENTATION_CONTRACT.md](docs/IMPLEMENTATION_CONTRACT.md) · open items: [docs/open_questions.md](docs/open_questions.md)
 - E1 install: `requirements-e1.txt` (student) · full pinned stack: `requirements.lock`

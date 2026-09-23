@@ -158,8 +158,8 @@ retained in code and reporting** `[project-decision]` because it mirrors the met
 partial grid impossible to average away silently.
 
 **Official integrity — fail on any of:** missing cell · duplicate cell · unexpected corruption ·
-unexpected severity · unequal clean-image ID sets across condition artifacts · undefined
-condition-level per-image score · mismatched split or `split_manifest_sha256` · mismatched
+unexpected severity · unequal clean-image ID sets across condition artifacts · ~~undefined
+condition-level per-image score~~ (**[UPDATED 2026-09-23 — B64 C5]** an undefined condition-level per-image score other than an AM-5 zero-disease TEST image, which is excluded from per-image mIoU-C and counted; code: lane L-AM5) · mismatched split or `split_manifest_sha256` · mismatched
 `class_map_sha256` · mismatched `metric_protocol` · mismatched `preprocess_protocol` · any
 available-case averaging or silent row deletion.
 
@@ -1059,10 +1059,11 @@ semantic, but its complete key set must correspond exactly to the 35 ordered JSO
 #### 12.3.7 Official counts
 
 For an **official** protocol-1.0.0 artifact, **every one of the 35 tasks** must have
-`bootstrap_replicates == 10000` (§8) and `jackknife_count == 1561` (§10) — without exception, and
+`bootstrap_replicates == 10000` (§8) and ~~`jackknife_count == 1561` (§10) — without exception, and
 explicitly including the per-image mIoU-C robustness comparison, the descriptive E1→E3 block and the
 E3→E6 non-inferiority task, not only the clean superiority comparisons. The robustness task resamples
-the same 1,561 canonical clean-image identities once the complete corruption grid has been aligned.
+the same 1,561 canonical clean-image identities once the complete corruption grid has been aligned.~~
+**[UPDATED 2026-09-23 — B64 C5]** Under AM-5, tasks on per-image disease-only values (the scalar statistics of the seven clean comparisons, the per-image mIoU-C robustness comparison and the descriptive E1→E3 block) have `jackknife_count == 1561 − k`, where k is the count of AM-5 zero-disease TEST images; dataset-level tasks (the pooled dataset-mIoU tasks and the E3→E6 non-inferiority task) keep `jackknife_count == 1561`. Code: lane L-AM5.
 
 For a **non-official** synthetic artifact, `bootstrap_replicates` may be smaller and `jackknife_count`
 may differ, but both must still equal their corresponding NPZ array lengths and the task's verified

@@ -44,10 +44,11 @@ Every number below is `[empirical]`, established by the committed B16 audit set 
 >   - Scratch instrument; results embedded in `reports/b59_pre_runpod_reconciliation.md`.
 > - **TEST — NOT verified on the canvas.** TEST was deliberately not accessed.
 >
-> The handling of a TEST image whose final canvas holds zero disease pixels is a **METHODOLOGY
+> ~~The handling of a TEST image whose final canvas holds zero disease pixels is a **METHODOLOGY
 > DECISION OPEN**. Candidates are the current abort rule (§3.3), or a pre-registered exclusion using
 > an identical eligibility set across models, reporting *k* excluded and *n*_eff. It must be
-> registered before the single test campaign. Until amended, **§3.3 stands unchanged**.
+> registered before the single test campaign. Until amended, **§3.3 stands unchanged**.~~
+> **[UPDATED 2026-09-23 — B64 C5]** Resolved by AM-5 (M10): TEST images with zero disease pixels are excluded from per-image disease-only analyses, including per-image mIoU-C; their count is reported; they stay in dataset-level metrics; the expected per-image disease-only count becomes 1,561 minus that count; any other `null` still aborts. Code: lane L-AM5.
 
 ### The `1,554` value is NOT a count — never use it
 
@@ -247,14 +248,16 @@ preregistered rule safe.
 | Inference/metric raised | `null` + `status = "evaluation_error"` | **NO — fail the run** |
 | Normal | numeric + `status = "ok"` | **YES — all rows** |
 
-**Expected defined-score counts on the official test split: 1,561 / 1,561 for BOTH per-image vectors.**
+~~**Expected defined-score counts on the official test split: 1,561 / 1,561 for BOTH per-image vectors.**
 Every test mask contains background *and* exactly one disease class, so neither vector can be undefined.
-Any `null` on test is a **data-integrity failure that must abort the run**, not a row to skip quietly.
+Any `null` on test is a **data-integrity failure that must abort the run**, not a row to skip quietly.~~
+**[UPDATED 2026-09-23 — B64 C5]** Resolved by AM-5 (M10): TEST images with zero disease pixels are excluded from per-image disease-only analyses, including per-image mIoU-C; their count is reported; they stay in dataset-level metrics; the expected per-image disease-only count becomes 1,561 minus that count; any other `null` still aborts. Code: lane L-AM5.
 
 > *Scope note `[B59 A12]`:* the "every test mask contains … exactly one disease class" premise is a
-> raw-mask fact. Survival on the final 512 canvas is verified for VAL only (0/846 lost). The rule above
+> raw-mask fact. Survival on the final 512 canvas is verified for VAL only (0/846 lost). ~~The rule above
 > is unchanged. Whether to replace it with a pre-registered exclusion rule is a **METHODOLOGY DECISION
-> OPEN** (see §0 evidence-scope note).
+> OPEN** (see §0 evidence-scope note).~~
+> **[UPDATED 2026-09-23 — B64 C5]** Replaced by AM-5 (M10); see the AM-5 block below. Code: lane L-AM5.
 
 > **[AMENDED 2026-09-23 — AM-5; resolves M10]** The one permitted exception is this. A TEST image whose
 > evaluated mask has **no disease pixels** gets a `null` + `undefined_no_eligible_class` per-image
@@ -678,8 +681,8 @@ and is **not** a Chapter III requirement — see `open_questions.md` **D6** for 
 
 Frozen here: dataset-level eligibility (union-present for IoU/Dice, GT-present for mAcc); per-image
 eligibility (GT-present, both vectors); ignore-255 masking on ground truth only; background inclusion;
-undefined-value representation (`null` + status, never `NaN`); the test count (**1,561**); expected defined
-scores (**1,561/1,561**); the bootstrap resampling unit (images, with `CM` re-accumulation); canonical
+undefined-value representation (`null` + status, never `NaN`); the test count (**1,561**); ~~expected defined
+scores (**1,561/1,561**)~~ (**[UPDATED 2026-09-23 — B64 C5]** expected defined per-image disease-only scores = 1,561 minus the AM-5 zero-disease count; code: lane L-AM5); the bootstrap resampling unit (images, with `CM` re-accumulation); canonical
 identity (file stem via index-emitting wrapper); and the four-file artifact layout with its required fields.
 
 A1 implements metric tests against §3 and §8.4. A2 implements the evaluator against §5–§7.

@@ -226,7 +226,7 @@ the teacher stage the pair is:
 | | Identity |
 |---|---|
 | **Container / environment** | `ghcr.io/ainsleydeluna/plantseg-thesis@sha256:cb413304e2445e5c8ac3786f7a370f2ed05a07d11843b11687bb9eb23dc32c2b` (revision label `48bccc70caef…4368f5`, `CUBLAS_WORKSPACE_CONFIG=:4096:8` by image `ENV`) |
-| **Runtime source (G20)** | detached checkout `0bb69961dfedcb4d00ff42990a6543f5dda505ec` — the commit that carries the G18 production source |
+| ~~**Runtime source (G20)**~~ | ~~detached checkout `0bb69961dfedcb4d00ff42990a6543f5dda505ec` — the commit that carries the G18 production source~~ **[UPDATED 2026-09-23 — B64 C5]** B62 runtime committed at `3c43f89` and frozen (runbook §4a, `a51a092`); CUDA re-canary pending (B65). The G20 checkout `0bb6996…` is historical. |
 
 The image revision label does **not** attest which source bytes execute — the runtime file hashes do.
 `src/training/teacher_runner.py` hashes its own resolved `__file__` before importing torch, the

@@ -89,7 +89,7 @@ evaluated on the **PlantSeg** in-the-wild plant-disease segmentation benchmark `
 | EXIF orientation (images) | **`ImageOps.exif_transpose` is MANDATORY** on images before pairing/transforming with masks; **never** on masks (PNG, no EXIF). 9 images affected (8× orient-6 dim-swap + 1× orient-3 180°). | `[empirical]` |
 | Ignore index | **255** (padding regions; excluded from all loss & metrics). **Absent from raw masks** — introduced only at preprocessing. | `[ch3; empirical]` |
 | `num_classes` (all-class) | **116** — empirically supported (mask values 0–115; max non-ignore = 115; background 0 + 115 diseases). | `[empirical]` |
-| `reduce_zero_label` / background | **background = index 0** (empirical: present in 7773/7774 masks, 80.6% of pixels). `reduce_zero_label` itself = `NEED_TO_CONFIRM` (implementation choice; no literal "background" category named in dataset files). | `[empirical]` |
+| `reduce_zero_label` / background | **background = index 0** (empirical: present in 7773/7774 masks, 80.6% of pixels). ~~`reduce_zero_label` itself = `NEED_TO_CONFIRM` (implementation choice; no literal "background" category named in dataset files).~~ **[UPDATED 2026-09-23 — B64 C5]** open_questions #2 RESOLVED (D1 + A0-FIX 2026-07-26): `reduce_zero_label = False`; index 0 is the non-disease slot and 1–115 are the diseases (official PlantSeg METAINFO). | `[empirical]` |
 | Zenodo DOI | **10.5281/zenodo.17719108** | `[Wei; ch3]` |
 | License (dataset) | **CC BY-NC 4.0** | `[Wei; ch3]` |
 | License (the article itself) | CC BY-NC-**ND** 4.0 (Nature) — distinct from dataset license; do not conflate | `[Wei]` |
@@ -112,10 +112,11 @@ segmentation. The two source claims were a **frame mismatch**, not a true contra
 
 **Locked outcomes:** classifier output channels = **116**; **do not change masks**; apply
 `ImageOps.exif_transpose` to images (not masks) before any pairing/resizing.
-**Residual `NEED_TO_CONFIRM`:** the *disease-only* metric must exclude background = **index 0**
+~~**Residual `NEED_TO_CONFIRM`:** the *disease-only* metric must exclude background = **index 0**
 (empirically), but no literal "background" category is named in the dataset files (COCO `categories`
 list is empty), so `reduce_zero_label` and the formal disease-only exclusion stay `NEED_TO_CONFIRM`
-pending the PlantSeg repo's official convention. `[empirical; ch3 Table 3.1; ctx]`
+pending the PlantSeg repo's official convention.~~ `[empirical; ch3 Table 3.1; ctx]`
+**[UPDATED 2026-09-23 — B64 C5]** open_questions #2 RESOLVED (D1 + A0-FIX 2026-07-26): `reduce_zero_label = False`; index 0 is the non-disease slot and 1–115 are the diseases (official PlantSeg METAINFO).
 
 ---
 
@@ -228,8 +229,9 @@ pending the PlantSeg repo's official convention. `[empirical; ch3 Table 3.1; ctx
 > distillation stages**, not to E1. Unclipped E1 is therefore not a deviation, and no E1 rerun follows
 > from it `[B59 A5]`.
 >
-> Whether E2/E3 are clipped remains a **METHODOLOGY DECISION OPEN** (§(f)). See
+> ~~Whether E2/E3 are clipped remains a **METHODOLOGY DECISION OPEN** (§(f)).~~ See
 > `docs/open_questions.md` D2. `[D2; D-A; B59]`
+> **[UPDATED 2026-09-23 — B64 C5]** Resolved by AM-7 (M1): no clipping in E1, E2 or E3; a NaN or divergence (as defined in AM-7) in any E2/E3 run stops the stage, after which one clipping rule is adopted for all three and the FP32 stages are rerun. Code: lane L-AM7.
 
 ### B2 — Augmentation (train split only) `[ch3 §E.2.c]`
 | Component | Value | Source |
@@ -356,7 +358,7 @@ peak on CUDA at batch 16", which omitted that transient.)*
 | Param | Value | Source |
 |---|---|---|
 | Method | static INT8 (standard) | `[ch3]` |
-| Calibration set | **~128 images**, sampled with **seed 42** from training partition; no augmentation; same preprocessing as clean test; identifiers persisted as fixed list; **same subset for E4 and E7**; **one image per mini-batch** (AM-10) | `[ch3; AM-10]` |
+| Calibration set | ~~**~128 images**~~ **[UPDATED 2026-09-23 — B64 C5]** exactly **128 images**, one per mini-batch (AM-10), sampled with **seed 42** from training partition; no augmentation; same preprocessing as clean test; identifiers persisted as fixed list; **same subset for E4 and E7**; **one image per mini-batch** (AM-10) | `[ch3; AM-10]` |
 | Activation observer | histogram (minimizes quantization error) | `[ch3]` |
 | Weight observer | per-channel min/max | `[ch3]` |
 | Weight quant | per-channel symmetric INT8, all conv (per-channel depthwise essential) | `[ch3]` |
@@ -375,7 +377,7 @@ peak on CUDA at batch 16", which omitted that transient.)*
 - **ignore_index = 255** excluded from CE, Dice, Logit KD, CWD, and **all** metrics `[ch3; ctx]`.
 
 ### B6 — Seed + library versions `[ch3 §D, Table 3.4; ctx]`
-- **Seed = 42** across `torch`, `numpy`, python `random` `[ch3]`.
+- **Seed = 42** across `torch`, `numpy`, python `random` `[ch3]`. **[UPDATED 2026-09-23 — B64 C5]** Seed 42 is the primary seed; seeds 43 and 44 per AM-1 (below).
 - Determinism set **before CUDA init**: `cudnn.deterministic=True`, `cudnn.benchmark=False`,
   `use_deterministic_algorithms(True, warn_only=True)`, `CUBLAS_WORKSPACE_CONFIG=:4096:8` `[ch3; ctx]`.
 - **Seeds — LOCKED 2026-09-23 (AM-1; resolves M8):** seeds **42 (primary), 43, 44** for **E1 and
@@ -431,7 +433,8 @@ peak on CUDA at batch 16", which omitted that transient.)*
   `PolynomialLR` curve at full float64 precision). Data **order** is not recoverable: the loop
   consumes an infinite `cycle(train_loader)` and the position within the current epoch is not
   persisted. A resumed run is therefore a valid E1 run but not a byte-reproduction of an
-  uninterrupted one, and must be reported as resumed if used for a headline result.
+  uninterrupted one~~, and must be reported as resumed if used for a headline result~~.
+  **[UPDATED 2026-09-23 — B64 C5]** Official (headline) runs are never launched or continued with `--resume` — see the no-resume rule below (D29); a non-official resumed run discloses it (D26).
 - **No-resume rule for official runs** `[project; B44; closes D29]`: official runs of any stage
   (teacher, E1, E2, E3, E5, E6) are never launched or continued with `--resume`. An interrupted
   official run is discarded and relaunched from iteration 0 with the same seed into a fresh
@@ -615,11 +618,12 @@ These are **operational** parameters. None of them touches a `[ch3]`-traced meth
   `ΔmIoU = mIoU(E6) − mIoU(E3)` (dataset-level, all-class, union-present) is **strictly greater than
   −2.0 pp**; equality fails. **B = 10,000**. Sensitivity decisions at 1.0/1.5/2.0/2.5 pp are read
   from the **same** bootstrap distribution.
-- **E6-KD contingency trigger** (stricter, distinct): run if the **observed** clean E3→E6 mIoU drop
+- ~~**E6-KD contingency trigger** (stricter, distinct): run if the **observed** clean E3→E6 mIoU drop
   is **> 1.0 pp**; equality does not trigger. No p-value, not a Holm test.
   **METHODOLOGY DECISION OPEN `[B59 C4]`:** this reads the clean TEST split to decide whether
   to train another model. It must be amended before E6 — validation-based trigger, or a fixed
-  pre-registered arm. The rule above is recorded as written, not endorsed.
+  pre-registered arm. The rule above is recorded as written, not endorsed.~~
+  **[UPDATED 2026-09-23 — B64 C5]** Resolved by AM-3 (M7): E6-KD runs if the E3 → E6 drop in dataset-level VAL all-class mIoU, with E6 scored on the converted INT8 model, is > 1.0 pp at seed 42; the clean-TEST block is descriptive only and never launches a model. Code: lane L-AM3.
 
 **Effect sizes (reported with each test)**
 - matched-pairs **rank-biserial r_rb** = `(R₊ − R₋)/(R₊ + R₋)` with Pratt ranking (zeros are ranked
@@ -723,11 +727,11 @@ BN freeze, and early-stop patience accruing only after the observer freeze.)* Un
 > explicitly before the first E2 run. Nothing here selects an option, and the committed launcher
 > gate is unchanged. The QAT half (E5/E6) is tracked separately.
 
-*Gradient clipping — TWO SEPARATE, STILL-UNRESOLVED DECISIONS.* Chapter 3 requires global-norm
+~~*Gradient clipping — TWO SEPARATE, STILL-UNRESOLVED DECISIONS.* Chapter 3 requires global-norm
 clipping throughout distillation training **and** during QAT, and the launchers require a positive
 finite `max_norm`, so **"no clipping" is not a candidate** for these stages. E1's separately resolved
 unclipped status (D2/D-A) is **not** permission to leave the distilled stages unclipped, and E1 is not
-reopened here. Distillation and QAT are different optimization regimes and no source establishes that
+reopened here.~~ **[UPDATED 2026-09-23 — B64 C5]** Resolved by AM-7 (M1): no clipping in E1, E2 or E3; a NaN or divergence (as defined in AM-7) in any E2/E3 run stops the stage, after which one clipping rule is adopted for all three and the FP32 stages are rerun. Code: lane L-AM7. The QAT (E5/E6) decision below is unchanged. Distillation and QAT are different optimization regimes and no source establishes that
 one numeric norm should serve both, so they are selected independently:
 
 | decision | applies to | candidates | selection |
@@ -954,4 +958,4 @@ iteration count for this phase. The "2,000-iteration E1 pilot" figure appears **
 **not** modify the **80,000-iteration / validate-every-4,000** recipe in §(d) B2. An optional short training
 rehearsal is tracked as `[operational] RECOMMENDED_NOT_BLOCKING` — see
 [open_questions.md](open_questions.md) **D6** and
-[reports/e1_runpod_launch_runbook.md](../reports/e1_runpod_launch_runbook.md).
+~~[reports/e1_runpod_launch_runbook.md](../reports/e1_runpod_launch_runbook.md)~~ [reports/e1_launch_runbook_v2.md](../reports/e1_launch_runbook_v2.md) **[UPDATED 2026-09-23 — B64 C5]** (v1 superseded).
