@@ -2,7 +2,7 @@
 
 > **Status: FROZEN (2026-07-26).** This is the authoritative definition of *how every evaluation number in
 > this thesis is computed* and *what every evaluation run must emit*. A1 (metric tests) and A2 (evaluator)
-> implement this document and must not invent additional metric or schema decisions.
+> implement this document and must not invent additional metric or schema decisions. **[UPDATED 2026-09-24 — B66-prep L-EVAL-DET, DL-17]** §10 adds one optional, separately versioned block (`run.eval_runtime`) and the evaluation determinism rule; `schema_version` is unchanged.
 >
 > Companion to [IMPLEMENTATION_CONTRACT.md](IMPLEMENTATION_CONTRACT.md) §(f) (which states *which* metrics
 > the thesis reports) and [open_questions.md](open_questions.md) D3/D4 (the decision records).
@@ -390,7 +390,7 @@ official statistics.
     "metric_impl_sha256":    "string",         // sha256 of the metric module actually imported
     "timestamp_utc":     "ISO-8601 Z",
     "env": { "python": "s", "torch": "s", "torchvision": "s", "numpy": "s", "device": "s" },
-    "config_sha256":     "string"              // hash of the resolved config snapshot below
+    "config_sha256":     "string"              // hash of the resolved config snapshot below; optional sibling "eval_runtime": {…} per §10 [UPDATED 2026-09-24 — B66-prep L-EVAL-DET]
   },
   "dataset": {
     "name": "PlantSeg", "doi": "10.5281/zenodo.17719108",
@@ -693,4 +693,66 @@ undefined-value representation (`null` + status, never `NaN`); the test count (*
 scores (**1,561/1,561**)~~ (**[UPDATED 2026-09-23 — B64 C5]** expected defined per-image disease-only scores = 1,561 minus the AM-5 zero-disease count; code: lane L-AM5); the bootstrap resampling unit (images, with `CM` re-accumulation); canonical
 identity (file stem via index-emitting wrapper); and the four-file artifact layout with its required fields.
 
-A1 implements metric tests against §3 and §8.4. A2 implements the evaluator against §5–§7.
+A1 implements metric tests against §3 and §8.4. A2 implements the evaluator against §5–§7. **[UPDATED 2026-09-24 — B66-prep L-EVAL-DET]** The evaluation runtime record and the evaluation determinism rule are implemented against §10.
+
+---
+
+## 10. Evaluation runtime record and determinism (DL-17, L-EVAL-DET) [added 2026-09-24, B66-prep]
+
+**(a) Record.** `summary.run.eval_runtime`, versioned `plantseg-eval-runtime/1.0.0`
+(`EVAL_RUNTIME_VERSION`, `src/eval/artifacts.py`). `scripts/evaluate_model.py` writes it on every run, and
+`write_artifact` refuses an `official` artifact without it. Core-only fixture writers and artifacts written
+before L-EVAL-DET may lack it, so readers must tolerate its absence. It is outside `config_sha256`;
+`schema_version` stays `plantseg-eval/1.0.0`. §5.2's ban on `""` applies at every depth, and `null` means
+not applicable. The record has exactly these 26 keys (`src/eval/eval_runtime.py`, `RECORD_KEYS`):
+
+| Key | Meaning |
+|---|---|
+| `eval_runtime_version` | `plantseg-eval-runtime/1.0.0` |
+| `model_device` | the model's construction device (`cpu`, `cuda:N`); `env.device` keeps recording the requested device |
+| `model_tensor_devices` | sorted devices of every parameter and buffer (`[]` if none) |
+| `input_devices` | sorted devices the input batches were moved to |
+| `forward_batches`, `batch_size`, `num_workers` | loader facts (`num_workers` is always 0) |
+| `determinism_policy_applied` | true only for an FP32 student on CUDA (b) |
+| `cuda_initialized_before_policy` | false when the policy was applied; null otherwise |
+| `inherited_cublas_workspace_config` | `CUBLAS_WORKSPACE_CONFIG` before the policy (null if unset) |
+| `determinism` | the live five-state after evaluation (`deterministic_algorithms`, `deterministic_algorithms_warn_only`, `cudnn_deterministic`, `cudnn_benchmark`, `CUBLAS_WORKSPACE_CONFIG`) |
+| `fill_uninitialized_memory` | `torch.utils.deterministic.fill_uninitialized_memory`; null where torch lacks it (torch 2.1.0) |
+| `cudnn_enabled`, `tf32` | cuDNN switch; TF32 state (two torch flags, `float32_matmul_precision`, two env overrides), recorded and never set |
+| `gpu_name`, `gpu_capability`, `cudnn_version` | non-null only when the model is on CUDA |
+| `torch_cuda`, `torch_num_threads`, `pillow` | runtime versions and CPU threads |
+| `checkpoint_iteration`, `checkpoint_best_val_miou_all_class` | the student checkpoint's stored `iter` and best VAL mIoU (null for random-init, teacher and INT8, and when the stored value is missing or non-finite) |
+| `image_digest` | `PLANTSEG_IMAGE_DIGEST`, stripped; null if unset or blank |
+| `eval_warnings`, `eval_warnings_truncated`, `nondeterministic_alert_count` | unique warnings captured around the evaluation core (first line, at most 50 entries), and the number of emitted "does not have a deterministic implementation" alerts; each unique warning is also echoed to stderr as `[eval-warning xN] …` |
+
+**(b) Policy.** For `model_role=student`, `precision=fp32` on a CUDA device only, the evaluator applies
+IMPLEMENTATION_CONTRACT B6's four settings exactly as `src/seeds.py` applies them for E1
+(`CUBLAS_WORKSPACE_CONFIG=:4096:8`, `cudnn.deterministic=True`, `cudnn.benchmark=False`,
+`use_deterministic_algorithms(True, warn_only=True)`), with no reseed. It runs after the pre-inference gate
+(`validate_artifact_request`) and before anything can initialise CUDA, and it is refused
+(`cuda_initialized_before_policy`) if CUDA is already initialised: one CUDA evaluation per process. TF32 is
+recorded, not set. Teacher, INT8 and CPU evaluations initialise no CUDA, apply nothing and record
+`determinism_policy_applied=false`.
+
+**(c) Inputs.** Every input batch moves to the model's construction device before the forward, as
+`train_e1.validate` does; predictions and targets return to the CPU for the confusion matrix, so §3's
+arithmetic is unchanged. A run is refused, before anything is written, on `model_device_mismatch`,
+`input_device_mismatch`, `policy_drift` or `checkpoint_changed_after_validation`.
+
+**(d) Re-scoring identity.** Artifacts A and B are identical when both pass `verify_artifact`,
+`per_image.jsonl` is byte-equal, the NPZ key sets are equal and every array has the same dtype, shape and
+raw bytes, and `summary.json` is equal as canonical JSON (sorted keys, compact separators, no non-finite
+values) after removing only `run.run_id` and `run.timestamp_utc`. NPZ container bytes need not match.
+
+**(e) DL-17.** `scripts/compare_eval_artifacts.py` is the DL-17 identity and PASS implementation (exit 0
+PASS, 1 FAIL, 2 validity violation; 3 is never a verdict: a usage error or `--help`, the same directory
+twice, or an unexpected error, and it releases nothing until DL-17 is re-run to a verdict). Validity
+preconditions, per artifact: `run.eval_runtime` present;
+`determinism_policy_applied`; `model_device` == `input_devices` == `cuda:N`; batch size 16, 0 workers, 53
+forward batches, 846 rows; checkpoint iteration 80000 and stored best 0.36314016580581665; the DL-21 image
+digest; Σ `gt_support` = 159,279,104; `run.checkpoint_sha256` = cf0879f7007dfacbd0d510085ff28a4b47ee845ddb8fd599611d74109e1d6a03;
+"A40" in `gpu_name`. A violation is not a DL-17 FAIL: the run is not a DL-17 run (STOP and report). PASS:
+the two runs are identical under (d), and |`all_class_miou` − 0.36314016580581665| ≤ 1e-4; a difference in
+(1e-6, 1e-4] is recorded, not a failure. DL-17 artifacts are `provisional`, and each run writes to a fresh
+out-dir outside the clone. A FAIL or a validity STOP blocks every step that relies on this evaluator (E4–E7
+and every official evaluation) until diagnosed; neither blocks the E1 training launches, which do not use it.

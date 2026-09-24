@@ -6,15 +6,16 @@ Drives the proven A2a flow in the frozen order:
     build metadata + class map
       -> prepare_artifact_request
       -> validate_artifact_request        <-- NOTHING is constructed before this succeeds
+      -> apply the B6 evaluation policy   (FP32 student on CUDA only; EVALUATION_CONTRACT section 10)
       -> construct dataset adapter + model
-      -> evaluate_model
-      -> write_artifact
+      -> evaluate_model                   (inputs moved to the model device; warnings captured)
+      -> write_artifact                   (with the run.eval_runtime record)
 
 The CLI and its metadata are STAGE-NEUTRAL (any stage / role / precision / condition can be
-*described*). Implemented construction paths are the FP32 student (E1/E2/E3, `--checkpoint`) and the
-converted INT8 student (E4-E7, `--provenance`, CPU/QNNPACK only). Teacher and corruption
-construction remain rejected explicitly -- metadata neutrality is never misrepresented as runtime
-support.
+*described*). Implemented construction paths are the FP32 student (E1/E2/E3, `--checkpoint`), the
+converted INT8 student (E4-E7, `--provenance`, CPU/QNNPACK only) and the teacher (M4-V, CPU,
+`--checkpoint` + `--teacher-config`). Corruption construction remains rejected explicitly --
+metadata neutrality is never misrepresented as runtime support.
 
 INT8 model-source validation (stage, source stage, artifact hash, backend) happens BEFORE the
 dataset adapter exists, so a tampered or mismatched artifact can never touch the test split.
@@ -189,6 +190,10 @@ def run(args, *, counters: Counters | None = None, teacher_builder=None) -> Path
                                    load_class_map)
     from src.eval.artifacts import (prepare_artifact_request, validate_artifact_request,
                                     write_artifact)
+    from src.eval.eval_runtime import (EVAL_NUM_WORKERS, EvalRuntimeError, ModelDeviceForward,
+                                       apply_eval_determinism, build_eval_runtime_record,
+                                       check_post_eval, determinism_required,
+                                       evaluate_capturing_warnings, resolve_model_device)
     from src.eval.model_loading import build_fp32_student, load_student_checkpoint
 
     validate_cli_args(args)
@@ -254,6 +259,14 @@ def run(args, *, counters: Counters | None = None, teacher_builder=None) -> Path
 
     provenance = validate_artifact_request(request)     # <-- refusal happens HERE, before step 5
 
+    # ---- evaluation determinism policy (contract section 10): an FP32 student on CUDA gets E1's
+    # B6 settings, without a reseed, before anything can initialise CUDA. Everything else applies
+    # nothing and records the inherited state.
+    cpu_only = args.model_role == "teacher" or args.precision in INT8_PRECISIONS
+    policy_applied = determinism_required(args.model_role, args.precision, args.device)
+    policy_info = apply_eval_determinism() if policy_applied else None
+    ck_info = None
+
     # ---- step 5: only now may the dataset adapter and the model be constructed ----
     if counters is not None:
         counters.dataset.append(("adapter", tuple(source_indices)))
@@ -268,15 +281,31 @@ def run(args, *, counters: Counters | None = None, teacher_builder=None) -> Path
     elif resolved is not None:
         from src.eval.model_loading import load_int8_student
         model = load_int8_student(resolved, require_qnnpack=True)[0]
+    elif args.random_init:
+        model = build_fp32_student(device=args.device)
     else:
-        model = (build_fp32_student(device=args.device) if args.random_init
-                 else load_student_checkpoint(args.checkpoint, map_location=args.device)[0])
+        model, ck_info = load_student_checkpoint(args.checkpoint, map_location=args.device)
+        if ck_info.sha256 != ckpt_sha:
+            raise EvalRuntimeError(
+                "checkpoint_changed_after_validation",
+                f"checkpoint bytes changed between validation ({ckpt_sha}) and load "
+                f"({ck_info.sha256})")
 
-    loader = build_eval_loader(adapter, args.batch_size, num_workers=0)
-    result = evaluate_model(model, loader, expected_manifest=expected_manifest,
-                            condition=request.dataset.condition, num_classes=116,
-                            background_index=0, ignore_index=255)
-    return write_artifact(result, request, provenance)
+    # Inputs go to the model's construction device, exactly as train_e1.validate moves them.
+    model_device = resolve_model_device(args.device, cpu_only=cpu_only)
+    fwd = ModelDeviceForward(model_device)
+    loader = build_eval_loader(adapter, args.batch_size, num_workers=EVAL_NUM_WORKERS)
+    result, warn_summary = evaluate_capturing_warnings(
+        evaluate_model, model, loader, expected_manifest=expected_manifest,
+        condition=request.dataset.condition, num_classes=116,
+        background_index=0, ignore_index=255, forward=fwd)
+    check_post_eval(model=model, model_device=model_device, fwd=fwd,
+                    policy_applied=policy_applied)
+    runtime = build_eval_runtime_record(
+        model=model, model_device=model_device, fwd=fwd, batch_size=args.batch_size,
+        forward_batches=result.forward_batches, policy_applied=policy_applied,
+        policy_info=policy_info, ckpt_info=ck_info, warn_summary=warn_summary)
+    return write_artifact(result, request, provenance, eval_runtime=runtime)
 
 
 def main(argv=None) -> int:

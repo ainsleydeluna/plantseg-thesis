@@ -37,6 +37,9 @@ from .evaluate import Condition, DatasetMeta, EvalResult, ManifestEntry, RunMeta
 
 SCHEMA_VERSION = "plantseg-eval/1.0.0"
 METRIC_PROTOCOL = "plantseg-metrics/1.0.0"
+# Optional, separately versioned summary.run.eval_runtime block (contract section 10; L-EVAL-DET).
+# Never part of config_sha256; SCHEMA_VERSION is unchanged by it.
+EVAL_RUNTIME_VERSION = "plantseg-eval-runtime/1.0.0"
 
 ARTIFACT_STATUSES = ("official", "provisional", "smoke")
 STAGES = ("teacher", "E1", "E2", "E3", "E4", "E5", "E6", "E7")
@@ -351,15 +354,48 @@ def _reject_constant(name):
     raise ArtifactWriteError(f"non-finite JSON constant {name!r} present in artifact")
 
 
+def _find_empty_string(obj, path="eval_runtime"):
+    if isinstance(obj, str):
+        return path if obj == "" else None
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            hit = _find_empty_string(v, f"{path}.{k}")
+            if hit:
+                return hit
+    if isinstance(obj, (list, tuple)):
+        for i, v in enumerate(obj):
+            hit = _find_empty_string(v, f"{path}[{i}]")
+            if hit:
+                return hit
+    return None
+
+
+def validate_eval_runtime(rt) -> None:
+    """Contract section 10: a dict of the current version, no "" anywhere, strict-JSON serialisable."""
+    if not isinstance(rt, dict):
+        raise ArtifactWriteError(f"eval_runtime must be a dict, got {type(rt).__name__}")
+    if rt.get("eval_runtime_version") != EVAL_RUNTIME_VERSION:
+        raise ArtifactWriteError(
+            f"eval_runtime_version must be {EVAL_RUNTIME_VERSION!r}, "
+            f"got {rt.get('eval_runtime_version')!r}")
+    hit = _find_empty_string(rt)
+    if hit:
+        raise ArtifactWriteError(f"{hit} is \"\"; absent values are null (contract section 5.2)")
+    try:
+        json.dumps(rt, allow_nan=False)
+    except (TypeError, ValueError) as e:
+        raise ArtifactWriteError(f"eval_runtime is not strict-JSON serialisable: {e}") from e
+
+
 def build_summary(result: EvalResult, req: ArtifactRequest, prov: Provenance,
-                  timestamp_utc: str) -> dict:
+                  timestamp_utc: str, eval_runtime: dict | None = None) -> dict:
     import torch
     try:
         import importlib.metadata as md
         tv = md.version("torchvision")
     except Exception:                                    # noqa: BLE001 -- optional at eval time
         tv = None
-    return {
+    summary = {
         "schema_version": SCHEMA_VERSION,
         "metric_protocol": METRIC_PROTOCOL,
         "run": {
@@ -405,6 +441,9 @@ def build_summary(result: EvalResult, req: ArtifactRequest, prov: Provenance,
         "per_class": dict(result.per_class),
         "integrity": dict(result.integrity),
     }
+    if eval_runtime is not None:
+        summary["run"]["eval_runtime"] = eval_runtime
+    return summary
 
 
 def validate_summary(summary: dict, req: ArtifactRequest, result: EvalResult) -> None:
@@ -451,16 +490,25 @@ def _manifest_text(directory: Path) -> str:
 
 
 def write_artifact(result: EvalResult, req: ArtifactRequest, prov: Provenance,
-                   *, timestamp_utc: str | None = None,
+                   *, timestamp_utc: str | None = None, eval_runtime: dict | None = None,
                    _inject_failure: bool = False) -> Path:
-    """All-or-nothing finalisation: temp sibling -> validate -> re-read -> hash -> rename."""
+    """All-or-nothing finalisation: temp sibling -> validate -> re-read -> hash -> rename.
+
+    `eval_runtime` (contract section 10) is validated before anything is created; an 'official'
+    artifact requires it.
+    """
     if req.out_dir.exists():
         raise ArtifactWriteError(f"refusing to overwrite {req.out_dir}")
+    if eval_runtime is not None:
+        validate_eval_runtime(eval_runtime)
+    elif req.artifact_status == "official":
+        raise ArtifactWriteError(
+            "an 'official' artifact requires run.eval_runtime (EVALUATION_CONTRACT section 10)")
     ts = timestamp_utc or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     tmp = req.out_dir.parent / f".{req.out_dir.name}.tmp-{uuid.uuid4().hex[:12]}"
     tmp.mkdir(parents=True, exist_ok=False)
     try:
-        summary = build_summary(result, req, prov, ts)
+        summary = build_summary(result, req, prov, ts, eval_runtime=eval_runtime)
         validate_summary(summary, req, result)
         if _inject_failure:
             raise ArtifactWriteError("injected integrity failure (test hook)")
