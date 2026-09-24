@@ -223,7 +223,7 @@ pending the PlantSeg repo's official convention.~~ `[empirical; ch3 Table 3.1; c
 | Distillation-weight ramp (E2/E3) | linear **0 → target over first epoch** | `[ch3]` |
 | Gradient clipping | ch3 p.104 places it in the distillation-stage sentence: "During the distillation stages … global-norm gradient clipping is applied throughout". **LOCKED 2026-09-23 (AM-7): E1, E2 and E3 share one rule — no clipping** (E1 seed 42 logged no gradient norm). A NaN/divergence (as defined in AM-7) in any E2/E3 run stops the stage; one clipping rule is then adopted for all three and the FP32 stages are rerun. The E2/E3 launcher gate changes in lane L-AM7. *(Was: E1 none; E2/E3 METHODOLOGY DECISION OPEN, B59 C2.)* | `[ch3; B59 A5/C2; AM-7]` |
 | Teacher in loop (E2/E3) | eval mode, online, consumes **identical augmented input** as student | `[ch3]` |
-| ~~Optional control~~ Longer-schedule controls **[UPDATED 2026-09-24 — B65 CP-006]** | ~~extended-schedule E2 (~160,000 iters, 1 seed) — **not run; recorded as future work (AM-11)**~~ **Run, descriptive (AM-16 item 3):** E1, E2 and E3 at seed 42 with 160,000 iterations each (poly schedule over the 160,000-iteration horizon; VAL every 4,000 iterations; best-checkpoint selection as in the 80,000-iteration runs; E2/E3 use the selected λ and α). Compared on clean TEST mIoU, with each run's measured GPU-hours reported alongside: each 160,000-iteration run against its 80,000-iteration run; E3 at 80,000 against E2 at 160,000 (the Chapter 3 sanity check); E2 and E3 at 80,000 against E1 at 160,000 (a longer-trained-baseline control; not compute-matched). Code: lanes L-AM16-ITERS and L-AM16-GPUH | `[ch3 §C; AM-11; AM-16]` |
+| ~~Optional control~~ Longer-schedule controls **[UPDATED 2026-09-24 — B65 CP-006]** | ~~extended-schedule E2 (~160,000 iters, 1 seed) — **not run; recorded as future work (AM-11)**~~ **Run, descriptive (AM-16 item 3):** E1, E2 and E3 at seed 42 with 160,000 iterations each (poly schedule over the 160,000-iteration horizon; VAL every 4,000 iterations; best-checkpoint selection as in the 80,000-iteration runs; E2/E3 use the selected λ and α). Compared on clean TEST mIoU, with each run's measured GPU-hours reported alongside: each 160,000-iteration run against its 80,000-iteration run; E3 at 80,000 against E2 at 160,000 (the Chapter 3 sanity check); E2 and E3 at 80,000 against E1 at 160,000 (a longer-trained-baseline control; not compute-matched). Code: lanes L-AM16-ITERS and L-AM16-GPUH **[UPDATED 2026-09-24 — B66-prep S3]** E1: `train_e1.py --iterations 160000` sets the poly horizon and the run length (L-AM16-ITERS, E1 part; default 80000 = the locked recipe). A run refuses `--max-iters` above its horizon; a real run refuses any other `--max-iters`; `--resume` refuses a checkpoint whose scheduler `total_iters` differs. E2/E3: KD part pending (required before any E2/E3 160,000-iteration launch). GPU-hours: L-AM16-GPUH | `[ch3 §C; AM-11; AM-16]` |
 
 > **[D-A/D2 RESOLVED — E1 unclipped; RECLASSIFIED 2026-09-21 as consistent with ch3, not a deviation]**
 > E1 runs with `grad_clip_max_norm=None`, which the completed E1 seed-42 run used. The
@@ -436,8 +436,8 @@ peak on CUDA at batch 16", which omitted that transient.)*
 - **Resume is NOT bitwise-identical to an uninterrupted run** — documented deviation, same register
   as D-A `[project; B31-2]`. `--resume` restores model / optimizer / scheduler / RNG state
   (`torch`, `torch.cuda`, `numpy`, python `random`, and the DataLoader generator) and the LR curve
-  continues **exactly** (checkpoint-recorded LR matches the analytic 80,000-iteration
-  `PolynomialLR` curve at full float64 precision). Data **order** is not recoverable: the loop
+  continues **exactly** ~~(checkpoint-recorded LR matches the analytic 80,000-iteration
+  `PolynomialLR` curve at full float64 precision)~~ **[UPDATED 2026-09-24 — B66-prep S3]** (the restored scheduler continues the chained `PolynomialLR` recursion over the checkpoint's own horizon, `total_iters`; the seed-42 curve equals that recursion bitwise and differs from the closed form in 79,684 of 80,000 values, B66-prep P1 MEASURED; a `--resume` whose horizon differs from `--iterations` is refused). Data **order** is not recoverable: the loop
   consumes an infinite `cycle(train_loader)` and the position within the current epoch is not
   persisted. A resumed run is therefore a valid E1 run but not a byte-reproduction of an
   uninterrupted one~~, and must be reported as resumed if used for a headline result~~.
@@ -467,6 +467,7 @@ These are **operational** parameters. None of them touches a `[ch3]`-traced meth
 | `num_workers` (real run) | **`min(cpu_count-2, 12)`** | reproducibility-relevant — see above |
 | `drop_last` | **True, TRAIN only** | val/test keep every sample; dropping eval samples would corrupt the metric |
 | telemetry | `e1_telemetry.jsonl` in `--ckpt-dir` | append-mode, resume-safe, never inside the repo |
+| `--iterations` **[UPDATED 2026-09-24 — B66-prep S3]** | default `E1_STUDENT["iterations"]` (**80000**); registered 80000 and 160000 | sets the poly horizon and the real-run length; recorded as run_meta `poly_horizon`. Not an operational default like the rows above: the default is the `[ch3]` value (80,000, B2), and 160000 is the AM-16 item-3 exception |
 
 - **Iterations per epoch = 335** under `drop_last=True` (5,367 train / batch 16; 7 samples dropped
   per epoch and reshuffled into the next), giving **238.806 epochs** at the locked 80,000 iterations

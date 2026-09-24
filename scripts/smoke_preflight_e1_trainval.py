@@ -330,8 +330,11 @@ def section_a() -> None:
           and all(P.RUN_META_EXPECT[k] == SEED42_RUN_META[k] for k in P.RUN_META_EXPECT)
           and set(P.RUN_META_EXPECT) | set(P.RUN_META_EXEMPT) == set(SEED42_RUN_META))
     check("A15 Q4: no eval profile; launch-block constants 12 workers / log-every 50",
-          set(P.PROFILES) >= {"e1_80k"} and "eval" not in P.PROFILES
+          set(P.PROFILES) == {"e1_80k", "e1_160k"} and "eval" not in P.PROFILES
           and P.PROFILES["e1_80k"] == {"extra_args": (), "max_iters": 80000, "poly_horizon": 80000}
+          and P.PROFILES["e1_160k"] == {"extra_args": ("--iterations", "160000"),
+                                        "dry_args": ("--iterations", "160000"),
+                                        "max_iters": 160000, "poly_horizon": 160000}
           and P.E1_NUM_WORKERS == 12 and P.LOG_EVERY == 50)
 
 
@@ -632,6 +635,15 @@ def section_d() -> dict:
     check("D10 an evidence record that cannot be written turns GO into NO-GO; no launch block is printed",
           rc == 1 and "VERDICT: NO-GO" in out and "VERDICT: GO" not in out and "launch block" not in out,
           out[-160:])
+    rec11 = TMP / "d11.json"
+    with patched(P, "STAGES", stub_stages({}, [], hub=hub)):
+        rc, out, _ = run_main(["gate", "--seed", "42", "--ckpt-dir", d, "--expect-head", HEAD, "--record",
+                               str(rec11), "--profile", "e1_160k"])
+    blk11 = block_of(out) if "----- launch block -----" in out else ""
+    check("D11 profile e1_160k: the GO block is the golden 160k block (--iterations 160000, never --max-iters)",
+          rc == 0 and blk11 == golden_block(42, d, str(Path("/staged/plantseg")),
+                                            extra=("--iterations", "160000"), hub=hub)
+          and "--iterations 160000" in blk11 and "--max-iters" not in blk11, f"rc={rc}")
     return {"block": gold, "d": d}
 
 
@@ -812,6 +824,12 @@ def section_e() -> None:
         with patched(P, "_child", dry_child(text)):
             e20.append(code_of(P.stage_dry_run, dict(ctx18)))
     check("E20 reduced coverage or NOOP -> dry_run_failed", e20 == ["dry_run_failed"] * 2, str(e20))
+    with patched(P, "_child", dry_child(good_out)):
+        r25 = P.stage_dry_run(dict(ctx18, profile="e1_160k"))
+    a25 = dry_seen[-1]
+    ok25 = (r25[0] == "PASS" and "--iterations" in a25
+            and a25[a25.index("--iterations") + 1] == "160000")
+    check("E25 profile e1_160k: the gate's dry run exercises --iterations 160000", ok25, str(a25[-4:]))
     fg_same = FakeGit({("-c",): (0, b" M x\x00")})
     with patched(P, "_git", fg_same):
         a = code_of(P.stage_repo_unchanged, {"snapshot": b" M x\x00"})
@@ -917,6 +935,19 @@ def section_f() -> None:
     check("F19 an undecodable line that mentions run_meta -> FAIL",
           rc == 1 and "mentions run_meta but is not valid JSON" in out, out[-160:])
 
+    def crm160(row, name):
+        d = fresh(name)
+        d.mkdir()
+        (d / "e1_telemetry.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
+        return run_main(["check-run-meta", "--ckpt-dir", str(d), "--seed", "42", "--expect-head", HEAD,
+                         "--profile", "e1_160k"])
+    rc, out, _ = crm160(dict(SEED42_RUN_META, git_head=HEAD, max_iters=160000, poly_horizon=160000), "f_F20")
+    check("F20 profile e1_160k: a seed-42 row with max_iters == poly_horizon == 160000 -> PASS",
+          rc == 0 and "RESULT: PASS" in out, out[-120:])
+    rc, out, _ = crm160(dict(SEED42_RUN_META, git_head=HEAD), "f_F21")
+    check("F21 profile e1_160k: an 80k row (the forgotten --iterations) -> FAIL naming max_iters and poly_horizon",
+          rc == 1 and "MISMATCH: max_iters:" in out and "MISMATCH: poly_horizon:" in out, out[-160:])
+
 
 # ------------------------------------------------------------------------------------------ G
 def section_g(block: str, d: str) -> None:
@@ -978,19 +1009,30 @@ def section_g(block: str, d: str) -> None:
           rc == 2 and "on CPU" in err and len(isos) == n_iso)
     n0, n_iso = len(calls), len(isos)
     rc, _, _ = e1_main(["--dry-run"], full)
-    check("G09 --dry-run kwargs == the P4 dry golden; no isolation call",
-          rc == 0 and calls[-1] == P4_DRY and len(isos) == n_iso, json.dumps(calls[-1], default=str)[:160])
-    line = next(ln for ln in block.splitlines() if "train_e1.py" in ln)
-    toks = shlex.split(line)
-    argv = toks[toks.index("src/training/train_e1.py") + 1: toks.index(">")]
+    check("G09 --dry-run kwargs == the P4 dry golden + poly_horizon 80000 (S3); no isolation call",
+          rc == 0 and calls[-1] == dict(P4_DRY, poly_horizon=80000) and len(isos) == n_iso,
+          json.dumps(calls[-1], default=str)[:160])
+
+    def block_argv(blk):
+        ln = next(x for x in blk.splitlines() if "train_e1.py" in x)
+        tk = shlex.split(ln)
+        return tk[tk.index("src/training/train_e1.py") + 1: tk.index(">")]
+    argv = block_argv(block)
     for tag, seed in (("G10", 42), ("G11", 43), ("G12", 44)):
         a2 = [seed_tok if seed_tok != "43" else str(seed) for seed_tok in argv]
         rc, _, _ = e1_main(a2, full)
-        want = dict(P4_REAL42, seed=seed, log_every=50, ckpt_dir_arg=d)
+        want = dict(P4_REAL42, seed=seed, log_every=50, ckpt_dir_arg=d, poly_horizon=80000)
         got = calls[-1]
         diff = sorted(k for k in set(want) | set(got) if want.get(k) != got.get(k))
         check(f"{tag} the launch block's argv (seed {seed}) -> run() kwargs == P4 golden + "
-              "{seed, log_every 50, ckpt_dir_arg} only", rc == 0 and diff == [], str(diff))
+              "{seed, log_every 50, ckpt_dir_arg, poly_horizon 80000} only", rc == 0 and diff == [], str(diff))
+    block160 = golden_block(42, d, str(Path("/staged/plantseg")), extra=P.PROFILES["e1_160k"]["extra_args"])
+    rc, _, _ = e1_main(block_argv(block160), full)
+    want = dict(P4_REAL42, seed=42, log_every=50, ckpt_dir_arg=d, max_iters=160000, poly_horizon=160000)
+    got = calls[-1]
+    diff = sorted(k for k in set(want) | set(got) if want.get(k) != got.get(k))
+    check("G16 the e1_160k launch block's argv -> run() kwargs == P4 golden + {seed 42, log_every 50, "
+          "ckpt_dir_arg, max_iters 160000, poly_horizon 160000} only", rc == 0 and diff == [], str(diff))
     st = (random.getstate(), np.random.get_state()[1].tobytes(), torch.get_rng_state().numpy().tobytes())
     real_iso(full, {"train": 5367, "val": 846})
     st2 = (random.getstate(), np.random.get_state()[1].tobytes(), torch.get_rng_state().numpy().tobytes())

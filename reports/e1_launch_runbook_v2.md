@@ -141,10 +141,11 @@ Everything else is left at its default **on purpose** — the defaults are the l
 | Flag | Default when omitted | Source |
 |---|---|---|
 | `--batch-size` | **16** | `E1_STUDENT["batch_size"]` |
-| `--max-iters` | **80000** | `E1_STUDENT["iterations"]` |
+| `--max-iters` | **80000** **[UPDATED 2026-09-24 — B66-prep S3]** = `--iterations`; a real run refuses any other value | `E1_STUDENT["iterations"]` |
+| `--iterations` **[UPDATED 2026-09-24 — B66-prep S3]** | **80000**; 160000 only for the AM-16 item-3 seed-42 control | sets the poly horizon and the real-run length |
 | `--val-interval` | **4000** | `E1_STUDENT["val_interval"]` |
 | `--max-val-batches` | `None` → **full val set** (846 imgs, 53 batches) | real-run path |
-| `--num-workers` | **`min(cpu_count-2, 12)`** | B31-5 |
+| `--num-workers` | **`min(cpu_count-2, 12)`** **[UPDATED 2026-09-24 — B66-prep S3]** B66: pass `--num-workers 12` explicitly (seed 42 resolved to 12, and the augmentation stream depends on it) | B31-5 |
 | `--ckpt-interval` | **2000** | B31-2 |
 | `--keep-ckpts` | **3** | B31-9 |
 | `--jsonl-name` | **`e1_telemetry.jsonl`** | B31-7 |
@@ -153,7 +154,7 @@ Everything else is left at its default **on purpose** — the defaults are the l
 | `--seed` | 42 | shown explicitly above for the log |
 
 **Do not pass `--max-iters`, `--batch-size` or `--val-interval`.** They are locked; passing them
-invites a typo that silently changes the recipe.
+invites a typo that silently changes the recipe. **[UPDATED 2026-09-24 — B66-prep S3]** A real run refuses a `--max-iters` that differs from its schedule. The 160,000-iteration control is `--iterations 160000`; `--max-iters 160000` alone is refused (before S3 it would have trained iterations 80,001–160,000 at LR 0).
 
 **Record `num_workers` with the seed.** It is reproducibility-relevant — see
 [IMPLEMENTATION_CONTRACT.md](../docs/IMPLEMENTATION_CONTRACT.md) §B6. It is written into the
@@ -248,8 +249,8 @@ evidence for how far the attempt got. Do not commit it (`ai_guardrails.md` §2).
          A resumed run is NOT bitwise-identical to an uninterrupted one.
 ```
 
-**What IS restored:** the LR curve exactly (checkpoint LR matches the analytic 80,000-iteration
-`PolynomialLR` curve at full float64), all RNG streams, best-mIoU tracking, and LR-monotonicity
+**What IS restored:** the LR curve exactly (~~checkpoint LR matches the analytic 80,000-iteration
+`PolynomialLR` curve at full float64~~ **[UPDATED 2026-09-24 — B66-prep S3]** the restored scheduler continues the chained `PolynomialLR` recursion over the checkpoint's own horizon; `--resume` refuses a checkpoint whose horizon differs from `--iterations`), all RNG streams, best-mIoU tracking, and LR-monotonicity
 checking **across** the resume boundary (`last.pt` carries `prev_lr`, so a *k*-segment run leaves
 zero unverified transitions).
 
@@ -427,3 +428,11 @@ container restarted, the 9.1 shell is gone: redo 9.1–9.3 in the new shell (and
 the volume; a re-fetch needs its own approval) before 9.5.
 
 **9.9 After the run.** Capture every checkpoint's sha256 on the pod before download (B52 N9).
+
+**9.10 Longer-schedule control (AM-16 item 3, DL-27) [added 2026-09-24, B66-prep S3].** E1 at seed 42 with
+160,000 iterations: pass `--profile e1_160k` to the gate (9.5) and to `check-run-meta` (9.7). Its launch
+block adds `--iterations 160000` (the poly horizon and the run length); it never passes `--max-iters`, which a
+real run refuses. `check-run-meta` then requires `max_iters` == `poly_horizon` == 160000, so a launch that
+forgot `--iterations` (a valid-looking duplicate 80k run) is caught. Budget: about 47 h at the seed-42 rate
+(1.0567 s/iter), 40 validations, 80 `last.pt` writes. No resume (AGENTS.md): an interruption forfeits the
+attempt, up to about 47 h; relaunch from 9.5 into a fresh `<D>`.

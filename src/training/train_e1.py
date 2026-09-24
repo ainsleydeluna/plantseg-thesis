@@ -296,7 +296,7 @@ def validate(student, val_loader, device, num_classes: int, max_val_batches: int
 def run(*, mode: str, device: str, pretrained, batch_size: int, max_iters: int, val_interval: int,
         max_val_batches: int | None, num_workers: int, ckpt_dir_arg: str | None,
         grad_clip_norm: float | None, log_every: int, seed: int,
-        resume: str | None = None, ckpt_interval: int = 2000,
+        resume: str | None = None, ckpt_interval: int = 2000, poly_horizon: int | None = None,
         jsonl_name: str = "e1_telemetry.jsonl", keep_ckpts: int = 3) -> int:
     set_seed(seed)
     dev = torch.device(device)
@@ -333,7 +333,7 @@ def run(*, mode: str, device: str, pretrained, batch_size: int, max_iters: int, 
     optimizer = torch.optim.SGD(student.parameters(), lr=E1_STUDENT["learning_rate"],
                                 momentum=E1_STUDENT["momentum"],
                                 weight_decay=E1_STUDENT["weight_decay"])
-    horizon = E1_STUDENT["iterations"]            # poly horizon is ALWAYS the real 80k curve
+    horizon = E1_STUDENT["iterations"] if poly_horizon is None else poly_horizon  # --iterations
     scheduler, sched_name = build_scheduler(optimizer, horizon, E1_STUDENT["lr_power"])
     print(f"[opt] SGD lr={E1_STUDENT['learning_rate']} momentum={E1_STUDENT['momentum']} "
           f"weight_decay={E1_STUDENT['weight_decay']} | scheduler={sched_name} "
@@ -361,7 +361,7 @@ def run(*, mode: str, device: str, pretrained, batch_size: int, max_iters: int, 
         "num_classes": NUM_CLASSES, "ignore_index": IGNORE_INDEX,
         "learning_rate": E1_STUDENT["learning_rate"], "momentum": E1_STUDENT["momentum"],
         "weight_decay": E1_STUDENT["weight_decay"], "lr_power": E1_STUDENT["lr_power"],
-        "poly_horizon": E1_STUDENT["iterations"], "grad_clip_norm": grad_clip_norm,
+        "poly_horizon": horizon, "grad_clip_norm": grad_clip_norm,
         "used_pretrained": student.used_pretrained, "params": n_params,
     })
     print(f"[jsonl] telemetry -> {jsonl_path}")
@@ -398,10 +398,19 @@ def run(*, mode: str, device: str, pretrained, batch_size: int, max_iters: int, 
               "streams ARE restored, so augmentation remains reproducible from this point onward. "
               "A resumed run is NOT bitwise-identical to an uninterrupted one.")
 
+    # L-AM16-ITERS: the scheduler (restored by --resume if given) must decay over this run's horizon.
+    # main() refuses first, before anything is written; this guard covers direct run() calls.
+    gate = schedule_gate_error(mode, horizon, max_iters)
+    sched_h = getattr(scheduler, "total_iters", None)
+    if gate is not None or sched_h != horizon:
+        raise RuntimeError("E1 schedule guard: " + (
+            gate or f"scheduler total_iters={sched_h} != poly horizon {horizon}"))
+
     if start_iter > max_iters:
         print(f"[resume] nothing to do: the checkpoint is already at iter {start_iter - 1}, which "
-              f"meets or exceeds --max-iters {max_iters}. Raise --max-iters to continue training, "
-              f"or resume from an earlier checkpoint. No iterations were run and no checkpoint was "
+              f"meets or exceeds --max-iters {max_iters}. A checkpoint keeps its own poly horizon, "
+              f"so a finished schedule cannot be extended by resuming; resume from an earlier "
+              f"checkpoint or start a fresh run. No iterations were run and no checkpoint was "
               f"written.")
         # Distinct token: zero checks were exercised, so this must not read as a checked PASS.
         # Exit 0 because "nothing to do" is not an error.
@@ -558,20 +567,64 @@ def total_grad_norm(parameters) -> float:
 
 
 # --------------------------------------------------------------------------------------------------
+# schedule length: L-AM16-ITERS (E1 part), AM-16 item 3 / DL-27
+# --------------------------------------------------------------------------------------------------
+LONGER_SCHEDULE_ITERS = 160_000
+REGISTERED_POLY_HORIZONS = (E1_STUDENT["iterations"], LONGER_SCHEDULE_ITERS)   # (80000, 160000)
+
+
+def schedule_gate_error(mode: str, poly_horizon: int, max_iters: int) -> str | None:
+    """Pure. None = admissible, else the refusal text (mirrors train_distill.grad_clip_gate_error).
+
+    PolynomialLR holds the LR at 0.0 past its horizon, so a loop longer than the horizon would not
+    train; a real run trains exactly its whole schedule.
+    """
+    if poly_horizon not in REGISTERED_POLY_HORIZONS:
+        return f"poly horizon {poly_horizon} is not registered {REGISTERED_POLY_HORIZONS}"
+    if max_iters > poly_horizon:
+        return (f"--max-iters {max_iters} exceeds the poly horizon {poly_horizon}: PolynomialLR holds "
+                f"lr at 0.0 after it, so iterations {poly_horizon + 1}..{max_iters} would not train. "
+                f"The longer schedule is --iterations {LONGER_SCHEDULE_ITERS}, not --max-iters.")
+    if mode == "real" and max_iters != poly_horizon:
+        return (f"a real run trains its whole schedule: --max-iters {max_iters} != --iterations "
+                f"{poly_horizon}. Do not pass --max-iters to a real run.")
+    return None
+
+
+def checkpoint_poly_horizon(path) -> int | None:
+    """The poly horizon a train_e1 checkpoint was trained under: scheduler_state_dict['total_iters'].
+
+    Loaded exactly as run() loads the same file for --resume (weights_only=False: a last.pt carries
+    numpy RNG state that torch 2.1.0 cannot allow-list), but always onto the CPU, so no CUDA is
+    touched before run() -> set_seed(). Nothing but total_iters is read. None when absent.
+    """
+    ck = torch.load(path, map_location="cpu", weights_only=False)
+    v = (ck.get("scheduler_state_dict") or {}).get("total_iters") if isinstance(ck, dict) else None
+    return None if v is None else int(v)
+
+
+# --------------------------------------------------------------------------------------------------
 # CLI / safety gate
 # --------------------------------------------------------------------------------------------------
 def parse_args(argv=None):
     p = argparse.ArgumentParser(description="E1 training-loop scaffold (dry-run by default).")
     p.add_argument("--dry-run", action="store_true", help="tiny CPU dry-run (safe default behavior)")
     p.add_argument("--real-run", action="store_true",
-                   help="intent to run the real 80k training (requires --confirm-real-run)")
+                   help="intent to run the real E1 training (80k; 160k with --iterations 160000) "
+                        "(requires --confirm-real-run)")
     p.add_argument("--confirm-real-run", action="store_true",
-                   help="explicit confirmation gate for the real 80k run")
+                   help="explicit confirmation gate for the real E1 run")
     p.add_argument("--device", default=None)
     p.add_argument("--init", choices=["none", "imagenet"], default=None,
                    help="backbone init; 'imagenet' uses configs/e1_student.py (real run only)")
     p.add_argument("--batch-size", type=int, default=None)
-    p.add_argument("--max-iters", type=int, default=None)
+    p.add_argument("--max-iters", type=int, default=None,
+                   help="loop bound; defaults to --iterations (real) / 4 (dry); never above the poly "
+                        "horizon; a real run refuses any other value")
+    p.add_argument("--iterations", type=int, choices=REGISTERED_POLY_HORIZONS, default=None,
+                   help="schedule length = the poly-LR horizon AND the real-run length; default "
+                        "E1_STUDENT['iterations'] (80000, the locked recipe); 160000 = the AM-16 "
+                        "item-3 longer-schedule control")
     p.add_argument("--val-interval", type=int, default=None)
     p.add_argument("--max-val-batches", type=int, default=None)
     p.add_argument("--num-workers", type=int, default=None)
@@ -603,7 +656,7 @@ def main(argv=None) -> int:
     if args.real_run:
         if not args.confirm_real_run:
             print("REFUSING to start the real E1 run: --real-run requires --confirm-real-run.\n"
-                  "The full 80k training is intentionally NOT runnable from defaults. "
+                  "The real E1 training is intentionally NOT runnable from defaults. "
                   "Re-run with: --real-run --confirm-real-run", file=sys.stderr)
             return 2
         mode = "real"
@@ -614,7 +667,16 @@ def main(argv=None) -> int:
         mode = "dry"
         if not args.dry_run:
             print("[mode] No --dry-run/--real-run given; defaulting to SAFE DRY-RUN. "
-                  "The real 80k run requires --real-run --confirm-real-run.")
+                  "A real E1 run requires --real-run --confirm-real-run.")
+
+    # L-AM16-ITERS (E1 part): --iterations sets the poly horizon AND the real-run length. Checked for
+    # both modes before the CPU refusal and before any data access.
+    horizon = args.iterations or E1_STUDENT["iterations"]
+    gate = schedule_gate_error(mode, horizon,
+                               args.max_iters or (horizon if mode == "real" else 4))
+    if gate is not None:
+        print(f"REFUSING to start the {mode} E1 run: {gate}", file=sys.stderr)
+        return 2
 
     if mode == "dry":
         device = args.device or "cpu"
@@ -634,8 +696,8 @@ def main(argv=None) -> int:
             reason = ("--device cpu was passed" if args.device == "cpu"
                       else "CUDA is not available (torch.cuda.is_available()=False)")
             print(f"REFUSING to start the real E1 run on CPU: {reason}.\n"
-                  "The real 80k run requires a CUDA GPU. Provision a GPU (see "
-                  "reports/e1_runpod_launch_runbook.md), or use --dry-run for a safe CPU smoke.",
+                  "A real E1 run requires a CUDA GPU. Provision a GPU (see "
+                  "reports/e1_launch_runbook_v2.md), or use --dry-run for a safe CPU smoke.",
                   file=sys.stderr)
             return 2
         # DL-21 (B66): a real E1 run uses a TRAIN/VAL-only staged root (the M11 check). It runs after
@@ -657,19 +719,36 @@ def main(argv=None) -> int:
         init = args.init or "imagenet"
         pretrained = False if init == "none" else E1_STUDENT["init_weights"]
         batch_size = args.batch_size or E1_STUDENT["batch_size"]
-        max_iters = args.max_iters or E1_STUDENT["iterations"]
+        max_iters = args.max_iters or horizon
         val_interval = args.val_interval or E1_STUDENT["val_interval"]
         max_val_batches = args.max_val_batches            # None -> full val
         # B31-5: data loading, not the GPU, bounded E1 throughput at the old default of 4.
         default_workers = min(max((os.cpu_count() or 4) - 2, 1), 12)
         num_workers = args.num_workers if args.num_workers is not None else default_workers
 
+    # A resumed scheduler keeps the checkpoint's own horizon: refuse a mismatch before anything is
+    # written (CPU map; no CUDA before run() -> set_seed()).
+    if args.resume:
+        try:
+            ck_h = checkpoint_poly_horizon(args.resume)
+        except Exception as e:                        # noqa: BLE001 -- surfaced as a refusal
+            print(f"REFUSING to resume from {args.resume}: cannot read its poly horizon "
+                  f"({type(e).__name__}: {e})", file=sys.stderr)
+            return 2
+        if ck_h != horizon:
+            hint = (f"Pass --iterations {ck_h} or resume a matching checkpoint."
+                    if ck_h in REGISTERED_POLY_HORIZONS else
+                    "It records no registered poly horizon, so train_e1 cannot resume it.")
+            print(f"REFUSING to resume from {args.resume}: its poly horizon (scheduler total_iters) "
+                  f"is {ck_h}, this run's is {horizon}. {hint}", file=sys.stderr)
+            return 2
+
     return run(mode=mode, device=device, pretrained=pretrained, batch_size=batch_size,
                max_iters=max_iters, val_interval=val_interval, max_val_batches=max_val_batches,
                num_workers=num_workers, ckpt_dir_arg=args.ckpt_dir,
                grad_clip_norm=args.grad_clip_norm, log_every=args.log_every, seed=args.seed,
                resume=args.resume, ckpt_interval=args.ckpt_interval,
-               jsonl_name=args.jsonl_name, keep_ckpts=args.keep_ckpts)
+               jsonl_name=args.jsonl_name, keep_ckpts=args.keep_ckpts, poly_horizon=horizon)
 
 
 if __name__ == "__main__":

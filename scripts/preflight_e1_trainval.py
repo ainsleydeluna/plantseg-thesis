@@ -81,6 +81,10 @@ E1_NUM_WORKERS = 12
 LOG_EVERY = 50
 PROFILES = {
     "e1_80k": {"extra_args": (), "max_iters": 80000, "poly_horizon": 80000},
+    # AM-16 item 3 / DL-27 longer-schedule control (L-AM16-ITERS, E1 part): --iterations sets both
+    # the poly horizon and the run length; the gate's dry run exercises the same horizon.
+    "e1_160k": {"extra_args": ("--iterations", "160000"), "dry_args": ("--iterations", "160000"),
+                "max_iters": 160000, "poly_horizon": 160000},
 }
 RUN_META_KEYS = (
     "event", "wall_clock", "mode", "seed", "git_head", "git_head_source", "image_digest", "torch",
