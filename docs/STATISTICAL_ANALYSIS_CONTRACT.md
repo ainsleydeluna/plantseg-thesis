@@ -151,7 +151,12 @@ parameters, the seed policy and the cache protocol remain a future corruption-sc
 must also verify that the vendored implementation really exposes these five function names.
 
 **Official inferential grid: exactly 5 × 3 = 15 cells** per clean image and stage. **Severity 4** is
-descriptive-degradation only and is **not** part of the inferential scalar; **severity 5 is excluded**.
+descriptive-degradation only and is **not** part of the inferential scalar; ~~**severity 5 is excluded**~~.
+**[UPDATED 2026-09-24 — B65 CP-006]** The four non-noise corruptions (motion blur, JPEG compression,
+brightness, fog) are also scored at severities 4 and 5 (descriptive; AM-16 item 6), reported per severity
+and as the Kamann & Rother (2020) average (non-noise corruptions over severities 1–5, noise over 1–3).
+Those cells never enter this grid; the mIoU-C, RPD and rCD definitions stay on severities 1–3. Code: lane
+L-AM16-SEV.
 
 The nested mean equals a flat 15-value mean on a complete grid, but **the nested definition is
 retained in code and reporting** `[project-decision]` because it mirrors the methodology and makes a
@@ -696,8 +701,10 @@ Stable iff all three hold:
 
 A per-seed table of dataset-level effects is reported for every planned comparison, descriptively. The
 eight-test Holm family (§1) and the E3-vs-E6 non-inferiority check (§9.2) use the **seed-42 models
-only**. Seeds 43 and 44 enter only this criterion and the per-seed table. This criterion carries no
-p-value and is not a Holm test.
+only**. ~~Seeds 43 and 44 enter only this criterion and the per-seed table.~~
+**[UPDATED 2026-09-24 — B65 CP-006]** Seed-43/44 models enter only this criterion and the per-seed table;
+E1's best-checkpoint VAL all-class mIoU at seeds 42, 43 and 44 also sets the AM-16 item-2 α_CWD tie
+band. This criterion carries no p-value and is not a Holm test.
 
 ---
 

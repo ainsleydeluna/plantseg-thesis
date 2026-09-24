@@ -34,8 +34,11 @@ evaluated on the **PlantSeg** in-the-wild plant-disease segmentation benchmark `
 
 - Goal: a more favorable **accuracy ⊕ efficiency ⊕ robustness** trade-off than the lightweight
   student baseline — judged by balance across all three dimensions, not peak on any single one `[ch3 §A]`.
-- Scope guardrails: **no on-device / ARM claims**; CPU-proxy efficiency only. Single-seed vertical
-  slice (E1→E7 + full eval) before any multi-seed scaling `[ch3 §D; ctx]`.
+- Scope guardrails: ~~**no on-device / ARM claims**; CPU-proxy efficiency only. Single-seed vertical
+  slice (E1→E7 + full eval) before any multi-seed scaling~~ **[UPDATED 2026-09-24 — B65 CP-006]** no
+  on-device claims (Chapter 3 p. 141 stands); the x86 fbgemm-copy CPU-proxy path stays official, and a
+  supplementary server-class ARM latency measurement is descriptive (AM-16 item 7). Multi-seed and
+  longer-schedule runs follow the `docs/DECISION_LOG.md` Current plan (AM-1, AM-16) `[ch3 §D; ctx; AM-16]`.
 - The teacher is a **descriptive upper-bound reference only** — never an inferential comparator `[ch3 §A]`.
 - Published Wei et al. (2026) numbers are **contextual reference only**, never inferential comparators
   (no per-image scores available; preprocessing/training/eval mismatched) `[ch3 §A]`.
@@ -68,6 +71,8 @@ evaluated on the **PlantSeg** in-the-wild plant-disease segmentation benchmark `
 - All stages share the **same official 70/10/20 split, preprocessing, 512×512 resolution, normalization,
   mask formatting, metrics, and corruption settings**; only the compression component varies `[ch3 §C]`.
 - All training runs are **iteration-matched (80,000 iters)**, not wall-clock- or FLOPs-matched `[ch3 §C]`.
+  **[UPDATED 2026-09-24 — B65 CP-006]** Exception: the AM-16 item-3 longer-schedule controls (E1, E2 and
+  E3 at seed 42 with 160,000 iterations, descriptive, with measured GPU-hours) `[AM-16]`.
 
 ---
 
@@ -218,7 +223,7 @@ pending the PlantSeg repo's official convention.~~ `[empirical; ch3 Table 3.1; c
 | Distillation-weight ramp (E2/E3) | linear **0 → target over first epoch** | `[ch3]` |
 | Gradient clipping | ch3 p.104 places it in the distillation-stage sentence: "During the distillation stages … global-norm gradient clipping is applied throughout". **LOCKED 2026-09-23 (AM-7): E1, E2 and E3 share one rule — no clipping** (E1 seed 42 logged no gradient norm). A NaN/divergence (as defined in AM-7) in any E2/E3 run stops the stage; one clipping rule is then adopted for all three and the FP32 stages are rerun. The E2/E3 launcher gate changes in lane L-AM7. *(Was: E1 none; E2/E3 METHODOLOGY DECISION OPEN, B59 C2.)* | `[ch3; B59 A5/C2; AM-7]` |
 | Teacher in loop (E2/E3) | eval mode, online, consumes **identical augmented input** as student | `[ch3]` |
-| Optional control | extended-schedule E2 (~160,000 iters, 1 seed) — **not run; recorded as future work (AM-11)** | `[ch3 §C; AM-11]` |
+| ~~Optional control~~ Longer-schedule controls **[UPDATED 2026-09-24 — B65 CP-006]** | ~~extended-schedule E2 (~160,000 iters, 1 seed) — **not run; recorded as future work (AM-11)**~~ **Run, descriptive (AM-16 item 3):** E1, E2 and E3 at seed 42 with 160,000 iterations each (poly schedule over the 160,000-iteration horizon; VAL every 4,000 iterations; best-checkpoint selection as in the 80,000-iteration runs; E2/E3 use the selected λ and α). Compared on clean TEST mIoU, with each run's measured GPU-hours reported alongside: each 160,000-iteration run against its 80,000-iteration run; E3 at 80,000 against E2 at 160,000 (the Chapter 3 sanity check); E2 and E3 at 80,000 against E1 at 160,000 (a longer-trained-baseline control; not compute-matched). Code: lanes L-AM16-ITERS and L-AM16-GPUH | `[ch3 §C; AM-11; AM-16]` |
 
 > **[D-A/D2 RESOLVED — E1 unclipped; RECLASSIFIED 2026-09-21 as consistent with ch3, not a deviation]**
 > E1 runs with `grad_clip_max_norm=None`, which the completed E1 seed-42 run used. The
@@ -262,7 +267,7 @@ pending the PlantSeg repo's official convention.~~ `[empirical; ch3 Table 3.1; c
 | Param | Value | Source |
 |---|---|---|
 | Temperature `T_CWD` | **4** | `[ch3]` |
-| Feature-map weight `α_CWD` | **50** (stride-16 C5 map) | `[ch3]` |
+| Feature-map weight `α_CWD` | ~~**50**~~ **[UPDATED 2026-09-24 — B65 CP-006]** selected on VAL from {25, 50, 100} by the AM-16 item-2 sweep; 50 (the Chapter 3 and Shu et al. (2021) default) wins ties and applies if item 2 is cut (stride-16 C5 map). `configs/distill.py` keeps 50 until lane L-AM16-ALPHA adds the override | `[ch3; AM-16]` |
 | Logit-map weight `β_CWD` | **3** | `[ch3]` |
 | Normalization | **T²/C**, with **C = the channel count of the map being distilled** (Shu et al. 2021, Eq. 4): **C = 320** for the stride-16 feature term (MSCAN-B Stage-3); **C = 116** for the logit-map term. Implemented at `src/training/train_distill.py:239` (`channels_norm=320`) and `:249` (default = map's own 116). ch3 names only the 320 case. | `[ch3; Shu 2021; B59 C1]` |
 | Projection head | training-only 1×1 conv: student **160-ch C5 → teacher 320-ch**; removed before E6/E7 via state_dict edit prior to observer insertion | `[ch3]` |
@@ -328,8 +333,8 @@ adds a 12.658 GiB forward transient that scales with num_classes × H × W × ba
 stage needs a 48 GB-class card. Whether E2/E3 add materially on top of E1 stays INFERRED until measured
 on the pod. *(Was: "E2/E3 therefore cost only marginally more than E1 itself … an INFERRED 11–14 GB
 peak on CUDA at batch 16", which omitted that transient.)*
-| E3 total loss | `L_CE + L_Dice + λ_logit·L_LogitKD + 50·L_CWD_feat + 3·L_CWD_logit` | `[ch3]` |
-| Optional control | α_CWD sensitivity sweep {25, 50, 100} — **not run; α_CWD fixed at 50 per Shu 2021; recorded as future work (AM-11)** | `[ch3 §C; AM-11]` |
+| E3 total loss | ~~`L_CE + L_Dice + λ_logit·L_LogitKD + 50·L_CWD_feat + 3·L_CWD_logit`~~ **[UPDATED 2026-09-24 — B65 CP-006]** `L_CE + L_Dice + λ_logit·L_LogitKD + α_CWD·L_CWD_feat + 3·L_CWD_logit`, α_CWD per AM-16 item 2 | `[ch3; AM-16]` |
+| ~~Optional control~~ α_CWD sweep **[UPDATED 2026-09-24 — B65 CP-006]** | ~~α_CWD sensitivity sweep {25, 50, 100} — **not run; α_CWD fixed at 50 per Shu 2021; recorded as future work (AM-11)**~~ **Run (AM-16 item 2):** after λ is fixed, E3 runs at seed 42 with α_CWD in {25, 50, 100} (β and T unchanged), 80,000 iterations each. The highest best-checkpoint VAL all-class mIoU wins. Tie band: the larger of 0.5 pp and √2·s, where s is the sample standard deviation (n = 3) of E1's best-checkpoint VAL all-class mIoU over seeds 42, 43 and 44; s, the band and the three E1 values are recorded in the decision log after B66 and before the sweep launches, and the sweep does not launch before that entry exists. A tie goes to 50 when 50 is tied, otherwise to the smallest α; a winner at 25 or 100 is reported as a boundary result, and the grid is not extended. The winning run is E3 seed 42, and its α is used for E3 seeds 43 and 44 (E6 and E7 inherit it through the E3 checkpoint). All three runs are reported as the Chapter 3 neighborhood-stability check. A pre-registered departure from Chapter 3 p. 98 (α_CWD fixed at 50); TEST is never consulted. If item 2 is cut, E3 runs at α_CWD = 50 and no sweep is reported. Code: lane L-AM16-ALPHA | `[ch3 §C; AM-11; AM-16]` |
 
 ### B4 — Quantization
 **INT8 QAT (E5 / E6)** `[ch3 §C "E5"/"E6", §D]`
@@ -358,7 +363,7 @@ peak on CUDA at batch 16", which omitted that transient.)*
 | Param | Value | Source |
 |---|---|---|
 | Method | static INT8 (standard) | `[ch3]` |
-| Calibration set | ~~**~128 images**~~ **[UPDATED 2026-09-23 — B64 C5]** exactly **128 images**, one per mini-batch (AM-10), sampled with **seed 42** from training partition; no augmentation; same preprocessing as clean test; identifiers persisted as fixed list; **same subset for E4 and E7**; **one image per mini-batch** (AM-10) | `[ch3; AM-10]` |
+| Calibration set | ~~**~128 images**~~ **[UPDATED 2026-09-23 — B64 C5]** exactly **128 images**, one per mini-batch (AM-10), sampled with **seed 42** from training partition; no augmentation; same preprocessing as clean test; identifiers persisted as fixed list; **same subset for E4 and E7**; **one image per mini-batch** (AM-10). **[UPDATED 2026-09-24 — B65 CP-006]** Descriptive sensitivity (AM-16 item 5): E4 and E7 at seed 42 are also calibrated on three further 128-image TRAIN subsets, drawn by the AM-10 procedure with seeds 43, 44 and 45, and reported per subset with the range over all four calibration sets; the official E4/E7 models keep this list. Code: lane L-AM16-CALIB | `[ch3; AM-10; AM-16]` |
 | Activation observer | histogram (minimizes quantization error) | `[ch3]` |
 | Weight observer | per-channel min/max | `[ch3]` |
 | Weight quant | per-channel symmetric INT8, all conv (per-channel depthwise essential) | `[ch3]` |
@@ -381,8 +386,10 @@ peak on CUDA at batch 16", which omitted that transient.)*
 - Determinism set **before CUDA init**: `cudnn.deterministic=True`, `cudnn.benchmark=False`,
   `use_deterministic_algorithms(True, warn_only=True)`, `CUBLAS_WORKSPACE_CONFIG=:4096:8` `[ch3; ctx]`.
 - **Seeds — LOCKED 2026-09-23 (AM-1; resolves M8):** seeds **42 (primary), 43, 44** for **E1 and
-  E3**; E4/E7 recomputed per seed; E5/E6 once per seed, from their FP32 parent's seed; **E2 at seed 42;
-  seeds 43/44 optional, budget permitting, with λ fixed from the seed-42 sweep**; teacher trained once.
+  E3**; E4/E7 recomputed per seed; E5/E6 once per seed, from their FP32 parent's seed; ~~**E2 at seed 42;
+  seeds 43/44 optional, budget permitting, with λ fixed from the seed-42 sweep**~~
+  **[UPDATED 2026-09-24 — B65 CP-006]** **E2 seeds 43 and 44 are planned runs, with λ fixed from the
+  seed-42 sweep (AM-16 item 1)**; teacher trained once.
   All training randomness, including data order and augmentation, derives from the run seed (B64 C1).
   The Holm family and the E3-vs-E6 non-inferiority check use the seed-42 models only. *(Was: three-seed
   validation planned for E1 and E3 with the extra values `NEED_TO_CONFIRM`; E5/E6 "where compute
@@ -544,7 +551,10 @@ These are **operational** parameters. None of them touches a `[ch3]`-traced meth
 > **Canonical corruption identifiers are frozen in `configs/corruption_protocol.json`**
 > (`plantseg-corruptions/1.0.0`, A3b-0): `motion_blur` · `gaussian_noise` · `jpeg_compression` ·
 > **`brightness`** · `fog`, in that order — the vendored `imagecorruptions` reference function
-> names. Inferential severities **1–3**; severity **4 descriptive-only**; severity **5 excluded**.
+> names. Inferential severities **1–3**; severity **4 descriptive-only**; ~~severity **5 excluded**~~.
+> **[UPDATED 2026-09-24 — B65 CP-006]** The four non-noise corruptions (motion blur, JPEG compression,
+> brightness, fog) are also scored at severities 4 and 5, descriptively (AM-16 item 6); the protocol
+> file still lists severity 5 as excluded until lane L-AM16-SEV lands.
 > "brightness variation" is a display label, never an identifier; `brightness_variation` and
 > `motion-blur` are rejected. The future corruption generator and cache manifest must **consume
 > that file** rather than duplicate the vocabulary. Rationale:
@@ -566,7 +576,13 @@ These are **operational** parameters. None of them touches a `[ch3]`-traced meth
   Hendrycks 2019 reference impl (not the installed package), applied to **uint8 RGB before padding &
   normalization**, **never to masks**; byte-identical cached + checksummed set across stages.
 - **mIoU-C:** mean of per-corruption-type mIoU, each averaged over **severities 1–3**.
-- Severity **4** = descriptive degradation profile only; severity **5** = **excluded**.
+- ~~Severity **4** = descriptive degradation profile only; severity **5** = **excluded**.~~
+  **[UPDATED 2026-09-24 — B65 CP-006]** Severity **4** = descriptive degradation profile only. The four
+  non-noise corruptions (motion blur, JPEG compression, brightness, fog) are also scored at severities 4
+  and 5 (descriptive), following Kamann & Rother (2020), who average non-noise corruptions over
+  severities 1–5 and noise over severities 1–3; reported per severity and as that average (AM-16 item 6).
+  The mIoU-C, RPD and rCD definitions (inferential and descriptive) stay on severities 1–3. Code: lane
+  L-AM16-SEV.
 - **RPD** = (mIoU_clean − mIoU_C)/mIoU_clean × 100 — **descriptive only**.
 - **rCD** (Kamann 2020) — descriptive only; E1 = internal reference (rCD(E1)=1); teacher excluded.
 
@@ -644,7 +660,19 @@ These are **operational** parameters. None of them touches a `[ch3]`-traced meth
 - **CPU-proxy latency** via `torch.utils.benchmark` (CPU, batch 1, **20 warm-up + 100 measured**,
   median / IQR / p95, `eval()` + `inference_mode()`, AMP off, fixed thread count).
 - **Peak memory** via `resource.getrusage` / psutil RSS delta.
-- No ARM / on-device latency claimed. All runtime/memory results are **CPU PROXY**.
+- ~~No ARM / on-device latency claimed. All runtime/memory results are **CPU PROXY**.~~
+  **[UPDATED 2026-09-24 — B65 CP-006]** No on-device latency is claimed (Chapter 3 p. 141 stands). The
+  official runtime/memory results are **CPU PROXY** (x86). Supplementary, descriptive (AM-16 item 7): the
+  INT8 models E4–E7 (the QNNPACK artifacts of record) and their FP32 parents E1 and E3 are also timed on
+  an AWS c6g.xlarge (Graviton2, Arm Neoverse N1; c6g.2xlarge if the x86 thread count exceeds 4),
+  on-demand, with the QNNPACK engine for INT8 and this latency protocol at the x86 path's fixed thread
+  count, on a recorded aarch64 runtime (torch 2.1.0 and torchvision 0.16.0
+  aarch64 CPU wheels with their hashes, OS image, kernel, CPU model and RAM). ARM timings are reported only
+  if the ARM INT8 outputs on the first 16 VAL images (sorted by file name) agree with the accuracy outputs
+  of record (the QNNPACK-configured models as evaluated on x86 with the QNNPACK engine, never the
+  fbgemm/x86 latency copies) on at least 99% of valid (non-255) pixels; the agreement is reported either
+  way. ARM and x86 latencies are not compared with each other. This is a server-class ARM measurement, not
+  an on-device one. Code: lane L-AM16-ARM.
 
 **Which artifact each efficiency number is measured from** (resolves the earlier ambiguity between
 "the same artifact used for latency" and the INT8 backend split — the INT8 rule is the specific one
@@ -661,6 +689,9 @@ and governs):
   identified (`artifact_role = x86_cpu_proxy_latency`), and is never substituted into an accuracy,
   robustness or size result. Its activation qparams legitimately differ from the QNNPACK copy's
   because `reduce_range` differs.
+- **[UPDATED 2026-09-24 — B65 CP-006]** The supplementary ARM latency (AM-16 item 7) times the QNNPACK
+  artifact for E4–E7 and the model artifact for E1 and E3 on ARM. It is descriptive, is never pooled
+  with or compared against the x86 CPU-proxy latency, and leaves this table's x86 rule official.
 
 **INT8 x86 latency copy — how it is obtained** (no second training run):
 - **E4/E7 (PTQ):** rebuilt from the same FP32 source checkpoint and the **same frozen 128-image
@@ -751,6 +782,9 @@ test is invented. The QAT decision never inherits the distillation result.
 λ_logit sweep → freeze λ_logit → official E2/E3 runs. **[AM-7]** The clipping pilot is withdrawn;
 **[AM-2]** fixes the sweep's budget and tie rule. ~~Fixing λ at the grid centre during the clipping
 pilot avoids a 2 × 5 Cartesian search while staying inside the registered grid.~~
+**[UPDATED 2026-09-24 — B65 CP-006]** For E3 (AM-16 item 2): after λ is fixed and the α tie band is
+recorded in the decision log (after B66), the α_CWD sweep {25, 50, 100} runs at seed 42; the winning run is
+E3 seed 42, and its α is used for E3 seeds 43 and 44. If item 2 is cut, E3 runs at α_CWD = 50.
 
 `λ_logit` is unchanged — {0.25, 0.5, 1, 2, 4}, seed 42, validation-only, boundary winner reported
 rather than extending the grid. It is not decided here. **[AM-2]** Budget 80,000 iterations per
@@ -850,7 +884,9 @@ interpreter remains development evidence only.
 
 Generating the official 31,220-item cache remains a **separate** operation: it reads the PlantSeg
 test split and produces a large governed artifact. This validation only removes the
-dependency-version blocker.
+dependency-version blocker. **[UPDATED 2026-09-24 — B65 CP-006]** AM-16 item 6 adds 6,244 severity-5
+items for the four non-noise corruptions (1,561 × 4; 37,464 in all) once lane L-AM16-SEV lands; until
+then the generator and cache refuse severity 5, and severity-5 reference equivalence is not validated.
 
 **Descriptive backend-accuracy parity (ch3: "any accuracy difference between the two quantization
 configurations is documented")**

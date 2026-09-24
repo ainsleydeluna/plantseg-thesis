@@ -10,6 +10,8 @@ leaves the original readable beside it.
   (`reports/b52_e1_seed42_completion.md`);
 - no teacher, E2–E7 or **TEST** result exists for any stage.
 
+[AM-16 onward carry their own dates.]
+
 | # | Resolves | Subject |
 |---|---|---|
 | AM-1 | M8; PREREGISTRATION §9, U5 | Seeds |
@@ -27,6 +29,7 @@ leaves the original readable beside it.
 | AM-13 | (record) | Teacher acceptance and the published comparison |
 | AM-14 | conflicts #9; PREREGISTRATION §12 disagreement 1 | The inferential family |
 | AM-15 | DL-14 (completes AM-11) | Contingencies not invoked |
+| AM-16 | — (amends AM-1, AM-8, AM-10, AM-11 and AM-13; notes AM-9) | Run additions |
 
 Code that implements an amendment is named by lane (L-AM…). Until that lane lands, the committed runtime
 keeps its pre-amendment behaviour and its launch gates.
@@ -48,6 +51,8 @@ does not depend on the student seed. QAT seeding and determinism flags arrive in
 
 The eight-test Holm family and the E3-vs-E6 non-inferiority check use the **seed-42 models only**. Seeds 43
 and 44 enter only AM-8 and the per-seed table.
+
+[Extended by AM-16: E2 seeds 43 and 44 also run.]
 
 ## AM-2 — λ_logit sweep (resolves M6; extends PREREGISTRATION §7 and U1)
 
@@ -147,9 +152,13 @@ A per-seed table of dataset-level effects is reported for every planned comparis
 The eight-test Holm family and the E3-vs-E6 non-inferiority check use the seed-42 models only. Seeds 43 and
 44 enter only this criterion and the per-seed table.
 
+[Extended by AM-16: the table includes E2 vs E3 at all three seeds.]
+
 ## AM-9 — Withdrawn before recording
 
 Latency and memory stay on the approved x86 path, with the fbgemm/x86 copy (ch3 f.154).
+
+[AM-16 adds a supplementary ARM latency measurement; the x86 path stays official.]
 
 ## AM-10 — PTQ calibration
 
@@ -160,9 +169,13 @@ Latency and memory stay on the approved x86 path, with the fbgemm/x86 copy (ch3 
 
 Code: lane L-AM10 (enforce a calibration batch of 1).
 
+[AM-16 adds three descriptive calibration subsets; the official models keep this list.]
+
 ## AM-11 — Optional controls
 
 The extended-schedule E2 and the α_CWD sensitivity sweep are **not run**. Both are recorded as future work.
+
+[Partly superseded by AM-16: the extended-schedule E2 and the α_CWD sweep now run; the DIST fallback and 'E2 as deliverable' remain not invoked (AM-15).]
 
 ## AM-12 — Augmentation library (resolves G5)
 
@@ -180,6 +193,8 @@ Code is unchanged.
   compared with 42.05%.
 
 Code: lane L-AM13.
+
+[Extended by AM-16: every student is also scored under the upstream protocol at TEST; E1 also on VAL before the first KD run.]
 
 ## AM-14 — The inferential family (resolves the family ambiguity, conflicts #9)
 
@@ -201,6 +216,70 @@ No code lane is needed.
 The DIST fallback and the 'E2 as distilled deliverable' switch are not invoked under any outcome: E6 is
 always built from E3, and E3 is reported whatever its result against E2. Dated 2026-09-23; no teacher,
 E2–E7 or TEST result exists.
+
+## AM-16 — Run additions (amends AM-1, AM-8, AM-10, AM-11 and AM-13; notes AM-9)
+
+Dated 2026-09-24. State at amendment: E1 seed 42 exists (best VAL all-class mIoU 0.3631; TEST not
+evaluated); no teacher, E2–E7 or TEST result exists. No item adds a test to the Holm family. Item 2 fixes
+E3's α_CWD on VAL before any E3 result, and E6 and E7 inherit it through the E3 checkpoint. Every other
+item is descriptive and changes no primary analysis.
+
+1. E2 seeds 43 and 44 are planned runs, with λ fixed from the seed-42 sweep. The per-seed effect table
+   (AM-8) includes E2 vs E3 at all three seeds.
+2. α_CWD sweep: after λ is fixed, E3 runs at seed 42 with α_CWD in {25, 50, 100} (β and T unchanged),
+   80,000 iterations each. The highest best-checkpoint VAL all-class mIoU wins. The tie band is the
+   larger of 0.5 pp and √2·s, where s is the sample standard deviation (n = 3) of E1's best-checkpoint
+   VAL all-class mIoU over seeds 42, 43 and 44; √2·s is the standard deviation of a difference between
+   two single runs, and the 0.5 pp floor guards against the n = 3 estimate running small. It is wider
+   than DL-06's fixed 0.5 pp λ band because α has a pre-registered default (50) that a single-seed pick
+   should not override on noise. s, the band and the three E1 values are recorded in the decision log
+   after B66 and before the sweep launches; the sweep does not launch before that entry exists.
+   Candidates within the band of the best are tied; a tie goes to 50 when 50 is tied, because 50 is the
+   Chapter 3 and Shu et al. (2021) default, otherwise to the smallest α, as in the Chapter 3 λ rule. A
+   winner at 25 or 100 is reported as a boundary result, and the grid is not extended. This departs from
+   Chapter 3 p. 98, which fixes α_CWD = 50 and treats the sweep as a stability check: selection on VAL is
+   pre-registered here before any E3 run, otherwise mirrors the λ_logit protocol (pp. 104–105) and never
+   consults TEST. The winning run is E3 seed 42, and its α is used for E3 seeds 43 and 44. All three
+   runs are reported as the Chapter 3 neighborhood-stability check.
+3. Longer-schedule controls: E1, E2 and E3 at seed 42 with 160,000 iterations each (poly schedule over
+   the 160,000-iteration horizon; VAL every 4,000 iterations; best-checkpoint selection as in the
+   80,000-iteration runs; E2/E3 use the selected λ and α). Descriptive, on clean TEST mIoU, with each
+   run's measured GPU-hours reported alongside: each 160,000-iteration run against its 80,000-iteration
+   run; E3 at 80,000 against E2 at 160,000 (the Chapter 3 sanity check); and E2 and E3 at 80,000
+   against E1 at 160,000 (a longer-trained-baseline control; the runs are not compute-matched, since a
+   KD iteration also runs the teacher forward pass and E1 at 160,000 stays cheaper than E2 or E3 at
+   80,000; the measured GPU-hours make the gap visible).
+4. Every student is also scored under the upstream PlantSeg protocol at the single TEST evaluation
+   (descriptive), as the teacher is under AM-13. E1 is also scored this way on VAL, on the existing
+   seed-42 best checkpoint, before the first KD run.
+5. PTQ calibration sensitivity: E4 and E7 at seed 42 are also calibrated on three further 128-image
+   TRAIN subsets, drawn by the AM-10 procedure with seeds 43, 44 and 45. Descriptive: reported per
+   subset, with the range over all four calibration sets. The official E4/E7 models keep the AM-10
+   list.
+6. Robustness: the four non-noise corruptions (motion blur, JPEG compression, brightness, fog) are also
+   scored at severities 4 and 5 (descriptive), following Kamann & Rother (2020), who average non-noise
+   corruptions over severities 1–5 and noise over severities 1–3. Reported per severity and as that
+   average. The mIoU-C, RPD and rCD definitions (inferential and descriptive) stay on severities 1–3.
+7. Supplementary latency: the INT8 models E4–E7 (the QNNPACK artifacts of record) and their FP32
+   parents E1 and E3 are also timed on an AWS c6g.xlarge (c6g.2xlarge if that thread count exceeds 4)
+   (Graviton2, Arm Neoverse N1, the Cortex-A76-derived server core and the closest EC2 analogue to a
+   mobile big core), on-demand, with the QNNPACK engine for INT8 and the existing latency protocol at
+   the x86 path's fixed thread count. The aarch64 runtime is recorded: torch 2.1.0 and torchvision
+   0.16.0 aarch64 CPU wheels with their hashes, OS image, kernel, CPU model and RAM; the x86 training
+   image does not run there. Before timing, the ARM INT8 outputs on
+   the first 16 VAL images (sorted by file name) are compared with the accuracy outputs of record (the
+   QNNPACK-configured models as evaluated on x86 with the QNNPACK engine, never the fbgemm/x86 latency
+   copies), with pixel agreement computed over valid (non-255) pixels; ARM timings are reported only if
+   agreement is at least 99%, and the agreement is reported either way. Descriptive: the x86
+   fbgemm-copy path stays official, and ARM and x86 latencies are not compared with each other (the
+   FP32 parents give the within-host reference). This is a server-class ARM measurement, not an
+   on-device one: it supersedes Chapter 3 p. 154's statement that no tests run on actual ARM devices
+   only to that extent, and p. 141's statement that on-device mobile latency is not claimed stands.
+
+Cut order if the schedule slips: the longer-schedule E3, then ARM latency, then the longer-schedule
+E1, then the longer-schedule E2; the α sweep and E2 seeds 43/44 are cut last; items 4–6 are never
+cut. If item 2 is cut, E3 runs at α_CWD = 50 (the Chapter 3 default) and no sweep is reported. Any cut
+is recorded here before the affected run.
 
 ## Status of PREREGISTRATION §10 items after these amendments
 

@@ -344,7 +344,12 @@ artifact field name changes.
 | clean | `"clean"` | **`null`** | **`null`** |
 | official inferential corruption | `"corruption"` | one of the **five exact IDs** below | **1, 2 or 3** |
 | descriptive-only corruption | `"corruption"` | one of the five exact IDs | **4** |
-| — | — | — | **5 must never be produced** by the official study pipeline |
+| ~~—~~ | ~~—~~ | ~~—~~ | ~~**5 must never be produced** by the official study pipeline~~ |
+| descriptive-only corruption (AM-16 item 6) **[UPDATED 2026-09-24 — B65 CP-006]** | `"corruption"` | `motion_blur`, `jpeg_compression`, `brightness` or `fog` | **5** (never for `gaussian_noise`) |
+
+**[UPDATED 2026-09-24 — B65 CP-006]** Severity 5 of the four non-noise corruptions is descriptive (AM-16
+item 6) and never enters the inferential grid; `configs/corruption_protocol.json` and the evaluator still
+refuse severity 5 until lane L-AM16-SEV lands.
 
 Five exact IDs, frozen in `configs/corruption_protocol.json`:
 `motion_blur` · `gaussian_noise` · `jpeg_compression` · **`brightness`** · `fog`.
@@ -574,6 +579,9 @@ Disease-only mIoU (§3.1) is reported alongside it.
   scored, descriptively, under the upstream PlantSeg protocol: the repository's aspect-ratio-preserving
   resize, scored against original-resolution ground truth. That score, not the 512-canvas score, is the
   one compared with the published 42.05%. Code: lane L-AM13 (TEST-time only).
+- **[AM-16, 2026-09-24] Students.** Every student is also scored under the upstream PlantSeg protocol at
+  the single TEST evaluation (descriptive), as the teacher is under AM-13. E1 is also scored this way on
+  VAL, on the existing seed-42 best checkpoint, before the first KD run. Code: lane L-AM16-UP.
 
 **M11 development data isolation.**
 - **Which runs:** the official teacher, E2 and E3. Development and training data roots are staged with

@@ -1,9 +1,23 @@
 # Fix Template (plan-gated change)
 
 For file-changing / behavior-changing work. ~~Default mode: **UltraCode + Accept Edits** for code/runtime;
-**Max + Accept Edits** for docs / small consistency fixes.~~ **[UPDATED 2026-09-23 — B64 C6]** Model and
+**Max + Accept Edits** for docs / small consistency fixes.~~ ~~**[UPDATED 2026-09-23 — B64 C6]** Model and
 effort per DL-24: Opus 5.5; high by default; medium for mechanical doc and sync edits; xhigh for pod/GPU
-sessions and official-run launches; max and ultracode are not used. See [CLAUDE.md](../../CLAUDE.md) and
+sessions and official-run launches; max and ultracode are not used.~~ **[UPDATED 2026-09-24 — B65 CP-006]**
+Model, route and effort (DL-24). Default route: Claude web (Opus 5.5) → Claude Code (Opus 5.5);
+experiment-critical or ambiguous handoffs add a Fable 5.1 audit and an Opus 5.5 integration pass before
+Claude Code. The user sets the effort level before each Claude Code prompt; prompts don't state it. Claude
+Code runs Opus 5.5 (default effort medium unless set): ultracode (xhigh plus automatic workflow
+orchestration) for read-only sessions such as Phase A audits and repo-wide sweeps; xhigh for sessions that
+write, commit, push or run pods, with a read-only verification workflow requested before each commit; high
+for routine, localized or mechanical sessions; max is not used. Ultracode is never on in a session that
+writes, commits, pushes or runs pods (no mid-run input, no plan approval in Auto mode, concurrent agents); a
+read-only session switches to xhigh before its first approved write. The ultracode keyword trigger is off,
+so the keyword in a prompt never starts a workflow; a plain-language request ("run a read-only verification
+workflow") is the opt-in for a single workflow. Claude Code does not enforce read-only on workflow agents;
+the session's permission prompts do, and they stay on in write sessions. The "Switch models when a message
+is flagged" setting (switchModelsOnFlag) is off, so a flagged request pauses for a choice instead of
+switching models. Web chat: Opus 5.5 at High or XHigh. See [CLAUDE.md](../../CLAUDE.md) and
 [ai_guardrails.md](../ai_guardrails.md).
 
 ## Plan-gated execution

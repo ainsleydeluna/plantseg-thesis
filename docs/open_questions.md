@@ -320,8 +320,9 @@ both are recorded in the contract's authority ledger. Frozen family (candidate �
 Per clean image and stage: per-image **disease-only** mIoU from each of **5 corruptions × 3
 severities = 15** cells → average severities 1–3 within each corruption → equal-weight mean of the
 five corruption means. Corruptions: motion blur, Gaussian noise, **JPEG compression**, brightness,
-fog `[ch3]` — "shot noise" appears nowhere in ch3. Severity 4 descriptive only; severity 5 excluded
-`[ch3]`. The nested form is retained even though it equals a flat 15-value mean on a complete grid
+fog `[ch3]` — "shot noise" appears nowhere in ch3. Severity 4 descriptive only; ~~severity 5 excluded~~
+`[ch3]`. **[UPDATED 2026-09-24 — B65 CP-006]** The four non-noise corruptions are also scored at
+severities 4 and 5, descriptively (AM-16 item 6); mIoU-C stays on severities 1–3. The nested form is retained even though it equals a flat 15-value mean on a complete grid
 `[project]`, so a partial grid cannot be averaged away silently. Built from per-image scores, never
 from dataset-level mIoU-C.
 
@@ -474,7 +475,9 @@ selects, frozen machine-readably in **`configs/corruption_protocol.json`**
 - **Aliases rejected outright**: `brightness_variation`, `motion-blur`, `Motion_Blur`, spaced or
   capitalised variants, filename-derived aliases, and any alias map. No official corruption
   artifact exists yet, so no migration compatibility is owed.
-- Severity roles frozen alongside: **1–3 inferential**, **4 descriptive-only**, **5 excluded**.
+- Severity roles frozen alongside: **1–3 inferential**, **4 descriptive-only**, ~~**5 excluded**~~.
+  **[UPDATED 2026-09-24 — B65 CP-006]** AM-16 item 6 also scores the four non-noise corruptions at
+  severities 4 and 5, descriptively; the protocol file's severity roles change in lane L-AM16-SEV.
 - **Official mIoU-C is no longer blocked by vocabulary ambiguity.** Official analysis must load the
   protocol file; `NONOFFICIAL_SMOKE` may inject a synthetic grid that can never enter official
   statistics.
@@ -947,7 +950,7 @@ The teacher G18 seam was exercised on a real GPU. Setup:
 | M5 | ✅ **LOCKED 2026-09-22 (B60 §2) — teacher classification, schedule, readiness.**<br>**Classification.** A thesis-derived SegNeXt-B / MSCAN-B teacher. Wei 42.05 / 56.30 / ~28M are contextual values only (not a target, band, protocol-match criterion or retraining trigger), and the ±1.5–2.0 pp rule has no authority.<br>**Schedule.** AdamW 6e-5, wd 0.01, betas (0.9, 0.999), head lr_mult 10; LinearLR warmup 1,500 (start 1e-6); PolyLR power 1.0, end 40,000; 40,000 iterations; batch 16; 512²; unweighted CE; validation every 4,000 iterations, VAL only.<br>**Selection.** Best VAL all-class mIoU is the intent; the operational rule is M12.<br>**Readiness R1–R4.** R3 is a controlled deterministic re-evaluation under the M4-locked rule, VAL all-class mIoU > 0.36314016580581665 with no margin. It is an operational floor, not an independent estimate. Failure → STOP and escalate. | *(band / Wei-SGD retrain / none / 10k interval rejected — B60 §6)* | runtime implemented (B62), incl. R3 (`scripts/teacher_readiness_r3.py`); ~~freeze + re-canary pending~~ **[UPDATED 2026-09-23 — B64 C5]** B62 runtime committed at `3c43f89` and frozen (runbook §4a, `a51a092`); CUDA re-canary pending (B65). |
 | M6 | ✅ **LOCKED 2026-09-23 (AM-2) — λ_logit sweep run length and tie band.** Grid {0.25, 0.5, 1, 2, 4} at seed 42, **80,000 iterations per candidate**; the highest VAL all-class mIoU (each candidate's best-checkpoint value) wins; candidates within **0.5 pp** of the best are tied → smallest λ; a boundary winner is reported and the grid is not extended; the winning run is E2 seed 42. | *(was: `NEED_TO_CONFIRM`; no externally suggested value adopted)* | amendment recorded; no code change |
 | M7 | ✅ **LOCKED 2026-09-23 (AM-3) — E6-KD trigger and weights.** Trigger: the E3 → E6 drop in dataset-level **VAL** all-class mIoU, E6 scored on the converted INT8 model, > 1.0 pp at seed 42. If triggered, E6-KD runs at seed 42 with Logit-KD and CWD weights at 0.5× their E3 values, T unchanged; descriptive, outside Holm. The clean-TEST trigger is withdrawn. | *(was: (A) validation-based trigger; (B) E6-KD pre-registered as a fixed additional arm; reduced weights `NEED_TO_CONFIRM`)* | amendment recorded; code lane L-AM3 |
-| M8 | ✅ **LOCKED 2026-09-23 (AM-1) — seeds.** Seeds 42 (primary), 43, 44 for E1 and E3; E4/E7 per seed; E5/E6 once per seed, from their FP32 parent's seed; E2 at seed 42; seeds 43/44 optional, budget permitting, with λ fixed from the seed-42 sweep; teacher once. Data order and augmentation derive from the run seed (B64 C1). The Holm family and the E3-vs-E6 non-inferiority check use seed-42 models only. | *(was: `NEED_TO_CONFIRM` (extra seed values too))* | E1/E2/E3 loader seeding done (B64 C1); QAT seed plumbing = code lane L-AM1q |
+| M8 | ✅ **LOCKED 2026-09-23 (AM-1) — seeds.** Seeds 42 (primary), 43, 44 for E1 and E3; E4/E7 per seed; E5/E6 once per seed, from their FP32 parent's seed; ~~E2 at seed 42; seeds 43/44 optional, budget permitting, with λ fixed from the seed-42 sweep;~~ **[UPDATED 2026-09-24 — B65 CP-006]** E2 seeds 43 and 44 are planned runs, with λ fixed from the seed-42 sweep (AM-16 item 1); teacher once. Data order and augmentation derive from the run seed (B64 C1). The Holm family and the E3-vs-E6 non-inferiority check use seed-42 models only. | *(was: `NEED_TO_CONFIRM` (extra seed values too))* | E1/E2/E3 loader seeding done (B64 C1); QAT seed plumbing = code lane L-AM1q |
 | M9 | ✅ **LOCKED 2026-09-23 (AM-4) — QAT schedule and checkpoint rule.** 15 fixed epochs, no early stopping; BN statistics frozen after epoch 10, observers after epoch 12; a checkpoint every epoch, each converted (QNNPACK) and scored on VAL on CPU; the highest converted VAL all-class mIoU wins, ties → earlier; batch 16. Fake-quant-off scores are reported descriptively. | *(was: `NEED_TO_CONFIRM`)* | amendment recorded; code lane L-AM4 (today `src/quant/runner.py` early-stops and scores VAL on the fake-quant model) |
 | M10 | ✅ **LOCKED 2026-09-23 (AM-5) — zero-disease TEST images.** Excluded from per-image disease-only analyses (paired tests, per-image effect sizes, per-image mIoU-C); the count is reported; they stay in every dataset-level metric. | *(was: (a) keep abort; (b) pre-register exclusion with an identical eligibility set across models, reporting *k* and *n*_eff)* | amendment recorded; code lane L-AM5 |
 | M11 | ✅ **LOCKED 2026-09-22 (B60 §5) — development data isolation.**<br>**Which runs.** The official teacher, E2 and E3.<br>**Rule.** Data roots are staged with TRAIN + VAL only; in the **configured data root**, `images/test` and `annotations/test` must be absent. Preflight verifies 5,367 / 846 and fails closed if the TEST paths exist. No TEST enumeration, counting or inspection during development; no active `test_dataloader`, `test_evaluator` or `test_cfg`.<br>**Scope.** The configured data root, not the host.<br>**TEST integrity.** Checked only after the final TEST unlock. | *(filename count / enumeration ban only — rejected, B60 §6)* | runtime implemented (B62); ~~freeze + re-canary pending~~ **[UPDATED 2026-09-23 — B64 C5]** B62 runtime committed at `3c43f89` and frozen (runbook §4a, `a51a092`); CUDA re-canary pending (B65). |
@@ -1045,8 +1048,9 @@ requiring a plan and an explicit go.
 - ~~**[B59 D4]** Whether the extra seeds are an *obligation* is itself open. ch3 §C.2 calls multi-seed
   validation "optional due to compute constraints", while §D/§F plan it. See M8.~~
   **[UPDATED 2026-09-23 — B64 C5]** Resolved by AM-1 (M8): seed 42 is the primary seed; seeds 43 and 44 for E1 and E3 per AM-1.
-- **When:** if/when multi-seed runs execute (compute-permitting; out of Week-1 scope).
-- **[UPDATED 2026-09-23 — B64, AM-1]** The extra seeds are **43 and 44**; M8 is locked. E2 repetition at 43/44 is optional, budget permitting.
+- **When:** ~~if/when multi-seed runs execute (compute-permitting; out of Week-1 scope).~~
+  **[UPDATED 2026-09-24 — B65 CP-006]** per the `docs/DECISION_LOG.md` Current plan (AM-1, AM-16).
+- **[UPDATED 2026-09-23 — B64, AM-1]** The extra seeds are **43 and 44**; M8 is locked. ~~E2 repetition at 43/44 is optional, budget permitting.~~ **[UPDATED 2026-09-24 — B65 CP-006]** E2 seeds 43 and 44 are planned runs, with λ fixed from the seed-42 sweep (AM-16 item 1).
 
 ### 7. RunPod hardware specifics
 - **Resolution:** final pod type, GPU model, VRAM, CPU model + thread count, CUDA/container image, storage,
