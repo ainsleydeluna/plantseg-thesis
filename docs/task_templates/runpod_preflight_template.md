@@ -1,7 +1,7 @@
 # RunPod Pre-flight Checklist — E1 real run
 
 Run **on the GPU pod**, in order. Do not launch the real 80k run until steps 1–12 pass. Mirrors the B31g
-safe order. Full detail: ~~[reports/e1_runpod_launch_runbook.md](../../reports/e1_runpod_launch_runbook.md)~~ [reports/e1_launch_runbook_v2.md](../../reports/e1_launch_runbook_v2.md) **[UPDATED 2026-09-23 — B64 C5]** (v1 superseded).
+safe order. Full detail: ~~[reports/e1_runpod_launch_runbook.md](../../reports/e1_runpod_launch_runbook.md)~~ [reports/e1_launch_runbook_v2.md](../../reports/e1_launch_runbook_v2.md) **[UPDATED 2026-09-23 — B64 C5]** (v1 superseded). **[UPDATED 2026-09-24 — B66-prep S2, DL-21]** Seed-42-era checklist. Not for TRAIN/VAL-only pods (B66 on): steps 6/7 list TEST and step 10 writes into the repo. Use `scripts/preflight_e1_trainval.py` per runbook v2 §9.
 
 Legend: **[RO]** read-only / temp-only (no repo writes) · **[W]** writes a `reports/*.md` (fine on the
 throwaway pod — do NOT commit it).

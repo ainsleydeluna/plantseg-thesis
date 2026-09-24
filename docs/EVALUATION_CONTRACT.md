@@ -595,7 +595,7 @@ Disease-only mIoU (§3.1) is reported alongside it.
 - **Official TEST integrity** (the 1,561-row manifest and row-count guards of §5–§7) is verified **only
   after the final TEST unlock**.
 - **Over time:** forward-looking. E1 is unaffected, because its training path constructed TRAIN and VAL
-  datasets only.
+  datasets only. **[UPDATED 2026-09-24 — B66-prep S2, DL-21]** From B66, real E1 runs also use a TRAIN/VAL-only staged root (`train_e1.py` real-run gate; `scripts/preflight_e1_trainval.py`).
 
 ### 7.3 Teacher NMF evaluation rule (M4-V) and checkpoint selection (M12) `[B61, 2026-09-22]`
 

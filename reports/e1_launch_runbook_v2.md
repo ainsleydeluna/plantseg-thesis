@@ -1,6 +1,6 @@
 # E1 Launch Runbook v2 (B31c) — supersedes [e1_runpod_launch_runbook.md](e1_runpod_launch_runbook.md)
 
-Operational runbook for launching the **real E1 FP32 training run** on a RunPod GPU box.
+Operational runbook for launching the **real E1 FP32 training run** on a RunPod GPU box. **[UPDATED 2026-09-24 — B66-prep S2, DL-21]** TRAIN/VAL-only pods (B66 on): follow §9; §3's `preflight_e1.py` gate is the seed-42 path.
 **Instructions only** — producing this document involved no training, GPU use, download, or install.
 
 **Why v2:** v1 (B28) predates `--resume`, `--ckpt-interval`, `--num-workers`, `--jsonl-name`,
@@ -235,8 +235,8 @@ Before launching, confirm `--seed` matches the aborted run's `run_meta` row rath
 of it: `head -1 /workspace/e1_ckpts.aborted-$ts/e1_telemetry.jsonl`. Relaunching the same stage under
 a different seed produces a run that looks official and is not: it will pass every gate, write a
 well-formed telemetry record, and silently duplicate or omit a seed in the three-seed set. Nothing
-downstream detects it — the seed identity check in `preflight_e1.py` verifies the RNG sequence for
-whatever seed it is given, not that the seed is the one the run plan called for.
+downstream detects it — the seed identity check in `preflight_e1.py` ~~verifies the RNG sequence for
+whatever seed it is given~~ **[UPDATED 2026-09-24 — B66-prep S2]** is seed-42-specific (`smoke_aug_stochasticity.py` hard-codes seed 42): a pinned-stack regression check, not a per-seed check, and it never checks that the seed is the one the run plan called for.
 
 Keep the aborted directory. It holds the telemetry and checkpoints of a run that happened and is the
 evidence for how far the attempt got. Do not commit it (`ai_guardrails.md` §2).
@@ -354,3 +354,76 @@ tail -5 /workspace/e1_ckpts/e1_stdout.log
 | [../docs/IMPLEMENTATION_CONTRACT.md](../docs/IMPLEMENTATION_CONTRACT.md) | §B6 seeds, `num_workers`, resume deviation, B31 defaults |
 | [../docs/open_questions.md](../docs/open_questions.md) | D25 `num_workers` · D26 resume non-identity · D27 check coverage |
 | [e1_runpod_launch_runbook.md](e1_runpod_launch_runbook.md) | **v1, SUPERSEDED** — history only |
+
+---
+
+## 9. B66 — TRAIN/VAL-only launch path (DL-21) [added 2026-09-24, B66-prep S2]
+
+Applies to every real E1 run from B66 on (seeds 43/44 and the longer-schedule E1). §1–§8 remain the
+seed-42 record; where they conflict with this section, this section wins. From this commit on,
+`train_e1.py` refuses a real run on any root that holds a TEST surface, so the §1–§8 launch path (the
+seed-42 volume root) cannot start a real run.
+
+**9.0 Scope.** On these pods never run `verify_env.py`, `preflight_e1.py`, `verify_plantseg_dataset.py`,
+`smoke_metrics.py` or `verify_class_weights_pod.py`, nor steps 6, 7, 10 or 12 of the RunPod pre-flight
+template: they list TEST or write into the repository. The gate in 9.5 replaces them.
+
+**9.1 Pod and shell.** Start the pod from the pinned image by digest (DL-21), with enough `/dev/shm` for 12
+DataLoader workers (Docker's 64 MB default crashes them). In the one shell that will run the gate and the
+launch:
+
+```bash
+export PLANTSEG_IMAGE_DIGEST=sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf
+unset PLANTSEG_GIT_COMMIT     # the image bakes f77d05d7, and train_e1.py prefers it over the checkout
+```
+
+**9.2 Checkout.** A DL-19 partial clone at the pushed pin: `--filter=blob:none --no-checkout`;
+`core.sparseCheckout true`, `core.sparseCheckoutCone false`, patterns `/*` and `!/docs/reference/`;
+`checkout --detach <pin>`; remote URL invalidated afterwards. Step 0: HEAD equals the pin, the protected
+reference file is absent, and the scoped status is clean. Then `export PYTHONPATH=<clone>` (the image's
+baked `PYTHONPATH` points at a stale source copy).
+
+**9.3 Data.** Stage the TRAIN/VAL payload at a NEW path and check its sha256 before extracting. Never use
+or list the seed-42 volume root, which contains TEST. `export PLANTSEG_DATA_ROOT=<absolute staged root>`.
+
+**9.4 ImageNet backbone.** Pre-stage `mobilenet_v3_large-5c1a4163.pth` (22,132,113 B, sha256
+`5c1a416349c4cf298f2a6a5e2600ed0ee55e604713578f5e74e6bc8bcaef7997`) into
+`$(python -B -c 'import torch; print(torch.hub.get_dir())')/checkpoints/` by a verified fetch or transfer,
+each separately approved. There is no in-run download: the gate refuses a missing or different file. Keep
+`TORCH_HOME` unchanged from here on; the launch block pins it.
+
+**9.5 Gate.** `<evidence>` is an existing directory outside the clone, the ckpt dir and the data root;
+`<D>` is absent or empty. `<n>` numbers the attempt (1, 2, …): every gate run gets new evidence names,
+because the gate refuses an existing `--record` and `tee` would overwrite an earlier log.
+
+```bash
+python -B scripts/preflight_e1_trainval.py gate --seed <S> --ckpt-dir <D> --expect-head <pin> \
+  --record <evidence>/preflight_<S>_<n>.json 2>&1 | tee <evidence>/preflight_<S>_<n>.log
+```
+
+It must print `VERDICT: GO`. Stages, first FAIL stops: `arguments` → `data_isolation` (TEST refused by
+exact path and never listed; TRAIN/VAL counts and stem pairing) → `repo_state` (pin, `885523a` floor,
+scoped status, `PLANTSEG_GIT_COMMIT` unset, sparse config) → `module_provenance` → `class_weights` →
+`smoke_loss` → `image` (`preflight_environment.py --mode gpu`) → `cuda` → `imagenet_backbone` →
+`smoke_loader_seed` → `smoke_dataloader` → `seed_sequence_R5` → `dry_run` → `repo_unchanged`.
+`--rehearsal` exercises the gate off-pod and never prints a launch block.
+
+**9.6 Launch.** Save the printed block as `<evidence>/launch_<S>_<n>.sh` and run it with `bash` from the
+same shell. It unsets `PLANTSEG_GIT_COMMIT`, pins `PYTHONPATH`, `PLANTSEG_DATA_ROOT`, `PLANTSEG_IMAGE_DIGEST`
+and `TORCH_HOME`, and passes `--num-workers 12` (the augmentation stream depends on it; seed 42 ran 12)
+and `--log-every 50`. It never passes `--resume`, `--max-iters`, `--batch-size`, `--val-interval`,
+`--max-val-batches` or `--device`. `train_e1.py` itself refuses a real run on a root that fails the
+TRAIN/VAL-only check.
+
+**9.7 Verify the launch.** Within 5 minutes:
+`python -B scripts/preflight_e1_trainval.py check-run-meta --ckpt-dir <D> --seed <S> --expect-head <pin>`.
+It compares the `run_meta` row with the seed-42 row (exempt: seed, git_head, wall_clock, gpu_name as a
+warning, and the profile's max_iters/poly_horizon). On FAIL, kill the run and relaunch into a fresh `<D>`
+from 9.5.
+
+**9.8 Preemption.** Move the dead `<D>` aside as in §5 Step 2 (do not run §5 Step 1 or §5's relaunch
+command: they name the seed-42 paths), then repeat from 9.5 with a FRESH `<D>` and the next `<n>`. If the
+container restarted, the 9.1 shell is gone: redo 9.1–9.3 in the new shell (and 9.4 if the backbone was not on
+the volume; a re-fetch needs its own approval) before 9.5.
+
+**9.9 After the run.** Capture every checkpoint's sha256 on the pod before download (B52 N9).

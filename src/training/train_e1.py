@@ -638,6 +638,22 @@ def main(argv=None) -> int:
                   "reports/e1_runpod_launch_runbook.md), or use --dry-run for a safe CPU smoke.",
                   file=sys.stderr)
             return 2
+        # DL-21 (B66): a real E1 run uses a TRAIN/VAL-only staged root (the M11 check). It runs after
+        # the CPU refusal (a CPU box never probes a data root) and before run() -> set_seed(). TEST is
+        # existence-checked on three exact paths only; stdlib-only, no RNG, no CUDA. The lazy import
+        # keeps this module's import closure (train_distill, src/quant/runner.py, launcher) unchanged.
+        from configs.data import SPLIT_SIZES
+        from src.data.isolation import TrainValIsolationError, assert_trainval_only_root
+        try:
+            isolation = assert_trainval_only_root(
+                Path(DATA["root"]), {"train": SPLIT_SIZES["train"], "val": SPLIT_SIZES["val"]})
+        except TrainValIsolationError as e:
+            print(f"REFUSING to start the real E1 run: [{e.code}] {e}\nFrom B66 (DL-21) real E1 runs "
+                  "use a TRAIN/VAL-only staged root; the shared M11 message names teacher/E2/E3 only.",
+                  file=sys.stderr)
+            return 2
+        print(f"[data] TRAIN/VAL-only staged root verified (DL-21): root={DATA['root']} "
+              f"counts={isolation['counts']} (TEST surfaces absent; existence-only check)")
         init = args.init or "imagenet"
         pretrained = False if init == "none" else E1_STUDENT["init_weights"]
         batch_size = args.batch_size or E1_STUDENT["batch_size"]

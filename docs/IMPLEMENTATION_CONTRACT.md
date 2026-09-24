@@ -152,7 +152,7 @@ pending the PlantSeg repo's official convention.~~ `[empirical; ch3 Table 3.1; c
 | CE ignore normalisation (LOCKED, M13) | teacher decode-head CE **`avg_non_ignore = True`**, `ignore_index = 255`: ignore/padded pixels enter neither the numerator nor the mean denominator (mean over valid pixels). Thesis-derived correction of the MMSeg default; implemented before the official teacher run | `[MS ch3 p.128; MEASURED B61 §7; REPO E1 losses.py:53; THESIS-DERIVED]` |
 | Train augmentation (LOCKED, M2) | **semantic parity with the E1–E3 recipe.** Rotation ±10° with p 0.5, before the crop (image fill ImageNet mean, mask 255); 512 crop with cat_max_ratio 0.95; independent horizontal and vertical flips, each p 0.5; image-only hue ±0.015 and saturation [0.8, 1.2], jointly p 0.5. **No** brightness, contrast, blur, noise or JPEG (no `PhotoMetricDistortion`). Parity is semantic; code, draws and RNG need not be identical | `[MS student recipe; PRIMARY only for flip/scale/crop; THESIS-DERIVED for the teacher; B60 §3]` |
 | Train scale (LOCKED, M3) | long side = 512·r, r ~ U[0.75, 2.0], applied to the unpadded image, then crop/pad to 512. Clean VAL evaluation stays long side 512 + pad (thesis evaluator) | `[MS student recipe; THESIS-DERIVED for the teacher; B60 §4]` |
-| Data isolation (LOCKED, M11) | configured data root staged with **TRAIN + VAL only**; `images/test` and `annotations/test` absent; preflight checks 5,367 / 846 and **fails closed** if TEST paths exist. No active `test_dataloader`, `test_evaluator` or `test_cfg`. Scope = the configured data root, not the host. Applies to the teacher, E2 and E3 | `[MS TEST policy; B60 §5]` |
+| Data isolation (LOCKED, M11) | configured data root staged with **TRAIN + VAL only**; `images/test` and `annotations/test` absent; preflight checks 5,367 / 846 and **fails closed** if TEST paths exist. No active `test_dataloader`, `test_evaluator` or `test_cfg`. Scope = the configured data root, not the host. Applies to the teacher, E2 and E3 **[UPDATED 2026-09-24 — B66-prep S2, DL-21]** and, from B66, every real E1 run (seeds 43/44 and the longer-schedule E1): `train_e1.py` refuses a real run on a root failing `assert_trainval_only_root` (5,367/846), and `scripts/preflight_e1_trainval.py` runs it in place of `verify_env.py`'s dataset loop | `[MS TEST policy; B60 §5]` |
 
 > **Runtime non-conformance, intentional until the unified implementation (B60 §9 step H, §10).** The
 > current runtime config (`510b212b…`), launcher (`58575276…`), smokes and `configs/teacher_finetune.py`
@@ -982,7 +982,7 @@ reading is adopted**:
 
 | Precondition | Governs | Evidence / status |
 |---|---|---|
-| **RunPod GPU/pod availability** | **before real E1 execution** | verified on the pod (`scripts/verify_env.py` → PASS, `train_e1.py --dry-run` → PASS) |
+| **RunPod GPU/pod availability** | **before real E1 execution** | verified on the pod (`scripts/verify_env.py` → PASS, `train_e1.py --dry-run` → PASS) **[UPDATED 2026-09-24 — B66-prep S2, DL-21]** seed 42: `scripts/preflight_e1.py` → GO. TRAIN/VAL-only pods from B66: `scripts/preflight_e1_trainval.py gate` → GO; verify_env.py and preflight_e1.py are not run there. |
 | **SegNeXt-B / MMSeg checkpoint availability** | **before teacher-dependent execution** (teacher fine-tune, E2/E3 prep) | `docs/B8_checkpoint.md` — none publicly released; in-house fine-tune planned |
 | **QNNPACK INT8 operator support** | **before the quantization stages (E4–E7)** | `docs/b7_result.md` — onednn proxy `PASS_CLEAN`; authoritative run env-gated |
 
