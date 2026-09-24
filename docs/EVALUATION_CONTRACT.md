@@ -751,7 +751,7 @@ preconditions, per artifact: `run.eval_runtime` present;
 `determinism_policy_applied`; `model_device` == `input_devices` == `cuda:N`; batch size 16, 0 workers, 53
 forward batches, 846 rows; checkpoint iteration 80000 and stored best 0.36314016580581665; the DL-21 image
 digest; Σ `gt_support` = 159,279,104; `run.checkpoint_sha256` = cf0879f7007dfacbd0d510085ff28a4b47ee845ddb8fd599611d74109e1d6a03;
-"A40" in `gpu_name`. A violation is not a DL-17 FAIL: the run is not a DL-17 run (STOP and report). PASS:
+`gpu_name` == "NVIDIA A40" exactly (the string seed 42's run_meta recorded; `DL17_GPU_NAME`, ruling R-GPU). A violation is not a DL-17 FAIL: the run is not a DL-17 run (STOP and report). PASS:
 the two runs are identical under (d), and |`all_class_miou` − 0.36314016580581665| ≤ 1e-4; a difference in
 (1e-6, 1e-4] is recorded, not a failure. DL-17 artifacts are `provisional`, and each run writes to a fresh
 out-dir outside the clone. A FAIL or a validity STOP blocks every step that relies on this evaluator (E4–E7

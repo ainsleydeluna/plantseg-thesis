@@ -23,7 +23,7 @@ Validity preconditions (each artifact): run.eval_runtime present; determinism_po
 device == input devices == cuda:N; batch_size 16, num_workers 0, forward_batches 53, actual_rows 846;
 checkpoint iteration DL17_CHECKPOINT_ITER and stored best DL17_REFERENCE_MIOU; image digest
 DL17_IMAGE_DIGEST; sum(per_class.gt_support) == DL17_GT_SUPPORT; run.checkpoint_sha256 ==
-DL17_CHECKPOINT_SHA256; DL17_GPU_NAME_SUBSTRING in eval_runtime.gpu_name.
+DL17_CHECKPOINT_SHA256; eval_runtime.gpu_name == DL17_GPU_NAME (exact).
 
 PASS (DL-17 as DECIDED): identical, and |all_class_miou - DL17_REFERENCE_MIOU| <= DL17_BAND; a
 difference in (DL17_RECORD_ABOVE, DL17_BAND] is recorded, not a failure.
@@ -46,7 +46,7 @@ DL17_CHECKPOINT_ITER = 80000
 DL17_CHECKPOINT_SHA256 = "cf0879f7007dfacbd0d510085ff28a4b47ee845ddb8fd599611d74109e1d6a03"
 DL17_IMAGE_DIGEST = "sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf"
 DL17_GT_SUPPORT = 159279104
-DL17_GPU_NAME_SUBSTRING = "A40"
+DL17_GPU_NAME = "NVIDIA A40"          # exact gpu_name of seed 42's run_meta (a substring would admit "RTX A4000")
 DL17_BATCH_SIZE = 16
 DL17_NUM_WORKERS = 0
 DL17_FORWARD_BATCHES = 53
@@ -145,8 +145,7 @@ def validity_problems(label: str, s: dict) -> list[str]:
     need(run.get("checkpoint_sha256") == DL17_CHECKPOINT_SHA256,
          f"run.checkpoint_sha256 {run.get('checkpoint_sha256')!r} != {DL17_CHECKPOINT_SHA256}")
     gpu = rt.get("gpu_name")
-    need(isinstance(gpu, str) and DL17_GPU_NAME_SUBSTRING in gpu,
-         f"gpu_name {gpu!r} does not contain {DL17_GPU_NAME_SUBSTRING!r}")
+    need(gpu == DL17_GPU_NAME, f"gpu_name {gpu!r} != {DL17_GPU_NAME!r} (exact match)")
     return out
 
 

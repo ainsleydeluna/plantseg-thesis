@@ -834,7 +834,8 @@ def section_c(work: Path) -> None:
           == "cf0879f7007dfacbd0d510085ff28a4b47ee845ddb8fd599611d74109e1d6a03"
           and CMP.DL17_IMAGE_DIGEST
           == "sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf"
-          and CMP.DL17_GT_SUPPORT == 159279104 and CMP.DL17_GPU_NAME_SUBSTRING == "A40"
+          and CMP.DL17_GT_SUPPORT == 159279104 and CMP.DL17_GPU_NAME == "NVIDIA A40"
+          and not hasattr(CMP, "DL17_GPU_NAME_SUBSTRING")
           and (CMP.EXIT_PASS, CMP.EXIT_FAIL, CMP.EXIT_VALIDITY) == (0, 1, 2))
     root = work / "cmp"
     a = write_fixture_artifact(root / "a", dl17_summary())
@@ -884,6 +885,8 @@ def section_c(work: Path) -> None:
         ("sum(gt_support) off by one", {"per_class__gt_support": gt_off}),
         ("checkpoint_sha256 differs", {"run__checkpoint_sha256": "0" * 64}),
         ("gpu_name not A40", {"run__eval_runtime__gpu_name": "NVIDIA RTX A6000"}),
+        ("gpu_name RTX A4000 (contains 'A40')", {"run__eval_runtime__gpu_name": "NVIDIA RTX A4000"}),
+        ("gpu_name A40 with a suffix", {"run__eval_runtime__gpu_name": "NVIDIA A40-PCIe"}),
     ]
     for i, (label, over) in enumerate(violations):
         va = write_fixture_artifact(root / f"va{i}", dl17_summary(**over))
