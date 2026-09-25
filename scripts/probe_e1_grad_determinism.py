@@ -11,8 +11,12 @@ freshly loaded checkpoint.
   Probe A  one train-mode forward, logits detached as a leaf; R times: weighted CE (mean and sum), the
            implied normaliser ce_sum/ce_mean, the actual ATen normaliser
            torch.ops.aten.nll_loss2d_forward(...)[1], and sha256 of d(ce_mean)/d(logits).
-  Probe B  the full E1 step R times (zero_grad(set_to_none) -> forward -> ce + dice -> backward; no
-           optimizer step): ce, dice and loss (exact floats) and sha256 over all parameter grads.
+  Probe B  the full E1 step R times, exactly as train_e1.py:437-439 and :451 (zero_grad(set_to_none) ->
+           forward -> ce = criterion.ce, dice = criterion.dice, loss = ce + dice -> backward; no optimizer
+           step): ce, dice and loss (exact floats), sha256 over all parameter grads, and beside them
+           criterion(logits, mask) under no_grad (never backpropagated) with its bitwise equality to ce + dice,
+           plus a no_grad re-run of ce and dice that shows whether the kernels themselves are
+           nondeterministic (how to read the flags: the record's criterion_compare_note).
 
 Record-only: exit 0 whenever the probe completes, whatever it finds; 1 on an unexpected error; 2 on a
 precondition refusal (--out exists, is relative, or lies inside the repository or the data root; its
@@ -51,6 +55,9 @@ if str(REPO) not in sys.path:
 E1_SEED42_CHECKPOINT_SHA256 = "cf0879f7007dfacbd0d510085ff28a4b47ee845ddb8fd599611d74109e1d6a03"
 RECIPE_NUM_WORKERS = 12
 BATCH_SIZE = 16
+# Probe B mirrors E1's step exactly: train_e1 backpropagates ce + dice, never criterion(logits, mask).
+E1_STEP_LOSS_LINES = "src/training/train_e1.py:437-439"
+E1_STEP_BACKWARD_LINE = "src/training/train_e1.py:451"
 IGNORE_INDEX = 255
 EXIT_OK, EXIT_ERROR, EXIT_REFUSED = 0, 1, 2
 BATCH_IDENTITY_NOTE = ("batch 0 of a fresh build_dataloader('train', 16, num_workers=N, seed=42): with N = 12 "
@@ -134,8 +141,6 @@ def run_probe(args) -> dict:
         "determinism": ER.determinism_state(), "fill_uninitialized_memory": ER.fill_uninitialized_memory_state(),
         "tf32": ER.tf32_state(), "image_digest": ER.image_digest(), "git_head": git_head(),
         "git_status_e1_code_paths": git_status_e1_code(), "git_status_pathspecs": list(E1_CODE_STATUS_PATHS),
-        "modules_under_repo": all(_under(Path(m.__file__), REPO) for n, m in list(sys.modules.items())
-                                  if n.startswith("src.") and getattr(m, "__file__", None)),
     }
     if dev.type == "cuda":
         idx = dev.index if dev.index is not None else torch.cuda.current_device()
@@ -237,22 +242,50 @@ def run_probe(args) -> dict:
         for r in range(args.repeats):
             model.zero_grad(set_to_none=True)
             logits = model(img)
-            ce = criterion.ce(logits, mask)
+            ce = criterion.ce(logits, mask)             # the E1 step's own calls, E1_STEP_LOSS_LINES
             dice = criterion.dice(logits, mask)
             loss = ce + dice
-            loss.backward()
+            loss.backward()                             # as E1_STEP_BACKWARD_LINE
+            with torch.no_grad():                       # recorded beside it, never backpropagated
+                crit = criterion(logits, mask)
+                ce2, dice2 = criterion.ce(logits, mask), criterion.dice(logits, mask)   # kernel re-run
             h = hashlib.sha256()
             for prm in params:
                 if prm.grad is not None:
                     h.update(prm.grad.detach().cpu().contiguous().numpy().tobytes())
             b_passes.append({"pass": r + 1, "ce": float(ce), "dice": float(dice), "loss": float(loss),
+                             "criterion_forward": float(crit),
+                             "criterion_equals_ce_plus_dice": bool(torch.equal(crit, loss.detach())),
+                             "rerun_ce_equals_ce": bool(torch.equal(ce2, ce.detach())),
+                             "rerun_dice_equals_dice": bool(torch.equal(dice2, dice.detach())),
+                             "rerun_ce_plus_dice_equals_loss": bool(torch.equal(ce2 + dice2, loss.detach())),
                              "grads_sha256": h.hexdigest()})
             p = b_passes[-1]
             print(f"[B] pass {r + 1}: ce={p['ce']!r} dice={p['dice']!r} loss={p['loss']!r} "
-                  f"grads {p['grads_sha256'][:16]}", flush=True)
+                  f"criterion={p['criterion_forward']!r} grads {p['grads_sha256'][:16]}", flush=True)
         rec["probe_B"] = {"passes": b_passes,
+                          "loss_call": f"loss = criterion.ce(logits, mask) + criterion.dice(logits, mask), as "
+                                       f"{E1_STEP_LOSS_LINES}; backward as {E1_STEP_BACKWARD_LINE}",
+                          "ce_dice_source": "the E1 step's own terms (not recomputed)",
+                          "criterion_forward_source": "criterion(logits, mask) under no_grad after backward; not "
+                                                      "backpropagated (the E1 step never calls it)",
+                          "criterion_compare_note": "criterion(...) and the rerun_* terms are independent no_grad "
+                                                    "re-executions of the same CE and Dice kernels on the same "
+                                                    "logits. Any rerun_ce_equals_ce or rerun_dice_equals_dice false, "
+                                                    "or probe_A distinct ce_mean > 1, shows kernel nondeterminism "
+                                                    "(on CUDA the CE forward, nll_loss2d_forward, is "
+                                                    "nondeterministic), which alone can explain "
+                                                    "criterion_equals_ce_plus_dice false. A genuine criterion-vs-"
+                                                    "step difference is suggested only if criterion is unequal "
+                                                    "while every rerun_* flag is true in all passes and probe_A's "
+                                                    "ce_mean is single-valued",
                           "distinct": {k: distinct([p[k] for p in b_passes])
-                                       for k in ("ce", "dice", "loss", "grads_sha256")}}
+                                       for k in ("ce", "dice", "loss", "criterion_forward", "grads_sha256")}}
+        # F3: after the last repo import (Probe B's losses), so every imported repo module is covered.
+        repo_modules = sorted(n for n, m in list(sys.modules.items())
+                              if n.split(".")[0] in ("src", "configs") and getattr(m, "__file__", None))
+        rec["repo_modules"] = repo_modules
+        rec["modules_under_repo"] = all(_under(Path(sys.modules[n].__file__), REPO) for n in repo_modules)
         for wmsg in caught:                             # an empty message must not lose the record
             first = (str(wmsg.message).splitlines() or [""])[0]
             captured.append(f"{wmsg.category.__name__}: {first[:300]}")

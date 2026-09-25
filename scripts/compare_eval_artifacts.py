@@ -12,7 +12,8 @@ Validity is judged before identity whenever both artifacts pass verify_artifact;
 fails verify_artifact fails identity (exit 1).
 --identity-only exits 0 (identical) or 1 (not identical) and prints both all_class_miou values.
 Exit 3 is reserved for anything that is not a verdict: a malformed command line, --help, the same
-directory given twice, or an unexpected error ("RESULT: ERROR").
+directory given twice, two artifacts carrying the same run.run_id (a copy of one run is not two runs;
+"RESULT: NO VERDICT"), or an unexpected error ("RESULT: ERROR").
 
 Identity (A == B): both pass verify_artifact; per_image.jsonl byte-equal; the NPZ key sets are equal
 and every array has the same dtype and shape and the same raw bytes; summary.json equal as canonical
@@ -155,6 +156,11 @@ def _miou(s: dict):
 
 def compare(a: Path, b: Path, *, identity_only: bool = False) -> int:
     problems, sa, sb = identity_problems(a, b)
+    rid_a, rid_b = sa.get("run", {}).get("run_id"), sb.get("run", {}).get("run_id")
+    if rid_a is not None and rid_a == rid_b:
+        print(f"RESULT: NO VERDICT -- A and B carry the same run.run_id {rid_a!r}: a copy of one run is not "
+              f"two runs; DL-17 compares two fresh runs")
+        return EXIT_USAGE
     print(f"all_class_miou A = {_miou(sa)!r}")
     print(f"all_class_miou B = {_miou(sb)!r}")
     if identity_only:

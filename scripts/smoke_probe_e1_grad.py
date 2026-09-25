@@ -25,6 +25,7 @@ import os           # noqa: E402
 import shutil       # noqa: E402
 import subprocess   # noqa: E402
 import tempfile     # noqa: E402
+import textwrap     # noqa: E402
 import traceback    # noqa: E402
 from pathlib import Path  # noqa: E402
 
@@ -196,6 +197,91 @@ def section_default():
           "exit 2 (out_inside_data_root); nothing written",
           r21.returncode == 2 and "[out_inside_data_root]" in r21.stderr and not any(cwd_root.iterdir()),
           (r21.stdout + r21.stderr)[-160:])
+    mods = set(rec.get("repo_modules", []))
+    check("S22 modules_under_repo is computed late: on the synthetic run it covers src.training.train_e1 (and the "
+          "losses module it imports), src.seeds and configs.data, all under the checkout (the old P0 placement "
+          "fails this; F05 covers the real path's later imports)",
+          rec.get("modules_under_repo") is True
+          and {"src.training.losses", "src.training.train_e1", "src.seeds", "configs.data"} <= mods,
+          f"{len(mods)} modules")
+    sdrv = TMP / "step_spy_driver.py"
+    sdrv.write_text(textwrap.dedent(f'''
+        import json, sys
+        sys.path.insert(0, {str(REPO)!r})
+        import torch
+        from src.training import losses as L
+        events, crit_calls = [], []
+        _ce, _dice, _bw = L.WeightedCrossEntropyLoss.forward, L.SoftDiceLoss.forward, torch.Tensor.backward
+        _crit = L.CombinedCEDiceLoss.forward
+        def ce_spy(self, *a, **k):
+            out = _ce(self, *a, **k); events.append(("ce", out.grad_fn)); return out
+        def dice_spy(self, *a, **k):
+            out = _dice(self, *a, **k); events.append(("dice", out.grad_fn)); return out
+        def bw_spy(self, *a, **k):
+            events.append(("backward", self.grad_fn)); return _bw(self, *a, **k)
+        def crit_spy(self, *a, **k):
+            crit_calls.append(torch.is_grad_enabled()); return _crit(self, *a, **k)
+        L.WeightedCrossEntropyLoss.forward, L.SoftDiceLoss.forward, torch.Tensor.backward = ce_spy, dice_spy, bw_spy
+        L.CombinedCEDiceLoss.forward = crit_spy
+        sys.path.insert(0, {str(REPO / "scripts")!r})
+        import probe_e1_grad_determinism as P
+        rc = P.main(["--synthetic", "--device", "cpu", "--repeats", "2", "--out", {str(TMP / "n10_spy.json")!r}])
+        live = [e for e in events if e[1] is not None]          # grad-enabled ce/dice outputs and backward calls
+        ok, n_bw, last = [], 0, {{}}
+        for kind, fn in live:
+            if kind == "backward":
+                n_bw += 1
+                nxt = [f for f, _ in fn.next_functions]
+                ok.append(fn.name() == "AddBackward0" and len(nxt) == 2
+                          and nxt[0] is last.get("ce") and nxt[1] is last.get("dice"))
+            else:
+                last[kind] = fn
+        print("SPY_JSON:" + json.dumps({{"rc": rc, "n_backward": n_bw, "ok": ok,
+                                        "live_kinds": [k for k, _ in live],
+                                        "criterion_calls_grad_enabled": crit_calls}}))
+    '''), encoding="utf-8")
+    r23 = subprocess.run([sys.executable, "-B", str(sdrv)], cwd=str(REPO), capture_output=True, text=True,
+                         env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1", PYTHONPATH=str(REPO),
+                                  PLANTSEG_DATA_ROOT=str(NO_ROOT)), timeout=600)
+    spy = next((json.loads(ln[9:]) for ln in r23.stdout.splitlines() if ln.startswith("SPY_JSON:")), {})
+    rec23 = json.loads((TMP / "n10_spy.json").read_text(encoding="utf-8")) if (TMP / "n10_spy.json").exists() else {}
+    b23 = rec23.get("probe_B", {}).get("passes", [])
+    check("S23 F4 spy: per pass exactly one grad-enabled criterion.ce, one criterion.dice and one backward, in "
+          "that order, and the backward is on AddBackward0 of that pass's ce and dice outputs (E1's step, not "
+          "recomputed); criterion(logits, mask) is only called under no_grad and equals ce + dice bitwise, as do "
+          "the no_grad re-runs (CPU)",
+          spy.get("rc") == 0 and spy.get("n_backward") == 2 and spy.get("ok") == [True, True]
+          and spy.get("live_kinds") == ["ce", "dice", "backward"] * 2
+          and spy.get("criterion_calls_grad_enabled") == [False, False] and len(b23) == 2
+          and all(p["criterion_equals_ce_plus_dice"] is True and p["criterion_forward"] == p["loss"]
+                  and p["rerun_ce_equals_ce"] is True and p["rerun_dice_equals_dice"] is True
+                  and p["rerun_ce_plus_dice_equals_loss"] is True for p in b23)
+          and rec23.get("probe_B", {}).get("ce_dice_source") == "the E1 step's own terms (not recomputed)",
+          json.dumps(spy) if spy else (r23.stdout + r23.stderr)[-200:])
+    e1_src = (REPO / "src" / "training" / "train_e1.py").read_text(encoding="utf-8")
+    e1 = e1_src.splitlines()
+    cited = [e1[i - 1].strip() for i in (437, 438, 439, 451)] if len(e1) >= 451 else []
+
+    def _is_loss(t):
+        return (isinstance(t, ast.Name) and t.id == "loss") or (
+            isinstance(t, (ast.Tuple, ast.List)) and any(_is_loss(x) for x in t.elts))
+    rebinds = []
+    for node in ast.walk(ast.parse(e1_src)):
+        if not 440 <= getattr(node, "lineno", 0) <= 450:
+            continue
+        if isinstance(node, ast.Assign) and any(_is_loss(t) for t in node.targets) \
+                or isinstance(node, (ast.AugAssign, ast.AnnAssign, ast.NamedExpr)) and _is_loss(node.target) \
+                or isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
+                and node.func.attr.endswith("_") and _is_loss(node.func.value):
+            rebinds.append(node.lineno)
+    check("S24 the probe's citation holds: train_e1.py:437-439 are exactly ce = criterion.ce(logits, mask), dice = "
+          "criterion.dice(logits, mask), loss = ce + dice (code part), :451 is loss.backward(), and :440-450 never "
+          "rebind or modify loss in place (AST: assign/augassign/annassign/walrus/tuple targets, loss.<op>_() calls)",
+          m.E1_STEP_LOSS_LINES == "src/training/train_e1.py:437-439"
+          and m.E1_STEP_BACKWARD_LINE == "src/training/train_e1.py:451"
+          and cited[:2] == ["ce = criterion.ce(logits, mask)", "dice = criterion.dice(logits, mask)"]
+          and cited[2].split("#", 1)[0].strip() == "loss = ce + dice" and cited[3] == "loss.backward()"
+          and rebinds == [], f"{cited} rebinds@{rebinds}")
 
 
 def section_full():
@@ -253,6 +339,17 @@ def section_full():
           and abs(a[0]["aten_total_weight"] - bt.get("total_weight_float64", -1)) <= 1e-5 * max(1.0, bt.get(
               "total_weight_float64", 1)), f"{a[0].get('aten_total_weight') if a else None} vs "
                                              f"{bt.get('total_weight_float64')}")
+    b = rec.get("probe_B", {}).get("passes", [])
+    check("F04 real path: in every Probe B pass criterion(logits, mask) and the no_grad re-run equal the "
+          "backpropagated ce + dice bitwise (recorded, CPU)",
+          bool(b) and all(p["criterion_equals_ce_plus_dice"] is True and p["criterion_forward"] == p["loss"]
+                          and p["rerun_ce_plus_dice_equals_loss"] is True for p in b),
+          json.dumps([(p.get("loss"), p.get("criterion_forward")) for p in b])[:160])
+    check("F05 real path: modules_under_repo covers the real path's later repo imports (src.eval.model_loading, "
+          "src.data, src.data.isolation, configs.data)",
+          rec.get("modules_under_repo") is True
+          and {"src.eval.model_loading", "src.data", "src.data.isolation", "configs.data"}
+          <= set(rec.get("repo_modules", [])), f"{len(rec.get('repo_modules', []))} modules")
     (root / "images" / "test").mkdir()
     r2 = probe(["--device", "cpu", "--checkpoint", str(ck), "--expect-sha256", sha, "--repeats", "2",
                 "--out", str(TMP / "n10_test.json")], env_extra={"PLANTSEG_DATA_ROOT": str(root)})

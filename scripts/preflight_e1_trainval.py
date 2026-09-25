@@ -16,6 +16,7 @@ Usage:
   python -B scripts/preflight_e1_trainval.py check-run-meta --ckpt-dir D --seed S --expect-head SHA40
          [--profile e1_80k]
 Exit: 0 GO / PASS · 1 NO-GO / FAIL (a rehearsal ALWAYS exits 1) · 2 usage.
+--profile e1_160k (DL-27's longer-schedule control) takes --seed 42 only; any other seed is a usage error.
 
 A rehearsal (`--rehearsal`) runs every stage it can off-pod. It SKIPs only work that needs the pod
 (CUDA, the pre-staged ImageNet backbone, the partial clone's sparse configuration, a safety-floor commit
@@ -86,6 +87,7 @@ PROFILES = {
     "e1_160k": {"extra_args": ("--iterations", "160000"), "dry_args": ("--iterations", "160000"),
                 "max_iters": 160000, "poly_horizon": 160000},
 }
+PROFILE_SEEDS = {"e1_160k": (42,)}              # DL-27 defines the 160,000-iteration control at seed 42 only
 RUN_META_KEYS = (
     "event", "wall_clock", "mode", "seed", "git_head", "git_head_source", "image_digest", "torch",
     "numpy", "device", "cuda_available", "gpu_name", "num_workers", "batch_size", "max_iters",
@@ -731,6 +733,11 @@ def build_parser():
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
+    allowed = PROFILE_SEEDS.get(getattr(args, "profile", None))
+    if allowed is not None and args.seed not in allowed:
+        print(f"usage error: --profile {args.profile} is defined for seed "
+              f"{', '.join(str(s) for s in allowed)} only (DL-27); got --seed {args.seed}", file=sys.stderr)
+        return 2
     if args.cmd == "_cuda-probe":
         return cuda_probe()
     if args.cmd == "check-run-meta":

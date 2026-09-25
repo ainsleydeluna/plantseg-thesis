@@ -801,6 +801,11 @@ def dl17_summary(**over) -> dict:
 DELETE = object()
 
 
+def dl17_b(**over) -> dict:
+    """The B side of a pair: a second run, so it carries its own run.run_id (the comparator refuses a copy)."""
+    return dl17_summary(run__run_id="dl17_run2", **over)
+
+
 def write_fixture_artifact(out: Path, summary: dict, *, rows: str | None = None, npz_tp=None) -> Path:
     import hashlib
     out.mkdir(parents=True)
@@ -839,31 +844,30 @@ def section_c(work: Path) -> None:
           and (CMP.EXIT_PASS, CMP.EXIT_FAIL, CMP.EXIT_VALIDITY) == (0, 1, 2))
     root = work / "cmp"
     a = write_fixture_artifact(root / "a", dl17_summary())
-    b = write_fixture_artifact(root / "b", dl17_summary())
+    b = write_fixture_artifact(root / "b", dl17_b())
     rc, out = cmp_rc(a, b)
     check("C2 identical valid pair -> 0 (full mode)", rc == 0 and "RESULT: PASS" in out, out[-120:])
     rc, out = cmp_rc(a, b, "--identity-only")
     check("C3 identical pair -> 0 (--identity-only), both all_class_miou values printed",
           rc == 0 and out.count(repr(CMP.DL17_REFERENCE_MIOU)) >= 2, out[:160])
-    b2 = write_fixture_artifact(root / "b2", dl17_summary(run__run_id="dl17_run2",
-                                                          run__timestamp_utc="2026-10-01T01:02:03Z"))
+    b2 = write_fixture_artifact(root / "b2", dl17_b(run__timestamp_utc="2026-10-01T01:02:03Z"))
     rc, out = cmp_rc(a, b2)
     check("C4 a pair differing only in run_id and timestamp_utc -> 0", rc == 0, out[-120:])
-    b3 = write_fixture_artifact(root / "b3", dl17_summary(),
+    b3 = write_fixture_artifact(root / "b3", dl17_b(),
                                 rows='{"image_id": "a", "miou": 0.5}\n{"image_id": "b", "miou": 0.35}\n')
     rc, out = cmp_rc(a, b3)
     check("C5 one per_image.jsonl byte changed -> 1", rc == 1 and "per_image.jsonl" in out, out[-160:])
-    b4 = write_fixture_artifact(root / "b4", dl17_summary(), npz_tp=np.array([1, 2, 4], dtype=np.int64))
+    b4 = write_fixture_artifact(root / "b4", dl17_b(), npz_tp=np.array([1, 2, 4], dtype=np.int64))
     rc, out = cmp_rc(a, b4)
     check("C6 one NPZ value changed -> 1", rc == 1 and "NPZ tp" in out, out[-160:])
     above = CMP.DL17_REFERENCE_MIOU + 1.01e-4
     a5 = write_fixture_artifact(root / "a5", dl17_summary(dataset_level__all_class_miou=above))
-    b5 = write_fixture_artifact(root / "b5", dl17_summary(dataset_level__all_class_miou=above))
+    b5 = write_fixture_artifact(root / "b5", dl17_b(dataset_level__all_class_miou=above))
     rc, out = cmp_rc(a5, b5)
     check("C7 |delta| just above 1e-4 -> 1", rc == 1 and "outside the DL-17 band" in out, out[-160:])
     inband = CMP.DL17_REFERENCE_MIOU - 6.49e-5
     a6 = write_fixture_artifact(root / "a6", dl17_summary(dataset_level__all_class_miou=inband))
-    b6 = write_fixture_artifact(root / "b6", dl17_summary(dataset_level__all_class_miou=inband))
+    b6 = write_fixture_artifact(root / "b6", dl17_b(dataset_level__all_class_miou=inband))
     rc, out = cmp_rc(a6, b6)
     check("C8 |delta| in (1e-6, 1e-4] -> 0 and recorded", rc == 0 and "RECORDED:" in out, out[-160:])
 
@@ -890,16 +894,17 @@ def section_c(work: Path) -> None:
     ]
     for i, (label, over) in enumerate(violations):
         va = write_fixture_artifact(root / f"va{i}", dl17_summary(**over))
-        vb = write_fixture_artifact(root / f"vb{i}", dl17_summary(**over))
+        vb = write_fixture_artifact(root / f"vb{i}", dl17_b(**over))
         rc, out = cmp_rc(va, vb)
         check(f"C9.{i + 1:02d} validity violated ({label}) -> 2",
               rc == 2 and "VALIDITY" in out, out[-140:])
     rc, _ = cmp_rc(a, b, "--no-such-flag")
     rc_help, _ = cmp_rc(a, b, "--help")
-    rc_same, _ = cmp_rc(a, a)
-    check("C10 a malformed command line, --help, or the same directory twice exit 3, never 0 or 2",
-          rc == 3 and rc_help == 3 and rc_same == 3, f"rc={rc}/{rc_help}/{rc_same}")
-    bad = write_fixture_artifact(root / "tampered", dl17_summary())
+    rc_same, out_same = cmp_rc(a, a)
+    check("C10 a malformed command line, --help, or the same directory twice exit 3, never 0 or 2 (the "
+          "same-directory guard answers before any comparison: nothing on stdout)",
+          rc == 3 and rc_help == 3 and rc_same == 3 and out_same == "", f"rc={rc}/{rc_help}/{rc_same}")
+    bad = write_fixture_artifact(root / "tampered", dl17_b())
     (bad / "per_image.jsonl").write_text("tampered\n", encoding="utf-8", newline="\n")
     rc, out = cmp_rc(a, bad)
     check("C11 an artifact failing verify_artifact fails identity -> 1",
@@ -913,7 +918,7 @@ def section_c(work: Path) -> None:
                            capture_output=True, text=True, timeout=300)
     check("C12 process exit codes: valid identical pair 0, validity violation 2",
           proc.returncode == 0 and proc2.returncode == 2, f"{proc.returncode}/{proc2.returncode}")
-    b13 = write_fixture_artifact(root / "b13", dl17_summary(run__artifact_status="smoke"))
+    b13 = write_fixture_artifact(root / "b13", dl17_b(run__artifact_status="smoke"))
     rc, out = cmp_rc(a, b13)
     check("C13 a summary.json difference outside run_id/timestamp_utc -> 1",
           rc == 1 and "summary.json differs" in out, out[-140:])
@@ -922,16 +927,31 @@ def section_c(work: Path) -> None:
           rc == 0 and "RESULT: IDENTICAL" in out, out[-120:])
     rc, out = cmp_rc(a, b3, "--identity-only")
     check("C15 --identity-only on a non-identical pair -> 1", rc == 1 and "NOT IDENTICAL" in out, out[-120:])
-    b16 = write_fixture_artifact(root / "b16", dl17_summary(run__eval_runtime__batch_size=2),
+    b16 = write_fixture_artifact(root / "b16", dl17_b(run__eval_runtime__batch_size=2),
                                  rows='{"image_id": "a", "miou": 0.5}\n{"image_id": "b", "miou": 0.35}\n')
     rc, out = cmp_rc(a, b16)
     check("C16 validity is judged before identity (B invalid AND different -> 2)",
           rc == 2 and "VALIDITY" in out and "IDENTITY" not in out, out[-140:])
     a17 = write_fixture_artifact(root / "a17", dl17_summary(dataset_level__all_class_miou="n/a"))
-    b17 = write_fixture_artifact(root / "b17", dl17_summary(dataset_level__all_class_miou="n/a"))
+    b17 = write_fixture_artifact(root / "b17", dl17_b(dataset_level__all_class_miou="n/a"))
     rc, out = cmp_rc(a17, b17)
     check("C17 an unexpected error is RESULT: ERROR with exit 3, never PASS/FAIL/VALIDITY",
           rc == 3 and "RESULT: ERROR" in out, out[-140:])
+    a_copy = root / "a_copy"
+    shutil.copytree(a, a_copy)
+    rc_full, out_full = cmp_rc(a, a_copy)
+    rc_id, out_id = cmp_rc(a, a_copy, "--identity-only")
+    va0_copy = root / "va0_copy"
+    shutil.copytree(root / "va0", va0_copy)
+    rc_inv, out_inv = cmp_rc(root / "va0", va0_copy)
+    check("C18 an exact copy of A in a second directory (same run.run_id) -> exit 3 (no verdict) in full and "
+          "--identity-only mode, never PASS/IDENTICAL; a copy of an invalid artifact is also 3, judged before "
+          "validity",
+          rc_full == 3 and rc_id == 3 and all("same run.run_id 'dl17_run1'" in o and "RESULT: NO VERDICT" in o
+                                              and "PASS" not in o and "IDENTICAL" not in o
+                                              for o in (out_full, out_id))
+          and rc_inv == 3 and "RESULT: NO VERDICT" in out_inv and "VALIDITY" not in out_inv,
+          f"rc={rc_full}/{rc_id}/{rc_inv} {out_full[-80:]}")
 
 
 # ------------------------------------------------------------------------------------------ main

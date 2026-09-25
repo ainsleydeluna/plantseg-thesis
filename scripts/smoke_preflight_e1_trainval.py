@@ -521,6 +521,18 @@ def section_c() -> None:
     check("C13 a real gate run without --record -> exit 2", rc == 2 and "--record" in err, f"rc={rc}")
     rc, _, _ = run_main(["gate", "--seed", "43", "--ckpt-dir", good_ck, "--rehearsal"])
     check("C14 a missing --expect-head -> usage exit 2", rc == 2, f"rc={rc}")
+    g18 = [run_main(["gate", "--seed", s, "--ckpt-dir", good_ck, "--expect-head", HEAD, "--rehearsal",
+                     "--profile", "e1_160k"]) for s in ("43", "44")]
+    check("C18 gate --profile e1_160k with seed 43 or 44 (--rehearsal) -> usage exit 2 before any stage (DL-27: "
+          "the 160k control is seed 42 only)",
+          P.PROFILE_SEEDS == {"e1_160k": (42,)}
+          and all(rc == 2 and "seed 42 only" in err and "GATE SUMMARY" not in out and "TRAIN/VAL-ONLY GATE" not in out
+                  for rc, out, err in g18), str([(rc, err[-60:]) for rc, _, err in g18]))
+    c19 = [run_main(["check-run-meta", "--seed", s, "--ckpt-dir", str(TMP / "c19_none"), "--expect-head", HEAD,
+                     "--profile", "e1_160k"]) for s in ("43", "44")]
+    check("C19 check-run-meta --profile e1_160k with seed 43 or 44 -> usage exit 2 before any telemetry read",
+          all(rc == 2 and "seed 42 only" in err and "RESULT" not in out for rc, out, err in c19),
+          str([(rc, out[-60:]) for rc, out, _ in c19]))
 
 
 # ------------------------------------------------------------------------------------------ D

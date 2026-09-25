@@ -746,7 +746,7 @@ values) after removing only `run.run_id` and `run.timestamp_utc`. NPZ container 
 
 **(e) DL-17.** `scripts/compare_eval_artifacts.py` is the DL-17 identity and PASS implementation (exit 0
 PASS, 1 FAIL, 2 validity violation; 3 is never a verdict: a usage error or `--help`, the same directory
-twice, or an unexpected error, and it releases nothing until DL-17 is re-run to a verdict). Validity
+twice, two artifacts carrying the same `run.run_id` (a copy of one run is not two runs), or an unexpected error, and it releases nothing until DL-17 is re-run to a verdict). Validity
 preconditions, per artifact: `run.eval_runtime` present;
 `determinism_policy_applied`; `model_device` == `input_devices` == `cuda:N`; batch size 16, 0 workers, 53
 forward batches, 846 rows; checkpoint iteration 80000 and stored best 0.36314016580581665; the DL-21 image
