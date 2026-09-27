@@ -57,6 +57,8 @@ and 44 enter only AM-8 and the per-seed table.
 
 [Extended by AM-16: E2 seeds 43 and 44 also run.]
 
+[Extended by AM-17 item 4.]
+
 ## AM-2 — λ_logit sweep (resolves M6; extends PREREGISTRATION §7 and U1)
 
 - **Grid and budget.** {0.25, 0.5, 1, 2, 4} at seed 42, with the **full 80,000 iterations per candidate**.
@@ -157,6 +159,8 @@ The eight-test Holm family and the E3-vs-E6 non-inferiority check use the seed-4
 
 [Extended by AM-16: the table includes E2 vs E3 at all three seeds.]
 
+[Extended by AM-17 item 4 and AM-8a.]
+
 ## AM-9 — Withdrawn before recording
 
 Latency and memory stay on the approved x86 path, with the fbgemm/x86 copy (ch3 f.154).
@@ -199,6 +203,8 @@ Code: lane L-AM13.
 
 [Extended by AM-16: every student is also scored under the upstream protocol at TEST; E1 also on VAL before the first KD run.]
 
+[Extended by AM-17 item 1.]
+
 ## AM-14 — The inferential family (resolves the family ambiguity, conflicts #9)
 
 The inferential family is the eight tests listed at ch3 f.139. The primary test is a one-tailed Wilcoxon with
@@ -214,6 +220,8 @@ by the paired-BCa non-inferiority check. E1 vs E3 is descriptive.
   (`src/stats/bootstrap.py:40-41`, `:117-131`).
 
 No code lane is needed.
+
+[Extended by AM-17 items 2 and 10(d).]
 
 ## AM-15 — Contingencies not invoked (completes DL-14)
 The DIST fallback and the 'E2 as distilled deliverable' switch are not invoked under any outcome: E6 is
@@ -284,7 +292,7 @@ E1, then the longer-schedule E2; the α sweep and E2 seeds 43/44 are cut last; i
 cut. If item 2 is cut, E3 runs at α_CWD = 50 (the Chapter 3 default) and no sweep is reported. Any cut
 is recorded here before the affected run.
 
-[Schedule extended by AM-17 item 9 and AM-17b item 3: wrapping cut order, launch order, λ shortfall rule and freeze dates.]
+[Schedule extended by AM-17 item 9 and AM-17b item 3: overall cut order, launch order, λ shortfall rule and freeze dates.]
 
 ## AM-17 — Teacher record, effect-size rules, CWD-only arm, strata, TEST schedule and a descriptive SegNeXt-L arm (extends AM-8, AM-13, AM-14 and AM-16)
 
@@ -460,17 +468,17 @@ teacher's score existed; items 1(f) and 11 were proposed after it and are descri
     (f) Upstream recipe (tqwei05/PlantSeg at 1a3dd4d, 2025-03-25): the repository ships MSCAN-T and
         MSCAN-L PlantSeg configurations only (no MSCAN-B); both use AdamW 6e-5, betas (0.9, 0.999),
         weight decay 0.01, head lr_mult 10, batch 16, LinearLR warm-up 1,500 iterations then PolyLR
-        power 1.0 with end = 160,000 inside a 40,000-iteration loop, checkpoints every 10,000 without
-        best-checkpoint selection, backbone-only initialisation from the ImageNet MSCAN pretrain
+        power 1.0 with end = 160,000 inside a 40,000-iteration loop, checkpoints every 10,000 (no
+        best-checkpoint selection, per B60 §1; base files not re-fetched), backbone-only initialisation from the ImageNet MSCAN pretrain
         (mscan_l_20230227-cef260d4.pth for L), and the MMSeg pipeline (RandomResize (2048, 512) ×
         [0.5, 2.0], RandomCrop 512 with cat_max_ratio 0.75, RandomFlip, PhotoMetricDistortion); the L
         configuration sets num_classes = 116, the T configuration 115. The MSCAN-B configuration of
-        record (configs/teacher/segnext_mscan-b_1xb16-adamw-40k_plantseg116-512x512.py) was constructed from these: initialisation ADE20K full-model checkpoint
+        record (configs/teacher/segnext_mscan-b_1xb16-adamw-40k_plantseg116-512x512.py) takes its optimizer and schedule settings from these configurations and its base from the MSCAN-B ADE20K 160k configuration: initialisation ADE20K full-model checkpoint
         segnext_mscan-b_…_20230209_172053-b6f6c70c.pth, scheduler end
         40,000, training pipeline repository. Chapter 3 p. 102's "the
         repository configuration that produced the published 42.05%" is read as "the repository's
         PlantSeg schedule with the MSCAN-B architecture"; the differences above are disclosed in
-        Chapter 4 and qualify the 42.05% reproduction check.
+        Chapter 4 and qualify the descriptive 42.05% comparison (AM-13).
     (g) Chapter 3 Table 3.3 p. 111 is corrected: MSCAN-L's Stage-3 width equals MSCAN-B's (320
         channels; Guo et al., 2022, Table 2; upstream configs); SegNeXt-L differs in depth
         ([3, 5, 27, 3] vs [3, 3, 12, 3]) and decoder width (1,024 vs 512), so the channel-width reason
@@ -483,7 +491,7 @@ teacher's score existed; items 1(f) and 11 were proposed after it and are descri
         iterations, batch 16, evaluator, readiness rules R1–R4 and checkpoint selection as in item
         1(a)) except the architecture fields of the upstream L configuration: depths [3, 5, 27, 3],
         embed_dims [64, 128, 320, 512], drop_path_rate 0.3, LightHamHead channels = ham_channels =
-        1,024, and the matching L initialisation checkpoint (<filled and recorded before L launch>, sha256 <filled and recorded before L launch>). Any other
+        1,024, and the matching L initialisation checkpoint (segnext_mscan-l_1x16_512x512_adamw_160k_ade20k_20230209_172055-19b14b63.pth (ADE20K full model, matching the B configuration's full-model initialisation), sha256 [sha256 recorded before L launch]). Any other
         difference is recorded before launch. Hardware: A40 at batch 16 after a memory preflight (the
         ADE20K L fine-tune is recorded at 43.3 GB); if the preflight fails at batch 16, the arm is not
         run at a smaller batch — an 80 GB card may be used for this fine-tune only, recorded; DL-17
@@ -569,9 +577,10 @@ threshold, family member, teacher of record or run of record changes.
        spread reference; it is not used in the MDE or in any decision.
    (c) Inputs: both models scored on one device with one metrics implementation. Pairing of record:
        the R3 teacher artifact (CPU, evaluator 3c43f89, manifest 35f6788e…) with the B66-prep Q12 CPU
-       re-score of E1 seed 42 (same manifest, metrics blob cbd5fa86…); if either lacks per-image
-       confusion contributions, both are re-scored once on the B66 pod with the per-image dump
-       enabled and the two artifacts are recorded. The pairing used is stated with the result.
+       re-score of E1 seed 42 (same manifest, metrics blob cbd5fa86…); the Q12 artifact lacks per-image
+       contributions (CP-007a finding G3), so both models are re-scored once on CPU in the pinned image
+       after B66 (lane L-AM17B-GAP) and the two artifacts are recorded; the teacher is never re-scored on a
+       B66 pod. The pairing used is stated with the result.
    (d) Uses: interpretation of the KD results and of AM-17 item 1(f); the CI does not gate, select
        or replace anything.
 
@@ -590,10 +599,12 @@ reuses the paired dataset-level statistic of the non-inferiority lane where it e
 ## AM-8a — Repeat rule for failed runs (extends AM-8)
 
 Dated 2026-09-28. A run is repeated with the same seed only after a documented infrastructure fault
-(NaN loss, crash, corrupted artifact, wrong configuration), and the fault report is committed before
-the repeat launches. The failed run's logs and partial checkpoints are kept. No selection between a
-failed run and its repeat is ever made: the repeat replaces the failed run. A run that finishes
-without a documented fault is never repeated.
+(crash, host or pod failure, corrupted artifact, wrong configuration). The fault report is written and
+sha256-listed in the run's durable evidence folder before the repeat launches, and committed at the next
+write session. The failed run's logs and partial checkpoints are kept. No selection between a failed run
+and its repeat is ever made: the repeat replaces the failed run. A run that finishes without a documented
+fault is never repeated. The same rule governs a repeat of the DL-17 evaluator pair or its comparator.
+Non-finite losses in E2/E3 follow AM-7/DL-04, not this rule.
 
 ## Status of PREREGISTRATION §10 items after these amendments
 
