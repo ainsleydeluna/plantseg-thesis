@@ -360,7 +360,7 @@ tail -5 /workspace/e1_ckpts/e1_stdout.log
 
 ## 9. B66 — TRAIN/VAL-only launch path (DL-21) [added 2026-09-24, B66-prep S2]
 
-Applies to every real E1 run from B66 on (seeds 43/44 and the longer-schedule E1). §1–§8 remain the
+Applies to every real E1 run from B66 on (seeds 43/44 and the longer-schedule E1). **[UPDATED 2026-09-28 — CP-007a]** The longer-schedule E1 (seed 42, 160k) is deferred from B66 to wave W1 (DECISION_LOG DL-36). §1–§8 remain the
 seed-42 record; where they conflict with this section, this section wins. From this commit on,
 `train_e1.py` refuses a real run on any root that holds a TEST surface, so the §1–§8 launch path (the
 seed-42 volume root) cannot start a real run.

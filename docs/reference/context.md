@@ -89,7 +89,7 @@ after; global-norm clip; **no EMA of weights**; best-val-mIoU ckpt. E6 starts fr
 **E4/E7 PTQ:** static INT8, ~128 calibration images. E4 from E1, E7 from E3 (head removed).
 
 **Teacher:** AdamW lr 6e-5, wd 0.01, betas (0.9,0.999), decode-head `lr_mult=10`, poly schedule,
-40,000 iters, batch 16, 512×512, CE loss. Success = recover 42.05% within ±1.5–2.0 pp (protocol match, not max accuracy).
+40,000 iters, batch 16, 512×512, CE loss. ~~Success = recover 42.05% within ±1.5–2.0 pp (protocol match, not max accuracy).~~ **[UPDATED 2026-09-28 — CP-007a]** Superseded by AM-13/DL-08: teacher acceptance is R3 on VAL (strictly > 0.36314016580581665); the 42.05% comparison is descriptive and made at TEST only.
 
 **Quantization detail:** per-channel **symmetric INT8** weights (all conv); per-tensor **asymmetric
 UINT8** activations. Fuse Conv-BN-ReLU before observer insertion; Hard-Swish/Hardsigmoid as standalone

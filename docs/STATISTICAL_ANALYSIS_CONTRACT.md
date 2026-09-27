@@ -690,7 +690,7 @@ superiority · robustness superiority.
 > - E6-KD pre-registered as a fixed additional arm, independent of TEST.
 >
 > One must be registered before E6. Until then the §12.4.10 schema field is retained as written, but it
-> must not be used to launch E6-KD. The reduced E6-KD weights remain `NEED_TO_CONFIRM`.
+> must not be used to launch E6-KD. The reduced E6-KD weights ~~remain `NEED_TO_CONFIRM`~~ **[UPDATED 2026-09-28 — CP-007a]** are fixed by AM-3: 0.5× their E3 values.
 
 ### 9.4 Seed stability `[AM-8, 2026-09-23]` — descriptive, at the single TEST evaluation
 
