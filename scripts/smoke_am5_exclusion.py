@@ -285,8 +285,8 @@ def main() -> int:  # noqa: C901
               summary.get("am5") == want and AM5_RULE == "no_disease_gt", summary.get("am5"))
         check("D1-6 artifact_schema_version set; schema_version unchanged",
               summary.get("artifact_schema_version") == ARTIFACT_SCHEMA_VERSION
-              == "plantseg-eval-artifact/1.1.0" and summary["schema_version"] == SCHEMA_VERSION
-              == "plantseg-eval/1.0.0")
+              == "plantseg-eval-artifact/1.2.0" and summary["schema_version"] == SCHEMA_VERSION
+              == "plantseg-eval/1.0.0")                   # 1.2.0 since lane L-AM13 (section 11)
         z = np.load(d1 / "sufficient_stats.npz", allow_pickle=False)
         fp = (z["image_index"] == 2) & (z["class_id"] == 30)
         check("D1-7 a predicted disease on a zero-disease image leaves it excluded (GT only)",

@@ -125,12 +125,18 @@ class DatasetMeta:
 
 @dataclass(frozen=True)
 class EvalBatch:
-    """A batch that carries identity directly. `clean_image_ids` is mandatory, not derived."""
+    """A batch that carries identity directly. `clean_image_ids` is mandatory, not derived.
+
+    `sample_meta` (lane L-AM13) optionally carries one per-image protocol record per sample -- the
+    upstream protocol's shape fields. It travels with the sample like the identity fields and is
+    serialised after `am5_excluded`; None (the canvas protocol) leaves the rows unchanged.
+    """
     images: torch.Tensor
     targets: torch.Tensor
     image_ids: Sequence[str]
     clean_image_ids: Sequence[str]
     manifest_indices: Sequence[int]
+    sample_meta: Sequence[dict] | None = None
 
     def __post_init__(self) -> None:
         n = len(self.image_ids)
@@ -140,12 +146,15 @@ class EvalBatch:
             raise ValueError(
                 f"batch size mismatch: images {self.images.shape[0]}, targets "
                 f"{self.targets.shape[0]}, ids {n}")
+        if self.sample_meta is not None and len(self.sample_meta) != n:
+            raise ValueError(f"sample_meta has {len(self.sample_meta)} entries for {n} samples")
 
 
 @dataclass(frozen=True)
 class PerImageRow:
     """Exactly the fields frozen by contract section 5.4 -- no per-image classwise arrays -- plus the
-    derived AM-5 flag, serialised last (contract section 3.2; lane L-AM5)."""
+    derived AM-5 flag (contract section 3.2; lane L-AM5) and, for a protocol that defines them, the
+    per-image protocol fields after it (contract section 11; lane L-AM13). A canvas row has none."""
     image_id: str
     clean_image_id: str
     manifest_index: int
@@ -157,6 +166,7 @@ class PerImageRow:
     n_eligible_all_class: int
     n_eligible_disease_only: int
     gt_disease_classes: list[int]
+    protocol_fields: tuple[tuple[str, object], ...] = ()
 
     @property
     def am5_excluded(self) -> bool:
@@ -165,7 +175,7 @@ class PerImageRow:
         return self.n_eligible_disease_only == 0
 
     def as_dict(self) -> dict:
-        return {
+        row = {
             "image_id": self.image_id,
             "clean_image_id": self.clean_image_id,
             "manifest_index": self.manifest_index,
@@ -179,6 +189,26 @@ class PerImageRow:
             "gt_disease_classes": self.gt_disease_classes,
             "am5_excluded": self.am5_excluded,
         }
+        row.update(self.protocol_fields)
+        return row
+
+
+# The contract row keys, derived from as_dict so the two cannot drift.
+ROW_KEYS = frozenset(PerImageRow("x", "x", 0, Condition(), None, STATUS_UNDEFINED, None,
+                                 STATUS_UNDEFINED, 0, 0, []).as_dict())
+
+
+def _protocol_fields(batch: "EvalBatch", i: int) -> tuple[tuple[str, object], ...]:
+    """Sample i's per-image protocol record as row fields; () when the batch carries none."""
+    if batch.sample_meta is None:
+        return ()
+    meta = batch.sample_meta[i]
+    clash = sorted(set(meta) & ROW_KEYS)
+    if clash:
+        raise EvaluationIntegrityError(
+            f"per-image protocol fields {clash} would overwrite contract fields "
+            f"(image_id={batch.image_ids[i]!r})")
+    return tuple(meta.items())
 
 
 @dataclass
@@ -238,13 +268,19 @@ def evaluate_model(
     background_index: int,
     ignore_index: int,
     forward: Callable | None = None,
+    batch_forward: Callable | None = None,
 ) -> EvalResult:
     """Evaluate an already-constructed model over identity-carrying batches.
 
     `model` may be anything whose forward returns `[B, num_classes, H, W]` logits (FP32 student,
-    teacher, PTQ, QAT -- the core does not care). `forward` optionally overrides how the model is
-    invoked. Raises EvaluationIntegrityError on any identity or output-shape violation.
+    teacher, PTQ, QAT -- the core does not care). `forward(model, images)` optionally overrides how
+    the model is invoked. `batch_forward(model, batch)` (lane L-AM13) replaces it when the invocation
+    needs the whole batch: the upstream protocol reads each sample's shape record to return logits at
+    the target's original resolution. At most one of the two may be given. Raises
+    EvaluationIntegrityError on any identity or output-shape violation.
     """
+    if forward is not None and batch_forward is not None:
+        raise EvaluationIntegrityError("pass at most one of forward and batch_forward")
     if num_classes <= background_index or background_index < 0:
         raise EvaluationIntegrityError(
             f"background_index {background_index} outside 0..{num_classes - 1}")
@@ -291,7 +327,8 @@ def evaluate_model(
 
     with torch.no_grad():
         for batch in batches:
-            logits = invoke(model, batch.images)
+            logits = (batch_forward(model, batch) if batch_forward is not None
+                      else invoke(model, batch.images))
             forward_batches += 1
             if logits.dim() != 4:
                 raise EvaluationIntegrityError(
@@ -376,6 +413,7 @@ def evaluate_model(
                     n_eligible_all_class=int(gt_present.size),
                     n_eligible_disease_only=len(gt_disease),
                     gt_disease_classes=gt_disease,
+                    protocol_fields=_protocol_fields(batch, i),
                 ))
 
     # ---- completeness ----

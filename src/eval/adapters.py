@@ -21,6 +21,11 @@ receive an 846-row manifest while only a handful of rows were produced.
 `manifest_index` is the STABLE EXTERNAL index: the row's position in the full canonical
 name-sorted split, which is preserved even when the subset is non-contiguous.
 
+Protocol switch (lane L-AM13, contract section 11): `build_protocol_adapter` and
+`protocol_forward_kwargs` select the canvas path above or the upstream path -- an original-resolution
+wrapper, a batch-1 collate and the upstream batch forward -- for any model, student or teacher. The
+identity contract and the expected manifest are the same under both protocols.
+
 Import-time behaviour is side-effect free.
 """
 from __future__ import annotations
@@ -34,6 +39,8 @@ import torch
 from torch.utils.data import DataLoader, Dataset
 
 from ..data.dataset import PlantSegDataset
+from ..data.original_resolution import PlantSegOriginalResolutionDataset
+from . import protocols
 from .evaluate import EvalBatch, ManifestEntry
 
 REPO = Path(__file__).resolve().parents[2]
@@ -46,6 +53,7 @@ CLASS_MAP_SEMANTIC_SHA256 = "d14182423b6f176f940cada979adb364701fe186be091655ce3
 DATASET_NAME = "PlantSeg"
 DATASET_DOI = "10.5281/zenodo.17719108"
 PREPROCESS_PROTOCOL = "core_preprocess/1.0.0"   # src/data/transforms.py core_preprocess (val/test)
+UPSTREAM_PREPROCESS_PROTOCOL = protocols.UPSTREAM_PROTOCOL_ID   # upstream/1.0.0 (contract section 11)
 
 
 class AdapterError(RuntimeError):
@@ -151,6 +159,65 @@ def eval_collate(samples: Sequence[dict]) -> EvalBatch:
     )
 
 
+def upstream_collate(samples: Sequence[dict]) -> EvalBatch:
+    """Upstream protocol: exactly one sample per batch, carrying its shape record."""
+    if len(samples) != protocols.UPSTREAM_BATCH_SIZE:
+        raise AdapterError(
+            f"the upstream protocol runs whole-image inference at batch size "
+            f"{protocols.UPSTREAM_BATCH_SIZE}; got a batch of {len(samples)}")
+    batch = eval_collate(samples)
+    return EvalBatch(images=batch.images, targets=batch.targets, image_ids=batch.image_ids,
+                     clean_image_ids=batch.clean_image_ids,
+                     manifest_indices=batch.manifest_indices,
+                     sample_meta=[s["shapes"] for s in samples])
+
+
+class PlantSegUpstreamEvalDataset(Dataset):
+    """Evaluation-only wrapper for the upstream protocol (lane L-AM13; contract section 11).
+
+    Same identity contract as `PlantSegEvalDataset` -- the stem is resolved inside `__getitem__` and
+    `manifest_index` is the stable external index -- over the original-resolution pairs. Each sample is
+    the protocol's rescaled, normalised and padded image, the ORIGINAL-resolution mask and the per-image
+    shape record. Batches of one only (`collate_fn`).
+    """
+
+    collate_fn = staticmethod(upstream_collate)
+
+    def __init__(self, split: str, source_indices: Sequence[int] | None = None):
+        self.base = PlantSegOriginalResolutionDataset(split)     # PlantSegDataset unmodified
+        self.split = split
+        n = len(self.base)
+        idx = list(range(n)) if source_indices is None else [int(i) for i in source_indices]
+        if not idx:
+            raise AdapterError("source_indices selects zero samples")
+        if len(set(idx)) != len(idx):
+            raise AdapterError("source_indices contains duplicates")
+        for i in idx:
+            if not (0 <= i < n):
+                raise AdapterError(f"source index {i} out of range for split={split} (n={n})")
+        self.source_indices = sorted(idx)
+
+    def __len__(self) -> int:
+        return len(self.source_indices)
+
+    def stem_for(self, source_index: int) -> str:
+        return self.base.pairs[source_index][0].stem
+
+    def __getitem__(self, i: int) -> dict:
+        src = self.source_indices[i]
+        image, mask = self.base[src]
+        stem = self.stem_for(src)                   # resolved HERE, before the sample leaves
+        sample = protocols.prepare_upstream_sample(image, mask)
+        return {
+            "image": sample.image,
+            "target": sample.target,
+            "image_id": stem,
+            "clean_image_id": stem,
+            "manifest_index": src,
+            "shapes": sample.shapes,
+        }
+
+
 def list_split_stems(split: str) -> list[str]:
     """Canonical name-sorted stems for a split.
 
@@ -201,9 +268,30 @@ def build_expected_manifest(adapter: PlantSegEvalDataset) -> list[ManifestEntry]
 
 def build_eval_loader(adapter: PlantSegEvalDataset, batch_size: int,
                       num_workers: int = 0) -> DataLoader:
-    """DataLoader over the ALREADY-CAPPED adapter. shuffle=False; identity does not depend on it."""
+    """DataLoader over the ALREADY-CAPPED adapter. shuffle=False; identity does not depend on it.
+    An adapter may name its own collate (`collate_fn`; the upstream wrapper does)."""
     return DataLoader(adapter, batch_size=batch_size, shuffle=False,
-                      num_workers=num_workers, collate_fn=eval_collate, drop_last=False)
+                      num_workers=num_workers,
+                      collate_fn=getattr(adapter, "collate_fn", eval_collate), drop_last=False)
+
+
+def build_protocol_adapter(protocol: str, split: str, source_indices: Sequence[int]):
+    """The protocol switch (lane L-AM13): the evaluation dataset wrapper for `protocol`, any model."""
+    if protocol == protocols.CANVAS:
+        return PlantSegEvalDataset(split, source_indices)
+    if protocol == protocols.UPSTREAM:
+        return PlantSegUpstreamEvalDataset(split, source_indices)
+    raise AdapterError(f"unknown protocol {protocol!r}; expected one of {protocols.PROTOCOL_NAMES}")
+
+
+def protocol_forward_kwargs(protocol: str, forward) -> dict:
+    """The `evaluate_model` forward keyword for `protocol`: the canvas `forward` hook unchanged, or the
+    upstream batch forward wrapping it (crop and resize to the original resolution)."""
+    if protocol == protocols.CANVAS:
+        return {"forward": forward}
+    if protocol == protocols.UPSTREAM:
+        return {"batch_forward": protocols.UpstreamForward(forward)}
+    raise AdapterError(f"unknown protocol {protocol!r}; expected one of {protocols.PROTOCOL_NAMES}")
 
 
 def deterministic_subset(n_total: int, n_samples: int) -> list[int]:

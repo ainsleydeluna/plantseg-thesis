@@ -2,7 +2,7 @@
 
 > **Status: FROZEN (2026-07-26).** This is the authoritative definition of *how every evaluation number in
 > this thesis is computed* and *what every evaluation run must emit*. A1 (metric tests) and A2 (evaluator)
-> implement this document and must not invent additional metric or schema decisions. **[UPDATED 2026-09-24 — B66-prep L-EVAL-DET, DL-17]** §10 adds one optional, separately versioned block (`run.eval_runtime`) and the evaluation determinism rule; `schema_version` is unchanged.
+> implement this document and must not invent additional metric or schema decisions. **[UPDATED 2026-09-24 — B66-prep L-EVAL-DET, DL-17]** §10 adds one optional, separately versioned block (`run.eval_runtime`) and the evaluation determinism rule; `schema_version` is unchanged. **[UPDATED 2026-09-28 — L-AM13]** §11 adds the descriptive upstream evaluation protocol (`upstream/1.0.0`) and artifact layout `plantseg-eval-artifact/1.2.0`; `schema_version`, `metric_protocol` and the canvas protocol are unchanged.
 >
 > Companion to [IMPLEMENTATION_CONTRACT.md](IMPLEMENTATION_CONTRACT.md) §(f) (which states *which* metrics
 > the thesis reports) and [open_questions.md](open_questions.md) D3/D4 (the decision records).
@@ -167,6 +167,11 @@ Therefore:
 
 The thesis preprocessing protocol is **not** changed by this document.
 
+> **[UPDATED 2026-09-28 — L-AM13]** For the descriptive scores of AM-13, AM-16 item 4 and AM-17 item
+> 1(e), the upstream test geometry is available as the `upstream` protocol (§11), and that score, not
+> the 512-canvas score, is the one compared with 42.05% (AM-13). The canvas protocol, and everything
+> this section says about it, is unchanged.
+
 ---
 
 ## 3. DECISION D3 — frozen metric semantics
@@ -252,6 +257,9 @@ preregistered rule safe.
 > refuses an `am5` block or a row flag that disagrees with the rows. The statistics ingest applies the
 > exclusion (STATISTICAL_ANALYSIS_CONTRACT §10), and `scripts/evaluate_model.py` prints the count with
 > every artifact.
+>
+> **[UPDATED 2026-09-28 — L-AM13]** The writer now records `plantseg-eval-artifact/1.2.0`, which keeps
+> these fields unchanged (§11).
 
 ### 3.3 Undefined cases
 
@@ -442,6 +450,9 @@ official statistics.
 **[UPDATED 2026-09-28 — L-AM5]** A lane artifact also carries `am5` and `artifact_schema_version`
 (§3.2).
 
+**[UPDATED 2026-09-28 — L-AM13]** An artifact scored under the upstream protocol also carries
+`protocol`, and its `dataset.preprocess_protocol` is `upstream/1.0.0` (§11).
+
 ### 5.4 `per_image.jsonl` — required fields (one object per line)
 
 ```jsonc
@@ -459,6 +470,9 @@ official statistics.
 
 **[UPDATED 2026-09-28 — L-AM5]** A lane artifact's rows also carry `am5_excluded`, as the last key
 (§3.2).
+
+**[UPDATED 2026-09-28 — L-AM13]** An upstream artifact's rows append `ori_shape`, `rescaled_shape` and
+`padded_shape` after `am5_excluded` (§11); a canvas row is unchanged.
 
 ### 5.5 `sufficient_stats.npz` — required arrays
 
@@ -598,10 +612,14 @@ Disease-only mIoU (§3.1) is reported alongside it.
 - **[AM-13, 2026-09-23] Published comparison.** At the single TEST evaluation the teacher is additionally
   scored, descriptively, under the upstream PlantSeg protocol: the repository's aspect-ratio-preserving
   resize, scored against original-resolution ground truth. That score, not the 512-canvas score, is the
-  one compared with the published 42.05%. Code: lane L-AM13 (TEST-time only).
+  one compared with the published 42.05%. Code: lane L-AM13 (TEST-time only). **[UPDATED 2026-09-28 —
+  L-AM13]** Implemented as the `upstream` protocol (§11); under AM-17 item 1(e) the teacher is also scored
+  with it on VAL.
 - **[AM-16, 2026-09-24] Students.** Every student is also scored under the upstream PlantSeg protocol at
   the single TEST evaluation (descriptive), as the teacher is under AM-13. E1 is also scored this way on
   VAL, on the existing seed-42 best checkpoint, before the first KD run. Code: lane L-AM16-UP.
+  **[UPDATED 2026-09-28 — L-AM13]** The code is §11, delivered by lane L-AM13 (docs/lane_specs/part1.md
+  lane 2 covers AM-16 item 4); it applies to every student precision.
 
 **M11 development data isolation.**
 - **Which runs:** the official teacher, E2 and E3. Development and training data roots are staged with
@@ -776,3 +794,81 @@ the two runs are identical under (d), and |`all_class_miou` − 0.36314016580581
 (1e-6, 1e-4] is recorded, not a failure. DL-17 artifacts are `provisional`, and each run writes to a fresh
 out-dir outside the clone. A FAIL or a validity STOP blocks every step that relies on this evaluator (E4–E7
 and every official evaluation) until diagnosed; neither blocks the E1 training launches, which do not use it.
+
+---
+
+## 11. Upstream PlantSeg protocol (L-AM13) [added 2026-09-28, lane L-AM13]
+
+Authority: AM-13, AM-16 item 4 and AM-17 item 1(e) ([PREREGISTRATION_AMENDMENTS.md](PREREGISTRATION_AMENDMENTS.md));
+docs/lane_specs/part1.md lane 2. Code: `src/eval/protocols.py`, `src/data/original_resolution.py`, the
+protocol switch in `src/eval/adapters.py`, and `scripts/evaluate_model.py --protocol {canvas,upstream}`.
+
+**(a) Scope.** The evaluator has two protocols. `canvas` (`core_preprocess/1.0.0`, the default) is the
+protocol of §§2–10: every inferential, checkpoint-selection and readiness number, including R3 (§7.2).
+`upstream` (`upstream/1.0.0`) reproduces the test geometry of `tqwei05/PlantSeg` for descriptive scores
+only: the teacher at TEST (AM-13), every student at TEST and E1 on VAL before the first KD run (AM-16
+item 4), and the teacher on VAL for the protocol effect, upstream minus canvas (AM-17 item 1(e)). An
+upstream score never enters the Holm family, a bootstrap, checkpoint selection or R3, and is never an
+inferential comparator; it is the score compared with the published 42.05% (AM-13).
+
+**(b) Geometry** (source-proven from the upstream configs; lane spec (a)):
+1. Rescale as mmcv `Resize(scale=(2048, 512), keep_ratio=True)`: s = min(2048 / long side, 512 / short
+   side), and each side becomes int(side · s + 0.5), mmcv `rescale_size`'s half-up rounding
+   (1025 × 1024 → 513 × 512). The image is resized bilinearly; the mask is never resized.
+2. Pad the normalised tensor, bottom and right, with 0.0 to a multiple of 32 (`SegDataPreProcessor`
+   with `test_cfg=dict(size_divisor=32)` and `pad_val=0`; mmseg `stack_batch`).
+3. Whole-image inference at batch size 1; the CLI refuses any other batch size.
+4. Logits bilinear (align_corners=False) to the padded input shape (`predict_by_feat`), cropped to the
+   rescaled shape, bilinear (align_corners=False) to the original shape (`postprocess_result`), then
+   argmax. Both bilinear steps are kept. Both evaluator models already end with the first step: the
+   student's final interpolate to its input size, and `FrozenTeacher`'s `logits_size` resize.
+5. The evaluation core accumulates the confusion against the original-resolution mask (ignore 255,
+   116 classes, background 0) with the frozen `src/eval/metrics.py`; dataset-level mIoU is
+   `miou_from_confusion` (union-present, §3.1). The functions are the same and the confusion is
+   different; `metric_impl_sha256` is unchanged.
+
+**(c) Numerics.** Only the geometry changes. The image numerics are the evaluator's own and identical
+for both models, because the R3 teacher path feeds the teacher the student's tensors: EXIF transpose of
+the image only, RGB, the repository's PIL bilinear resize (as `core_preprocess`), [0, 1] scaling and
+ImageNet mean/std (`transforms.finalize`). mmcv's cv2 resize is not used, so rescaled pixel values can
+differ slightly from the upstream pipeline's; this is disclosed with the descriptive score. The teacher
+keeps M4-V (§7.3): batch size 1, the frozen manifest order, the NMF stream seeded 42 once per pass. The
+NMF basis draw does not depend on the image size, so both protocols consume the stream identically.
+
+**(d) Data.** `PlantSegDataset` is not modified (§6). `src/data/original_resolution.py` reuses its pairing,
+missing-mask guard and split-count guard, and returns each pair at the original resolution. An image
+whose EXIF-transposed shape differs from its mask's shape is refused by name, because the upstream
+protocol never resizes the mask. The expected manifest, the identity rules and every §7 guard, including
+the TEST confirmation flag, are identical under both protocols.
+
+**(e) Artifact** (layout `plantseg-eval-artifact/1.2.0`). The four files of §5.1; `schema_version` and
+`metric_protocol` are unchanged; `dataset.preprocess_protocol` is `upstream/1.0.0` and enters
+`config_sha256`. summary.json adds:
+
+```jsonc
+"protocol": {
+  "name": "upstream", "version": "1.0.0",            // name/version == dataset.preprocess_protocol
+  "resize": {"short": 512, "long_max": 2048, "interp": "bilinear"},
+  "size_divisor": 32, "pad_value_normalized": 0.0,
+  "logit_upsample": ["bilinear_to_padded", "crop", "bilinear_to_original"],
+  "align_corners": false, "scored_resolution": "original",
+  "note": "..."                                       // descriptive use; the class-count note of (f)
+}
+```
+
+Every per_image.jsonl row appends `ori_shape`, `rescaled_shape` and `padded_shape` (`[h, w]` each) after
+`am5_excluded`. Every prediction is argmaxed at its row's `ori_shape` (the evaluator refuses otherwise),
+so for each image the sufficient statistics hold Σ_c pred = Σ_c gt = its valid-pixel count. The writer
+refuses a `protocol` block other than the one above and any row whose shape fields are not the (b)
+geometry of its `ori_shape`. A canvas artifact carries neither the block nor the fields: under 1.2.0 its
+files are laid out exactly as under 1.1.0, and readers derive "canvas" from the block's absence (every
+artifact older than 1.2.0 is a canvas artifact).
+
+**(f) Class-count note.** The upstream MSCAN-B class count behind the published 42.05% is NOT DETERMINABLE:
+the upstream PlantSeg MSCAN-L config uses 116 classes and the MSCAN-T config 115. Every upstream artifact
+carries this note, and Chapter 4 states it with the comparison.
+
+**(g) Tests.** `scripts/smoke_am13_upstream.py` (d1, d2, d3 for the student, d4, d6, the layout and the CLI
+end to end) and `scripts/smoke_am13_teacher.py` (d3 for a random-init teacher and the teacher CLI path;
+teacher image). d5, the real VAL runs of E1 seed 42 and the teacher of record, is local and checked by
+`scripts/am13_real_checks.py d5`.

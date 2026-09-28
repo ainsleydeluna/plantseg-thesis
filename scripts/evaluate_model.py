@@ -20,6 +20,13 @@ metadata neutrality is never misrepresented as runtime support.
 INT8 model-source validation (stage, source stage, artifact hash, backend) happens BEFORE the
 dataset adapter exists, so a tampered or mismatched artifact can never touch the test split.
 
+`--protocol` (lane L-AM13; EVALUATION_CONTRACT section 11) selects the geometry for any model:
+`canvas` (default) is the 512x512 canvas, `core_preprocess/1.0.0`, the protocol of every inferential
+analysis; `upstream` is the tqwei05/PlantSeg test geometry, `upstream/1.0.0` (aspect-preserving
+rescale to short side 512 / long side <= 2048, pad to a multiple of 32, batch size 1, logits resized
+back and scored against the original-resolution mask), descriptive only. The test-split guards are
+identical under both.
+
 Importing this module has no side effects: everything happens inside `main()`.
 
 Example (capped validation smoke, random-init, no checkpoint):
@@ -43,6 +50,7 @@ SUPPORTED_ROLES = ("student", "teacher")
 SUPPORTED_PRECISIONS = ("fp32", "int8_ptq", "int8_qat")
 INT8_PRECISIONS = ("int8_ptq", "int8_qat")
 SUPPORTED_CONDITIONS = ("clean",)
+SUPPORTED_PROTOCOLS = ("canvas", "upstream")         # src/eval/protocols.py PROTOCOL_NAMES
 EXPECTED_SPLIT_ROWS = {"val": 846, "test": 1561}
 
 
@@ -82,6 +90,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--confirm-test-split", action="store_true")
     p.add_argument("--run-id", default=None)
     p.add_argument("--device", default="cpu")
+    p.add_argument("--protocol", default="canvas", choices=list(SUPPORTED_PROTOCOLS),
+                   help="canvas: the 512x512 canvas (core_preprocess/1.0.0; default). upstream: the "
+                        "tqwei05/PlantSeg test geometry scored at original resolution "
+                        "(upstream/1.0.0; descriptive; requires --batch-size 1)")
     return p
 
 
@@ -121,6 +133,15 @@ def validate_cli_args(args) -> None:
         raise CliError(
             f"condition={args.condition!r} is not implemented in A2b. Supported: "
             f"{SUPPORTED_CONDITIONS}. Corruption generation does not exist yet.")
+    # --- evaluation protocol (lane L-AM13). Read defensively, like --provenance below: callers that
+    # predate the flag evaluate the canvas protocol, unchanged. ---
+    protocol = getattr(args, "protocol", "canvas")
+    if protocol not in SUPPORTED_PROTOCOLS:
+        raise CliError(f"protocol={protocol!r} is not supported. Supported: {SUPPORTED_PROTOCOLS}.")
+    if protocol == "upstream" and args.batch_size != 1:
+        raise CliError(
+            "the upstream protocol runs whole-image inference at batch size 1; got --batch-size "
+            f"{args.batch_size}")
 
     # --- INT8 model-source consistency (E4-E7 consume a run provenance, not a raw checkpoint) ---
     # `--provenance` is newer than this function's other flags, so it is read defensively: callers
@@ -185,10 +206,10 @@ def validate_cli_args(args) -> None:
 def run(args, *, counters: Counters | None = None, teacher_builder=None) -> Path:
     """Execute the frozen A2a flow. Returns the finalised artifact directory."""
     from src.eval import Condition, DatasetMeta, RunMeta, evaluate_model
-    from src.eval.adapters import (DATASET_DOI, DATASET_NAME, PREPROCESS_PROTOCOL,
-                                   PlantSegEvalDataset, build_eval_loader,
-                                   build_expected_manifest_for, deterministic_subset,
-                                   load_class_map)
+    from src.eval.adapters import (DATASET_DOI, DATASET_NAME, build_eval_loader,
+                                   build_expected_manifest_for, build_protocol_adapter,
+                                   deterministic_subset, load_class_map,
+                                   protocol_forward_kwargs)
     from src.eval.artifacts import (prepare_artifact_request, validate_artifact_request,
                                     write_artifact)
     from src.eval.eval_runtime import (EVAL_NUM_WORKERS, EvalRuntimeError, ModelDeviceForward,
@@ -196,8 +217,10 @@ def run(args, *, counters: Counters | None = None, teacher_builder=None) -> Path
                                        check_post_eval, determinism_required,
                                        evaluate_capturing_warnings, resolve_model_device)
     from src.eval.model_loading import build_fp32_student, load_student_checkpoint
+    from src.eval.protocols import PROTOCOL_IDS
 
     validate_cli_args(args)
+    protocol = getattr(args, "protocol", "canvas")      # lane L-AM13; see validate_cli_args
 
     # ---- static metadata + AUTHORITATIVE class map (verified against the pinned hash) ----
     class_map = load_class_map()
@@ -252,7 +275,7 @@ def run(args, *, counters: Counters | None = None, teacher_builder=None) -> Path
             condition=Condition(args.condition,
                                 None if args.condition == "clean" else args.condition,
                                 None if args.condition == "clean" else args.corruption_severity),
-            preprocess_protocol=PREPROCESS_PROTOCOL,
+            preprocess_protocol=PROTOCOL_IDS[protocol],
             expected_rows=len(source_indices)),
         expected_manifest=expected_manifest,
         class_map=list(class_map.entries),
@@ -271,7 +294,7 @@ def run(args, *, counters: Counters | None = None, teacher_builder=None) -> Path
     # ---- step 5: only now may the dataset adapter and the model be constructed ----
     if counters is not None:
         counters.dataset.append(("adapter", tuple(source_indices)))
-    adapter = PlantSegEvalDataset(args.split, source_indices)
+    adapter = build_protocol_adapter(protocol, args.split, source_indices)
 
     if counters is not None:
         counters.model.append(("model", args.random_init))
@@ -292,14 +315,15 @@ def run(args, *, counters: Counters | None = None, teacher_builder=None) -> Path
                 f"checkpoint bytes changed between validation ({ckpt_sha}) and load "
                 f"({ck_info.sha256})")
 
-    # Inputs go to the model's construction device, exactly as train_e1.validate moves them.
+    # Inputs go to the model's construction device, exactly as train_e1.validate moves them. Under the
+    # upstream protocol the same hook runs inside the upstream batch forward (src/eval/protocols.py).
     model_device = resolve_model_device(args.device, cpu_only=cpu_only)
     fwd = ModelDeviceForward(model_device)
     loader = build_eval_loader(adapter, args.batch_size, num_workers=EVAL_NUM_WORKERS)
     result, warn_summary = evaluate_capturing_warnings(
         evaluate_model, model, loader, expected_manifest=expected_manifest,
         condition=request.dataset.condition, num_classes=116,
-        background_index=0, ignore_index=255, forward=fwd)
+        background_index=0, ignore_index=255, **protocol_forward_kwargs(protocol, fwd))
     check_post_eval(model=model, model_device=model_device, fwd=fwd,
                     policy_applied=policy_applied)
     runtime = build_eval_runtime_record(
@@ -317,10 +341,16 @@ def main(argv=None) -> int:
         print(f"{type(e).__name__}: {e}", file=sys.stderr)
         return 1
     print(f"artifact written: {out}")
+    summary = json.loads((Path(out) / "summary.json").read_text(encoding="utf-8"))
     # AM-5 (lane L-AM5): the zero-disease count is reported with every artifact.
-    am5 = json.loads((Path(out) / "summary.json").read_text(encoding="utf-8")).get("am5") or {}
+    am5 = summary.get("am5") or {}
     print(f"am5 ({am5.get('rule')}): excluded_count={am5.get('excluded_count')} "
           f"included_count={am5.get('included_count')}")
+    # Lane L-AM13: the protocol and the union-present eligible-class count, with every artifact.
+    level = summary.get("dataset_level") or {}
+    print(f"protocol {summary['dataset']['preprocess_protocol']}: all_class_miou="
+          f"{level.get('all_class_miou')!r} (union-present, "
+          f"n_eligible={level.get('all_class_miou_n_eligible')})")
     return 0
 
 
