@@ -60,6 +60,8 @@ and 44 enter only AM-8 and the per-seed table.
 
 [Extended by AM-17 item 4.]
 
+[Extended by AM-4a items 3 and 4: E5 seed 42 runs twice for the U4 clipping pilot, and the winner is the run of record; the QAT loader follows the run seed.]
+
 ## AM-2 — λ_logit sweep (resolves M6; extends PREREGISTRATION §7 and U1)
 
 - **Grid and budget.** {0.25, 0.5, 1, 2, 4} at seed 42, with the **full 80,000 iterations per candidate**.
@@ -81,6 +83,8 @@ and 44 enter only AM-8 and the per-seed table.
 
 Code: lane L-AM3.
 
+[Extended by DL-39: E6-KD uses E3's one-epoch ramp per term and retains the supervised CE + Dice loss.]
+
 ## AM-4 — QAT (resolves M9)
 
 **Schedule.**
@@ -101,6 +105,8 @@ FP32 weights after QAT). This separates extra fine-tuning from INT8 adaptation.
 candidates on converted-model VAL mIoU (AM-4's scoring).
 
 Code: lane L-AM4.
+
+[Extended by AM-4a.]
 
 ## AM-5 — Zero-disease TEST images (resolves M10)
 
@@ -367,7 +373,8 @@ teacher's score existed; items 1(f) and 11 were proposed after it and are descri
        observed differences; B = 2,000 resamples of size n (RNG seed 42) are tested with the
        pre-registered call scipy.stats.wilcoxon(zero_method='pratt', alternative='greater',
        correction=True, method='approx') at α = 0.00625; MDE_W is the smallest δ on a 0.001 grid with
-       power ≥ 0.80; the largest MDE_W over the three pairs is reported;
+       power ≥ 0.80 at δ and at the next two grid points (Monte Carlo noise guard;
+       docs/lane_specs/part1.md lane 6); the largest MDE_W over the three pairs is reported;
    (d) analytic cross-check: SD_Δ = the largest of the three standard deviations;
        dz_MDE = (2.4977 + 0.8416)/√n (one-tailed α/8 = 0.00625, power 0.80, paired normal
        approximation); MDE_t = dz_MDE × SD_Δ, with its Wilcoxon-efficiency range MDE_t × [1.023,
@@ -611,7 +618,7 @@ Non-finite losses in E2/E3 follow AM-7/DL-04, not this rule.
 
 Dated 2026-09-28. Status: DRAFT (group-recorded; adviser approval pending). State at amendment: no E4–E7 run or result exists. Source: the 28 Sep 2026 lane-spec audit (docs/lane_specs/part2.md, lane 6). No test is added to the Holm family.
 
-1. Recipe pins (values AM-4 does not state; the runtime values of record): SGD with momentum 0.9, learning rate 3e-4, cosine schedule with T_max = 15 × steps per epoch, weight decay 1e-4, batch 16, no EMA; 15 fixed epochs with no early stopping; observers on from the first step (moving average); BN statistics frozen from the first step of epoch 11 and observers from the first step of epoch 13 (epoch boundaries replace step fractions); the quantization configuration of record in configs/quant.py, with its weight and activation observers recorded in run_meta.
+1. Recipe pins (the values of record; AM-4 already states the epochs, both freeze points and batch 16, and this item adds the rest): SGD with momentum 0.9, learning rate 3e-4, cosine schedule with T_max = 15 × steps per epoch, weight decay 1e-4, batch 16, no EMA; 15 fixed epochs with no early stopping; observers on from the first step (moving average); BN statistics frozen from the first step of epoch 11 and observers from the first step of epoch 13 (epoch boundaries replace step fractions); the quantization configuration of record in configs/quant.py, with its weight and activation observers recorded in run_meta.
 2. Checkpoint selection: each epoch's checkpoint is converted (QNNPACK) and scored on VAL on CPU with scripts/evaluate_model.py (canvas protocol); the highest dataset-level VAL all-class mIoU wins, and ties go to the earlier epoch. Fake-quant VAL is recorded and never selects.
 3. U4 clipping pilot (a VAL selection, disclosed): E5 seed 42 is run twice in full, with global-norm clipping at 1.0 and at 5.0. The winner under item 2's score is E5 seed 42 of record; a tie within 0.1 pp goes to 5.0. The losing run is retained and reported. The winning value is used for E5 seeds 43/44, E6 (all seeds) and E6-KD. Chapter 4 discloses that QAT receives 2 × 15 VAL evaluations (clip value, epoch) while PTQ receives one calibration configuration (Chapter 3 p. 127), the E4-vs-E5 analogue of AM-17 item 6.
 4. Seeding (AM-1): the QAT data loader is built with the run seed; torch, numpy and Python are seeded from --seed; determinism settings as in train_e1.
@@ -626,7 +633,7 @@ Code: L-AM4, L-AM1q.
 | U1 | mechanism completed by AM-2; the value is still selected by the sweep |
 | U2 | AM-3 |
 | U3 | withdrawn by AM-7 |
-| U4 | unchanged (AM-4 fixes only its future scoring) |
+| U4 | unchanged (AM-4 fixes only its future scoring) [Superseded by AM-4a item 3: the pilot is two full E5 seed-42 runs, clipped at 1.0 and 5.0, scored on converted-model VAL mIoU.] |
 | U5 | AM-1 |
 | U6 | unchanged |
 | U7 | unchanged (D22 deferred) |
