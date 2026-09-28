@@ -33,6 +33,8 @@ from .noninferiority import (E6KD_TRIGGER_THRESHOLD, PRIMARY_MARGIN, SENSITIVITY
 from .corruption_protocol import (CorruptionEntry, CorruptionProtocol, CorruptionProtocolError,
                                   build_official_corruption_grid, load_corruption_protocol,
                                   official_corruption_grid)
+from .eligibility import (GT_PRESENT, UNION_PRESENT, ClassTotals, DatasetMiou, EligibilityError,
+                          class_totals, dataset_miou, per_class_table, rule_variants)
 from .ingest import (Am5Exclusion, Am5Pair, EvaluationRun, EvaluationRunIdentity, IngestError,
                      PerImageRecord, PerImageSufficientStats, Policy, am5_pair, apply_am5_policy,
                      load_run, verify_run_manifest)
@@ -47,6 +49,9 @@ __all__ = [
     "Policy", "IngestError", "EvaluationRun", "EvaluationRunIdentity", "PerImageRecord",
     "PerImageSufficientStats", "load_run", "verify_run_manifest", "Am5Exclusion", "Am5Pair",
     "am5_pair", "apply_am5_policy",
+    # dataset-level eligibility variants (lane L-AM17-GTPRESENT)
+    "UNION_PRESENT", "GT_PRESENT", "EligibilityError", "ClassTotals", "DatasetMiou", "class_totals",
+    "dataset_miou", "rule_variants", "per_class_table",
     # alignment
     "AlignmentError", "PairedVector", "align_runs", "align_vectors",
     "METRIC_DISEASE_ONLY", "METRIC_ALL_CLASS", "METRIC_MIOU_C",

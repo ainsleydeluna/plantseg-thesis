@@ -706,6 +706,18 @@ only**. ~~Seeds 43 and 44 enter only this criterion and the per-seed table.~~
 E1's best-checkpoint VAL all-class mIoU at seeds 42, 43 and 44 also sets the AM-16 item-2 α_CWD tie
 band. This criterion carries no p-value and is not a Holm test.
 
+### 9.5 GT-present dataset-level sensitivity `[AM-6; AM-17 item 1(b), 2026-09-28]` — descriptive
+
+For any evaluation artifact, `src/stats/eligibility.py` rebuilds per-class TP, GT and PRED from
+`sufficient_stats.npz` and reports dataset-level mIoU under the union-present rule (the headline; §9.1)
+and under the GT-present rule (classes with `GT_c > 0`), all-class and disease-only: four numbers, plus
+per-class IoU and both eligibility flags (`scripts/eligibility_variants.py`; lane L-AM17-GTPRESENT). The
+four numbers use the evaluator's float32 arithmetic, so the union-present values reproduce
+`summary.json` bitwise, which proves the reconstruction faithful. Float64 values with an exactly
+rounded sum are reported beside them for exact relations such as GT-present = union-present ×
+n_union / n_gt, which holds because a class that is union-present but not GT-present has `TP = 0`.
+Descriptive only: no test, threshold, family member or decision uses it.
+
 ---
 
 ## 10. Official integrity policy
