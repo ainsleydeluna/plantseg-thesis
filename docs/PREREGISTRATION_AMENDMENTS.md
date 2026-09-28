@@ -30,9 +30,10 @@ leaves the original readable beside it.
 | AM-14 | conflicts #9; PREREGISTRATION §12 disagreement 1 | The inferential family |
 | AM-15 | DL-14 (completes AM-11) | Contingencies not invoked |
 | AM-16 | — (amends AM-1, AM-8, AM-10, AM-11 and AM-13; notes AM-9) | Run additions |
-| AM-17 | — (extends AM-8, AM-13, AM-14 and AM-16) | Teacher record, effect-size rules, CWD-only arm, strata, TEST schedule and a descriptive SegNeXt-L arm (DRAFT) |
+| AM-17 | — (extends AM-1, AM-8, AM-13, AM-14 and AM-16) | Teacher record, effect-size rules, CWD-only arm, strata, TEST schedule and a descriptive SegNeXt-L arm (DRAFT) |
 | AM-17b | — (extends AM-17 items 7, 9 and 1(f)) | Channel-wise decomposition arms and teacher–student gap robustness (DRAFT) |
 | AM-8a | — (extends AM-8) | Repeat rule for failed runs |
+| AM-4a | — (extends AM-4 and AM-1) | QAT recipe pins, converted-model selection and the U4 clipping pilot (DRAFT) |
 
 Code that implements an amendment is named by lane (L-AM…). Until that lane lands, the committed runtime
 keeps its pre-amendment behaviour and its launch gates.
@@ -294,7 +295,7 @@ is recorded here before the affected run.
 
 [Schedule extended by AM-17 item 9 and AM-17b item 3: overall cut order, launch order, λ shortfall rule and freeze dates.]
 
-## AM-17 — Teacher record, effect-size rules, CWD-only arm, strata, TEST schedule and a descriptive SegNeXt-L arm (extends AM-8, AM-13, AM-14 and AM-16)
+## AM-17 — Teacher record, effect-size rules, CWD-only arm, strata, TEST schedule and a descriptive SegNeXt-L arm (extends AM-1, AM-8, AM-13, AM-14 and AM-16)
 
 Dated 2026-09-28. Status: DRAFT (group-recorded; adviser approval pending). State at amendment: E1
 seed 42 exists (best VAL all-class mIoU 0.36314016580581665); the SegNeXt-B teacher run exists and
@@ -329,7 +330,7 @@ teacher's score existed; items 1(f) and 11 were proposed after it and are descri
        evaluator commit and one execution context (item 9). Because the teacher head's NMF bases are
        randomly initialised (rand_init = True; seeded stream M4-V), a GPU re-score of the teacher is a
        tolerance check only, never a gate; if one is logged during B66 it is recorded next to E1's
-       6.49e-5.
+       6.49e-5. [Superseded in part by AM-17b item 2(c): the teacher is not re-scored on a B66 pod.]
    (c) The teacher of record is final for every inferential run and for E4–E7: it is not retuned,
        replaced or re-selected under any E2–E7, SegNeXt-L or TEST outcome. A conditional replacement
        by SegNeXt-L was considered on 2026-09-27 and rejected as post-hoc (decision log entry
@@ -578,7 +579,7 @@ threshold, family member, teacher of record or run of record changes.
    (c) Inputs: both models scored on one device with one metrics implementation. Pairing of record:
        the R3 teacher artifact (CPU, evaluator 3c43f89, manifest 35f6788e…) with the B66-prep Q12 CPU
        re-score of E1 seed 42 (same manifest, metrics blob cbd5fa86…); the Q12 artifact lacks per-image
-       contributions (CP-007a finding G3), so both models are re-scored once on CPU in the pinned image
+       contributions (CP-007a finding G3), so both models are re-scored once on CPU in the pinned images (teacher and student)
        after B66 (lane L-AM17B-GAP) and the two artifacts are recorded; the teacher is never re-scored on a
        B66 pod. The pairing used is stated with the result.
    (d) Uses: interpretation of the KD results and of AM-17 item 1(f); the CI does not gate, select
@@ -605,6 +606,18 @@ write session. The failed run's logs and partial checkpoints are kept. No select
 and its repeat is ever made: the repeat replaces the failed run. A run that finishes without a documented
 fault is never repeated. The same rule governs a repeat of the DL-17 evaluator pair or its comparator.
 Non-finite losses in E2/E3 follow AM-7/DL-04, not this rule.
+
+## AM-4a — QAT recipe pins, converted-model selection and the U4 clipping pilot (extends AM-4 and AM-1)
+
+Dated 2026-09-28. Status: DRAFT (group-recorded; adviser approval pending). State at amendment: no E4–E7 run or result exists. Source: the 28 Sep 2026 lane-spec audit (docs/lane_specs/part2.md, lane 6). No test is added to the Holm family.
+
+1. Recipe pins (values AM-4 does not state; the runtime values of record): SGD with momentum 0.9, learning rate 3e-4, cosine schedule with T_max = 15 × steps per epoch, weight decay 1e-4, batch 16, no EMA; 15 fixed epochs with no early stopping; observers on from the first step (moving average); BN statistics frozen from the first step of epoch 11 and observers from the first step of epoch 13 (epoch boundaries replace step fractions); the quantization configuration of record in configs/quant.py, with its weight and activation observers recorded in run_meta.
+2. Checkpoint selection: each epoch's checkpoint is converted (QNNPACK) and scored on VAL on CPU with scripts/evaluate_model.py (canvas protocol); the highest dataset-level VAL all-class mIoU wins, and ties go to the earlier epoch. Fake-quant VAL is recorded and never selects.
+3. U4 clipping pilot (a VAL selection, disclosed): E5 seed 42 is run twice in full, with global-norm clipping at 1.0 and at 5.0. The winner under item 2's score is E5 seed 42 of record; a tie within 0.1 pp goes to 5.0. The losing run is retained and reported. The winning value is used for E5 seeds 43/44, E6 (all seeds) and E6-KD. Chapter 4 discloses that QAT receives 2 × 15 VAL evaluations (clip value, epoch) while PTQ receives one calibration configuration (Chapter 3 p. 127), the E4-vs-E5 analogue of AM-17 item 6.
+4. Seeding (AM-1): the QAT data loader is built with the run seed; torch, numpy and Python are seeded from --seed; determinism settings as in train_e1.
+5. Sources: E5 starts from E1's best.json checkpoint of the same seed; E6 from E3's, which carries no projection keys (asserted on load).
+
+Code: L-AM4, L-AM1q.
 
 ## Status of PREREGISTRATION §10 items after these amendments
 

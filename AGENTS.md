@@ -7,7 +7,7 @@
 
 ## Project identity
 - **Project:** THESIS2 — `plantseg-thesis`. Resource-constrained plant-lesion segmentation (knowledge distillation + INT8 quantization); the current focus is the **E1 FP32 student baseline**.
-- **Branch:** work happens on `claude/keen-curie-u4a8ig`; at every push `master` is fast-forwarded to the same commit, so the two never diverge. The checkout is location-independent — never hard-code a repository path.
+- **Branch:** work happens on `claude/keen-curie-u4a8ig`; at every push `master` is fast-forwarded to the same commit, so the two never diverge. The checkout is location-independent — never hard-code a repository path. Exception: cloud lane sessions under DL-37 work on `lane/<lane-id>` branches in their own VM clones and never push to the working branch or master.
 - **E1 safety floor:** HEAD must include **`885523a`** ("harden E1 training safety"). This is a durable *minimum* baseline, not a pin to any current HEAD.
 
 ## What counts as approval
