@@ -14,8 +14,12 @@
       default), a label outside the class space and an RGB mask.
   S4  --check (d2) on synthetic documents: the 5-mask build is refused as not the registered build; a
       registered-shape 115-class document built from reports/e1_class_weights.json's pixel counts
-      passes all ten checks (Spearman rho 1.0, pixel counts equal the class-weight file); perturbed
-      shares, terciles, a missing class and an unclean script commit each fail.
+      passes all eleven checks (identical rankings, Spearman rho 1.0, every pixel count, the
+      background and the mask count equal to the class-weight file); perturbed shares, terciles, a
+      missing class and an unclean script commit each fail. Exact equality (ruling 2026-09-28): the
+      largest class one pixel over (rankings unchanged, rho still 1.0), classes 1 and 2 swapped (C8
+      too), the background one pixel over and a class-weight file with another mask count each fail
+      C11, and the CLI exits 1 (STOP) on a mismatch and prints the differing class.
 
 Run:  python -B scripts/smoke_train_strata.py
 """
@@ -25,6 +29,7 @@ import contextlib
 import hashlib
 import importlib.util
 import io
+import itertools
 import json
 import os
 import shutil
@@ -43,6 +48,7 @@ import numpy as np                       # noqa: E402
 from PIL import Image                    # noqa: E402
 
 SCRIPT = REPO / "scripts" / "build_train_strata.py"
+CLASS_WEIGHTS = REPO / "reports" / "e1_class_weights.json"
 UTC = "2026-09-28T00:00:00Z"
 SYN = ["--num-classes", "7", "--rare-threshold", "2", "--expected-images", "5"]
 CHECKS: list[tuple[str, bool, str]] = []
@@ -110,10 +116,15 @@ def make_root(root: Path, masks=MASKS, names=IMAGE_NAMES) -> Path:
     return root
 
 
-def registered_document(mod) -> dict:
-    """A 115-class document in the registered shape, from the class-weight file's TRAIN pixel counts."""
-    ref = json.loads((REPO / "reports" / "e1_class_weights.json").read_text(encoding="utf-8"))
-    pixels = ref["pixel_counts"]
+def reference_pixels() -> list[int]:
+    """reports/e1_class_weights.json's 116 TRAIN pixel counts (background first)."""
+    return list(json.loads(CLASS_WEIGHTS.read_text(encoding="utf-8"))["pixel_counts"])
+
+
+def registered_document(mod, pixels=None) -> dict:
+    """A 115-class document in the registered shape, from the class-weight file's TRAIN pixel counts or
+    from `pixels` (116 counts); rows, totals and the CSV hash always re-derive from the counts used."""
+    pixels = reference_pixels() if pixels is None else list(pixels)
     images = [5367] + [20 + (c * 7) % 300 for c in range(1, 116)]
     images[42] = 7                                        # a rare class
     rows = mod.build_rows(pixels, images)
@@ -317,8 +328,8 @@ def main() -> int:  # noqa: C901
         reg = registered_document(mod)
         good = write_doc(mod, work / "reg_ok", reg)
         rc, text = run_cli(["--check", str(good)])
-        check("S4-2 a registered-shape 115-class document passes all ten checks -> exit 0",
-              rc == 0 and "SUMMARY  10/10" in text and "STRATA d2 PASS" in text, text[-300:])
+        check("S4-2 a registered-shape 115-class document passes all eleven checks -> exit 0",
+              rc == 0 and "SUMMARY  11/11" in text and "STRATA d2 PASS" in text, text[-300:])
         results, recorded = mod.check_document(good)
         check("S4-3 Spearman rho = 1.0 and the pixel counts equal the class-weight file (recorded)",
               recorded["spearman_rho"] == 1.0 and recorded["pixel_counts_equal_class_weight_file"]
@@ -327,12 +338,18 @@ def main() -> int:  # noqa: C901
         check("S4-4 tercile sizes of the 115-class build are 38/38/39 with 1 rare class",
               reg["tercile_sizes"] == [38, 38, 39] and [r["rare"] for r in reg["per_class"]].count(True) == 1)
 
+        seq = itertools.count()
+
+        def verdict(d):
+            """(sorted failing check ids, the recorded values, the file) for a written document."""
+            p = write_doc(mod, work / f"doc_{next(seq)}", d)
+            res, rec = mod.check_document(p)
+            return sorted(n.split()[0] for n, ok, _ in res if not ok), rec, p
+
         def failing(label, fn, which):
             d = json.loads(json.dumps(reg))
             fn(d)
-            p = write_doc(mod, work / f"bad_{len(CHECKS)}", d)
-            res, _ = mod.check_document(p)
-            failed = sorted(n.split()[0] for n, ok, _ in res if not ok)
+            failed, _, _ = verdict(d)
             check(label, failed == which, failed)
 
         failing("S4-5 a share off by 1e-9 fails C5, C7 and C9 (the CSV hash)",
@@ -359,6 +376,46 @@ def main() -> int:  # noqa: C901
         check("S4-9 a class with zero TRAIN pixels is ranked last and flagged, and fails C4 (all present)",
               "C4" in failed and rows0[0]["rank"] == 115 and rows0[0]["zero_train_pixels"]
               and rows0[0]["tercile"] == "T3", failed)
+
+        # exact equality with the class-weight file (ruling 2026-09-28): consistent documents whose
+        # counts differ from reports/e1_class_weights.json
+        ref_px = reference_pixels()
+        top = max(range(1, 116), key=lambda c: (ref_px[c], -c))   # the largest class: +1 keeps every rank
+        plus1 = list(ref_px)
+        plus1[top] += 1
+        failed, rec, p_plus1 = verdict(registered_document(mod, plus1))
+        check(f"S4-10 class {top} one pixel over the class-weight file (rankings unchanged, rho 1.0) "
+              "fails C11 only: exact counts, not rank agreement",
+              failed == ["C11"] and rec["spearman_rho"] == 1.0
+              and rec["pixel_count_differences"] == [{"class_id": top, "strata": ref_px[top] + 1,
+                                                      "class_weights": ref_px[top]}],
+              (failed, rec.get("spearman_rho"), rec.get("pixel_count_differences")))
+        swap = list(ref_px)
+        swap[1], swap[2] = swap[2], swap[1]
+        failed, rec, _ = verdict(registered_document(mod, swap))
+        check("S4-11 the counts of classes 1 and 2 swapped fail C8 (rankings differ) and C11",
+              failed == ["C11", "C8"] and rec["spearman_rho"] < 1.0
+              and [d["class_id"] for d in rec["pixel_count_differences"]] == [1, 2],
+              (failed, rec.get("spearman_rho")))
+        failing("S4-12 the background one pixel over the class-weight file fails C11 only",
+                lambda d: d["background"].__setitem__("pixels", d["background"]["pixels"] + 1), ["C11"])
+        alt = work / "alt_class_weights.json"
+        alt_doc = json.loads(CLASS_WEIGHTS.read_text(encoding="utf-8"))
+        alt_doc["train_mask_count"] = 5366
+        alt.write_text(json.dumps(alt_doc), encoding="utf-8")
+        real_weights, mod.CLASS_WEIGHTS = mod.CLASS_WEIGHTS, alt
+        try:
+            res, _ = mod.check_document(good)
+        finally:
+            mod.CLASS_WEIGHTS = real_weights
+        failed = sorted(n.split()[0] for n, ok, _ in res if not ok)
+        check("S4-13 a class-weight file recording another TRAIN mask count fails C11 only",
+              failed == ["C11"], failed)
+        rc, text = run_cli(["--check", str(p_plus1)])
+        check("S4-14 the CLI on the one-pixel mismatch: exit 1 (STOP), C11 FAIL, the class printed",
+              rc == 1 and "[FAIL] C11" in text and "SUMMARY  10/11" in text and "STRATA d2 FAIL" in text
+              and f"class {top}: strata {ref_px[top] + 1} vs class weights {ref_px[top]}" in text,
+              text[-400:])
     except Exception:                                        # noqa: BLE001
         traceback.print_exc()
         check("FATAL", False, traceback.format_exc(limit=2))

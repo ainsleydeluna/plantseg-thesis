@@ -140,15 +140,23 @@ def _git(*args) -> str | None:
     return p.stdout if p.returncode == 0 else None
 
 
+def head_commit() -> str | None:
+    """HEAD of this checkout (40-hex), or None when Git is unavailable. Reads no working-tree state."""
+    head = (_git("rev-parse", "HEAD") or "").strip()
+    return head if _HEX40.match(head) else None
+
+
 def code_provenance(rel_paths) -> dict:
     """{code_commit, code_clean_at_commit, code_files} for the analysis code that writes an output.
 
     `code_clean_at_commit` is None when Git is unavailable, else True iff none of `rel_paths` differs
-    from HEAD or is untracked. Only those explicit paths are passed to `git status`.
+    from HEAD or is untracked. Only those explicit paths are passed to `git status`, so an empty list
+    is refused (it would widen the status to the whole tree).
     """
     rel = [str(p) for p in rel_paths]
-    head = (_git("rev-parse", "HEAD") or "").strip()
-    commit = head if _HEX40.match(head) else None
+    if not rel:
+        raise ValueError("code_provenance needs at least one explicit path")
+    commit = head_commit()
     status = _git("status", "--porcelain=v1", "--", *rel) if commit else None
     return {"code_commit": commit,
             "code_clean_at_commit": None if status is None else status == "",
@@ -164,4 +172,4 @@ def require_comparable(baseline: ValArtifact, candidate: ValArtifact) -> None:
 
 
 __all__ = ["POLICY", "AM5_LAYOUT", "ValArtifactError", "ValArtifact", "require_canvas",
-           "load_val_artifact", "require_role", "require_comparable", "code_provenance"]
+           "load_val_artifact", "require_role", "require_comparable", "head_commit", "code_provenance"]

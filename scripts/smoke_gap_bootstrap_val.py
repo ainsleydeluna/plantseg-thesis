@@ -25,6 +25,16 @@
       GPU re-score, batch 16, no image digest, two pins, dirty governed paths, another checkpoint,
       other ground truth, an eligibility file of another artifact, an existing output; STOPs (exit 1,
       nothing written): a validity delta above tolerance (E1 and teacher), a d5 mismatch.
+  G8  --e1-tolerance (ruling 2026-09-28): 1e-7 is the default and is recorded; 1e-5 admits an E1 delta
+      of 2e-7 that 1e-7 stops and is recorded; any other value (1e-6, 1e-4, 0.0001, text) is refused
+      (exit 2) and nothing is written.
+  G9  --check-artifact DIR --role (ruling 2026-09-28): both synthetic re-scores pass all fourteen
+      checks in seconds; each pairing defect fails its own check (exit 1): no image digest, a GPU
+      re-score, batch 16, dirty governed paths, another checkpoint, the wrong role, the upstream
+      protocol, a pre-lane layout, a TEST split, a smoke artifact, a commit other than this checkout's
+      HEAD; an unreadable artifact, a malformed summary and every usage error exit 2; the subprocess
+      CLI (the runbook form) runs the same fourteen checks from a fresh interpreter, where the
+      registered checkpoint, image digest and pin fail on the synthetic re-score.
 
 Run:  python -B scripts/smoke_gap_bootstrap_val.py
 """
@@ -39,6 +49,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import traceback
 from fractions import Fraction
 from pathlib import Path
@@ -95,7 +106,10 @@ def load(name, rel):
 def in_process(mod, argv):
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
-        rc = mod.main(argv)
+        try:
+            rc = mod.main(argv)
+        except SystemExit as e:                  # argparse usage errors exit through SystemExit
+            rc = e.code
     return rc, buf.getvalue()
 
 
@@ -430,6 +444,10 @@ def main() -> int:  # noqa: C901
         check("G6-6 validity deltas recorded (E1 -5e-8 within 1e-7; teacher +5e-6 within 1e-5)",
               vd["e1"]["within"] and vd["teacher"]["within"] and abs(vd["e1"]["delta"] + 5e-8) < 1e-15
               and abs(vd["teacher"]["delta"] - 5e-6) < 1e-15, vd)
+        check("G6-11 the default E1 tolerance 1e-7 is recorded (e1_tolerance and validity_deltas)",
+              doc["e1_tolerance"]["value"] == 1e-7 == vd["e1"]["tolerance"]
+              and doc["e1_tolerance"]["allowed"] == [1e-7, 1e-5] and vd["teacher"]["tolerance"] == 1e-5,
+              doc.get("e1_tolerance"))
         rows_t = [json.loads(x) for x in (art_t / "per_image.jsonl").read_text(encoding="utf-8").splitlines()]
         rows_e = [json.loads(x) for x in (art_e / "per_image.jsonl").read_text(encoding="utf-8").splitlines()]
         dvec = np.array([a_["disease_only_miou"] - b_["disease_only_miou"] for a_, b_ in zip(rows_t, rows_e)
@@ -482,14 +500,14 @@ def main() -> int:  # noqa: C901
               load_val_artifact(v13, label="e1", min_layout=AM5_LAYOUT).layout == (1, 3, 0))
         gpu = write(work / "e1_gpu", re_, man, stage="E1", role="student", sha=SHA_E, digest=DIG_E,
                     repo_root=fx, device="cuda:0")
-        run("G7-4 a GPU re-score is refused", e=gpu, marker="not a CPU re-score")
+        run("G7-4 a GPU re-score is refused", e=gpu, marker="CPU re-score: env.device")
         b16 = write(work / "e1_b16", re_, man, stage="E1", role="student", sha=SHA_E, digest=DIG_E,
                     repo_root=fx, batch_size=16)
-        run("G7-5 a batch-16 re-score is refused", e=b16, marker="batch size 16")
+        run("G7-5 a batch-16 re-score is refused", e=b16, marker="batch size 1 -- got 16")
         nod = write(work / "e1_nodigest", re_, man, stage="E1", role="student", sha=SHA_E, digest=None,
                     repo_root=fx)
         run("G7-6 a re-score without the pinned image digest is refused", e=nod,
-            marker="is not the pinned image")
+            marker="pinned e1 image -- got None")
         fx2 = clean_git_fixture(work / "pin_repo_b", "b")
         t2 = write(work / "teacher_pin_b", rt_, man, stage="teacher", role="teacher", sha=SHA_T, digest=DIG_T,
                    repo_root=fx2)
@@ -497,10 +515,10 @@ def main() -> int:  # noqa: C901
         dirty = edited(art_t, work / "t_dirty", fn=lambda s: {**s, "run": {**s["run"],
                                                                          "governed_paths_clean": False}})
         run("G7-8 dirty governed paths at scoring time are refused", t=dirty,
-            marker="governed paths were dirty")
+            marker="governed paths clean at scoring time -- got False")
         oth = edited(art_t, work / "t_other",
                      fn=lambda s: {**s, "run": {**s["run"], "checkpoint_sha256": "c" * 64}})
-        run("G7-9 another teacher checkpoint is refused", t=oth, marker="is not the expected model")
+        run("G7-9 another teacher checkpoint is refused", t=oth, marker="checkpoint sha256 of record")
         g2, _, pe2 = label_maps(gt_shift=100)
         rg, _ = core_result(ids, g2, pe2)
         othergt = write(work / "e1_othergt", rg, man, stage="E1", role="student", sha=SHA_E, digest=DIG_E,
@@ -532,7 +550,7 @@ def main() -> int:  # noqa: C901
         p = subprocess.run([sys.executable, "-B", str(REPO / "scripts" / "gap_bootstrap_val.py"), *base,
                             "--out-dir", str(work / "sub")], capture_output=True, text=True)
         check("G7-16 the subprocess CLI (registered pairing) refuses the synthetic pair -> exit 2",
-              p.returncode == 2 and "is not the expected model" in p.stdout and not (work / "sub").exists(),
+              p.returncode == 2 and "checkpoint sha256 of record" in p.stdout and not (work / "sub").exists(),
               (p.stdout + p.stderr)[-200:])
         h = subprocess.run([sys.executable, "-B", str(REPO / "scripts" / "gap_bootstrap_val.py"), "--help"],
                            capture_output=True, text=True)
@@ -553,6 +571,106 @@ def main() -> int:  # noqa: C901
         tgt.write_bytes(b"prior")
         expect(FileExistsError, cli.write_json, tgt, {"ok": 1})
         check("G7-21 write_json never replaces an existing file", tgt.read_bytes() == b"prior")
+
+        # ================================ G8 --e1-tolerance ================================
+        cli.PAIRING["e1"]["reference"] = v_e + 2e-7        # |delta| = 2e-7: outside 1e-7, inside 1e-5
+        rc, text = in_process(cli, [*base, "--out-dir", str(work / "tol5"), "--e1-tolerance", "1e-5"])
+        doc5 = json.loads((work / "tol5" / jp.name).read_text(encoding="utf-8")) if rc == 0 else {}
+        check("G8-1 --e1-tolerance 1e-5 admits an E1 delta of 2e-7 and records 1e-5",
+              rc == 0 and doc5["e1_tolerance"]["value"] == 1e-5
+              and doc5["validity_deltas"]["e1"]["tolerance"] == 1e-5
+              and doc5["validity_deltas"]["e1"]["within"]
+              and abs(doc5["validity_deltas"]["e1"]["delta"] + 2e-7) < 1e-15, text[-300:])
+        rc, text = in_process(cli, [*base, "--out-dir", str(work / "tol7"), "--e1-tolerance", "1e-7"])
+        check("G8-2 --e1-tolerance 1e-7 stops the same delta (exit 1, nothing written)",
+              rc == 1 and "validity delta exceeds" in text and not (work / "tol7").exists(), text[-200:])
+        cli.PAIRING["e1"]["reference"] = ref_e
+        bad_tols = []
+        for val in ("1e-6", "1e-4", "0.0001", "0", "loose"):
+            o = work / f"tol_bad_{val}"
+            rc, text = in_process(cli, [*base, "--out-dir", str(o), "--e1-tolerance", val])
+            if not (rc == 2 and "--e1-tolerance" in text and not o.exists()):
+                bad_tols.append((val, rc))
+        check("G8-3 any other --e1-tolerance (1e-6, 1e-4, 0.0001, 0, text) is refused (exit 2, nothing "
+              "written)",
+              not bad_tols, bad_tols)
+        check("G8-4 validity() itself refuses a tolerance outside {1e-7, 1e-5}",
+              "--e1-tolerance must be one of" in str(expect(cli.Refused, cli.validity, None, None, 1e-6)))
+
+        # ================================ G9 --check-artifact ================================
+        pin = st_e["run"]["repo_commit"]
+        real_head = cli.checkout_head
+        cli.checkout_head = lambda: pin                            # the fixture repository is the pin here
+
+        def check_art(label, d, role, *, code, fails=(), markers=()):
+            rc, text = in_process(cli, ["--check-artifact", str(d), "--role", role])
+            failed = {ln.split("] ")[1].split()[0] for ln in text.splitlines() if "[FAIL] A" in ln}
+            ok = rc == code and failed == set(fails) and all(m in text for m in markers)
+            check(label, ok, f"rc={rc} failed={sorted(failed)} {text[-240:]}")
+            return failed
+
+        t0 = time.perf_counter()
+        check_art("G9-1 the E1 re-score passes all fourteen checks (info: within 1e-07 yes)", art_e, "e1",
+                  code=0, markers=("ARTIFACT PAIRING PASS (e1, 14/14)", "within 1e-07: yes"))
+        elapsed = time.perf_counter() - t0
+        check_art("G9-2 the teacher re-score passes all fourteen checks", art_t, "teacher", code=0,
+                  markers=("ARTIFACT PAIRING PASS (teacher, 14/14)",))
+        check("G9-3 the check takes seconds on an 846-row artifact", elapsed < 30, f"{elapsed:.2f} s")
+        check_art("G9-4 no image digest fails the digest check only (exit 1)", nod, "e1", code=1,
+                  fails=("A10",),
+                  markers=("image digest present and equal to the pinned e1 image", "got None"))
+        check_art("G9-5 a GPU re-score fails the CPU check only", gpu, "e1", code=1, fails=("A8",))
+        check_art("G9-6 a batch-16 re-score fails the batch check only", b16, "e1", code=1, fails=("A9",))
+        check_art("G9-7 dirty governed paths fail their check only", dirty, "teacher", code=1,
+                  fails=("A11",))
+        check_art("G9-8 another checkpoint fails the checkpoint check only", oth, "teacher", code=1,
+                  fails=("A6",))
+        check_art("G9-9 the wrong role fails role, checkpoint and digest", art_t, "e1", code=1,
+                  fails=("A5", "A6", "A10"))
+        check_art("G9-10 an upstream-protocol artifact fails the canvas check (and the reader refuses it)",
+                  up_art, "teacher", code=1, fails=("A1", "A14"))
+        check_art("G9-11 a pre-lane layout fails the layout check (and the reader's 1.1.0 floor)", pre, "e1",
+                  code=1, fails=("A4", "A14"))
+        tst = edited(art_e, work / "e_test", fn=lambda s: {**s, "dataset": {**s["dataset"], "split": "test"}})
+        check_art("G9-12 a TEST-split artifact fails the VAL check (and REHEARSAL refuses it)", tst, "e1",
+                  code=1, fails=("A2", "A14"))
+        smk = edited(art_e, work / "e_smoke",
+                     fn=lambda s: {**s, "run": {**s["run"], "artifact_status": "smoke"}})
+        check_art("G9-13 a smoke artifact fails the real-run check (and REHEARSAL refuses it)", smk, "e1",
+                  code=1, fails=("A3", "A14"))
+        cli.checkout_head = real_head                     # this repository's HEAD is not the fixture pin
+        check_art("G9-14 a re-score made at another commit than this checkout's HEAD fails the pin check "
+                  "only",
+                  art_e, "e1", code=1, fails=("A13",))
+        cli.checkout_head = lambda: pin
+        tam = shutil.copytree(art_e, work / "e_tampered")
+        (tam / "per_image.jsonl").write_bytes((tam / "per_image.jsonl").read_bytes() + b"\n")
+        rc, text = in_process(cli, ["--check-artifact", str(tam), "--role", "e1"])
+        check("G9-15 an artifact whose files fail their manifest is unreadable (exit 2)",
+              rc == 2 and "cannot be read" in text, text[-200:])
+        usage = [in_process(cli, argv)[0] for argv in (
+            ["--check-artifact", str(art_e)],
+            ["--check-artifact", str(art_e), "--role", "e1", "--teacher", str(art_t)],
+            ["--check-artifact", str(art_e), "--role", "student"],
+            ["--role", "e1", "--teacher", str(art_t), "--e1", str(art_e), "--eligibility-variants", str(el_t),
+             str(el_e)],
+            ["--teacher", str(art_t), "--e1", str(art_e)])]
+        check("G9-16 usage errors exit 2: no --role, extra gap flags, an unknown role, --role alone, "
+              "missing --eligibility-variants", usage == [2, 2, 2, 2, 2], usage)
+        cli.checkout_head = real_head
+        p = subprocess.run([sys.executable, "-B", str(REPO / "scripts" / "gap_bootstrap_val.py"),
+                            "--check-artifact", str(art_e), "--role", "e1"], capture_output=True, text=True)
+        failed = {ln.split("] ")[1].split()[0] for ln in p.stdout.splitlines() if "[FAIL] A" in ln}
+        check("G9-17 the subprocess CLI (the runbook form, registered pairing) runs all fourteen checks on "
+              "the synthetic E1 re-score: only the registered checkpoint, image and pin checks fail (exit 1)",
+              p.returncode == 1 and failed == {"A6", "A10", "A13"}
+              and "ARTIFACT PAIRING FAIL (e1, 11/14)" in p.stdout,
+              f"rc={p.returncode} failed={sorted(failed)} {(p.stdout + p.stderr)[-240:]}")
+        mal = edited(art_e, work / "e_malformed", fn=lambda s: {**s, "run": {**s["run"], "env": ["cpu"]}})
+        rc, text = in_process(cli, ["--check-artifact", str(mal), "--role", "e1"])
+        check("G9-18 a manifest-valid artifact with a malformed summary (run.env a list) exits 2, never a "
+              "verdict", rc == 2 and "cannot be checked (malformed summary.json)" in text
+              and "ARTIFACT PAIRING" not in text, text[-200:])
     except Exception:                                        # noqa: BLE001
         traceback.print_exc()
         check("FATAL", False, traceback.format_exc(limit=2))

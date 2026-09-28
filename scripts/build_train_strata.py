@@ -25,12 +25,12 @@ created, a failed write leaves neither behind, and an existing output is never o
 CHECK (lane 5 d2, local, after the build). PASS iff the file is the registered build (5,367 images,
 116 classes, rare threshold 20, status provisional) and internally consistent (shares, ranks, terciles,
 rare flags and the CSV all re-derive from the counts), all 115 classes are present, the shares sum to
-1 within 1e-12, the terciles hold 38/38/39 classes, Spearman's rho between share and 1/weight of
-reports/e1_class_weights.json is at least 0.95 (lane 5 d2: an INFERRED sanity bound; below it, inspect
-and explain before committing), and script_commit names a commit at which this script was clean.
-Recorded, not gated: whether the per-class pixel counts equal the class-weight file's `pixel_counts`
-(that file records its basis as the raw TRAIN PNGs at native resolution, i.e. these same counts). The
-check prints the file's sha256 for the decision-log row.
+1 within 1e-12, the terciles hold 38/38/39 classes, script_commit names a commit at which this script
+was clean, and the file agrees EXACTLY with reports/e1_class_weights.json, which was computed on the
+same native-resolution TRAIN masks (ruling 2026-09-28; the lane spec's "512 canvas" wording and its
+rho >= 0.95 bound are errata): every per-class pixel count, the background pixel count and the TRAIN
+mask count equal that file's, and Spearman's rho between share and 1/weight is 1 (the two rankings are
+identical). A mismatch is a STOP (exit 1). The check prints the file's sha256 for the decision-log row.
 
 --num-classes, --rare-threshold and --expected-images exist for synthetic fixtures only: any value
 other than the registered one marks the output artifact_status "smoke", and CHECK refuses it.
@@ -74,7 +74,8 @@ BACKGROUND = int(DATA["background_index"])            # 0
 IGNORE_INDEX = int(DATA["ignore_index"])              # 255 (absent from the raw masks)
 TRAIN_IMAGES = int(SPLIT_SIZES["train"])              # 5,367 [counted]
 RARE_THRESHOLD = 20                                   # AM-17 item 8: fewer than 20 TRAIN images
-SPEARMAN_MIN = 0.95                                   # lane 5 d2 (INFERRED sanity bound)
+#: lane 5 d2 as ruled 2026-09-28: exact equality with reports/e1_class_weights.json (same native TRAIN
+#: masks), so rho(share, 1/weight) = 1; the spec's "512 canvas" wording and 0.95 bound are errata.
 SHARE_SUM_TOL = 1e-12                                 # lane 5 d2
 IMAGE_SUFFIXES = (".jpg", ".jpeg")                    # as PlantSegDataset (case-insensitive)
 MASK_SUFFIX = ".png"
@@ -339,8 +340,9 @@ def write_outputs(out_dir, doc: dict, csv_b: bytes) -> tuple[Path, Path]:
 # check (lane 5 d2)
 # --------------------------------------------------------------------------------------------------
 def check_document(path) -> tuple[list[tuple[str, bool, str]], dict]:
-    """[(check, passed, detail)] for a written strata file, plus the recorded (ungated) cross-checks."""
-    from scipy.stats import spearmanr
+    """[(check, passed, detail)] for a written strata file, plus the values the report prints."""
+    import numpy as np
+    from scipy.stats import rankdata, spearmanr
 
     path = Path(path)
     raw = path.read_bytes()
@@ -384,9 +386,11 @@ def check_document(path) -> tuple[list[tuple[str, bool, str]], dict]:
                                        if a != b), "none"))
     weights_doc = json.loads(CLASS_WEIGHTS.read_text(encoding="utf-8"))
     weights = weights_doc["weights"]
-    rho = float(spearmanr([r["share"] for r in rows], [1.0 / weights[c] for c in diseases])[0])
-    check(f"C8 Spearman rho(share, 1/weight) >= {SPEARMAN_MIN} (d2; reports/e1_class_weights.json)",
-          rho >= SPEARMAN_MIN, f"rho={rho!r}")
+    shares, inv_w = [r["share"] for r in rows], [1.0 / weights[c] for c in diseases]
+    rho = float(spearmanr(shares, inv_w)[0])
+    identical = bool(np.array_equal(rankdata(shares), rankdata(inv_w)))
+    check("C8 Spearman rho(share, 1/weight) = 1: the two rankings are identical (d2; "
+          "reports/e1_class_weights.json)", identical, f"rho={rho!r}, rankings identical={identical}")
     csv_path = path.with_suffix(".csv")
     csv_ok = csv_path.is_file() and _sha256_bytes(csv_path.read_bytes()) == doc.get("csv_sha256") \
         and csv_path.read_bytes() == csv_bytes(rows)
@@ -398,14 +402,22 @@ def check_document(path) -> tuple[list[tuple[str, bool, str]], dict]:
           f"script_commit={commit!r} clean={doc.get('script_clean_at_commit')!r}")
     ref = weights_doc.get("pixel_counts") or []
     differ = [c for c in diseases if len(ref) != NUM_CLASSES or ref[c] != rows[c - 1]["pixels"]]
+    bg_pixels = (doc.get("background") or {}).get("pixels")
+    bg_equal = bool(len(ref) == NUM_CLASSES and ref[BACKGROUND] == bg_pixels)
+    count_equal = weights_doc.get("train_mask_count") == doc.get("n_images")
+    check("C11 pixel counts equal reports/e1_class_weights.json exactly: 115 disease classes, the "
+          "background and the TRAIN mask count (the same native TRAIN masks)",
+          not differ and bg_equal and count_equal,
+          f"{len(differ)} disease class(es) differ {differ[:5]}; background {bg_pixels!r} vs "
+          f"{ref[BACKGROUND] if len(ref) == NUM_CLASSES else None!r}; TRAIN masks "
+          f"{doc.get('n_images')!r} vs {weights_doc.get('train_mask_count')!r}")
     recorded = {"spearman_rho": rho,
                 "pixel_counts_equal_class_weight_file": not differ,
                 "pixel_count_differences": [{"class_id": c, "strata": rows[c - 1]["pixels"],
                                              "class_weights": ref[c] if len(ref) == NUM_CLASSES else None}
                                             for c in differ[:10]],
-                "background_pixels_equal": bool(len(ref) == NUM_CLASSES
-                                                and ref[BACKGROUND] == doc["background"]["pixels"]),
-                "train_mask_count_equal": weights_doc.get("train_mask_count") == doc.get("n_images"),
+                "background_pixels_equal": bg_equal,
+                "train_mask_count_equal": count_equal,
                 "file_sha256": _sha256_bytes(raw)}
     return out, recorded
 
@@ -421,15 +433,11 @@ def run_check(path) -> int:
         if detail:
             print(f"         {detail}")
     if recorded:
-        print("  recorded (not gated):")
-        print(f"    per-class pixel counts equal reports/e1_class_weights.json pixel_counts: "
-              f"{recorded['pixel_counts_equal_class_weight_file']} "
-              f"{recorded['pixel_count_differences'] or ''}".rstrip())
-        print(f"    background pixels equal: {recorded['background_pixels_equal']}; TRAIN mask count "
-              f"equal: {recorded['train_mask_count_equal']}")
-        print(f"    sha256 {recorded['file_sha256']}  {Path(path).as_posix()}")
+        for d in recorded["pixel_count_differences"]:
+            print(f"    class {d['class_id']}: strata {d['strata']} vs class weights {d['class_weights']}")
+        print(f"  sha256 {recorded['file_sha256']}  {Path(path).as_posix()}")
     good = sum(1 for _, ok, _ in results if ok)
-    allok = good == len(results) and len(results) == 10
+    allok = good == len(results) and len(results) == 11
     print(f"SUMMARY  {good}/{len(results)} checks passed")
     print(f"RESULT: {'STRATA d2 PASS' if allok else 'STRATA d2 FAIL -- inspect before committing'} "
           f"({good}/{len(results)})")
