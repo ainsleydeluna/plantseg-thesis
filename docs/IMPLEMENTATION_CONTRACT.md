@@ -267,11 +267,49 @@ pending the PlantSeg repo's official convention.~~ `[empirical; ch3 Table 3.1; c
 | Param | Value | Source |
 |---|---|---|
 | Temperature `T_CWD` | **4** | `[ch3]` |
-| Feature-map weight `α_CWD` | ~~**50**~~ **[UPDATED 2026-09-24 — B65 CP-006]** selected on VAL from {25, 50, 100} by the AM-16 item-2 sweep; 50 (the Chapter 3 and Shu et al. (2021) default) wins ties and applies if item 2 is cut (stride-16 C5 map). `configs/distill.py` keeps 50 until lane L-AM16-ALPHA adds the override | `[ch3; AM-16]` |
+| Feature-map weight `α_CWD` | ~~**50**~~ **[UPDATED 2026-09-24 — B65 CP-006]** selected on VAL from {25, 50, 100} by the AM-16 item-2 sweep; 50 (the Chapter 3 and Shu et al. (2021) default) wins ties and applies if item 2 is cut (stride-16 C5 map). ~~`configs/distill.py` keeps 50 until lane L-AM16-ALPHA adds the override~~ **[UPDATED 2026-09-28 — K1 L-AM16-ALPHA]** `train_distill --alpha` takes a value from `configs/distill.py` `alpha_cwd_grid` (25, 50, 100; default 50; `--allow-offgrid` in dry runs only) and is refused for a stage without the feature-map term; run_meta records `alpha_cwd`, and a real run's `--ckpt-dir` name must carry `alpha<value>`. Selection: `scripts/select_alpha.py` (rule `configs/sweep_rules.json`, band `reports/derived/dl27_band.json`) | `[ch3; AM-16]` |
 | Logit-map weight `β_CWD` | **3** | `[ch3]` |
-| Normalization | **T²/C**, with **C = the channel count of the map being distilled** (Shu et al. 2021, Eq. 4): **C = 320** for the stride-16 feature term (MSCAN-B Stage-3); **C = 116** for the logit-map term. Implemented at `src/training/train_distill.py:239` (`channels_norm=320`) and `:249` (default = map's own 116). ch3 names only the 320 case. | `[ch3; Shu 2021; B59 C1]` |
-| Projection head | training-only 1×1 conv: student **160-ch C5 → teacher 320-ch**; removed before E6/E7 via state_dict edit prior to observer insertion | `[ch3]` |
+| Normalization | **T²/C**, with **C = the channel count of the map being distilled** (Shu et al. 2021, Eq. 4): **C = 320** for the stride-16 feature term (MSCAN-B Stage-3); **C = 116** for the logit-map term. Implemented at ~~`src/training/train_distill.py:239` (`channels_norm=320`) and `:249`~~ **[UPDATED 2026-09-28 — K1 L-AM17B-FG]** `src/training/train_distill.py:469` (`distillation_losses`, `channels_norm=320`) and `:479` (default = map's own 116). ch3 names only the 320 case. | `[ch3; Shu 2021; B59 C1]` |
+| Projection head | training-only 1×1 conv: student **160-ch C5 → teacher 320-ch**; ~~removed before E6/E7 via state_dict edit prior to observer insertion~~ **[UPDATED 2026-09-28 — K1 L-AM17B-FG]** never part of the student: instantiated only with the `cwd_feat` term and written, with its optimizer group, to `projection.pt` beside the checkpoint, so the E3 checkpoint E6/E7 load carries nothing to strip (B3 per-term switches below) | `[ch3]` |
 | Ignore handling | validity mask downsampled to stride-16; channel-wise spatial softmax + KL restricted to valid locations | `[ch3]` |
+
+#### B3 — per-term instantiation switches `[L-AM17B-FG; AM-17 item 7, AM-17b item 1; 2026-09-28]`
+**[UPDATED 2026-09-28 — K1 L-AM17B-FG]** A distillation stage is three independently switched terms,
+`logit_kd` (λ_logit·L_LogitKD), `cwd_feat` (α_CWD·L_CWD_feat) and `cwd_logit` (β_CWD·L_CWD_logit),
+tabled in `configs/distill.py` `DISTILL_STAGES` and validated by `src/training/train_distill.py` at
+import.
+
+| Stage | `logit_kd` | `cwd_feat` | `cwd_logit` | Source |
+|---|---|---|---|---|
+| E2 | on | off | off | `[ch3]` |
+| E3 | on | on | on | `[ch3]` |
+| A | off | on | on | `[AM-17 item 7]` |
+| F | off | on | off | `[AM-17b item 1(a)]` |
+| G | off | off | on | `[AM-17b item 1(b)]` |
+
+- A term that is off is **not instantiated** (not weighted 0.0): no projection module (`cwd_feat`), no
+  optimizer param group, no ramp object, no loss call, no telemetry column. The pre-lane combined
+  `cwd` key (DL-35 G1) is refused, and all three terms off is E1 (`train_e1.py`), also refused.
+- Every stage runs one full teacher forward per step (Stage-3 features and logits), so the M4-KD NMF
+  stream (B1 row "NMF / Hamburger") and the per-step teacher cost are identical across arms.
+- Terms are added in the order logit_kd → cwd_feat → cwd_logit, each as `ramp·weight·loss`; every
+  instantiated term has its own first-epoch linear ramp (B2 row "Distillation-weight ramp").
+- Optimizer: the student's param group, plus a `cwd_projection` group (51,200 parameters) only with
+  `cwd_feat`. Checkpoint: `model_state_dict` and `optimizer_state_dict` hold the student only (the
+  shared scheduler state keeps one learning rate per param group); the projection and its optimizer
+  group go to `projection.pt` beside the checkpoint, paired by name and iteration
+  (`src/distill/cwd_projection.py` `restore_projection` restores both bit for bit); `best.json` uses
+  E1's schema. The telemetry file ends with a `run_end` record written after the final validation and
+  checkpoint; the sweep selections require it.
+- run_meta: `terms`, `projection_params` (51,200 or 0), λ_logit/T_logit (logit_kd), α_CWD/C
+  (cwd_feat), β_CWD (cwd_logit) and T_CWD (either CWD term), each only for instantiated terms. Train
+  rows carry `logit_kd`, `cwd_feat`, `cwd_logit` only when instantiated.
+- An argument for a term the stage does not instantiate (`--lambda-logit` for A/F/G, `--alpha` for
+  E2/G) is refused, not ignored. A real run with `cwd_feat` also needs `alpha<value>` in its
+  `--ckpt-dir` name (dry runs get it in their temporary directory name).
+- Evidence: `scripts/smoke_invariance_distill.py` (E2/E3 step records byte-identical to the pre-lane
+  commit on the invariance harness with the stub teacher, N = 8; the real-teacher N = 4 run of lane 1
+  d4 is local-only and pending) and `scripts/smoke_distill_switches.py`.
 
 #### B3 — spatial grid of each distillation term `[project; B32/F8, 2026-09-01]`
 ch3 pins *which pixels* enter the Logit-KD KL ("averaged over valid pixels only") but **not which
@@ -334,7 +372,7 @@ stage needs a 48 GB-class card. Whether E2/E3 add materially on top of E1 stays 
 on the pod. *(Was: "E2/E3 therefore cost only marginally more than E1 itself … an INFERRED 11–14 GB
 peak on CUDA at batch 16", which omitted that transient.)*
 | E3 total loss | ~~`L_CE + L_Dice + λ_logit·L_LogitKD + 50·L_CWD_feat + 3·L_CWD_logit`~~ **[UPDATED 2026-09-24 — B65 CP-006]** `L_CE + L_Dice + λ_logit·L_LogitKD + α_CWD·L_CWD_feat + 3·L_CWD_logit`, α_CWD per AM-16 item 2 | `[ch3; AM-16]` |
-| ~~Optional control~~ α_CWD sweep **[UPDATED 2026-09-24 — B65 CP-006]** | ~~α_CWD sensitivity sweep {25, 50, 100} — **not run; α_CWD fixed at 50 per Shu 2021; recorded as future work (AM-11)**~~ **Run (AM-16 item 2):** after λ is fixed, E3 runs at seed 42 with α_CWD in {25, 50, 100} (β and T unchanged), 80,000 iterations each. The highest best-checkpoint VAL all-class mIoU wins. Tie band: the larger of 0.5 pp and √2·s, where s is the sample standard deviation (n = 3) of E1's best-checkpoint VAL all-class mIoU over seeds 42, 43 and 44; s, the band and the three E1 values are recorded in the decision log after B66 and before the sweep launches, and the sweep does not launch before that entry exists. A tie goes to 50 when 50 is tied, otherwise to the smallest α; a winner at 25 or 100 is reported as a boundary result, and the grid is not extended. The winning run is E3 seed 42, and its α is used for E3 seeds 43 and 44 (E6 and E7 inherit it through the E3 checkpoint). All three runs are reported as the Chapter 3 neighborhood-stability check. A pre-registered departure from Chapter 3 p. 98 (α_CWD fixed at 50); TEST is never consulted. If item 2 is cut, E3 runs at α_CWD = 50 and no sweep is reported. Code: lane L-AM16-ALPHA | `[ch3 §C; AM-11; AM-16]` |
+| ~~Optional control~~ α_CWD sweep **[UPDATED 2026-09-24 — B65 CP-006]** | ~~α_CWD sensitivity sweep {25, 50, 100} — **not run; α_CWD fixed at 50 per Shu 2021; recorded as future work (AM-11)**~~ **Run (AM-16 item 2):** after λ is fixed, E3 runs at seed 42 with α_CWD in {25, 50, 100} (β and T unchanged), 80,000 iterations each. The highest best-checkpoint VAL all-class mIoU wins. Tie band: the larger of 0.5 pp and √2·s, where s is the sample standard deviation (n = 3) of E1's best-checkpoint VAL all-class mIoU over seeds 42, 43 and 44; s, the band and the three E1 values are recorded in the decision log after B66 and before the sweep launches, and the sweep does not launch before that entry exists. A tie goes to 50 when 50 is tied, otherwise to the smallest α; a winner at 25 or 100 is reported as a boundary result, and the grid is not extended. The winning run is E3 seed 42, and its α is used for E3 seeds 43 and 44 (E6 and E7 inherit it through the E3 checkpoint). All three runs are reported as the Chapter 3 neighborhood-stability check. A pre-registered departure from Chapter 3 p. 98 (α_CWD fixed at 50); TEST is never consulted. If item 2 is cut, E3 runs at α_CWD = 50 and no sweep is reported. Code: lane L-AM16-ALPHA **[UPDATED 2026-09-28 — K1 L-AM16-ALPHA]** (`train_distill --alpha`; `scripts/select_alpha.py`, which refuses a partial sweep, a missing band file or an unfinished run; `scripts/select_lambda.py` applies AM-2 the same way and refuses a λ shortfall, naming AM-17 item 9, which it does not implement) | `[ch3 §C; AM-11; AM-16]` |
 
 ### B4 — Quantization
 **INT8 QAT (E5 / E6)** `[ch3 §C "E5"/"E6", §D]`

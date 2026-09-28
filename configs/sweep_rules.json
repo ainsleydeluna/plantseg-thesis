@@ -1,0 +1,36 @@
+{
+  "format": "sweep_rules/1",
+  "note": "Committed selection rules read by scripts/select_lambda.py and scripts/select_alpha.py (lane L-AM16-ALPHA; the selection contract in docs/lane_specs/part2.md). Grid, band floor, default, seed and iterations must agree with configs/distill.py; src/training/sweep_select.py refuses a disagreement.",
+  "lambda_logit": {
+    "source": "AM-2 / DL-06",
+    "stage": "E2",
+    "seed": 42,
+    "iterations": 80000,
+    "value": "best_val_miou_all_class: the run's best-checkpoint VAL all-class mIoU (strict >, earliest tie, as E1)",
+    "grid": [0.25, 0.5, 1, 2, 4],
+    "band": {"kind": "fixed", "value": 0.005},
+    "tie": "smallest",
+    "boundary": [0.25, 4],
+    "winner_is": "E2 seed 42",
+    "shortfall": "refused, naming AM-17 item 9: selection among the finished candidates at the TEST freeze (shortfall disclosed) is not implemented, so no selection is made"
+  },
+  "alpha_cwd": {
+    "source": "AM-16 item 2 / DL-27",
+    "stage": "E3",
+    "seed": 42,
+    "iterations": 80000,
+    "value": "best_val_miou_all_class: the run's best-checkpoint VAL all-class mIoU",
+    "grid": [25, 50, 100],
+    "band": {
+      "kind": "dl27",
+      "file": "reports/derived/dl27_band.json",
+      "floor": 0.005,
+      "rule": "band = max(floor, sqrt(2) * s); s = sample SD (n = 3) of E1's best VAL all-class mIoU over seeds 42, 43, 44"
+    },
+    "tie": "default_if_tied_else_smallest",
+    "default": 50,
+    "boundary": [25, 100],
+    "winner_is": "E3 seed 42",
+    "shortfall": "refused (lane 2 STOP: fewer than three finished runs); a cut sweep means alpha = 50 and no selection file (AM-16)"
+  }
+}

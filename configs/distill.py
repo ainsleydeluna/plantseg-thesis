@@ -21,6 +21,23 @@ LOGIT_KD_SEMANTICS = "logitkd@os8-64x64-of-512"
 # current tag without an explicit, recorded override.
 LOGIT_KD_SEMANTICS_SUPERSEDED = ("logitkd@full-512x512-upsampled",)   # pre-B32
 
+# ---------------------------------------------------------------- per-term switches (L-AM17B-FG)
+# AM-17b item 1(c) and AM-17 item 7: a distillation stage is a set of three independently switched
+# terms. A term that is off is NOT instantiated — no projection module (cwd_feat), no optimizer param
+# group, no ramp, no loss call, no telemetry column — which is not the same as weighting it 0.0.
+# All three off is E1 (train_e1.py), never a distillation stage; the pre-lane combined `cwd` key,
+# which switched the projection and both channel-wise terms together (DL-35 G1), is refused.
+# The tuple order is the pre-lane addition order of the total loss.
+DISTILL_TERMS = ("logit_kd", "cwd_feat", "cwd_logit")
+
+DISTILL_STAGES = {
+    "e2": {"name": "E2", "logit_kd": True, "cwd_feat": False, "cwd_logit": False},
+    "e3": {"name": "E3", "logit_kd": True, "cwd_feat": True, "cwd_logit": True},
+    "a": {"name": "A", "logit_kd": False, "cwd_feat": True, "cwd_logit": True},    # AM-17 item 7
+    "f": {"name": "F", "logit_kd": False, "cwd_feat": True, "cwd_logit": False},   # AM-17b 1(a)
+    "g": {"name": "G", "logit_kd": False, "cwd_feat": False, "cwd_logit": True},   # AM-17b 1(b)
+}
+
 DISTILL = {
     # E2: response-level Logit KD
     "logit_kd": {
@@ -44,7 +61,16 @@ DISTILL = {
     # E3: + Channel-Wise KD (Shu 2021)
     "cwd": {
         "T_cwd": 4,
-        "alpha_cwd_feature_map": 50,                # stride-16 C5 map
+        "alpha_cwd_feature_map": 50,                # stride-16 C5 map; the default and AM-16's fallback
+        # AM-16 item 2 (L-AM16-ALPHA): train_distill --alpha takes a value from this grid (50 stays
+        # the default); selection by scripts/select_alpha.py with the rule in configs/sweep_rules.json.
+        "alpha_cwd_grid": (25, 50, 100),
+        "alpha_sweep_iters_per_candidate": 80000,
+        "alpha_sweep_selection_value": "each candidate's best-checkpoint VAL all-class mIoU",
+        "alpha_sweep_tie_band": "max(0.005, sqrt(2)*s); s = sample SD (n = 3) of E1's best VAL all-class mIoU, seeds 42-44 (DL-27 entry)",
+        "alpha_sweep_tie_rule": "50 if 50 is within the band of the best, otherwise the smallest alpha within it",
+        "alpha_sweep_winner_is_e3_seed42": True,
+        "alpha_amended_by": "AM-16 item 2",
         "beta_cwd_logit_map": 3,
         "normalization": "T^2 / C",
         "C": 320,                                   # MSCAN-B stride-16 Stage-3 channel count
@@ -52,13 +78,15 @@ DISTILL = {
             "type": "1x1 conv, training-only",
             "maps": "student 160-ch C5 -> teacher 320-ch",
             "removed_before": ("E6", "E7"),
-            "removal": "state_dict edit before quant observer insertion",
+            # L-AM17B-FG: never part of the student; instantiated only with the cwd_feat term and written
+            # with its optimizer group to projection.pt beside the checkpoint, so nothing is stripped.
+            "removal": "never in the student or its checkpoint: projection.pt beside the checkpoint",
         },
         "ignore_handling": "validity mask downsampled to stride-16; softmax + KL over valid locations only",
     },
 
-    # Combined E3 objective
-    "e3_total_loss": "L_CE + L_Dice + lambda_logit*L_LogitKD + 50*L_CWD_feat + 3*L_CWD_logit",
+    # Combined E3 objective (alpha_cwd per AM-16 item 2; 50 unless --alpha says otherwise)
+    "e3_total_loss": "L_CE + L_Dice + lambda_logit*L_LogitKD + alpha_cwd*L_CWD_feat + 3*L_CWD_logit",
 
     # ---------------------------------------------------- AMENDED 2026-09-23 by AM-7
     # WITHDRAWN by AM-7 (docs/PREREGISTRATION_AMENDMENTS.md): E1, E2 and E3 share one rule, no clipping.
