@@ -33,8 +33,9 @@ from .noninferiority import (E6KD_TRIGGER_THRESHOLD, PRIMARY_MARGIN, SENSITIVITY
 from .corruption_protocol import (CorruptionEntry, CorruptionProtocol, CorruptionProtocolError,
                                   build_official_corruption_grid, load_corruption_protocol,
                                   official_corruption_grid)
-from .ingest import (EvaluationRun, EvaluationRunIdentity, IngestError, PerImageRecord,
-                     PerImageSufficientStats, Policy, load_run, verify_run_manifest)
+from .ingest import (Am5Exclusion, Am5Pair, EvaluationRun, EvaluationRunIdentity, IngestError,
+                     PerImageRecord, PerImageSufficientStats, Policy, am5_pair, apply_am5_policy,
+                     load_run, verify_run_manifest)
 from .robustness import CorruptionGrid, MiouCVector, RobustnessError, align_miou_c, assemble_miou_c
 from .tests import (ALPHA, CANONICAL_COMPARISON_IDS, CohensDzResult, ComparisonResult, HolmFamily,
                     HolmMember, RankBiserialResult, StatsError, TTestResult, WilcoxonResult,
@@ -42,9 +43,10 @@ from .tests import (ALPHA, CANONICAL_COMPARISON_IDS, CohensDzResult, ComparisonR
                     paired_t_test, rank_biserial, run_comparison, wilcoxon_test)
 
 __all__ = [
-    # ingestion + policy
+    # ingestion + policy (AM-5 exclusion: lane L-AM5)
     "Policy", "IngestError", "EvaluationRun", "EvaluationRunIdentity", "PerImageRecord",
-    "PerImageSufficientStats", "load_run", "verify_run_manifest",
+    "PerImageSufficientStats", "load_run", "verify_run_manifest", "Am5Exclusion", "Am5Pair",
+    "am5_pair", "apply_am5_policy",
     # alignment
     "AlignmentError", "PairedVector", "align_runs", "align_vectors",
     "METRIC_DISEASE_ONLY", "METRIC_ALL_CLASS", "METRIC_MIOU_C",

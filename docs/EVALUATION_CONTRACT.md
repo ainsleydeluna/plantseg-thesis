@@ -239,6 +239,20 @@ A0 preserves it and records the two consequences below rather than silently upgr
 recomputable **without re-running inference on any stage**. This is the hedge that makes preserving the
 preregistered rule safe.
 
+> **[UPDATED 2026-09-28 — L-AM5]** AM-5 fields (the §3.3 AM-5 block; lane L-AM5). Every
+> `per_image.jsonl` row gains `am5_excluded: bool`, appended as the last key: `true` iff
+> `n_eligible_disease_only == 0`, i.e. the evaluated mask holds no disease pixel. It depends on ground
+> truth only, so it is identical across models. No existing value changes: such a row keeps its `null`
+> + `undefined_no_eligible_class` disease-only value. `summary.json` gains
+> `am5 = {rule: "no_disease_gt", excluded_count, included_count, excluded_ids_sha256}`, where the hash is
+> the SHA-256 of the sorted excluded `image_id`s joined by `\n` (UTF-8, no trailing newline), and
+> `artifact_schema_version = "plantseg-eval-artifact/1.1.0"`. `schema_version` and `config_sha256` are
+> unchanged, so a pre-lane artifact (neither field; layout 1.0.0) stays pairable with a lane artifact:
+> readers derive the flag from `n_eligible_disease_only == 0` and tolerate the extra fields. The writer
+> refuses an `am5` block or a row flag that disagrees with the rows. The statistics ingest applies the
+> exclusion (STATISTICAL_ANALYSIS_CONTRACT §10), and `scripts/evaluate_model.py` prints the count with
+> every artifact.
+
 ### 3.3 Undefined cases
 
 | Situation | Result | Expected on val/test? |
@@ -425,6 +439,9 @@ official statistics.
 }
 ```
 
+**[UPDATED 2026-09-28 — L-AM5]** A lane artifact also carries `am5` and `artifact_schema_version`
+(§3.2).
+
 ### 5.4 `per_image.jsonl` — required fields (one object per line)
 
 ```jsonc
@@ -439,6 +456,9 @@ official statistics.
   "gt_disease_classes": [1]         // GT-present disease class ids; exactly one, dataset-wide
 }
 ```
+
+**[UPDATED 2026-09-28 — L-AM5]** A lane artifact's rows also carry `am5_excluded`, as the last key
+(§3.2).
 
 ### 5.5 `sufficient_stats.npz` — required arrays
 

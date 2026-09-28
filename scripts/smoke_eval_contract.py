@@ -416,9 +416,9 @@ def main() -> int:  # noqa: C901
         row_keys = {"image_id", "clean_image_id", "manifest_index", "condition",
                     "all_class_miou", "all_class_miou_status", "disease_only_miou",
                     "disease_only_miou_status", "n_eligible_all_class",
-                    "n_eligible_disease_only", "gt_disease_classes"}
-        check("5 per-image rows have exactly the frozen 11 keys",
-              all(set(r) == row_keys for r in parsed_rows),
+                    "n_eligible_disease_only", "gt_disease_classes", "am5_excluded"}
+        check("5 per-image rows have exactly the frozen 12 keys (L-AM5: am5_excluded last)",
+              all(set(r) == row_keys and list(r)[-1] == "am5_excluded" for r in parsed_rows),
               f"{sorted(set(parsed_rows[0]) ^ row_keys)}")
         check("116-class artifact: num_classes field",
               summary["dataset"]["num_classes"] == 116)

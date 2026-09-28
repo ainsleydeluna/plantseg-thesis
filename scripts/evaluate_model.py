@@ -29,6 +29,7 @@ Example (capped validation smoke, random-init, no checkpoint):
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -316,6 +317,10 @@ def main(argv=None) -> int:
         print(f"{type(e).__name__}: {e}", file=sys.stderr)
         return 1
     print(f"artifact written: {out}")
+    # AM-5 (lane L-AM5): the zero-disease count is reported with every artifact.
+    am5 = json.loads((Path(out) / "summary.json").read_text(encoding="utf-8")).get("am5") or {}
+    print(f"am5 ({am5.get('rule')}): excluded_count={am5.get('excluded_count')} "
+          f"included_count={am5.get('included_count')}")
     return 0
 
 

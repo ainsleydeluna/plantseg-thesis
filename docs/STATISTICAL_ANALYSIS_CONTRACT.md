@@ -726,6 +726,26 @@ actual row counts, and condition identity · **`metric_impl_sha256` equality**.
 For official analysis a **metric-implementation mismatch is an error, not a warning** — two stages
 scored by different metric code are not comparable.
 
+> **[UPDATED 2026-09-28 — L-AM5]** AM-5 in the ingest (`src/stats/ingest.py`; documentation only, no
+> test, threshold or estimand changes). Every row carries `am5_excluded` (EVALUATION_CONTRACT §3.2): read
+> from the artifact when present, where it must equal `n_eligible_disease_only == 0`, and derived for a
+> pre-lane artifact. A row set mixing both forms, or a summary `am5` block or `artifact_schema_version`
+> that disagrees with the rows, is an integrity error; a later additive layout (`plantseg-eval-artifact/1.x`)
+> is read, another major is refused. The OFFICIAL and REHEARSAL policies drop the
+> flagged rows from the per-image records and abort, naming the row, on any other undefined primary
+> value; NONOFFICIAL_SMOKE keeps every row. The sufficient statistics keep every row, so every
+> dataset-level metric and the §9 pooled estimand still use all images. Each ingested run reports
+> `n_excluded_am5` and `n_included`; a pair (`am5_pair`) reports them once and aborts unless the two
+> excluded id sets are identical (ground truth decides the set, so a difference is a manifest mismatch).
+> In alignment (`src/stats/align.py`) REHEARSAL applies the OFFICIAL rules too (a metric-implementation
+> mismatch or an undefined pair is an error), and an OFFICIAL or REHEARSAL pair runs `am5_pair` first,
+> so the paired vector carries the pair's AM-5 counts.
+> Per-image mIoU-C (§2) takes the stage's clean artifact: its excluded set is applied to all 15 cells,
+> each cell must flag exactly that set, an undefined score for an included image still fails, and the
+> robustness n equals the clean n. REHEARSAL is the OFFICIAL row policy on real VAL artifacts (the
+> AM-17 item 9 dress rehearsal and the L-AM5 d5 check): `artifact_status` provisional or official, no
+> random initialization, `split = val`, 846 rows; it never reads TEST.
+
 **Forbidden:** silent deletion · pairwise-complete fallback · mean/median/zero imputation ·
 reordering without identity verification.
 
@@ -1071,6 +1091,10 @@ explicitly including the per-image mIoU-C robustness comparison, the descriptive
 E3→E6 non-inferiority task, not only the clean superiority comparisons. The robustness task resamples
 the same 1,561 canonical clean-image identities once the complete corruption grid has been aligned.~~
 **[UPDATED 2026-09-23 — B64 C5]** Under AM-5, tasks on per-image disease-only values (the scalar statistics of the seven clean comparisons, the per-image mIoU-C robustness comparison and the descriptive E1→E3 block) have `jackknife_count == 1561 − k`, where k is the count of AM-5 zero-disease TEST images; dataset-level tasks (the pooled dataset-mIoU tasks and the E3→E6 non-inferiority task) keep `jackknife_count == 1561`. Code: lane L-AM5.
+**[NOTE 2026-09-28 — L-AM5]** Not yet implemented: the lane-1 file list in docs/lane_specs/part1.md does not
+include `src/stats/artifact.py`, whose `build_family` still compares task 0's jackknife count with 1,561
+(`OFFICIAL_JACKKNIFE_N`). An artifact built from AM-5-filtered inputs with k > 0 is therefore marked
+non-official. Open; it needs an owner before TEST.
 
 For a **non-official** synthetic artifact, `bootstrap_replicates` may be smaller and `jackknife_count`
 may differ, but both must still equal their corresponding NPZ array lengths and the task's verified

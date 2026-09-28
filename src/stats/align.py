@@ -14,7 +14,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .ingest import EvaluationRun, EvaluationRunIdentity, Policy
+from .ingest import (STRICT_POLICIES, Am5Pair, EvaluationRun, EvaluationRunIdentity, IngestError,
+                     Policy, am5_pair)
 
 METRIC_DISEASE_ONLY = "per_image_disease_only_miou"
 METRIC_ALL_CLASS = "per_image_all_class_miou"
@@ -37,6 +38,7 @@ class PairedVector:
     baseline_identity: EvaluationRunIdentity | None
     candidate_identity: EvaluationRunIdentity | None
     alignment_status: str = "ok"
+    am5: Am5Pair | None = None          # AM-5 counts of the pair (OFFICIAL/REHEARSAL; lane L-AM5)
 
     @property
     def n(self) -> int:
@@ -73,8 +75,8 @@ def assert_compatible(a: EvaluationRunIdentity, b: EvaluationRunIdentity, policy
             msg = (f"{f} differs between runs ({getattr(a, f)[:12]}... vs "
                    f"{getattr(b, f)[:12]}...) -- the two stages were scored by different metric "
                    "code")
-            if policy is Policy.OFFICIAL:
-                raise AlignmentError("OFFICIAL analysis forbids this: " + msg)
+            if policy in STRICT_POLICIES:
+                raise AlignmentError(f"{policy.name} analysis forbids this: " + msg)
             warnings.append(msg)
     return warnings
 
@@ -100,6 +102,12 @@ def align_runs(baseline: EvaluationRun, candidate: EvaluationRun, *, policy: Pol
         raise AlignmentError(
             f"runs were ingested under a different policy than requested ({policy})")
     warns = assert_compatible(baseline.identity, candidate.identity, policy)
+    pair_am5 = None
+    if policy in STRICT_POLICIES:
+        try:                               # AM-5: both runs must exclude exactly the same images
+            pair_am5 = am5_pair(baseline, candidate)
+        except IngestError as e:
+            raise AlignmentError(str(e)) from e
 
     b_ids = [r.image_id for r in baseline.records]
     c_ids = [r.image_id for r in candidate.records]
@@ -132,9 +140,9 @@ def align_runs(baseline: EvaluationRun, candidate: EvaluationRun, *, policy: Pol
             cv.append(float(c))
 
     if undefined:
-        if policy is Policy.OFFICIAL:
+        if policy in STRICT_POLICIES:
             raise AlignmentError(
-                f"OFFICIAL analysis forbids undefined primary values; {len(undefined)} pair(s) "
+                f"{policy.name} analysis forbids undefined primary values; {len(undefined)} pair(s) "
                 f"undefined, e.g. {undefined[:3]}. Rows are never dropped or imputed.")
         # NONOFFICIAL: report the frozen status, still without deleting the pair
         return PairedVector(tuple(order), np.asarray(bv, float), np.asarray(cv, float),
@@ -148,7 +156,8 @@ def align_runs(baseline: EvaluationRun, candidate: EvaluationRun, *, policy: Pol
         raise AlignmentError("non-finite value present in an aligned vector")
     status = "ok" if not warns else "ok_with_warnings"
     return PairedVector(tuple(order), base, cand, cand - base, metric, policy,
-                        baseline.identity, candidate.identity, alignment_status=status)
+                        baseline.identity, candidate.identity, alignment_status=status,
+                        am5=pair_am5)
 
 
 def align_vectors(baseline_ids, baseline_values, candidate_ids, candidate_values, *,

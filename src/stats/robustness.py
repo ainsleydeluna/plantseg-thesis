@@ -84,9 +84,41 @@ class MiouCVector:
 
 
 # --------------------------------------------------------------------------------------------------
+def _clean_exclusion(clean: EvaluationRun, ref, policy: Policy, stage: str | None) -> frozenset:
+    """AM-5: the clean artifact's excluded clean-image ids, after checking it belongs to the grid."""
+    i = clean.identity
+    if i.condition_type != "clean":
+        raise RobustnessError(f"`clean` run {i.run_id!r} has condition type {i.condition_type!r}")
+    if clean.policy is not policy:
+        raise RobustnessError(f"`clean` run was ingested under {clean.policy}, not {policy}")
+    if clean.am5 is None:
+        raise RobustnessError(f"`clean` run {i.run_id!r} carries no AM-5 exclusion (use load_run)")
+    for f in ("schema_version", "metric_protocol", "split", "class_map_sha256",
+              "preprocess_protocol", "num_classes", "background_index", "ignore_index"):
+        if getattr(i, f) != getattr(ref, f):
+            raise RobustnessError(f"`clean` run has incompatible {f}: {getattr(i, f)!r} != "
+                                  f"{getattr(ref, f)!r}")
+    want = stage if stage is not None else ref.stage
+    if i.stage != want:
+        raise RobustnessError(f"`clean` run is stage {i.stage!r}, expected {want!r}")
+    return frozenset(clean.am5.excluded_clean_ids)
+
+
 def assemble_miou_c(runs: Sequence[EvaluationRun], grid: CorruptionGrid, *, policy: Policy,
-                    stage: str | None = None) -> MiouCVector:
-    """Build the per-image mIoU-C vector for ONE stage from exactly 15 verified condition runs."""
+                    stage: str | None = None, clean: EvaluationRun | None = None) -> MiouCVector:
+    """Build the per-image mIoU-C vector for ONE stage from exactly 15 verified condition runs.
+
+    AM-5 (lane L-AM5): `clean` is the stage's clean artifact. Its excluded set (no disease ground
+    truth) is applied to all 15 cells: every cell must flag exactly that set (ground truth decides it,
+    so a difference is a manifest mismatch), those images get no mIoU-C, an undefined score for an
+    included image still raises, and n equals the clean artifact's included count. OFFICIAL and
+    REHEARSAL require `clean`; without it (NONOFFICIAL_SMOKE only) every image must be defined in
+    every cell, as before.
+    """
+    if clean is None and policy is not Policy.NONOFFICIAL_SMOKE:
+        raise RobustnessError(
+            f"{policy.name} mIoU-C requires the stage's clean artifact (`clean=`): AM-5 applies its "
+            "excluded set to all 15 cells")
     if len(runs) != N_CELLS:
         raise RobustnessError(
             f"expected exactly {N_CELLS} corruption runs (5 corruptions x severities "
@@ -132,10 +164,17 @@ def assemble_miou_c(runs: Sequence[EvaluationRun], grid: CorruptionGrid, *, poli
         if stage is not None and i.stage != stage:
             raise RobustnessError(f"cell ({name!r},{sev}) is stage {i.stage!r}, expected {stage!r}")
 
-    ref_clean = tuple(sorted(r.clean_image_id for r in next(iter(seen.values())).records))
+    excluded = frozenset() if clean is None else _clean_exclusion(clean, ref, policy, stage)
+    ref_clean = tuple(sorted(r.clean_image_id for r in next(iter(seen.values())).records
+                             if r.clean_image_id not in excluded))
     per_cell: dict[tuple[str, int], dict[str, float]] = {}
     for (name, sev), r in seen.items():
-        clean_ids = [rec.clean_image_id for rec in r.records]
+        if clean is not None and (r.am5 is None or frozenset(r.am5.excluded_clean_ids) != excluded):
+            flagged = None if r.am5 is None else sorted(r.am5.excluded_clean_ids)
+            raise RobustnessError(
+                f"cell ({name!r},{sev}) flags AM-5 images {flagged} but the clean artifact excludes "
+                f"{sorted(excluded)}: ground truth decides the set, so this is a manifest mismatch")
+        clean_ids = [rec.clean_image_id for rec in r.records if rec.clean_image_id not in excluded]
         if len(set(clean_ids)) != len(clean_ids):
             raise RobustnessError(f"cell ({name!r},{sev}) has duplicate clean_image_id")
         if tuple(sorted(clean_ids)) != ref_clean:
@@ -143,6 +182,8 @@ def assemble_miou_c(runs: Sequence[EvaluationRun], grid: CorruptionGrid, *, poli
                 f"cell ({name!r},{sev}) has a different clean-image ID set than the grid")
         cell: dict[str, float] = {}
         for rec in r.records:
+            if rec.clean_image_id in excluded:
+                continue
             if rec.disease_only_miou is None:
                 raise RobustnessError(
                     f"cell ({name!r},{sev}) has an undefined disease-only score for "
@@ -162,6 +203,13 @@ def assemble_miou_c(runs: Sequence[EvaluationRun], grid: CorruptionGrid, *, poli
 
     if not np.isfinite(values).all():
         raise RobustnessError("non-finite value produced during mIoU-C assembly")
+    if clean is not None:
+        clean_included = tuple(sorted(r.clean_image_id for r in clean.records
+                                      if r.clean_image_id not in excluded))
+        if order != clean_included or len(order) != clean.n_included:
+            raise RobustnessError(
+                f"mIoU-C covers {len(order)} images but the clean artifact includes "
+                f"{clean.n_included}: the robustness n must equal the clean n")
 
     return MiouCVector(
         clean_image_ids=order, values=values,

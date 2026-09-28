@@ -40,6 +40,12 @@ METRIC_PROTOCOL = "plantseg-metrics/1.0.0"
 # Optional, separately versioned summary.run.eval_runtime block (contract section 10; L-EVAL-DET).
 # Never part of config_sha256; SCHEMA_VERSION is unchanged by it.
 EVAL_RUNTIME_VERSION = "plantseg-eval-runtime/1.0.0"
+# Separately versioned artifact layout (contract section 3.2; lane L-AM5). A pre-lane artifact has no
+# such field (layout 1.0.0); 1.1.0 appends per_image.jsonl `am5_excluded` (last key) and adds
+# summary.json `am5`. SCHEMA_VERSION and config_sha256 are unchanged, so pre-lane and lane artifacts
+# stay pairable and readers derive the missing fields (docs/lane_specs/part1.md, cross-lane rules).
+ARTIFACT_SCHEMA_VERSION = "plantseg-eval-artifact/1.1.0"
+AM5_RULE = "no_disease_gt"
 
 ARTIFACT_STATUSES = ("official", "provisional", "smoke")
 STAGES = ("teacher", "E1", "E2", "E3", "E4", "E5", "E6", "E7")
@@ -97,6 +103,19 @@ def hash_split_manifest(entries: Sequence[ManifestEntry]) -> str:
 def hash_class_map(class_map: Sequence[dict]) -> str:
     """Complete ordered per-class descriptor (id + name + role), canonical JSON."""
     return _sha256_bytes(canonical_json_bytes(list(class_map)))
+
+
+def am5_excluded_ids_sha256(excluded_ids: Sequence[str]) -> str:
+    """SHA-256 of the sorted AM-5 excluded image ids joined by `\\n` (UTF-8, no trailing newline)."""
+    return _sha256_bytes("\n".join(sorted(excluded_ids)).encode("utf-8"))
+
+
+def build_am5_block(rows) -> dict:
+    """summary.json `am5`: the AM-5 zero-disease exclusion counted from the per-image flags."""
+    excluded = [r.image_id for r in rows if r.am5_excluded]
+    return {"rule": AM5_RULE, "excluded_count": len(excluded),
+            "included_count": len(rows) - len(excluded),
+            "excluded_ids_sha256": am5_excluded_ids_sha256(excluded)}
 
 
 def hash_metric_impl() -> tuple[str, str]:
@@ -174,7 +193,8 @@ def git_commit(repo: Path) -> str:
 # expose them without importing any filesystem/Git-touching code.
 __all__ = ["RunMeta", "DatasetMeta", "ArtifactRequest", "Provenance", "ArtifactRequestError",
            "ArtifactWriteError", "prepare_artifact_request", "validate_artifact_request",
-           "write_artifact", "verify_artifact", "canonical_json_bytes"]
+           "write_artifact", "verify_artifact", "canonical_json_bytes", "build_am5_block",
+           "am5_excluded_ids_sha256"]
 
 
 @dataclass(frozen=True)
@@ -440,6 +460,8 @@ def build_summary(result: EvalResult, req: ArtifactRequest, prov: Provenance,
         "dataset_level": dict(result.dataset_level),
         "per_class": dict(result.per_class),
         "integrity": dict(result.integrity),
+        "am5": build_am5_block(result.rows),
+        "artifact_schema_version": ARTIFACT_SCHEMA_VERSION,
     }
     if eval_runtime is not None:
         summary["run"]["eval_runtime"] = eval_runtime
@@ -476,6 +498,12 @@ def validate_summary(summary: dict, req: ArtifactRequest, result: EvalResult) ->
         raise ArtifactWriteError("official artifact requires governed_paths_clean=True")
     if summary["run"]["random_init"] and req.artifact_status != "smoke":
         raise ArtifactWriteError("random_init=True requires artifact_status='smoke'")
+    if summary.get("artifact_schema_version") != ARTIFACT_SCHEMA_VERSION:
+        raise ArtifactWriteError(f"artifact_schema_version must be {ARTIFACT_SCHEMA_VERSION!r}")
+    am5 = summary.get("am5")
+    if am5 != build_am5_block(result.rows) or \
+            am5["excluded_count"] + am5["included_count"] != d["actual_rows"]:
+        raise ArtifactWriteError(f"summary.am5 {am5!r} does not match the per-image AM-5 flags")
 
 
 # --------------------------------------------------------------------------------------------------
@@ -537,7 +565,11 @@ def write_artifact(result: EvalResult, req: ArtifactRequest, prov: Provenance,
                 reread.get("metric_protocol") != METRIC_PROTOCOL:
             raise ArtifactWriteError("top-level version fields failed post-write verification")
         for line in (tmp / "per_image.jsonl").read_text(encoding="utf-8").splitlines():
-            json.loads(line, parse_constant=_reject_constant)
+            row = json.loads(line, parse_constant=_reject_constant)
+            if row.get("am5_excluded") is not (row["n_eligible_disease_only"] == 0):
+                raise ArtifactWriteError(
+                    f"per_image row {row.get('image_id')!r}: am5_excluded must be present and "
+                    "equal n_eligible_disease_only == 0")
 
         # NPZ re-read + sufficient-statistic invariants
         with np.load(tmp / "sufficient_stats.npz", allow_pickle=False) as z:

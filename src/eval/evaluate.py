@@ -144,7 +144,8 @@ class EvalBatch:
 
 @dataclass(frozen=True)
 class PerImageRow:
-    """Exactly the fields frozen by contract section 5.4 -- no per-image classwise arrays."""
+    """Exactly the fields frozen by contract section 5.4 -- no per-image classwise arrays -- plus the
+    derived AM-5 flag, serialised last (contract section 3.2; lane L-AM5)."""
     image_id: str
     clean_image_id: str
     manifest_index: int
@@ -156,6 +157,12 @@ class PerImageRow:
     n_eligible_all_class: int
     n_eligible_disease_only: int
     gt_disease_classes: list[int]
+
+    @property
+    def am5_excluded(self) -> bool:
+        """AM-5: the evaluated mask has no disease ground truth, so the image is excluded from every
+        per-image disease-only analysis. Ground truth only, hence identical across models."""
+        return self.n_eligible_disease_only == 0
 
     def as_dict(self) -> dict:
         return {
@@ -170,6 +177,7 @@ class PerImageRow:
             "n_eligible_all_class": self.n_eligible_all_class,
             "n_eligible_disease_only": self.n_eligible_disease_only,
             "gt_disease_classes": self.gt_disease_classes,
+            "am5_excluded": self.am5_excluded,
         }
 
 
