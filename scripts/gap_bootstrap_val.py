@@ -26,18 +26,24 @@ Inputs: the two AM-17b item 2(c) CPU re-scores and the L-AM17-GTPRESENT outputs
 3. d5 cross-check (STOP, exit 1): each point estimate equals the difference of the two L-AM17-GTPRESENT
    `rules_float64` values within 1e-12, for both rules and both class subsets (S1 ruling). Each
    eligibility file must name the input artifact's own four file hashes (exit 2 otherwise).
-4. Four bootstraps (src/stats/gap.py: B = 10,000, default_rng(42), BCa with the percentile fallback)
-   and the per-image summary on the AM-5-included images. Written once to
-   <out-dir>/gap_val_<UTC>.json; an existing output is never overwritten.
+4. Four bootstraps (src/stats/gap.py: B = 10,000, default_rng(42), BCa; the percentile interval of the
+   same replicates when the jackknife acceleration is non-finite, when BCa raises, or when BCa returns
+   a non-finite bound -- SciPy warns DegenerateDataWarning and returns NaN instead of raising; each
+   interval's fallback_reason names the condition) and the per-image summary on the AM-5-included
+   images. Written once to <out-dir>/gap_val_<UTC>.json, serialized before the file is created, so a
+   failed write leaves no partial file; an existing output is never overwritten. The output records
+   the analysis code's commit, whether those files were clean at it, and each file's sha256.
 
 Exit codes: 0 written; 1 STOP (a validity delta above its tolerance, or the d5 cross-check failed:
-evaluator regression or an unfaithful reconstruction -- report it); 2 refused or unreadable input.
+evaluator regression or an unfaithful reconstruction -- report it); 2 refused or unreadable input, or
+any other error (never a verdict).
 """
 from __future__ import annotations
 
 import argparse
 import hashlib
 import json
+import math
 import re
 import sys
 from datetime import datetime, timezone
@@ -55,6 +61,16 @@ UTC_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 _UTC = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 D5_TOLERANCE = 1e-12
 DEVICE, BATCH_SIZE = "cpu", 1
+RULE_KEYS, SCOPE_KEYS = ("union_present", "gt_present"), ("all_class", "disease_only")
+#: the analysis code recorded with every output (commit, clean state and sha256 of each file)
+CODE_FILES = ("scripts/gap_bootstrap_val.py", "src/stats/gap.py", "src/stats/val_artifacts.py",
+              "src/stats/eligibility.py", "src/stats/noninferiority.py", "src/stats/align.py",
+              "src/stats/ingest.py", "src/stats/tests.py")
+BOOTSTRAP_CALL = ("scipy.stats.bootstrap((idx,), stat, n_resamples=10000, method='BCa', "
+                  "random_state=numpy.random.default_rng(42), vectorized=False); the percentile interval "
+                  "of the same replicates when the jackknife acceleration is non-finite, when BCa raises, "
+                  "or when BCa returns a non-finite bound (SciPy warns DegenerateDataWarning and returns "
+                  "NaN instead of raising); fallback_reason names the condition")
 
 #: The pairing of record (AM-17 item 1(a), DL-17, DL-21, AM-17b item 2(c)) and the lane 7 (a) validity
 #: references.
@@ -122,8 +138,14 @@ def validity(art_t, art_e) -> dict:
 
 def load_eligibility(path: Path, art, label: str) -> dict:
     doc = json.loads(Path(path).read_text(encoding="utf-8"))
-    if doc.get("lane") != "L-AM17-GTPRESENT" or not isinstance(doc.get("rules_float64"), dict):
+    rf = doc.get("rules_float64")
+    if doc.get("lane") != "L-AM17-GTPRESENT" or not isinstance(rf, dict):
         raise Refused(f"{label}: {path} is not an L-AM17-GTPRESENT eligibility-variants file")
+    for rule in RULE_KEYS:
+        for scope in SCOPE_KEYS:
+            v = rf[rule].get(scope) if isinstance(rf.get(rule), dict) else None
+            if not isinstance(v, float) or not math.isfinite(v):
+                raise Refused(f"{label}: {path} rules_float64.{rule}.{scope} is {v!r}, not a finite number")
     if doc.get("artifact_sha256s") != art.file_sha256s:
         raise Refused(f"{label}: {path} was computed from other artifact files than {art.path}")
     return doc
@@ -148,6 +170,19 @@ def d5_cross_check(stages, elig_t: dict, elig_e: dict, background_index: int) ->
                 problems.append(f"{scope} {rule}: point {pt['point']!r} vs rules_float64 difference {want!r} "
                                 f"(|diff| {diff!r} > {D5_TOLERANCE})")
     return rec, problems
+
+
+def write_json(target: Path, doc: dict) -> None:
+    """Serialize first, then create the file exclusively; a failed write leaves no partial file."""
+    data = (json.dumps(doc, indent=2, ensure_ascii=False, allow_nan=False) + "\n").encode("utf-8")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fh = open(target, "xb")                       # refuses an existing output; nothing created before
+    try:
+        with fh:
+            fh.write(data)
+    except BaseException:
+        target.unlink(missing_ok=True)
+        raise
 
 
 def main(argv=None) -> int:  # noqa: C901
@@ -175,7 +210,7 @@ def main(argv=None) -> int:  # noqa: C901
         from src.stats.align import METRIC_DISEASE_ONLY, align_runs
         from src.stats.gap import DIRECTION, gap_rules, paired_totals_identical_gt, per_image_summary
         from src.stats.noninferiority import PooledStages
-        from src.stats.val_artifacts import AM5_LAYOUT, POLICY, load_val_artifact
+        from src.stats.val_artifacts import AM5_LAYOUT, POLICY, code_provenance, load_val_artifact
 
         if target.exists():
             raise Refused(f"refusing to overwrite {target}")
@@ -191,7 +226,12 @@ def main(argv=None) -> int:  # noqa: C901
         return EXIT_REFUSED
 
     ident = art_t.run.identity
-    valid = validity(art_t, art_e)
+    try:
+        valid = validity(art_t, art_e)
+        d5, problems = d5_cross_check(stages, elig_t, elig_e, ident.background_index)
+    except Exception as e:                            # noqa: BLE001 -- an error is never a verdict
+        print(f"RESULT: ERROR -- {type(e).__name__}: {e}")
+        return EXIT_REFUSED
     for label in ("e1", "teacher"):
         v = valid[label]
         print(f"validity {label}: {v['value']!r} vs {v['reference']!r} -> delta {v['delta']:+.3e} "
@@ -200,7 +240,6 @@ def main(argv=None) -> int:  # noqa: C901
         print("RESULT: STOP -- a validity delta exceeds its tolerance (evaluator regression); nothing "
               "written")
         return EXIT_STOP
-    d5, problems = d5_cross_check(stages, elig_t, elig_e, ident.background_index)
     if problems:
         for msg in problems:
             print(f"  d5: {msg}")
@@ -243,18 +282,14 @@ def main(argv=None) -> int:  # noqa: C901
                       "n_included": pv.am5.n_included, "excluded_ids_sha256": pv.am5.excluded_ids_sha256},
         "validity_deltas": valid,
         "d5_cross_check": {"tolerance": D5_TOLERANCE, "source": "L-AM17-GTPRESENT rules_float64", **d5},
-        "bootstrap_call": "scipy.stats.bootstrap((idx,), stat, n_resamples=10000, method='BCa', "
-                          "random_state=numpy.random.default_rng(42), vectorized=False); percentile on "
-                          "the same replicates when the jackknife acceleration is non-finite or BCa "
-                          "fails (fallback_reason)",
+        "bootstrap_call": BOOTSTRAP_CALL,
+        "code": code_provenance(CODE_FILES),
         "environment": {"python": sys.version.split()[0], "numpy": np.__version__,
                         "scipy": scipy.__version__, "torch": torch.__version__},
         "generated_utc": stamp,
     }
     try:
-        args.out_dir.mkdir(parents=True, exist_ok=True)
-        with open(target, "x", encoding="utf-8", newline="\n") as fh:
-            fh.write(json.dumps(doc, indent=2, ensure_ascii=False, allow_nan=False) + "\n")
+        write_json(target, doc)
     except Exception as e:                            # noqa: BLE001
         print(f"RESULT: REFUSED -- {type(e).__name__}: {e}")
         return EXIT_REFUSED

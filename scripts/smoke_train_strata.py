@@ -239,6 +239,26 @@ def main() -> int:  # noqa: C901
               and not (work / "badutc").exists(), text[-120:])
         rc, text = run_cli(["--help"])
         check("S2-12 --help renders (exit 0)", rc == 0 and "usage:" in text, text[-200:])
+        nan_out = work / "nan_out"
+        try:
+            mod.write_outputs(nan_out, {**doc, "bad": float("nan")}, c1.read_bytes())
+            raised = False
+        except ValueError:
+            raised = True
+        check("S2-13 a document that cannot be serialized creates no file (serialized first)",
+              raised and not nan_out.exists())
+        real_json_bytes = mod.json_bytes
+        mod.json_bytes = lambda d: real_json_bytes(d).decode("utf-8")      # str: the binary write fails
+        half = work / "half_out"
+        try:
+            mod.write_outputs(half, doc, c1.read_bytes())
+            raised = False
+        except TypeError:
+            raised = True
+        finally:
+            mod.json_bytes = real_json_bytes
+        check("S2-14 a write that fails after the CSV exists leaves neither the CSV nor a partial JSON",
+              raised and half.is_dir() and not any(half.iterdir()))
 
         # ============================ S3 refusals ============================
         reads = []

@@ -17,12 +17,20 @@ Output (src/stats/perclass.py): <out-dir>/perclass_gap_val_<UTC>.json and .csv -
 (stratum, rare, VAL gt_support, iou_teacher, iou_e1, delta, both iou_status; class 69 with no VAL
 ground truth is not_evaluable) plus the background line, the per-stratum / rare / overall summaries,
 the input sha256s (the four files of each artifact and the strata file) and the d2 integrity record.
-The files are written only when the lane 4 d2 integrity holds: each model's table IoUs reproduce its
-recorded mIoU bitwise in the evaluator's arithmetic, 115 rows plus the background line, and every
-class sits in exactly one stratum. An existing output is never overwritten.
+The files are written only when the lane 4 d2 integrity holds: 115 rows plus the background line,
+every class in exactly one stratum, and, for each model, the per-class counts the table carries
+reproduce its recorded mIoU BITWISE in the evaluator's own arithmetic (float32 counts, float32 IoU,
+float32 mean over the union-present classes, as src/eval/metrics.py) while the table's IoU column
+equals summary.per_class.iou, the exact quotient intersection / union. That is how d2's "mean of
+iou_teacher over union-present classes equals R3's mIoU exactly" is read: a float64 mean of the
+float64 IoU column differs from the recorded float32 value by rounding, so it is recorded, never
+gated. Both files are serialized before either is created, a failed write leaves neither behind, and
+an existing output is never overwritten. The output records the analysis code's commit, whether those
+files were clean at it, and each file's sha256.
 
 Exit codes: 0 written; 1 STOP -- the d2 integrity failed (nothing written); 2 refused or unreadable
-input (not the specified pair, upstream protocol, TEST split, strata file, existing output).
+input (not the specified pair, upstream protocol, TEST split, strata file, existing output) or any
+other error (never a verdict).
 """
 from __future__ import annotations
 
@@ -44,6 +52,9 @@ EXIT_OK, EXIT_STOP, EXIT_REFUSED = 0, 1, 2
 LANE = "L-AM17-PERCLASS"
 DEFAULT_OUT_DIR = REPO / "reports" / "derived"
 OUT_PREFIX = "perclass_gap_val_"
+#: the analysis code recorded with every output (commit, clean state and sha256 of each file)
+CODE_FILES = ("scripts/perclass_gap_table.py", "src/stats/perclass.py", "src/stats/val_artifacts.py",
+              "src/stats/eligibility.py", "src/stats/align.py", "src/stats/ingest.py")
 UTC_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 _UTC = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 
@@ -80,7 +91,8 @@ def build(teacher_dir, e1_dir, strata_path, generated_utc: str) -> tuple[dict, b
     """(document, CSV bytes, integrity problems). Raises ValArtifactError / PerclassError on bad input."""
     from src.stats.perclass import (PerclassError, integrity, load_strata, perclass_rows, strata_index,
                                     summarize)
-    from src.stats.val_artifacts import load_val_artifact, require_comparable, require_role
+    from src.stats.val_artifacts import (code_provenance, load_val_artifact, require_comparable,
+                                         require_role)
 
     art_t = load_val_artifact(teacher_dir, label="teacher")
     art_e = load_val_artifact(e1_dir, label="E1")
@@ -123,25 +135,31 @@ def build(teacher_dir, e1_dir, strata_path, generated_utc: str) -> tuple[dict, b
         "summaries": summaries,
         "integrity": record,
         "csv_sha256": hashlib.sha256(csv_b).hexdigest(),
+        "code": code_provenance(CODE_FILES),
         "generated_utc": generated_utc,
     }
     return doc, csv_b, problems
 
 
 def write(out_dir: Path, doc: dict, csv_b: bytes) -> tuple[Path, Path]:
+    """Serialize first, then create both files exclusively; a failure leaves neither file behind."""
     stamp = doc["generated_utc"].replace("-", "").replace(":", "")
     targets = (out_dir / f"{OUT_PREFIX}{stamp}.json", out_dir / f"{OUT_PREFIX}{stamp}.csv")
+    json_b = (json.dumps(doc, indent=2, ensure_ascii=False, allow_nan=False) + "\n").encode("utf-8")
     existing = [str(t) for t in targets if t.exists()]
     if existing:
         raise FileExistsError(f"refusing to overwrite {existing}")
     out_dir.mkdir(parents=True, exist_ok=True)
-    with open(targets[1], "xb") as fh:
-        fh.write(csv_b)
+    created: list[Path] = []
     try:
-        with open(targets[0], "xb") as fh:
-            fh.write((json.dumps(doc, indent=2, ensure_ascii=False, allow_nan=False) + "\n").encode("utf-8"))
+        for path, data in ((targets[1], csv_b), (targets[0], json_b)):
+            fh = open(path, "xb")                     # exclusive: never replaces an existing file
+            created.append(path)
+            with fh:
+                fh.write(data)
     except BaseException:
-        targets[1].unlink()
+        for path in created:
+            path.unlink(missing_ok=True)
         raise
     return targets
 

@@ -373,6 +373,13 @@ def main() -> int:  # noqa: C901
         check("P3-6 CSV: header, 115 rows, background last; JSON binds the CSV hash",
               len(lines) == 117 and lines[-1].startswith("0,background,") and lines[1].startswith("1,")
               and doc["csv_sha256"] == hashlib.sha256(cp.read_bytes()).hexdigest())
+        code = doc.get("code", {})
+        check("P3-9 code provenance: HEAD commit, clean flag and the sha256 of each analysis file",
+              isinstance(code.get("code_commit"), str) and len(code["code_commit"]) == 40
+              and isinstance(code.get("code_clean_at_commit"), bool)
+              and list(code.get("code_files", {})) == list(cli.CODE_FILES)
+              and code["code_files"]["src/stats/perclass.py"]
+              == hashlib.sha256((REPO / "src" / "stats" / "perclass.py").read_bytes()).hexdigest(), code)
         rc2, _ = in_process(cli, ["--teacher", str(art_t), "--e1", str(art_e), "--strata", str(sfile),
                                   "--out-dir", str(work / "derived2"), "--generated-utc", UTC])
         check("P3-7 two runs are byte-identical (JSON and CSV)", rc2 == 0
@@ -451,6 +458,15 @@ def main() -> int:  # noqa: C901
         h = subprocess.run([sys.executable, "-B", str(REPO / "scripts" / "perclass_gap_table.py"), "--help"],
                            capture_output=True, text=True)
         check("P4-14 --help renders (exit 0)", h.returncode == 0 and "usage:" in h.stdout, h.stderr[-200:])
+        csv_ok = cp.read_bytes()
+        nan_dir = work / "nan_table"
+        e = expect(ValueError, cli.write, nan_dir, {**doc, "bad": float("nan")}, csv_ok)
+        check("P4-15 a table that cannot be serialized creates no file", "Out of range" in str(e)
+              and not nan_dir.exists(), e)
+        half = work / "half_table"
+        expect(TypeError, cli.write, half, doc, "not bytes")
+        check("P4-16 a write that fails after a file was created leaves no file behind",
+              half.is_dir() and not any(half.iterdir()))
     except Exception:                                        # noqa: BLE001
         traceback.print_exc()
         check("FATAL", False, traceback.format_exc(limit=2))

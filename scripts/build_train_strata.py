@@ -19,7 +19,8 @@ mask is read (exit 2). For each disease class 1-115:
 Background (class 0) is counted but takes no share or rank. A mask value outside 0..115 other than
 the ignore index 255 is refused by name. Output: <out-dir>/train_strata_v1.json and .csv, sorted by
 class id and deterministic: two runs over the same masks at the same commit write identical bytes when
---generated-utc is pinned (the only volatile field). An existing output is never overwritten.
+--generated-utc is pinned (the only volatile field). Both files are serialized before either is
+created, a failed write leaves neither behind, and an existing output is never overwritten.
 
 CHECK (lane 5 d2, local, after the build). PASS iff the file is the registered build (5,367 images,
 116 classes, rare threshold 20, status provisional) and internally consistent (shares, ranks, terciles,
@@ -312,19 +313,24 @@ def json_bytes(doc: dict) -> bytes:
 
 
 def write_outputs(out_dir, doc: dict, csv_b: bytes) -> tuple[Path, Path]:
+    """Serialize first, then create both files exclusively; a failure leaves neither file behind."""
     out = Path(out_dir)
     targets = (out / f"{OUT_STEM}.json", out / f"{OUT_STEM}.csv")
+    json_b = json_bytes(doc)                          # before any file exists
     existing = [str(t) for t in targets if t.exists()]
     if existing:
         raise StrataError(f"refusing to overwrite {existing}")
     out.mkdir(parents=True, exist_ok=True)
-    with open(targets[1], "xb") as fh:
-        fh.write(csv_b)
+    created: list[Path] = []
     try:
-        with open(targets[0], "xb") as fh:
-            fh.write(json_bytes(doc))
+        for path, data in ((targets[1], csv_b), (targets[0], json_b)):
+            fh = open(path, "xb")                     # exclusive: never replaces an existing file
+            created.append(path)
+            with fh:
+                fh.write(data)
     except BaseException:
-        targets[1].unlink()                          # never leave a CSV without its JSON
+        for path in created:                          # never a CSV without its JSON, nor a partial file
+            path.unlink(missing_ok=True)
         raise
     return targets
 

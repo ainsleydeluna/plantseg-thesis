@@ -448,6 +448,13 @@ def main() -> int:  # noqa: C901
               and doc["inputs"]["pairing"]["device"] == "cpu" and doc["inputs"]["pairing"]["batch_size"] == 1
               and doc["inputs"]["eligibility_variants"]["e1"]["sha256"]
               == hashlib.sha256(el_e.read_bytes()).hexdigest())
+        code = doc.get("code", {})
+        check("G6-10 code provenance recorded and the three fallback conditions named in bootstrap_call",
+              isinstance(code.get("code_commit"), str) and len(code["code_commit"]) == 40
+              and isinstance(code.get("code_clean_at_commit"), bool)
+              and list(code.get("code_files", {})) == list(cli.CODE_FILES)
+              and "non-finite bound" in doc["bootstrap_call"] and "BCa raises" in doc["bootstrap_call"]
+              and "acceleration is non-finite" in doc["bootstrap_call"], code)
         rc2, _ = in_process(cli, [*base, "--out-dir", str(work / "derived2")])
         check("G6-9 two runs write byte-identical results", rc2 == 0
               and (work / "derived2" / jp.name).read_bytes() == jp.read_bytes())
@@ -530,6 +537,22 @@ def main() -> int:  # noqa: C901
         h = subprocess.run([sys.executable, "-B", str(REPO / "scripts" / "gap_bootstrap_val.py"), "--help"],
                            capture_output=True, text=True)
         check("G7-17 --help renders (exit 0)", h.returncode == 0 and "usage:" in h.stdout, h.stderr[-200:])
+        for label, tag, mutate in (
+                ("G7-18", "a missing scope", lambda r: r["gt_present"].pop("disease_only")),
+                ("G7-19", "a null value", lambda r: r["union_present"].__setitem__("all_class", None))):
+            bad2 = json.loads(el_e.read_text(encoding="utf-8"))
+            mutate(bad2["rules_float64"])
+            bp = work / f"elig_{label}.json"
+            bp.write_text(json.dumps(bad2), encoding="utf-8")
+            run(f"{label} an eligibility file with {tag} is refused (exit 2, not a STOP)", ee=bp,
+                marker="not a finite number")
+        tgt = work / "wj" / "gap_val_x.json"
+        e = expect(ValueError, cli.write_json, tgt, {"bad": float("nan")})
+        check("G7-20 a result that cannot be serialized creates no file", not tgt.exists(), e)
+        tgt.parent.mkdir(parents=True, exist_ok=True)
+        tgt.write_bytes(b"prior")
+        expect(FileExistsError, cli.write_json, tgt, {"ok": 1})
+        check("G7-21 write_json never replaces an existing file", tgt.read_bytes() == b"prior")
     except Exception:                                        # noqa: BLE001
         traceback.print_exc()
         check("FATAL", False, traceback.format_exc(limit=2))

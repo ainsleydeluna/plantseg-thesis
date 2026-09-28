@@ -14,12 +14,20 @@ One loader serves both entry points, so they refuse the same inputs:
     pre-lane artifact (layout 1.0.0) whose AM-5 flags the reader derives. `min_layout` adds a floor:
     the gap lane's inputs are re-scored after the L-AM5 merge, so it requires 1.1.0 or later.
 
+`code_provenance` records which analysis code wrote a derived output: HEAD, whether the named files are
+unmodified at HEAD (a `git status` over those explicit paths only, never the whole tree) and each file's
+sha256 as run.
+
 The frozen OFFICIAL ingest branch, the TEST driver and the bootstrap task matrix are not touched; this
-module only calls the public reader. Import-time behaviour is side-effect free.
+module only calls the public reader. Import-time behaviour is side-effect free: Git runs only inside
+`code_provenance`.
 """
 from __future__ import annotations
 
 import hashlib
+import os
+import re
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -30,6 +38,8 @@ from .ingest import EvaluationRun, IngestError, Policy, _layout, load_run, verif
 
 POLICY = Policy.REHEARSAL
 AM5_LAYOUT = (1, 1, 0)                 # the first layout that carries the AM-5 fields (ingest)
+REPO = Path(__file__).resolve().parents[2]
+_HEX40 = re.compile(r"^[0-9a-f]{40}$")
 
 
 class ValArtifactError(RuntimeError):
@@ -120,6 +130,31 @@ def require_role(art: ValArtifact, *, stage: str, model_role: str, precision: st
                                f"expected model {checkpoint_sha256!r}")
 
 
+def _git(*args) -> str | None:
+    """git output from the repository root, or None. GIT_OPTIONAL_LOCKS=0: never writes the index."""
+    try:
+        p = subprocess.run(["git", *args], cwd=str(REPO), capture_output=True, text=True, timeout=60,
+                           env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"})
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return p.stdout if p.returncode == 0 else None
+
+
+def code_provenance(rel_paths) -> dict:
+    """{code_commit, code_clean_at_commit, code_files} for the analysis code that writes an output.
+
+    `code_clean_at_commit` is None when Git is unavailable, else True iff none of `rel_paths` differs
+    from HEAD or is untracked. Only those explicit paths are passed to `git status`.
+    """
+    rel = [str(p) for p in rel_paths]
+    head = (_git("rev-parse", "HEAD") or "").strip()
+    commit = head if _HEX40.match(head) else None
+    status = _git("status", "--porcelain=v1", "--", *rel) if commit else None
+    return {"code_commit": commit,
+            "code_clean_at_commit": None if status is None else status == "",
+            "code_files": {p: _sha256(REPO / p) for p in rel}}
+
+
 def require_comparable(baseline: ValArtifact, candidate: ValArtifact) -> None:
     """Same split, manifest, class map, protocol and metric implementation (REHEARSAL strictness)."""
     try:
@@ -129,4 +164,4 @@ def require_comparable(baseline: ValArtifact, candidate: ValArtifact) -> None:
 
 
 __all__ = ["POLICY", "AM5_LAYOUT", "ValArtifactError", "ValArtifact", "require_canvas",
-           "load_val_artifact", "require_role", "require_comparable"]
+           "load_val_artifact", "require_role", "require_comparable", "code_provenance"]

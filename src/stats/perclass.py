@@ -14,12 +14,14 @@ teacher better (delta > 0), E1 better (delta < 0) and ties (delta == 0, exactly)
 (class 0) is reported as one separate line and enters no summary.
 
 Integrity (lane 4 d2), per model: the per-class supports carried by the table reproduce the model's
-dataset-level mIoU BITWISE under the evaluator's own arithmetic (`src.stats.eligibility.dataset_miou`,
-float32 as src/eval/metrics.py), all-class and disease-only, with the same eligible-class counts; the
-table's IoU equals `summary.per_class.iou` and the exact quotient intersection / union. So the mean of
-each model's table IoU over its union-present classes, in the evaluator's arithmetic, IS its recorded
-mIoU. The float64 mean of the same IoUs is recorded beside it (it differs from the float32 value by
-float32 rounding only). Both artifacts must carry identical `gt_support` (one VAL ground truth).
+dataset-level mIoU BITWISE under the evaluator's own arithmetic (`src.stats.eligibility.dataset_miou`:
+float32 counts, float32 IoU and a float32 mean over the union-present classes, as src/eval/metrics.py),
+all-class and disease-only, with the same eligible-class counts; and the table's IoU equals
+`summary.per_class.iou`, the exact float64 quotient intersection / union. That is how d2's "mean of
+iou_teacher over union-present classes equals R3's mIoU exactly" is read. A float64 mean of the
+float64 IoU column is NOT the recorded value -- it differs by the evaluator's float32 rounding (counts
+above 2**24 are rounded before dividing) -- so it is recorded beside the proof and never gated.
+Both artifacts must carry identical `gt_support` (one VAL ground truth).
 
 Import-time behaviour is side-effect free.
 """
