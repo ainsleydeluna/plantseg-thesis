@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Synthetic verification of the SegNeXt-B / MSCAN-B teacher adapter. No mmseg, no GPU, no dataset.
+"""Synthetic verification of the SegNeXt-B / MSCAN-B teacher adapter. No GPU, no dataset; mmseg optional.
 
 The real teacher checkpoint does not exist yet and MMSegmentation is intentionally absent from the
 E1/E2/E3 student stack, so every check here runs on stub modules and synthetic checkpoints written
 to a temp dir OUTSIDE the repo. What is proven: the adapter's framework-independent behaviour
 (checkpoint parsing, Stage-3 resolution by semantics, class-space validation, provenance, frozen
-teacher, E3 integration) and that the mmseg-dependent path fails loudly rather than silently.
+teacher, E3 integration) and that the mmseg-dependent path fails loudly rather than silently. That one
+check detects the MMSeg stack the way the builder does: without it the builder must raise
+TeacherStackMissing; with it, it must refuse a config that does not exist.
 
 Kept separate from scripts/smoke_distill.py so teacher-specific checks do not bloat that suite.
 """
@@ -38,6 +40,21 @@ TMP = Path(tempfile.mkdtemp(prefix="smoke_teacher_"))
 
 def check(name: str, ok: bool, detail: str = "") -> None:
     results.append((name, bool(ok), detail))
+
+
+def mmseg_stack_importable() -> bool:
+    """True when the real teacher builder's own import, `from mmseg.apis import init_model`, works.
+
+    src/distill/segnext_teacher._mmseg_model_factory raises TeacherStackMissing exactly when that
+    import fails, so the stack-dependent check expects the outcome the builder itself will produce.
+    Call it only after the checks that mmseg is not yet imported: when the stack is present, it
+    imports mmseg.
+    """
+    try:
+        from mmseg.apis import init_model  # noqa: F401
+    except Exception:  # noqa: BLE001 — the builder treats any import failure as a missing stack
+        return False
+    return True
 
 
 def expect_raises(name: str, exc, fn, *a, **kw) -> None:
@@ -143,10 +160,23 @@ def test_import_isolation() -> None:
     check("mmseg_path_is_lazy",
           "mmseg" not in sys.modules and "mmcv" not in sys.modules,
           "importing the adapter still pulls no teacher stack")
-    # the real mmseg builder must fail loudly when the stack is absent
+    # the real mmseg builder must fail loudly: at the import when the stack is absent, and on a
+    # config that does not exist when it is present (never a silent fallback to a default)
     ck = write_ckpt("stack.pth", valid_state())
-    expect_raises("mmseg_builder_raises_TeacherStackMissing", TeacherStackMissing,
-                  build_segnext_teacher, ck, config_path="whatever.py")
+    if not mmseg_stack_importable():
+        expect_raises("mmseg_builder_raises_TeacherStackMissing", TeacherStackMissing,
+                      build_segnext_teacher, ck, config_path="whatever.py")
+    else:
+        missing = TMP / "missing_config.py"
+        try:
+            build_segnext_teacher(ck, config_path=str(missing))
+            check("mmseg_builder_with_stack_refuses_missing_config", False, "no exception raised")
+        except FileNotFoundError as e:
+            check("mmseg_builder_with_stack_refuses_missing_config", missing.name in str(e),
+                  f"{type(e).__name__}: {e}"[:120])
+        except Exception as e:  # noqa: BLE001
+            check("mmseg_builder_with_stack_refuses_missing_config", False,
+                  f"wrong exception {type(e).__name__}: {e}")
 
 
 # ---------------------------------------------------------------- 2. checkpoint handling
@@ -360,7 +390,7 @@ def test_m4_nmf_stream() -> None:
 
 def main() -> int:
     print("=" * 78)
-    print("SEGNEXT-B / MSCAN-B TEACHER ADAPTER SMOKE — stubs only; no mmseg, no GPU, no dataset")
+    print("SEGNEXT-B / MSCAN-B TEACHER ADAPTER SMOKE — stubs only (mmseg optional); no GPU, no dataset")
     print(f"torch {torch.__version__} | temp dir {TMP}")
     print("=" * 78)
     for fn in (test_import_isolation, test_checkpoint_formats, test_stage3_resolution,

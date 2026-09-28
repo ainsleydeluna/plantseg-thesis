@@ -35,7 +35,10 @@ from types import SimpleNamespace
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 CONFIG = REPO / "configs" / "teacher" / "segnext_mscan-b_1xb16-adamw-40k_plantseg116-512x512.py"
-STOCK = "/usr/local/lib/python3.11/site-packages/mmseg/.mim/configs/segnext/segnext_mscan-b_1xb16-adamw-160k_ade20k-512x512.py"
+# The stock MSCAN-B ADE20K config at its path in the pinned image. PLANTSEG_MMSEG_STOCK_CONFIG points
+# at the same file in another mmseg install (for example a venv), so the smoke runs outside the image.
+STOCK = (os.environ.get("PLANTSEG_MMSEG_STOCK_CONFIG")
+         or "/usr/local/lib/python3.11/site-packages/mmseg/.mim/configs/segnext/segnext_mscan-b_1xb16-adamw-160k_ade20k-512x512.py")
 TMP = Path(tempfile.mkdtemp(prefix="smoke_teacher_selection_"))
 results: list[tuple[str, bool, str]] = []
 

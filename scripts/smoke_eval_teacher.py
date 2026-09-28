@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Synthetic verification of the teacher clean-evaluation path. No mmseg, no GPU, no dataset.
+"""Synthetic verification of the teacher clean-evaluation path. No GPU, no dataset; mmseg optional.
 
 The teacher is a DESCRIPTIVE REFERENCE: this proves it can be resolved, validated and evaluated as
 an ordinary FP32 model, while never being turned into an inferential comparator. All fixtures are
-synthetic checkpoints in a temp dir outside the repository; PlantSeg is never touched.
+synthetic checkpoints in a temp dir outside the repository; PlantSeg is never touched. The one check
+on the real (non-stub) builder path detects the MMSeg stack the way the builder does: without it the
+path must fail loudly; with it, it must build the thesis teacher from its config.
 """
 from __future__ import annotations
 
@@ -32,6 +34,21 @@ results: list[tuple[str, bool, str]] = []
 
 def check(name: str, ok: bool, detail: str = "") -> None:
     results.append((name, bool(ok), detail))
+
+
+def mmseg_stack_importable() -> bool:
+    """True when the real teacher builder's own import, `from mmseg.apis import init_model`, works.
+
+    src/distill/segnext_teacher._mmseg_model_factory raises TeacherStackMissing exactly when that
+    import fails, so the stack-dependent check expects the outcome the builder itself will produce.
+    Call it only after the check that the evaluator imports pulled no mmseg: when the stack is
+    present, it imports mmseg.
+    """
+    try:
+        from mmseg.apis import init_model  # noqa: F401
+    except Exception:  # noqa: BLE001 — the builder treats any import failure as a missing stack
+        return False
+    return True
 
 
 def expect(name: str, exc, fn, *a, **kw) -> None:
@@ -202,10 +219,26 @@ def test_loading() -> None:
     expect("wrapper_refuses_wrong_logit_channels", CheckpointError,
            TeacherEvalModel(_WrongChannels()), torch.randn(1, 3, 32, 32))
 
-    # the real builder path fails loudly without the teacher stack
+    # the real builder path fails loudly without the teacher stack; with it, it builds the thesis
+    # teacher from its config: the MMSeg SegNeXt adapter, frozen, with the M4-V stream (no stub).
+    # Construction only, not weight fidelity: mmengine loads the partial fixture non-strictly.
     from src.distill.teacher import TeacherStackMissing
-    expect("missing_teacher_stack_fails_loudly", TeacherStackMissing, load_teacher_model, resolved,
-           config_path=str(TEACHER_CONFIG))
+    if not mmseg_stack_importable():
+        expect("missing_teacher_stack_fails_loudly", TeacherStackMissing, load_teacher_model, resolved,
+               config_path=str(TEACHER_CONFIG))
+    else:
+        from src.distill.segnext_teacher import SegNeXtTeacherAdapter
+        try:
+            real, _ = load_teacher_model(resolved, config_path=str(TEACHER_CONFIG))
+            policy = (real.nmf_policy or {}).get("policy")
+            ok = (isinstance(real, TeacherEvalModel)
+                  and isinstance(real.teacher.teacher, SegNeXtTeacherAdapter)
+                  and policy == "M4-V" and not real.training
+                  and all(not p.requires_grad for p in real.parameters()))
+            detail = f"MMSeg stack present: real SegNeXt teacher built, nmf_policy={policy}"
+        except Exception as e:  # noqa: BLE001
+            ok, detail = False, f"{type(e).__name__}: {e}"[:160]
+        check("real_teacher_path_builds_with_stack", ok, detail)
     # B62: the real (non-stub) path needs the thesis teacher config, whose head implements M4-V.
     expect("real_teacher_requires_config", CheckpointError, load_teacher_model, resolved)
     stub_model, _ = load_teacher_model(resolved, builder=stub_builder)
@@ -281,7 +314,7 @@ def test_cli_and_safety() -> None:
 
 def main() -> int:
     print("=" * 78)
-    print("TEACHER CLEAN-EVALUATION SMOKE — synthetic; no mmseg, no GPU, no PlantSeg")
+    print("TEACHER CLEAN-EVALUATION SMOKE — synthetic (mmseg optional); no GPU, no PlantSeg")
     print(f"temp: {TMP}")
     print("=" * 78)
     for fn in (test_resolution, test_provenance, test_loading, test_cli_and_safety):
