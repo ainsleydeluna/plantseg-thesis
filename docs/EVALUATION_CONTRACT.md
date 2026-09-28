@@ -809,7 +809,11 @@ protocol of §§2–10: every inferential, checkpoint-selection and readiness nu
 only: the teacher at TEST (AM-13), every student at TEST and E1 on VAL before the first KD run (AM-16
 item 4), and the teacher on VAL for the protocol effect, upstream minus canvas (AM-17 item 1(e)). An
 upstream score never enters the Holm family, a bootstrap, checkpoint selection or R3, and is never an
-inferential comparator; it is the score compared with the published 42.05% (AM-13).
+inferential comparator; it is the score compared with the published 42.05% (AM-13). Enforcement in code
+is partial (open): `src/stats/align.py` refuses to pair a canvas and an upstream artifact, but the
+frozen OFFICIAL and REHEARSAL ingest (`src/stats/ingest.py`) does not check the protocol, so the guard
+`dataset.preprocess_protocol == "core_preprocess/1.0.0"` belongs in the statistics entry points that
+consume TEST or VAL artifacts.
 
 **(b) Geometry** (source-proven from the upstream configs; lane spec (a)):
 1. Rescale as mmcv `Resize(scale=(2048, 512), keep_ratio=True)`: s = min(2048 / long side, 512 / short
@@ -830,8 +834,11 @@ inferential comparator; it is the score compared with the published 42.05% (AM-1
 **(c) Numerics.** Only the geometry changes. The image numerics are the evaluator's own and identical
 for both models, because the R3 teacher path feeds the teacher the student's tensors: EXIF transpose of
 the image only, RGB, the repository's PIL bilinear resize (as `core_preprocess`), [0, 1] scaling and
-ImageNet mean/std (`transforms.finalize`). mmcv's cv2 resize is not used, so rescaled pixel values can
-differ slightly from the upstream pipeline's; this is disclosed with the descriptive score. The teacher
+ImageNet mean/std (`transforms.finalize`). mmcv's cv2 decoding and resize are not used. PIL's bilinear
+filter widens with the reduction factor and cv2's `INTER_LINEAR` does not, so rescaled pixels differ
+from the upstream pipeline's, increasingly with the downscale factor (on a synthetic texture, a mean
+absolute difference of about 3/255 at 2× and about 10/255 at about 6×; within 1/255 when enlarging).
+Every upstream artifact's `note` states this, and it is disclosed with every upstream score. The teacher
 keeps M4-V (§7.3): batch size 1, the frozen manifest order, the NMF stream seeded 42 once per pass. The
 NMF basis draw does not depend on the image size, so both protocols consume the stream identically.
 

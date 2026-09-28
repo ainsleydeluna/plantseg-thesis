@@ -71,16 +71,24 @@ def _verified_summary(d: Path) -> dict:
 def d4(pre: Path, lane: Path) -> int:
     import numpy as np
 
-    from src.eval.artifacts import AM5_RULE, ARTIFACT_SCHEMA_VERSION, am5_excluded_ids_sha256
+    from src.eval.artifacts import AM5_RULE, am5_excluded_ids_sha256
+    from src.stats.ingest import AM5_MIN_LAYOUT, IngestError, _layout
 
     sp, sl = _verified_summary(pre), _verified_summary(lane)
     problems: list[str] = []
     notes: list[str] = []
     if any(k in sp for k in NEW_SUMMARY_KEYS):
         problems.append("PRE carries the L-AM5 summary keys: it is not a pre-lane artifact")
-    if sl.get("artifact_schema_version") != ARTIFACT_SCHEMA_VERSION or "am5" not in sl:
+    # Any additive 1.x layout from 1.1.0 on carries the L-AM5 fields (the reader's rule), so a LANE
+    # artifact scored at the L-AM5 commit (1.1.0) or after lane L-AM13 (1.2.0) is accepted.
+    try:
+        layout = _layout(sl)
+    except IngestError:
+        layout = None
+    if layout is None or layout < AM5_MIN_LAYOUT or "am5" not in sl:
         problems.append(f"LANE lacks the L-AM5 layout (artifact_schema_version "
-                        f"{sl.get('artifact_schema_version')!r}, expected {ARTIFACT_SCHEMA_VERSION!r})")
+                        f"{sl.get('artifact_schema_version')!r}, expected plantseg-eval-artifact/1.x.y "
+                        f"at or after {'.'.join(map(str, AM5_MIN_LAYOUT))})")
 
     # ---- per_image.jsonl: LANE row == PRE row + '"am5_excluded": <bool>' appended last ----
     pre_lines = (pre / "per_image.jsonl").read_text(encoding="utf-8").splitlines()

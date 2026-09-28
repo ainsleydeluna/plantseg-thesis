@@ -34,7 +34,7 @@ import numpy as np
 
 from . import metrics as _metrics_module
 from . import protocols as _protocols
-from .evaluate import Condition, DatasetMeta, EvalResult, ManifestEntry, RunMeta
+from .evaluate import ROW_KEYS, Condition, DatasetMeta, EvalResult, ManifestEntry, RunMeta
 
 SCHEMA_VERSION = "plantseg-eval/1.0.0"
 METRIC_PROTOCOL = "plantseg-metrics/1.0.0"
@@ -296,6 +296,11 @@ def validate_artifact_request(req: ArtifactRequest) -> Provenance:
         raise ArtifactRequestError(f"precision must be one of {PRECISIONS}")
     if req.dataset.split not in SPLITS:
         raise ArtifactRequestError(f"split must be one of {SPLITS}, got {req.dataset.split!r}")
+    pp = req.dataset.preprocess_protocol
+    if pp.startswith(f"{_protocols.UPSTREAM}/") and pp != _protocols.UPSTREAM_PROTOCOL_ID:
+        raise ArtifactRequestError(
+            f"preprocess_protocol {pp!r} is an upstream version this evaluator does not implement "
+            f"(it implements {_protocols.UPSTREAM_PROTOCOL_ID}; contract section 11)")
 
     # frozen class space -- a non-116 result may never become a plantseg-eval/1.0.0 artifact
     if req.num_classes != FROZEN_NUM_CLASSES:
@@ -521,23 +526,29 @@ def validate_summary(summary: dict, req: ArtifactRequest, result: EvalResult) ->
 
 
 def check_row_protocol_fields(row: dict, protocol: dict | None) -> None:
-    """Contract section 11: an upstream row ends with exactly the shape fields, and they are the
-    upstream geometry of its `ori_shape`; a row of any other protocol carries none of them."""
-    fields = _protocols.SHAPE_FIELDS
-    present = [k for k in fields if k in row]
-    if protocol is None:
-        if present:
-            raise ArtifactWriteError(
-                f"per_image row {row.get('image_id')!r} carries {present}, which only the upstream "
-                "protocol defines")
-        return
-    if list(row)[-len(fields):] != list(fields):
+    """Contract sections 5.4 and 11: a row holds exactly the contract keys, in order, and after them
+    only the upstream protocol's shape fields, which must be the upstream geometry of its
+    `ori_shape`; a row of any other protocol holds nothing after the contract keys."""
+    image_id = row.get("image_id")
+    keys, base = list(row), list(ROW_KEYS)
+    if keys[:len(base)] != base:
         raise ArtifactWriteError(
-            f"per_image row {row.get('image_id')!r} must end with {list(fields)}, got {list(row)}")
+            f"per_image row {image_id!r} does not start with the contract keys {base}: {keys}")
+    extra = keys[len(base):]
+    if protocol is None:
+        if extra:
+            raise ArtifactWriteError(
+                f"per_image row {image_id!r} carries {extra}; only the upstream protocol adds "
+                "per-image fields")
+        return
+    fields = list(_protocols.SHAPE_FIELDS)
+    if extra != fields:
+        raise ArtifactWriteError(
+            f"per_image row {image_id!r} must end with {fields} after the contract keys, got {extra}")
     try:
         _protocols.validate_shapes({k: row[k] for k in fields})
     except _protocols.ProtocolError as e:
-        raise ArtifactWriteError(f"per_image row {row.get('image_id')!r}: {e}") from e
+        raise ArtifactWriteError(f"per_image row {image_id!r}: {e}") from e
 
 
 # --------------------------------------------------------------------------------------------------

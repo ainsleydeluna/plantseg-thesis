@@ -431,12 +431,12 @@ def main() -> int:  # noqa: C901
         check("D2-20 align_runs (REHEARSAL/OFFICIAL) aborts on differing AM-5 sets with the AM-5 message",
               "excluded id sets differ" in str(e) and "manifest mismatch" in str(e), str(e)[:120])
         v12 = edit_summary(shutil.copytree(d1, work / "v12"), lambda s: {
-            **s, "artifact_schema_version": "plantseg-eval-artifact/1.2.0"})
+            **s, "artifact_schema_version": "plantseg-eval-artifact/1.3.0"})     # beyond the writer's 1.2.0
         v2 = edit_summary(shutil.copytree(d1, work / "v2"), lambda s: {
             **s, "artifact_schema_version": "plantseg-eval-artifact/2.0.0"})
         vbad = edit_summary(shutil.copytree(d1, work / "vbad"), lambda s: {
             **s, "artifact_schema_version": "1.1"})
-        check("D2-21 a later additive layout (1.2.0) is read; another major or a malformed one aborts",
+        check("D2-21 a later additive layout (1.3.0) is read; another major or a malformed one aborts",
               load_run(v12, Policy.NONOFFICIAL_SMOKE).am5.source == "artifact"
               and "unsupported artifact_schema_version" in str(expect(
                   IngestError, load_run, v2, Policy.NONOFFICIAL_SMOKE))

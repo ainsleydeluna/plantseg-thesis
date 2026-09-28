@@ -11,11 +11,13 @@ pair, because it never resizes the mask. It also reports the largest image and t
 take once resized to it (116 float32 channels at the original resolution, as MMSeg's
 `postprocess_result` holds them).
 
-d5 (after the runs): two real VAL artifacts of one model scored under the upstream protocol.
-PASS iff both artifacts
+d5 (after the runs): two real VAL artifacts of one model scored under the upstream protocol, each
+written to a fresh --out-dir OUTSIDE the clone (an output inside it would change the second run's
+recorded worktree state). PASS iff both artifacts
   * verify (manifest hashes, strict JSON), are VAL, carry 846 rows and are scored under
     `upstream/1.0.0` with the contract `summary.protocol` block (EVALUATION_CONTRACT section 11);
-  * are the same model and manifest (stage, role, checkpoint sha256, split manifest sha256);
+  * are the same model and manifest (stage, role, checkpoint sha256, split manifest sha256), and,
+    with --expect-checkpoint-sha256, the model intended (E1 seed 42 cf0879f7..., teacher 8c0e649a...);
   * are bitwise identical: per_image.jsonl byte for byte, every sufficient_stats.npz array (dtype,
     shape, bytes), summary.json as canonical JSON once run.run_id and run.timestamp_utc are removed;
   * score every image at its original resolution: each row's shape fields are the upstream geometry
@@ -64,13 +66,18 @@ def _rows(d: Path) -> list[dict]:
     return [json.loads(ln) for ln in (d / "per_image.jsonl").read_text(encoding="utf-8").splitlines()]
 
 
-def d5(a_dir: Path, b_dir: Path, canvas_value: float | None) -> int:
+def d5(a_dir: Path, b_dir: Path, canvas_value: float | None,
+       expect_checkpoint_sha256: str | None = None) -> int:
     import numpy as np
 
     from src.eval import protocols as P
 
     sa, sb = _verified_summary(a_dir), _verified_summary(b_dir)
     problems: list[str] = []
+    if expect_checkpoint_sha256 is not None \
+            and sa["run"].get("checkpoint_sha256") != expect_checkpoint_sha256:
+        problems.append(f"run.checkpoint_sha256 {sa['run'].get('checkpoint_sha256')!r} is not the "
+                        f"expected model {expect_checkpoint_sha256!r}")
     for label, s in (("A", sa), ("B", sb)):
         ds = s["dataset"]
         if ds["preprocess_protocol"] != P.UPSTREAM_PROTOCOL_ID or s.get("protocol") != P.upstream_block():
@@ -138,7 +145,8 @@ def d5(a_dir: Path, b_dir: Path, canvas_value: float | None) -> int:
     # ---- reported values (no threshold) ----
     lvl, am5 = sa["dataset_level"], sa.get("am5") or {}
     print(f"model: stage={sa['run']['stage']} role={sa['run']['model_role']} "
-          f"checkpoint_sha256={sa['run'].get('checkpoint_sha256')}")
+          f"checkpoint_sha256={sa['run'].get('checkpoint_sha256')}; artifact_status="
+          f"{sa['run']['artifact_status']}; device={sa['run']['env']['device']}")
     print(f"upstream all_class_miou={lvl['all_class_miou']!r} (union-present, "
           f"n_eligible={lvl['all_class_miou_n_eligible']}); disease_only_miou="
           f"{lvl['disease_only_miou']!r} (n_eligible={lvl['disease_only_miou_n_eligible']})")
@@ -187,8 +195,9 @@ def preflight() -> int:
     print(f"VAL pairs: {len(pairs)}; EXIF-transposed images: {transposed}; image/mask shape "
           f"mismatches: {len(mismatched)}")
     print(f"largest image: {stem} {h}x{w} -> rescaled {shapes['rescaled_shape']}, padded "
-          f"{shapes['padded_shape']}; logits at original resolution {116 * h * w * 4 / mib:.0f} MiB, "
-          f"at the padded input {116 * ph * pw * 4 / mib:.0f} MiB")
+          f"{shapes['padded_shape']}; its logits take {116 * h * w * 4 / mib:.0f} MiB at the original "
+          f"resolution (the evaluator holds one such map at a time) and {116 * ph * pw * 4 / mib:.0f} "
+          "MiB at the padded input, on top of the model's working memory")
     for m in mismatched[:10]:
         print(f"PREFLIGHT: {m}")
     if mismatched:
@@ -208,11 +217,13 @@ def main(argv=None) -> int:
     s.add_argument("--canvas-value", type=float, default=None,
                    help="the model's canvas VAL all-class mIoU (e.g. E1 CPU 0.36307525634765625, "
                         "teacher 0.38576993346214294), to report the protocol effect")
+    s.add_argument("--expect-checkpoint-sha256", default=None,
+                   help="the checkpoint sha256 both runs must record (the model intended)")
     args = p.parse_args(argv)
     try:
         if args.check == "preflight":
             return preflight()
-        return d5(args.run_a, args.run_b, args.canvas_value)
+        return d5(args.run_a, args.run_b, args.canvas_value, args.expect_checkpoint_sha256)
     except Unreadable as e:
         print(f"RESULT: ERROR -- {e}")
         return EXIT_USAGE

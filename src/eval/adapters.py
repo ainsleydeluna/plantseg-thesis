@@ -207,7 +207,10 @@ class PlantSegUpstreamEvalDataset(Dataset):
         src = self.source_indices[i]
         image, mask = self.base[src]
         stem = self.stem_for(src)                   # resolved HERE, before the sample leaves
-        sample = protocols.prepare_upstream_sample(image, mask)
+        try:
+            sample = protocols.prepare_upstream_sample(image, mask)
+        except protocols.ProtocolError as e:
+            raise AdapterError(f"{stem}: {e}") from e
         return {
             "image": sample.image,
             "target": sample.target,

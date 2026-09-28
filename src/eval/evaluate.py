@@ -193,9 +193,9 @@ class PerImageRow:
         return row
 
 
-# The contract row keys, derived from as_dict so the two cannot drift.
-ROW_KEYS = frozenset(PerImageRow("x", "x", 0, Condition(), None, STATUS_UNDEFINED, None,
-                                 STATUS_UNDEFINED, 0, 0, []).as_dict())
+# The contract row keys in serialisation order, derived from as_dict so the two cannot drift.
+ROW_KEYS = tuple(PerImageRow("x", "x", 0, Condition(), None, STATUS_UNDEFINED, None,
+                             STATUS_UNDEFINED, 0, 0, []).as_dict())
 
 
 def _protocol_fields(batch: "EvalBatch", i: int) -> tuple[tuple[str, object], ...]:
@@ -203,7 +203,7 @@ def _protocol_fields(batch: "EvalBatch", i: int) -> tuple[tuple[str, object], ..
     if batch.sample_meta is None:
         return ()
     meta = batch.sample_meta[i]
-    clash = sorted(set(meta) & ROW_KEYS)
+    clash = sorted(set(meta) & set(ROW_KEYS))
     if clash:
         raise EvaluationIntegrityError(
             f"per-image protocol fields {clash} would overwrite contract fields "
@@ -415,6 +415,10 @@ def evaluate_model(
                     gt_disease_classes=gt_disease,
                     protocol_fields=_protocol_fields(batch, i),
                 ))
+
+            # Release this batch's tensors before the next forward: under the upstream protocol the
+            # logits sit at the original resolution, and holding two batches would double the peak.
+            del logits, preds, targets, all_scores, dis_scores
 
     # ---- completeness ----
     missing = [e.image_id for e in ordered if e.image_id not in observed]

@@ -56,8 +56,10 @@ SHAPE_FIELDS = ("ori_shape", "rescaled_shape", "padded_shape")   # per-image, [h
 
 UPSTREAM_NOTE = (
     "Descriptive protocol (AM-13, AM-16 item 4, AM-17 item 1(e)); never an inferential comparator. "
-    "The upstream MSCAN-B class count behind the published 42.05% is NOT DETERMINABLE: the upstream "
-    "PlantSeg MSCAN-L config uses 116 classes and the MSCAN-T config 115.")
+    "Image decoding and the bilinear rescale are the evaluator's own (PIL, as core_preprocess), not "
+    "mmcv's cv2, so rescaled pixels differ from the upstream pipeline's, more so for large "
+    "downscales. The upstream MSCAN-B class count behind the published 42.05% is NOT DETERMINABLE: "
+    "the upstream PlantSeg MSCAN-L config uses 116 classes and the MSCAN-T config 115.")
 
 
 class ProtocolError(ValueError):

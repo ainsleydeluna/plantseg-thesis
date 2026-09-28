@@ -61,10 +61,10 @@ from src.eval import (Condition, DatasetMeta, EvalBatch,                  # noqa
                       evaluate_model as core_evaluate)
 from src.eval import adapters as ADP                                      # noqa: E402
 from src.eval import protocols as P                                       # noqa: E402
-from src.eval.artifacts import (ARTIFACT_SCHEMA_VERSION, ArtifactWriteError,  # noqa: E402
-                                build_config_payload, prepare_artifact_request,
-                                validate_artifact_request, validate_summary, verify_artifact,
-                                write_artifact)
+from src.eval.artifacts import (ARTIFACT_SCHEMA_VERSION, ArtifactRequestError,  # noqa: E402
+                                ArtifactWriteError, build_config_payload,
+                                prepare_artifact_request, validate_artifact_request,
+                                validate_summary, verify_artifact, write_artifact)
 from src.eval.model_loading import build_fp32_student                    # noqa: E402
 
 C = 116
@@ -205,8 +205,9 @@ def section_d1() -> None:
         check("D1 mmcv.imrescale output shapes equal the rescaled shapes", got == want,
               f"{got} vs {want}")
     else:
-        NOTES.append("D1: mmcv not importable; checked against the formula only")
-    check("D1 padded shape: next multiple of 32 (512x609 -> 512x640; 410x2048 unchanged)",
+        NOTES.append("D1: mmcv not importable; the sweep used the formula, which restates the "
+                     "implementation (only the spec values and the half-up case are independent)")
+    check("D1 padded shape: next multiple of 32 (512x609 -> 512x640; 410x2048 -> 416x2048)",
           P.padded_shape(512, 609) == (512, 640) and P.padded_shape(410, 2048) == (416, 2048)
           and P.padded_shape(512, 512) == (512, 512) and P.padded_shape(513, 512) == (544, 512))
     t = torch.randn(3, 410, 609)
@@ -571,6 +572,44 @@ def section_a(work: Path) -> None:
                req, result)
     check("A validate_summary refuses a protocol block that differs from the contract", "does not "
           "match" in str(e), str(e))
+    # rows must hold exactly the contract keys (+ the shape fields for upstream): a batch forward that
+    # skips the record check cannot smuggle another per-image key into either kind of artifact
+    loose = [EvalBatch(b.images, b.targets, b.image_ids, b.clean_image_ids, b.manifest_indices,
+                       sample_meta=[{**b.sample_meta[0], "foo": 1}]) for b in batches]
+    result_loose = core_evaluate(
+        model, loose, expected_manifest=manifest, condition=Condition("clean"), num_classes=C,
+        background_index=0, ignore_index=255,
+        batch_forward=lambda m, b: P.logits_to_original(m(b.images), b.sample_meta[0]))
+    req_l, _ = synth_request(work / "art_up_extra", repo, P.UPSTREAM_PROTOCOL_ID, len(sizes))
+    e = expect(ArtifactWriteError, write_artifact, result_loose, req_l, validate_artifact_request(req_l))
+    check("A writer refuses an upstream row carrying a key beyond the shape fields",
+          "must end with" in str(e) and "foo" in str(e), str(e))
+    canvas_extra = [EvalBatch(samples[2].image[None], samples[2].target[None], ["a_02"], ["a_02"], [2],
+                              sample_meta=[{"foo": 1}])]
+    result_cx = core_evaluate(model, canvas_extra, expected_manifest=[ManifestEntry(2, "a_02", "a_02")],
+                              condition=Condition("clean"), num_classes=C, background_index=0,
+                              ignore_index=255)
+    req_cx = prepare_artifact_request(
+        out_dir=work / "art_canvas_extra", artifact_status="smoke", run_id="am13_cx", run=req.run,
+        dataset=DatasetMeta(name="SYNTHETIC am13 fixture (NOT PlantSeg data)",
+                            doi="10.5281/zenodo.17719108", split="val", condition=Condition("clean"),
+                            preprocess_protocol=P.CANVAS_PROTOCOL_ID, expected_rows=1),
+        expected_manifest=[ManifestEntry(2, "a_02", "a_02")], class_map=SYNTH_CLASS_MAP, repo_root=repo)
+    e = expect(ArtifactWriteError, write_artifact, result_cx, req_cx, validate_artifact_request(req_cx))
+    check("A writer refuses a canvas row carrying any key beyond the contract keys",
+          "only the upstream protocol adds per-image fields" in str(e) and "foo" in str(e), str(e))
+    req_v, _ = synth_request(work / "art_up_v9", repo, "upstream/9.9.9", len(sizes))
+    e = expect(ArtifactRequestError, validate_artifact_request, req_v)
+    check("A the pre-inference gate refuses an upstream protocol version it does not implement",
+          "does not implement" in str(e), str(e))
+    wrapper = ADP.PlantSegUpstreamEvalDataset.__new__(ADP.PlantSegUpstreamEvalDataset)
+    wrapper.source_indices = [0]
+    wrapper.base = type("Base", (), {
+        "pairs": [(Path("syn_thin.jpg"), Path("syn_thin.png"))],
+        "__getitem__": lambda self, i: (np.zeros((1, 10379, 3), np.uint8), np.zeros((1, 10379), np.int64))})()
+    e = expect(ADP.AdapterError, wrapper.__getitem__, 0)
+    check("A a sample the geometry cannot rescale (1x10379 -> a zero-height side) is refused by name",
+          str(e).startswith("syn_thin:"), str(e))
     # core refusals
     e = expect(EvaluationIntegrityError, core_evaluate, model, batches[:1],
                expected_manifest=manifest[:1], condition=Condition("clean"), num_classes=C,
@@ -712,16 +751,22 @@ def section_e(work: Path) -> None:
     RC.VAL_ROWS = len(E_SHAPES)
     try:
         with contextlib.redirect_stdout(io.StringIO()) as out_ok:
-            code_ok = RC.d5(up1, up2, canvas_value=0.25)
+            code_ok = RC.d5(up1, up2, canvas_value=0.25,
+                            expect_checkpoint_sha256=s_up["run"]["checkpoint_sha256"])
         with contextlib.redirect_stdout(io.StringIO()) as out_bad:
             code_bad = RC.d5(up1, cv, canvas_value=None)
+        with contextlib.redirect_stdout(io.StringIO()) as out_model:
+            code_model = RC.d5(up1, up2, canvas_value=None, expect_checkpoint_sha256="0" * 64)
     finally:
         RC.VAL_ROWS = saved_rows
-    check("E am13_real_checks d5 passes two identical upstream runs and reports the protocol effect",
-          code_ok == RC.EXIT_PASS and "D5 PASS" in out_ok.getvalue()
+    check("E am13_real_checks d5 passes two identical upstream runs of the expected model and reports "
+          "the protocol effect", code_ok == RC.EXIT_PASS and "D5 PASS" in out_ok.getvalue()
           and "protocol effect (upstream - canvas)" in out_ok.getvalue(), out_ok.getvalue()[-400:])
     check("E am13_real_checks d5 fails an upstream/canvas pair", code_bad == RC.EXIT_FAIL
           and "not an upstream/1.0.0 artifact" in out_bad.getvalue(), out_bad.getvalue()[-400:])
+    check("E am13_real_checks d5 fails runs of another model than --expect-checkpoint-sha256",
+          code_model == RC.EXIT_FAIL and "is not the expected model" in out_model.getvalue(),
+          out_model.getvalue()[-400:])
 
 
 # ------------------------------------------------------------------------------------------ main
