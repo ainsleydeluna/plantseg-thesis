@@ -133,7 +133,15 @@ QUANT = {
         "e4_from": "E1",
         "e7_from": "E3 (CWD head removed)",
         "selection": "fixed registered qconfig; no validation-based calibration choice (AM-10); reported on test",
-        "calibration_batch_size": 1,                 # AM-10: one image per mini-batch (enforced in lane L-AM10)
+        "calibration_batch_size": 1,                 # AM-10: one image per mini-batch; src/quant/prepare.py calibrate() refuses any other (L-AM10)
+        # AM-16 item 5: three further 128-image TRAIN subsets, drawn by the AM-10 procedure, for the
+        # descriptive calibration-sensitivity runs of E4/E7 at seed 42. The official models keep the
+        # seed-42 list (AM-10). All four lists: configs/calibration/ (scripts/build_calibration_lists.py).
+        "calibration_sensitivity_seeds": (43, 44, 45),
+        "calibration_list_dir": "configs/calibration",
+        # Lane 8 (L-AM10): scripts/run_ptq.py writes the QNNPACK TorchScript artifact of record, the
+        # converted state_dict alongside it, and the x86 latency copy (src/quant/ptq.py).
+        "artifact_format": "torchscript",
     },
 
     # Sigmoid FixedQParams fix for the LR-ASPP global-pool branch (gate before E4)

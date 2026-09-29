@@ -18,6 +18,7 @@ Import-time behaviour is side-effect free: no model is constructed and no file i
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -79,18 +80,42 @@ def build_fp32_student(num_classes: int = FROZEN_NUM_CLASSES, device: str = "cpu
 
 
 # ---------------------------------------------------------------------------------------------
-# INT8 (E4-E7) -- the EXACT schema written by src/quant/runner.py
+# INT8 (E4-E7) -- two artifact formats, named by the run provenance's `artifact_format`
+#
+# "state_dict" (the key is absent from src/quant/runner.py provenance): the EXACT runner schema
 #
 #     {"stage": str, "quantization": "ptq"|"qat", "num_classes": 116, "model": <converted
 #      state_dict>}
 #
 # That is a QUANTIZED STATE DICT, not a serialized module, so evaluation rebuilds the converted
-# skeleton with the committed quantization helpers and loads the weights strictly into it. No second
-# artifact representation is introduced, nothing is recalibrated, and no QAT step is run.
+# skeleton with the committed quantization helpers and loads the weights strictly into it. Nothing is
+# recalibrated and no QAT step is run.
+#
+# "torchscript" (src/quant/ptq.py, lane 8 / L-AM10): the QNNPACK TorchScript module of record, traced
+# from the converted model, carrying its identity as the extra file `plantseg_int8.json`. Its converted
+# state_dict is written alongside it in the runner schema above, and src/quant/ptq.py proves the two
+# give bitwise-equal outputs before the run provenance exists.
 # ---------------------------------------------------------------------------------------------
 INT8_REQUIRED_KEYS = ("stage", "quantization", "num_classes", "model")
 INT8_METHODS = ("ptq", "qat")
 OFFICIAL_QUANT_BACKEND = "qnnpack"
+INT8_FORMAT_STATE_DICT = "state_dict"
+INT8_FORMAT_TORCHSCRIPT = "torchscript"
+INT8_ARTIFACT_FORMATS = (INT8_FORMAT_STATE_DICT, INT8_FORMAT_TORCHSCRIPT)
+INT8_TORCHSCRIPT_META = "plantseg_int8.json"            # the extra file inside the TorchScript zip
+INT8_TORCHSCRIPT_SCHEMA = "plantseg-int8-torchscript/1.0.0"
+INT8_TORCHSCRIPT_META_KEYS = ("schema", "stage", "quantization", "num_classes", "engine",
+                              "artifact_role")
+ACCURACY_ARTIFACT_ROLE = "accuracy"                     # = src.quant.x86_latency.ACCURACY_ARTIFACT_ROLE
+
+
+def int8_artifact_format(provenance: dict) -> str:
+    """The artifact format a run provenance declares; the runner's provenance (no key) is a state_dict."""
+    fmt = provenance.get("artifact_format", INT8_FORMAT_STATE_DICT)
+    if fmt not in INT8_ARTIFACT_FORMATS:
+        raise CheckpointError(
+            f"unknown INT8 artifact_format {fmt!r}; known formats: {list(INT8_ARTIFACT_FORMATS)}")
+    return fmt
 
 
 @dataclass(frozen=True)
@@ -125,33 +150,21 @@ def select_int8_backend(*, require_qnnpack: bool = True) -> str:
     return torch.backends.quantized.engine
 
 
-def load_int8_student(resolved: dict, *, require_qnnpack: bool = True,
-                      map_location: str = "cpu"):
-    """Load a converted E4-E7 INT8 student from an ALREADY-VALIDATED resolved artifact.
+def rebuild_int8_from_state_dict(path, *, stage: str, method: str):
+    """Rebuild a converted INT8 student from a runner-schema state_dict file. Returns it in eval mode.
 
-    `resolved` must come from `src.eval.stage_artifacts.validate_int8_artifact`, which has already
-    proven stage/source/method/class-count/backend provenance AND re-verified the artifact's
-    SHA-256 against the file on disk — that hash check is the trust anchor for reading this file.
-    This function never chooses a stage of its own, never downloads, never calibrates and never
-    trains. Returns `(model, Int8ArtifactInfo)` with the model in eval mode on CPU.
+    The caller has already selected the quantized engine and established trust in the file (the
+    evaluator re-verifies its SHA-256 against the run provenance; src/quant/ptq.py re-reads the file
+    it has just written and hashed).
     """
     from ..quant.prepare import convert_model, prepare_ptq, prepare_qat_model
 
-    spec, prov = resolved["spec"], resolved["provenance"]
-    path = Path(resolved["artifact_path"])
-    method = spec["method"]
     if method not in INT8_METHODS:
         raise CheckpointError(f"unsupported quantization method {method!r}")
-    if str(map_location) != "cpu":
-        raise CheckpointError(
-            f"converted eager INT8 models are CPU-only; got map_location={map_location!r}")
-
-    backend = select_int8_backend(require_qnnpack=require_qnnpack)
-
     # weights_only=False is required here: a converted state_dict carries quantized packed-param
     # objects that the weights_only unpickler rejects. The file is trusted because the bridge just
     # re-verified its SHA-256 against the value recorded when the runner produced it.
-    obj = torch.load(path, map_location="cpu", weights_only=False)
+    obj = torch.load(Path(path), map_location="cpu", weights_only=False)
     if not isinstance(obj, dict):
         raise CheckpointError(f"INT8 artifact must be a dict, got {type(obj).__name__}")
     missing = [k for k in INT8_REQUIRED_KEYS if k not in obj]
@@ -161,10 +174,10 @@ def load_int8_student(resolved: dict, *, require_qnnpack: bool = True,
             "The evaluator accepts only the schema written by src/quant/runner.py.")
     if obj["quantization"] != method:
         raise CheckpointError(
-            f"artifact records quantization={obj['quantization']!r} but {spec['stage']} is {method}")
-    if str(obj["stage"]).upper() != spec["stage"]:
+            f"artifact records quantization={obj['quantization']!r} but {stage} is {method}")
+    if str(obj["stage"]).upper() != stage:
         raise CheckpointError(
-            f"artifact records stage={obj['stage']!r}, requested {spec['stage']}")
+            f"artifact records stage={obj['stage']!r}, requested {stage}")
     if int(obj["num_classes"]) != FROZEN_NUM_CLASSES:
         raise CheckpointError(
             f"artifact num_classes={obj['num_classes']!r} != required {FROZEN_NUM_CLASSES}")
@@ -191,12 +204,89 @@ def load_int8_student(resolved: dict, *, require_qnnpack: bool = True,
         raise CheckpointError(
             "converted INT8 artifact contains CWD projection tensors; the training-only projection "
             "must be absent from every evaluated model")
+    return converted.eval()
+
+
+def load_int8_torchscript(path, *, stage: str, method: str, engine: str = OFFICIAL_QUANT_BACKEND,
+                          artifact_role: str = ACCURACY_ARTIFACT_ROLE):
+    """Load an INT8 TorchScript module written by src/quant/ptq.py and verify its embedded identity.
+
+    `engine` must already be the active quantized engine: TorchScript re-packs quantized weights for
+    the active engine while it loads, so loading under another engine would build a different
+    runtime model. The embedded `plantseg_int8.json` must name exactly this stage, method, class
+    count, engine and artifact role. Returns `(module in eval mode, embedded metadata)`.
+    """
+    if method not in INT8_METHODS:
+        raise CheckpointError(f"unsupported quantization method {method!r}")
+    active = torch.backends.quantized.engine
+    if active != engine:
+        raise CheckpointError(
+            f"the quantized engine is {active!r}; select {engine!r} before loading an INT8 "
+            "TorchScript artifact (its weights are re-packed for the active engine at load time)")
+    extra = {INT8_TORCHSCRIPT_META: ""}
+    try:
+        module = torch.jit.load(str(path), map_location="cpu", _extra_files=extra)
+    except Exception as e:                                    # noqa: BLE001 -- surfaced verbatim
+        raise CheckpointError(
+            f"INT8 TorchScript load failed for {path}: {type(e).__name__}: {str(e)[:300]}") from e
+    raw = extra[INT8_TORCHSCRIPT_META]
+    if not raw:
+        raise CheckpointError(
+            f"{path} carries no {INT8_TORCHSCRIPT_META}; only TorchScript artifacts written by "
+            "src/quant/ptq.py are accepted")
+    try:
+        meta = json.loads(raw.decode("utf-8") if isinstance(raw, bytes) else raw)
+    except ValueError as e:
+        raise CheckpointError(f"{path}: {INT8_TORCHSCRIPT_META} is not JSON ({e})") from e
+    missing = [k for k in INT8_TORCHSCRIPT_META_KEYS if k not in meta]
+    if missing:
+        raise CheckpointError(f"{path}: {INT8_TORCHSCRIPT_META} lacks {missing}")
+    expected = {"schema": INT8_TORCHSCRIPT_SCHEMA, "stage": stage, "quantization": method,
+                "num_classes": FROZEN_NUM_CLASSES, "engine": engine,
+                "artifact_role": artifact_role}
+    wrong = {k: meta.get(k) for k, v in expected.items() if meta.get(k) != v}
+    if wrong:
+        raise CheckpointError(
+            f"{path}: embedded identity {wrong} does not match the expected "
+            f"{ {k: expected[k] for k in wrong} }")
+    return module.eval(), meta
+
+
+def load_int8_student(resolved: dict, *, require_qnnpack: bool = True,
+                      map_location: str = "cpu"):
+    """Load a converted E4-E7 INT8 student from an ALREADY-VALIDATED resolved artifact.
+
+    `resolved` must come from `src.eval.stage_artifacts.validate_int8_artifact`, which has already
+    proven stage/source/method/class-count/backend provenance AND re-verified the artifact's
+    SHA-256 against the file on disk — that hash check is the trust anchor for reading this file.
+    The provenance's `artifact_format` selects the reader: the runner's state_dict (rebuilt into the
+    converted skeleton) or the QNNPACK TorchScript module of src/quant/ptq.py. This function never
+    chooses a stage of its own, never downloads, never calibrates and never trains. Returns
+    `(model, Int8ArtifactInfo)` with the model in eval mode on CPU.
+    """
+    spec, prov = resolved["spec"], resolved["provenance"]
+    path = Path(resolved["artifact_path"])
+    method = spec["method"]
+    if method not in INT8_METHODS:
+        raise CheckpointError(f"unsupported quantization method {method!r}")
+    if str(map_location) != "cpu":
+        raise CheckpointError(
+            f"converted eager INT8 models are CPU-only; got map_location={map_location!r}")
+    fmt = int8_artifact_format(prov)
+
+    backend = select_int8_backend(require_qnnpack=require_qnnpack)
+
+    if fmt == INT8_FORMAT_TORCHSCRIPT:
+        model, _meta = load_int8_torchscript(path, stage=spec["stage"], method=method,
+                                             engine=OFFICIAL_QUANT_BACKEND)
+    else:
+        model = rebuild_int8_from_state_dict(path, stage=spec["stage"], method=method)
 
     info = Int8ArtifactInfo(path=str(path), sha256=resolved["artifact_sha256"],
                             stage=spec["stage"], method=method,
                             num_classes=FROZEN_NUM_CLASSES,
                             backend=str(prov.get("backend", backend)))
-    return converted.eval(), info
+    return model, info
 
 
 # ---------------------------------------------------------------------------------------------

@@ -28,6 +28,9 @@ NUM_CLASSES = 116
 OFFICIAL_SPLIT = "test"
 OFFICIAL_ROWS = 1561
 OFFICIAL_BACKEND = "qnnpack"
+# = src.eval.model_loading.INT8_ARTIFACT_FORMATS (restated so this module stays import-light);
+# a provenance without the key is the src/quant/runner.py state_dict.
+INT8_ARTIFACT_FORMATS = ("state_dict", "torchscript")
 
 # Stage -> artifact contract (IMPLEMENTATION_CONTRACT B4 stage table).
 STAGE_ARTIFACTS: dict[str, dict] = {
@@ -81,9 +84,11 @@ def resolve_stage_artifact(stage: str) -> dict:
 def validate_int8_artifact(stage: str, provenance_path: str | Path) -> dict:
     """Validate an E4-E7 converted INT8 artifact through its runner provenance.
 
-    Checks stage identity, source stage, random_init, class count, artifact existence, the recorded
-    SHA-256 against the file on disk, the official backend, and — for E6/E7 — that the training-only
-    CWD projection was never loaded.
+    Checks stage identity, source stage, random_init, class count, the artifact format, artifact
+    existence, the recorded SHA-256 against the file on disk, the official backend, and — for E6/E7 —
+    that the training-only CWD projection was never loaded. A relative `converted_artifact` (written
+    by src/quant/ptq.py, so a run directory can move between a container and its host) is resolved
+    against the provenance file's directory; the recorded SHA-256 stays the trust anchor either way.
     """
     from src.eval.model_loading import sha256_file
 
@@ -127,10 +132,18 @@ def validate_int8_artifact(stage: str, provenance_path: str | Path) -> dict:
               f"{spec['stage']} provenance must record cwd_projection_loaded=false, got "
               f"{prov.get('cwd_projection_loaded')!r}")
 
+    fmt = prov.get("artifact_format", "state_dict")
+    if fmt not in INT8_ARTIFACT_FORMATS:
+        _fail("artifact_format_unknown",
+              f"provenance declares artifact_format={fmt!r}; known formats: "
+              f"{list(INT8_ARTIFACT_FORMATS)}")
+
     art = prov.get("converted_artifact")
     if not art:
         _fail("artifact_path_missing", "provenance records no converted_artifact")
     art_path = Path(art)
+    if not art_path.is_absolute():
+        art_path = p.resolve().parent / art_path
     if not art_path.is_file():
         _fail("artifact_file_missing", f"converted artifact not found: {art_path}")
     recorded = prov.get("converted_artifact_sha256")
@@ -142,7 +155,25 @@ def validate_int8_artifact(stage: str, provenance_path: str | Path) -> dict:
               f"converted artifact hash {actual[:16]}… does not match the recorded "
               f"{str(recorded)[:16]}… — the artifact changed after the run")
     return {"spec": spec, "provenance": prov, "artifact_path": art_path,
-            "artifact_sha256": actual}
+            "artifact_sha256": actual, "artifact_format": fmt}
+
+
+def int8_official_calibration_error(resolved: dict, repo_root: str | Path | None = None) -> str | None:
+    """PRE-RUN: may this INT8 artifact be scored as the OFFICIAL E4/E7? None when it may.
+
+    A PTQ artifact written by src/quant/ptq.py (artifact_format "torchscript") records its calibration
+    list. Only the registered AM-10 list of record, as committed at
+    configs/calibration/ptq_calibration_seed42.json, yields an official E4/E7 score; runs on the AM-16
+    item 5 sensitivity lists or on synthetic lists stay descriptive. QAT artifacts and the
+    src/quant/runner.py state_dict artifacts (whose index validator accepts seed 42 only) are unaffected.
+    """
+    prov = resolved["provenance"]
+    if resolved["spec"]["method"] != "ptq" or prov.get("artifact_format", "state_dict") != "torchscript":
+        return None
+    from src.quant.ptq import list_of_record_error
+    root = Path(repo_root) if repo_root else Path(__file__).resolve().parents[2]
+    err = list_of_record_error(prov.get("calibration") or {}, root)
+    return None if err is None else f"refusing an official {resolved['spec']['stage']} score: {err}"
 
 
 # ------------------------------------------------------------------ FP32 (E1-E3)
