@@ -14,6 +14,9 @@ once) and compiled into a separate module, so the production module is never mod
        (proves the counter sees it)
   I1   F4/N1 mutant: the teacher is handed `model_input.clone()` -> teacher_same_augmented_input FAIL
        (the 44c05dc check `model_input is img` passed this mutant)
+  I2   Q7 mutant: the teacher is handed `model_input.transpose(-1, -2)`, a view of the square input with
+       the same data pointer and shape -> teacher_same_augmented_input FAIL on the recorded stride (the
+       e7a22a0 probe, pointer and shape only, passed this mutant)
   D1   teacher Stage-3 on a 64x64 grid, stage E2 (no feature term) -> teacher_feat_shape FAIL
   D2   item 8: teacher logits on a 32x32 grid -> distillation_losses raises (never resampled), in an E2
        run and in a direct E2 call; a teacher Stage-3 grid different from C5 raises in a direct call for
@@ -164,6 +167,11 @@ def test_input_identity() -> None:
     m = mutant([("teacher_out = teacher(model_input)", "teacher_out = teacher(model_input.clone())")], "clone")
     rc, out = dry_run(m)
     check("I1_teacher_given_a_copy_fails", rc == 1
+          and check_line(out, "teacher_same_augmented_input") == "FAIL", f"rc={rc} {result_line(out)}")
+    m = mutant([("teacher_out = teacher(model_input)",
+                 "teacher_out = teacher(model_input.transpose(-1, -2))")], "transpose")
+    rc, out = dry_run(m)
+    check("I2_teacher_given_a_transposed_view_fails", rc == 1
           and check_line(out, "teacher_same_augmented_input") == "FAIL", f"rc={rc} {result_line(out)}")
 
 

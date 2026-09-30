@@ -32,6 +32,18 @@ Checks (docs/lane_specs/part2.md lane 2 (d) d2, and the cross-lane selection con
          the same diverged lambda twice -> duplicate_candidate; alpha 25 and 100 diverged -> 50; alpha 50
          diverged -> exit 2; alpha 100 diverged with 25 tied with 50 -> 50. No case prints a traceback,
          and only exit 0 writes a file.
+  records (Q2, Q4, Q3; commit 8) an AM-7 record train_distill cannot have written -> exit 2
+         abort_record_invalid: AM-7 (b) at iter ramp_iters + 100 (that window only seeds the minimum),
+         a ratio "nan" or other than window_mean / running_min, a threshold other than 5 x running_min,
+         a window mean not above 5 x the minimum, and (load_candidate units) a non-finite, string,
+         boolean, missing or negative field, an integer beyond the float range, or a finite ratio where
+         the quotient overflows; AM-7 (a) with a finite loss and grad_norm, at iter 1 (step1_checks
+         under R8-1), or whose train row's nonfinite map does not name the non-finite key. Accepted as
+         diverged: AM-7 (b) at ramp_iters + 101, a float ratio of exactly 5.0 while window_mean > 5 x
+         running_min holds (the pair found by search, both properties asserted), running_min 0 with
+         ratio "inf", an overflowing quotient written "inf", and the AM-7 (a) norm case. A diverged
+         default candidate beside a num_workers or teacher checkpoint mismatch -> recipe_mismatch, not
+         default_candidate_diverged.
   10b    the recipe of record: grad_clip_norm 1.0, batch 8, VAL every 2000 or capped, no ImageNet init,
          a float horizon, differing num_workers or teacher checkpoints, or none -> recipe_mismatch.
 """
@@ -54,7 +66,7 @@ import scripts.select_alpha as sa  # noqa: E402
 import scripts.select_lambda as sl  # noqa: E402
 from configs.distill import LOGIT_KD_SEMANTICS  # noqa: E402
 from src.training.sweep_select import (RULES_PATH, SelectionRefused, apply_rule,  # noqa: E402
-                                       dl27_band, load_rules, sha256_file)
+                                       dl27_band, load_candidate, load_rules, sha256_file)
 
 RULES = load_rules()
 ALPHA, LAMBDA = RULES["alpha_cwd"], RULES["lambda_logit"]
@@ -142,19 +154,21 @@ def test_lambda_rule() -> None:
 
 
 # ------------------------------------------------------------------- synthetic run dirs
-def abort_record(it: int, rule: str = "AM-7(b)", cause: str = "student_divergence", ratio=5.2,
+def abort_record(it: int, rule: str = "AM-7(b)", cause: str = "student_divergence", detail=None,
                  input_finite=True, teacher_finite=True) -> dict:
     """train_distill's run_abort row (AM-7a section A); fields not computed at the abort point are null
-    and a non-finite float is written as a string."""
+    and a non-finite float is written as a string. The AM-7 (b) detail is one the trainer can write
+    (window_mean 3.12 > 5 x running_min 0.6, threshold 5 x 0.6, ratio 3.12 / 0.6); the AM-7 (a) detail
+    records a NaN loss. `detail` overrides fields."""
     if rule == "AM-7(b)":
-        detail = {"loss": 3.12, "grad_norm": 1.7, "window_mean": 3.12, "running_min": 0.6, "ratio": ratio,
-                  "threshold": 3.0}
+        base = {"loss": 3.12, "grad_norm": 1.7, "window_mean": 3.12, "running_min": 0.6, "ratio": 3.12 / 0.6,
+                "threshold": 5.0 * 0.6}
     else:
-        detail = {"loss": "nan", "grad_norm": None, "window_mean": None, "running_min": 0.6, "ratio": None,
-                  "threshold": None}
-    return {"event": "run_abort", "iter": it, "rule": rule, "cause": cause, "detail": detail,
-            "input_finite": input_finite, "teacher_finite": teacher_finite, "params_finite": True,
-            "n_val": it // 4000, "wall_clock": 1.0}
+        base = {"loss": "nan", "grad_norm": None, "window_mean": None, "running_min": 0.6, "ratio": None,
+                "threshold": None}
+    return {"event": "run_abort", "iter": it, "rule": rule, "cause": cause,
+            "detail": {**base, **(detail or {})}, "input_finite": input_finite,
+            "teacher_finite": teacher_finite, "params_finite": True, "n_val": it // 4000, "wall_clock": 1.0}
 
 
 def make_run(root: Path, stage: str, value: float, best_val: float, *, name: str | None = None,
@@ -164,7 +178,8 @@ def make_run(root: Path, stage: str, value: float, best_val: float, *, name: str
              record_iter=None, nonfinite=False, with_best=True, recipe=None, val_nonfinite=None) -> Path:
     """A synthetic run directory. `abort` (run_abort record kwargs) ends the telemetry at the abort
     iteration with a run_abort row and no run_end; `abort_after_end` appends it after a run_end instead;
-    `nonfinite` flags the last train row as train_distill does (null + nonfinite map); `val_nonfinite`
+    `nonfinite` (True for the loss, or a {key: tag} map) flags the last train row as train_distill does
+    (null + nonfinite map); an abort at iteration 1 has that single train row; `val_nonfinite`
     (a val-row key) adds a val row at the last iteration with that value non-finite; `recipe` overrides
     run_meta's recipe fields."""
     sk = stage.lower()
@@ -187,9 +202,12 @@ def make_run(root: Path, stage: str, value: float, best_val: float, *, name: str
     if abort is not None and not abort_after_end:
         last = abort.get("it", ABORT_ITER)
     ck_name = f"{sk}_student_best_iter76000.pt"
-    last_row = {"event": "train", "iter": last, "loss": None, "nonfinite": {"loss": "nan"}} if nonfinite \
-        else {"event": "train", "iter": last, "loss": 1.0}
-    lines = [json.dumps({"event": "train", "iter": last - 1, "loss": 1.0}), json.dumps(last_row)]
+    named = ({"loss": "nan"} if nonfinite is True else dict(nonfinite)) if nonfinite else {}
+    last_row = {"event": "train", "iter": last, "loss": 1.0, **{k: None for k in named}}
+    if named:
+        last_row["nonfinite"] = named
+    lines = ([json.dumps({"event": "train", "iter": last - 1, "loss": 1.0})] if last > 1 else []) \
+        + [json.dumps(last_row)]
     if val_nonfinite is not None:
         val = {"event": "val", "iter": last, "all_class_miou": best_val,
                "disease_only_miou_PROVISIONAL": best_val}
@@ -495,7 +513,7 @@ def test_am7a_lambda_cli(tmp: Path) -> None:
     check("am7a_val_disease_only_nonfinite_is_still_finished", rc == 0 and doc is not None
           and doc.get("n_finished") == 5, f"rc={rc} {log.strip()[-200:]}")
     invalid = {"am7b_at_iter_300": dict(abort=dict(it=300), with_best=False),
-               "am7b_ratio_not_above_factor": dict(abort=dict(ratio=5.0), with_best=False),
+               "am7b_ratio_not_the_quotient": dict(abort=dict(detail={"ratio": 5.0}), with_best=False),
                "abort_after_run_end": dict(abort={}, abort_after_end=True),
                "abort_iter_not_last_train_row": dict(abort={}, record_iter=ABORT_ITER - 1, with_best=False)}
     for label, kw in invalid.items():
@@ -568,6 +586,113 @@ def test_am7a_alpha_cli(tmp: Path) -> None:
           and "lambda_mismatch" in log, log.strip()[-200:])
 
 
+def outcome(fn, *args):
+    """fn's result, the code of a SelectionRefused, or the name and text of any other exception: a unit
+    whose check raises unexpectedly FAILs by name instead of stopping the smoke."""
+    try:
+        return fn(*args)
+    except SelectionRefused as e:
+        return e.code
+    except Exception as e:                        # noqa: BLE001 - reported as the check's detail
+        return f"{type(e).__name__}: {e}"
+
+
+def ratio_exactly_factor_pair() -> tuple[float, float]:
+    """(window_mean, running_min) for which the trainer's test window_mean > 5.0 x running_min holds in
+    floats while the float quotient window_mean / running_min is exactly 5.0. Found by search: running_min
+    steps up one float at a time from 0.75, window_mean is the float just above 5.0 x running_min."""
+    rm = 0.75
+    for _ in range(100000):
+        rm = math.nextafter(rm, 1.0)
+        wm = math.nextafter(5.0 * rm, math.inf)
+        if wm > 5.0 * rm and wm / rm == 5.0:
+            return wm, rm
+    raise RuntimeError("no (window_mean, running_min) pair found")
+
+
+def test_am7_records(tmp: Path) -> None:
+    """Q2, Q4 (commit 8): an AM-7 run_abort record train_distill cannot have written is
+    abort_record_invalid; Q3: the recipe is checked before a divergence is read."""
+    wm, rm = ratio_exactly_factor_pair()
+    check("q2_search_pair_window_mean_above_5x_and_ratio_exactly_5", wm > 5.0 * rm and wm / rm == 5.0,
+          f"window_mean={wm!r} running_min={rm!r}")
+    exactly_5 = {"window_mean": wm, "running_min": rm, "ratio": wm / rm, "threshold": 5.0 * rm}
+    min_0 = {"window_mean": 0.5, "running_min": 0.0, "ratio": "inf", "threshold": 0.0}
+    norm_case = {"loss": 3.1, "grad_norm": "nan"}
+    accepted = {"am7b_ratio_rounds_to_exactly_5": dict(abort=dict(detail=exactly_5)),
+                "am7b_running_min_0_ratio_inf": dict(abort=dict(detail=min_0)),
+                "am7b_first_firing_iter_ramp_plus_101": dict(abort=dict(it=RAMP + 101)),
+                "am7a_finite_loss_nonfinite_grad_norm": dict(abort=dict(rule="AM-7(a)", detail=norm_case),
+                                                             nonfinite={"grad_norm": "nan",
+                                                                        "grad_norm_student": "nan"})}
+    for label, kw in accepted.items():
+        rc, log, doc, out, _ = lambda_case(tmp, f"q_{label}", {2: dict(kw, with_best=False)})
+        check(f"q_{label}_accepted_as_diverged", rc == 0 and doc is not None
+              and [e["value"] for e in doc["excluded_am7a"]] == [2.0], f"rc={rc} {log.strip()[-200:]}")
+    invalid = {"am7b_at_ramp_plus_100": dict(abort=dict(it=RAMP + 100)),
+               "am7b_ratio_nan": dict(abort=dict(detail={"ratio": "nan"})),
+               "am7b_threshold_not_5x_running_min": dict(abort=dict(detail={"threshold": 3.1})),
+               "am7b_window_mean_not_above_5x": dict(abort=dict(detail={"window_mean": 3.0,
+                                                                        "ratio": 3.0 / 0.6})),
+               "am7a_finite_loss_and_finite_grad_norm": dict(abort=dict(rule="AM-7(a)", detail={
+                   "loss": 3.1, "grad_norm": 1.7}), nonfinite={"loss": "nan", "grad_norm": "nan"}),
+               "am7a_at_iter_1": dict(abort=dict(it=1, rule="AM-7(a)"), nonfinite=True),
+               "am7a_loss_case_row_names_only_grad_norm": dict(abort=dict(rule="AM-7(a)"),
+                                                               nonfinite={"grad_norm": "nan"}),
+               "am7a_grad_norm_case_row_without_nonfinite_map": dict(abort=dict(rule="AM-7(a)", detail={
+                   "loss": 3.1, "grad_norm": "inf"}))}
+    for label, kw in invalid.items():
+        rc, log, doc, out, _ = lambda_case(tmp, f"q_{label}", {2: dict(kw, with_best=False)})
+        check(f"q_{label}_is_abort_record_invalid", rc == 2 and doc is None and "abort_record_invalid" in log
+              and "Traceback" not in log, f"rc={rc} {log.strip()[-200:]}")
+    # the other values a record can carry, one field off a record that holds otherwise (load_candidate)
+    units = {"am7b_running_min_nan": ("AM-7(b)", {"running_min": "nan"}, False),
+             "am7b_window_mean_inf_string": ("AM-7(b)", {"window_mean": "inf", "ratio": "inf"}, False),
+             "am7b_window_mean_numeric_string": ("AM-7(b)", {"window_mean": "3.12"}, False),
+             "am7b_window_mean_missing": ("AM-7(b)", {"window_mean": None}, False),
+             "am7b_running_min_bool": ("AM-7(b)", {"window_mean": 6.0, "running_min": True, "ratio": 6.0,
+                                                   "threshold": 5.0}, False),
+             "am7b_running_min_negative": ("AM-7(b)", {"running_min": -0.1, "ratio": 3.12 / -0.1,
+                                                       "threshold": 5.0 * -0.1}, False),
+             "am7b_ratio_numeric_string": ("AM-7(b)", {"ratio": "5.2"}, False),
+             "am7b_ratio_inf_with_positive_running_min": ("AM-7(b)", {"ratio": "inf"}, False),
+             "am7b_threshold_numeric_string": ("AM-7(b)", {"threshold": "3.0"}, False),
+             "am7b_running_min_0_finite_ratio": ("AM-7(b)", {"window_mean": 0.5, "running_min": 0.0,
+                                                             "ratio": 1e308, "threshold": 0.0}, False),
+             "am7b_running_min_integer_beyond_float": ("AM-7(b)", {"running_min": 10 ** 400}, False),
+             "am7b_overflowing_quotient_written_finite": ("AM-7(b)", {"window_mean": 1.0,
+                                                                      "running_min": 1e-310, "ratio": 1e308,
+                                                                      "threshold": 5.0 * 1e-310}, False),
+             "am7a_loss_tag_other_spelling": ("AM-7(a)", {"loss": "NaN"}, {"loss": "nan"}),
+             "am7a_loss_bool_grad_norm_nan": ("AM-7(a)", {"loss": True, "grad_norm": "nan"},
+                                              {"grad_norm": "nan"}),
+             "am7a_grad_norm_bool": ("AM-7(a)", {"loss": 3.1, "grad_norm": True}, {"grad_norm": "nan"}),
+             "am7a_loss_integer_beyond_float": ("AM-7(a)", {"loss": 10 ** 400, "grad_norm": "nan"},
+                                                {"grad_norm": "nan"})}
+    for label, (rule, detail, named) in units.items():
+        d = make_run(tmp / f"q_unit_{label}", "E2", 2, 0.4, abort=dict(rule=rule, detail=detail),
+                     nonfinite=named, with_best=False)
+        got = outcome(load_candidate, d, LAMBDA, "lambda_logit")
+        check(f"q_unit_{label}_is_abort_record_invalid", got == "abort_record_invalid", str(got)[:160])
+    control = make_run(tmp / "q_unit_control", "E2", 2, 0.4, abort={}, with_best=False)
+    got = outcome(load_candidate, control, LAMBDA, "lambda_logit")
+    check("q_unit_control_record_is_diverged", isinstance(got, dict) and got.get("status") == "diverged",
+          str(got)[:160])
+    # the trainer writes a quotient that overflows (running_min > 0) as "inf", as for running_min 0
+    over = make_run(tmp / "q_unit_overflow", "E2", 2, 0.4, with_best=False, abort=dict(detail={
+        "window_mean": 1.0, "running_min": 1e-310, "ratio": "inf", "threshold": 5.0 * 1e-310}))
+    got = outcome(load_candidate, over, LAMBDA, "lambda_logit")
+    check("q_unit_am7b_overflowing_quotient_inf_is_diverged", 1.0 / 1e-310 == math.inf
+          and isinstance(got, dict) and got.get("status") == "diverged", str(got)[:160])
+    for label, recipe in (("num_workers", {"num_workers": 8}),
+                          ("teacher_ckpt", {"teacher_provenance": {"ckpt_sha256": "cd" * 32}})):
+        rc, log, doc, out, _ = lambda_case(tmp, f"q3_default_diverged_{label}",
+                                           {1: DIVERGED, 2: dict(recipe=recipe)})
+        check(f"q3_diverged_default_with_{label}_mismatch_is_recipe_mismatch", rc == 2 and doc is None
+              and "recipe_mismatch" in log and "default_candidate_diverged" not in log
+              and "Traceback" not in log, f"rc={rc} {log.strip()[-200:]}")
+
+
 def main() -> int:
     print("=" * 78)
     print("SWEEP SELECTION SMOKE — synthetic inputs only; nothing written in the repository")
@@ -575,7 +700,8 @@ def main() -> int:
     tmp = Path(tempfile.mkdtemp(prefix="k1_select_"))
     for fn in (test_alpha_rule, test_lambda_rule, test_am7a_rule):
         fn()
-    for fn in (test_alpha_cli, test_lambda_cli, test_rules_file, test_am7a_lambda_cli, test_am7a_alpha_cli):
+    for fn in (test_alpha_cli, test_lambda_cli, test_rules_file, test_am7a_lambda_cli, test_am7a_alpha_cli,
+               test_am7_records):
         fn(tmp)
     print("\n[CHECKS]")
     for name, ok, detail in results:

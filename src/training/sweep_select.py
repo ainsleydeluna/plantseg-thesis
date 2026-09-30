@@ -33,7 +33,11 @@ Candidate status (load_candidate):
 Refusal codes (exit 2 in the select scripts), besides the format and consistency refusals:
   default_candidate_diverged  the sweep's default candidate (sweep_rules default_candidate: lambda 1,
                               alpha 50) diverged: AM-7 applies in full (stop the stage, apply the AM-7a
-                              item 5 clipping value, rerun the FP32 stages); no selection is made.
+                              item 5 clipping value, rerun the FP32 stages); no selection is made. Only
+                              checked once the candidates agree on RECIPE_IDENTICAL (num_workers and the
+                              teacher checkpoint; recipe_mismatch first). select_alpha checks the shared
+                              lambda after this, so a diverged default run at another lambda still reads
+                              as default_candidate_diverged, not lambda_mismatch.
   run_aborted_other           a run_abort that is not a student divergence (another rule, a non-finite
                               input or teacher output), or a train row flagged `nonfinite` (or a val row
                               whose all-class mIoU is) with no run_abort after it (the abort record is
@@ -41,8 +45,16 @@ Refusal codes (exit 2 in the select scripts), besides the format and consistency
                               never a shortfall.
   abort_record_invalid        a run_abort record that is malformed, is not the last telemetry row, is
                               accompanied by a run_end, is not at the last train iteration, or is an
-                              AM-7 (b) record that cannot hold (before ramp_iters + AM7B_WINDOW, or a
-                              ratio not above AM7B_FACTOR).
+                              AM-7 record the trainer cannot have written:
+                              AM-7 (b) unless iter > ramp_iters + AM7B_WINDOW, window_mean and
+                                running_min are finite numbers with running_min >= 0, the trainer's own
+                                test window_mean > AM7B_FACTOR x running_min holds on the recorded values,
+                                threshold == AM7B_FACTOR x running_min, and ratio == window_mean /
+                                running_min ("inf" when running_min is 0 or the quotient overflows);
+                              AM-7 (a) unless iter >= 2 (a non-finite value at iteration 1 is recorded
+                                as step1_checks, R8-1) and either detail.loss is "nan", "inf" or "-inf",
+                                or detail.loss is finite and detail.grad_norm is non-finite, with that
+                                key named in the `nonfinite` map of the train row at the abort iteration.
   recipe_mismatch             a run_meta that violates RECIPE_EXPECT or lacks a RECIPE_IDENTICAL value,
                               or candidates whose RECIPE_IDENTICAL values differ.
 
@@ -126,16 +138,52 @@ def _finite_unit(x, what: str) -> float:
     return float(x)
 
 
-def _record_number(x):
-    """A number from a run_abort record: finite floats as written, "nan"/"inf"/"-inf" as their floats
-    (the trainer's strict-JSON encoding), anything else None."""
-    if isinstance(x, bool):
+NONFINITE_TAGS = ("nan", "inf", "-inf")    # the trainer's strict-JSON encoding of a non-finite float
+
+
+def _finite_number(x) -> bool:
+    """A finite int or float as a run_abort record writes one (never a bool or a string). A JSON integer
+    too large for a float is not one (math.isfinite raises on it)."""
+    if isinstance(x, bool) or not isinstance(x, (int, float)):
+        return False
+    try:
+        return math.isfinite(x)
+    except OverflowError:
+        return False
+
+
+def _am7b_record_holds(it: int, detail: dict, ramp_iters: int) -> bool:
+    """Q2: could train_distill's AM7bMonitor have fired with these window fields at iteration `it`? The
+    first window closes at ramp_iters + AM7B_WINDOW and only seeds the running minimum, so the earliest
+    firing is one iteration later; the trainer fires on window_mean > AM7B_FACTOR x running_min and
+    records threshold = AM7B_FACTOR x running_min and ratio = window_mean / running_min ("inf" when
+    running_min is 0, and the same encoding when the quotient overflows)."""
+    wm, rm, th, ratio = (detail.get(k) for k in ("window_mean", "running_min", "threshold", "ratio"))
+    if not (it > ramp_iters + AM7B_WINDOW and _finite_number(wm) and _finite_number(rm) and rm >= 0):
+        return False
+    if not (wm > AM7B_FACTOR * rm and _finite_number(th) and th == AM7B_FACTOR * rm):
+        return False
+    if rm == 0:
+        return ratio == "inf"
+    expected = wm / rm
+    return ratio == "inf" if not math.isfinite(expected) else (_finite_number(ratio) and ratio == expected)
+
+
+def _am7a_record_key(it: int, detail: dict, train_row: dict) -> str | None:
+    """Q4: the non-finite quantity of an AM-7 (a) detail ("loss" or "grad_norm"), or None when the record
+    fails a check every train_distill record passes: iteration 2 or later (R8-1); a non-finite loss (the
+    loss case), or a finite loss and a non-finite grad_norm (the norm case); and the aborting iteration's
+    train row naming that key in its `nonfinite` map. The loss case does not require grad_norm to be null,
+    although the trainer always writes it null there."""
+    loss, grad_norm = detail.get("loss"), detail.get("grad_norm")
+    if loss in NONFINITE_TAGS:
+        key = "loss"
+    elif _finite_number(loss) and grad_norm in NONFINITE_TAGS:
+        key = "grad_norm"
+    else:
         return None
-    if isinstance(x, (int, float)):
-        return float(x)
-    if x in ("nan", "inf", "-inf"):
-        return float(x)
-    return None
+    named = train_row.get("nonfinite") if isinstance(train_row, dict) else None
+    return key if it >= 2 and isinstance(named, dict) and key in named else None
 
 
 def _dotted(m: dict, dotted: str):
@@ -314,13 +362,23 @@ def _diverged(run_dir: Path, rows: list[dict], torn_last: bool, ramp_iters: int)
         raise SelectionRefused("abort_record_invalid", f"{run_dir.name}: run_abort at iter {ab['iter']} "
                                                        f"but the last train row is iter "
                                                        f"{train_iters[-1] if train_iters else None}")
-    if ab["rule"] == "AM-7(b)":
-        ratio = _record_number(detail.get("ratio"))
-        if ab["iter"] < ramp_iters + AM7B_WINDOW or ratio is None or not ratio > AM7B_FACTOR:
+    if ab["rule"] == "AM-7(b)" and not _am7b_record_holds(ab["iter"], detail, ramp_iters):
+        raise SelectionRefused("abort_record_invalid",
+                               f"{run_dir.name}: an AM-7 (b) abort at iter {ab['iter']} with detail "
+                               f"{json.dumps(detail)[:240]} cannot hold: it needs iter > ramp_iters + "
+                               f"{AM7B_WINDOW} = {ramp_iters + AM7B_WINDOW}, a finite window_mean above "
+                               f"{AM7B_FACTOR} x a finite running_min >= 0, threshold = {AM7B_FACTOR} x "
+                               "running_min and ratio = window_mean / running_min (\"inf\" at 0 or on "
+                               "overflow)")
+    if ab["rule"] == "AM-7(a)":
+        train_rows = [r for r in rows if r.get("event") == "train"]
+        key = _am7a_record_key(ab["iter"], detail, train_rows[-1])
+        if key is None:
             raise SelectionRefused("abort_record_invalid",
-                                   f"{run_dir.name}: an AM-7 (b) abort at iter {ab['iter']} with ratio "
-                                   f"{detail.get('ratio')!r} cannot hold (it needs iter >= ramp_iters + "
-                                   f"{AM7B_WINDOW} = {ramp_iters + AM7B_WINDOW} and ratio > {AM7B_FACTOR})")
+                                   f"{run_dir.name}: an AM-7 (a) abort at iter {ab['iter']} with detail "
+                                   f"{json.dumps(detail)[:240]} cannot hold: it needs iter >= 2 (iteration "
+                                   "1 is step1_checks) and a non-finite loss, or a finite loss with a "
+                                   "non-finite grad_norm, named in that train row's `nonfinite` map")
     if ab["rule"] not in DIVERGENCE_RULES or ab["cause"] != DIVERGENCE_CAUSE \
             or ab.get("input_finite") is not True or ab.get("teacher_finite") is not True:
         raise SelectionRefused("run_aborted_other",
@@ -461,6 +519,13 @@ def collect_candidates(run_dirs, sweep: dict, key: str) -> tuple[list[dict], lis
     off = sorted(v for v in values if v not in grid)
     if off:
         raise SelectionRefused("grid_mismatch", f"{key} {off} not in the registered grid {grid}")
+    # Q3: the candidates' RECIPE_IDENTICAL values must agree BEFORE a divergence is read (select_alpha's
+    # shared-lambda check still follows; see the module docstring).
+    for field in ("num_workers", "teacher_ckpt_sha256"):
+        seen = {repr(c[field]) for c in finished + diverged}
+        if len(seen) > 1:
+            raise SelectionRefused("recipe_mismatch", f"the candidates differ in {field}: "
+                                                      f"{sorted(seen)} (a sweep's runs share one value)")
     default = float(sweep["default_candidate"])
     for c in diverged:
         if c["value"] == default:
@@ -469,11 +534,6 @@ def collect_candidates(run_dirs, sweep: dict, key: str) -> tuple[list[dict], lis
                 f"the default candidate {key} = {default:g} (run {c['run_id']}) diverged at iter "
                 f"{c['abort']['iter']} under {c['abort']['rule']}: AM-7 applies in full: stop the stage, "
                 "apply the AM-7a item 5 clipping value, rerun the FP32 stages; no selection is made")
-    for field in ("num_workers", "teacher_ckpt_sha256"):
-        seen = {repr(c[field]) for c in finished + diverged}
-        if len(seen) > 1:
-            raise SelectionRefused("recipe_mismatch", f"the candidates differ in {field}: "
-                                                      f"{sorted(seen)} (a sweep's runs share one value)")
     return finished, diverged, shortfall
 
 

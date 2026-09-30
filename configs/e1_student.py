@@ -35,17 +35,19 @@ E1_STUDENT = {
     "shared_by": ("E1", "E2", "E3"),
 
     # ---------------------------------------------------------------- clipping scope note
-    # E1 stays UNCLIPPED: open_questions D2/D-A resolved that, and this task does not reopen it.
-    # Chapter 3 requires global-norm clipping for the DISTILLATION stages and for QAT, so the clipped
-    # stages carry their own separate, independently selected thresholds:
-    #   * E2/E3  -> DISTILL["distillation_grad_clip_pilot"]  (configs/distill.py)
+    # AM-7 (docs/PREREGISTRATION_AMENDMENTS.md; DL-04): E1, E2 and E3 share one rule, NO clipping. E1
+    # was already unclipped (open_questions D2/D-A); train_distill's real-run gate refuses
+    # --grad-clip-norm for E2/E3. Chapter 3 asks for global-norm clipping in the distillation stages and
+    # in QAT; for the distillation stages AM-7 replaces that, and QAT keeps its own threshold:
+    #   * E2/E3  -> none (AM-7). configs/distill.py DISTILL["distillation_grad_clip_pilot"] is the
+    #               WITHDRAWN_AM7 record of the pilot that would have selected one; the
+    #               grad_clip_scope["e2_e3"] value below still names that record.
     #   * E5/E6  -> QUANT["qat_grad_clip_pilot"]             (configs/quant.py)
-    # Those two are DIFFERENT optimization regimes and are not required to share a numeric threshold.
     #
     # CARRY FORWARD (manuscript, not resolved here): Chapter 3 describes E1/E2/E3 as sharing an
     # identical recipe and attributes their differences to the distillation objectives, yet applies
     # clipping only to the distillation stages. That wording needs reconciling; execution is governed
-    # by the repository decision above.
+    # by AM-7 (E1-E3 unclipped).
     "grad_clip_scope": {
         "e1": "unclipped (D2/D-A)",
         "e2_e3": "DISTILL['distillation_grad_clip_pilot']",

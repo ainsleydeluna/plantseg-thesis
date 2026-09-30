@@ -40,14 +40,26 @@ SAFETY MODEL (mirrors train_e1.py, plus the distillation-specific gates):
     and CUDA-order checks at its entry, after main() has loaded the teacher, and in a real run it also
     refuses a missing --ckpt-dir, a clipping value and an off-grid alpha (direct calls).
   * A real run stops (L-KD-HARDEN items 1b and 3; AM-7, DL-04) on AM-7 (a), a non-finite total loss
-    before backward or a non-finite pre-clip gradient norm before the step; on AM-7 (b), the post-ramp
-    rolling-mean rule of configs/distill.py AM7_DIVERGENCE; on a non-finite VAL mIoU; and after
-    iteration 1 if a step-1 check failed. It writes that iteration's row, then a run_abort record
-    (never run_end), and raises RunAborted. Telemetry is strict JSON: a row writes a non-finite value
-    as null and lists it in its `nonfinite` map; the run_abort record writes "nan", "inf" or "-inf".
+    before backward or a non-finite pre-clip gradient norm before the step, from iteration 2 on; on
+    AM-7 (b), the post-ramp rolling-mean rule of configs/distill.py AM7_DIVERGENCE; on a non-finite VAL
+    mIoU; and on a step-1 failure (rule step1_checks): a failed step-1 check after iteration 1's block,
+    or a non-finite loss or gradient norm AT iteration 1 (orchestrator ruling R8-1, not yet in DL-04 or
+    AM-7: before the first update nothing can diverge). It writes that iteration's row, then a
+    run_abort record (never run_end), and raises RunAborted; main() reports it and exits 3. Telemetry
+    is strict JSON: a row writes a non-finite value as null and lists it in its `nonfinite` map; the
+    run_abort record writes "nan", "inf" or "-inf".
   * Checkpoints are NEVER written inside the repo. The training-only CWD projection and its optimizer
     group are written to `projection.pt` beside the checkpoint, never into it, so `model_state_dict`
     is already the clean E6/E7 deployment student and the checkpoint carries nothing to strip.
+
+Exit codes of main() (and of train_e2.py / train_e3.py):
+  0  the run finished and every hard check passed (RESULT: PASS); argparse's --help also exits 0
+  1  the run finished with a failed hard check (RESULT: FAIL); also an uncaught exception (a traceback)
+  2  refused before training: a REFUSING or ERROR line (most name a [code]), or an argparse usage error;
+     run() returns 2 itself for [cuda_initialized_before_seed]
+  3  a real run aborted (RunAborted: AM-7 (a) or (b), val_nonfinite or step1_checks): RESULT: ABORTED;
+     the run_abort record is the telemetry's last row, and the run is never relaunched (AM-7a; a fault
+     follows AM-8a)
 
 No quantization path exists in this file: no QuantStub prepare/convert, no QAT, no PTQ.
 """
@@ -438,9 +450,11 @@ def require_same_grid(what: str, tensor, target_what: str, target) -> None:
 
 
 def input_probe(seen: dict, name: str):
-    """A forward pre-hook recording the (data_ptr, shape) of the tensor a model receives (item 1c)."""
+    """A forward pre-hook recording the (data_ptr, shape, stride) of the tensor a model receives (item
+    1c). The stride catches a layout-changing view such as a transpose, which keeps a square input's
+    pointer and shape."""
     def hook(module, inputs):
-        seen[name] = (inputs[0].data_ptr(), tuple(inputs[0].shape))
+        seen[name] = (inputs[0].data_ptr(), tuple(inputs[0].shape), tuple(inputs[0].stride()))
     return hook
 
 
@@ -622,6 +636,9 @@ class RunAborted(RuntimeError):
         return (RunAborted, (self.record,))
 
 
+ABORTED_EXIT = 3                          # main()'s exit code for a RunAborted run (module docstring)
+
+
 class AM7bMonitor:
     """AM-7 (b), pure (DL-04; item 3b): a divergence monitor on the logged total loss.
 
@@ -677,9 +694,19 @@ def record_number(x) -> float | str | None:
     return x if math.isfinite(x) else _nonfinite_tag(x)
 
 
+def nonfinite_rule(it: int) -> str:
+    """The rule of a non-finite total loss or gradient norm at iteration `it` (orchestrator ruling
+    R8-1): AM-7 (a) from iteration 2 on. At iteration 1 it is a step-1 failure: before the first update
+    nothing can diverge, and with every ramp at 0 the loss does not depend on lambda or alpha, so AM-7a
+    item 4 sends it to STOP (it must never read as a default candidate's divergence)."""
+    return "AM-7(a)" if it >= 2 else "step1_checks"
+
+
 def abort_cause(rule: str, input_finite: bool, teacher_finite: bool) -> str:
     """AM-7a: an AM-7 (a)/(b) stop is a STUDENT divergence only when the step's input and teacher
-    outputs were finite; otherwise it is a fault of the input or of the teacher."""
+    outputs were finite; otherwise it is a fault of the input or of the teacher. step1_checks (a failed
+    step-1 check, or a non-finite loss or gradient norm at iteration 1, R8-1) is checks_failed whatever
+    the input and teacher were; its record still carries input_finite and teacher_finite."""
     if rule in AM7_RULES:
         if not input_finite:
             return "input_nonfinite"
@@ -976,7 +1003,8 @@ def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeach
                 h.remove()
         if it == 1:
             checks["teacher_same_augmented_input"] = (
-                seen.get("student") == seen.get("teacher") == (img.data_ptr(), tuple(img.shape)))
+                seen.get("student") == seen.get("teacher")
+                == (img.data_ptr(), tuple(img.shape), tuple(img.stride())))
             checks["teacher_logits_shape"] = tuple(teacher_out.logits.shape) == tuple(head_logits.shape)
             checks["teacher_feat_shape"] = (teacher_out.feat_s16 is not None
                                             and tuple(teacher_out.feat_s16.shape)
@@ -1010,10 +1038,11 @@ def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeach
                     checks[k] = True
 
         # AM-7 (a), real runs (item 3a): a non-finite total loss stops the run BEFORE backward; its row
-        # has no lr and no gradient norms (not computed), and the weights are not stepped.
+        # has no lr and no gradient norms (not computed), and the weights are not stepped. At iteration
+        # 1 the same stop is a step-1 failure, rule step1_checks (R8-1; nonfinite_rule).
         if mode == "real" and not bool(torch.isfinite(loss)):
             write_train_row(it)
-            abort("AM-7(a)", it, loss_value=float(loss.item()))
+            abort(nonfinite_rule(it), it, loss_value=float(loss.item()))
         if it == 1:
             checks["loss_finite"] = bool(torch.isfinite(loss)) and loss.dim() == 0
             checks["has_expected_terms"] = set(parts) == set(terms)
@@ -1028,10 +1057,11 @@ def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeach
         grad_norm_student = total_grad_norm(student.parameters())
         grad_norm_projection = None if projection is None else total_grad_norm(projection.parameters())
         norms = (grad_norm, grad_norm_student, grad_norm_projection)
-        # AM-7 (a), real runs: a non-finite pre-clip gradient norm stops the run before optimizer.step.
+        # AM-7 (a), real runs: a non-finite pre-clip gradient norm stops the run before optimizer.step
+        # (step1_checks at iteration 1, R8-1).
         if mode == "real" and not math.isfinite(grad_norm):
             write_train_row(it, norms=norms)
-            abort("AM-7(a)", it, loss_value=float(loss.item()), grad_norm_value=grad_norm)
+            abort(nonfinite_rule(it), it, loss_value=float(loss.item()), grad_norm_value=grad_norm)
         if grad_clip_norm is not None:
             # global-norm clipping over the student (+ projection), every iteration ("throughout")
             total_norm = torch.nn.utils.clip_grad_norm_(trainable, grad_clip_norm)
@@ -1232,7 +1262,8 @@ def main(argv=None, stage_default: str | None = None) -> int:
                  if mode == "real" else (args.max_iters or 4))
 
     def both_mode_gates() -> int | None:
-        """L-KD-HARDEN items 2j and 2c, in both modes; a real run checks them after M11 and the device."""
+        """L-KD-HARDEN items 2j and 2c and the log cadence (Q10), in both modes; a real run checks them
+        after M11 and the device."""
         sem_error = lambda_semantics_gate_error(args.lambda_semantics, args.allow_semantics_mismatch)
         if sem_error is not None:
             return refuse("lambda_semantics", sem_error)
@@ -1240,6 +1271,9 @@ def main(argv=None, stage_default: str | None = None) -> int:
         if sched_error is not None:
             print(f"REFUSING to start the {mode} {stage['name']} run: {sched_error}", file=sys.stderr)
             return 2
+        if args.log_every < 1:
+            return refuse("log_every", f"--log-every {args.log_every}: the train log is printed every "
+                                       "--log-every iterations, a whole number >= 1")
         return None
 
     if mode == "real":
@@ -1284,6 +1318,14 @@ def main(argv=None, stage_default: str | None = None) -> int:
             return refuse("ckpt_dir_required", "--ckpt-dir is required: a real run writes into an "
                                                "explicit, fresh, out-of-repo directory; the "
                                                "temporary-directory fallback is for dry runs only")
+        # Q10: train_e1's guard, now before anything is built. The path is resolved first, so an error of
+        # the resolution itself (pathlib's RuntimeError for a symlink loop) raises as it does in train_e1
+        # and is never refused as an in-repo directory.
+        ckpt_resolved = Path(args.ckpt_dir).resolve()
+        try:
+            _assert_outside_repo(ckpt_resolved)
+        except RuntimeError as e:
+            return refuse("ckpt_dir_in_repo", f"{e}; checkpoints live outside the repository")
         fresh_error = ckpt_dir_fresh_error(args.ckpt_dir)
         if fresh_error is not None:
             return refuse("ckpt_dir_not_fresh", fresh_error)
@@ -1350,14 +1392,20 @@ def main(argv=None, stage_default: str | None = None) -> int:
         lambda_logit = (args.lambda_logit if args.lambda_logit is not None
                         else (1.0 if stage["logit_kd"] else None))
 
-    return run(stage=stage, mode=mode, device=device, pretrained=pretrained, teacher=teacher,
-               lambda_logit=lambda_logit, batch_size=batch_size, max_iters=max_iters,
-               val_interval=val_interval, max_val_batches=max_val_batches,
-               num_workers=num_workers, ckpt_dir_arg=args.ckpt_dir,
-               grad_clip_norm=args.grad_clip_norm, log_every=args.log_every, seed=args.seed,
-               semantics_declared=args.lambda_semantics,
-               semantics_override=bool(args.allow_semantics_mismatch),
-               alpha=alpha, alpha_offgrid=alpha_offgrid)
+    try:
+        return run(stage=stage, mode=mode, device=device, pretrained=pretrained, teacher=teacher,
+                   lambda_logit=lambda_logit, batch_size=batch_size, max_iters=max_iters,
+                   val_interval=val_interval, max_val_batches=max_val_batches,
+                   num_workers=num_workers, ckpt_dir_arg=args.ckpt_dir,
+                   grad_clip_norm=args.grad_clip_norm, log_every=args.log_every, seed=args.seed,
+                   semantics_declared=args.lambda_semantics,
+                   semantics_override=bool(args.allow_semantics_mismatch),
+                   alpha=alpha, alpha_offgrid=alpha_offgrid)
+    except RunAborted as e:                       # run() raises; the process exits cleanly with code 3
+        r = e.record
+        print(f"RESULT: ABORTED rule={r['rule']} iter={r['iter']} cause={r['cause']}; the run_abort record "
+              "is the telemetry's last row; do not relaunch this run (AM-7a; a fault follows AM-8a)")
+        return ABORTED_EXIT
 
 
 if __name__ == "__main__":

@@ -29,6 +29,12 @@ Part 2 - real-mode CPU integration: synthetic 512x512 TRAIN/VAL set (4 + 2 image
       before optimizer.step: the row carries the (null) grad norms, the record detail.grad_norm "nan"
   A3  a NaN input pixel at iteration 3 -> rule AM-7(a), cause input_nonfinite, input_finite false
   A4  a NaN teacher output at iteration 3 -> rule AM-7(a), cause teacher_nonfinite, teacher_finite false
+  A5  R8-1: a non-finite loss AT iteration 1 is a step-1 failure, not AM-7 (a) (before the first update
+      nothing can diverge) -> iteration 1's train row (loss null and listed in `nonfinite`, lr and grad
+      norms null), then run_abort {rule step1_checks, cause checks_failed, detail.loss "nan",
+      detail.grad_norm null}, and nothing else in the telemetry
+  A6  R8-1: a finite loss and a non-finite gradient at iteration 1 (the A2 fault) -> run_abort {rule
+      step1_checks, cause checks_failed, detail.grad_norm non-finite, detail.loss finite}
   B6  AM-7(b) with the window patched to 2: a +1000 loss offset from iteration 5 on (after the ramp)
       -> rule AM-7(b), cause student_divergence, ratio > 5, iter >= ramp_iters + window
   V1  a non-finite VAL all-class mIoU -> the val row (strict JSON), then run_abort {rule val_nonfinite,
@@ -338,6 +344,35 @@ def test_real_mode() -> None:
     last4 = tail(r)[0]
     check_safe("A4_nonfinite_teacher_is_not_a_divergence", lambda: ok and last4["teacher_finite"] is False
                and last4["input_finite"] is True, det)
+
+    with patched(td, "distillation_losses",
+                 distill_wrapper(lambda n, total, kw: total + float("nan") if n == 1 else total)):
+        r = real_run("a5")
+    ok, det = abort_ok(r, rule="step1_checks", cause="checks_failed", it=1)
+    last5, row5 = tail(r)
+    check_safe("A5_nonfinite_loss_at_iter1_is_step1_checks",
+               lambda: ok and [x.get("event") for x in r["rows"]] == ["train", "run_abort"]
+               and last5["detail"]["loss"] == "nan" and last5["detail"]["grad_norm"] is None
+               and last5["input_finite"] is True and last5["teacher_finite"] is True, det)
+    check_safe("A5_train_row_nulls_and_nonfinite_map", lambda: row5["loss"] is None
+               and row5.get("nonfinite", {}).get("loss") == "nan" and row5["lr"] is None
+               and row5["grad_norm"] is None and row5["grad_norm_student"] is None, json.dumps(row5)[:300])
+
+    def bad_grad_at_1(n, total, kw):
+        if n != 1:
+            return total
+        z = kw["logits"].sum() * 0.0
+        return total + torch.sqrt(z)                                  # forward 0, backward inf*0 = NaN
+    with patched(td, "distillation_losses", distill_wrapper(bad_grad_at_1)):
+        r = real_run("a6")
+    ok, det = abort_ok(r, rule="step1_checks", cause="checks_failed", it=1)
+    last6, row6 = tail(r)
+    check_safe("A6_nonfinite_grad_norm_at_iter1_is_step1_checks",
+               lambda: ok and [x.get("event") for x in r["rows"]] == ["train", "run_abort"]
+               and last6["detail"]["grad_norm"] in ("nan", "inf", "-inf")
+               and isinstance(last6["detail"]["loss"], float) and math.isfinite(last6["detail"]["loss"])
+               and row6.get("nonfinite", {}).get("grad_norm") == last6["detail"]["grad_norm"]
+               and row6["lr"] is None, det)
 
     blowup = distill_wrapper(lambda n, total, kw: total + 1000.0 if n >= 5 else total)
     with patched(td, "distillation_losses", blowup), \

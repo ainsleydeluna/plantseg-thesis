@@ -33,6 +33,16 @@ can be built even if one of them failed.
   2j  more than one alpha<v> in --ckpt-dir (glued on or not) -> [ckpt_dir_alpha]; run() refuses an
       off-grid alpha in real mode; the lambda-semantics gate refuses in dry mode too; the grid error
       prints repr(alpha)
+  Q10 a --ckpt-dir that resolves inside the repository (the repository itself, a path under it, a
+      relative path and a path through a symlink that resolve into it; the test of train_e1's
+      _assert_outside_repo) -> [ckpt_dir_in_repo] in a real run, before the fresh-directory gate, and
+      nothing is created; a path whose resolution fails (pathlib's symlink-loop RuntimeError, simulated)
+      raises before any teacher or loader and is never refused as in-repo; --log-every < 1 ->
+      [log_every] in both modes (the dry cases pass --teacher-ckpt, so a gate after the teacher load
+      would show as a load). A host without symlink rights (Windows) SKIPs the symlink case, and a
+      working directory on another drive SKIPs the relative one: a named SKIP, never a PASS.
+  abort  main() turns run()'s RunAborted into exit code 3 (td.ABORTED_EXIT, distinct from 0, 1 and 2) and
+      one RESULT: ABORTED line on stdout (a stub run() that raises)
   legal  each stage's legal launch reaches run() with the recipe values (mode real, 80,000 iterations,
       batch 16, ImageNet init, VAL every 4,000 over the full set, explicit workers, no clipping)
   order  M11 and the CUDA-device refusals keep their text and fire before every item-2 gate
@@ -58,12 +68,18 @@ from src.distill import FrozenTeacher, MockTeacher  # noqa: E402
 
 NC = 116
 results: list[tuple[str, bool, str]] = []
+SKIPPED: list[tuple[str, str]] = []
 COUNT = {"teacher": 0, "loader": 0, "run": 0, "student": 0}
 SEEN: list[dict] = []
 
 
 def check(name: str, ok: bool, detail: str = "") -> None:
     results.append((name, bool(ok), detail))
+
+
+def skip(name: str, reason: str) -> None:
+    """A case this host cannot run: printed with its reason, never counted as a PASS."""
+    SKIPPED.append((name, reason))
 
 
 # ------------------------------------------------------------------------------------ stubs
@@ -240,6 +256,90 @@ def test_ckpt_dir() -> None:
     afile.parent.mkdir(parents=True, exist_ok=True)
     afile.write_text("x", encoding="utf-8")
     refused("2b_path_is_a_file", legal("g", ckpt_dir=str(afile)), "ckpt_dir_not_fresh")
+
+
+def test_ckpt_dir_in_repo_and_log_every() -> None:
+    """Q10: an in-repository --ckpt-dir and a log cadence below 1 are refused by name before any loader
+    or teacher is built."""
+    refused("q10_repo_itself", legal("g", ckpt_dir=str(REPO)), "ckpt_dir_in_repo")
+    under = REPO / "kdh_ckpt_never_created"
+    refused("q10_under_repo", legal("g", ckpt_dir=str(under / "g_s42")), "ckpt_dir_in_repo")
+    try:
+        rel = os.path.relpath(REPO / "kdh_ckpt_never_created_rel", start=os.getcwd())
+    except ValueError as e:                       # Windows: the working directory is on another drive
+        rel = None
+        skip("q10_relative_into_repo_refused_ckpt_dir_in_repo", f"no relative path from here: {e}")
+    if rel is not None:
+        refused("q10_relative_into_repo", legal("g", ckpt_dir=rel), "ckpt_dir_in_repo")
+    link = TMP / "link_into_repo"
+    try:
+        link.symlink_to(REPO, target_is_directory=True)
+    except (OSError, NotImplementedError) as e:   # Windows without the symlink privilege
+        skip("q10_symlink_into_repo_refused_ckpt_dir_in_repo", f"os.symlink not permitted on this host: {e}")
+    else:
+        try:
+            refused("q10_symlink_into_repo", legal("g", ckpt_dir=str(link / "kdh_ckpt_never_created_link")),
+                    "ckpt_dir_in_repo")
+        finally:
+            link.unlink()
+    created = [p for p in (under, REPO / "kdh_ckpt_never_created_rel", REPO / "kdh_ckpt_never_created_link")
+               if p.exists()]
+    check("q10_nothing_created_in_repo", not created, str(created))
+    marker = "kdh_unresolvable_ckpt_dir"
+    real_resolve = Path.resolve
+
+    def resolve(self, strict=False):              # pathlib's error for a symlink loop (Python <= 3.12)
+        if marker in str(self):
+            raise RuntimeError(f"Symlink loop from {str(self)!r}")
+        return real_resolve(self, strict=strict)
+    reset()
+    Path.resolve = resolve
+    try:
+        rc, err = call_main(legal("g", ckpt_dir=str(TMP / marker / "g_s42")))
+        outcome = f"rc={rc} {err.strip()[-120:]}"
+    except RuntimeError as e:
+        outcome = f"raised {e}"
+    finally:
+        Path.resolve = real_resolve
+    check("q10_unresolvable_ckpt_dir_raises_not_in_repo", outcome.startswith("raised Symlink loop")
+          and COUNT["teacher"] == 0 and COUNT["loader"] == 0 and COUNT["run"] == 0, outcome)
+    for bad in ("0", "-1"):
+        refused(f"q10_real_log_every_{bad}", legal("g", log_every=bad), "log_every")
+        refused(f"q10_dry_log_every_{bad}", ["--stage", "e2", "--dry-run", "--teacher-ckpt", str(TEACHER),
+                                             "--log-every", bad], "log_every")
+    reset()
+    rc, err = call_main(["--stage", "e2", "--dry-run", "--log-every", "1"])
+    check("q10_dry_log_every_1_accepted", rc == 0 and COUNT["run"] == 1 and SEEN[-1].get("log_every") == 1,
+          err.strip()[-120:])
+
+
+def test_abort_exit() -> None:
+    """Item 3: run() raises RunAborted; main() prints one RESULT: ABORTED line and returns 3."""
+    record = {"event": "run_abort", "iter": 1234, "rule": "AM-7(a)", "cause": "student_divergence",
+              "detail": {"loss": "nan", "grad_norm": None, "window_mean": None, "running_min": 0.8,
+                         "ratio": None, "threshold": None},
+              "input_finite": True, "teacher_finite": True, "params_finite": True, "n_val": 0,
+              "wall_clock": 0.0}
+
+    def aborting_run(**kwargs):
+        COUNT["run"] += 1
+        raise td.RunAborted(record)
+    reset()
+    out, err = io.StringIO(), io.StringIO()
+    td.run = aborting_run
+    try:
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = td.main(legal("e2"))
+    except td.RunAborted as e:                    # main() let it through: a FAIL, not a traceback
+        rc = f"raised {e}"
+    finally:
+        td.run = stub_run
+    want = ("RESULT: ABORTED rule=AM-7(a) iter=1234 cause=student_divergence; the run_abort record is the "
+            "telemetry's last row; do not relaunch this run (AM-7a; a fault follows AM-8a)")
+    lines = [ln for ln in out.getvalue().splitlines() if ln.startswith("RESULT")]
+    check("abort_main_exits_3_with_one_result_line", rc == 3 and td.ABORTED_EXIT == 3 and lines == [want]
+          and COUNT["run"] == 1 and "RESULT" not in err.getvalue(),
+          f"rc={rc} lines={lines} err={err.getvalue().strip()[-120:]}")
 
 
 def test_schedule() -> None:
@@ -465,9 +565,10 @@ def main() -> int:
     td.load_frozen_teacher, td.build_dataloader = stub_load_frozen_teacher, stub_build_dataloader
     td.run, td.build_student = stub_run, stub_build_student
     try:
-        for fn in (test_legal_launches, test_lambda, test_ckpt_dir, test_schedule, test_val, test_workers,
-                   test_seed_batch_init, test_clip, test_tf32, test_cuda_order, test_alpha_and_semantics,
-                   test_run_entry_repeats, test_gate_order):
+        for fn in (test_legal_launches, test_lambda, test_ckpt_dir, test_ckpt_dir_in_repo_and_log_every,
+                   test_abort_exit, test_schedule, test_val, test_workers, test_seed_batch_init, test_clip,
+                   test_tf32, test_cuda_order, test_alpha_and_semantics, test_run_entry_repeats,
+                   test_gate_order):
             fn()
     finally:
         td.DATA["root"] = saved[0]
@@ -477,8 +578,11 @@ def main() -> int:
     print("\n[CHECKS]")
     for name, ok, detail in results:
         print(f"  {name:58}: {'PASS' if ok else 'FAIL'}{('  ' + detail) if detail and not ok else ''}")
+    for name, reason in SKIPPED:
+        print(f"  {name:58}: SKIP  {reason}")
     passed = sum(1 for _, ok, _ in results if ok)
-    print(f"\nRESULT: {'PASS' if passed == len(results) else 'FAIL'} ({passed}/{len(results)})")
+    skipped = f", {len(SKIPPED)} skipped" if SKIPPED else ""
+    print(f"\nRESULT: {'PASS' if passed == len(results) else 'FAIL'} ({passed}/{len(results)}{skipped})")
     return 0 if passed == len(results) else 1
 
 
