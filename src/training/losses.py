@@ -1,10 +1,10 @@
-"""Loss scaffolds for E1/E2/E3 (Blocker B11). SMOKE-ONLY use here — no training, no backward.
+"""Losses for E1/E2/E3 and the KD arms A, F, G (Blocker B11), used by the E1 and KD trainers.
 
 Per docs/IMPLEMENTATION_CONTRACT.md B5 (supervised) + B3 (distillation):
   L_sup = L_CE + L_Dice (equal weight). CE: class-weighted (sqrt inverse-frequency, median-normalized,
   over non-255 pixels), ignore_index=255. Dice: soft, on softmax probs, per-class macro over classes
   PRESENT in the batch (absent excluded), smoothing 1e-5, validity-masked. Logit KD (E2/E3): KL on
-  temperature-softened outputs (T_Logit=4), averaged over valid pixels. CWD (E3): PLACEHOLDER only.
+  temperature-softened outputs (T_Logit=4), averaged over valid pixels. CWD: per-channel spatial KL.
 """
 
 from __future__ import annotations
@@ -159,10 +159,16 @@ def cwd_channelwise_kl(student_map: torch.Tensor, teacher_map: torch.Tensor,
     the logit map unless `channels_norm` overrides it).
 
     `valid_mask` [B,h,w] restricts BOTH the softmax and the KL to valid locations, per the contract's
-    ignore handling: invalid positions are pushed to -inf before the softmax so they receive exactly
-    zero probability and contribute nothing. A sample with no valid location contributes 0 instead of
-    NaN. Teacher input is used as-is; callers pass a detached teacher tensor so no gradient flows back
-    into the frozen teacher.
+    ignore handling: invalid positions are filled with the dtype's most negative finite value before
+    the softmax (in a sample with at least one valid location they receive exactly zero probability),
+    and their KL entries are then replaced by exactly 0, so no value written at an ignored position
+    can reach the loss or the gradient. ONLY the masked positions are zeroed: a non-finite value at a
+    VALID position propagates (a NaN gives a NaN loss; a student -inf gives +inf, or NaN where the
+    teacher's probability there is 0; a teacher -inf gives NaN), so the trainer's AM-7 (a) check stops
+    a real run instead of training on a silently scrubbed number (L-KD-HARDEN item 9). A sample with no
+    valid location contributes exactly 0. The unmasked path (`valid_mask=None`) is not scrubbed either.
+    Teacher input is used as-is; callers pass a detached teacher tensor so no gradient flows back into
+    the frozen teacher.
 
     Returns a scalar: the per-sample CWD summed over channels/locations, averaged over the batch.
     """
@@ -190,8 +196,7 @@ def cwd_channelwise_kl(student_map: torch.Tensor, teacher_map: torch.Tensor,
     t_logp = F.log_softmax(t, dim=-1)
     kl = t_logp.exp() * (t_logp - s_logp)                          # [B,C,HW]
     if m is not None:
-        kl = kl * m                                                # drop the all -inf columns
-    kl = torch.nan_to_num(kl, nan=0.0, posinf=0.0, neginf=0.0)     # samples with no valid location
+        kl = torch.where(m, kl, kl.new_zeros(()))                  # zero the masked positions only
 
     cnorm = c if channels_norm is None else channels_norm
     per_sample = kl.sum(dim=(1, 2)) * (T * T) / cnorm              # [B]
