@@ -5,22 +5,27 @@
 Lane checks (docs/lane_specs/part2.md lanes 1-2; smoke convention per errata E-7):
 
 default mode, on this checkout (or --code-root DIR):
-  H0   repeat determinism: E3 run twice, every step JSON byte-identical.
+  H0   repeat determinism: E3 run twice, every step JSON byte-identical (the wall-clock fields are
+       dropped by the harness before writing and comparing; L-KD-HARDEN item 4e).
   d2   optimizer parameters = the student only (E2, G) or the student + 51,200 (E3, A, F).
-  d6   exact telemetry key sets per stage (E2, E3, A, F, G).
+  d6   exact telemetry key sets per stage (E2, E3, A, F, G): train rows with ce, dice, the grad-norm
+       split and E1's wall-clock fields; val rows in E1's schema; run_end with the wall-clock and
+       GPU-hour fields (L-KD-HARDEN item 4).
   d7   one teacher forward per step for every stage; the same `_build_bases` count, NMF stream
        position and teacher output hashes at every step for every stage.
   d8   no projection keys in any student state_dict and no projection in the checkpoint payload;
        projection.pt exists iff cwd_feat and pairs with the latest checkpoint; the E6/E7 loader
        takes E3's checkpoint as it is (nothing to strip) and refuses the other stages.
   R    projection.pt restores the projection and its optimizer group bit for bit.
-  run_meta: terms, projection_params, and lambda/alpha/beta/T only for instantiated terms;
-       best.json in E1's schema.
+  run_meta: terms, projection_params, and lambda/alpha/beta/T only for instantiated terms; E1's
+       provenance and recipe keys plus ramp_iters, class_weights_sha256, tf32, teacher_provenance and
+       teacher_mock, with their dry-harness values (L-KD-HARDEN item 5); best.json in E1's schema.
 
 --cross-commit OLD NEW  (or --old-root DIR --new-root DIR for trees exported beforehand):
   d4   E2 and E3 step JSONs of NEW byte-identical to OLD: telemetry (losses, ramp, lr, grad norm),
-       gradient and weight hashes, teacher output hashes, NMF position, RNG state. No field is
-       declared new. E3 is also compared with global-norm clipping on (max_norm 1.0).
+       gradient and weight hashes, teacher output hashes, NMF position, RNG state. Fields the lane
+       adds are named with --declared-new (removed from NEW only; an OLD field always has to match).
+       E3 is also compared with the dry global-norm clipping path on (max_norm 1.0).
   L2d3 NEW E3 with an explicit alpha = 50 byte-identical to OLD E3.
   Guards: OLD and NEW must be different code (train_distill.py bytes differ), and a negative
        control (NEW E3 at alpha 25) must differ from OLD E3 at every step after the first.
@@ -43,8 +48,9 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
-from scripts.invariance_harness import (compare_step_dirs, export_commit,  # noqa: E402
-                                        make_synthetic_dataset, run_worker)
+from configs.e1_student import E1_STUDENT  # noqa: E402
+from scripts.invariance_harness import (BATCH, N_TRAIN, compare_step_dirs, export_commit,  # noqa: E402
+                                        make_synthetic_dataset, run_worker, sha256_file)
 
 TERMS = ("logit_kd", "cwd_feat", "cwd_logit")
 STAGE_TERMS = {"e2": (True, False, False), "e3": (True, True, True), "a": (False, True, True),
@@ -69,8 +75,40 @@ def outside_repo(p: Path) -> Path:
 
 
 def expected_keys(flags) -> list[str]:
-    return (["event", "iter", "loss", "sup"] + [t for t, on in zip(TERMS, flags) if on]
-            + ["ramp", "lr", "grad_norm"])
+    """Train-row keys in order (L-KD-HARDEN item 4): the 44c05dc keys with ce/dice after sup, the
+    grad-norm split after grad_norm, and E1's wall-clock fields last."""
+    cf = flags[1]
+    return (["event", "iter", "loss", "sup", "ce", "dice"] + [t for t, on in zip(TERMS, flags) if on]
+            + ["ramp", "lr", "grad_norm", "grad_norm_student"] + (["grad_norm_projection"] if cf else [])
+            + ["wall_clock", "iter_seconds", "samples_per_sec"])
+
+
+VAL_KEYS = ["event", "iter", "all_class_miou", "disease_only_miou_PROVISIONAL", "per_class_iou",
+            "per_class_eligible", "n_eligible_classes", "val_batches", "val_total_px", "val_seconds",
+            "wall_clock"]                                    # train_e1's val row (train_e1.py:492-500)
+RUN_END_KEYS = ["event", "iter", "best_val_miou_all_class", "best_ckpt", "checks_passed",
+                "wall_clock_start", "wall_clock_end", "wall_seconds", "train_seconds", "gpu_hours"]
+# E1's run_meta keys, with persistent_workers (E1's TRAIN-loader argument) after num_workers (item 5)
+E1_META_KEYS = ["wall_clock", "git_head", "git_head_source", "image_digest", "torch", "numpy", "device",
+                "cuda_available", "gpu_name", "num_workers", "persistent_workers", "val_interval",
+                "max_val_batches", "learning_rate", "momentum", "weight_decay", "lr_power", "poly_horizon",
+                "grad_clip_norm", "used_pretrained", "params", "ignore_index"]
+KD_META_KEYS = ["ramp_iters", "class_weights_sha256", "tf32", "teacher_provenance", "teacher_mock"]
+
+
+def host_facts() -> dict:
+    """What run_meta records about the HOST rather than the run's device: the workers train on the CPU,
+    but cuda_available, gpu_name and the TF32 state describe the machine and its environment, which the
+    workers inherit. A worker that set a TF32 flag would differ from this fresh-process reading."""
+    import os
+
+    import torch
+    cuda = torch.cuda.is_available()
+    return {"cuda_available": cuda, "gpu_name": torch.cuda.get_device_name(0) if cuda else None,
+            "tf32": {"cudnn_allow_tf32": bool(torch.backends.cudnn.allow_tf32),
+                     "matmul_allow_tf32": bool(torch.backends.cuda.matmul.allow_tf32),
+                     "float32_matmul_precision": torch.get_float32_matmul_precision(),
+                     "NVIDIA_TF32_OVERRIDE": os.environ.get("NVIDIA_TF32_OVERRIDE")}}
 
 
 def load_steps(d: Path) -> list[dict]:
@@ -171,6 +209,35 @@ def single(work: Path, data_root: Path, code_root: Path, a) -> dict:
                    and (("beta_cwd" in present) == cl) and (("T_cwd" in present) == (cf or cl))
                    and (rm.get("alpha_cwd") == 50.0 if cf else True))
         check(f"run_meta_{s}_terms_and_instantiated_fields", ok_meta, json.dumps(rm)[:400])
+        # L-KD-HARDEN item 5: E1's provenance/recipe keys and the KD carriers, with dry-harness values
+        want_meta = {"mode": "dry", "seed": 42, "batch_size": BATCH, "max_iters": a.steps,
+                     "num_workers": 0, "persistent_workers": False, "val_interval": a.val_interval,
+                     "max_val_batches": None, "poly_horizon": E1_STUDENT["iterations"],
+                     "grad_clip_norm": None, "used_pretrained": False, "params": STUDENT_PARAMS,
+                     "ignore_index": 255, **{k: E1_STUDENT[k] for k in ("learning_rate", "momentum",
+                                                                        "weight_decay", "lr_power")},
+                     "ramp_iters": N_TRAIN // BATCH, "device": "cpu", **host_facts(), "teacher_mock": False,
+                     "torch": sm.get("torch"),
+                     "class_weights_sha256": sha256_file(code_root / "reports" / "e1_class_weights.json")}
+        missing = [k for k in E1_META_KEYS + KD_META_KEYS if k not in rm]
+        wrong = {k: (rm.get(k), v) for k, v in want_meta.items()
+                 if k not in rm or rm[k] != v or type(rm[k]) is not type(v)}
+        prov = rm.get("teacher_provenance", "absent")
+        prov_ok = prov is None if a.teacher == "stub" else (isinstance(prov, dict)
+                                                            and bool(prov.get("ckpt_sha256")))
+        check(f"run_meta_{s}_e1_keys_and_kd_carriers", len(rows) == 1 and not missing and not wrong
+              and prov_ok, f"missing={missing} wrong={wrong} teacher_provenance={prov!r}")
+        # L-KD-HARDEN item 4: E1-schema val rows at every validation, run_end with the GPU-hour carrier
+        want_val = sorted({i for i in range(1, a.steps + 1) if i % a.val_interval == 0} | {a.steps})
+        check(f"val_rows_{s}_e1_schema", sm.get("val_keys") == [VAL_KEYS]
+              and sm.get("val_iters") == want_val, f"{sm.get('val_keys')} at {sm.get('val_iters')} "
+                                                   f"(want {want_val})")
+        end = sm.get("run_end") or {}
+        check(f"run_end_{s}_wall_clock_and_gpu_hours", list(end) == RUN_END_KEYS
+              and end["wall_clock_end"] >= end["wall_clock_start"]
+              and end["wall_seconds"] == end["wall_clock_end"] - end["wall_clock_start"]
+              and end["gpu_hours"] == end["wall_seconds"] / 3600.0
+              and 0.0 <= end["train_seconds"] <= end["wall_seconds"], json.dumps(end)[:300])
         check(f"best_json_{s}_e1_schema", sorted(sm["best_json"] or {}) == BEST_JSON_KEYS,
               json.dumps(sm["best_json"]))
         end, best = sm.get("run_end") or {}, sm["best_json"] or {}
@@ -217,16 +284,17 @@ def cross(work: Path, data_root: Path, old_root: Path, new_root: Path, a) -> dic
     new_sha = (runs["new_e3"]["summary"] or {}).get("train_distill_sha256")
     check("cross_old_and_new_code_differ", bool(old_sha) and bool(new_sha) and old_sha != new_sha,
           f"train_distill.py sha256 old={old_sha} new={new_sha}")
-    comps = {"d4_e2": compare_step_dirs(work / "old_e2", work / "new_e2"),
-             "d4_e3": compare_step_dirs(work / "old_e3", work / "new_e3"),
-             "d4_e3_clipped": compare_step_dirs(work / "old_e3_clip", work / "new_e3_clip"),
-             "lane2_d3_e3_alpha50": compare_step_dirs(work / "old_e3", work / "new_e3_alpha50")}
+    new = tuple(a.declared_new)
+    comps = {"d4_e2": compare_step_dirs(work / "old_e2", work / "new_e2", new),
+             "d4_e3": compare_step_dirs(work / "old_e3", work / "new_e3", new),
+             "d4_e3_clipped": compare_step_dirs(work / "old_e3_clip", work / "new_e3_clip", new),
+             "lane2_d3_e3_alpha50": compare_step_dirs(work / "old_e3", work / "new_e3_alpha50", new)}
     for name, c in comps.items():
         check(f"{name}_step_jsons_byte_identical", c["identical"],
               f"{c['n_old']}/{c['n_new']} steps; first mismatch: {c['mismatches'][:1]}")
     # Negative control: the comparison must be able to fail. alpha 25 changes the feature-term weight
     # from step 2 on (the ramp is exactly 0 at step 1), so those step JSONs must differ from OLD E3.
-    ctrl = compare_step_dirs(work / "old_e3", work / "new_e3_alpha25")
+    ctrl = compare_step_dirs(work / "old_e3", work / "new_e3_alpha25", new)
     comps["control_e3_alpha25"] = ctrl
     diff_files = [m["file"] for m in ctrl["mismatches"]]
     check("control_e3_alpha25_detected", ctrl["n_old"] == ctrl["n_new"] == a.steps
@@ -251,6 +319,9 @@ def main(argv=None) -> int:
     ap.add_argument("--new-root", default=None)
     ap.add_argument("--stages", nargs="+", default=list(STAGE_TERMS), choices=list(STAGE_TERMS))
     ap.add_argument("--no-repeat", action="store_true")
+    ap.add_argument("--declared-new", nargs="*", default=[], metavar="FIELD",
+                    help="cross-commit only: dotted step-JSON fields the lane under test adds (e.g. "
+                         "telemetry.ce); removed from NEW before the byte comparison, never from OLD")
     a = ap.parse_args(argv)
     if a.teacher == "real" and not (a.teacher_ckpt and a.teacher_config):
         ap.error("--teacher real needs --teacher-ckpt and --teacher-config")
@@ -263,6 +334,7 @@ def main(argv=None) -> int:
     t0 = time.time()
     data = make_synthetic_dataset(work / "data")
     out = {"mode": None, "steps": a.steps, "teacher": a.teacher, "threads": a.threads,
+           "declared_new": list(a.declared_new),
            "data_manifest_sha256": data["manifest_sha256"], "work_dir": str(work)}
     print("=" * 78)
     print(f"DISTILL INVARIANCE SMOKE — CPU, synthetic 16+4 set, batch 2, seed 42, "

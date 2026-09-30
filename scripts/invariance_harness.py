@@ -5,7 +5,7 @@ Runs `src.training.train_distill.run` for N steps on a synthetic TRAIN/VAL set (
 512x512 RGB images with 116-class block masks), batch 2, num_workers 0, CPU, seed 42 (run() applies
 it through set_seed, with the determinism settings on), and writes ONE JSON PER STEP:
 
-    the telemetry row, verbatim           sha256 of the student / projection state_dict
+    the telemetry row, less wall-clock    sha256 of the student / projection state_dict
     sha256 of the student / projection    sha256 of that step's teacher logits and Stage-3 map
       gradients the step applied          teacher forward count; NMF `_build_bases` count and
     sha256 of the CPU / numpy / python      stream position (M4-KD)
@@ -20,7 +20,10 @@ The file has two roles:
     `build_student`, `build_cwd_projection`, `validate`, `save_distill_checkpoint`) and adds a forward
     hook to the teacher, so the pre-lane (73fd4d7) and the lane code run through the identical
     driver. A cross-commit run passes when every step JSON is byte-identical, except fields the lane
-    declares new.
+    declares new. The wall-clock telemetry fields (VOLATILE_FIELDS: wall_clock, iter_seconds,
+    samples_per_sec, val_seconds) differ between any two runs, so they are dropped from both sides
+    before a step JSON is written and before two are compared, and the run summary lists them
+    (L-KD-HARDEN item 4e).
 
 Teachers. `stub`: a fixed-weight tiny MSCAN-shaped network with the teacher of record's output
 shapes ([B,116,64,64] logits, [B,320,32,32] Stage 3). Its ham head draws its NMF bases through the
@@ -61,6 +64,8 @@ SEED = 42
 BATCH = 2
 STEP_GLOB = "step_*.json"
 SUMMARY = "run_summary.json"
+# Wall-clock telemetry (L-KD-HARDEN item 4e): different in every run, so never compared.
+VOLATILE_FIELDS = ("wall_clock", "iter_seconds", "samples_per_sec", "val_seconds")
 
 
 # ------------------------------------------------------------------------------------------ hashing
@@ -79,6 +84,15 @@ def sha256_file(path: Path, chunk: int = 1 << 20) -> str:
 def dumps(obj) -> str:
     """The one serialisation of a step record: insertion-ordered keys, shortest-repr floats."""
     return json.dumps(obj, ensure_ascii=True, separators=(",", ":"), allow_nan=True) + "\n"
+
+
+def drop_volatile(obj):
+    """A copy of `obj` without the VOLATILE_FIELDS keys, at any depth (key order otherwise kept)."""
+    if isinstance(obj, dict):
+        return {k: drop_volatile(v) for k, v in obj.items() if k not in VOLATILE_FIELDS}
+    if isinstance(obj, list):
+        return [drop_volatile(v) for v in obj]
+    return obj
 
 
 # ------------------------------------------------------------------------------ synthetic data
@@ -213,19 +227,19 @@ def _drop_field(obj: dict, dotted: str) -> None:
 
 
 def compare_step_dirs(old_dir: Path, new_dir: Path, declared_new=()) -> dict:
-    """Byte comparison of two runs' step JSONs. A declared-new field is removed from the NEW side
-    only, so a field that also exists on the old side still has to match."""
+    """Byte comparison of two runs' step JSONs. The VOLATILE_FIELDS are removed from BOTH sides (a
+    step JSON written by this harness has none left); a declared-new field is removed from the NEW
+    side only, so a field that also exists on the old side still has to match."""
     a, b = step_files(old_dir), step_files(new_dir)
     out = {"old": str(old_dir), "new": str(new_dir), "n_old": len(a), "n_new": len(b),
            "same_names": [p.name for p in a] == [p.name for p in b],
-           "declared_new": list(declared_new), "mismatches": []}
+           "declared_new": list(declared_new), "volatile_dropped": list(VOLATILE_FIELDS),
+           "mismatches": []}
     for pa, pb in zip(a, b):
-        ba, bb = pa.read_bytes(), pb.read_bytes()
-        if declared_new:
-            jb = json.loads(bb)
-            for field in declared_new:
-                _drop_field(jb, field)
-            bb = dumps(jb).encode()
+        ja, jb = drop_volatile(json.loads(pa.read_bytes())), drop_volatile(json.loads(pb.read_bytes()))
+        for field in declared_new:
+            _drop_field(jb, field)
+        ba, bb = dumps(ja).encode(), dumps(jb).encode()
         if ba != bb:
             diff = first_difference(json.loads(ba), json.loads(bb))
             out["mismatches"].append({"file": pa.name, "first_difference": diff})
@@ -486,6 +500,8 @@ def _inspect_run(torch, td, ckpt_dir: Path, stage_key: str, rec: _Recorder, out:
             if tel_path.exists() else [])
     out["telemetry_rows"] = len(rows)
     out["telemetry_keys"] = sorted({tuple(r) for r in rows if r.get("event") == "train"})
+    out["val_keys"] = sorted({tuple(r) for r in rows if r.get("event") == "val"})
+    out["val_iters"] = [r.get("iter") for r in rows if r.get("event") == "val"]
     out["run_end"] = rows[-1] if rows and rows[-1].get("event") == "run_end" else None
     out["telemetry_finite"] = all(math.isfinite(v) for r in rows for v in r.values()
                                   if isinstance(v, float))
@@ -649,7 +665,7 @@ def worker(argv=None) -> int:
     (out / "trainer_stdout.txt").write_text(trainer_out, encoding="utf-8")
 
     for r in rec.steps:
-        (out / f"step_{r['step']:04d}.json").write_text(dumps(r), encoding="utf-8")
+        (out / f"step_{r['step']:04d}.json").write_text(dumps(drop_volatile(r)), encoding="utf-8")
 
     summary = {"code_root": str(code_root), "stage": stage["key"], "stage_name": stage["name"],
                "steps": a.steps, "alpha_arg": a.alpha, "grad_clip_norm": a.grad_clip_norm,
@@ -659,6 +675,7 @@ def worker(argv=None) -> int:
                                        if ln.strip().startswith("RESULT")), None),
                "train_distill_sha256": sha256_file(Path(td.__file__)),
                "n_step_records": len(rec.steps),
+               "volatile_fields_dropped": list(VOLATILE_FIELDS),
                "data_layout": dataset_layout(data_root), "split_counts": counts}
     _inspect_run(torch, td, ckpt_dir, stage["key"], rec, summary)
     summary["restore"] = _restore_check(torch, td, cp, stage, rec, bitwise_equal)

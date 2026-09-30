@@ -44,11 +44,14 @@ No quantization path exists in this file: no QuantStub prepare/convert, no QAT, 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
+import os
 import re
 import sys
 import tempfile
+import time
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -56,6 +59,7 @@ REPO = Path(__file__).resolve().parents[2]
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
+import numpy as np  # noqa: E402
 import torch  # noqa: E402
 
 from configs.data import DATA                                      # noqa: E402
@@ -78,9 +82,11 @@ from src.seeds import set_seed                                     # noqa: E402
 from src.training.losses import (CombinedCEDiceLoss, cwd_channelwise_kl,  # noqa: E402
                                  downsample_validity, logit_kd_kl)
 # Reuse the audited E1 mechanics verbatim rather than re-implementing them.
-from src.training.train_e1 import (build_scheduler, cycle, load_ce_weights,  # noqa: E402
-                                   resolve_ckpt_dir, total_grad_norm, validate,
-                                   write_best_pointer, _assert_outside_repo, _jsonl)
+from src.training.train_e1 import (CLASS_WEIGHTS_JSON, build_scheduler, cycle,  # noqa: E402
+                                   load_ce_weights, per_class_iou, resolve_ckpt_dir,
+                                   total_grad_norm, validate, write_best_pointer,
+                                   _assert_outside_repo, _atomic_save, _git_provenance,
+                                   _image_digest, _jsonl)
 
 IGNORE_INDEX = DATA["ignore_index"]            # 255
 T_LOGIT = DISTILL["logit_kd"]["T_logit"]       # 4
@@ -347,7 +353,7 @@ def save_distill_checkpoint(ckpt_dir: Path, stage: dict, student, projection, op
         payload.update({"logit_kd_semantics": LOGIT_KD_SEMANTICS,
                         "logit_kd_semantics_declared": semantics_declared,
                         "logit_kd_semantics_override_used": bool(semantics_override)})
-    torch.save(payload, path)
+    _atomic_save(payload, path)          # train_e1's same-directory .tmp + os.replace (item 7)
     if projection is not None:
         save_projection(Path(ckpt_dir) / PROJECTION_FILE, projection, projection_opt,
                         stage=stage["name"], it=it, checkpoint=path.name)
@@ -497,12 +503,29 @@ def distillation_losses(*, stage: dict, logits, head_logits, c5, mask, teacher_o
     return total, parts
 
 
+def tf32_state() -> dict:
+    """The TF32 state a run executes under (run_meta, item 5). Read only: no trainer sets these."""
+    return {"cudnn_allow_tf32": bool(torch.backends.cudnn.allow_tf32),
+            "matmul_allow_tf32": bool(torch.backends.cuda.matmul.allow_tf32),
+            "float32_matmul_precision": torch.get_float32_matmul_precision(),
+            "NVIDIA_TF32_OVERRIDE": os.environ.get("NVIDIA_TF32_OVERRIDE")}
+
+
+def sha256_file(path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for block in iter(lambda: fh.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
 def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeacher,
         lambda_logit: float | None, batch_size: int, max_iters: int, val_interval: int,
         max_val_batches: int | None, num_workers: int, ckpt_dir_arg: str | None,
         semantics_declared=None, semantics_override: bool = False,
         grad_clip_norm: float | None, log_every: int, seed: int,
         alpha: float | None = None, alpha_offgrid: bool = False) -> int:
+    wall_clock_start = time.time()
     set_seed(seed)
     dev = torch.device(device)
     terms = instantiated_terms(stage)
@@ -557,7 +580,10 @@ def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeach
               f"(TRAINING-ONLY; written with its optimizer group to {PROJECTION_FILE}, never into the "
               f"student checkpoint)")
 
-    train_loader = build_dataloader("train", batch_size, num_workers=num_workers, seed=seed)
+    # Item 6: E1's TRAIN-loader call verbatim (train_e1.run), so at equal seed and num_workers a KD
+    # stage consumes E1's realized sample stream for the whole run, not only its first epoch.
+    train_loader = build_dataloader("train", batch_size, num_workers=num_workers,
+                                    persistent_workers=num_workers > 0, seed=seed)
     val_loader = build_dataloader("val", batch_size, num_workers=num_workers, seed=seed)
     print(f"[data] train_index={len(train_loader.dataset)} val_index={len(val_loader.dataset)} "
           "(train+val only; the TEST split is never built here)")
@@ -603,10 +629,10 @@ def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeach
             raise RuntimeError(dir_error)
     print(f"[ckpt] dir={ckpt_dir} (verified OUTSIDE repo)")
 
-    # B32c-2: one run_meta line recording the semantics lambda_logit is being used under. Not the
-    # full E1 telemetry stack — a provenance guard, so a mismatched run stays identifiable from its
-    # artifacts alone long after the terminal is gone. L-AM17B-FG: the term switches and projection
-    # size, and the weight, temperature and grid of each INSTANTIATED term only.
+    # B32c-2: one run_meta line recording the semantics lambda_logit is being used under, so a
+    # mismatched run stays identifiable from its artifacts alone long after the terminal is gone.
+    # L-AM17B-FG: the term switches and projection size, and the weight, temperature and grid of each
+    # INSTANTIATED term only. L-KD-HARDEN item 5: then E1's run_meta keys and the KD carriers.
     meta_path = _assert_outside_repo(Path(ckpt_dir)) / f"{stage['key']}_run_meta.jsonl"
     # Per-iteration telemetry beside the checkpoints, never inside the repo (append mode, like E1's).
     telemetry_path = meta_path.with_name(f"{stage['key']}_telemetry.jsonl")
@@ -630,6 +656,26 @@ def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeach
                      "cwd_logit_grid": "os8 64x64 (validity mask shared with Logit-KD when on)"})
     meta.update({"supervised_grid": "full 512x512", "batch_size": batch_size,
                  "max_iters": max_iters, "num_classes": NUM_CLASSES, "teacher_nmf": teacher_nmf})
+    # L-KD-HARDEN item 5: E1's run_meta keys, through train_e1's provenance helpers, plus
+    # persistent_workers (E1's TRAIN-loader argument); then the KD carriers (L-CKPT-GUARD adds further
+    # provenance fields later).
+    git_head, git_head_source = _git_provenance()
+    meta.update({"wall_clock": time.time(), "git_head": git_head, "git_head_source": git_head_source,
+                 "image_digest": _image_digest(), "torch": torch.__version__, "numpy": np.__version__,
+                 "device": str(dev), "cuda_available": torch.cuda.is_available(),
+                 "gpu_name": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
+                 "num_workers": num_workers, "persistent_workers": num_workers > 0,
+                 "val_interval": val_interval, "max_val_batches": max_val_batches,
+                 "learning_rate": E1_STUDENT["learning_rate"], "momentum": E1_STUDENT["momentum"],
+                 "weight_decay": E1_STUDENT["weight_decay"], "lr_power": E1_STUDENT["lr_power"],
+                 "poly_horizon": horizon, "grad_clip_norm": grad_clip_norm,
+                 "used_pretrained": student.used_pretrained,
+                 "params": sum(p.numel() for p in student.parameters()), "ignore_index": IGNORE_INDEX,
+                 "ramp_iters": ramp_iters, "class_weights_sha256": sha256_file(CLASS_WEIGHTS_JSON),
+                 "tf32": tf32_state(),
+                 "teacher_provenance": (None if teacher.provenance is None
+                                        else teacher.provenance.as_dict()),
+                 "teacher_mock": bool(is_mock)})
     with open(meta_path, "a", encoding="utf-8") as _f:
         _f.write(json.dumps(meta) + "\n")
     if stage["logit_kd"]:
@@ -646,8 +692,11 @@ def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeach
     best_ckpt = None
     lr_trace: list[float] = []
     train_iter = cycle(train_loader)
+    t_prev = time.time()
+    train_seconds = 0.0       # top of each iteration to its train row: no setup, validation or checkpoint
 
     for it in range(1, max_iters + 1):
+        t_iter = time.time()
         img, mask = next(train_iter)
         img, mask = img.to(dev), mask.to(dev)
 
@@ -733,7 +782,11 @@ def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeach
             before = p0.detach().clone()
 
         loss.backward()
-        grad_norm = total_grad_norm(trainable)   # telemetry only; measured BEFORE any clipping
+        # Telemetry only, measured BEFORE any clipping: grad_norm over every trainable parameter (the
+        # AM-7 (a) quantity), and its student and projection parts (item 4b).
+        grad_norm = total_grad_norm(trainable)
+        grad_norm_student = total_grad_norm(student.parameters())
+        grad_norm_projection = None if projection is None else total_grad_norm(projection.parameters())
         if grad_clip_norm is not None:
             # global-norm clipping over the student (+ projection), every iteration ("throughout")
             total_norm = torch.nn.utils.clip_grad_norm_(trainable, grad_clip_norm)
@@ -744,9 +797,19 @@ def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeach
         optimizer.step()
         scheduler.step()
         lr_trace.append(optimizer.param_groups[0]["lr"])
-        _jsonl(telemetry_path, {"event": "train", "iter": it, "loss": float(loss.item()),
-                                "sup": float(sup.item()), **parts, "ramp": ramp,
-                                "lr": lr_trace[-1], "grad_norm": grad_norm})
+        # Item 4a/4b: the 44c05dc keys in their order, ce and dice after sup, the grad-norm split after
+        # grad_norm, and E1's wall-clock fields (train_e1's definitions) last.
+        now = time.time()
+        row = {"event": "train", "iter": it, "loss": float(loss.item()), "sup": float(sup.item()),
+               "ce": float(ce.item()), "dice": float(dice.item()), **parts, "ramp": ramp,
+               "lr": lr_trace[-1], "grad_norm": grad_norm, "grad_norm_student": grad_norm_student}
+        if projection is not None:
+            row["grad_norm_projection"] = grad_norm_projection
+        row.update({"wall_clock": now, "iter_seconds": now - t_prev,
+                    "samples_per_sec": (batch_size / (now - t_prev)) if now > t_prev else None})
+        _jsonl(telemetry_path, row)
+        train_seconds += now - t_iter
+        t_prev = now
 
         if it == 1:
             checks["optimizer_step"] = bool((p0.detach() - before).abs().sum().item() > 0.0)
@@ -759,8 +822,21 @@ def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeach
                   f"{extra} ramp={ramp:.4f} lr={lr_trace[-1]:.8e}")
 
         if it % val_interval == 0 or it == max_iters:
+            t_val0 = time.time()
             all_miou, disease_miou, cm, nvb = validate(student, val_loader, dev, NUM_CLASSES,
                                                        max_val_batches)
+            val_seconds = time.time() - t_val0
+            iou_vec, eligible = per_class_iou(cm)
+            # Item 4c: train_e1's val row, written before the best-checkpoint save.
+            _jsonl(telemetry_path, {
+                "event": "val", "iter": it, "all_class_miou": all_miou,
+                "disease_only_miou_PROVISIONAL": disease_miou,
+                "per_class_iou": [round(float(x), 8) for x in iou_vec.tolist()],
+                "per_class_eligible": [bool(x) for x in eligible.tolist()],
+                "n_eligible_classes": int(eligible.sum()), "val_batches": nvb,
+                "val_total_px": int(cm.sum()), "val_seconds": val_seconds,
+                "wall_clock": time.time(),
+            })
             checks["val_cm_accumulated"] = (tuple(cm.shape) == (NUM_CLASSES, NUM_CLASSES)
                                             and int(cm.sum()) > 0 and nvb >= 1)
             print(f"[val  {it:>4}/{max_iters}] cm_batches={nvb} all_class_miou={all_miou:.5f} "
@@ -788,11 +864,16 @@ def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeach
     passed = all(checks.get(k, False) for k in hard)
     # The run's last telemetry row, written after the final validation and checkpoint save, so a
     # selection (scripts/select_*.py) can tell a finished run from one that died during its last
-    # validation. Not a train row: the per-step telemetry is unchanged.
+    # validation. Not a train row. Item 4d (L-AM16-GPUH): the run's wall-clock span from run() entry,
+    # its train-step time, and gpu_hours = wall_seconds / 3600 (validations included).
+    wall_clock_end = time.time()
+    wall_seconds = wall_clock_end - wall_clock_start
     _jsonl(telemetry_path, {"event": "run_end", "iter": max_iters,
                             "best_val_miou_all_class": best_miou,
                             "best_ckpt": None if best_ckpt is None else Path(best_ckpt).name,
-                            "checks_passed": passed})
+                            "checks_passed": passed, "wall_clock_start": wall_clock_start,
+                            "wall_clock_end": wall_clock_end, "wall_seconds": wall_seconds,
+                            "train_seconds": train_seconds, "gpu_hours": wall_seconds / 3600.0})
     print("\n[CHECKS]")
     for k in hard:
         print(f"  {k:22}: {'PASS' if checks.get(k) else 'FAIL'}")

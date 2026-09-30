@@ -269,7 +269,7 @@ pending the PlantSeg repo's official convention.~~ `[empirical; ch3 Table 3.1; c
 | Temperature `T_CWD` | **4** | `[ch3]` |
 | Feature-map weight `α_CWD` | ~~**50**~~ **[UPDATED 2026-09-24 — B65 CP-006]** selected on VAL from {25, 50, 100} by the AM-16 item-2 sweep; 50 (the Chapter 3 and Shu et al. (2021) default) wins ties and applies if item 2 is cut (stride-16 C5 map). ~~`configs/distill.py` keeps 50 until lane L-AM16-ALPHA adds the override~~ **[UPDATED 2026-09-28 — K1 L-AM16-ALPHA]** `train_distill --alpha` takes a value from `configs/distill.py` `alpha_cwd_grid` (25, 50, 100; default 50; `--allow-offgrid` in dry runs only) and is refused for a stage without the feature-map term; run_meta records `alpha_cwd`, and a real run's `--ckpt-dir` name must carry `alpha<value>`. Selection: `scripts/select_alpha.py` (rule `configs/sweep_rules.json`, band `reports/derived/dl27_band.json`) | `[ch3; AM-16]` |
 | Logit-map weight `β_CWD` | **3** | `[ch3]` |
-| Normalization | **T²/C**, with **C = the channel count of the map being distilled** (Shu et al. 2021, Eq. 4): **C = 320** for the stride-16 feature term (MSCAN-B Stage-3); **C = 116** for the logit-map term. Implemented at ~~`src/training/train_distill.py:239` (`channels_norm=320`) and `:249`~~ **[UPDATED 2026-09-28 — K1 L-AM17B-FG]** ~~`src/training/train_distill.py:469` (`distillation_losses`, `channels_norm=320`) and `:479`~~ **[UPDATED 2026-09-30 — L-KD-HARDEN]** `src/training/train_distill.py:484` (`distillation_losses`, `channels_norm=320`) and `:494` (default = map's own 116). ch3 names only the 320 case. | `[ch3; Shu 2021; B59 C1]` |
+| Normalization | **T²/C**, with **C = the channel count of the map being distilled** (Shu et al. 2021, Eq. 4): **C = 320** for the stride-16 feature term (MSCAN-B Stage-3); **C = 116** for the logit-map term. Implemented at ~~`src/training/train_distill.py:239` (`channels_norm=320`) and `:249`~~ **[UPDATED 2026-09-28 — K1 L-AM17B-FG]** ~~`src/training/train_distill.py:469` (`distillation_losses`, `channels_norm=320`) and `:479`~~ **[UPDATED 2026-09-30 — L-KD-HARDEN]** `src/training/train_distill.py:490` (`distillation_losses`, `channels_norm=320`) and `:500` (default = map's own 116). ch3 names only the 320 case. | `[ch3; Shu 2021; B59 C1]` |
 | Projection head | training-only 1×1 conv: student **160-ch C5 → teacher 320-ch**; ~~removed before E6/E7 via state_dict edit prior to observer insertion~~ **[UPDATED 2026-09-28 — K1 L-AM17B-FG]** never part of the student: instantiated only with the `cwd_feat` term and written, with its optimizer group, to `projection.pt` beside the checkpoint, so the E3 checkpoint E6/E7 load carries nothing to strip (B3 per-term switches below) | `[ch3]` |
 | Ignore handling | validity mask downsampled to stride-16; channel-wise spatial softmax + KL restricted to valid locations | `[ch3]` |
 
@@ -301,9 +301,28 @@ import.
   (`src/distill/cwd_projection.py` `restore_projection` restores both bit for bit); `best.json` uses
   E1's schema. The telemetry file ends with a `run_end` record written after the final validation and
   checkpoint; the sweep selections require it.
-- run_meta: `terms`, `projection_params` (51,200 or 0), λ_logit/T_logit (logit_kd), α_CWD/C
+- ~~run_meta: `terms`, `projection_params` (51,200 or 0), λ_logit/T_logit (logit_kd), α_CWD/C
   (cwd_feat), β_CWD (cwd_logit) and T_CWD (either CWD term), each only for instantiated terms. Train
-  rows carry `logit_kd`, `cwd_feat`, `cwd_logit` only when instantiated.
+  rows carry `logit_kd`, `cwd_feat`, `cwd_logit` only when instantiated.~~
+  **[UPDATED 2026-09-30 — L-KD-HARDEN]** run_meta (one row): `event`, `stage`, `mode`, `seed`,
+  `terms`, `projection_params` (51,200 or 0), then the weight, temperature, grid and (logit_kd)
+  semantics keys of each instantiated term only (λ_logit/T_logit, α_CWD/C, β_CWD, T_CWD); then
+  `supervised_grid`, `batch_size`, `max_iters`, `num_classes`, `teacher_nmf`; then E1's run_meta keys
+  `wall_clock`, `git_head`, `git_head_source`, `image_digest`, `torch`, `numpy`, `device`,
+  `cuda_available`, `gpu_name`, `num_workers`, `val_interval`, `max_val_batches`, `learning_rate`,
+  `momentum`, `weight_decay`, `lr_power`, `poly_horizon`, `grad_clip_norm`, `used_pretrained`,
+  `params`, `ignore_index`, with `persistent_workers` (E1's TRAIN-loader argument) after
+  `num_workers`; then `ramp_iters`,
+  `class_weights_sha256` (of the file `load_ce_weights` reads), `tf32` (`cudnn_allow_tf32`,
+  `matmul_allow_tf32`, `float32_matmul_precision`, `NVIDIA_TF32_OVERRIDE`), `teacher_provenance` (null
+  for the mock) and `teacher_mock`. Train rows, in order: `event`, `iter`, `loss`, `sup`, `ce`, `dice`
+  (`sup = ce + dice`), then `logit_kd`, `cwd_feat`, `cwd_logit` only when instantiated, then `ramp`,
+  `lr`, `grad_norm` (pre-clip, every trainable parameter), `grad_norm_student`,
+  `grad_norm_projection` (cwd_feat only), `wall_clock`, `iter_seconds`, `samples_per_sec`. Val rows
+  are train_e1's (`all_class_miou`, `disease_only_miou_PROVISIONAL`, `per_class_iou`,
+  `per_class_eligible`, `n_eligible_classes`, `val_batches`, `val_total_px`, `val_seconds`,
+  `wall_clock`). `run_end` adds `wall_clock_start`, `wall_clock_end`, `wall_seconds`,
+  `train_seconds` and `gpu_hours` (wall_seconds / 3600, validations included).
 - An argument for a term the stage does not instantiate (`--lambda-logit` for A/F/G, `--alpha` for
   E2/G) is refused, not ignored. A real run with `cwd_feat` also needs `alpha<value>` in its
   `--ckpt-dir` name (dry runs get it in their temporary directory name).
