@@ -39,6 +39,12 @@ SAFETY MODEL (mirrors train_e1.py, plus the distillation-specific gates):
   * main()'s gates return before any dataloader or teacher is constructed; run() repeats the schedule
     and CUDA-order checks at its entry, after main() has loaded the teacher, and in a real run it also
     refuses a missing --ckpt-dir, a clipping value and an off-grid alpha (direct calls).
+  * A real run stops (L-KD-HARDEN items 1b and 3; AM-7, DL-04) on AM-7 (a), a non-finite total loss
+    before backward or a non-finite pre-clip gradient norm before the step; on AM-7 (b), the post-ramp
+    rolling-mean rule of configs/distill.py AM7_DIVERGENCE; on a non-finite VAL mIoU; and after
+    iteration 1 if a step-1 check failed. It writes that iteration's row, then a run_abort record
+    (never run_end), and raises RunAborted. Telemetry is strict JSON: a row writes a non-finite value
+    as null and lists it in its `nonfinite` map; the run_abort record writes "nan", "inf" or "-inf".
   * Checkpoints are NEVER written inside the repo. The training-only CWD projection and its optimizer
     group are written to `projection.pt` beside the checkpoint, never into it, so `model_state_dict`
     is already the clean E6/E7 deployment student and the checkpoint carries nothing to strip.
@@ -56,6 +62,7 @@ import re
 import sys
 import tempfile
 import time
+from collections import deque
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -67,8 +74,8 @@ import numpy as np  # noqa: E402
 import torch  # noqa: E402
 
 from configs.data import DATA                                      # noqa: E402
-from configs.distill import (DISTILL, DISTILL_STAGES, DISTILL_TERMS,  # noqa: E402
-                             LOGIT_KD_SEMANTICS, LOGIT_KD_SEMANTICS_SUPERSEDED)
+from configs.distill import (AM7_DIVERGENCE, DISTILL, DISTILL_STAGES,  # noqa: E402
+                             DISTILL_TERMS, LOGIT_KD_SEMANTICS, LOGIT_KD_SEMANTICS_SUPERSEDED)
 from configs.e1_student import E1_STUDENT                          # noqa: E402
 from src.data import NUM_CLASSES, build_dataloader                 # noqa: E402
 from src.data.isolation import TrainValIsolationError, assert_trainval_only_root  # noqa: E402
@@ -581,6 +588,107 @@ def ckpt_dir_fresh_error(ckpt_dir) -> str | None:
     return None
 
 
+# ---------------------------------------------------------------- AM-7 aborts (L-KD-HARDEN item 3)
+# AM-7 (b)'s pre-registered parameters (DL-04). configs/distill.py AM7_DIVERGENCE must carry them:
+# another window, factor or ramp rule is a new amendment, not a config edit, so the import refuses it.
+AM7_REGISTERED = {"window": 100, "factor": 5.0, "post_ramp_only": True}
+
+
+def am7_divergence_error(cfg) -> str | None:
+    """None when `cfg` carries AM7_REGISTERED's values (a bool never stands in for a number, nor a
+    number for a bool), else the refusal text."""
+    bad = {k: (cfg.get(k), want) for k, want in AM7_REGISTERED.items()
+           if cfg.get(k) != want or isinstance(cfg.get(k), bool) != isinstance(want, bool)}
+    if not bad:
+        return None
+    return (f"configs/distill.py AM7_DIVERGENCE departs from AM-7 (b)'s registered parameters: {bad} "
+            "(got, want)")
+
+
+if am7_divergence_error(AM7_DIVERGENCE) is not None:
+    raise ValueError(am7_divergence_error(AM7_DIVERGENCE))
+AM7_RULES = ("AM-7(a)", "AM-7(b)")
+
+
+class RunAborted(RuntimeError):
+    """A real run stopped by AM-7 (a) or (b), a non-finite VAL mIoU or failed step-1 checks. `record`
+    is the run_abort row, the telemetry's last line; no run_end follows it."""
+
+    def __init__(self, record: dict):
+        super().__init__(f"{record['rule']} at iter {record['iter']} (cause {record['cause']})")
+        self.record = record
+
+    def __reduce__(self):                 # pickling and copying rebuild it from the record
+        return (RunAborted, (self.record,))
+
+
+class AM7bMonitor:
+    """AM-7 (b), pure (DL-04; item 3b): a divergence monitor on the logged total loss.
+
+    Only post-ramp iterations (it > ramp_iters) enter a rolling window of `window` losses; ramp
+    iterations never enter a window or the minimum. From it = ramp_iters + window on, every iteration
+    evaluates the window mean: the run diverges when the mean is STRICTLY greater than factor x the
+    running minimum of the earlier window means; otherwise the mean joins the minimum. update() returns
+    None, or on divergence {window_mean, running_min, ratio, threshold} (threshold = factor x
+    running_min; ratio = window_mean / running_min, inf when the minimum is 0).
+    """
+
+    def __init__(self, ramp_iters: int, window: int = 100, factor: float = 5.0):
+        self.ramp_iters, self.window, self.factor = int(ramp_iters), int(window), float(factor)
+        self._losses: deque = deque(maxlen=self.window)
+        self.running_min: float | None = None
+        self.n_windows = 0
+
+    def update(self, it: int, loss: float) -> dict | None:
+        if it <= self.ramp_iters:
+            return None
+        self._losses.append(float(loss))
+        if len(self._losses) < self.window:
+            return None
+        mean = math.fsum(self._losses) / self.window
+        self.n_windows += 1
+        if self.running_min is not None and mean > self.factor * self.running_min:
+            return {"window_mean": mean, "running_min": self.running_min,
+                    "ratio": mean / self.running_min if self.running_min > 0 else math.inf,
+                    "threshold": self.factor * self.running_min}
+        self.running_min = mean if self.running_min is None else min(self.running_min, mean)
+        return None
+
+
+def _nonfinite_tag(x: float) -> str:
+    return "nan" if math.isnan(x) else ("inf" if x > 0 else "-inf")
+
+
+def strict_row(row: dict) -> dict:
+    """A telemetry row as strict JSON (item 3a): each non-finite float becomes null and is listed, as
+    "nan", "inf" or "-inf", in a trailing `nonfinite` map. A finite row is returned unchanged."""
+    bad = {k: _nonfinite_tag(v) for k, v in row.items() if isinstance(v, float) and not math.isfinite(v)}
+    if not bad:
+        return row
+    return {**{k: (None if k in bad else v) for k, v in row.items()}, "nonfinite": bad}
+
+
+def record_number(x) -> float | str | None:
+    """A run_abort detail value (AM-7a): a finite float as written, a non-finite one as "nan", "inf" or
+    "-inf", and null when it was not computed at the abort point."""
+    if x is None:
+        return None
+    x = float(x)
+    return x if math.isfinite(x) else _nonfinite_tag(x)
+
+
+def abort_cause(rule: str, input_finite: bool, teacher_finite: bool) -> str:
+    """AM-7a: an AM-7 (a)/(b) stop is a STUDENT divergence only when the step's input and teacher
+    outputs were finite; otherwise it is a fault of the input or of the teacher."""
+    if rule in AM7_RULES:
+        if not input_finite:
+            return "input_nonfinite"
+        if not teacher_finite:
+            return "teacher_nonfinite"
+        return "student_divergence"
+    return {"val_nonfinite": "val_nonfinite", "step1_checks": "checks_failed"}[rule]
+
+
 def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeacher,
         lambda_logit: float | None, batch_size: int, max_iters: int, val_interval: int,
         max_val_batches: int | None, num_workers: int, ckpt_dir_arg: str | None,
@@ -779,6 +887,51 @@ def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeach
     train_iter = cycle(train_loader)
     t_prev = time.time()
     train_seconds = 0.0       # top of each iteration to its train row: no setup, validation or checkpoint
+    n_val = 0
+    # AM-7 (b), real runs only (item 3b). window and factor are read from AM7_DIVERGENCE here, at run
+    # time (item 3d); the import has pinned the config's values to AM7_REGISTERED.
+    am7b = (AM7bMonitor(ramp_iters, window=AM7_DIVERGENCE["window"], factor=AM7_DIVERGENCE["factor"])
+            if mode == "real" else None)
+
+    def write_train_row(it: int, *, lr=None, norms=(None, None, None)) -> None:
+        """The iteration's train row (items 3a, 4a, 4b): the 44c05dc keys in their order, ce and dice
+        after sup, the grad-norm split after grad_norm, E1's wall-clock fields last. A value not computed
+        when a run aborts is null; a non-finite float is null and listed in `nonfinite`."""
+        nonlocal t_prev, train_seconds
+        now = time.time()
+        row = {"event": "train", "iter": it, "loss": float(loss.item()), "sup": float(sup.item()),
+               "ce": float(ce.item()), "dice": float(dice.item()), **parts, "ramp": ramp,
+               "lr": lr, "grad_norm": norms[0], "grad_norm_student": norms[1]}
+        if projection is not None:
+            row["grad_norm_projection"] = norms[2]
+        row.update({"wall_clock": now, "iter_seconds": now - t_prev,
+                    "samples_per_sec": (batch_size / (now - t_prev)) if now > t_prev else None})
+        _jsonl(telemetry_path, strict_row(row))
+        train_seconds += now - t_iter
+        t_prev = now
+
+    def abort(rule: str, it: int, *, loss_value=None, grad_norm_value=None, hit=None) -> None:
+        """Write the run_abort record (AM-7a section A) as the telemetry's last row, then raise. The
+        window fields are AM-7 (b)'s; another rule records only the monitor's running minimum."""
+        input_finite = bool(torch.isfinite(img).all())
+        teacher_finite = bool(torch.isfinite(teacher_out.logits).all()) and (
+            teacher_out.feat_s16 is None or bool(torch.isfinite(teacher_out.feat_s16).all()))
+        hit = hit or {}
+        running_min = hit.get("running_min", None if am7b is None else am7b.running_min)
+        record = {"event": "run_abort", "iter": it, "rule": rule,
+                  "cause": abort_cause(rule, input_finite, teacher_finite),
+                  "detail": {"loss": record_number(loss_value), "grad_norm": record_number(grad_norm_value),
+                             "window_mean": record_number(hit.get("window_mean")),
+                             "running_min": record_number(running_min),
+                             "ratio": record_number(hit.get("ratio")),
+                             "threshold": record_number(hit.get("threshold"))},
+                  "input_finite": input_finite, "teacher_finite": teacher_finite,
+                  "params_finite": all(bool(torch.isfinite(p).all()) for p in trainable),
+                  "n_val": n_val, "wall_clock": time.time()}
+        _jsonl(telemetry_path, record)
+        print(f"[abort] {rule} at iter {it} (cause {record['cause']}): {json.dumps(record['detail'])}. "
+              f"The real {stage['name']} run stops here; no run_end is written.", file=sys.stderr)
+        raise RunAborted(record)
 
     for it in range(1, max_iters + 1):
         t_iter = time.time()
@@ -856,10 +1009,11 @@ def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeach
                 for k in ("distill_zero_at_step1", "sup_added_unscaled", "sup_positive_finite"):
                     checks[k] = True
 
+        # AM-7 (a), real runs (item 3a): a non-finite total loss stops the run BEFORE backward; its row
+        # has no lr and no gradient norms (not computed), and the weights are not stepped.
         if mode == "real" and not bool(torch.isfinite(loss)):
-            raise RuntimeError(
-                f"non-finite loss at iter {it}: total={loss.item():.4f} sup={sup.item():.4f} "
-                f"parts={parts}. Aborting the real {stage['name']} run.")
+            write_train_row(it)
+            abort("AM-7(a)", it, loss_value=float(loss.item()))
         if it == 1:
             checks["loss_finite"] = bool(torch.isfinite(loss)) and loss.dim() == 0
             checks["has_expected_terms"] = set(parts) == set(terms)
@@ -867,11 +1021,17 @@ def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeach
             before = p0.detach().clone()
 
         loss.backward()
-        # Telemetry only, measured BEFORE any clipping: grad_norm over every trainable parameter (the
-        # AM-7 (a) quantity), and its student and projection parts (item 4b).
+        # Measured BEFORE any clipping, and never used to scale a gradient: grad_norm over every
+        # trainable parameter (the AM-7 (a) quantity: logged, and tested below in a real run), and its
+        # student and projection parts (telemetry, item 4b).
         grad_norm = total_grad_norm(trainable)
         grad_norm_student = total_grad_norm(student.parameters())
         grad_norm_projection = None if projection is None else total_grad_norm(projection.parameters())
+        norms = (grad_norm, grad_norm_student, grad_norm_projection)
+        # AM-7 (a), real runs: a non-finite pre-clip gradient norm stops the run before optimizer.step.
+        if mode == "real" and not math.isfinite(grad_norm):
+            write_train_row(it, norms=norms)
+            abort("AM-7(a)", it, loss_value=float(loss.item()), grad_norm_value=grad_norm)
         if grad_clip_norm is not None:
             # global-norm clipping over the student (+ projection), every iteration ("throughout")
             total_norm = torch.nn.utils.clip_grad_norm_(trainable, grad_clip_norm)
@@ -882,24 +1042,23 @@ def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeach
         optimizer.step()
         scheduler.step()
         lr_trace.append(optimizer.param_groups[0]["lr"])
-        # Item 4a/4b: the 44c05dc keys in their order, ce and dice after sup, the grad-norm split after
-        # grad_norm, and E1's wall-clock fields (train_e1's definitions) last.
-        now = time.time()
-        row = {"event": "train", "iter": it, "loss": float(loss.item()), "sup": float(sup.item()),
-               "ce": float(ce.item()), "dice": float(dice.item()), **parts, "ramp": ramp,
-               "lr": lr_trace[-1], "grad_norm": grad_norm, "grad_norm_student": grad_norm_student}
-        if projection is not None:
-            row["grad_norm_projection"] = grad_norm_projection
-        row.update({"wall_clock": now, "iter_seconds": now - t_prev,
-                    "samples_per_sec": (batch_size / (now - t_prev)) if now > t_prev else None})
-        _jsonl(telemetry_path, row)
-        train_seconds += now - t_iter
-        t_prev = now
+        write_train_row(it, lr=lr_trace[-1], norms=norms)
 
         if it == 1:
             checks["optimizer_step"] = bool((p0.detach() - before).abs().sum().item() > 0.0)
             checks["teacher_stayed_frozen"] = all(
                 p.grad is None for p in teacher.teacher.parameters())
+            # Item 1b: a real run whose step-1 checks failed stops now, not 80,000 iterations later.
+            failed = [k for k, ok in checks.items() if not ok]
+            if mode == "real" and failed:
+                print(f"[checks] step-1 checks FAILED: {failed}", file=sys.stderr)
+                abort("step1_checks", it, loss_value=float(loss.item()), grad_norm_value=grad_norm)
+
+        # AM-7 (b), real runs (item 3b): the post-ramp rolling mean of the logged total loss.
+        if am7b is not None:
+            hit = am7b.update(it, float(loss.item()))
+            if hit is not None:
+                abort("AM-7(b)", it, loss_value=float(loss.item()), grad_norm_value=grad_norm, hit=hit)
 
         if it % log_every == 0 or it == max_iters:
             extra = " ".join(f"{k}={v:.4f}" for k, v in parts.items())
@@ -911,9 +1070,10 @@ def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeach
             all_miou, disease_miou, cm, nvb = validate(student, val_loader, dev, NUM_CLASSES,
                                                        max_val_batches)
             val_seconds = time.time() - t_val0
+            n_val += 1
             iou_vec, eligible = per_class_iou(cm)
-            # Item 4c: train_e1's val row, written before the best-checkpoint save.
-            _jsonl(telemetry_path, {
+            # Item 4c: train_e1's val row, written before the best-checkpoint save (strict JSON, 3a).
+            _jsonl(telemetry_path, strict_row({
                 "event": "val", "iter": it, "all_class_miou": all_miou,
                 "disease_only_miou_PROVISIONAL": disease_miou,
                 "per_class_iou": [round(float(x), 8) for x in iou_vec.tolist()],
@@ -921,7 +1081,10 @@ def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeach
                 "n_eligible_classes": int(eligible.sum()), "val_batches": nvb,
                 "val_total_px": int(cm.sum()), "val_seconds": val_seconds,
                 "wall_clock": time.time(),
-            })
+            }))
+            # Item 3c: a non-finite VAL all-class mIoU stops a real run, after its val row.
+            if mode == "real" and not math.isfinite(all_miou):
+                abort("val_nonfinite", it, loss_value=float(loss.item()), grad_norm_value=grad_norm)
             checks["val_cm_accumulated"] = (tuple(cm.shape) == (NUM_CLASSES, NUM_CLASSES)
                                             and int(cm.sum()) > 0 and nvb >= 1)
             print(f"[val  {it:>4}/{max_iters}] cm_batches={nvb} all_class_miou={all_miou:.5f} "
@@ -953,12 +1116,13 @@ def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeach
     # its train-step time, and gpu_hours = wall_seconds / 3600 (validations included).
     wall_clock_end = time.time()
     wall_seconds = wall_clock_end - wall_clock_start
-    _jsonl(telemetry_path, {"event": "run_end", "iter": max_iters,
-                            "best_val_miou_all_class": best_miou,
-                            "best_ckpt": None if best_ckpt is None else Path(best_ckpt).name,
-                            "checks_passed": passed, "wall_clock_start": wall_clock_start,
-                            "wall_clock_end": wall_clock_end, "wall_seconds": wall_seconds,
-                            "train_seconds": train_seconds, "gpu_hours": wall_seconds / 3600.0})
+    _jsonl(telemetry_path, strict_row({"event": "run_end", "iter": max_iters,
+                                       "best_val_miou_all_class": best_miou,
+                                       "best_ckpt": None if best_ckpt is None else Path(best_ckpt).name,
+                                       "checks_passed": passed, "wall_clock_start": wall_clock_start,
+                                       "wall_clock_end": wall_clock_end, "wall_seconds": wall_seconds,
+                                       "train_seconds": train_seconds,
+                                       "gpu_hours": wall_seconds / 3600.0}))
     print("\n[CHECKS]")
     for k in hard:
         print(f"  {k:22}: {'PASS' if checks.get(k) else 'FAIL'}")

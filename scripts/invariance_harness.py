@@ -503,8 +503,10 @@ def _inspect_run(torch, td, ckpt_dir: Path, stage_key: str, rec: _Recorder, out:
     out["val_keys"] = sorted({tuple(r) for r in rows if r.get("event") == "val"})
     out["val_iters"] = [r.get("iter") for r in rows if r.get("event") == "val"]
     out["run_end"] = rows[-1] if rows and rows[-1].get("event") == "run_end" else None
-    out["telemetry_finite"] = all(math.isfinite(v) for r in rows for v in r.values()
-                                  if isinstance(v, float))
+    # A strict-JSON row (L-KD-HARDEN) writes a non-finite value as null and lists it in `nonfinite`.
+    out["telemetry_finite"] = (all(math.isfinite(v) for r in rows for v in r.values()
+                                   if isinstance(v, float))
+                               and not any("nonfinite" in r for r in rows))
     out["ckpt_files"] = sorted(p.name for p in ckpt_dir.iterdir())
     ckpts = sorted(ckpt_dir.glob(f"{stage_key}_student_best_iter*.pt"),
                    key=lambda p: int(p.stem.rsplit("iter", 1)[1]))

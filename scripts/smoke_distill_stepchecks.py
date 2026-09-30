@@ -18,15 +18,25 @@ once) and compiled into a separate module, so the production module is never mod
   D2   item 8: teacher logits on a 32x32 grid -> distillation_losses raises (never resampled), in an E2
        run and in a direct E2 call; a teacher Stage-3 grid different from C5 raises in a direct call for
        a feature-term stage (F)
+  F0   item 1b: a REAL-mode production run (3 iterations, the harness's stub teacher) is not stopped
+  F1   item 1b: the I1 mutant in REAL mode stops right after iteration 1: its train row, then a run_abort
+       record {rule step1_checks, cause checks_failed}, no run_end, RunAborted raised
+GPUs are hidden (CUDA_VISIBLE_DEVICES="" before torch loads). On a GPU host the earlier CPU runs touch
+CUDA (run_meta's gpu_name calls torch.cuda.get_device_name, which initialises it; the loaders pin
+memory), and run()'s CUDA-order gate would then refuse F0/F1's real runs in this process.
 """
 from __future__ import annotations
 
 import contextlib
 import io
+import json
+import os
 import sys
 import tempfile
 import types
 from pathlib import Path
+
+os.environ["CUDA_VISIBLE_DEVICES"] = ""          # CPU-only smoke: hide GPUs before torch loads (above)
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
@@ -36,8 +46,10 @@ import torch  # noqa: E402
 import configs.data as cdata  # noqa: E402
 import src.training.losses as losses  # noqa: E402
 import src.training.train_distill as td  # noqa: E402
-from scripts.invariance_harness import make_synthetic_dataset  # noqa: E402
+from configs.e1_student import E1_STUDENT  # noqa: E402
+from scripts.invariance_harness import build_stub_segnext, make_synthetic_dataset  # noqa: E402
 from src.distill import FrozenTeacher, MockTeacher  # noqa: E402
+from src.distill.segnext_teacher import SegNeXtTeacherAdapter  # noqa: E402
 
 NC = 116
 TD_SOURCE = Path(td.__file__).read_text(encoding="utf-8")
@@ -182,6 +194,46 @@ def test_grids() -> None:
         check("D2_feat_grid_mismatch_raises_for_cwd_feat", "never resampled" in str(e), str(e)[:160])
 
 
+def real_run(module, tag: str, max_iters: int = 3) -> tuple[object, list[dict]]:
+    """A REAL-mode run of `module.run` on the synthetic set (the invariance harness's stub teacher, which
+    has the M4-KD NMF stream a real run requires; E1_STUDENT["iterations"] patched to `max_iters` so the
+    schedule gate admits it on CPU). Returns (the RunAborted record, or the return code; the rows)."""
+    ckpt = Path(tempfile.mkdtemp(prefix=f"kdh_step_real_{tag}_")) / "run"
+    saved = E1_STUDENT["iterations"]
+    E1_STUDENT["iterations"] = max_iters
+    try:
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            outcome = module.run(stage=module.resolve_stage("e2"), mode="real", device="cpu",
+                                 pretrained=False, teacher=FrozenTeacher(SegNeXtTeacherAdapter(
+                                     build_stub_segnext())), lambda_logit=1.0, batch_size=2,
+                                 max_iters=max_iters, val_interval=max_iters, max_val_batches=None,
+                                 num_workers=0, ckpt_dir_arg=str(ckpt), grad_clip_norm=None, log_every=1,
+                                 seed=42)
+    except module.RunAborted as e:
+        outcome = e.record
+    finally:
+        E1_STUDENT["iterations"] = saved
+    tel = ckpt / "e2_telemetry.jsonl"
+    rows = ([json.loads(ln) for ln in tel.read_text(encoding="utf-8").splitlines() if ln.strip()]
+            if tel.is_file() else [])             # none when run() refused first: a FAIL, not a traceback
+    return outcome, rows
+
+
+def test_real_fail_fast() -> None:
+    """Item 1b: in a real run, a failed step-1 check stops the run right after iteration 1."""
+    rc, rows = real_run(td, "production")
+    check("F0_real_production_run_is_not_stopped", rc == 0 and bool(rows)
+          and rows[-1].get("event") == "run_end" and not any(r.get("event") == "run_abort" for r in rows),
+          f"rc={rc} last={rows[-1] if rows else None}")
+    m = mutant([("teacher_out = teacher(model_input)", "teacher_out = teacher(model_input.clone())")],
+               "clone_real")
+    rec, rows = real_run(m, "clone")
+    events = [(r.get("event"), r.get("iter")) for r in rows]
+    check("F1_failed_step1_check_aborts_after_iteration_1", isinstance(rec, dict)
+          and rec.get("rule") == "step1_checks" and rec.get("cause") == "checks_failed"
+          and rec.get("iter") == 1 and events == [("train", 1), ("run_abort", 1)], f"{rec} {events}")
+
+
 def main() -> int:
     print("=" * 78)
     print("DISTILL STEP-1 CHECKS SMOKE (L-KD-HARDEN items 1, 8) - CPU, synthetic 512x512 set")
@@ -193,7 +245,7 @@ def main() -> int:
     cdata.DATA["root"] = str(root / "data")
     cdata.SPLIT_SIZES.update({"train": 4, "val": 2})
     try:
-        for fn in (test_production, test_g_f1_mutants, test_input_identity, test_grids):
+        for fn in (test_production, test_g_f1_mutants, test_input_identity, test_grids, test_real_fail_fast):
             fn()
     finally:
         cdata.DATA["root"] = saved[0]
