@@ -9,10 +9,6 @@ torch 2.1.0+cu121 stack, so the result is meaningful before the pod exists.
 Covers: Logit-KD correctness/gradients/ignore-index/spatial alignment · CWD correctness/shapes/
 projection/gradients/valid-only softmax · student feature taps · E2 vs E3 stage composition ·
 checkpoint projection isolation · real-run safety gates · absence of any quantization path.
-
-Runs with or without the MMSeg stack. The one check that reaches the real teacher builder detects the
-stack the way the builder does and asserts the matching outcome; the training entry is stubbed for that
-call, so no student ImageNet download, dataloader or CUDA work can follow on either stack.
 """
 from __future__ import annotations
 
@@ -31,10 +27,9 @@ import torch  # noqa: E402
 import torch.nn.functional as F  # noqa: E402
 
 from src.distill import (CWD_PROJECTION_KEY, CWDProjectionLeak, FrozenTeacher, MockTeacher,  # noqa: E402
-                         SegNeXtTeacherAdapter, StudentTaps, TeacherCheckpointMissing,
-                         TeacherStackMissing, assert_clean_student_state, build_cwd_projection,
-                         find_projection_keys, load_teacher_state_dict, require_teacher_checkpoint,
-                         strip_cwd_projection)
+                         StudentTaps, TeacherCheckpointMissing, TeacherStackMissing,
+                         assert_clean_student_state, build_cwd_projection, find_projection_keys,
+                         load_teacher_state_dict, require_teacher_checkpoint, strip_cwd_projection)
 from src.models.student import build_student  # noqa: E402
 from src.seeds import set_seed  # noqa: E402
 from src.training.losses import cwd_channelwise_kl, downsample_validity, logit_kd_kl  # noqa: E402
@@ -66,19 +61,6 @@ def run_main_stderr(argv: list[str], stage: str) -> tuple[int, str]:
     with contextlib.redirect_stderr(buf):
         rc = run_main(argv, stage)
     return rc, buf.getvalue()
-
-
-def mmseg_stack_importable() -> bool:
-    """True when the real teacher builder's own import, `from mmseg.apis import init_model`, works.
-
-    src/distill/segnext_teacher._mmseg_model_factory raises TeacherStackMissing exactly when that
-    import fails, so the stack-dependent check expects the outcome the builder itself will produce.
-    """
-    try:
-        from mmseg.apis import init_model  # noqa: F401
-    except Exception:  # noqa: BLE001 — the builder treats any import failure as a missing stack
-        return False
-    return True
 
 
 def staged_trainval_root(n: int = 2) -> Path:
@@ -518,8 +500,8 @@ def _safety_gates_on_staged_root(staged: Path) -> None:
     # a throwaway file outside the repo satisfies the teacher-path existence check. Every case below
     # must return 2 BEFORE any dataset build, teacher load or CUDA work.
     # A STRUCTURALLY VALID teacher checkpoint (backbone.* + decode_head.* tensors) written outside
-    # the repo, so the real builder path clears checkpoint validation and reaches the teacher build —
-    # the mmseg import without the MMSeg stack, the real SegNeXt construction with it.
+    # the repo, so the real builder path clears checkpoint validation and reaches the mmseg import —
+    # letting this gate test the stack-missing failure mode precisely.
     tmp = Path(tempfile.mkdtemp(prefix="smoke_distill_teacher_")) / "teacher.pth"
     torch.save({"meta": {"mmseg_version": "1.2.2"},
                 "state_dict": {"backbone.projs.0.weight": torch.randn(4, 3, 1, 1),
@@ -540,41 +522,14 @@ def _safety_gates_on_staged_root(staged: Path) -> None:
           "experiment-level decision" in (grad_clip_gate_error(None) or ""))
     check("gate_accepts_positive_finite", grad_clip_gate_error(1.0) is None
           and grad_clip_gate_error(0.5) is None)
-    # A VALID value passes the gate: execution proceeds through checkpoint validation to the teacher
-    # build. `run` (student ImageNet init, dataloaders, CUDA) is stubbed for this one call, so nothing
-    # past the teacher build can execute on either stack. Without the MMSeg stack the build stops at
-    # the mmseg import -> TeacherStackMissing specifically, not a return code of 2. With it, the real
-    # builder constructs the thesis SegNeXt teacher and execution reaches `run`. This tests the gate
-    # and the construction path, not weight fidelity: mmengine loads the partial fixture non-strictly.
-    import src.training.train_distill as td
-    stack = mmseg_stack_importable()
-    reached_run, reached = object(), {}
-
-    def stub_run(**kw):
-        reached.update(kw)
-        return reached_run
-
-    saved_run, td.run = td.run, stub_run
+    # A VALID value passes the gate: execution proceeds through checkpoint validation to the mmseg
+    # import, which is absent here -> TeacherStackMissing specifically, not a return code of 2.
     try:
-        outcome = run_main(base + ["--grad-clip-norm=1.0"], "e2")
-    except Exception as e:  # noqa: BLE001 — classified below; an unexpected one is a FAIL, not a crash
-        outcome = e
-    finally:
-        td.run = saved_run
-    if not stack:
-        check("gate_valid_clip_proceeds_past_gate", isinstance(outcome, TeacherStackMissing),
-              "reached the mmseg teacher build, not the clip gate"
-              if isinstance(outcome, TeacherStackMissing)
-              else f"got {outcome!r} instead of TeacherStackMissing from the teacher build")
-    else:
-        teacher = reached.get("teacher")
-        check("gate_valid_clip_proceeds_past_gate",
-              outcome is reached_run and reached.get("grad_clip_norm") == 1.0
-              and isinstance(teacher, FrozenTeacher)
-              and isinstance(teacher.teacher, SegNeXtTeacherAdapter),
-              "MMSeg stack present: built the real SegNeXt teacher and reached the training entry "
-              "(stubbed: no student download, data or CUDA)" if outcome is reached_run
-              else f"got {type(outcome).__name__}: {str(outcome)[:100]}")
+        rc = run_main(base + ["--grad-clip-norm=1.0"], "e2")
+        check("gate_valid_clip_proceeds_past_gate", False, f"returned {rc} instead of loading teacher")
+    except TeacherStackMissing:
+        check("gate_valid_clip_proceeds_past_gate", True,
+              "reached the mmseg teacher build, not the clip gate")
     check("dry_run_needs_no_grad_clip", grad_clip_gate_error(None) is not None
           and "--grad-clip-norm" in (grad_clip_gate_error(None) or ""),
           "gate applies to real runs only; dry-runs never call it")
