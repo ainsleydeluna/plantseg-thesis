@@ -57,7 +57,6 @@ if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
 import torch  # noqa: E402
-import torch.nn.functional as F  # noqa: E402
 
 from configs.data import DATA                                      # noqa: E402
 from configs.distill import (DISTILL, DISTILL_STAGES, DISTILL_TERMS,  # noqa: E402
@@ -406,6 +405,21 @@ def build_term_ramps(stage, ramp_iters: int) -> dict[str, TermRamp]:
     return {t: TermRamp(t, ramp_iters) for t in instantiated_terms(stage)}
 
 
+def require_same_grid(what: str, tensor, target_what: str, target) -> None:
+    """A teacher map must already be on the student's grid: it is never resampled (L-KD-HARDEN item 8)."""
+    if tuple(tensor.shape[-2:]) != tuple(target.shape[-2:]):
+        raise RuntimeError(f"{what} is on a {tuple(tensor.shape[-2:])} grid but {target_what} is on "
+                           f"{tuple(target.shape[-2:])}: a teacher map is never resampled onto the "
+                           "student's grid; check the teacher config (B32/F8)")
+
+
+def input_probe(seen: dict, name: str):
+    """A forward pre-hook recording the (data_ptr, shape) of the tensor a model receives (item 1c)."""
+    def hook(module, inputs):
+        seen[name] = (inputs[0].data_ptr(), tuple(inputs[0].shape))
+    return hook
+
+
 def distillation_losses(*, stage: dict, logits, head_logits, c5, mask, teacher_out, projection,
                         lambda_logit: float | None, ramp=1.0, alpha: float | None = None,
                         beta: float | None = None):
@@ -441,11 +455,11 @@ def distillation_losses(*, stage: dict, logits, head_logits, c5, mask, teacher_o
         # B32/F8: both logit-map terms are computed on the head's NATIVE OS8 map, not on upsampled
         # copies. The student's `head_logits` and the teacher's LightHamHead output are both 64x64 for
         # a 512x512 input, so neither side is resampled and no interpolation artifact enters the soft
-        # targets. The validity mask is downsampled to that same grid once and shared.
+        # targets; a teacher map on any other grid is refused, never resampled (L-KD-HARDEN item 8).
+        # The validity mask is downsampled to that same grid once and shared.
+        require_same_grid("the teacher logits", t_logits, "the student head logits", head_logits)
         valid_os8 = downsample_validity(mask, head_logits.shape[-2:], ignore_index=IGNORE_INDEX)
-        t_logits_os8 = (t_logits if t_logits.shape[-2:] == head_logits.shape[-2:]
-                        else F.interpolate(t_logits, size=head_logits.shape[-2:], mode="bilinear",
-                                           align_corners=False))
+        t_logits_os8 = t_logits
 
     # --- Logit KD (E2, E3; unchanged between them per contract B3) ---
     if stage["logit_kd"]:
@@ -463,8 +477,9 @@ def distillation_losses(*, stage: dict, logits, head_logits, c5, mask, teacher_o
         if projection is None:
             raise RuntimeError(f"stage {stage['name']} instantiates the feature-map CWD term but no "
                                "projection was built")
-        s_feat = projection(c5)
         t_feat = teacher_out.feat_s16
+        require_same_grid("the teacher stride-16 feature", t_feat, "the student C5 map", c5)
+        s_feat = projection(c5)
         valid_s16 = downsample_validity(mask, s_feat.shape[-2:], ignore_index=IGNORE_INDEX)
         l_feat = cwd_channelwise_kl(s_feat, t_feat, valid_s16, T=T_CWD, channels_norm=CWD_C_FEAT)
         total = total + factor("cwd_feat") * alpha * l_feat
@@ -641,30 +656,51 @@ def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeach
         model_input = img
 
         optimizer.zero_grad(set_to_none=True)
-        with StudentTaps(student) as taps:
-            logits = student(model_input)
-            c5, head_logits = taps.require()
-        if it == 1:
-            checks["logits_shape"] = tuple(logits.shape) == (img.shape[0], NUM_CLASSES, 512, 512)
-            checks["c5_channels"] = c5.shape[1] == 160
-            checks["teacher_params_frozen"] = not teacher.trainable_parameters()
-            checks["optimizer_excludes_teacher"] = not ({id(p) for g in optimizer.param_groups
-                                                         for p in g["params"]}
-                                                        & teacher.parameter_ids())
+        # Item 1c: at step 1, pre-hooks on the student and on the wrapped teacher record the tensor each
+        # model actually receives, so the check compares the inputs, not two names for one variable.
+        seen: dict = {}
+        hooks = ([student.register_forward_pre_hook(input_probe(seen, "student")),
+                  teacher.teacher.register_forward_pre_hook(input_probe(seen, "teacher"))]
+                 if it == 1 else [])
+        try:
+            with StudentTaps(student) as taps:
+                logits = student(model_input)
+                c5, head_logits = taps.require()
+            if it == 1:
+                checks["logits_shape"] = tuple(logits.shape) == (img.shape[0], NUM_CLASSES, 512, 512)
+                checks["c5_channels"] = c5.shape[1] == 160
+                checks["head_logits_64x64"] = tuple(head_logits.shape[-2:]) == (64, 64)
+                checks["c5_32x32"] = tuple(c5.shape[-2:]) == (32, 32)
+                checks["teacher_params_frozen"] = not teacher.trainable_parameters()
+                checks["optimizer_excludes_teacher"] = not ({id(p) for g in optimizer.param_groups
+                                                             for p in g["params"]}
+                                                            & teacher.parameter_ids())
 
-        # B32/F8: request the teacher's logits on the student head's NATIVE OS8 grid. The SegNeXt
-        # LightHamHead already emits 64x64 for a 512x512 input (stock in_index=[1,2,3], resized to
-        # inputs[0] = stride-8), so this is currently a no-op — but it makes the resolution contract
-        # explicit and load-bearing if the teacher config ever changes. L-AM17B-FG: one full forward
-        # (features AND logits) in every stage, whatever its terms.
-        teacher_out = teacher(model_input, logits_size=head_logits.shape[-2:],
-                              feat_size=c5.shape[-2:])
+            # B32/F8 and L-KD-HARDEN item 8: the teacher's maps are used on their NATIVE grids. The
+            # SegNeXt LightHamHead emits 64x64 logits for a 512x512 input (stock in_index=[1,2,3],
+            # resized to inputs[0] = stride-8) and the MSCAN-B Stage-3 feature is 32x32: the student
+            # head's and C5's grids. No size is requested and nothing is resampled: distillation_losses
+            # refuses another grid for a map an instantiated term uses, and the step-1 checks
+            # teacher_logits_shape and teacher_feat_shape cover both maps in every stage. L-AM17B-FG:
+            # one full forward (features AND logits) in every stage.
+            teacher_out = teacher(model_input)
+        finally:
+            for h in hooks:
+                h.remove()
         if it == 1:
-            checks["teacher_same_augmented_input"] = model_input is img
+            checks["teacher_same_augmented_input"] = (
+                seen.get("student") == seen.get("teacher") == (img.data_ptr(), tuple(img.shape)))
+            checks["teacher_logits_shape"] = tuple(teacher_out.logits.shape) == tuple(head_logits.shape)
+            checks["teacher_feat_shape"] = (teacher_out.feat_s16 is not None
+                                            and tuple(teacher_out.feat_s16.shape)
+                                            == (c5.shape[0], CWD_C_FEAT, *c5.shape[-2:]))
 
         ramp_by_term = {t: r(it) for t, r in ramps.items()}
         ramp = ramp_by_term[terms[0]]      # every instantiated term runs the same first-epoch schedule
-        sup = criterion(logits, mask)
+        # The supervised term is CombinedCEDiceLoss's own sum, from one call of each of its two parts.
+        ce = criterion.ce(logits, mask)
+        dice = criterion.dice(logits, mask)
+        sup = ce + dice
         distill, parts = distillation_losses(
             stage=stage, logits=logits, head_logits=head_logits, c5=c5, mask=mask,
             teacher_out=teacher_out, projection=projection, lambda_logit=lambda_logit,
@@ -673,7 +709,18 @@ def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeach
         if it == 1:
             checks["distill_ramp_starts_at_zero"] = all(
                 (v == 0.0) if ramp_iters > 1 else (v == 1.0) for v in ramp_by_term.values())
-            checks["supervised_never_ramped"] = bool(torch.equal(sup, criterion(logits, mask)))
+            # Item 1a (G-F1): every ramp is exactly 0 at step 1, so the distillation total is exactly 0
+            # and the loss is exactly the unscaled supervised term, which must be positive and finite.
+            if ramp_iters > 1:
+                checks["distill_zero_at_step1"] = float(distill) == 0.0
+                checks["sup_added_unscaled"] = bool(torch.equal(loss, sup))
+                checks["sup_positive_finite"] = bool(torch.isfinite(sup)) and float(sup) > 0.0
+            else:
+                print("[checks] ramp_iters <= 1: step 1 already carries the full distillation weight, "
+                      "so distill_zero_at_step1, sup_added_unscaled and sup_positive_finite are set "
+                      "True without a test")
+                for k in ("distill_zero_at_step1", "sup_added_unscaled", "sup_positive_finite"):
+                    checks[k] = True
 
         if mode == "real" and not bool(torch.isfinite(loss)):
             raise RuntimeError(
@@ -732,10 +779,12 @@ def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeach
     checks["lr_non_increasing"] = all(lr_trace[i + 1] <= lr_trace[i] + 1e-12
                                       for i in range(len(lr_trace) - 1))
 
-    hard = ["logits_shape", "c5_channels", "loss_finite", "has_expected_terms", "optimizer_step",
+    hard = ["logits_shape", "c5_channels", "head_logits_64x64", "c5_32x32", "teacher_logits_shape",
+            "teacher_feat_shape", "loss_finite", "has_expected_terms", "optimizer_step",
             "teacher_stayed_frozen", "teacher_params_frozen", "optimizer_excludes_teacher",
-            "teacher_same_augmented_input", "distill_ramp_starts_at_zero", "supervised_never_ramped",
-            "grad_clip_applied", "val_cm_accumulated", "lr_non_increasing"]
+            "teacher_same_augmented_input", "distill_ramp_starts_at_zero", "distill_zero_at_step1",
+            "sup_added_unscaled", "sup_positive_finite", "grad_clip_applied", "val_cm_accumulated",
+            "lr_non_increasing"]
     passed = all(checks.get(k, False) for k in hard)
     # The run's last telemetry row, written after the final validation and checkpoint save, so a
     # selection (scripts/select_*.py) can tell a finished run from one that died during its last
