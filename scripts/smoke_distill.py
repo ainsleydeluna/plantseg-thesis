@@ -523,21 +523,39 @@ def _safety_gates_on_staged_root(staged: Path) -> None:
     for bad in ("0", "-1.0", "nan", "inf", "-inf"):
         check(f"gate_rejects_grad_clip_{bad}",
               run_main(base + [f"--grad-clip-norm={bad}"], "e2") == 2)
-    check("gate_error_message_names_the_open_decision",
-          "experiment-level decision" in (grad_clip_gate_error(None) or ""))
-    check("gate_accepts_positive_finite", grad_clip_gate_error(1.0) is None
-          and grad_clip_gate_error(0.5) is None)
-    # A VALID value passes the gate: execution proceeds through checkpoint validation to the mmseg
-    # import, which is absent here -> TeacherStackMissing specifically, not a return code of 2.
+    # AM-7 (L-KD-HARDEN item 2g): E1-E3 are unclipped; a real run refuses any --grad-clip-norm.
+    check("gate_error_message_names_am7", "AM-7" in (grad_clip_gate_error(1.0) or ""),
+          (grad_clip_gate_error(1.0) or "")[:120])
+    check("gate_accepts_no_clip_and_refuses_any_value", grad_clip_gate_error(None) is None
+          and grad_clip_gate_error(1.0) is not None and grad_clip_gate_error(0.5) is not None)
+    # With no --grad-clip-norm a real run passes the clip gate and every later gate up to the teacher
+    # load, which is stubbed (as in smoke_distill_realrun_gates) so the check does not depend on
+    # whether the MMSeg stack is installed.
+    import src.training.train_distill as td
+
+    class _ReachedTeacherLoad(Exception):
+        pass
+
+    def _stub_teacher_load(*_a, **_k):
+        raise _ReachedTeacherLoad()
+
+    saved_load, td.load_frozen_teacher = td.load_frozen_teacher, _stub_teacher_load
     try:
-        rc = run_main(base + ["--grad-clip-norm=1.0"], "e2")
-        check("gate_valid_clip_proceeds_past_gate", False, f"returned {rc} instead of loading teacher")
-    except TeacherStackMissing:
-        check("gate_valid_clip_proceeds_past_gate", True,
-              "reached the mmseg teacher build, not the clip gate")
-    check("dry_run_needs_no_grad_clip", grad_clip_gate_error(None) is not None
-          and "--grad-clip-norm" in (grad_clip_gate_error(None) or ""),
-          "gate applies to real runs only; dry-runs never call it")
+        rc = run_main(base + ["--num-workers", "12", "--ckpt-dir", str(tmp.parent / "e2_s42")], "e2")
+        check("gate_no_clip_proceeds_past_gate", False, f"returned {rc} before the teacher load")
+    except _ReachedTeacherLoad:
+        check("gate_no_clip_proceeds_past_gate", True, "reached the (stubbed) teacher load")
+    finally:
+        td.load_frozen_teacher = saved_load
+    # A dry run still accepts --grad-clip-norm (tests); run() is stubbed, so nothing trains.
+    seen: dict = {}
+    saved_run, td.run = td.run, (lambda **kw: seen.update(kw) or 0)
+    try:
+        rc = run_main(["--dry-run", "--grad-clip-norm", "1.0"], "e2")
+    finally:
+        td.run = saved_run
+    check("dry_run_accepts_grad_clip", rc == 0 and seen.get("mode") == "dry"
+          and seen.get("grad_clip_norm") == 1.0, f"rc={rc} {seen.get('grad_clip_norm')!r}")
 
     # No quantization path is reachable from the distillation entry points.
     forbidden = ("quantize_dynamic", "prepare_qat", "convert(", "prepare(", ".fuse(",

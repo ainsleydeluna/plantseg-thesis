@@ -259,7 +259,7 @@ def cross(work: Path, data_root: Path, old_root: Path, new_root: Path, a) -> dic
                                               val_interval=a.val_interval, teacher=a.teacher,
                                               teacher_ckpt=a.teacher_ckpt,
                                               teacher_config=a.teacher_config, threads=a.threads)
-        # the global-norm clipping path (the pre-L-AM7 real-run gate requires --grad-clip-norm)
+        # the dry global-norm clipping path (a real run refuses --grad-clip-norm under AM-7)
         runs[f"{label}_e3_clip"] = run_worker(code_root=root, data_root=data_root,
                                               out_dir=work / f"{label}_e3_clip", stage="e3",
                                               steps=a.steps, val_interval=a.val_interval,

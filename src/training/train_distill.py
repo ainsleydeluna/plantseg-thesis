@@ -27,14 +27,18 @@ SAFETY MODEL (mirrors train_e1.py, plus the distillation-specific gates):
   * Default / `--dry-run` -> tiny CPU run, random student init, NO download, EXPLICIT MockTeacher,
     checkpoint to a temp dir.
   * Real run requires BOTH `--real-run` AND `--confirm-real-run`, requires CUDA, requires an existing
-    `--teacher-ckpt`, requires an explicit `--lambda-logit` for a stage with Logit KD (the contract
-    leaves lambda_logit as NEED_TO_CONFIRM, selected by validation sweep — it is never guessed here),
-    and requires an explicit positive finite `--grad-clip-norm` (methodology mandates global-norm
-    clipping but fixes no numeric threshold, so it stays a recorded experiment-level decision). A
-    stage with the feature-map CWD term takes `--alpha` from {25, 50, 100} only, and its `--ckpt-dir`
-    name must carry the token `alpha<value>`. An argument for a term the stage does not instantiate
-    is refused, not ignored.
-  * All gates return before any dataloader or teacher is constructed.
+    `--teacher-ckpt`, and requires an explicit `--lambda-logit` from the AM-2 grid for a stage with
+    Logit KD (the contract leaves lambda_logit as NEED_TO_CONFIRM, selected by validation sweep — it
+    is never guessed here). It runs the registered recipe only (L-KD-HARDEN item 2): a fresh, explicit
+    `--ckpt-dir`; the whole 80,000-iteration schedule; VAL on the full set every 4,000 iterations; an
+    explicit `--num-workers` >= 1; seed 42, 43 or 44 (42 only for A, F and G); batch 16; ImageNet
+    init; the default TF32 state; and NO gradient clipping: AM-7 makes E1, E2 and E3 unclipped, so
+    `--grad-clip-norm` is refused (dry runs accept it). A stage with the feature-map CWD term takes
+    `--alpha` from {25, 50, 100} only, and its `--ckpt-dir` name must carry exactly one token
+    `alpha<value>`. An argument for a term the stage does not instantiate is refused, not ignored.
+  * main()'s gates return before any dataloader or teacher is constructed; run() repeats the schedule
+    and CUDA-order checks at its entry, after main() has loaded the teacher, and in a real run it also
+    refuses a missing --ckpt-dir, a clipping value and an off-grid alpha (direct calls).
   * Checkpoints are NEVER written inside the repo. The training-only CWD projection and its optimizer
     group are written to `projection.pt` beside the checkpoint, never into it, so `model_state_dict`
     is already the clean E6/E7 deployment student and the checkpoint carries nothing to strip.
@@ -163,26 +167,19 @@ STAGES: dict[str, dict] = _build_stage_table(DISTILL_STAGES)
 
 
 def grad_clip_gate_error(value: float | None) -> str | None:
-    """Validate `--grad-clip-norm` for a REAL E2/E3 launch. Returns an error string, or None if OK.
+    """Validate `--grad-clip-norm` for a REAL E2/E3/A/F/G launch. Returns an error string, or None if OK.
 
-    Methodology requires global-norm gradient clipping THROUGHOUT distillation training
-    (IMPLEMENTATION_CONTRACT B2), but no numeric `max_norm` is locked anywhere authoritative — D-A/D2
-    records that Chapter 3 gives no value, and `configs/e1_student.py` keeps `grad_clip_max_norm=None`
-    rather than inventing one. Rather than guessing a default, a real E2/E3 run REQUIRES the value to
-    be supplied explicitly on the command line, so the threshold stays a recorded experiment-level
-    decision. Dry-runs are unaffected. E1 is untouched by this gate.
+    AM-7 (docs/PREREGISTRATION_AMENDMENTS.md; DL-04) makes E1, E2 and E3 unclipped under one shared
+    rule, so a real run of any distillation stage takes no clipping value and ANY value is refused
+    (lane L-AM7, carried out by L-KD-HARDEN item 2g); divergence is governed by AM-7's rules (a) and
+    (b) instead. The pre-amendment pilot (configs/distill.py `distillation_grad_clip_pilot`) is
+    WITHDRAWN_AM7. Dry runs never call this gate, so they still accept a value.
     """
     if value is None:
-        return ("--grad-clip-norm is required. The methodology mandates global-norm gradient "
-                "clipping throughout distillation training, but the numeric max_norm is NOT fixed "
-                "by any authoritative source (IMPLEMENTATION_CONTRACT D-A/D2; open_questions D2; "
-                "configs/e1_student.py grad_clip_max_norm=None). It therefore remains an explicit "
-                "experiment-level decision: re-run with --grad-clip-norm <positive finite value> "
-                "and record the chosen threshold with the run.")
-    if not math.isfinite(value) or value <= 0.0:
-        return (f"--grad-clip-norm must be a positive finite value, got {value!r}. Zero, negative, "
-                "NaN and Inf are rejected.")
-    return None
+        return None
+    return (f"--grad-clip-norm {value!r} was given, but AM-7 (DL-04) makes E1, E2 and E3 unclipped: "
+            "a real run of any distillation stage takes no clipping value (divergence is governed by "
+            "AM-7's rules (a) and (b)). Dry runs still accept the flag.")
 
 
 def lambda_semantics_gate_error(declared, override: bool) -> str | None:
@@ -231,18 +228,32 @@ def alpha_gate_error(alpha, *, allow_offgrid: bool, mode: str) -> str | None:
     if not math.isfinite(alpha) or alpha <= 0.0:
         return f"--alpha must be a positive finite value, got {alpha!r}"
     if alpha not in ALPHA_GRID and not allow_offgrid:
-        return (f"--alpha {alpha:g} is not in the AM-16 item 2 grid {ALPHA_GRID} (default "
+        return (f"--alpha {alpha!r} is not in the AM-16 item 2 grid {ALPHA_GRID} (default "
                 f"{ALPHA_CWD_FEAT}); --allow-offgrid admits other values in dry runs only")
     return None
 
 
+# An alpha<value> token in a directory name (L-KD-HARDEN item 2j): not preceded by a letter or digit,
+# not followed by a digit or a decimal part. ALPHA_VALUE_RE counts every alpha<value>, glued to other
+# text or not, so a second value refuses the name even when glued on (e3_s42_alpha25alpha50).
+ALPHA_TOKEN_RE = re.compile(r"(?<![0-9A-Za-z])alpha[0-9]+(?:\.[0-9]+)?(?![0-9]|\.[0-9])",
+                            re.IGNORECASE)
+ALPHA_VALUE_RE = re.compile(r"alpha[0-9]+(?:\.[0-9]+)?", re.IGNORECASE)
+
+
 def ckpt_dir_alpha_error(ckpt_dir, alpha: float) -> str | None:
     """A run with the feature-map term names its checkpoint dir after its alpha (L-AM16-ALPHA): the
-    last path component must contain the token `alpha<value>`, e.g. /workspace/e3_s42_alpha50, with
-    no digit following it. Returns an error string, or None if OK."""
+    last path component must carry exactly one alpha<value> (item 2j), as a token, and it must be the
+    run's, e.g. /workspace/e3_s42_alpha50, with no digit following it. Returns an error string, or
+    None if OK."""
     tok = alpha_token(alpha)
     name = Path(ckpt_dir).name
-    if re.search(rf"(?<![0-9A-Za-z]){re.escape(tok)}(?![0-9]|\.[0-9])", name, flags=re.IGNORECASE):
+    values = ALPHA_VALUE_RE.findall(name)
+    if len(values) > 1:
+        return (f"--ckpt-dir {ckpt_dir} carries {len(values)} alpha values {values} in its last path "
+                f"component; exactly one, {tok!r}, names the run's alpha, e.g. .../e3_s42_{tok}")
+    found = ALPHA_TOKEN_RE.findall(name)
+    if len(found) == 1 and found[0].lower() == tok.lower():
         return None
     return (f"--ckpt-dir {ckpt_dir} does not carry the alpha token {tok!r} in its last path "
             f"component; name it after the run's alpha, e.g. .../e3_s42_{tok}")
@@ -519,6 +530,57 @@ def sha256_file(path) -> str:
     return h.hexdigest()
 
 
+# ------------------------------------------------------------------ real-run gates (L-KD-HARDEN item 2)
+# Item 2h: the pinned torch 2.1.0 defaults (cuDNN convolutions may use TF32 on Ampere; matmul TF32 off;
+# float32_matmul_precision "highest") with NVIDIA_TF32_OVERRIDE unset. Contract B6.
+TF32_DEFAULTS = {"cudnn_allow_tf32": True, "matmul_allow_tf32": False,
+                 "float32_matmul_precision": "highest", "NVIDIA_TF32_OVERRIDE": None}
+# Item 2f: E2 and E3 run seeds 42, 43 and 44; the exploratory arms A, F and G run seed 42 only.
+REAL_RUN_SEEDS = {"e2": (42, 43, 44), "e3": (42, 43, 44), "a": (42,), "f": (42,), "g": (42,)}
+if set(REAL_RUN_SEEDS) != set(STAGES):
+    raise StageConfigError(f"REAL_RUN_SEEDS covers {sorted(REAL_RUN_SEEDS)}, the stage table "
+                           f"{sorted(STAGES)}")
+
+
+def tf32_gate_error(state: dict) -> str | None:
+    """Item 2h: a real run starts only under TF32_DEFAULTS. Returns an error string, or None if OK."""
+    bad = {k: (state.get(k), want) for k, want in TF32_DEFAULTS.items() if state.get(k) != want}
+    if not bad:
+        return None
+    return (f"the TF32 state differs from the pinned torch 2.1.0 defaults: {bad} (got, want). No "
+            "trainer sets these flags, so the environment did; restore the defaults (unset "
+            "NVIDIA_TF32_OVERRIDE) and relaunch")
+
+
+def schedule_gate_error(mode: str, max_iters: int, *, horizon: int | None = None) -> str | None:
+    """Item 2c. None = admissible, else the refusal text, led by its bracketed code.
+
+    The KD stages train on E1's fixed poly horizon (E1_STUDENT["iterations"]). PolynomialLR holds the
+    LR at 0.0 past it, so no mode may run longer, and a real run trains exactly the whole schedule.
+    `horizon` is keyword-only: train_e1.schedule_gate_error takes (mode, poly_horizon, max_iters).
+    """
+    horizon = E1_STUDENT["iterations"] if horizon is None else horizon
+    if max_iters > horizon:
+        return (f"[max_iters_above_horizon] --max-iters {max_iters} exceeds the poly horizon {horizon}: "
+                f"PolynomialLR holds lr at 0.0 after it, so iterations {horizon + 1}..{max_iters} "
+                "would not train")
+    if mode == "real" and max_iters != horizon:
+        return (f"[max_iters_not_horizon] a real run trains its whole schedule: --max-iters {max_iters} "
+                f"!= the poly horizon {horizon}; do not pass --max-iters to a real run")
+    return None
+
+
+def ckpt_dir_fresh_error(ckpt_dir) -> str | None:
+    """Item 2b: a real run starts in a fresh checkpoint directory, absent or empty (the check of
+    scripts/preflight_e1_trainval.py). Its run_meta and telemetry files are appended to, so a reused
+    directory would interleave two runs. Returns an error string, or None if OK."""
+    p = Path(ckpt_dir)
+    if p.exists() and (not p.is_dir() or any(p.iterdir())):
+        return (f"--ckpt-dir {ckpt_dir} exists and is not an empty directory; a real run starts in a "
+                "fresh directory (its run_meta and telemetry files are appended to)")
+    return None
+
+
 def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeacher,
         lambda_logit: float | None, batch_size: int, max_iters: int, val_interval: int,
         max_val_batches: int | None, num_workers: int, ckpt_dir_arg: str | None,
@@ -526,6 +588,29 @@ def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeach
         grad_clip_norm: float | None, log_every: int, seed: int,
         alpha: float | None = None, alpha_offgrid: bool = False) -> int:
     wall_clock_start = time.time()
+    # Item 2i: set_seed exports CUBLAS_WORKSPACE_CONFIG and the determinism settings, which must precede
+    # the first CUDA op (contract B6), so CUDA must still be uninitialised here; main() checks the same
+    # before the teacher load. Nothing that touches CUDA or data comes before these entry checks.
+    if mode == "real" and torch.cuda.is_initialized():
+        print(f"REFUSING to start the real {stage['name']} run: [cuda_initialized_before_seed] CUDA was "
+              "initialised before run() seeded the run; find what touched CUDA first",
+              file=sys.stderr)
+        return 2
+    sched_error = schedule_gate_error(mode, max_iters)            # item 2c, repeated for direct calls
+    if sched_error is not None:
+        raise RuntimeError(sched_error)
+    if mode == "real":
+        # Item 2 for direct calls: the real-run gates of main() that run() can check itself.
+        if not ckpt_dir_arg:                      # None or "": resolve_ckpt_dir would take a temp dir
+            raise ValueError("[ckpt_dir_required] a real run needs an explicit, fresh --ckpt-dir; the "
+                             "temporary-directory fallback is for dry runs only")
+        clip_error = grad_clip_gate_error(grad_clip_norm)
+        if clip_error is not None:
+            raise ValueError(f"[grad_clip_am7] {clip_error}")
+        if stage["cwd_feat"]:
+            alpha_error = alpha_gate_error(alpha, allow_offgrid=alpha_offgrid, mode="real")
+            if alpha_error is not None:
+                raise ValueError(f"[alpha] {alpha_error}")
     set_seed(seed)
     dev = torch.device(device)
     terms = instantiated_terms(stage)
@@ -612,15 +697,15 @@ def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeach
           f"{', '.join(ramps)}; targets "
           f"{term_weights(stage, lambda_logit=lambda_logit, alpha=alpha)}")
     if grad_clip_norm is None:
-        clip_msg = ("DISABLED — no numeric max_norm is specified anywhere authoritative "
-                    "(IMPLEMENTATION_CONTRACT D-A/D2, open_questions D2); pass "
-                    "--grad-clip-norm <value> to enable the global-norm path")
+        clip_msg = "none: AM-7 (DL-04) makes E1, E2 and E3 unclipped; a real run refuses the flag"
     else:
-        clip_msg = f"global-norm, max_norm={grad_clip_norm}, applied every iteration"
+        clip_msg = (f"global-norm, max_norm={grad_clip_norm}, applied every iteration (dry run only: a "
+                    "real run refuses --grad-clip-norm under AM-7)")
     print(f"[grad-clip] {clip_msg}")
 
     if ckpt_dir_arg is None and stage["cwd_feat"]:
-        # L-AM16-ALPHA: the checkpoint dir of a run with the feature-map term carries its alpha.
+        # L-AM16-ALPHA: the checkpoint dir of a run with the feature-map term carries its alpha. Dry
+        # runs only: a real run has already refused a missing --ckpt-dir (item 2b).
         ckpt_dir_arg = tempfile.mkdtemp(prefix=f"{stage['key']}_{alpha_token(alpha)}_dryrun_")
     ckpt_dir = resolve_ckpt_dir(ckpt_dir_arg)
     if mode == "real" and stage["cwd_feat"]:
@@ -793,7 +878,7 @@ def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeach
             if it == 1:
                 checks["grad_clip_applied"] = bool(torch.isfinite(torch.as_tensor(total_norm)))
         elif it == 1:
-            checks["grad_clip_applied"] = True   # path present, intentionally disabled (D-A/D2)
+            checks["grad_clip_applied"] = True   # no clipping: AM-7 (the dry-run clip path is above)
         optimizer.step()
         scheduler.step()
         lr_trace.append(optimizer.param_groups[0]["lr"])
@@ -922,11 +1007,14 @@ def parse_args(argv=None, stage_default: str | None = None):
     p.add_argument("--max-iters", type=int, default=None)
     p.add_argument("--val-interval", type=int, default=None)
     p.add_argument("--max-val-batches", type=int, default=None)
-    p.add_argument("--num-workers", type=int, default=None)
-    p.add_argument("--ckpt-dir", default=None, help="out-of-repo dir; auto temp dir if omitted; a stage "
-                                                    "with the feature-map term needs alpha<value> in "
-                                                    "its name")
-    p.add_argument("--grad-clip-norm", type=float, default=None)
+    p.add_argument("--num-workers", type=int, default=None,
+                   help="TRAIN/VAL loader workers; a real run needs an explicit value >= 1 (official 12)")
+    p.add_argument("--ckpt-dir", default=None, help="out-of-repo dir, absent or empty; required for a "
+                                                    "real run (a dry run gets a temp dir if omitted); a "
+                                                    "stage with the feature-map term needs exactly one "
+                                                    "alpha<value> token in its name")
+    p.add_argument("--grad-clip-norm", type=float, default=None,
+                   help="dry runs only: a real run refuses it (AM-7: E1, E2 and E3 are unclipped)")
     p.add_argument("--log-every", type=int, default=1)
     p.add_argument("--seed", type=int, default=42)
     args = p.parse_args(argv)
@@ -972,6 +1060,24 @@ def main(argv=None, stage_default: str | None = None) -> int:
              else float(ALPHA_CWD_FEAT if args.alpha is None else args.alpha))
     alpha_offgrid = alpha is not None and alpha not in ALPHA_GRID
 
+    def refuse(code: str, message: str) -> int:
+        print(f"REFUSING to start the {mode} {stage['name']} run: [{code}] {message}", file=sys.stderr)
+        return 2
+
+    max_iters = ((args.max_iters if args.max_iters is not None else E1_STUDENT["iterations"])
+                 if mode == "real" else (args.max_iters or 4))
+
+    def both_mode_gates() -> int | None:
+        """L-KD-HARDEN items 2j and 2c, in both modes; a real run checks them after M11 and the device."""
+        sem_error = lambda_semantics_gate_error(args.lambda_semantics, args.allow_semantics_mismatch)
+        if sem_error is not None:
+            return refuse("lambda_semantics", sem_error)
+        sched_error = schedule_gate_error(mode, max_iters)
+        if sched_error is not None:
+            print(f"REFUSING to start the {mode} {stage['name']} run: {sched_error}", file=sys.stderr)
+            return 2
+        return None
+
     if mode == "real":
         # M11 (B60 §5): the E2/E3 data root must be staged with TRAIN and VAL only. TEST surfaces are
         # checked for existence only — never opened, listed or counted.
@@ -988,6 +1094,9 @@ def main(argv=None, stage_default: str | None = None) -> int:
             print(f"REFUSING to start the real {stage['name']} run on CPU: {reason}.",
                   file=sys.stderr)
             return 2
+        gate_rc = both_mode_gates()
+        if gate_rc is not None:
+            return gate_rc
         try:
             require_teacher_checkpoint(args.teacher_ckpt)
         except TeacherCheckpointMissing as e:
@@ -998,31 +1107,66 @@ def main(argv=None, stage_default: str | None = None) -> int:
                   f"The contract leaves lambda_logit as NEED_TO_CONFIRM (validation sweep over "
                   f"{LAMBDA_SWEEP} at seed 42); it is never guessed.", file=sys.stderr)
             return 2
+        # ---- L-KD-HARDEN item 2: the registered recipe, refused by name, before the teacher load ----
+        lam = args.lambda_logit
+        if stage["logit_kd"] and (not math.isfinite(lam) or lam <= 0.0 or lam not in LAMBDA_SWEEP):
+            return refuse("lambda_grid", f"--lambda-logit {lam!r} is not in the AM-2 grid "
+                                         f"{LAMBDA_SWEEP}; a real run takes lambda from the grid, "
+                                         "with no override")
         clip_error = grad_clip_gate_error(args.grad_clip_norm)
         if clip_error is not None:
-            print(f"REFUSING to start the real {stage['name']} run: {clip_error}", file=sys.stderr)
-            return 2
-        sem_error = lambda_semantics_gate_error(args.lambda_semantics,
-                                                args.allow_semantics_mismatch)
-        if sem_error is not None:
-            print(f"REFUSING to start the real {stage['name']} run: {sem_error}", file=sys.stderr)
-            return 2
-        if stage["cwd_feat"] and args.ckpt_dir is not None:
+            return refuse("grad_clip_am7", clip_error)
+        if not args.ckpt_dir:                     # None or "": resolve_ckpt_dir would take a temp dir
+            return refuse("ckpt_dir_required", "--ckpt-dir is required: a real run writes into an "
+                                               "explicit, fresh, out-of-repo directory; the "
+                                               "temporary-directory fallback is for dry runs only")
+        fresh_error = ckpt_dir_fresh_error(args.ckpt_dir)
+        if fresh_error is not None:
+            return refuse("ckpt_dir_not_fresh", fresh_error)
+        if stage["cwd_feat"]:
             dir_error = ckpt_dir_alpha_error(args.ckpt_dir, alpha)
             if dir_error is not None:
-                print(f"REFUSING to start the real {stage['name']} run: {dir_error}", file=sys.stderr)
-                return 2
+                return refuse("ckpt_dir_alpha", dir_error)
+        if args.max_val_batches is not None:
+            return refuse("max_val_batches", f"--max-val-batches {args.max_val_batches} was given; "
+                                             "a real run validates on the full VAL set")
+        if args.val_interval is not None and args.val_interval != E1_STUDENT["val_interval"]:
+            return refuse("val_interval", f"--val-interval {args.val_interval} != "
+                                          f"{E1_STUDENT['val_interval']}; a real run validates every "
+                                          f"{E1_STUDENT['val_interval']} iterations, as E1")
+        if args.num_workers is None or args.num_workers < 1:
+            return refuse("num_workers", f"--num-workers {args.num_workers!r}: a real run needs an "
+                                         "explicit value >= 1 (the official value is 12, E1's), "
+                                         "recorded in run_meta")
+        if args.seed not in REAL_RUN_SEEDS[stage["key"]]:
+            return refuse("seed", f"--seed {args.seed} is not a registered seed of stage "
+                                  f"{stage['name']}: {REAL_RUN_SEEDS[stage['key']]}")
+        if args.batch_size is not None and args.batch_size != E1_STUDENT["batch_size"]:
+            return refuse("batch_size", f"--batch-size {args.batch_size} != "
+                                        f"{E1_STUDENT['batch_size']}, the E1 recipe's batch")
+        if args.init is not None and args.init != "imagenet":
+            return refuse("init", f"--init {args.init}: a real run starts from E1's ImageNet init")
+        tf32_error = tf32_gate_error(tf32_state())
+        if tf32_error is not None:
+            return refuse("tf32", tf32_error)
+        # Item 2i (decision C5): CUDA must still be uninitialised when run() calls set_seed, which
+        # exports CUBLAS_WORKSPACE_CONFIG and the determinism settings that must precede the first
+        # CUDA op (contract B6); run() checks the same at its entry, after the teacher load.
+        if torch.cuda.is_initialized():
+            return refuse("cuda_initialized_before_teacher", "CUDA is already initialised before the "
+                                                             "teacher load and the run's seeding")
         teacher = load_frozen_teacher(args.teacher_ckpt,
                                       config_path=args.teacher_config or str(DEFAULT_TEACHER_CONFIG))
-        init = args.init or "imagenet"
-        pretrained = False if init == "none" else E1_STUDENT["init_weights"]
-        batch_size = args.batch_size or E1_STUDENT["batch_size"]
-        max_iters = args.max_iters or E1_STUDENT["iterations"]
-        val_interval = args.val_interval or E1_STUDENT["val_interval"]
-        max_val_batches = args.max_val_batches
-        num_workers = args.num_workers if args.num_workers is not None else 4
+        pretrained = E1_STUDENT["init_weights"]
+        batch_size = E1_STUDENT["batch_size"]
+        val_interval = E1_STUDENT["val_interval"]
+        max_val_batches = None
+        num_workers = args.num_workers
         lambda_logit = args.lambda_logit
     else:
+        gate_rc = both_mode_gates()
+        if gate_rc is not None:
+            return gate_rc
         device = args.device or "cpu"
         if args.init == "imagenet":
             print("[init] --init imagenet ignored in dry-run (forcing random init, no download).")
@@ -1036,7 +1180,6 @@ def main(argv=None, stage_default: str | None = None) -> int:
                   "--teacher-ckpt.")
             teacher = FrozenTeacher(MockTeacher(NUM_CLASSES))
         batch_size = args.batch_size or 2
-        max_iters = args.max_iters or 4
         val_interval = args.val_interval or 2
         max_val_batches = args.max_val_batches if args.max_val_batches is not None else 2
         num_workers = args.num_workers if args.num_workers is not None else 0

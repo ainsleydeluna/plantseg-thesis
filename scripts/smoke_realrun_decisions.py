@@ -3,7 +3,9 @@
 
 Proves the surface is internally coherent and honestly labelled:
   * the QAT controls that ARE locked are machine-readable and identical for E5/E6;
-  * the two gradient-clipping decisions are SEPARATE, both unresolved, both clipping-only;
+  * the two gradient-clipping decisions are SEPARATE and clipping-only; the distillation one is
+    withdrawn by AM-7 (E1-E3 unclipped: the E2/E3 gate refuses any value, lane L-AM7 carried out by
+    L-KD-HARDEN) and kept as a readable record, the QAT one is still unresolved;
   * early stopping cannot fire before the quantization schedule has executed;
   * official launches still refuse every unresolved value, and no selection path can see TEST.
 
@@ -103,7 +105,9 @@ def test_early_stop_after_observer_freeze() -> None:
 
 # ---------------------------------------------------------------- 3. two separate clipping decisions
 def test_two_clipping_decisions() -> None:
-    check("distillation_decision_named",
+    # AM-7 withdrew the distillation pilot: the distillation_record_* checks guard the WITHDRAWN_AM7
+    # record's values (kept unchanged as the readable record), not a live requirement.
+    check("distillation_record_named",
           DISTILL_PILOT["name"] == "DISTILLATION_GRAD_CLIP_NORM"
           and tuple(DISTILL_PILOT["applies_to"]) == ("E2", "E3"))
     check("qat_decision_named",
@@ -113,12 +117,13 @@ def test_two_clipping_decisions() -> None:
           QAT_PILOT["inherits_distillation_value"] is False
           and E1_STUDENT["grad_clip_scope"]["shared_numeric_threshold_required"] is False,
           "distillation and QAT may select different numeric thresholds")
-    check("both_still_unresolved",
-          DISTILL_PILOT["status"] == "PILOT_REQUIRED" and QAT_PILOT["status"] == "PILOT_REQUIRED"
+    check("distillation_withdrawn_qat_unresolved",
+          DISTILL_PILOT["status"] == "WITHDRAWN_AM7"
+          and QAT_PILOT["status"] == "PILOT_REQUIRED"
           and DISTILL_PILOT["selected_value"] is None and QAT_PILOT["selected_value"] is None,
-          "not described as locked")
+          "AM-7 withdraws the distillation pilot; neither is described as locked")
 
-    for label, pilot in (("distillation", DISTILL_PILOT), ("qat", QAT_PILOT)):
+    for label, pilot in (("distillation_record", DISTILL_PILOT), ("qat", QAT_PILOT)):
         cands = pilot["candidates"]
         check(f"{label}_no_none_candidate",
               all(not isinstance(c, str) for c in cands) and "none" not in cands,
@@ -140,7 +145,7 @@ def test_two_clipping_decisions() -> None:
 
 # ---------------------------------------------------------------- 4. test-set firewall
 def test_test_firewall() -> None:
-    for label, pilot in (("distillation", DISTILL_PILOT), ("qat", QAT_PILOT)):
+    for label, pilot in (("distillation_record", DISTILL_PILOT), ("qat", QAT_PILOT)):
         check(f"{label}_pilot_train_val_only",
               tuple(pilot["splits_used"]) == ("train", "val")
               and pilot["test_used_for_selection"] is False)
@@ -151,7 +156,7 @@ def test_test_firewall() -> None:
           DISTILL["logit_kd"]["lambda_logit"] == "NEED_TO_CONFIRM"
           and DISTILL["logit_kd"]["sweep_seed"] == 42)
     # no pilot spec smuggles a test split in
-    for label, pilot in (("distillation", DISTILL_PILOT), ("qat", QAT_PILOT)):
+    for label, pilot in (("distillation_record", DISTILL_PILOT), ("qat", QAT_PILOT)):
         leaks = [k for k, v in pilot.items()
                  if k not in ("splits_used", "excluded_from", "test_used_for_selection")
                  and "test" in str(v).lower()]
@@ -160,11 +165,11 @@ def test_test_firewall() -> None:
 
 # ---------------------------------------------------------------- 5. pilot budgets are separate
 def test_pilot_budgets() -> None:
-    check("distillation_pilot_budget_shortened",
+    check("distillation_record_budget_shortened",
           DISTILL_PILOT["pilot_budget_iters"] < DISTILL_PILOT["official_budget_iters"]
           and DISTILL_PILOT["official_budget_iters"] == 80000,
           f"{DISTILL_PILOT['pilot_budget_iters']} vs {DISTILL_PILOT['official_budget_iters']} iters")
-    check("distillation_pilot_has_validation_cadence",
+    check("distillation_record_has_validation_cadence",
           DISTILL_PILOT["pilot_val_interval"] > 0
           and DISTILL_PILOT["pilot_budget_iters"] % DISTILL_PILOT["pilot_val_interval"] == 0,
           f"{DISTILL_PILOT['pilot_budget_iters'] // DISTILL_PILOT['pilot_val_interval']} checks")
@@ -172,30 +177,34 @@ def test_pilot_budgets() -> None:
           QAT_PILOT["pilot_budget_epochs"] < QAT_PILOT["official_max_epochs"]
           and QAT_PILOT["official_max_epochs"] == QAT_RUN["max_epochs"],
           f"{QAT_PILOT['pilot_budget_epochs']} vs {QAT_PILOT['official_max_epochs']} epochs")
-    check("lambda_pilot_uses_grid_centre",
+    check("distillation_record_lambda_at_grid_centre",
           DISTILL_PILOT["lambda_logit_during_pilot"] == 1.0
           and 1 in DISTILL["logit_kd"]["lambda_logit_sweep_grid"],
           "avoids a 2 x 5 Cartesian search while staying inside the registered grid")
-    check("decision_order_clip_then_lambda",
+    check("distillation_record_decision_order_unchanged",
           DISTILL_PILOT["decision_order"][0].startswith("select DISTILLATION_GRAD_CLIP_NORM")
           and "lambda_logit sweep" in DISTILL_PILOT["decision_order"][2]
-          and DISTILL_PILOT["decision_order"][-1] == "official E2/E3 runs")
+          and DISTILL_PILOT["decision_order"][-1] == "official E2/E3 runs",
+          "the withdrawn pilot's order as written; under AM-7 E2/E3 wait on the lambda sweep only")
 
 
 # ---------------------------------------------------------------- 6. gates still refuse
 def test_gates_still_refuse() -> None:
-    check("e2e3_refuses_absent_clip", grad_clip_gate_error(None) is not None)
+    # AM-7: the E2/E3 real-run gate takes NO clipping value (None is the only admissible input).
+    check("e2e3_accepts_absent_clip_am7", grad_clip_gate_error(None) is None)
     check("e5e6_refuses_absent_clip", qat_grad_clip_gate_error(None) is not None)
     for bad in (0.0, -1.0, float("inf"), float("nan")):
         check(f"e2e3_refuses_{bad}", grad_clip_gate_error(bad) is not None, str(bad))
         check(f"e5e6_refuses_{bad}", qat_grad_clip_gate_error(bad) is not None, str(bad))
 
-    # the low-level primitive stays reusable: it accepts any positive finite norm, so PILOT runs can
-    # use their candidates. Candidate membership belongs to the decision layer above, not here.
+    # the QAT primitive stays reusable: it accepts any positive finite norm, so PILOT runs can use
+    # their candidates. Candidate membership belongs to the decision layer above, not here. The E2/E3
+    # gate refuses the withdrawn pilot's candidates like any other value (AM-7).
     for candidate in DISTILL_PILOT["candidates"]:
-        check(f"primitive_accepts_candidate_{candidate}",
-              grad_clip_gate_error(candidate) is None
-              and qat_grad_clip_gate_error(candidate) is None, str(candidate))
+        check(f"e2e3_refuses_withdrawn_candidate_{candidate}",
+              grad_clip_gate_error(candidate) is not None, str(candidate))
+        check(f"qat_primitive_accepts_candidate_{candidate}",
+              qat_grad_clip_gate_error(candidate) is None, str(candidate))
 
     # every QAT control is still demanded explicitly
     from src.quant.runner import unresolved_qat_values
@@ -223,7 +232,7 @@ def test_untouched() -> None:
           "D2/D-A governs execution; not reopened here")
     check("manuscript_reconciliation_flagged",
           E1_STUDENT["grad_clip_scope"]["manuscript_reconciliation_pending"] is True,
-          "'identical recipe' wording vs E1-unclipped/E2-E3-clipped carried forward")
+          "'identical recipe' wording carried forward; AM-7 makes E1-E3 unclipped")
     check("lambda_grid_unchanged",
           tuple(DISTILL["logit_kd"]["lambda_logit_sweep_grid"]) == (0.25, 0.5, 1, 2, 4))
     check("governed_fp32_recipe_untouched",
@@ -252,9 +261,9 @@ def main() -> int:
         print(f"  {name:50}: {'PASS' if ok else 'FAIL'}{('  ' + detail) if detail else ''}")
     passed = sum(1 for _, ok, _ in results if ok)
     print(f"\nRESULT: {'PASS' if passed == len(results) else 'FAIL'} ({passed}/{len(results)})")
-    print("\nNOTE: DISTILLATION_GRAD_CLIP_NORM and QAT_GRAD_CLIP_NORM are both UNSELECTED, and "
-          "lambda_logit is unselected. Official E2/E3 and E5/E6 runs stay blocked until their "
-          "validation-only pilots freeze those values.")
+    print("\nNOTE: AM-7 withdraws DISTILLATION_GRAD_CLIP_NORM (E1-E3 unclipped; the E2/E3 gate "
+          "refuses any value). QAT_GRAD_CLIP_NORM and lambda_logit are unselected: official E2/E3 "
+          "runs wait on the lambda_logit sweep, and E5/E6 runs on the QAT validation-only pilot.")
     return 0 if passed == len(results) else 1
 
 

@@ -90,8 +90,10 @@ DISTILL = {
 
     # ---------------------------------------------------- AMENDED 2026-09-23 by AM-7
     # WITHDRAWN by AM-7 (docs/PREREGISTRATION_AMENDMENTS.md): E1, E2 and E3 share one rule, no clipping.
-    # The block below is the pre-amendment launcher surface until lane L-AM7 (train_distill real-run
-    # gate + smoke_realrun_decisions) lands; its values are deliberately left unchanged here.
+    # Lane L-AM7's launcher gate is in place (L-KD-HARDEN, 2026-09-30; the in-trainer AM-7 aborts land
+    # in the same lane): a real train_distill run of any distillation stage refuses --grad-clip-norm and
+    # nothing launches from this block. It is kept as the readable record of the withdrawn pilot, values
+    # unchanged, with status WITHDRAWN_AM7; the pre-amendment rationale follows as it was written.
     # ---------------------------------------------------- E2/E3 gradient clipping (PREREGISTERED)
     # Chapter 3 requires global-norm clipping THROUGHOUT distillation training but names no threshold,
     # and no primary source supplies one (the KD/CWD papers report optimizer, schedule, temperature and
@@ -104,7 +106,7 @@ DISTILL = {
     # both. E2 and E3 must nevertheless use the SAME selected value, or E2-vs-E3 is confounded.
     "distillation_grad_clip_pilot": {
         "name": "DISTILLATION_GRAD_CLIP_NORM",
-        "status": "PILOT_REQUIRED",              # unresolved; official E2/E3 launches must refuse
+        "status": "WITHDRAWN_AM7",               # was PILOT_REQUIRED; AM-7: E1-E3 unclipped
         "selected_value": None,
         "candidates": (1.0, 5.0),                # both positive finite; no 'none' option
         "applies_to": ("E2", "E3"),

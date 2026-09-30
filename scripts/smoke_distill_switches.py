@@ -20,6 +20,10 @@ scripts/smoke_invariance_distill.py. Lane checks (docs/lane_specs/part2.md; erra
       feature-term weight at the ramp's end equals alpha exactly; a real cwd_feat run refuses a
       --ckpt-dir without alpha<value> and passes every gate with it.
   gates  an argument for a term the stage does not instantiate is refused before any data access.
+  2j (L-KD-HARDEN)  a --ckpt-dir with more than one alpha<value> token is refused; run() refuses an
+      off-grid alpha in real mode itself; the lambda-semantics gate refuses in dry mode too; the grid
+      error prints repr(alpha). The real launches here carry --num-workers and no --grad-clip-norm
+      (item 2; AM-7).
 """
 from __future__ import annotations
 
@@ -350,6 +354,8 @@ def test_cli_gates() -> None:
                    "g_alpha": ["--stage", "g", "--alpha", "50"],
                    "g_lambda": ["--stage", "g", "--lambda-logit", "1.0"],
                    "a_lambda_semantics": ["--stage", "a", "--lambda-semantics", "x"],
+                   "e2_dry_lambda_semantics_mismatch": ["--stage", "e2", "--lambda-semantics",
+                                                        "logitkd@elsewhere"],
                    "f_allow_semantics_mismatch": ["--stage", "f", "--allow-semantics-mismatch"],
                    "e2_allow_offgrid": ["--stage", "e2", "--allow-offgrid"],
                    "e3_offgrid_real": ["--stage", "e3", "--real-run", "--confirm-real-run",
@@ -382,6 +388,17 @@ def test_cli_gates() -> None:
                                              alpha=50.0))):
         ok, msg = raises(td.run, ValueError, **common, **kw)
         check(f"run_refuses_{label}", ok, msg)
+    # L-KD-HARDEN item 2j: run() itself applies the alpha gate in real mode (a direct call; it refuses
+    # before any seeding, data access or model build)
+    real = dict(common, mode="real", max_iters=80000, num_workers=12,
+                ckpt_dir_arg=str(Path(tempfile.mkdtemp(prefix="k1_switch_run_")) / "e3_s42_alpha30"))
+    for label, kw in (("e3_real_alpha30", dict(alpha=30.0)),
+                      ("e3_real_offgrid_flag", dict(alpha=50.0, alpha_offgrid=True))):
+        ok, msg = raises(td.run, ValueError, **real, stage=td.resolve_stage("e3"), lambda_logit=1.0, **kw)
+        check(f"run_refuses_{label}", ok, msg)
+    # the grid error prints repr(alpha), so a near-grid value is not shown as a grid value
+    msg = td.alpha_gate_error(50.0000001, allow_offgrid=False, mode="dry") or ""
+    check("alpha_grid_error_prints_repr", "50.0000001" in msg, msg[:110])
 
     # real-run gate order on a synthetic TRAIN/VAL-only root; the CUDA gate is passed with
     # `--device cuda`, and load_frozen_teacher is replaced so reaching it proves every gate passed.
@@ -398,14 +415,22 @@ def test_cli_gates() -> None:
     td.DATA["root"] = str(root)
     isolation.DEFAULT_EXPECTED_COUNTS.update({"train": 1, "val": 1})
     td.load_frozen_teacher = fake_load
+    # L-KD-HARDEN item 2: no --grad-clip-norm (AM-7) and an explicit --num-workers in a real launch.
     base = ["--real-run", "--confirm-real-run", "--device", "cuda", "--teacher-ckpt", str(ckpt),
-            "--grad-clip-norm", "1.0"]
+            "--num-workers", "12"]
     try:
         for label, argv, want in (
                 ("e3_dir_without_token", ["--stage", "e3", "--lambda-logit", "1", "--alpha", "50",
                                           "--ckpt-dir", str(work / "e3_run")], "refused"),
                 ("e3_dir_wrong_alpha", ["--stage", "e3", "--lambda-logit", "1", "--alpha", "25",
                                         "--ckpt-dir", str(work / "e3_s42_alpha50")], "refused"),
+                ("e3_dir_two_alpha_tokens", ["--stage", "e3", "--lambda-logit", "1", "--alpha", "50",
+                                             "--ckpt-dir", str(work / "e3_alpha50_alpha25")], "refused"),
+                ("e3_dir_same_token_twice", ["--stage", "e3", "--lambda-logit", "1", "--alpha", "50",
+                                             "--ckpt-dir", str(work / "e3_alpha50_s42_alpha50")],
+                 "refused"),
+                ("f_dir_two_alpha_tokens", ["--stage", "f", "--ckpt-dir",
+                                            str(work / "f_s42_alpha50_alpha100")], "refused"),
                 ("e3_dir_with_token", ["--stage", "e3", "--lambda-logit", "1", "--alpha", "50",
                                        "--ckpt-dir", str(work / "e3_s42_alpha50")], "reached"),
                 ("a_no_lambda", ["--stage", "a", "--alpha", "50",
