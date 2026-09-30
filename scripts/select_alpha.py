@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Select alpha_cwd from the three E3 seed-42 sweep runs (AM-16 item 2 / DL-27; lane L-AM16-ALPHA).
+"""Select alpha_cwd from the three E3 seed-42 sweep runs (AM-16 item 2 / DL-27 with AM-7a; lanes
+L-AM16-ALPHA and L-KD-HARDEN).
 
     python scripts/select_alpha.py --runs <E3 run dir> <E3 run dir> <E3 run dir>
                                    [--band reports/derived/dl27_band.json]
@@ -13,6 +14,12 @@ the smallest alpha; a winner at 25 or 100 is flagged as a boundary result and th
 The winning run is E3 seed 42. The three runs must share one lambda_logit, equal to the winner of the
 lambda selection file (AM-16 item 2: the alpha sweep runs after lambda is fixed).
 
+AM-7a: a non-default candidate (alpha 25 or 100) whose run ends in the trainer's own run_abort record for
+a student divergence (AM-7 (a)/(b)) is excluded from the selection and never relaunched; its directory is
+still a required input. The rule runs over the finished candidates (a sole finished candidate wins with
+no band and no tie); a winner at an edge of the finished set next to a diverged value is a boundary
+result too. A diverged default candidate (alpha 50) keeps AM-7 in full: refused.
+
 Band file (the DL-27 decision-log entry, written after B66 and before the sweep):
     {"e1_best_val": {"42": <float>, "43": <float>, "44": <float>}, "s": <float>, "band": <float, optional>}
 s is the n = 3 sample SD of E1's best VAL all-class mIoU; band = max(0.005, sqrt(2) * s). s is recomputed
@@ -20,9 +27,11 @@ from the three values and a recorded band is recomputed; any disagreement refuse
 
 Exit 0: the selection file is written. Exit 2: refused (the band or lambda selection file missing or
 malformed, a malformed, unreadable or inconsistent input, a finished run whose checkpoint is absent,
-or an existing selection file). Exit 3: fewer than three finished runs (a run directory absent, its
-best.json/run_meta/telemetry not written yet, or no run_end record): lane 2 STOP; a cut sweep means
-alpha = 50 per AM-16 and no selection file. Exit 4: an unexpected error. Only exit 0 writes a file.
+an existing selection file, an AM-7a refusal: default_candidate_diverged, run_aborted_other,
+abort_record_invalid, or item 10b's recipe_mismatch). Exit 3: a grid value with neither a finished nor a
+diverged run (a run directory absent, its run_meta/telemetry not written yet, a finished run without
+best.json, or neither a run_end nor a run_abort record): lane 2 STOP; a cut sweep means alpha = 50 per
+AM-16 and no selection file. Exit 4: an unexpected error. Only exit 0 writes a file.
 """
 from __future__ import annotations
 
@@ -77,25 +86,27 @@ def select(runs, band_path: Path, out: Path, rules_path: Path = RULES_PATH,
     lambda_path = Path(lambda_selection) if lambda_selection is not None else \
         REPO / "reports" / "derived" / "lambda_selection.json"
     lam_record = lambda_of_record(lambda_path)
-    finished, shortfall = collect_candidates(runs, sweep, KEY)
-    missing = missing_grid_values(finished, sweep)
+    finished, diverged, shortfall = collect_candidates(runs, sweep, KEY)
+    missing = missing_grid_values(finished + diverged, sweep)
     if shortfall or missing:
         absent = ["{} ({})".format(x["run_dir"], x["code"]) for x in shortfall]
         raise SelectionRefused(
             "shortfall_lane2_stop",
-            f"alpha selection needs all three finished runs; finished: "
-            f"{sorted(c['value'] for c in finished)}; grid values without a finished run: {missing}; "
-            f"absent or unfinished: {absent}. Lane 2 STOP; a cut sweep means alpha = 50 (AM-16 "
-            "item 2) and no selection file.")
-    lambdas = sorted({c["lambda_logit"] for c in finished}, key=repr)
+            f"alpha selection needs all three runs, finished or diverged; finished: "
+            f"{sorted(c['value'] for c in finished)}; diverged: {sorted(c['value'] for c in diverged)}; "
+            f"grid values without a finished or diverged run: {missing}; absent or unfinished: {absent} "
+            "(diverged candidates are not shortfalls: pass their directories). Lane 2 STOP; a cut sweep "
+            "means alpha = 50 (AM-16 item 2) and no selection file.")
+    lambdas = sorted({c["lambda_logit"] for c in finished + diverged}, key=repr)
     if len(lambdas) != 1 or lambdas[0] is None or float(lambdas[0]) != lam_record:
         raise SelectionRefused("lambda_mismatch", f"the alpha runs must share one lambda_logit equal to "
                                                   f"the lambda selection's winner {lam_record!r}; got "
                                                   f"{lambdas}")
-    res = apply_rule(finished, sweep, band, "alpha")
+    res = apply_rule(finished, sweep, band, "alpha", diverged=diverged)
     rec = lambda c: {"alpha": c["value"], "run_id": c["run_id"], "best_val": c["best_val"],  # noqa: E731
                      "ckpt_sha256": c["ckpt_sha256"]}
     doc = {"format": "alpha_selection/1", "rule": sweep["source"],
+           "amendments": ["AM-16 item 2", "AM-7a"],
            "rules_file": {"path": _rel(rules_path), "sha256": sha256_file(Path(rules_path))},
            "band_file": {"path": _rel(band_path), "sha256": sha256_file(band_path)},
            "lambda_selection_file": {"path": _rel(lambda_path), "sha256": sha256_file(lambda_path),
@@ -103,7 +114,9 @@ def select(runs, band_path: Path, out: Path, rules_path: Path = RULES_PATH,
            "candidates": [rec(c) for c in sorted(finished, key=lambda c: c["value"])],
            "s": s, "band": band, "rule_trace": band_trace + res["rule_trace"],
            "winner": rec(res["winner"]), "tie": res["tie"], "tied": res["tied"],
-           "boundary": res["boundary"], "winner_is": sweep["winner_is"],
+           "boundary": res["boundary"], "boundary_kind": res["boundary_kind"],
+           "winner_is": sweep["winner_is"], "excluded_am7a": res["excluded_am7a"],
+           "n_finished": res["n_finished"], "n_diverged": res["n_diverged"],
            "lambda_logit": lambdas[0],
            "inputs": [{"run_dir": c["run_dir"], "checkpoint": c["checkpoint"],
                        "best_json_sha256": c["best_json_sha256"],
@@ -136,8 +149,9 @@ def main(argv=None) -> int:
     for line in doc["rule_trace"]:
         print(f"  {line}")
     w = doc["winner"]
+    div = ", ".join(f"{x['value']:g}" for x in doc["excluded_am7a"])
     print(f"RESULT: SELECTED alpha_cwd = {w['alpha']:g} (run {w['run_id']}, tie={doc['tie']}, "
-          f"boundary={doc['boundary']}, band={doc['band']!r}) -> {a.out}")
+          f"boundary={doc['boundary']}/{doc['boundary_kind']}, diverged=[{div}]) -> {a.out}")
     return 0
 
 

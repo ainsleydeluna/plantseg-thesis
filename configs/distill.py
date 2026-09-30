@@ -65,6 +65,7 @@ DISTILL = {
         "lambda_sweep_tie_band_pp": 0.5,
         "lambda_sweep_tie_rule": "smallest lambda among candidates within 0.5 pp of the best",
         "lambda_sweep_winner_is_e2_seed42": True,
+        "lambda_default_candidate": 1,              # AM-7a: the default lambda keeps AM-7 in full
         "amended_by": "AM-2",
     },
 
