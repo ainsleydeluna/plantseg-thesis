@@ -720,6 +720,29 @@ def check_val_reference(path, *, stub: bool, expected_rows: int) -> dict:
             "files_sha256": files}
 
 
+def check_strata(path, stems, *, stub: bool) -> dict:
+    """The AM-17 item 8 strata file, read directly (P1): its schema and lane, the registered build in a
+    real run, and its split-list sha256 equal to the TRAIN split list's."""
+    from scripts.build_train_strata import LANE as STRATA_LANE
+    from scripts.build_train_strata import SCHEMA as STRATA_SCHEMA
+    from scripts.build_train_strata import split_list_sha256
+    p = Path(path)
+    if not p.is_file():
+        raise Refused(f"--strata not found: {p}")
+    sha = file_sha256(p)
+    doc = read_json_strict(p)
+    if (doc.get("schema"), doc.get("lane"), doc.get("split")) != (STRATA_SCHEMA, STRATA_LANE, "train"):
+        raise Refused(f"--strata is not a {STRATA_SCHEMA} TRAIN file of {STRATA_LANE}")
+    if not stub and doc.get("artifact_status") != "provisional":
+        raise Refused(f"--strata has artifact_status {doc.get('artifact_status')!r}; a real run needs the "
+                      "registered build (provisional)")
+    got = split_list_sha256(list(stems))
+    if doc.get("split_list_sha256") != got:
+        raise Refused(f"the TRAIN split list sha256 {got} != the strata file's {doc.get('split_list_sha256')}")
+    return {"path": str(p), "sha256": sha, "split_list_sha256": got, "artifact_status": doc.get("artifact_status"),
+            "n_images": doc.get("n_images")}
+
+
 def check_m11(root) -> dict:
     from src.data.isolation import TrainValIsolationError, assert_trainval_only_root
     try:
@@ -822,7 +845,9 @@ def add_correction_flags(p) -> None:
 
 
 _REFUSAL_CLASSES = (("src.eval.artifacts", "ArtifactRequestError"),
-                    ("src.eval.stage_artifacts", "StageArtifactError"))
+                    ("src.eval.stage_artifacts", "StageArtifactError"),
+                    ("scripts.build_train_strata", "StrataError"),
+                    ("src.quant.calibration", "CalibrationIndexError"))
 _STOP_CLASSES = (("src.eval.calibration", "CalibrationStop"), ("src.eval.evaluate", "EvaluationIntegrityError"),
                  ("src.eval.eval_runtime", "EvalRuntimeError"), ("src.eval.artifacts", "ArtifactWriteError"),
                  ("src.distill.nmf_stream", "NMFStreamError"))
@@ -888,7 +913,7 @@ __all__ = [
     "require_single_output", "TeacherInputs", "verify_teacher_inputs", "LoadedTeacher", "load_teacher",
     "loaded_state_sha256", "frozen_blob_record", "after_load_checks", "teacher_record", "same_teacher",
     "feature_sha256", "rng_state_sha256", "RngWatchForward", "SplitTeacher", "train_canvas_dataset", "check_val_reference",
-    "check_m11",
+    "check_strata", "check_m11",
     "environment_block", "base_document", "output_stamp", "read_diag_output", "add_common_flags",
     "add_teacher_flags", "add_correction_flags", "exit_code_for", "run_with_exit_codes", "cli_main",
     "finish_output",

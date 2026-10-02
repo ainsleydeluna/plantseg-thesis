@@ -16,13 +16,24 @@ changed in place, NaN, a global-RNG draw), K=1 bit for bit against frozen(x).log
 streams each equal to itself run alone (P10), the stub guards of P2, the sha256 formats of P5 with the
 load counter at 0, the role pins of P3, the provenance count of P8, the flags of C2 and P26-P28, the
 commit binding (fake git answers), one output per kind, and the P21 path guards.
+
+The script (scripts/teacher_d1_nmf_sensitivity.py) on a synthetic 5,367/846 root. Crops (acceptance a):
+the sample is the literal AM-10 draw (ids 'a', 'a-1', 'a (1)'); crop i equals the trainer's TRAIN
+branch with RandomState(1801 + i); the all-valid 64x64 domain; backbone once and head 8 times per crop;
+draws == 8 x crops with the end state of a reference M4-KD stream; F, KL and the CI; the arm role
+without booleans; --d2-val-output identity (P11); D == 0; refusals before any load. VAL part
+(acceptance c): eight streams seeded 42..49; stream 42 equal to the evaluator's M4-V pass (end state,
+mIoU, ECE); the core's confusion equals stream 42's; probabilities averaged, not logits; the
+reproduction gate both ways; the spread over streams.
 Synthetic inputs only; no PlantSeg data, no checkpoint of record, no GPU.
 
     python -B scripts/smoke_teacher_d1.py
 """
 from __future__ import annotations
 
+import contextlib
 import dataclasses
+import io
 import math
 import os
 import shutil
@@ -587,7 +598,268 @@ def _seam_body(fx, td, tmp, ckpt, sha, args) -> None:
                                          "pillow", "image_digest", "start_utc", "end_utc"} <= set(env))
 
 
-SECTIONS = [stats_cases, seam_cases]
+# ---------------------------------------------------------------------------------------------------
+# the D1 script (scripts/teacher_d1_nmf_sensitivity.py): crops (acceptance a) and the VAL part (c)
+# ---------------------------------------------------------------------------------------------------
+UTC = "2026-10-02T00:00:00Z"
+CORR = dict(correction_state="declined", correction_dl_id="DL-62")
+
+
+def _d1_env():
+    import json
+
+    from scripts import teacher_d1_nmf_sensitivity as d1
+    from scripts import teacher_d2_calibration as d2
+    from scripts import teacher_diag_fixtures as fx
+    from scripts.synthetic_ptq_fixtures import safe_tmpdir
+    from src.eval import teacher_diag as td
+    tmp = safe_tmpdir("diag_d1_")
+    root, stems = fx.make_data_root("diag_d1_data_")
+    fx.set_data_root(root)
+    ckpt, sha = fx.write_stub_ckpt(tmp / "stub_teacher.pth")
+    strata = fx.write_strata(tmp / "train_strata_v1.json", stems["train"])
+    ref = fx.reference_artifact(tmp / "ref_artifact", ckpt, n=3)
+    cfg = str(td.REPO / td.TEACHER_CONFIG_REL)
+    teacher = dict(teacher_ckpt=str(ckpt), teacher_ckpt_sha256=sha, teacher_config=cfg)
+    fx.call_run(d2, out_dir=tmp / "d2", artifact_dir=tmp / "d2_art", teacher_role="record", purpose="item1",
+                val_reference=str(ref), max_samples=3, generated_utc=UTC, **teacher)
+    cfg_copy = Path(shutil.copy(cfg, tmp / "arm_cfg.py"))
+    arm = dict(teacher_role="arm", arm_id="R1", arm_dl_id="DL-70", teacher_config=str(cfg_copy),
+               teacher_config_sha256=td.file_sha256(cfg_copy))
+    fx.call_run(d2, out_dir=tmp / "d2_arm", artifact_dir=tmp / "d2_arm_art", val_reference=str(ref), max_samples=3,
+                generated_utc=UTC, **dict(teacher, **arm))
+    d2_json = fx.output_files(tmp / "d2")[0]
+    return types.SimpleNamespace(
+        d1=d1, d2=d2, fx=fx, td=td, tmp=tmp, root=root, stems=stems, ckpt=ckpt, sha=sha, strata=strata, ref=ref,
+        teacher=teacher, arm=arm, d2_json=d2_json, d2_doc=json.loads(d2_json.read_text()),
+        d2_arm_json=fx.output_files(tmp / "d2_arm")[0])
+
+
+def _crops_cases(e) -> None:
+    import json
+    import random
+
+    import torch
+    from src.distill.nmf_stream import NMFStream
+    from src.quant.calibration import build_calibration_index
+    d1, fx, td = e.d1, e.fx, e.td
+
+    # a1: the sample
+    ids = ["a", "a-1", "a (1)"] + [f"id_{k:03d}" for k in range(300)]
+    check("a1 sample == random.Random(1801).sample(sorted(ids), 256) == build_calibration_index; ids include "
+          "'a', 'a-1', 'a (1)' (sorted: 'a' < 'a (1)' < 'a-1')",
+          d1.sample_ids(ids) == random.Random(1801).sample(sorted(ids), 256)
+          == build_calibration_index(ids, count=256, seed=1801)["selected_ids"]
+          and sorted(["a", "a-1", "a (1)"]) == ["a", "a (1)", "a-1"])
+    tr = e.stems["train"]
+    check("a1 on the synthetic TRAIN stems the sample is the literal draw",
+          d1.sample_ids(tr) == random.Random(1801).sample(sorted(tr), 256))
+
+    # a2: crop i is the trainer's TRAIN branch with RandomState(1801 + i)
+    from src.data.dataset import PlantSegDataset
+    ds = PlantSegDataset("train")
+    ok = True
+    for i, src in ((0, 11), (5, 4000)):
+        with fx.patched(np.random, randint=lambda *a, _s=1801 + i, **k: _s):
+            img_t, mask_t = ds[src]
+        mine_img, mine_mask = d1.crop(ds.pairs[src], i)
+        ok &= torch.equal(img_t, mine_img) and torch.equal(mask_t, mine_mask)
+    other = d1.crop(ds.pairs[11], 1)[0]
+    check("a2 crop i equals PlantSegDataset('train')[src] with its global draw patched to 1801 + i "
+          "(image and mask); seed 1802 gives another crop", ok and not torch.equal(other, d1.crop(ds.pairs[11], 0)[0]))
+    m = torch.zeros(512, 512, dtype=torch.long)
+    m[0, 0] = 255
+    v = d1.valid_cells(m)
+    check("a2 the domain is the all-valid min-pool on 64x64: one ignore pixel drops its cell only",
+          v.shape == (64, 64) and not v[0, 0] and int(v.sum()) == 64 * 64 - 1)
+
+    # the crops run, record role
+    out = e.tmp / "d1_out"
+    code, err = fx.call_run(d1, part="crops", out_dir=out, teacher_role="record", strata=str(e.strata),
+                            d2_val_output=str(e.d2_json), n_crops=3, generated_utc=UTC, **CORR, **e.teacher)
+    files = fx.output_files(out)
+    doc = json.loads(files[0].read_text()) if files else {}
+    check("a crops: exit 0, teacher_d1_<UTC>.json, status written, smoke",
+          code == 0 and [p.name for p in files] == ["teacher_d1_20261002T000000Z.json"]
+          and doc.get("status") == "written" and doc.get("artifact_status") == "smoke", err)
+    c, nmf = doc.get("checks", {}), doc.get("nmf", {})
+    check("a4 the backbone runs once per crop, the head 8 times", c.get("backbone_calls") == 3 and c.get("head_calls") == 24)
+    ref_stream = NMFStream(42, "M4-KD")
+    for _ in range(24):
+        ref_stream.draw(lambda: torch.rand(1, 512, 1, 1))
+    check("a5 stream draws == 8 x crops, and the end state equals a reference M4-KD stream after 24 draws",
+          nmf.get("draws") == 24 and nmf.get("end", {}).get("state_sha256") == ref_stream.state_sha256()
+          and nmf.get("begin", {}).get("draws") == 0)
+    pc = doc.get("per_crop", [])
+    check("a crop seeds 1801 + i in sample order; ids are the first n of the 256-draw",
+          [p["seed"] for p in pc] == [1801, 1802, 1803] and [p["id"] for p in pc] == d1.sample_ids(tr)[:3])
+    f = doc.get("F", {})
+    check("a F pools the crops: N = sum N_i, D = 28 * sum |V_i|, branch booleans from the integers",
+          f.get("N") == sum(p["N"] for p in pc) and f.get("D") == 28 * sum(p["n_valid"] for p in pc)
+          and f.get("below_0_03") == (100 * f["N"] < 3 * f["D"]) and f.get("at_least_0_10") == (10 * f["N"] >= f["D"])
+          and isinstance(f.get("ci95"), dict))
+    kl = doc.get("KL_logit", {}).get("value")
+    check("a KL_logit = fsum of per-crop sums / (8 * sum |V_i|)",
+          kl is not None and kl == math.fsum(p["kl_logit_sum"] for p in pc) / (8 * sum(p["n_valid"] for p in pc)))
+    check("P11 the D2 output's sha256 is recorded and names the same teacher",
+          doc.get("inputs", {}).get("d2_val_output", {}).get("sha256") == td.file_sha256(e.d2_json)
+          and td.same_teacher(doc.get("teacher", {}), e.d2_doc["teacher"]) == []
+          and doc.get("correction") == {"state": "declined", "dl_id": "DL-62"})
+
+    # arm
+    code, err = fx.call_run(d1, part="crops", out_dir=e.tmp / "d1_arm", strata=str(e.strata),
+                            d2_val_output=str(e.d2_arm_json), n_crops=2, generated_utc=UTC, **CORR,
+                            **dict(e.teacher, **e.arm))
+    files = fx.output_files(e.tmp / "d1_arm")
+    adoc = json.loads(files[0].read_text()) if files else {}
+    check("P3 arm crops: teacher_d1_arm-R1_<UTC>.json, gates nothing, N, D and F without branch booleans",
+          code == 0 and [p.name for p in files] == ["teacher_d1_arm-R1_20261002T000000Z.json"]
+          and adoc.get("gates") == "nothing" and "below_0_03" not in adoc.get("F", {})
+          and "N" in adoc.get("F", {}), err)
+
+    # refusals and stops
+    base = dict(part="crops", teacher_role="record", strata=str(e.strata), d2_val_output=str(e.d2_json), n_crops=2,
+                generated_utc=UTC, **CORR, **e.teacher)
+    check("P11 the record role refuses an arm's D2 output", fx.call_run(
+        d1, out_dir=e.tmp / "r1", **dict(base, d2_val_output=str(e.d2_arm_json)))[0] == 2)
+    alt = json.loads(e.d2_json.read_text())
+    alt["teacher"]["loaded_state_sha256"] = "0" * 64
+    alt_p = e.tmp / "d2_other_teacher.json"
+    alt_p.write_text(json.dumps(alt))
+    code, _ = fx.call_run(d1, out_dir=e.tmp / "r2", **dict(base, d2_val_output=str(alt_p)))
+    check("P11 a D2 output of another teacher (loaded_state_sha256) is refused after the load, nothing written",
+          code == 2 and not fx.output_files(e.tmp / "r2"))
+    alt["artifact_status"] = "provisional"
+    alt_p2 = e.tmp / "d2_provisional.json"
+    alt_p2.write_text(json.dumps(alt))
+    check("P2 stub mode refuses a non-smoke --d2-val-output",
+          fx.call_run(d1, out_dir=e.tmp / "r3", **dict(base, d2_val_output=str(alt_p2)))[0] == 2)
+    bad_strata = fx.write_strata(e.tmp / "strata_other.json", e.stems["train"][:-1] + ["plant_leaf_zzzz"])
+    with fx.count_loads() as calls:
+        r_strata = fx.call_run(d1, out_dir=e.tmp / "r4", **dict(base, strata=str(bad_strata)))[0]
+        fx.set_data_root(e.tmp / ("x" + "TeSt" + "x"))
+        try:
+            r_test = fx.call_run(d1, out_dir=e.tmp / "r5", **base)[0]
+        finally:
+            fx.set_data_root(e.root)
+    check("a7 a strata split list other than the TRAIN list, and a 'test' data root, are refused before any load",
+          (r_strata, r_test) == (2, 2) and sum(calls.values()) == 0)
+    with fx.patched(d1, valid_cells=lambda mask: np.zeros((64, 64), dtype=bool)):
+        code, _ = fx.call_run(d1, out_dir=e.tmp / "r6", **base)
+    files = fx.output_files(e.tmp / "r6")
+    zdoc = json.loads(files[0].read_text()) if files else {}
+    check("P12 D == 0: status 'F not produced', booleans and branch null, exit 1",
+          code == 1 and zdoc.get("status") == "F not produced" and zdoc.get("F", {}).get("below_0_03") is None
+          and zdoc.get("F", {}).get("branch") is None)
+    check("P31 a stream-less model is refused; a NaN head stops with nothing written",
+          fx.call_run(d1, out_dir=e.tmp / "r7", factory=fx.streamless_factory, **base)[0] == 2
+          and fx.call_run(d1, out_dir=e.tmp / "r8", factory=fx.nan_factory, **base)[0] == 1
+          and not fx.output_files(e.tmp / "r8"))
+    real = dict(base, generated_utc=None, n_crops=None, script_commit="c" * 40, script_commit_dl_id="DL-61")
+    with fx.count_loads() as calls:
+        r_nocorr = fx.call_run(d1, factory=None, out_dir=e.tmp / "r9",
+                               **dict(real, correction_state=None, correction_dl_id=None))[0]
+        r_badcorr = fx.call_run(d1, factory=None, out_dir=e.tmp / "r10", **dict(real, correction_state="maybe"))[0]
+        r_p8 = fx.call_run(d1, factory=None, out_dir=e.tmp / "r11", **real)[0]
+        r_n = fx.call_run(d1, factory=None, out_dir=e.tmp / "r12", **dict(real, n_crops=3))[0]
+        r_nosha = fx.call_run(d1, factory=None, out_dir=e.tmp / "r13", **dict(real, teacher_ckpt_sha256=None))[0]
+    check("a6/P28/P8 real weights are refused without the correction flags, without --teacher-ckpt-sha256, "
+          "with --n-crops, and (until K-part) at all -- each before any load",
+          (r_nocorr, r_badcorr, r_p8, r_n, r_nosha) == (2, 2, 2, 2, 2) and sum(calls.values()) == 0)
+
+
+def _val_cases(e) -> None:
+    import json
+
+    import torch
+    d1, fx, td = e.d1, e.fx, e.td
+    out = e.tmp / "d1val_out"
+    code, err = fx.call_run(d1, part="val", out_dir=out, teacher_role="record", val_reference=str(e.ref), max_samples=3,
+                            generated_utc=UTC, **CORR, **e.teacher)
+    files = fx.output_files(out)
+    doc = json.loads(files[0].read_text()) if files else {}
+    check("c VAL part: exit 0, teacher_d1val_<UTC>.json, status written, no evaluator artifact",
+          code == 0 and [p.name for p in files] == ["teacher_d1val_20261002T000000Z.json"]
+          and doc.get("status") == "written" and doc.get("pass", {}).get("evaluator_artifact") is None, err)
+    nmf, ps = doc.get("nmf", {}), doc.get("per_stream", [])
+    check("c1 eight streams seeded 42..49, each advanced one draw per image, end states distinct",
+          nmf.get("seeds") == list(range(42, 50)) and nmf.get("draws") == [3] * 8
+          and len(set(nmf.get("end_state_sha256", []))) == 8 and [r["seed"] for r in ps] == list(range(42, 50)))
+    d2c = e.d2_doc["checks"]["nmf_stream"]
+    check("c2 stream 42's draw sequence equals M4-V's: its end state equals the D2 pass's evaluator stream",
+          nmf.get("end_state_sha256", [None])[0] == d2c["end"]["state_sha256"]
+          and nmf.get("stream_42_begin") == d2c["begin"])
+    cal = e.d2_doc["calibration"]
+    check("c2 stream 42 scores like the evaluator's TeacherEvalModel: mIoU, ECE, n and correct equal D2's",
+          ps and ps[0]["all_class_miou"] == e.d2_doc["pass"]["all_class_miou"] and ps[0]["ece"] == cal["ece"]
+          and ps[0]["n"] == cal["n"] and ps[0]["correct"] == cal["correct"])
+    check("c2 the evaluator core's confusion equals stream 42's; stream 42 re-attached; caller RNG unchanged",
+          doc.get("checks", {}).get("core_confusion_equals_stream_42") is True
+          and doc.get("checks", {}).get("stream_42_reattached") is True
+          and doc.get("checks", {}).get("rng_state_unchanged") is True
+          and doc.get("checks", {}).get("backbone_calls") == 3 and doc.get("checks", {}).get("head_calls") == 24)
+    import statistics
+    mi = [r["all_class_miou"] for r in ps]
+    sp = doc.get("spread", {}).get("all_class_miou") or {}
+    check("c4 spread over the eight streams: fsum mean, sample SD (ddof 1), range",
+          sp.get("mean") == math.fsum(mi) / 8 and abs(sp.get("sd", -1) - statistics.stdev(mi)) <= 1e-15
+          and sp.get("range") == max(mi) - min(mi))
+    check("c4 the gate passed against the reference (delta 0.0) and the mean-probability mIoU is written",
+          doc.get("reproduction", {}).get("passed") is True and doc.get("reproduction", {}).get("delta") == 0.0
+          and isinstance(doc.get("mean_probability", {}).get("all_class_miou"), float))
+
+    # c3: probabilities are averaged, not logits
+    dk = [5.0, 5.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0]
+    mp = d1.MeanProbability()
+    for d in dk:
+        mp.add(torch.tensor([[[[0.0]], [[d]]]]))
+    logit_mean = torch.tensor([0.0, sum(dk) / 8]).argmax().item()
+    check("c3 the mean-probability prediction averages probabilities: class 0, where the mean logit says 1",
+          int(mp.prediction().reshape(-1)[0]) == 0 and logit_mean == 1 and mp.count == 8)
+
+    # c4: the gate fails -> "not reproduced", statistics withheld
+    with fx.patched(td, R3_TOLERANCE=-1.0):
+        code, _ = fx.call_run(d1, part="val", out_dir=e.tmp / "v_gate", teacher_role="record", val_reference=str(e.ref),
+                              max_samples=3, generated_utc=UTC, **CORR, **e.teacher)
+    files = fx.output_files(e.tmp / "v_gate")
+    gdoc = json.loads(files[0].read_text()) if files else {}
+    check("c4 stream 42 not reproducing the reference: status 'not reproduced', statistics withheld, exit 1",
+          code == 1 and gdoc.get("status") == "not reproduced" and "per_stream" not in gdoc
+          and "spread" not in gdoc and gdoc.get("reproduction", {}).get("passed") is False)
+
+    base = dict(part="val", teacher_role="record", val_reference=str(e.ref), max_samples=3, generated_utc=UTC,
+                **CORR, **e.teacher)
+    with fx.count_loads() as calls:
+        r_arm = fx.call_run(d1, out_dir=e.tmp / "v1", **dict(base, **e.arm))[0]
+        r_strata = fx.call_run(d1, out_dir=e.tmp / "v2", **dict(base, strata=str(e.strata)))[0]
+        r_rows = fx.call_run(d1, out_dir=e.tmp / "v3", **dict(base, max_samples=2))[0]
+        real = dict(base, max_samples=None, generated_utc=None, script_commit="c" * 40, script_commit_dl_id="DL-61")
+        r_nocorr = fx.call_run(d1, factory=None, out_dir=e.tmp / "v4",
+                               **dict(real, correction_state=None, correction_dl_id=None))[0]
+        r_ms = fx.call_run(d1, factory=None, out_dir=e.tmp / "v5", **dict(real, max_samples=3))[0]
+    check("P3/P28 the VAL part refuses the arm role, --strata, another row count, and real runs without the "
+          "correction flags or with --max-samples -- each before any load",
+          (r_arm, r_strata, r_rows, r_nocorr, r_ms) == (2, 2, 2, 2, 2) and sum(calls.values()) == 0)
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        m_real = d1.main(fx.argv(out_dir=e.tmp / "v6", **dict(base, max_samples=None, generated_utc=None,
+                                                                script_commit="c" * 40, script_commit_dl_id="DL-61")))
+    check("P29 the CLI is real mode and refuses until K-part (exit 2)", m_real == 2)
+
+
+def d1_cases() -> None:
+    e = _d1_env()
+    try:
+        for fn in (_crops_cases, _val_cases):
+            try:
+                fn(e)
+            except Exception as exc:  # noqa: BLE001 -- a crash is a failed case
+                check(f"{fn.__name__} raised", False, f"{type(exc).__name__}: {exc}")
+    finally:
+        shutil.rmtree(e.tmp, ignore_errors=True)
+        shutil.rmtree(e.root.parent, ignore_errors=True)
+
+
+SECTIONS = [stats_cases, seam_cases, d1_cases]
 
 
 def main() -> int:

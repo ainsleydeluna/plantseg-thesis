@@ -19,6 +19,7 @@ temporary directory whose path names neither TEST nor VAL (scripts/synthetic_ptq
 from __future__ import annotations
 
 import contextlib
+import io
 import json
 import os
 import sys
@@ -275,6 +276,28 @@ def argv(**kw) -> list[str]:
         else:
             out += [flag, str(v)]
     return out
+
+
+def reference_artifact(out_dir, ckpt, *, n: int = 3, factory=None, run_id: str = "ref_run") -> Path:
+    """scripts/evaluate_model.py run() on the stub teacher: a smoke's R3-equivalent --val-reference."""
+    from scripts import evaluate_model as em
+    from src.distill.segnext_teacher import segnext_builder
+    from src.eval.teacher_diag import REPO, TEACHER_CONFIG_REL
+    args = em.build_parser().parse_args([
+        "--stage", "teacher", "--model-role", "teacher", "--split", "val", "--checkpoint", str(ckpt),
+        "--teacher-config", str(REPO / TEACHER_CONFIG_REL), "--artifact-status", "smoke",
+        "--max-samples", str(n), "--batch-size", "1", "--out-dir", str(out_dir), "--run-id", run_id])
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        return em.run(args, teacher_builder=segnext_builder(model_factory=factory or stub_factory))
+
+
+def call_run(module, *, factory=stub_factory, **flags) -> tuple[int, str]:
+    """Parse `flags` with the script's own parser and call its run(); (exit code, stderr)."""
+    args = module.build_parser().parse_args(argv(**flags))
+    err = io.StringIO()
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+        code = module.run(args) if factory is None else module.run(args, model_factory=factory)
+    return code, err.getvalue()
 
 
 def output_files(out_dir) -> list[Path]:
