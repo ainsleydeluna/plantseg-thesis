@@ -38,6 +38,16 @@ DISTILL_STAGES = {
     "g": {"name": "G", "logit_kd": False, "cwd_feat": False, "cwd_logit": True},   # AM-17b 1(b)
 }
 
+# ---------------------------------------------------------------- AM-7 divergence rule (b) (L-AM7)
+# AM-7 (docs/PREREGISTRATION_AMENDMENTS.md; DL-04) stops a diverging run: (a) a non-finite total loss,
+# or a non-finite pre-clip gradient norm; (b) a rolling mean of the logged total loss over `window`
+# post-ramp iterations STRICTLY greater than `factor` x the running minimum of the earlier such means.
+# Rule (b) runs after the first-epoch ramp only (post_ramp_only): ramp iterations never enter a window
+# or the minimum. These are pre-registered: train_distill refuses to import other values, and its real
+# runs of E2, E3, A, F and G read window and factor at run time (L-KD-HARDEN item 3).
+AM7_DIVERGENCE = {"window": 100, "factor": 5.0, "post_ramp_only": True,
+                  "source": "AM-7 (b) / DL-04; lane L-AM7"}
+
 DISTILL = {
     # E2: response-level Logit KD
     "logit_kd": {
@@ -55,6 +65,7 @@ DISTILL = {
         "lambda_sweep_tie_band_pp": 0.5,
         "lambda_sweep_tie_rule": "smallest lambda among candidates within 0.5 pp of the best",
         "lambda_sweep_winner_is_e2_seed42": True,
+        "lambda_default_candidate": 1,              # AM-7a: the default lambda keeps AM-7 in full
         "amended_by": "AM-2",
     },
 
@@ -90,8 +101,10 @@ DISTILL = {
 
     # ---------------------------------------------------- AMENDED 2026-09-23 by AM-7
     # WITHDRAWN by AM-7 (docs/PREREGISTRATION_AMENDMENTS.md): E1, E2 and E3 share one rule, no clipping.
-    # The block below is the pre-amendment launcher surface until lane L-AM7 (train_distill real-run
-    # gate + smoke_realrun_decisions) lands; its values are deliberately left unchanged here.
+    # Lane L-AM7 is carried out (L-KD-HARDEN, 2026-09-30): a real train_distill run of any distillation
+    # stage refuses --grad-clip-norm, and the AM-7 (a)/(b) aborts run in-trainer (AM7_DIVERGENCE above).
+    # Nothing launches from this block. It is kept as the readable record of the withdrawn pilot, values
+    # unchanged, with status WITHDRAWN_AM7; the pre-amendment rationale follows as it was written.
     # ---------------------------------------------------- E2/E3 gradient clipping (PREREGISTERED)
     # Chapter 3 requires global-norm clipping THROUGHOUT distillation training but names no threshold,
     # and no primary source supplies one (the KD/CWD papers report optimizer, schedule, temperature and
@@ -104,7 +117,7 @@ DISTILL = {
     # both. E2 and E3 must nevertheless use the SAME selected value, or E2-vs-E3 is confounded.
     "distillation_grad_clip_pilot": {
         "name": "DISTILLATION_GRAD_CLIP_NORM",
-        "status": "PILOT_REQUIRED",              # unresolved; official E2/E3 launches must refuse
+        "status": "WITHDRAWN_AM7",               # was PILOT_REQUIRED; AM-7: E1-E3 unclipped
         "selected_value": None,
         "candidates": (1.0, 5.0),                # both positive finite; no 'none' option
         "applies_to": ("E2", "E3"),

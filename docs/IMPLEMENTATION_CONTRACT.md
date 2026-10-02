@@ -221,7 +221,7 @@ pending the PlantSeg repo's official convention.~~ `[empirical; ch3 Table 3.1; c
 | Validation interval | every **4,000** iters | `[ch3]` |
 | Checkpoint selection | **best validation-mIoU — all-class val mIoU (D1)** | `[ch3; D1]` |
 | Distillation-weight ramp (E2/E3) | linear **0 → target over first epoch** | `[ch3]` |
-| Gradient clipping | ch3 p.104 places it in the distillation-stage sentence: "During the distillation stages … global-norm gradient clipping is applied throughout". **LOCKED 2026-09-23 (AM-7): E1, E2 and E3 share one rule — no clipping** (E1 seed 42 logged no gradient norm). A NaN/divergence (as defined in AM-7) in any E2/E3 run stops the stage; one clipping rule is then adopted for all three and the FP32 stages are rerun. The E2/E3 launcher gate changes in lane L-AM7. *(Was: E1 none; E2/E3 METHODOLOGY DECISION OPEN, B59 C2.)* | `[ch3; B59 A5/C2; AM-7]` |
+| Gradient clipping | ch3 p.104 places it in the distillation-stage sentence: "During the distillation stages … global-norm gradient clipping is applied throughout". **LOCKED 2026-09-23 (AM-7): E1, E2 and E3 share one rule — no clipping** (E1 seed 42 logged no gradient norm). A NaN/divergence (as defined in AM-7) in any E2/E3 run stops the stage; one clipping rule is then adopted for all three and the FP32 stages are rerun. The E2/E3 launcher gate changes in lane L-AM7. *(Was: E1 none; E2/E3 METHODOLOGY DECISION OPEN, B59 C2.)* **[UPDATED 2026-09-30 — L-KD-HARDEN]** The real-run gate refuses --grad-clip-norm for E2, E3, A, F and G (AM-7: unclipped); dry runs accept it for tests. Divergence aborts for AM-7 (a) and (b) run in-trainer. | `[ch3; B59 A5/C2; AM-7]` |
 | Teacher in loop (E2/E3) | eval mode, online, consumes **identical augmented input** as student | `[ch3]` |
 | ~~Optional control~~ Longer-schedule controls **[UPDATED 2026-09-24 — B65 CP-006]** | ~~extended-schedule E2 (~160,000 iters, 1 seed) — **not run; recorded as future work (AM-11)**~~ **Run, descriptive (AM-16 item 3):** E1, E2 and E3 at seed 42 with 160,000 iterations each (poly schedule over the 160,000-iteration horizon; VAL every 4,000 iterations; best-checkpoint selection as in the 80,000-iteration runs; E2/E3 use the selected λ and α). Compared on clean TEST mIoU, with each run's measured GPU-hours reported alongside: each 160,000-iteration run against its 80,000-iteration run; E3 at 80,000 against E2 at 160,000 (the Chapter 3 sanity check); E2 and E3 at 80,000 against E1 at 160,000 (a longer-trained-baseline control; not compute-matched). Code: lanes L-AM16-ITERS and L-AM16-GPUH **[UPDATED 2026-09-24 — B66-prep S3]** E1: `train_e1.py --iterations 160000` sets the poly horizon and the run length (L-AM16-ITERS, E1 part; default 80000 = the locked recipe). A run refuses `--max-iters` above its horizon; a real run refuses any other `--max-iters`; `--resume` refuses a checkpoint whose scheduler `total_iters` differs. E2/E3: KD part pending (required before any E2/E3 160,000-iteration launch). GPU-hours: L-AM16-GPUH | `[ch3 §C; AM-11; AM-16]` |
 
@@ -269,7 +269,7 @@ pending the PlantSeg repo's official convention.~~ `[empirical; ch3 Table 3.1; c
 | Temperature `T_CWD` | **4** | `[ch3]` |
 | Feature-map weight `α_CWD` | ~~**50**~~ **[UPDATED 2026-09-24 — B65 CP-006]** selected on VAL from {25, 50, 100} by the AM-16 item-2 sweep; 50 (the Chapter 3 and Shu et al. (2021) default) wins ties and applies if item 2 is cut (stride-16 C5 map). ~~`configs/distill.py` keeps 50 until lane L-AM16-ALPHA adds the override~~ **[UPDATED 2026-09-28 — K1 L-AM16-ALPHA]** `train_distill --alpha` takes a value from `configs/distill.py` `alpha_cwd_grid` (25, 50, 100; default 50; `--allow-offgrid` in dry runs only) and is refused for a stage without the feature-map term; run_meta records `alpha_cwd`, and a real run's `--ckpt-dir` name must carry `alpha<value>`. Selection: `scripts/select_alpha.py` (rule `configs/sweep_rules.json`, band `reports/derived/dl27_band.json`) | `[ch3; AM-16]` |
 | Logit-map weight `β_CWD` | **3** | `[ch3]` |
-| Normalization | **T²/C**, with **C = the channel count of the map being distilled** (Shu et al. 2021, Eq. 4): **C = 320** for the stride-16 feature term (MSCAN-B Stage-3); **C = 116** for the logit-map term. Implemented at ~~`src/training/train_distill.py:239` (`channels_norm=320`) and `:249`~~ **[UPDATED 2026-09-28 — K1 L-AM17B-FG]** `src/training/train_distill.py:469` (`distillation_losses`, `channels_norm=320`) and `:479` (default = map's own 116). ch3 names only the 320 case. | `[ch3; Shu 2021; B59 C1]` |
+| Normalization | **T²/C**, with **C = the channel count of the map being distilled** (Shu et al. 2021, Eq. 4): **C = 320** for the stride-16 feature term (MSCAN-B Stage-3); **C = 116** for the logit-map term. Implemented at ~~`src/training/train_distill.py:239` (`channels_norm=320`) and `:249`~~ **[UPDATED 2026-09-28 — K1 L-AM17B-FG]** ~~`src/training/train_distill.py:469` (`distillation_losses`, `channels_norm=320`) and `:479`~~ **[UPDATED 2026-09-30 — L-KD-HARDEN]** `src/training/train_distill.py:522` (`distillation_losses`, `channels_norm=320`) and `:532` (default = map's own 116). ch3 names only the 320 case. | `[ch3; Shu 2021; B59 C1]` |
 | Projection head | training-only 1×1 conv: student **160-ch C5 → teacher 320-ch**; ~~removed before E6/E7 via state_dict edit prior to observer insertion~~ **[UPDATED 2026-09-28 — K1 L-AM17B-FG]** never part of the student: instantiated only with the `cwd_feat` term and written, with its optimizer group, to `projection.pt` beside the checkpoint, so the E3 checkpoint E6/E7 load carries nothing to strip (B3 per-term switches below) | `[ch3]` |
 | Ignore handling | validity mask downsampled to stride-16; channel-wise spatial softmax + KL restricted to valid locations | `[ch3]` |
 
@@ -301,9 +301,28 @@ import.
   (`src/distill/cwd_projection.py` `restore_projection` restores both bit for bit); `best.json` uses
   E1's schema. The telemetry file ends with a `run_end` record written after the final validation and
   checkpoint; the sweep selections require it.
-- run_meta: `terms`, `projection_params` (51,200 or 0), λ_logit/T_logit (logit_kd), α_CWD/C
+- ~~run_meta: `terms`, `projection_params` (51,200 or 0), λ_logit/T_logit (logit_kd), α_CWD/C
   (cwd_feat), β_CWD (cwd_logit) and T_CWD (either CWD term), each only for instantiated terms. Train
-  rows carry `logit_kd`, `cwd_feat`, `cwd_logit` only when instantiated.
+  rows carry `logit_kd`, `cwd_feat`, `cwd_logit` only when instantiated.~~
+  **[UPDATED 2026-09-30 — L-KD-HARDEN]** run_meta (one row): `event`, `stage`, `mode`, `seed`,
+  `terms`, `projection_params` (51,200 or 0), then the weight, temperature, grid and (logit_kd)
+  semantics keys of each instantiated term only (λ_logit/T_logit, α_CWD/C, β_CWD, T_CWD); then
+  `supervised_grid`, `batch_size`, `max_iters`, `num_classes`, `teacher_nmf`; then E1's run_meta keys
+  `wall_clock`, `git_head`, `git_head_source`, `image_digest`, `torch`, `numpy`, `device`,
+  `cuda_available`, `gpu_name`, `num_workers`, `val_interval`, `max_val_batches`, `learning_rate`,
+  `momentum`, `weight_decay`, `lr_power`, `poly_horizon`, `grad_clip_norm`, `used_pretrained`,
+  `params`, `ignore_index`, with `persistent_workers` (E1's TRAIN-loader argument) after
+  `num_workers`; then `ramp_iters`,
+  `class_weights_sha256` (of the file `load_ce_weights` reads), `tf32` (`cudnn_allow_tf32`,
+  `matmul_allow_tf32`, `float32_matmul_precision`, `NVIDIA_TF32_OVERRIDE`), `teacher_provenance` (null
+  for the mock) and `teacher_mock`. Train rows, in order: `event`, `iter`, `loss`, `sup`, `ce`, `dice`
+  (`sup = ce + dice`), then `logit_kd`, `cwd_feat`, `cwd_logit` only when instantiated, then `ramp`,
+  `lr`, `grad_norm` (pre-clip, every trainable parameter), `grad_norm_student`,
+  `grad_norm_projection` (cwd_feat only), `wall_clock`, `iter_seconds`, `samples_per_sec`. Val rows
+  are train_e1's (`all_class_miou`, `disease_only_miou_PROVISIONAL`, `per_class_iou`,
+  `per_class_eligible`, `n_eligible_classes`, `val_batches`, `val_total_px`, `val_seconds`,
+  `wall_clock`). `run_end` adds `wall_clock_start`, `wall_clock_end`, `wall_seconds`,
+  `train_seconds` and `gpu_hours` (wall_seconds / 3600, validations included).
 - An argument for a term the stage does not instantiate (`--lambda-logit` for A/F/G, `--alpha` for
   E2/G) is refused, not ignored. A real run with `cwd_feat` also needs `alpha<value>` in its
   `--ckpt-dir` name (dry runs get it in their temporary directory name).
@@ -459,6 +478,8 @@ peak on CUDA at batch 16", which omitted that transient.)*
   predates the project's first GPU execution (2026-09-09, B42). Runs are comparable in
   distribution; they are not bitwise-comparable across different `num_workers`. Record the value
   in Ch4 with the seed. Compare ~~`:825-837`~~ §(f), **Corruption dependency pins — REGISTERED and EXECUTABLY VALIDATED (corruption closure only)**, the "Two phases, never collapsed into one Boolean" flag block **[UPDATED 2026-09-23 — B64 C6]**, which scopes and dates its own byte-identity flag.
+- **Loader policy of the KD stages (E2, E3, A, F, G) = E1's** `[UPDATED 2026-09-30 — L-KD-HARDEN; A1 adjudication]`: persistent TRAIN workers, `--num-workers` explicit (official value 12, the E1 seed-42/43/44 value), seed-derived generator. At equal seed and num_workers the KD stages consume the same realized augmented sample stream as E1 for the whole run (common random numbers; measured on synthetic data across 3 epochs by scripts/smoke_loader_parity.py), not only epoch 1. `num_workers` and `persistent_workers` are recorded in every KD run_meta.
+- **TF32** `[UPDATED 2026-09-30 — L-KD-HARDEN; A1 adjudication]`: no trainer sets the TF32 flags; the pinned torch 2.1.0 defaults apply (cuDNN convolutions may use TF32 on Ampere; matmul TF32 off; `float32_matmul_precision` highest). KD runs record the three values and `NVIDIA_TF32_OVERRIDE` in run_meta and refuse to start unless they equal the defaults. E1 seed 42's state is inferred from the same image and an unset override, not measured.
 - **Bitwise identity of training *results* is not claimed, and ch3 does not claim it** `[ch3 §D]`.
   ch3 §D states that "floating-point variation may remain across GPU classes and compiled CUDA
   kernels", and specifies "mean ± SD reported across completed seeds" rather than bitwise

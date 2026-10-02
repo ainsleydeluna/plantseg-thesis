@@ -1,6 +1,6 @@
 {
   "format": "sweep_rules/1",
-  "note": "Committed selection rules read by scripts/select_lambda.py and scripts/select_alpha.py (lane L-AM16-ALPHA; the selection contract in docs/lane_specs/part2.md). Grid, band floor, default, seed and iterations must agree with configs/distill.py; src/training/sweep_select.py refuses a disagreement.",
+  "note": "Committed selection rules read by scripts/select_lambda.py and scripts/select_alpha.py (lane L-AM16-ALPHA; the selection contract in docs/lane_specs/part2.md). The lambda grid, band, seed, iterations and default candidate, and the alpha grid, default, default candidate and iterations must agree with configs/distill.py; src/training/sweep_select.py refuses a disagreement.",
   "lambda_logit": {
     "source": "AM-2 / DL-06",
     "stage": "E2",
@@ -11,8 +11,9 @@
     "band": {"kind": "fixed", "value": 0.005},
     "tie": "smallest",
     "boundary": [0.25, 4],
+    "default_candidate": 1,
     "winner_is": "E2 seed 42",
-    "shortfall": "refused, naming AM-17 item 9: selection among the finished candidates at the TEST freeze (shortfall disclosed) is not implemented, so no selection is made"
+    "shortfall": "refused, naming AM-17 item 9: selection among the finished candidates at the TEST freeze (shortfall disclosed) is not implemented, so no selection is made; a diverged non-default candidate is not a shortfall: its directory is supplied and it is excluded (AM-7a)"
   },
   "alpha_cwd": {
     "source": "AM-16 item 2 / DL-27",
@@ -30,7 +31,8 @@
     "tie": "default_if_tied_else_smallest",
     "default": 50,
     "boundary": [25, 100],
+    "default_candidate": 50,
     "winner_is": "E3 seed 42",
-    "shortfall": "refused (lane 2 STOP: fewer than three finished runs); a cut sweep means alpha = 50 and no selection file (AM-16)"
+    "shortfall": "refused (lane 2 STOP: fewer than three finished runs); a cut sweep means alpha = 50 and no selection file (AM-16); a diverged non-default candidate is not a shortfall: its directory is supplied and it is excluded (AM-7a)"
   }
 }

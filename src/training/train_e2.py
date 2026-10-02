@@ -12,7 +12,7 @@ identifiable, reproducible stage on the command line and in logs.
     python src/training/train_e2.py --dry-run
     python src/training/train_e2.py --real-run --confirm-real-run \
         --teacher-ckpt /workspace/teacher/segnext_b_plantseg.pth \
-        --lambda-logit <value from the validation sweep> \
+        --lambda-logit <value from the validation sweep> --num-workers 12 \
         --ckpt-dir /workspace/e2_ckpts
 """
 from __future__ import annotations
