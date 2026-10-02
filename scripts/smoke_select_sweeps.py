@@ -75,6 +75,9 @@ LAMBDA_GRID = [0.25, 0.5, 1, 2, 4]
 RAMP = 335                               # a first-epoch ramp length; AM-7 (b) is evaluated from RAMP + 100
 ABORT_ITER = 12000
 TEACHER_SHA = "ab" * 32
+# every run_meta carries the three teacher hashes the candidates of a sweep share (L-CKPT-GUARD)
+TEACHER_PROV = {"ckpt_sha256": TEACHER_SHA, "config_sha256": "c0" * 32, "model_cfg_sha256": "d0" * 32}
+AUTO = object()                          # make_run: the trainer's own train-row grad_norm (see there)
 results: list[tuple[str, bool, str]] = []
 
 
@@ -175,13 +178,16 @@ def make_run(root: Path, stage: str, value: float, best_val: float, *, name: str
              finished=True, mode="real", seed=42, offgrid=False, rows=1, ckpt_best=None,
              with_ckpt=True, lam=1.0, override=False, run_end=True, checks_passed=True,
              end_best=None, torn="", corrupt_ckpt=False, abort=None, abort_after_end=False,
-             record_iter=None, nonfinite=False, with_best=True, recipe=None, val_nonfinite=None) -> Path:
+             record_iter=None, nonfinite=False, with_best=True, recipe=None, val_nonfinite=None,
+             row_grad_norm=AUTO) -> Path:
     """A synthetic run directory. `abort` (run_abort record kwargs) ends the telemetry at the abort
     iteration with a run_abort row and no run_end; `abort_after_end` appends it after a run_end instead;
     `nonfinite` (True for the loss, or a {key: tag} map) flags the last train row as train_distill does
     (null + nonfinite map); an abort at iteration 1 has that single train row; `val_nonfinite`
     (a val-row key) adds a val row at the last iteration with that value non-finite; `recipe` overrides
-    run_meta's recipe fields."""
+    run_meta's recipe fields. A train row whose loss is non-finite holds grad_norm null, as the trainer
+    writes it (the loss stop precedes backward); `row_grad_norm` sets another value, or None to drop the
+    key (K8-2(c))."""
     sk = stage.lower()
     d = root / (name or (f"{sk}_s42_alpha{value:g}" if stage == "E3" else f"{sk}_s42_lambda{value:g}"))
     d.mkdir(parents=True)
@@ -194,7 +200,7 @@ def make_run(root: Path, stage: str, value: float, best_val: float, *, name: str
         meta.update({"alpha_cwd": value, "alpha_offgrid": offgrid, "beta_cwd": 3})
     meta.update({"num_workers": 12, "batch_size": 16, "val_interval": 4000, "max_val_batches": None,
                  "poly_horizon": 80000, "grad_clip_norm": None, "used_pretrained": True, "ramp_iters": RAMP,
-                 "teacher_provenance": {"ckpt_sha256": TEACHER_SHA}})
+                 "teacher_provenance": dict(TEACHER_PROV)})
     meta.update(recipe or {})
     (d / f"{sk}_run_meta.jsonl").write_text("".join(json.dumps(meta) + "\n" for _ in range(rows)),
                                             encoding="utf-8")
@@ -204,6 +210,12 @@ def make_run(root: Path, stage: str, value: float, best_val: float, *, name: str
     ck_name = f"{sk}_student_best_iter76000.pt"
     named = ({"loss": "nan"} if nonfinite is True else dict(nonfinite)) if nonfinite else {}
     last_row = {"event": "train", "iter": last, "loss": 1.0, **{k: None for k in named}}
+    if "loss" in named:
+        last_row.setdefault("grad_norm", None)
+    if row_grad_norm is None:
+        last_row.pop("grad_norm", None)
+    elif row_grad_norm is not AUTO:
+        last_row["grad_norm"] = row_grad_norm
     if named:
         last_row["nonfinite"] = named
     lines = ([json.dumps({"event": "train", "iter": last - 1, "loss": 1.0})] if last > 1 else []) \
@@ -541,13 +553,22 @@ def test_am7a_lambda_cli(tmp: Path) -> None:
               "not_pretrained": dict(recipe={"used_pretrained": False}),
               "poly_horizon_float": dict(recipe={"poly_horizon": 80000.0}),
               "num_workers_differ": dict(recipe={"num_workers": 8}),
-              "teacher_ckpt_differs": dict(recipe={"teacher_provenance": {"ckpt_sha256": "cd" * 32}}),
+              "teacher_ckpt_differs": dict(recipe={"teacher_provenance": {**TEACHER_PROV,
+                                                                          "ckpt_sha256": "cd" * 32}}),
+              "teacher_config_differs": dict(recipe={"teacher_provenance": {**TEACHER_PROV,
+                                                                            "config_sha256": "c1" * 32}}),
+              "teacher_model_cfg_differs": dict(recipe={"teacher_provenance": {
+                  **TEACHER_PROV, "model_cfg_sha256": "d1" * 32}}),
               "teacher_provenance_absent": dict(recipe={"teacher_provenance": None}),
               "diverged_run_num_workers_differ": dict(abort={}, with_best=False, recipe={"num_workers": 8})}
     for label, kw in recipe.items():
         rc, log, doc, out, _ = lambda_case(tmp, f"l2_{label}", {2: kw})
+        named = {"num_workers_differ": "differ in num_workers",
+                 "teacher_ckpt_differs": "differ in teacher_ckpt_sha256",
+                 "teacher_config_differs": "differ in teacher_config_sha256",
+                 "teacher_model_cfg_differs": "differ in teacher_model_cfg_sha256"}.get(label, "")
         check(f"item10b_recipe_{label}_refused", rc == 2 and doc is None and "recipe_mismatch" in log
-              and "Traceback" not in log, f"rc={rc} {log.strip()[-200:]}")
+              and named in log and "Traceback" not in log, f"rc={rc} {log.strip()[-200:]}")
     rc, log, doc, out, _ = lambda_case(tmp, "l2_am7a_with_nonfinite_row",
                                        {2: dict(abort=dict(rule="AM-7(a)"), nonfinite=True)})
     check("am7a_am7a_divergence_with_nonfinite_row_is_excluded",
@@ -684,13 +705,95 @@ def test_am7_records(tmp: Path) -> None:
     got = outcome(load_candidate, over, LAMBDA, "lambda_logit")
     check("q_unit_am7b_overflowing_quotient_inf_is_diverged", 1.0 / 1e-310 == math.inf
           and isinstance(got, dict) and got.get("status") == "diverged", str(got)[:160])
-    for label, recipe in (("num_workers", {"num_workers": 8}),
-                          ("teacher_ckpt", {"teacher_provenance": {"ckpt_sha256": "cd" * 32}})):
+    for label, recipe, field in (
+            ("num_workers", {"num_workers": 8}, "num_workers"),
+            ("teacher_ckpt", {"teacher_provenance": {**TEACHER_PROV, "ckpt_sha256": "cd" * 32}},
+             "teacher_ckpt_sha256"),
+            ("teacher_config", {"teacher_provenance": {**TEACHER_PROV, "config_sha256": "c1" * 32}},
+             "teacher_config_sha256"),
+            ("teacher_model_cfg", {"teacher_provenance": {**TEACHER_PROV, "model_cfg_sha256": "d1" * 32}},
+             "teacher_model_cfg_sha256")):
         rc, log, doc, out, _ = lambda_case(tmp, f"q3_default_diverged_{label}",
                                            {1: DIVERGED, 2: dict(recipe=recipe)})
         check(f"q3_diverged_default_with_{label}_mismatch_is_recipe_mismatch", rc == 2 and doc is None
-              and "recipe_mismatch" in log and "default_candidate_diverged" not in log
+              and "recipe_mismatch" in log and f"differ in {field}" in log
+              and "default_candidate_diverged" not in log
               and "Traceback" not in log, f"rc={rc} {log.strip()[-200:]}")
+
+
+def test_ckpt_guard(tmp: Path) -> None:
+    """L-CKPT-GUARD: the teacher's config and resolved model-config hashes join RECIPE_IDENTICAL; K8-2(a)
+    the shared-lambda refusal before default_candidate_diverged in select_alpha; K8-2(b) the AM-7 comment
+    names R8-1; K8-2(c) an AM-7 (a) loss record needs grad_norm null in its detail and its train row."""
+    # each new teacher key absent, None, empty or not a string: the run lacks a comparable value
+    for key in ("config_sha256", "model_cfg_sha256"):
+        for label, value in (("absent", KeyError), ("none", None), ("empty", ""), ("int", 123)):
+            prov = {k: v for k, v in TEACHER_PROV.items() if not (k == key and value is KeyError)}
+            if value is not KeyError:
+                prov[key] = value
+            rc, log, doc, out, _ = lambda_case(tmp, f"cg_{key}_{label}",
+                                               {2: dict(recipe={"teacher_provenance": prov})})
+            check(f"cg_teacher_{key}_{label}_is_recipe_mismatch", rc == 2 and doc is None
+                  and "recipe_mismatch" in log and "lacks a comparable" in log and "Traceback" not in log,
+                  f"rc={rc} {log.strip()[-200:]}")
+
+    # K8-2(a): the five lambda cases of select_alpha (selection lambda 1)
+    def alpha_runs(label: str, spec: dict, vals=(0.430, 0.428, 0.431)):
+        """spec maps alpha -> make_run kwargs, or None for a run directory that does not exist."""
+        root = tmp / f"cg_alpha_{label}"
+        root.mkdir(parents=True)
+        runs = []
+        for a, b in zip((25, 50, 100), vals):
+            if spec.get(a, {}) is None:
+                runs.append(root / f"e3_s42_alpha{a}_absent")
+            else:
+                runs.append(make_run(root, "E3", a, b, **spec.get(a, {})))
+        band, lam, out = band_file(root), lambda_selection_file(root), tmp / f"cg_a_{label}.json"
+        rc, log = run_cli(sa, ["--runs", *map(str, runs), "--band", str(band), "--lambda-selection",
+                               str(lam), "--out", str(out)])
+        return rc, log, out
+
+    rc, log, out = alpha_runs("no_run_loaded", {25: None, 50: None, 100: None})
+    check("k82a_no_run_loaded_is_shortfall_exit3", rc == 3 and "shortfall_lane2_stop" in log
+          and "lambda_mismatch" not in log and not out.exists(), f"rc={rc} {log.strip()[-160:]}")
+    unfinished = dict(finished=False)
+    rc, log, out = alpha_runs("three_unfinished", {25: unfinished, 50: unfinished, 100: unfinished})
+    check("k82a_three_unfinished_is_shortfall_exit3", rc == 3 and "shortfall_lane2_stop" in log
+          and "lambda_mismatch" not in log, f"rc={rc} {log.strip()[-160:]}")
+    rc, log, out = alpha_runs("wrong_lambda_two_missing", {25: dict(lam=0.5), 50: None, 100: None})
+    check("k82a_one_wrong_lambda_run_two_missing_is_lambda_mismatch", rc == 2 and "lambda_mismatch" in log
+          and "shortfall" not in log, f"rc={rc} {log.strip()[-160:]}")
+    rc, log, out = alpha_runs("default_diverged_right_lambda_one_missing", {50: DIVERGED, 100: None})
+    check("k82a_default_diverged_right_lambda_one_missing_is_default_candidate_diverged", rc == 2
+          and "default_candidate_diverged" in log and "shortfall" not in log, f"rc={rc} {log.strip()[-160:]}")
+    rc, log, out = alpha_runs("default_diverged_wrong_lambda", {50: dict(DIVERGED, lam=0.5)})
+    check("k82a_lambda_mismatch_fires_before_default_candidate_diverged", rc == 2 and "lambda_mismatch" in log
+          and "default_candidate_diverged" not in log and not out.exists(), f"rc={rc} {log.strip()[-160:]}")
+
+    # K8-2(b): the AM-7 comment block of configs/distill.py names the iteration-1 exception (R8-1)
+    text = (REPO / "configs" / "distill.py").read_text(encoding="utf-8")
+    block = text[text.index("AM-7 divergence rule (b)"):text.index("AM7_DIVERGENCE = {")]
+    check("k82b_am7_comment_names_r8_1_step1_checks", "R8-1" in block and "step1_checks" in block
+          and "iteration 1" in block, block[:200])
+
+    # K8-2(c): the loss case of AM-7 (a) with grad_norm anything but null, in the detail or the train row
+    loss_case = dict(abort=dict(rule="AM-7(a)"), nonfinite=True, with_best=False)
+    for label, kw in (("detail_grad_norm_1_7", dict(abort=dict(rule="AM-7(a)", detail={"grad_norm": 1.7}))),
+                      ("detail_grad_norm_nan", dict(abort=dict(rule="AM-7(a)", detail={"grad_norm": "nan"}))),
+                      ("detail_grad_norm_0", dict(abort=dict(rule="AM-7(a)", detail={"grad_norm": 0}))),
+                      ("detail_grad_norm_false", dict(abort=dict(rule="AM-7(a)", detail={"grad_norm": False}))),
+                      ("row_grad_norm_1_7", dict(row_grad_norm=1.7)),
+                      ("row_without_grad_norm", dict(row_grad_norm=None))):
+        rc, log, doc, out, _ = lambda_case(tmp, f"cg_{label}", {2: {**loss_case, **kw}})
+        check(f"k82c_am7a_loss_record_{label}_is_abort_record_invalid", rc == 2 and doc is None
+              and "abort_record_invalid" in log and "Traceback" not in log, f"rc={rc} {log.strip()[-200:]}")
+        d = make_run(tmp / f"cg_unit_{label}", "E2", 2, 0.4, **{**loss_case, **kw})
+        got = outcome(load_candidate, d, LAMBDA, "lambda_logit")
+        check(f"k82c_unit_{label}_is_abort_record_invalid", got == "abort_record_invalid", str(got)[:160])
+    control = make_run(tmp / "cg_unit_loss_case_control", "E2", 2, 0.4, **loss_case)
+    got = outcome(load_candidate, control, LAMBDA, "lambda_logit")
+    check("k82c_unit_loss_case_with_null_grad_norms_is_diverged",
+          isinstance(got, dict) and got.get("status") == "diverged", str(got)[:160])
 
 
 def main() -> int:
@@ -701,7 +804,7 @@ def main() -> int:
     for fn in (test_alpha_rule, test_lambda_rule, test_am7a_rule):
         fn()
     for fn in (test_alpha_cli, test_lambda_cli, test_rules_file, test_am7a_lambda_cli, test_am7a_alpha_cli,
-               test_am7_records):
+               test_am7_records, test_ckpt_guard):
         fn(tmp)
     print("\n[CHECKS]")
     for name, ok, detail in results:
