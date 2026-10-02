@@ -8,14 +8,26 @@ other way, and the exact tie (5, 5, 0); F_lesion with its undefined case; F_halv
 against an independent numpy reference (1e-12; identity cases 1e-15) and the CWD logit-map construction;
 the bootstrap vector of P32(b), the index sha256 of P15, identical replicates across runs, a replicate
 with sum D == 0, and SciPy's percentile bootstrap; d2_crops; empty crops add nothing.
+
+The seam (src/eval/teacher_diag.py) on the stub teacher of scripts/teacher_diag_fixtures.py: both load
+lines (P6, P7), the stream object of C1 (a check against the begin call's dict misses a head call's draw,
+the object sees it), the split-forward checks of P9 (no stream, a wrong stream object, shape, features
+changed in place, NaN, a global-RNG draw), K=1 bit for bit against frozen(x).logits, eight interleaved
+streams each equal to itself run alone (P10), the stub guards of P2, the sha256 formats of P5 with the
+load counter at 0, the role pins of P3, the provenance count of P8, the flags of C2 and P26-P28, the
+commit binding (fake git answers), one output per kind, and the P21 path guards.
 Synthetic inputs only; no PlantSeg data, no checkpoint of record, no GPU.
 
     python -B scripts/smoke_teacher_d1.py
 """
 from __future__ import annotations
 
+import dataclasses
 import math
+import os
+import shutil
 import sys
+import types
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -255,7 +267,327 @@ def stats_cases() -> None:
           all(a[k] == b[k] for k in ("F", "F_lesion", "F_halves", "KL_logit", "KL_cwd", "d2_crops")))
 
 
-SECTIONS = [stats_cases]
+# ---------------------------------------------------------------------------------------------------
+# the seam (src/eval/teacher_diag.py): load, stream object, split forward, gates -- stub teacher only
+# ---------------------------------------------------------------------------------------------------
+def _seam_env():
+    from scripts import teacher_diag_fixtures as fx
+    from scripts.synthetic_ptq_fixtures import safe_tmpdir
+    from src.eval import teacher_diag as td
+    tmp = safe_tmpdir("diag_seam_")
+    ckpt, sha = fx.write_stub_ckpt(tmp / "stub_teacher.pth")
+
+    def args(**kw):
+        base = dict(teacher_ckpt=str(ckpt), teacher_ckpt_sha256=sha,
+                    teacher_config=str(td.REPO / td.TEACHER_CONFIG_REL), teacher_role="record",
+                    arm_id=None, arm_dl_id=None, teacher_config_sha256=None)
+        base.update(kw)
+        return types.SimpleNamespace(**base)
+    return fx, td, tmp, ckpt, sha, args
+
+
+def gated_load(td, a, *, stub=True, mode="kd", factory=None):
+    """The scripts' teacher gate order: flags, inputs, the load, the after-load checks."""
+    td.check_teacher_flags(a)
+    inputs = td.verify_teacher_inputs(a, stub=stub)
+    loaded = td.load_teacher(mode, inputs, model_factory=factory)
+    return inputs, loaded, td.after_load_checks(loaded, inputs, stub=stub)
+
+
+def seam_cases() -> None:
+    env = _seam_env()
+    try:
+        _seam_body(*env)
+    finally:
+        shutil.rmtree(env[2], ignore_errors=True)
+
+
+def _seam_body(fx, td, tmp, ckpt, sha, args) -> None:
+    import torch
+    from src.distill.nmf_stream import NMFStream
+    g = torch.Generator().manual_seed(9)
+    x = torch.rand(1, 3, 512, 512, generator=g)
+    xs = [torch.rand(1, 3, 64, 64, generator=g) for _ in range(3)]
+
+    # load, both modes (P6, P7; C1)
+    inputs, kd, checks = gated_load(td, args(), factory=fx.stub_factory)
+    check("seam kd load: the stream is the adapter's live object, M4-KD seed 42, description == describe()",
+          kd.stream is kd.adapter.nmf_stream and kd.stream.policy == "M4-KD" and kd.stream.seed == 42
+          and kd.stream_description == kd.stream.describe() and kd.stream_description["draws"] == 0)
+    _, ev, checks_ev = gated_load(td, args(), mode="evaluator", factory=fx.stub_factory)
+    check("seam evaluator load: M4-V stream, nmf_policy is the description, same loaded state as kd",
+          ev.stream is ev.adapter.nmf_stream and ev.stream.policy == "M4-V"
+          and ev.eval_model.nmf_policy == ev.stream_description
+          and checks_ev["loaded_state_sha256"] == checks["loaded_state_sha256"])
+    check("seam after-load: eval mode, nine frozen blob ids equal the table, stub parameters <= 1e6",
+          kd.segmentor.training is False and checks["frozen_blob_ids"] == {k: v[0] for k, v in td.FROZEN.items()}
+          and len(checks["frozen_blob_ids"]) == 9 and 0 < checks["parameters"] <= td.STUB_MAX_PARAMETERS,
+          f"{len(checks['frozen_blob_ids'])} blobs, {checks['parameters']} parameters")
+    _, kd2, checks2 = gated_load(td, args(), factory=fx.stub_factory)
+    w = kd2.segmentor.decode_head.conv_seg.bias
+    with torch.no_grad():
+        w[0] += 1.0
+    check("seam loaded_state_sha256: two loads agree; one changed weight changes it",
+          checks2["loaded_state_sha256"] == checks["loaded_state_sha256"]
+          and td.loaded_state_sha256(kd2.segmentor) != checks["loaded_state_sha256"])
+    rec = td.teacher_record(kd, inputs, checks)
+    check("seam teacher_record: provenance is the loaded as_dict, sha verified, same_teacher(a, a) == []",
+          rec["provenance"] == kd.frozen.provenance.as_dict() and rec["checkpoint"]["sha256_verified"] == sha
+          and rec["nmf_stream_begin"]["policy"] == "M4-KD" and td.same_teacher(rec, rec) == [])
+    other = dict(rec, loaded_state_sha256="0" * 64)
+    check("seam same_teacher names the differing field", td.same_teacher(rec, other) == ["loaded_state_sha256"])
+
+    # C1: a check against the dict misses a head call's draw; the object sees it
+    split = td.SplitTeacher(kd)
+    feats = split.features(x)
+    h = td.feature_sha256(feats)
+    desc = kd.stream_description
+    d_before, o_before = desc["draws"], kd.stream.draws
+    z1 = split.head(feats, kd.stream, feat_hash=h, expect_shape=(1, 116, 64, 64))
+    check("C1 after one head call the dict still says draws == 0 (misses it), the object says 1",
+          desc["draws"] == d_before == 0 and kd.stream.draws == o_before + 1 == 1)
+    check("C1 handing the head check the dict instead of the object stops (identity is the object's)",
+          raises(lambda: split.head(feats, desc, feat_hash=h), td.Stop) and kd.stream.draws == 1)
+
+    # P9 split-forward checks
+    check("P9 D1 shape [1, 116, 64, 64] from a 512x512 canvas, finite", tuple(z1.shape) == (1, 116, 64, 64))
+    check("P9 a head call with no stream stops", raises(lambda: split.head(feats, None, feat_hash=h), td.Stop))
+    check("P9 a head call with a stream that is not the attached object stops",
+          raises(lambda: split.head(feats, NMFStream(42, "M4-KD"), feat_hash=h), td.Stop))
+    check("P9 an unexpected logit shape stops",
+          raises(lambda: split.head(feats, kd.stream, feat_hash=h, expect_shape=(1, 116, 63, 64)), td.Stop))
+    check("P9 a changed feature hash stops", raises(lambda: split.head(feats, kd.stream, feat_hash="0" * 64),
+                                                     td.Stop))
+    for name, factory, why in (("in-place-mutating head", fx.mutating_factory, "features changed"),
+                               ("NaN head", fx.nan_factory, "non-finite"),
+                               ("head drawing from the global CPU RNG", fx.global_draw_factory, "RNG")):
+        _, bad, _ = gated_load(td, args(), factory=factory)
+        sb = td.SplitTeacher(bad)
+        fb = sb.features(x)
+        try:
+            sb.head(fb, bad.stream, feat_hash=td.feature_sha256(fb))
+            ok, msg = False, "no stop"
+        except td.Stop as e:
+            ok, msg = why in str(e), str(e)
+        check(f"P9 the {name} stops", ok, msg)
+    rng0 = td.rng_state_sha256()
+    split.head(feats, kd.stream, feat_hash=h)
+    check("P9 a head call leaves the caller's CPU RNG state unchanged", td.rng_state_sha256() == rng0)
+
+    # K = 1: the split forward is bit for bit the adapter's own forward
+    _, a1, _ = gated_load(td, args(), factory=fx.stub_factory)
+    _, a2, _ = gated_load(td, args(), factory=fx.stub_factory)
+    s1 = td.SplitTeacher(a1)
+    f1 = s1.features(x)
+    z_split = s1.head(f1, a1.stream, feat_hash=td.feature_sha256(f1))
+    z_full = a2.frozen(x).logits
+    check("K=1 split forward == frozen(x).logits bit for bit; both streams end in the same state",
+          torch.equal(z_split, z_full) and a1.stream.state_sha256() == a2.stream.state_sha256()
+          and a1.stream.draws == a2.stream.draws == 1)
+
+    # eight interleaved streams each equal themselves run alone (P10's draw discipline)
+    _, il, _ = gated_load(td, args(), factory=fx.stub_factory)
+    si = td.SplitTeacher(il)
+    fs = [si.features(xi) for xi in xs]
+    hs = [td.feature_sha256(f) for f in fs]
+    streams = [NMFStream(42 + k, "M4-V") for k in range(8)]
+    inter = {}
+    for i, f in enumerate(fs):
+        for k, s in enumerate(streams):
+            si.attach(s)
+            inter[(k, i)] = si.head(f, s, feat_hash=hs[i])
+    ok, ends = True, []
+    for k in range(8):
+        alone = NMFStream(42 + k, "M4-V")
+        for i, f in enumerate(fs):
+            si.attach(alone)
+            ok &= torch.equal(si.head(f, alone, feat_hash=hs[i]), inter[(k, i)])
+        ends.append(alone.state_sha256() == streams[k].state_sha256() and alone.draws == streams[k].draws == 3)
+    si.attach(il.stream)
+    check("P10 each of eight interleaved streams equals itself run alone (logits and end state)", ok and all(ends))
+    check("P10 different streams give different logits (the check is not vacuous)",
+          not torch.equal(inter[(0, 0)], inter[(1, 0)]))
+
+    # refusals: a stream-less model; P2 stub guards; P5 formats with the load counter at 0
+    check("seam a model with no isolated NMF module is refused (begin returns None)",
+          raises(lambda: gated_load(td, args(), factory=fx.streamless_factory), td.Refused))
+    big, big_sha = fx.write_stub_ckpt(tmp / "big_stub.pth", pad_bytes=td.STUB_MAX_CKPT_BYTES)
+    with fx.count_loads() as calls:
+        r = raises(lambda: gated_load(td, args(teacher_ckpt=str(big), teacher_ckpt_sha256=big_sha),
+                                      factory=fx.stub_factory), td.Refused)
+    check("P2 stub refuses a checkpoint over 16 MiB by stat, before any load", r and sum(calls.values()) == 0,
+          str(calls))
+    with fx.patched(td, REGISTERED_TEACHER_SHA256=frozenset({sha})), fx.count_loads() as calls:
+        r = raises(lambda: gated_load(td, args(), factory=fx.stub_factory), td.Refused)
+    check("P2 stub refuses a registered teacher sha256, before any load", r and sum(calls.values()) == 0)
+    pre = "mmseg" in sys.modules
+    try:
+        r = raises(lambda: gated_load(td, args(), factory=fx.mmseg_factory), td.Refused)
+    finally:
+        if not pre:
+            sys.modules.pop("mmseg", None)
+    check("P2 stub refuses a build that leaves mmseg imported", r and not pre, f"mmseg imported before: {pre}")
+    check("P2 stub refuses a model over 1e6 parameters",
+          raises(lambda: gated_load(td, args(), factory=fx.big_factory), td.Refused))
+    for label, bad in (("empty", ""), ("uppercase", sha.upper()), ("63 characters", sha[:63]),
+                       ("a well-formed wrong sha256", "0" * 64)):
+        with fx.count_loads() as calls:
+            r = raises(lambda: gated_load(td, args(teacher_ckpt_sha256=bad), factory=fx.stub_factory), td.Refused)
+        check(f"P5 --teacher-ckpt-sha256 {label} is refused with the load counter at 0",
+              r and sum(calls.values()) == 0, str(calls))
+    cfg_copy = Path(shutil.copy(td.REPO / td.TEACHER_CONFIG_REL, tmp / "teacher_cfg_copy.py"))
+    with fx.count_loads() as calls:
+        r1 = raises(lambda: gated_load(td, args(teacher_config=str(cfg_copy)), factory=fx.stub_factory), td.Refused)
+        with fx.patched(td, RECORD_CONFIG_BLOB="0" * 40):
+            r2 = raises(lambda: gated_load(td, args(), factory=fx.stub_factory), td.Refused)
+    check("P3 record role: a config copy outside the repo and a wrong frozen blob are refused before any load",
+          r1 and r2 and sum(calls.values()) == 0)
+    arm = dict(teacher_role="arm", arm_id="R1", arm_dl_id="DL-60", teacher_config_sha256=td.file_sha256(cfg_copy),
+               teacher_config=str(cfg_copy))
+    _, arm_loaded, _ = gated_load(td, args(**arm), factory=fx.stub_factory)
+    check("P3 arm role with its own config sha256 loads", arm_loaded.stream.policy == "M4-KD")
+    with fx.patched(td, REGISTERED_TEACHER_SHA256=frozenset({sha})):
+        r = raises(lambda: td.verify_teacher_inputs(args(**arm), stub=False), td.Refused)
+    check("P3 the arm role refuses a record checkpoint sha256", r)
+    check("P3 arm config sha256 mismatch is refused",
+          raises(lambda: gated_load(td, args(**dict(arm, teacher_config_sha256="1" * 64)), factory=fx.stub_factory),
+                 td.Refused))
+    check("P3 the arm role requires --arm-id, --arm-dl-id and --teacher-config-sha256",
+          raises(lambda: td.check_teacher_flags(args(**dict(arm, arm_id=None))), td.Refused)
+          and raises(lambda: td.check_teacher_flags(args(**dict(arm, arm_dl_id="60"))), td.Refused)
+          and raises(lambda: td.check_teacher_flags(args(**dict(arm, teacher_config_sha256=None))), td.Refused))
+    check("P3 arm flags on the record role are refused",
+          raises(lambda: td.check_teacher_flags(args(arm_id="R1")), td.Refused))
+    check("P3 a role outside the script's roles is refused (TRAIN, D3, D1 VAL are record only)",
+          raises(lambda: td.check_teacher_flags(args(**arm), roles=("record",)), td.Refused))
+    with fx.count_loads() as calls:
+        r = raises(lambda: gated_load(td, args(), stub=False, factory=fx.stub_factory), td.Refused)
+    check("P5 real mode refuses a checkpoint that is not the teacher of record, before any load",
+          r and sum(calls.values()) == 0)
+    check("P5 after the load, a provenance sha256 other than the verified one is refused",
+          raises(lambda: td.after_load_checks(kd, dataclasses.replace(inputs, sha256="0" * 64), stub=True),
+                 td.Refused))
+    n_fields = len(td.provenance_fields())
+    check("P8 real runs are refused while TeacherProvenance lacks the K-part fields; stub runs proceed",
+          (n_fields == td.EXPECTED_PROVENANCE_FIELDS)
+          or (raises(lambda: td.require_provenance_field_count(True), td.Refused)
+              and not raises(lambda: td.require_provenance_field_count(False), Exception)
+              and raises(lambda: td.after_load_checks(kd, inputs, stub=False), td.Refused)),
+          f"{n_fields} fields")
+
+    # flags (C2, P26, P27, P28) and the commit binding
+    ns_ = types.SimpleNamespace
+    head = "c" * 40
+    real_ok = ns_(generated_utc=None, script_commit=head, script_commit_dl_id="DL-61", repeat_of=None,
+                  repeat_case=None, repeat_dl_id=None)
+    check("C2 real mode refuses --generated-utc; stub mode takes a well-formed one and refuses a malformed one",
+          raises(lambda: td.check_common_flags(ns_(**dict(vars(real_ok), generated_utc="2026-10-02T00:00:00Z")),
+                                               real=True), td.Refused)
+          and not raises(lambda: td.check_common_flags(ns_(**dict(vars(real_ok), generated_utc="2026-10-02T00:00:00Z")),
+                                                       real=False), Exception)
+          and raises(lambda: td.check_common_flags(ns_(**dict(vars(real_ok), generated_utc="2026-10-02")),
+                                                   real=False), td.Refused))
+    check("P26 real mode requires --script-commit and --script-commit-dl-id, each well formed",
+          not raises(lambda: td.check_common_flags(real_ok, real=True), Exception)
+          and raises(lambda: td.check_common_flags(ns_(**dict(vars(real_ok), script_commit=None)), real=True),
+                     td.Refused)
+          and raises(lambda: td.check_common_flags(ns_(**dict(vars(real_ok), script_commit="C" * 40)), real=True),
+                     td.Refused)
+          and raises(lambda: td.check_common_flags(ns_(**dict(vars(real_ok), script_commit_dl_id="61")), real=True),
+                     td.Refused))
+    check("P27 the repeat flags go together and are well formed",
+          raises(lambda: td.check_common_flags(ns_(**dict(vars(real_ok), repeat_of="a" * 64)), real=True), td.Refused)
+          and raises(lambda: td.check_common_flags(ns_(**dict(vars(real_ok), repeat_of="a" * 64, repeat_case="iii",
+                                                              repeat_dl_id="DL-1")), real=True), td.Refused))
+    check("P28 correction flags: state in the three values, DL id ^DL-\\d+$",
+          not raises(lambda: td.check_correction_flags(ns_(correction_state="declined", correction_dl_id="DL-62")),
+                     Exception)
+          and raises(lambda: td.check_correction_flags(ns_(correction_state="none", correction_dl_id="DL-62")),
+                     td.Refused)
+          and raises(lambda: td.check_correction_flags(ns_(correction_state="available", correction_dl_id="DL-")),
+                     td.Refused))
+    present = tuple(r for r in td.CODE_FILES if (td.REPO / r).is_file())
+    with fx.patched(td, CODE_FILES=present):
+        with fx.fake_git(head=head):
+            prov = td.require_commit_binding(head, "DL-61")
+        ok_bind = prov["script_commit"] == head and prov["code_files_clean_at_head"] is True
+        with fx.fake_git(head="d" * 40):
+            r_head = raises(lambda: td.require_commit_binding(head, "DL-61"), td.Refused)
+        with fx.fake_git(head=head, status=" M src/eval/teacher_diag.py\n"):
+            r_dirty = raises(lambda: td.require_commit_binding(head, "DL-61"), td.Refused)
+        msg = ""
+        with fx.fake_git(head=head, tree_status="?? scripts/a_new_name.py\n?? src/b_new_name.py\n"):
+            try:
+                td.require_commit_binding(head, "DL-61")
+            except td.Refused as e:
+                msg = str(e)
+    with fx.patched(td, CODE_FILES=present + ("src/eval/no_such_module.py",)), fx.fake_git(head=head):
+        r_missing = raises(lambda: td.require_commit_binding(head, "DL-61"), td.Refused)
+    check("P26 commit binding: HEAD == flag and clean gives the provenance block", ok_bind)
+    check("P26 HEAD other than --script-commit, a dirty CODE_FILES path and a missing one are refused",
+          r_head and r_dirty and r_missing)
+    check("P26 a dirty src/configs/scripts tree is refused with a count only, no names",
+          "2 entr" in msg and "a_new_name" not in msg and "b_new_name" not in msg, msg)
+    out = tmp / "outs"
+    out.mkdir()
+    kind = "teacher_d2"
+    td.write_json_exclusive(out / f"{kind}_20261002T000000Z.json", {"artifact_status": "smoke"})
+    none_yet = td.require_single_output(out, kind, real_ok)
+    first = td.write_json_exclusive(out / f"{kind}_20261002T000100Z.json", {"artifact_status": "provisional"})
+    r_second = raises(lambda: td.require_single_output(out, kind, real_ok), td.Refused)
+    rep = ns_(**dict(vars(real_ok), repeat_of=td.file_sha256(first), repeat_case="i", repeat_dl_id="DL-63"))
+    rep_bad = ns_(**dict(vars(rep), repeat_of="e" * 64))
+    check("P27 smoke outputs do not count; a second non-smoke output is refused",
+          none_yet is None and r_second)
+    check("P27 --repeat-of naming the existing output passes and is recorded; another sha256 is refused",
+          td.require_single_output(out, kind, rep) == {"repeat_of": rep.repeat_of, "repeat_case": "i",
+                                                         "repeat_dl_id": "DL-63"}
+          and raises(lambda: td.require_single_output(out, kind, rep_bad), td.Refused))
+    check("P27 the control purpose is exempt", td.require_single_output(out, kind, real_ok, exempt=True) is None)
+    check("P27 an out directory inside the repository (or the repository itself) is refused",
+          raises(lambda: td.require_outside_repo(td.REPO / "runs_out", "--out-dir"), td.Refused)
+          and raises(lambda: td.require_outside_repo(td.REPO, "--out-dir"), td.Refused)
+          and td.require_outside_repo(out, "--out-dir") == out.resolve())
+
+    # P21 path guards; JSON discipline; the document block (P30)
+    link = tmp / "plain_link"
+    os.symlink(tmp / ("x" + "TeSt" + "x"), link)           # the target is never created or read
+    msgs = []
+    for pth in (tmp / ("a" + "TEST"), link):
+        try:
+            td.refuse_test_path(pth, "--data-root")
+            msgs.append(None)
+        except td.Refused as e:
+            msgs.append(str(e))
+    check("P21 a 'test' path is refused by its string, and a link resolving to one by its real path",
+          msgs[0] is not None and "containing" in msgs[0] and msgs[1] is not None and "resolving" in msgs[1]
+          and "TEST" not in msgs[0] and "TeSt" not in msgs[1], str(msgs))
+    try:
+        td.refuse_test_names(["ok_a", "x" + "Test" + "_b"], "names")
+        m = ""
+    except td.Refused as e:
+        m = str(e)
+    check("P21 refused names print a count and sha256s, never the name", "1 offending entry" in m and "Test" not in m, m)
+    p_nan = tmp / "nan.json"
+    r_nan = raises(lambda: td.write_json_exclusive(p_nan, {"v": float("nan")}), ValueError) and not p_nan.exists()
+    p_nan.write_text('{"v": NaN}')
+    check("JSON: a NaN is never written (no file left) and a NaN constant is refused on read",
+          r_nan and raises(lambda: td.read_json_strict(p_nan), td.Refused))
+    check("JSON: writes are exclusive", raises(lambda: td.write_json_exclusive(first, {}), FileExistsError))
+    a_stub = ns_(generated_utc="2026-10-02T01:02:03Z", x=1)
+    d_stub = td.base_document("s.py", a_stub, stub=True, start_utc="2026-10-02T09:00:00Z", code={})
+    d_real = td.base_document("s.py", ns_(x=1), stub=False, start_utc="2026-10-02T09:00:00Z", code={})
+    check("P30/C2 stub documents are 'smoke' and may carry --generated-utc; real ones are 'provisional', "
+          "stamped from the start UTC",
+          d_stub["artifact_status"] == "smoke" and td.output_stamp(a_stub, "2026-10-02T09:00:00Z") == "20261002T010203Z"
+          and d_real["artifact_status"] == "provisional" and d_real["generated_utc"] == "2026-10-02T09:00:00Z"
+          and td.output_stamp(ns_(), "2026-10-02T09:00:00Z") == "20261002T090000Z")
+    env = td.environment_block("2026-10-02T09:00:00Z")
+    check("P30 environment block keys", {"hostname", "cpu_model", "torch_num_threads", "python", "torch", "numpy",
+                                         "pillow", "image_digest", "start_utc", "end_utc"} <= set(env))
+
+
+SECTIONS = [stats_cases, seam_cases]
 
 
 def main() -> int:
