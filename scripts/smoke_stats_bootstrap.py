@@ -536,6 +536,18 @@ case("officiality warnings drawn only from the frozen six",
      set(fam["warnings"]) <= set(A.OFFICIALITY_WARNINGS))
 case("status derived from warnings",
      A.derive_artifact_status(tuple(fam["warnings"])) == fam["artifact_status"])
+# The section 10.1 gate checks below pin the software block explicitly, so this one ties the block
+# to the stack actually running: what it records, its match flag and the unpinned warning must agree.
+import scipy as _scipy                                                          # noqa: E402
+import statsmodels as _statsmodels                                              # noqa: E402
+_live = {"python": "%d.%d" % sys.version_info[:2], "numpy": np.__version__,
+         "scipy": _scipy.__version__, "statsmodels": _statsmodels.__version__}
+_sw = fam["software_environment"]
+case("software block records the running stack; match flag and warning agree with it",
+     _sw["pinned"] == A.PINNED_ENVIRONMENT and _sw["observed"] == _live
+     and _sw["matches_pinned"] is (_live == A.PINNED_ENVIRONMENT)
+     and (A.W_SOFTWARE in fam["warnings"]) is (not _sw["matches_pinned"]),
+     "running stack %s the pin" % ("matches" if _live == A.PINNED_ENVIRONMENT else "differs from"))
 case("thirteen integrity checks in exact order, all true",
      tuple(fam["integrity"]["checks"].keys()) == A.INTEGRITY_CHECKS
      and all(fam["integrity"]["checks"].values())
@@ -578,14 +590,34 @@ try:
                                      encoding="utf-8", newline="\n")
     case("manifest tamper detection",
          raises(lambda: A.verify_statistics_artifact(out), A.ArtifactError))
+    # Contract section 10.1: an official request refuses unless the software block matches the
+    # pinned statistics stack. The block is set explicitly on each side of the rule, so these checks
+    # test the rule itself on every stack -- the drifted dev stack and the pinned one alike.
+    def software_block(matches):
+        pinned = dict(A.PINNED_ENVIRONMENT)
+        observed = dict(pinned) if matches else dict(pinned, numpy=pinned["numpy"] + "+drifted")
+        return {"pinned": pinned, "observed": observed, "matches_pinned": observed == pinned}
+
+    def stack_gate_refuses(out_dir, fam_):
+        try:
+            A.write_statistics_artifact(out_dir, fam_, task_results)
+        except A.ArtifactError as e:
+            return "requires the pinned statistics stack" in str(e)
+        return False
+
     out3 = tmp / "a3b-smoke-0003"
     fam3 = dict(fam); fam3["run_id"] = "a3b-smoke-0003"
     fam3["artifact_status"] = "official"
-    case("official request on the drifted dev stack refuses",
-         raises(lambda: A.write_statistics_artifact(out3, fam3, task_results), A.ArtifactError))
+    fam3["software_environment"] = software_block(matches=False)
+    case("official request on the drifted dev stack refuses", stack_gate_refuses(out3, fam3))
     case("refusal left no final directory and no temp directory",
          not out3.exists() and not any(p.name.startswith(".a3b-smoke-0003")
                                        for p in tmp.iterdir()))
+    out5 = tmp / "a3b-smoke-0005"
+    fam5 = dict(fam3); fam5["run_id"] = "a3b-smoke-0005"
+    fam5["software_environment"] = software_block(matches=True)
+    case("official request on the pinned stack passes the stack gate",
+         not stack_gate_refuses(out5, fam5))
     fam4 = dict(fam); fam4["run_id"] = "Bad_Run_ID"
     case("invalid run_id refused",
          raises(lambda: A.write_statistics_artifact(tmp / "Bad_Run_ID", fam4, task_results),
@@ -597,8 +629,10 @@ finally:
 print("\n" + "=" * 96)
 print("SUMMARY  %d/%d checks passed" % (PASS, PASS + FAILED))
 print("RESULT: %s" % ("A3b SMOKE OK" if FAILED == 0 else "A3b SMOKE FAILED"))
-print("NONOFFICIAL: synthetic fixtures, small B=%d (production B=%d recorded), dev stack differs "
-      "from the pinned statistics stack." % (B_SMALL, BS.PRODUCTION_B))
+print("NONOFFICIAL: synthetic fixtures, small B=%d (production B=%d recorded), %s." % (
+    B_SMALL, BS.PRODUCTION_B,
+    "stack matches the pinned statistics stack" if fam["software_environment"]["matches_pinned"]
+    else "dev stack differs from the pinned statistics stack"))
 print("No PlantSeg image, mask, split file or checkpoint was accessed; no training, inference or "
       "GPU use.")
 print("=" * 96)

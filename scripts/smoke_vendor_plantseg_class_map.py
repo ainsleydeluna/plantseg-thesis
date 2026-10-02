@@ -22,6 +22,7 @@ import hashlib
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -49,6 +50,17 @@ def sha256_bytes(b: bytes) -> str:
 def canonical_entries_sha(entries) -> str:
     return sha256_bytes(json.dumps(list(entries), sort_keys=True, separators=(",", ":"),
                                    ensure_ascii=False, allow_nan=False).encode("utf-8"))
+
+
+def is_link(p: Path) -> bool:
+    """A symlink, or a Windows directory junction (Path.is_symlink misses junctions before 3.12)."""
+    try:
+        st = os.lstat(p)
+    except OSError:
+        return False
+    junction = getattr(stat, "IO_REPARSE_TAG_MOUNT_POINT", None)      # defined on Windows only
+    return stat.S_ISLNK(st.st_mode) or (junction is not None
+                                        and getattr(st, "st_reparse_tag", None) == junction)
 
 
 def snapshot(root: Path) -> dict:
@@ -198,16 +210,22 @@ def main() -> int:
         check("4 symlink or path-escape target is refused",
               r.returncode != 0 and "refusing to write" in (r.stdout + r.stderr) and not escaped,
               f"mechanism={mechanism} rc={r.returncode} escaped_write={escaped}")
-        # restore a clean configs/ for the remaining checks
+        # restore a clean configs/ for the remaining checks. A link is removed as a link and never
+        # followed: os.unlink removes a POSIX directory symlink (os.rmdir refuses one with ENOTDIR),
+        # and os.rmdir stays the fallback for a Windows directory symlink or junction. rmtree is
+        # reserved for a real directory.
         try:
-            if cfg.is_symlink():
-                os.rmdir(cfg)                      # dir symlinks and junctions
+            if is_link(cfg):
+                try:
+                    os.unlink(cfg)
+                except OSError:
+                    os.rmdir(cfg)
             elif cfg.is_dir():
                 shutil.rmtree(cfg, ignore_errors=True)
             elif cfg.exists():
                 cfg.unlink()
-        except OSError:
-            shutil.rmtree(cfg, ignore_errors=True)
+        except OSError as e:
+            print(f"configs/ cleanup after check 4 failed: {type(e).__name__}: {e}")
         cfg.mkdir(parents=True, exist_ok=True)
 
         # ---------- 5. offline canonical generation is deterministic ----------
