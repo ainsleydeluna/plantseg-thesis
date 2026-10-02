@@ -557,6 +557,36 @@ def rng_state_sha256() -> str:
     return hashlib.sha256(torch.get_rng_state().numpy().tobytes()).hexdigest()
 
 
+class RngWatchForward:
+    """Wraps a forward; hashes the caller's CPU RNG state before and after every call (P9).
+
+    The evaluator's DataLoader draws its base seed from the global generator when its iterator is
+    created, before the first batch, so the check is taken inside the forward: the state seen before the
+    first forward must equal the state after the last, and no forward or loader step in between may move it.
+    """
+
+    def __init__(self, fwd):
+        self.fwd = fwd
+        self.hashes: list[str] = []
+        self.calls = 0
+
+    def __call__(self, model, images):
+        self.hashes.append(rng_state_sha256())
+        out = self.fwd(model, images)
+        self.hashes.append(rng_state_sha256())
+        self.calls += 1
+        return out
+
+    def unchanged(self) -> bool:
+        return bool(self.hashes) and len(set(self.hashes)) == 1
+
+    def require_unchanged(self) -> str:
+        if not self.unchanged():
+            raise Stop(f"the caller's CPU RNG state moved between the first and the last forward "
+                       f"({len(set(self.hashes))} distinct states over {self.calls} forwards)")
+        return self.hashes[0]
+
+
 class SplitTeacher:
     """The adapter's forward split in two: the backbone once, the decode head as often as needed."""
 
@@ -679,7 +709,10 @@ def check_val_reference(path, *, stub: bool, expected_rows: int) -> dict:
             raise Refused("--val-reference must be a real-run artifact")
         if abs(miou - R3_VAL_MIOU) > R3_TOLERANCE:
             raise Refused(f"--val-reference mIoU {miou!r} is not within {R3_TOLERANCE} of R3 {R3_VAL_MIOU!r}")
-    verify_artifact(d)
+    try:
+        verify_artifact(d)
+    except Exception as e:  # noqa: BLE001 -- an input that fails verification is refused, not a STOP
+        raise Refused(f"--val-reference fails verify_artifact: {type(e).__name__}: {e}") from e
     files = {name: file_sha256(d / name) for name in sorted([*ARTIFACT_FILES, MANIFEST_NAME])}
     return {"dir": str(d), "run_id": run.get("run_id"), "artifact_status": run.get("artifact_status"),
             "checkpoint_sha256": run.get("checkpoint_sha256"), "all_class_miou": miou,
@@ -740,6 +773,110 @@ def output_stamp(args, start_utc: str) -> str:
     return utc_stamp(getattr(args, "generated_utc", None) or start_utc)
 
 
+def read_diag_output(path, *, script: str, stub: bool, what: str) -> tuple[dict, str]:
+    """Another DIAG output used as an input (P4 --of-record-output, P11 --d2-val-output): this lane's,
+    of the named script, written; a real run refuses a smoke one, a stub run takes only a smoke one."""
+    p = Path(path)
+    if not p.is_file():
+        raise Refused(f"{what} not found: {p}")
+    sha = file_sha256(p)
+    doc = read_json_strict(p)
+    if doc.get("lane") != LANE or doc.get("script") != script:
+        raise Refused(f"{what} is not a {script} output of {LANE}")
+    status = doc.get("artifact_status")
+    if not stub and status == "smoke":
+        raise Refused(f"{what} is a smoke output; a real run refuses it")
+    if stub and status != "smoke":
+        raise Refused(f"{what}: stub mode takes only a smoke output (got {status!r})")
+    if doc.get("status") != "written":
+        raise Refused(f"{what} has status {doc.get('status')!r}, not 'written'")
+    return doc, sha
+
+
+# --------------------------------------------------------------------------------------------------
+# CLI plumbing (P29)
+# --------------------------------------------------------------------------------------------------
+def add_common_flags(p) -> None:
+    p.add_argument("--out-dir", required=True, help="where the JSON goes; must resolve outside the repo")
+    p.add_argument("--script-commit", help="40-hex HEAD of the dedicated clone (real runs, P26)")
+    p.add_argument("--script-commit-dl-id", help="DL-<n> logging that commit (real runs, P26)")
+    p.add_argument("--generated-utc", help="stub and smoke runs only: pin the output stamp (C2)")
+    p.add_argument("--repeat-of", help="sha256 of the existing output this run repeats (P27)")
+    p.add_argument("--repeat-case", help="i or ii (P27)")
+    p.add_argument("--repeat-dl-id", help="DL-<n> authorising the repeat (P27)")
+
+
+def add_teacher_flags(p) -> None:
+    p.add_argument("--teacher-ckpt")
+    p.add_argument("--teacher-ckpt-sha256", help="^[0-9a-f]{64}$; verified before anything unpickles")
+    p.add_argument("--teacher-config")
+    p.add_argument("--teacher-role", help="record or arm (P3)")
+    p.add_argument("--arm-id", help="arm role: R1 or R2")
+    p.add_argument("--arm-dl-id", help="arm role: DL-<n>")
+    p.add_argument("--teacher-config-sha256", help="arm role: the config's sha256")
+
+
+def add_correction_flags(p) -> None:
+    p.add_argument("--correction-state", help="available, declined or no_approval (P28)")
+    p.add_argument("--correction-dl-id", help="DL-<n> logging the correction state (P28)")
+
+
+_REFUSAL_CLASSES = (("src.eval.artifacts", "ArtifactRequestError"),
+                    ("src.eval.stage_artifacts", "StageArtifactError"))
+_STOP_CLASSES = (("src.eval.calibration", "CalibrationStop"), ("src.eval.evaluate", "EvaluationIntegrityError"),
+                 ("src.eval.eval_runtime", "EvalRuntimeError"), ("src.eval.artifacts", "ArtifactWriteError"),
+                 ("src.distill.nmf_stream", "NMFStreamError"))
+
+
+def _loaded_classes(pairs) -> tuple:
+    """Exception classes of modules already imported (an exception of a module never imported is none)."""
+    return tuple(getattr(sys.modules[m], n) for m, n in pairs if m in sys.modules and hasattr(sys.modules[m], n))
+
+
+def exit_code_for(exc: BaseException) -> int | None:
+    """2 for a refusal, 1 for a STOP, None for anything unexpected (main turns that into 4)."""
+    if isinstance(exc, Refused) or isinstance(exc, _loaded_classes(_REFUSAL_CLASSES)):
+        return EXIT_REFUSED
+    if isinstance(exc, Stop) or isinstance(exc, _loaded_classes(_STOP_CLASSES)):
+        return EXIT_STOP
+    return None
+
+
+def run_with_exit_codes(body, *args, **kwargs) -> int:
+    try:
+        return body(*args, **kwargs)
+    except Exception as e:  # noqa: BLE001 -- classified here; anything unexpected propagates to main
+        code = exit_code_for(e)
+        if code is None:
+            raise
+        print(f"{'REFUSED' if code == EXIT_REFUSED else 'STOP'}: {type(e).__name__}: {e}", file=sys.stderr)
+        return code
+
+
+def cli_main(parser, run, argv=None) -> int:
+    """argparse errors exit 2; `run` returns 0, 1 or 2; any other exception is caught here as 4."""
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit as e:
+        return EXIT_OK if e.code in (0, None) else EXIT_REFUSED
+    try:
+        return int(run(args))
+    except Exception as e:  # noqa: BLE001 -- the unexpected-exception exit code
+        print(f"ERROR (unexpected): {type(e).__name__}: {e}", file=sys.stderr)
+        return EXIT_ERROR
+
+
+def finish_output(path: Path, doc: dict, start_utc: str, t0: float) -> str:
+    """Stamp the end time and the environment, write exclusively, print and return the sha256."""
+    import time
+    doc["environment"] = environment_block(start_utc, utc_now())
+    doc["wall_seconds"] = round(time.monotonic() - t0, 3)
+    write_json_exclusive(path, doc)
+    sha = file_sha256(path)
+    print(f"{doc.get('status')}: {path.name} sha256 {sha}")
+    return sha
+
+
 __all__ = [
     "REPO", "LANE", "RECORD_SHA256", "REGISTERED_TEACHER_SHA256", "R3_VAL_MIOU", "R3_TOLERANCE",
     "TEACHER_CONFIG_REL", "RECORD_CONFIG_BLOB", "EXPECTED_PROVENANCE_FIELDS", "CODE_FILES", "ROLES",
@@ -750,7 +887,9 @@ __all__ = [
     "check_teacher_flags", "check_correction_flags", "provenance_fields", "require_provenance_field_count",
     "require_single_output", "TeacherInputs", "verify_teacher_inputs", "LoadedTeacher", "load_teacher",
     "loaded_state_sha256", "frozen_blob_record", "after_load_checks", "teacher_record", "same_teacher",
-    "feature_sha256", "rng_state_sha256", "SplitTeacher", "train_canvas_dataset", "check_val_reference",
+    "feature_sha256", "rng_state_sha256", "RngWatchForward", "SplitTeacher", "train_canvas_dataset", "check_val_reference",
     "check_m11",
-    "environment_block", "base_document", "output_stamp",
+    "environment_block", "base_document", "output_stamp", "read_diag_output", "add_common_flags",
+    "add_teacher_flags", "add_correction_flags", "exit_code_for", "run_with_exit_codes", "cli_main",
+    "finish_output",
 ]

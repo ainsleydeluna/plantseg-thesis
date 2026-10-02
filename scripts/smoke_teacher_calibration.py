@@ -6,6 +6,12 @@ case; a hand-computed two-bin case; bin edges at exactly m/15 (m = 1..14), 1.0 i
 1..15 stops; pixels labelled 255 are ignored; the disease subset; the float32-logit vector of P32(d)
 (0.2799999955678827, a float32 softmax would give 0.47999998927116394); the hook scores the tensor the
 core argmaxes (sum correct == sum TP), keeps no reference to it and refuses an in-place change.
+
+The D2 VAL pass (scripts/teacher_d2_calibration.py) on the stub teacher and a synthetic 5,367/846 root:
+its evaluator artifact equals scripts/evaluate_model.py run()'s under EVALUATION_CONTRACT 10(d); the
+gate runs before the write (P18: "not reproduced", no artifact, exit 1); control and arm (P3, P4);
+--val-reference read summary-first, its manifest identity and verification; refusals before any load;
+real mode (the CLI) refused until K-part (P8); the RNG watch of P9.
 Synthetic inputs only; no PlantSeg data, no checkpoint of record, no GPU.
 
     python -B scripts/smoke_teacher_calibration.py
@@ -14,6 +20,7 @@ from __future__ import annotations
 
 import gc
 import math
+import os
 import sys
 from pathlib import Path
 
@@ -189,8 +196,212 @@ def hook_cases() -> None:
           not outer and len(w_hook.accumulation_warnings) == 1, f"outer={len(outer)}")
 
 
+# ---------------------------------------------------------------------------------------------------
+# the D2 VAL pass (scripts/teacher_d2_calibration.py) on the stub teacher and a synthetic data root
+# ---------------------------------------------------------------------------------------------------
+def _reference(fx, td, tmp, ckpt, n=3):
+    """The R3-equivalent reference: scripts/evaluate_model.py run() on the same stub teacher."""
+    from scripts import evaluate_model as em
+    from src.distill.segnext_teacher import segnext_builder
+    out = tmp / "ref_artifact"
+    args = em.build_parser().parse_args([
+        "--stage", "teacher", "--model-role", "teacher", "--split", "val", "--checkpoint", str(ckpt),
+        "--teacher-config", str(td.REPO / td.TEACHER_CONFIG_REL), "--artifact-status", "smoke",
+        "--max-samples", str(n), "--batch-size", "1", "--out-dir", str(out), "--run-id", "ref_run"])
+    return em.run(args, teacher_builder=segnext_builder(model_factory=fx.stub_factory))
+
+
+def _rewrite_manifest(d: Path) -> None:
+    import hashlib
+    lines = [f"{hashlib.sha256((d / n).read_bytes()).hexdigest()}  {n}\n"
+             for n in ("per_image.jsonl", "sufficient_stats.npz", "summary.json")]
+    (d / "MANIFEST.sha256").write_text("".join(lines), encoding="utf-8", newline="\n")
+
+
+def d2_cases() -> None:
+    import contextlib
+    import io
+    import json
+    import shutil
+
+    from scripts import teacher_d2_calibration as d2
+    from scripts import teacher_diag_fixtures as fx
+    from scripts.compare_eval_artifacts import identity_problems
+    from scripts.synthetic_ptq_fixtures import safe_tmpdir
+    from src.eval import teacher_diag as td
+
+    tmp = safe_tmpdir("diag_d2_")
+    try:
+        root, _ = fx.make_data_root("diag_d2_data_")
+        fx.set_data_root(root)
+        ckpt, sha = fx.write_stub_ckpt(tmp / "stub_teacher.pth")
+        ref = _reference(fx, td, tmp, ckpt)
+        cfg = str(td.REPO / td.TEACHER_CONFIG_REL)
+        utc = "2026-10-02T00:00:00Z"
+
+        def call(*, factory=fx.stub_factory, **kw):
+            base = dict(teacher_ckpt=str(ckpt), teacher_ckpt_sha256=sha, teacher_config=cfg, teacher_role="record",
+                        purpose="item1", val_reference=str(ref), max_samples=3, generated_utc=utc)
+            base.update(kw)
+            args = d2.build_parser().parse_args(fx.argv(**base))
+            err = io.StringIO()
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+                code = d2.run(args) if factory is None else d2.run(args, model_factory=factory)
+            return code, err.getvalue()
+
+        # item 1(b)
+        out1, art1 = tmp / "out1", tmp / "art1"
+        code, err = call(out_dir=out1, artifact_dir=art1)
+        files = fx.output_files(out1)
+        doc = json.loads(files[0].read_text()) if files else {}
+        check("D2 item1: exit 0, one teacher_d2_<UTC>.json, status written, artifact_status smoke",
+              code == 0 and [p.name for p in files] == ["teacher_d2_20261002T000000Z.json"]
+              and doc.get("status") == "written" and doc.get("artifact_status") == "smoke", err)
+        art = Path(doc.get("artifact", {}).get("dir", tmp / "missing"))
+        problems, _, _ = identity_problems(ref, art) if art.is_dir() else (["no artifact"], {}, {})
+        check("D2 its evaluator artifact equals scripts/evaluate_model.py run()'s under EVALUATION_CONTRACT 10(d)",
+              problems == [], str(problems))
+        eq = doc.get("artifact", {}).get("against_val_reference", {})
+        check("D2 per_image_equal and npz_equal against --val-reference are recorded (True here)",
+              eq.get("per_image_equal") is True and eq.get("npz_equal") is True)
+        c, cal = doc.get("checks", {}), doc.get("calibration", {})
+        check("D2 sum correct == sum TP and n == sum GT of the core; one hook call per image",
+              c.get("sum_correct_equals_sum_tp") is True and cal.get("correct") == c.get("sum_tp")
+              and cal.get("n") == c.get("sum_gt") and c.get("hook_calls") == c.get("forward_batches") == 3)
+        s = c.get("nmf_stream", {})
+        check("D2 M4-V stream seeded 42: one draw per image, the adapter's object, caller RNG unchanged",
+              s.get("begin", {}).get("policy") == "M4-V" and s.get("begin", {}).get("seed") == 42
+              and s.get("draws") == 3 and c.get("rng_state_unchanged") is True)
+        g = doc.get("gates", {})
+        check("D2 record gate against the reference mIoU passed before the write (delta 0.0)",
+              isinstance(g, dict) and g.get("passed") is True and g.get("delta") == 0.0)
+        t = doc.get("teacher", {})
+        check("D2 teacher block: verified sha256, loaded_state_sha256, provenance, evaluator load",
+              t.get("checkpoint", {}).get("sha256_verified") == sha and len(t.get("loaded_state_sha256", "")) == 64
+              and t.get("provenance", {}).get("ckpt_sha256") == sha and t.get("load_mode") == "evaluator")
+        check("D2 the evaluator artifact's four file hashes are recorded",
+              sorted(doc.get("artifact", {}).get("files_sha256", {})) ==
+              ["MANIFEST.sha256", "per_image.jsonl", "sufficient_stats.npz", "summary.json"])
+
+        # the gate runs before the write (P18)
+        import src.eval.artifacts as ea
+        writes = []
+        orig_write = ea.write_artifact
+        ea.write_artifact = lambda *a, **k: writes.append(1) or orig_write(*a, **k)
+        try:
+            with fx.patched(td, R3_TOLERANCE=-1.0):
+                code, err = call(out_dir=tmp / "out_gate", artifact_dir=tmp / "art_gate")
+        finally:
+            ea.write_artifact = orig_write
+        gdoc = json.loads(fx.output_files(tmp / "out_gate")[0].read_text()) if fx.output_files(tmp / "out_gate") else {}
+        check("P18 a failed gate: exit 1, 'not reproduced' with value and delta, no artifact, write_artifact never "
+              "called", code == 1 and gdoc.get("status") == "not reproduced" and gdoc.get("artifact") is None
+              and gdoc.get("gates", {}).get("delta") is not None and not writes
+              and not (tmp / "art_gate").exists(), err)
+
+        # control (P4)
+        code, err = call(out_dir=tmp / "out_ctl", artifact_dir=tmp / "art_ctl", purpose="control",
+                         of_record_output=str(files[0]))
+        ctl_files = fx.output_files(tmp / "out_ctl")
+        cdoc = json.loads(ctl_files[0].read_text()) if ctl_files else {}
+        check("P4 control: teacher_d2_control_<UTC>.json, reproduction_check, ECE_B beside the of-record ECE",
+              code == 0 and [p.name for p in ctl_files] == ["teacher_d2_control_20261002T000000Z.json"]
+              and cdoc.get("reproduction_check") is True
+              and cdoc.get("control", {}).get("ece_b") == cdoc.get("control", {}).get("ece_of_record") is not None
+              and cdoc.get("inputs", {}).get("of_record_output", {}).get("sha256") == td.file_sha256(files[0]), err)
+        check("P4 control without --of-record-output, item1 with one, and an of-record file that is not item1 "
+              "are refused (exit 2)",
+              call(out_dir=tmp / "o_c1", artifact_dir=tmp / "a_c1", purpose="control")[0] == 2
+              and call(out_dir=tmp / "o_c2", artifact_dir=tmp / "a_c2", of_record_output=str(files[0]))[0] == 2
+              and call(out_dir=tmp / "o_c3", artifact_dir=tmp / "a_c3", purpose="control",
+                       of_record_output=str(ctl_files[0]))[0] == 2)
+
+        # arm (P3)
+        cfg_copy = Path(shutil.copy(cfg, tmp / "arm_cfg.py"))
+        arm = dict(teacher_role="arm", purpose=None, arm_id="R2", arm_dl_id="DL-70", teacher_config=str(cfg_copy),
+                   teacher_config_sha256=td.file_sha256(cfg_copy))
+        code, err = call(out_dir=tmp / "out_arm", artifact_dir=tmp / "art_arm", **arm)
+        arm_files = fx.output_files(tmp / "out_arm")
+        adoc = json.loads(arm_files[0].read_text()) if arm_files else {}
+        check("P3 arm: teacher_d2_arm-R2_<UTC>.json, gates nothing, artifact hashes recorded (R2)",
+              code == 0 and [p.name for p in arm_files] == ["teacher_d2_arm-R2_20261002T000000Z.json"]
+              and adoc.get("gates") == "nothing" and adoc.get("teacher", {}).get("arm_id") == "R2"
+              and len(adoc.get("artifact", {}).get("files_sha256", {})) == 4, err)
+        check("P3 arm with --purpose is refused",
+              call(out_dir=tmp / "o_a1", artifact_dir=tmp / "a_a1", **dict(arm, purpose="item1"))[0] == 2)
+
+        # refusals before any load
+        bad_split = tmp / "ref_split"
+        shutil.copytree(ref, bad_split)
+        sj = json.loads((bad_split / "summary.json").read_text())
+        sj["dataset"]["split"] = "t" + "est"
+        (bad_split / "summary.json").write_text(json.dumps(sj))
+        verifies = []
+        orig_verify = ea.verify_artifact
+        ea.verify_artifact = lambda *a, **k: verifies.append(1) or orig_verify(*a, **k)
+        try:
+            with fx.count_loads() as calls:
+                code, _ = call(out_dir=tmp / "o_r1", artifact_dir=tmp / "a_r1", val_reference=str(bad_split))
+        finally:
+            ea.verify_artifact = orig_verify
+        check("P18 a --val-reference whose summary names another split is refused from summary.json alone "
+              "(no verify_artifact, no load)", code == 2 and not verifies and sum(calls.values()) == 0)
+        bad_man = tmp / "ref_manifest"
+        shutil.copytree(ref, bad_man)
+        sj = json.loads((bad_man / "summary.json").read_text())
+        sj["dataset"]["split_manifest_sha256"] = "0" * 64
+        (bad_man / "summary.json").write_text(json.dumps(sj, indent=2) + "\n")
+        _rewrite_manifest(bad_man)
+        with fx.count_loads() as calls:
+            code, err = call(out_dir=tmp / "o_r2", artifact_dir=tmp / "a_r2", val_reference=str(bad_man))
+        check("D0-3 the pass's VAL manifest must equal --val-reference's (manifest identity), before any load",
+              code == 2 and "manifest" in err and sum(calls.values()) == 0, err)
+        tampered = tmp / "ref_tampered"
+        shutil.copytree(ref, tampered)
+        (tampered / "per_image.jsonl").write_text((tampered / "per_image.jsonl").read_text() + "\n")
+        check("P18 a --val-reference failing verify_artifact is refused (exit 2)",
+              call(out_dir=tmp / "o_r3", artifact_dir=tmp / "a_r3", val_reference=str(tampered))[0] == 2)
+        check("P18 a --val-reference with another row count is refused",
+              call(out_dir=tmp / "o_r4", artifact_dir=tmp / "a_r4", max_samples=2)[0] == 2)
+        with fx.count_loads() as calls:
+            r_repo = call(out_dir=td.REPO / "d2_out_in_repo", artifact_dir=tmp / "a_r5")[0]
+            r_same = call(out_dir=out1, artifact_dir=tmp / "a_r6")[0]
+            r_sha = call(out_dir=tmp / "o_r7", artifact_dir=tmp / "a_r7", teacher_ckpt_sha256=sha.upper())[0]
+        check("P27/P5 an in-repo --out-dir, an existing output name and an uppercase sha256 are refused, load "
+              "counter 0", (r_repo, r_same, r_sha) == (2, 2, 2) and sum(calls.values()) == 0
+              and not (td.REPO / "d2_out_in_repo").exists())
+        commit = dict(script_commit="c" * 40, script_commit_dl_id="DL-61", generated_utc=None, max_samples=None)
+        with fx.count_loads() as calls:
+            r_real = call(factory=None, out_dir=tmp / "o_r8", artifact_dir=tmp / "a_r8", **commit)[0]
+            r_c2 = call(factory=None, out_dir=tmp / "o_r9", artifact_dir=tmp / "a_r9",
+                        **dict(commit, generated_utc=utc))[0]
+            r_ms = call(factory=None, out_dir=tmp / "o_r10", artifact_dir=tmp / "a_r10", **dict(commit, max_samples=3))[0]
+        check("P2/P8/C2 real mode (no stub): refused before any load -- the provenance count, --generated-utc, "
+              "--max-samples", (r_real, r_c2, r_ms) == (2, 2, 2) and sum(calls.values()) == 0)
+        quiet = td.RngWatchForward(lambda m, x: x)
+        drawing = td.RngWatchForward(lambda m, x: x + torch.rand(1))
+        for w in (quiet, quiet, drawing, drawing):
+            w(None, torch.zeros(1))
+        check("P9 the RNG watch passes a forward that leaves the CPU RNG alone and stops one that draws from it",
+              quiet.unchanged() and not raises(quiet.require_unchanged, Exception)
+              and raises(drawing.require_unchanged, td.Stop))
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            m_usage = d2.main([])
+            m_real = d2.main(fx.argv(out_dir=tmp / "o_m", artifact_dir=tmp / "a_m", teacher_ckpt=str(ckpt),
+                                     teacher_ckpt_sha256=sha, teacher_config=cfg, teacher_role="record",
+                                     purpose="item1", val_reference=str(ref), script_commit="c" * 40,
+                                     script_commit_dl_id="DL-61"))
+        check("P29 the CLI: a usage error exits 2; the CLI is real mode and refuses until K-part (exit 2)",
+              m_usage == 2 and m_real == 2)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+        root_base = Path(os.environ.get("PLANTSEG_DATA_ROOT", "")).parent
+        if root_base.name.startswith("diag_d2_data_"):
+            shutil.rmtree(root_base, ignore_errors=True)
+
+
 def main() -> int:
-    for fn in (unit_cases, hook_cases):
+    for fn in (unit_cases, hook_cases, d2_cases):
         try:
             fn()
         except Exception as e:  # noqa: BLE001 -- a crash is a failed case, never a pass
