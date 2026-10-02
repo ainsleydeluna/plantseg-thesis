@@ -231,14 +231,28 @@ def validate_teacher_artifact(checkpoint_path: str | Path, *,
     loader already refuses non-dict payloads, empty/tensor-free states, and anything lacking both
     `backbone.*` and `decode_head.*` keys, so an unrelated or ADE20K-only-shaped file cannot be
     silently substituted.
+
+    R6: when `expected_sha256` is not None it must be 64 lowercase hex characters
+    (`teacher_ckpt_sha256_format`, "" included), and the file is hashed once and compared BEFORE the
+    parse (`teacher_hash_mismatch`); that hash is the recorded `checkpoint_sha256`.
     """
     from src.distill.segnext_teacher import TeacherCheckpointInvalid, load_teacher_state_dict
+    from src.distill.teacher import sha256_format_error
     from src.eval.model_loading import sha256_file
 
     spec = resolve_stage_artifact(TEACHER_STAGE)
+    if expected_sha256 is not None:
+        error = sha256_format_error(expected_sha256)
+        if error is not None:
+            _fail("teacher_ckpt_sha256_format", f"expected teacher sha256 {error}")
     p = Path(checkpoint_path)
     if not p.is_file():
         _fail("teacher_checkpoint_missing", f"teacher checkpoint not found: {p}")
+    digest = sha256_file(p)
+    if expected_sha256 is not None and digest != expected_sha256:
+        _fail("teacher_hash_mismatch",
+              f"teacher checkpoint hash {digest} does not match the expected {expected_sha256}; the "
+              "file was not parsed")
     try:
         state = load_teacher_state_dict(p)
     except TeacherCheckpointInvalid as e:
@@ -251,12 +265,6 @@ def validate_teacher_artifact(checkpoint_path: str | Path, *,
     if any("_packed_params" in k or "activation_post_process" in k for k in state):
         _fail("teacher_is_quantized_artifact",
               "this is a quantized artifact; the teacher is evaluated in FP32")
-
-    digest = sha256_file(p)
-    if expected_sha256 and digest != expected_sha256:
-        _fail("teacher_hash_mismatch",
-              f"teacher checkpoint hash {digest[:16]}… does not match the expected "
-              f"{str(expected_sha256)[:16]}…")
     return {"spec": spec, "checkpoint_path": p, "checkpoint_sha256": digest,
             "state_keys": len(state), "descriptive_only": True}
 

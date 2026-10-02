@@ -14,7 +14,8 @@ Drives the proven A2a flow in the frozen order:
 The CLI and its metadata are STAGE-NEUTRAL (any stage / role / precision / condition can be
 *described*). Implemented construction paths are the FP32 student (E1/E2/E3, `--checkpoint`), the
 converted INT8 student (E4-E7, `--provenance`, CPU/QNNPACK only) and the teacher (M4-V, CPU,
-`--checkpoint` + `--teacher-config`). Corruption construction remains rejected explicitly --
+`--checkpoint` + `--teacher-config` + `--teacher-ckpt-sha256`, the checkpoint's SHA-256, compared
+before the file is parsed; R6). Corruption construction remains rejected explicitly --
 metadata neutrality is never misrepresented as runtime support.
 
 INT8 model-source validation (stage, source stage, artifact hash, backend) happens BEFORE the
@@ -79,6 +80,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--teacher-config", default=None,
                    help="thesis teacher mmseg config (required for --model-role teacher; its "
                         "IsolatedNMFLightHamHead implements M4-V)")
+    p.add_argument("--teacher-ckpt-sha256", default=None,
+                   help="the teacher checkpoint's SHA-256, 64 lowercase hex characters (required for "
+                        "--stage teacher, refused on any other stage); compared before the file is "
+                        "parsed")
     p.add_argument("--provenance", default=None,
                    help="E4-E7 run-provenance JSON written by src/quant/runner.py (INT8 stages)")
     p.add_argument("--random-init", action="store_true")
@@ -202,6 +207,22 @@ def validate_cli_args(args) -> None:
         if args.artifact_status == "smoke":
             raise CliError("--split test refuses artifact_status=smoke")
 
+    # --- teacher checkpoint identity (R6, L-CKPT-GUARD). Read defensively, like --provenance: an args
+    # object without the attribute is a non-teacher caller. ---
+    teacher_sha = getattr(args, "teacher_ckpt_sha256", None)
+    if args.stage == "teacher":
+        if teacher_sha is None:
+            raise CliError("[teacher_ckpt_sha256_required] the teacher stage requires "
+                           "--teacher-ckpt-sha256, the checkpoint's SHA-256, compared before the "
+                           "file is parsed")
+        from src.distill.teacher import sha256_format_error
+        sha_error = sha256_format_error(teacher_sha)
+        if sha_error is not None:
+            raise CliError(f"[teacher_ckpt_sha256_format] --teacher-ckpt-sha256 {sha_error}")
+    elif teacher_sha is not None:
+        raise CliError(f"[teacher_ckpt_sha256_not_teacher] --teacher-ckpt-sha256 applies to the teacher "
+                       f"stage only; stage={args.stage!r} takes none")
+
 
 def run(args, *, counters: Counters | None = None, teacher_builder=None) -> Path:
     """Execute the frozen A2a flow. Returns the finalised artifact directory."""
@@ -251,8 +272,10 @@ def run(args, *, counters: Counters | None = None, teacher_builder=None) -> Path
         ckpt_sha = resolved["artifact_sha256"]
     elif args.model_role == "teacher":
         from src.eval.stage_artifacts import validate_teacher_artifact
-        # Teacher checkpoint structure/identity is proven before any dataset exists.
-        resolved = validate_teacher_artifact(args.checkpoint)
+        # Teacher checkpoint identity (hash first, R6) and structure are proven before any dataset
+        # exists.
+        resolved = validate_teacher_artifact(args.checkpoint,
+                                             expected_sha256=getattr(args, "teacher_ckpt_sha256", None))
         ckpt_path = str(resolved["checkpoint_path"])
         ckpt_sha = resolved["checkpoint_sha256"]
     elif args.checkpoint:
@@ -308,7 +331,8 @@ def run(args, *, counters: Counters | None = None, teacher_builder=None) -> Path
     if args.model_role == "teacher":
         from src.eval.model_loading import load_teacher_model
         model = load_teacher_model(resolved, builder=teacher_builder,
-                                   config_path=getattr(args, "teacher_config", None))[0]
+                                   config_path=getattr(args, "teacher_config", None),
+                                   expected_sha256=getattr(args, "teacher_ckpt_sha256", None))[0]
     elif resolved is not None:
         from src.eval.model_loading import load_int8_student
         model = load_int8_student(resolved, require_qnnpack=True)[0]

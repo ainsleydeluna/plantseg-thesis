@@ -376,10 +376,11 @@ def main() -> int:
         base.update(kw)
         return SimpleNamespace(**base)
 
-    ev = R3.evaluator_args(args("argcheck"))
+    ev = R3.evaluator_args(args("argcheck"), sha256(ckpt))
     check("r3_evaluator_args_batch1_provisional_val_teacher",
           ev.batch_size == 1 and ev.artifact_status == "provisional" and ev.split == "val"
-          and ev.model_role == "teacher" and ev.teacher_config == str(CONFIG))
+          and ev.model_role == "teacher" and ev.teacher_config == str(CONFIG)
+          and ev.teacher_ckpt_sha256 == sha256(ckpt))
 
     evaluated: list[str] = []
 

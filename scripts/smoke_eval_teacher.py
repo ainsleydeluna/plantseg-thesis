@@ -5,11 +5,14 @@ The teacher is a DESCRIPTIVE REFERENCE: this proves it can be resolved, validate
 an ordinary FP32 model, while never being turned into an inferential comparator. All fixtures are
 synthetic checkpoints in a temp dir outside the repository; PlantSeg is never touched. The one check
 on the real (non-stub) builder path detects the MMSeg stack the way the builder does: without it the
-path must fail loudly; with it, it must refuse the 3-key fixture under the strict load (R6) and build
-the thesis teacher from a full-shape fixture.
+path must fail loudly; with it, it must refuse the 3-key fixture under the strict load and build the
+thesis teacher from a full-shape fixture. R6 (L-CKPT-GUARD): the teacher stage requires
+--teacher-ckpt-sha256 (checked before the parse, again before the build); `args_for` derives it from
+the checkpoint it is given and adds none for a student stage.
 """
 from __future__ import annotations
 
+import hashlib
 import sys
 import tempfile
 from pathlib import Path
@@ -127,6 +130,9 @@ def args_for(**kw):
                 out_dir=str(TMP / "out"), artifact_status="smoke", device="cpu", batch_size=1,
                 teacher_config=str(TEACHER_CONFIG))
     base.update(kw)
+    ck = base.get("checkpoint")
+    if base["stage"] == "teacher" and "teacher_ckpt_sha256" not in kw and ck and Path(ck).is_file():
+        base["teacher_ckpt_sha256"] = hashlib.sha256(Path(ck).read_bytes()).hexdigest()
     argv = []
     for k, v in base.items():
         if v is True:
@@ -308,8 +314,13 @@ def test_cli_and_safety() -> None:
 
     # ordering: an invalid teacher checkpoint fails before the dataset adapter is built
     ctr = Counters(dataset=[], model=[])
-    expect("invalid_teacher_fails_before_dataset", StageArtifactError, run,
-           args_for(checkpoint=str(student_ckpt("e1b.pt"))), counters=ctr)
+    try:
+        run(args_for(checkpoint=str(student_ckpt("e1b.pt"))), counters=ctr)
+        check("invalid_teacher_fails_before_dataset", False, "no exception raised")
+    except StageArtifactError as e:
+        check("invalid_teacher_fails_before_dataset", e.code == "teacher_checkpoint_invalid", e.code)
+    except Exception as e:  # noqa: BLE001
+        check("invalid_teacher_fails_before_dataset", False, f"wrong exception {type(e).__name__}: {e}")
     check("no_dataset_built_for_invalid_teacher", ctr.dataset == [])
 
     # descriptive-only role is carried, and no inferential machinery is touched here
@@ -319,12 +330,111 @@ def test_cli_and_safety() -> None:
           "teacher integration creates no significance test")
 
 
+def test_teacher_identity() -> None:
+    """R6 (L-CKPT-GUARD): the teacher checkpoint's SHA-256 is required, checked before the parse at
+    validation and again before the build at load; the flag is refused on any other stage."""
+    from types import SimpleNamespace
+
+    import scripts.teacher_readiness_r3 as R3
+    from src.distill.teacher import TeacherChecksumFormatError, TeacherChecksumMismatch
+    tk = teacher_ckpt("t5.pth")
+    sha = hashlib.sha256(tk.read_bytes()).hexdigest()
+
+    def cli_code(name: str, args, code: str) -> None:
+        try:
+            validate_cli_args(args)
+            check(name, False, "no exception raised")
+        except CliError as e:
+            check(name, f"[{code}]" in str(e), str(e)[:120])
+
+    cli_code("r6_teacher_without_sha256_refused", args_for(checkpoint=str(tk), teacher_ckpt_sha256=None),
+             "teacher_ckpt_sha256_required")
+    for label, value in (("empty", ""), ("63_chars", sha[:63]), ("uppercase", sha.upper())):
+        cli_code(f"r6_teacher_sha256_{label}_refused_at_cli",
+                 args_for(checkpoint=str(tk), teacher_ckpt_sha256=value), "teacher_ckpt_sha256_format")
+    for label, value in (("value", sha), ("empty", "")):
+        cli_code(f"r6_student_stage_with_sha256_{label}_refused",
+                 args_for(stage="E1", model_role="student", checkpoint=str(tk), teacher_config=None,
+                          teacher_ckpt_sha256=value), "teacher_ckpt_sha256_not_teacher")
+    ns = build_parser().parse_args(["--stage", "E1", "--checkpoint", str(tk), "--out-dir", str(TMP / "o")])
+    del ns.teacher_ckpt_sha256
+    try:
+        validate_cli_args(ns)
+        check("r6_cli_returns_for_args_without_the_attribute", True)
+    except Exception as e:  # noqa: BLE001
+        check("r6_cli_returns_for_args_without_the_attribute", False, f"{type(e).__name__}: {e}")
+    r3 = SimpleNamespace(checkpoint=str(tk), teacher_config=str(TEACHER_CONFIG), out_dir=str(TMP / "r3"),
+                         device="cpu", run_id=None)
+    ev = R3.evaluator_args(r3, sha)
+    try:
+        validate_cli_args(ev)
+        check("r6_r3_evaluator_args_pass_and_carry_the_sha256", ev.teacher_ckpt_sha256 == sha,
+              str(ev.teacher_ckpt_sha256))
+    except Exception as e:  # noqa: BLE001
+        check("r6_r3_evaluator_args_pass_and_carry_the_sha256", False, f"{type(e).__name__}: {e}")
+
+    # function level: a malformed value is refused at validation and at load
+    resolved = validate_teacher_artifact(tk, expected_sha256=sha)
+    for label, value in (("empty", ""), ("63_chars", sha[:63]), ("uppercase", sha.upper())):
+        try:
+            validate_teacher_artifact(tk, expected_sha256=value)
+            check(f"r6_validate_sha256_{label}_refused", False, "no exception raised")
+        except StageArtifactError as e:
+            check(f"r6_validate_sha256_{label}_refused", e.code == "teacher_ckpt_sha256_format", e.code)
+        expect(f"r6_load_sha256_{label}_refused", TeacherChecksumFormatError, load_teacher_model,
+               resolved, builder=stub_builder, expected_sha256=value)
+
+    # a wrong value: refused before any torch.load, at validation and through run()
+    calls = {"torch_load": 0}
+    real_torch_load = torch.load
+
+    def counting_load(*a, **k):
+        calls["torch_load"] += 1
+        return real_torch_load(*a, **k)
+    torch.load = counting_load
+    try:
+        try:
+            validate_teacher_artifact(tk, expected_sha256="0" * 64)
+            code = None
+        except StageArtifactError as e:
+            code = e.code
+        ctr = Counters(dataset=[], model=[])
+        try:
+            run(args_for(checkpoint=str(tk), teacher_ckpt_sha256="0" * 64), counters=ctr)
+            run_code = None
+        except StageArtifactError as e:
+            run_code = e.code
+    finally:
+        torch.load = real_torch_load
+    check("r6_wrong_sha256_refused_before_any_torch_load",
+          code == run_code == "teacher_hash_mismatch" and calls["torch_load"] == 0 and ctr.dataset == [],
+          f"{code} {run_code} {calls}")
+
+    # the file changes between validation and load: refused, the builder never called
+    moved = TMP / "t5_moved.pth"
+    moved.write_bytes(tk.read_bytes())
+    resolved_moved = validate_teacher_artifact(moved, expected_sha256=sha)
+    moved.write_bytes(moved.read_bytes() + b"tampered")
+    built = []
+
+    def counting_builder(path):
+        built.append(path)
+        return stub_builder(path)
+    try:
+        load_teacher_model(resolved_moved, builder=counting_builder, expected_sha256=sha)
+        check("r6_file_changed_after_validation_refused", False, "no exception raised")
+    except TeacherChecksumMismatch as e:
+        check("r6_file_changed_after_validation_refused", built == [] and e.expected == sha
+              and e.actual != sha, str(e)[:120])
+
+
 def main() -> int:
     print("=" * 78)
     print("TEACHER CLEAN-EVALUATION SMOKE — synthetic (mmseg optional); no GPU, no PlantSeg")
     print(f"temp: {TMP}")
     print("=" * 78)
-    for fn in (test_resolution, test_provenance, test_loading, test_cli_and_safety):
+    for fn in (test_resolution, test_provenance, test_loading, test_cli_and_safety,
+               test_teacher_identity):
         print(f"\n--- {fn.__name__} ---")
         fn()
     print("\n[CHECKS]")

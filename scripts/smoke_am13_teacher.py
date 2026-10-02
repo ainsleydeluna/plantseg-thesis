@@ -21,6 +21,7 @@ Run:  python -B scripts/smoke_am13_teacher.py      (exit 1 on any failure, 2 wit
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -199,7 +200,9 @@ def section_te(work: Path, segmentor, cfg) -> None:
         return type("A", (), dict(
             stage="teacher", model_role="teacher", precision="fp32", split="val", condition="clean",
             corruption_severity=None, out_dir=str(out), checkpoint=str(ckpt),
-            teacher_config=str(CONFIG), provenance=None, random_init=False,
+            teacher_config=str(CONFIG),
+            teacher_ckpt_sha256=hashlib.sha256(ckpt.read_bytes()).hexdigest(),
+            provenance=None, random_init=False,
             artifact_status="smoke", batch_size=1, max_samples=4, confirm_test_split=False,
             run_id=f"am13_teacher_{protocol}", device="cpu", protocol=protocol))()
 
