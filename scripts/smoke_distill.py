@@ -28,7 +28,7 @@ import torch  # noqa: E402
 import torch.nn.functional as F  # noqa: E402
 
 from src.distill import (CWD_PROJECTION_KEY, CWDProjectionLeak, FrozenTeacher, MockTeacher,  # noqa: E402
-                         StudentTaps, TeacherCheckpointMissing, TeacherStackMissing,
+                         StudentTaps, TeacherCheckpointMissing,
                          assert_clean_student_state, build_cwd_projection, find_projection_keys,
                          load_teacher_state_dict, require_teacher_checkpoint, strip_cwd_projection)
 from src.models.student import build_student  # noqa: E402
@@ -501,13 +501,12 @@ def _safety_gates_on_staged_root(staged: Path) -> None:
     check("gate_m11_clean_root_proceeds_to_cuda_gate", rc == 2 and "on CPU" in err
           and "test_split_present" not in err, err.strip()[-120:])
 
-    # --- real E2/E3 are hard-gated on an explicit global-norm clipping threshold ---
+    # --- AM-7 (DL-04): a real E2/E3 run is unclipped, so any --grad-clip-norm is refused ---
     # `--device cuda` gets past the CUDA gate on this CPU box so the LATER gates can be isolated;
-    # a throwaway file outside the repo satisfies the teacher-path existence check. Every case below
-    # must return 2 BEFORE any dataset build, teacher load or CUDA work.
-    # A STRUCTURALLY VALID teacher checkpoint (backbone.* + decode_head.* tensors) written outside
-    # the repo, so the real builder path clears checkpoint validation and reaches the mmseg import —
-    # letting this gate test the stack-missing failure mode precisely.
+    # a throwaway file outside the repo satisfies the teacher-path existence check, and `base` carries
+    # its sha256 (R6). Every case below must return 2 BEFORE any dataset build, teacher load or CUDA
+    # work. The fixture is a structurally valid teacher checkpoint (backbone.* + decode_head.*
+    # tensors); the teacher load itself is stubbed below, so nothing here depends on the MMSeg stack.
     tmp = Path(tempfile.mkdtemp(prefix="smoke_distill_teacher_")) / "teacher.pth"
     torch.save({"meta": {"mmseg_version": "1.2.2"},
                 "state_dict": {"backbone.projs.0.weight": torch.randn(4, 3, 1, 1),
@@ -518,9 +517,12 @@ def _safety_gates_on_staged_root(staged: Path) -> None:
     base = ["--real-run", "--confirm-real-run", "--device", "cuda",
             "--teacher-ckpt", str(tmp), "--lambda-logit", "1.0",
             "--teacher-ckpt-sha256", hashlib.sha256(tmp.read_bytes()).hexdigest()]
+    # Q14: each stage's clip gate refuses a value with its own code (these two checks once passed only
+    # through [ckpt_dir_required], before the clip gate could see a value).
     for stage_key in ("e2", "e3"):
-        check(f"gate_{stage_key}_real_requires_grad_clip",
-              run_main(list(base), stage_key) == 2)
+        rc, err = run_main_stderr(base + ["--grad-clip-norm=1.0"], stage_key)
+        check(f"gate_{stage_key}_real_refuses_grad_clip_am7", rc == 2 and "[grad_clip_am7]" in err,
+              f"rc={rc} {err.strip()[-120:]}")
     # `=` form so argparse cannot mistake a negative value for an option flag
     for bad in ("0", "-1.0", "nan", "inf", "-inf"):
         check(f"gate_rejects_grad_clip_{bad}",
