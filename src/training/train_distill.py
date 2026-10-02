@@ -27,7 +27,9 @@ SAFETY MODEL (mirrors train_e1.py, plus the distillation-specific gates):
   * Default / `--dry-run` -> tiny CPU run, random student init, NO download, EXPLICIT MockTeacher,
     checkpoint to a temp dir.
   * Real run requires BOTH `--real-run` AND `--confirm-real-run`, requires CUDA, requires an existing
-    `--teacher-ckpt`, and requires an explicit `--lambda-logit` from the AM-2 grid for a stage with
+    `--teacher-ckpt` and its `--teacher-ckpt-sha256` (R6: the file is hashed and compared before it
+    is read, and the teacher loads strictly; either mismatch is refused, in both modes), and
+    requires an explicit `--lambda-logit` from the AM-2 grid for a stage with
     Logit KD (the contract leaves lambda_logit as NEED_TO_CONFIRM, selected by validation sweep — it
     is never guessed here). It runs the registered recipe only (L-KD-HARDEN item 2): a fresh, explicit
     `--ckpt-dir`; the whole 80,000-iteration schedule; VAL on the full set every 4,000 iterations; an
@@ -56,7 +58,9 @@ Exit codes of main() (and of train_e2.py / train_e3.py):
   0  the run finished and every hard check passed (RESULT: PASS); argparse's --help also exits 0
   1  the run finished with a failed hard check (RESULT: FAIL); also an uncaught exception (a traceback)
   2  refused before training: a REFUSING or ERROR line (most name a [code]), or an argparse usage error;
-     run() returns 2 itself for [cuda_initialized_before_seed]
+     run() returns 2 itself for [cuda_initialized_before_seed]; a teacher checkpoint whose sha256 or
+     state does not match is refused with [teacher_ckpt_sha256_mismatch] or
+     [teacher_state_dict_mismatch]
   3  a real run aborted (RunAborted: AM-7 (a) or (b), val_nonfinite or step1_checks): RESULT: ABORTED;
      the run_abort record is the telemetry's last row, and the run is never relaunched (AM-7a; a fault
      follows AM-8a)
@@ -97,9 +101,11 @@ from src.distill.cwd_projection import (PROJECTION_FILE, PROJECTION_GROUP,  # no
 from src.distill.export import assert_clean_student_state          # noqa: E402
 from src.distill.features import StudentTaps                       # noqa: E402
 from src.distill.nmf_stream import M4_NMF_SEED                     # noqa: E402
+from src.distill.segnext_teacher import TeacherStateDictMismatch   # noqa: E402
 from src.distill.teacher import (FrozenTeacher, MockTeacher,       # noqa: E402
-                                 TeacherCheckpointMissing, load_frozen_teacher,
-                                 require_teacher_checkpoint)
+                                 TeacherCheckpointMissing, TeacherChecksumMismatch,
+                                 load_frozen_teacher, require_teacher_checkpoint,
+                                 sha256_format_error)
 from src.models.student import build_student                       # noqa: E402
 from src.seeds import set_seed                                     # noqa: E402
 from src.training.losses import (CombinedCEDiceLoss, cwd_channelwise_kl,  # noqa: E402
@@ -877,8 +883,8 @@ def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeach
     meta.update({"supervised_grid": "full 512x512", "batch_size": batch_size,
                  "max_iters": max_iters, "num_classes": NUM_CLASSES, "teacher_nmf": teacher_nmf})
     # L-KD-HARDEN item 5: E1's run_meta keys, through train_e1's provenance helpers, plus
-    # persistent_workers (E1's TRAIN-loader argument); then the KD carriers (L-CKPT-GUARD adds further
-    # provenance fields later).
+    # persistent_workers (E1's TRAIN-loader argument); then the KD carriers. teacher_provenance holds the
+    # twelve DL-50 keys of TeacherProvenance.as_dict() (L-CKPT-GUARD), the same dict as the payload's.
     git_head, git_head_source = _git_provenance()
     meta.update({"wall_clock": time.time(), "git_head": git_head, "git_head_source": git_head_source,
                  "image_digest": _image_digest(), "torch": torch.__version__, "numpy": np.__version__,
@@ -1177,6 +1183,9 @@ def parse_args(argv=None, stage_default: str | None = None):
     p.add_argument("--teacher-config", default=None,
                    help="teacher mmseg config (default: the thesis teacher config, whose "
                         "IsolatedNMFLightHamHead implements M4-KD)")
+    p.add_argument("--teacher-ckpt-sha256", default=None,
+                   help="the teacher checkpoint's SHA-256, 64 lowercase hex characters; required for a "
+                        "real run. The file is hashed and compared before it is read (R6)")
     p.add_argument("--lambda-semantics", default=None,
                    help="OPTIONAL: the Logit-KD semantics tag the supplied --lambda-logit was "
                         "SELECTED under. If given it must match this code's tag; a mismatch "
@@ -1274,7 +1283,25 @@ def main(argv=None, stage_default: str | None = None) -> int:
         if args.log_every < 1:
             return refuse("log_every", f"--log-every {args.log_every}: the train log is printed every "
                                        "--log-every iterations, a whole number >= 1")
+        if args.teacher_ckpt_sha256 is not None:              # R6 (L-CKPT-GUARD)
+            sha_error = sha256_format_error(args.teacher_ckpt_sha256)
+            if sha_error is not None:
+                return refuse("teacher_ckpt_sha256_format", f"--teacher-ckpt-sha256 {sha_error}")
+            if not args.teacher_ckpt:
+                return refuse("teacher_ckpt_sha256_without_ckpt", "--teacher-ckpt-sha256 was given "
+                                                                  "without --teacher-ckpt; it checks "
+                                                                  "nothing on its own")
         return None
+
+    def load_teacher():
+        """Both modes' teacher load: a checksum or strict-load mismatch is refused (exit 2); every
+        other loader error propagates as before."""
+        try:
+            return load_frozen_teacher(args.teacher_ckpt,
+                                       config_path=args.teacher_config or str(DEFAULT_TEACHER_CONFIG),
+                                       expected_sha256=args.teacher_ckpt_sha256), None
+        except (TeacherChecksumMismatch, TeacherStateDictMismatch) as e:
+            return None, refuse(e.code, str(e).removeprefix(f"[{e.code}] "))
 
     if mode == "real":
         # M11 (B60 §5): the E2/E3 data root must be staged with TRAIN and VAL only. TEST surfaces are
@@ -1318,10 +1345,14 @@ def main(argv=None, stage_default: str | None = None) -> int:
             return refuse("ckpt_dir_required", "--ckpt-dir is required: a real run writes into an "
                                                "explicit, fresh, out-of-repo directory; the "
                                                "temporary-directory fallback is for dry runs only")
-        # Q10: train_e1's guard, now before anything is built. The path is resolved first, so an error of
-        # the resolution itself (pathlib's RuntimeError for a symlink loop) raises as it does in train_e1
-        # and is never refused as an in-repo directory.
-        ckpt_resolved = Path(args.ckpt_dir).resolve()
+        # Q10: train_e1's guard, now before anything is built. The path is resolved first; a path that
+        # cannot be resolved (pathlib's RuntimeError for a symlink loop, an OSError, a NUL byte's
+        # ValueError) is refused by name (K8-2(d)) and never as an in-repo directory.
+        try:
+            ckpt_resolved = Path(args.ckpt_dir).resolve()
+        except (OSError, RuntimeError, ValueError) as e:
+            return refuse("ckpt_dir_unresolvable", f"--ckpt-dir {args.ckpt_dir!r} cannot be resolved "
+                                                   f"({type(e).__name__}: {e})")
         try:
             _assert_outside_repo(ckpt_resolved)
         except RuntimeError as e:
@@ -1355,14 +1386,19 @@ def main(argv=None, stage_default: str | None = None) -> int:
         tf32_error = tf32_gate_error(tf32_state())
         if tf32_error is not None:
             return refuse("tf32", tf32_error)
+        if args.teacher_ckpt_sha256 is None:                  # R6 (L-CKPT-GUARD)
+            return refuse("teacher_ckpt_sha256_required", "--teacher-ckpt-sha256 is required: a real "
+                                                          "run verifies the teacher checkpoint's "
+                                                          "SHA-256 before the file is read")
         # Item 2i (decision C5): CUDA must still be uninitialised when run() calls set_seed, which
         # exports CUBLAS_WORKSPACE_CONFIG and the determinism settings that must precede the first
         # CUDA op (contract B6); run() checks the same at its entry, after the teacher load.
         if torch.cuda.is_initialized():
             return refuse("cuda_initialized_before_teacher", "CUDA is already initialised before the "
                                                              "teacher load and the run's seeding")
-        teacher = load_frozen_teacher(args.teacher_ckpt,
-                                      config_path=args.teacher_config or str(DEFAULT_TEACHER_CONFIG))
+        teacher, load_rc = load_teacher()
+        if load_rc is not None:
+            return load_rc
         pretrained = E1_STUDENT["init_weights"]
         batch_size = E1_STUDENT["batch_size"]
         val_interval = E1_STUDENT["val_interval"]
@@ -1378,8 +1414,9 @@ def main(argv=None, stage_default: str | None = None) -> int:
             print("[init] --init imagenet ignored in dry-run (forcing random init, no download).")
         pretrained = False
         if args.teacher_ckpt:
-            teacher = load_frozen_teacher(
-                args.teacher_ckpt, config_path=args.teacher_config or str(DEFAULT_TEACHER_CONFIG))
+            teacher, load_rc = load_teacher()
+            if load_rc is not None:
+                return load_rc
         else:
             print("[teacher] DRY-RUN uses an EXPLICIT MockTeacher (random, weight-free). This is a "
                   "smoke substitute and is refused by the real-run path, which requires "

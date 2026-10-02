@@ -11,7 +11,8 @@ identifiable, reproducible stage on the command line and in logs.
 
     python src/training/train_e2.py --dry-run
     python src/training/train_e2.py --real-run --confirm-real-run \
-        --teacher-ckpt /workspace/teacher/segnext_b_plantseg.pth \
+        --teacher-ckpt /workspace/teacher/iter_24000.pth \
+        --teacher-ckpt-sha256 <the checkpoint's sha256, 64 lowercase hex> \
         --lambda-logit <value from the validation sweep> --num-workers 12 \
         --ckpt-dir /workspace/e2_ckpts
 """

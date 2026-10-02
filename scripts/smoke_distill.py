@@ -13,6 +13,7 @@ checkpoint projection isolation · real-run safety gates · absence of any quant
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import io
 import os
 import shutil
@@ -515,7 +516,8 @@ def _safety_gates_on_staged_root(staged: Path) -> None:
     check("gate_fixture_checkpoint_is_structurally_valid",
           len(load_teacher_state_dict(tmp)) == 3, "passes adapter checkpoint validation")
     base = ["--real-run", "--confirm-real-run", "--device", "cuda",
-            "--teacher-ckpt", str(tmp), "--lambda-logit", "1.0"]
+            "--teacher-ckpt", str(tmp), "--lambda-logit", "1.0",
+            "--teacher-ckpt-sha256", hashlib.sha256(tmp.read_bytes()).hexdigest()]
     for stage_key in ("e2", "e3"):
         check(f"gate_{stage_key}_real_requires_grad_clip",
               run_main(list(base), stage_key) == 2)
