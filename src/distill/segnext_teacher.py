@@ -19,10 +19,22 @@ configs and versions, so nothing here hooks a guessed attribute string. The adap
 backbone's own tuple of stage outputs and selects the element that satisfies BOTH the channel count
 (320) and the spatial stride (16) relative to the input, requiring exactly one match and failing
 loudly otherwise. Architecture semantics are verified at runtime; names are not assumed.
+
+STRICT LOAD (R6, L-CKPT-GUARD; IMPLEMENTATION_CONTRACT B1): the segmentor is built from the config
+WITHOUT weights (`init_model(config, None)`), its `architecture_signature` is taken, and the
+checkpoint's state must then match `model.state_dict()` exactly under this module's own comparison:
+no missing, unexpected, shape-mismatched, dtype-mismatched or non-tensor entry, and no key that the
+`module.` strip collapses. Only then does `load_state_dict(strict=True)` copy the weights. torch's
+strict flag alone is not the check: it accepts a state without `num_batches_tracked` and `copy_` casts
+dtypes. mmengine's non-strict `load_checkpoint` is not used. The build record carries the provenance
+fields `TeacherProvenance` records (src/distill/teacher.py).
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
+import sys
 from pathlib import Path
 from typing import Callable, Sequence
 
@@ -45,6 +57,39 @@ class TeacherCheckpointInvalid(ValueError):
     """Raised when a teacher checkpoint is unreadable, malformed, or not a SegNeXt checkpoint."""
 
 
+class TeacherStateDictMismatch(TeacherCheckpointInvalid):
+    """R6: the checkpoint's state does not match the built teacher exactly. One code for every class.
+
+    The five classes are exact counts, and their key lists are fields: `missing` (in the model, not in
+    the checkpoint), `unexpected` (the reverse), `shape`, `dtype` and `non_tensor`. `duplicate` lists
+    the keys that two checkpoint keys collapse onto when the `module.` prefix is stripped. The message
+    names at most MAX_NAMES keys per class.
+    """
+
+    code = "teacher_state_dict_mismatch"
+    CLASSES = ("missing", "unexpected", "shape", "dtype", "non_tensor")
+    MAX_NAMES = 20
+
+    def __init__(self, *, missing=(), unexpected=(), shape=(), dtype=(), non_tensor=(), duplicate=(),
+                 source: str = ""):
+        self.missing, self.unexpected, self.shape = list(missing), list(unexpected), list(shape)
+        self.dtype, self.non_tensor, self.duplicate = list(dtype), list(non_tensor), list(duplicate)
+        counts = " ".join(f"{c}={len(getattr(self, c))}" for c in (*self.CLASSES, "duplicate"))
+        lines = [f"[{self.code}] teacher checkpoint {source} does not match the built teacher "
+                 f"exactly: {counts}"]
+        for c in (*self.CLASSES, "duplicate"):
+            names = getattr(self, c)
+            if names:
+                more = (f" (+{len(names) - self.MAX_NAMES} more)" if len(names) > self.MAX_NAMES
+                        else "")
+                lines.append(f"  {c}: {names[:self.MAX_NAMES]}{more}")
+        super().__init__("\n".join(lines))
+
+    @property
+    def counts(self) -> dict:
+        return {c: len(getattr(self, c)) for c in (*self.CLASSES, "duplicate")}
+
+
 class TeacherArchitectureMismatch(RuntimeError):
     """Raised when the built teacher does not expose the expected Stage-3 / class-space semantics."""
 
@@ -58,7 +103,8 @@ def load_teacher_state_dict(ckpt_path: str | Path, map_location: str = "cpu") ->
       * `{"state_dict": {...}}`,
       * a full checkpoint dict carrying metadata, e.g. `{"meta": {...}, "state_dict": {...}}`.
 
-    `module.` prefixes (distributed training) are stripped. Anything else — a non-dict payload, an
+    `module.` prefixes (distributed training) are stripped; a strip that collapses two keys onto one
+    is refused (`TeacherStateDictMismatch`, `duplicate`). Anything else — a non-dict payload, an
     empty mapping, a mapping without tensors, or a state_dict that is not a SegNeXt/MSCAN encoder-
     decoder — raises `TeacherCheckpointInvalid`. Unrelated or random checkpoints are never silently
     accepted (contract: no silent teacher substitution).
@@ -79,7 +125,15 @@ def load_teacher_state_dict(ckpt_path: str | Path, map_location: str = "cpu") ->
     if not isinstance(state, dict) or not state:
         raise TeacherCheckpointInvalid(f"teacher checkpoint {path} contains no usable state_dict")
 
-    state = {(k[len("module."):] if k.startswith("module.") else k): v for k, v in state.items()}
+    stripped = {(k[len("module."):] if k.startswith("module.") else k): v for k, v in state.items()}
+    if len(stripped) != len(state):
+        seen: dict[str, int] = {}
+        for k in state:
+            name = k[len("module."):] if k.startswith("module.") else k
+            seen[name] = seen.get(name, 0) + 1
+        raise TeacherStateDictMismatch(duplicate=sorted(k for k, n in seen.items() if n > 1),
+                                       source=str(path))
+    state = stripped
     if not any(torch.is_tensor(v) for v in state.values()):
         raise TeacherCheckpointInvalid(
             f"teacher checkpoint {path} state_dict holds no tensors — not a model checkpoint")
@@ -99,6 +153,85 @@ def checkpoint_metadata(ckpt_path: str | Path, map_location: str = "cpu") -> dic
     payload = torch.load(str(Path(ckpt_path)), map_location=map_location, weights_only=False)
     meta = payload.get("meta", {}) if isinstance(payload, dict) else {}
     return meta if isinstance(meta, dict) else {}
+
+
+# ------------------------------------------------------------------ strict load (R6)
+def architecture_signature(model: nn.Module) -> str:
+    """SHA-256 of the canonical JSON list of [name, shape, dtype] over `model.state_dict()`, sorted by
+    name (compact separators, ASCII). A tensor census of the built segmentor, taken before any weight
+    is loaded; it identifies the parameter and buffer layout, not the model's behaviour."""
+    entries = [[name, [int(d) for d in t.shape], str(t.dtype)]
+               for name, t in sorted(model.state_dict().items())]
+    blob = json.dumps(entries, separators=(",", ":"), ensure_ascii=True).encode("ascii")
+    return hashlib.sha256(blob).hexdigest()
+
+
+def strict_load_teacher_state(model: nn.Module, state: dict, *, source: str = "") -> dict:
+    """Load `state` into `model` only if it matches `model.state_dict()` exactly (R6).
+
+    The comparison is this function's own: every model key present, no other key, every value a
+    tensor of the model's shape and dtype. Any non-zero count raises `TeacherStateDictMismatch`. Only
+    then `load_state_dict(strict=True)` copies the weights. Returns the five counts and the duplicate
+    count (all 0; a duplicate is refused earlier, by load_teacher_state_dict) and the number of entries."""
+    target = model.state_dict()
+    missing = sorted(k for k in target if k not in state)
+    unexpected = sorted(k for k in state if k not in target)
+    non_tensor = sorted(k for k, v in state.items() if not torch.is_tensor(v))
+    shape, dtype = [], []
+    for k in sorted(set(state) & set(target)):
+        v = state[k]
+        if not torch.is_tensor(v):
+            continue
+        if tuple(v.shape) != tuple(target[k].shape):
+            shape.append(k)
+        if v.dtype != target[k].dtype:
+            dtype.append(k)
+    if missing or unexpected or shape or dtype or non_tensor:
+        raise TeacherStateDictMismatch(missing=missing, unexpected=unexpected, shape=shape,
+                                       dtype=dtype, non_tensor=non_tensor, source=source)
+    model.load_state_dict(state, strict=True)
+    return {"missing": 0, "unexpected": 0, "shape": 0, "dtype": 0, "non_tensor": 0, "duplicate": 0,
+            "entries": len(target)}
+
+
+def model_cfg_sha256(model: nn.Module) -> str:
+    """SHA-256 of the canonical JSON (sorted keys, compact separators, ASCII) of the loaded instance's
+    resolved `cfg.model`: the config file merged with its `_base_` from the installed mmseg, so it
+    pins the NMF settings the file itself does not hold. A value json cannot encode raises."""
+    blob = json.dumps(model.cfg.model.to_dict(), sort_keys=True, separators=(",", ":"),
+                      ensure_ascii=True)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def _sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for block in iter(lambda: fh.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def _build_record(model: nn.Module, *, mmseg_built: bool, config_path, signature: str,
+                  strict_load: dict) -> dict:
+    """The provenance fields `build_segnext_teacher` contributes (TeacherProvenance, DL-50). The config
+    fields exist only for a model the mmseg factory built; the components hashes only when the decode
+    head is teacher_components' IsolatedNMFLightHamHead. Every value is a plain type."""
+    record = {"config_path": None, "config_sha256": None, "ham_kwargs": None,
+              "architecture_signature": signature, "teacher_components_sha256": None,
+              "reused_module_hashes": None, "model_cfg_sha256": None}
+    if mmseg_built:
+        resolved = Path(config_path).resolve()
+        ham = model.cfg.model.decode_head.ham_kwargs.to_dict()
+        json.dumps(ham)                               # plain values only, or this raises
+        record.update(config_path=str(resolved), config_sha256=_sha256_file(resolved),
+                      ham_kwargs=ham, model_cfg_sha256=model_cfg_sha256(model))
+    tc = sys.modules.get("src.training.teacher_components")
+    head_cls = getattr(tc, "IsolatedNMFLightHamHead", None) if tc is not None else None
+    if head_cls is not None and type(getattr(model, "decode_head", None)) is head_cls:
+        record.update(teacher_components_sha256=tc.COMPONENTS_PROVENANCE["sha256"],
+                      reused_module_hashes=dict(tc.reused_module_hashes()))
+    record["strict_load"] = dict(strict_load)
+    return record
 
 
 # ------------------------------------------------------------------ Stage-3 resolution
@@ -237,22 +370,34 @@ class SegNeXtTeacherAdapter(nn.Module):
 def build_segnext_teacher(ckpt_path: str | Path, config_path: str | None = None,
                           model_factory: Callable[[str | None, str], nn.Module] | None = None,
                           num_classes: int = TEACHER_NUM_CLASSES) -> nn.Module:
-    """Build the frozen-ready SegNeXt-B teacher from an explicit checkpoint.
+    """Build the frozen-ready SegNeXt-B teacher from an explicit checkpoint (R6 order).
 
-    `model_factory(config_path, ckpt_path) -> nn.Module` is injectable so the adapter's
-    framework-independent behaviour is testable without mmseg. When omitted, MMSegmentation is
-    required and `TeacherStackMissing` is raised if it is not installed.
+    Parse and validate the checkpoint, then the factory builds the segmentor without weights, then
+    its `architecture_signature`, then the strict load, then the adapter, which carries the build
+    record (`build_record`). One model instance; nothing reads the config file before the factory
+    returns. `model_factory(config_path, ckpt_path) -> nn.Module` is injectable so the adapter's
+    framework-independent behaviour is testable without mmseg; whatever it returns is loaded
+    strictly. When omitted, MMSegmentation is required and `TeacherStackMissing` is raised if it is
+    not installed.
     """
     path = Path(ckpt_path)
-    load_teacher_state_dict(path)          # validate the checkpoint BEFORE constructing anything
-    if model_factory is None:
-        model_factory = _mmseg_model_factory
-    model = model_factory(config_path, str(path))
-    return SegNeXtTeacherAdapter(model, num_classes=num_classes)
+    state = load_teacher_state_dict(path)  # validate the checkpoint BEFORE constructing anything
+    mmseg_built = model_factory is None
+    factory = _mmseg_model_factory if mmseg_built else model_factory
+    model = factory(config_path, str(path))
+    signature = architecture_signature(model)
+    report = strict_load_teacher_state(model, state, source=str(path))
+    adapter = SegNeXtTeacherAdapter(model, num_classes=num_classes)
+    adapter.build_record = _build_record(model, mmseg_built=mmseg_built, config_path=config_path,
+                                         signature=signature, strict_load=report)
+    return adapter
 
 
 def _mmseg_model_factory(config_path: str | None, ckpt_path: str) -> nn.Module:
-    """Construct the SegNeXt segmentor through MMSegmentation's own API."""
+    """Construct the SegNeXt segmentor through MMSegmentation's own API, WITHOUT weights.
+
+    `init_model(config, None)`: `build_segnext_teacher` loads the checkpoint strictly afterwards, so
+    mmengine's non-strict `load_checkpoint` never runs. `ckpt_path` keeps the factory signature."""
     try:
         from mmseg.apis import init_model
     except Exception as e:  # noqa: BLE001
@@ -267,7 +412,7 @@ def _mmseg_model_factory(config_path: str | None, ckpt_path: str) -> nn.Module:
             "a teacher config path is required to build the SegNeXt segmentor — pass "
             f"--teacher-config pointing at the derived '{PLANTSEG_CONFIG_STEM}.py' "
             "(docs/teacher_prep_runbook.md §3)")
-    return init_model(str(config_path), str(ckpt_path), device="cpu")
+    return init_model(str(config_path), None, device="cpu")
 
 
 def segnext_builder(config_path: str | None = None,

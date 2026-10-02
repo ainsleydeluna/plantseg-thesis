@@ -27,8 +27,8 @@ import torch.nn as nn  # noqa: E402
 from src.distill import (STAGE3_CHANNELS, FrozenTeacher, SegNeXtTeacherAdapter,  # noqa: E402
                          TeacherArchitectureMismatch, TeacherCheckpointInvalid,
                          TeacherCheckpointMissing, TeacherStackMissing, build_cwd_projection,
-                         build_segnext_teacher, load_frozen_teacher, load_teacher_state_dict,
-                         segnext_builder, select_stride16_feature)
+                         architecture_signature, build_segnext_teacher, load_frozen_teacher,
+                         load_teacher_state_dict, segnext_builder, select_stride16_feature)
 from src.models.student import build_student  # noqa: E402
 from src.seeds import set_seed  # noqa: E402
 from src.training.train_distill import distillation_losses, resolve_stage  # noqa: E402
@@ -148,6 +148,11 @@ def valid_state() -> dict:
     return {"backbone.projs.0.weight": torch.randn(4, 3, 1, 1),
             "decode_head.conv_seg.weight": torch.randn(NC, 8, 1, 1),
             "decode_head.conv_seg.bias": torch.randn(NC)}
+
+
+def stub_state() -> dict:
+    """A state that matches StubSegNeXt exactly: what the builder's strict load (R6) requires."""
+    return {k: v.detach().clone() for k, v in StubSegNeXt().state_dict().items()}
 
 
 # ---------------------------------------------------------------- 1. import isolation
@@ -272,7 +277,7 @@ def test_adapter() -> None:
 def test_frozen_and_provenance() -> None:
     set_seed(42)
     ck = write_ckpt("teacher_ok.pth", {"meta": {"mmseg_version": "1.2.2"},
-                                       "state_dict": valid_state()})
+                                       "state_dict": stub_state()})
     teacher = load_frozen_teacher(str(ck), builder=segnext_builder(model_factory=stub_factory))
     check("load_frozen_teacher_builds_adapter",
           isinstance(teacher, FrozenTeacher) and isinstance(teacher.teacher, SegNeXtTeacherAdapter))
@@ -285,6 +290,26 @@ def test_frozen_and_provenance() -> None:
           f"{prov['ckpt_bytes']} B")
     check("provenance_records_builder", prov["builder"] == "segnext_mscan_b_builder",
           prov["builder"])
+    keys = ["builder", "ckpt_path", "ckpt_sha256", "ckpt_bytes", "expected_sha256", "config_path",
+            "config_sha256", "ham_kwargs", "architecture_signature", "teacher_components_sha256",
+            "reused_module_hashes", "model_cfg_sha256"]
+    check("provenance_has_the_twelve_dl50_keys_in_order", list(prov) == keys, str(list(prov)))
+    check("provenance_stub_build_records_signature_only",
+          prov["architecture_signature"] == architecture_signature(StubSegNeXt())
+          and all(prov[k] is None for k in keys[4:] if k != "architecture_signature"), str(prov)[:240])
+    checked = load_frozen_teacher(str(ck), builder=segnext_builder(model_factory=stub_factory),
+                                  expected_sha256=expected_sha).provenance.as_dict()
+    check("provenance_records_the_matched_expected_sha256",
+          checked["expected_sha256"] == expected_sha == checked["ckpt_sha256"])
+    bypass = load_frozen_teacher(str(ck), builder=lambda p: SegNeXtTeacherAdapter(StubSegNeXt()))
+    check("provenance_bypassing_builder_records_eight_nulls",
+          all(bypass.provenance.as_dict()[k] is None for k in keys[4:]), str(bypass.provenance)[:200])
+    # a value the caller supplied matched before any builder call, so it is recorded whatever the builder
+    bypass_checked = load_frozen_teacher(str(ck), builder=lambda p: SegNeXtTeacherAdapter(StubSegNeXt()),
+                                         expected_sha256=expected_sha).provenance.as_dict()
+    check("provenance_bypassing_builder_with_a_supplied_value_records_seven_nulls",
+          bypass_checked["expected_sha256"] == expected_sha
+          and all(bypass_checked[k] is None for k in keys[5:]), str(bypass_checked)[:200])
 
     x = torch.randn(1, 3, 64, 64)
     out = teacher(x, feat_size=(4, 4))
@@ -305,7 +330,7 @@ def test_frozen_and_provenance() -> None:
 # ---------------------------------------------------------------- 6. E3 integration
 def test_e3_integration() -> None:
     set_seed(42)
-    ck = write_ckpt("teacher_e3.pth", {"state_dict": valid_state()})
+    ck = write_ckpt("teacher_e3.pth", {"state_dict": stub_state()})
     teacher = load_frozen_teacher(str(ck), builder=segnext_builder(model_factory=stub_factory))
     student = build_student(pretrained=False)
     proj = build_cwd_projection()

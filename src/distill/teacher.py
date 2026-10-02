@@ -12,7 +12,9 @@ SAFETY MODEL — the three failure modes this module makes impossible:
      `MockTeacher`, which must be constructed explicitly by name and is refused by the real-run path.
   2. **No silent download.** Nothing here fetches anything from the network.
   3. **No silent substitution.** The builder is explicit; provenance (path, sha256, builder name) is
-     recorded on the instance so a run manifest can capture it later.
+     recorded on the instance so a run manifest can capture it later. With `expected_sha256` the
+     checkpoint is hashed and compared BEFORE anything reads it or builds a model (R6), and the
+     default builder loads it strictly (`segnext_teacher.strict_load_teacher_state`).
 
 Teacher CONSTRUCTION from a SegNeXt checkpoint needs MMSegmentation 1.2.2 + mmcv 2.1.0, which are
 deliberately absent from the E1/E2/E3 student stack (`requirements-e1.txt`). The mmseg builder is
@@ -22,8 +24,10 @@ teacher preparation is a separate workflow (docs/teacher_prep_runbook.md).
 
 from __future__ import annotations
 
+import copy
 import hashlib
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Callable
 
@@ -42,16 +46,59 @@ class TeacherStackMissing(RuntimeError):
     """Raised when MMSegmentation/mmcv are needed to build the teacher but are not installed."""
 
 
+class TeacherChecksumFormatError(ValueError):
+    """An expected teacher SHA-256 that is not 64 lowercase hexadecimal characters ("" included)."""
+
+    code = "teacher_ckpt_sha256_format"
+
+
+class TeacherChecksumMismatch(ValueError):
+    """The teacher checkpoint's SHA-256 is not the expected one; nothing was read or built (R6)."""
+
+    code = "teacher_ckpt_sha256_mismatch"
+
+    def __init__(self, expected: str, actual: str, path=None):
+        self.expected, self.actual = expected, actual
+        super().__init__(f"[{self.code}] teacher checkpoint {path} has sha256 {actual}, expected "
+                         f"{expected}; it was neither parsed nor built")
+
+
+SHA256_HEX = re.compile(r"[0-9a-f]{64}")
+
+
+def sha256_format_error(value) -> str | None:
+    """None when `value` is 64 lowercase hexadecimal characters, else the refusal text."""
+    if isinstance(value, str) and SHA256_HEX.fullmatch(value):
+        return None
+    return (f"{value!r} is not a SHA-256: 64 lowercase hexadecimal characters are required "
+            "(PowerShell's Get-FileHash prints uppercase; lower-case it)")
+
+
 @dataclass(frozen=True)
 class TeacherProvenance:
+    """The teacher's identity (DL-50). Twelve keys, in this order; every value is a plain type. The
+    eight after `ckpt_bytes` are null when not applicable: `expected_sha256` when none was supplied,
+    the build-record fields for a builder that bypasses `segnext_teacher.build_segnext_teacher`."""
     builder: str
     ckpt_path: str | None
     ckpt_sha256: str | None
     ckpt_bytes: int | None
+    expected_sha256: str | None = None
+    config_path: str | None = None
+    config_sha256: str | None = None
+    ham_kwargs: dict | None = None
+    architecture_signature: str | None = None
+    teacher_components_sha256: str | None = None
+    reused_module_hashes: dict | None = None
+    model_cfg_sha256: str | None = None
 
     def as_dict(self) -> dict:
-        return {"builder": self.builder, "ckpt_path": self.ckpt_path,
-                "ckpt_sha256": self.ckpt_sha256, "ckpt_bytes": self.ckpt_bytes}
+        return {f.name: copy.deepcopy(getattr(self, f.name)) for f in fields(self)}
+
+
+# The provenance fields a builder contributes through its module's `build_record`.
+BUILD_RECORD_KEYS = ("config_path", "config_sha256", "ham_kwargs", "architecture_signature",
+                     "teacher_components_sha256", "reused_module_hashes", "model_cfg_sha256")
 
 
 @dataclass(frozen=True)
@@ -224,19 +271,39 @@ def build_mmseg_teacher(ckpt_path: Path, config_path: str | None = None) -> nn.M
 def load_frozen_teacher(ckpt_path: str | None, *,
                         builder: Callable[[Path], nn.Module] | None = None,
                         config_path: str | None = None,
-                        record_sha256: bool = True) -> FrozenTeacher:
+                        record_sha256: bool = True,
+                        expected_sha256: str | None = None) -> FrozenTeacher:
     """Load the frozen teacher from an explicit checkpoint path.
 
-    Fails loud when the checkpoint is missing. `builder` lets teacher preparation inject a concrete
-    constructor without changing this call site.
+    Fails loud when the checkpoint is missing. When `expected_sha256` is not None it must be 64
+    lowercase hex characters (`TeacherChecksumFormatError`, "" included); the file is then hashed once
+    and compared BEFORE any `torch.load` or builder call (`TeacherChecksumMismatch`), and that hash is
+    the recorded `ckpt_sha256` whatever `record_sha256` says. The default builder is
+    `segnext_teacher.segnext_builder(config_path)` (recorded as `segnext_mscan_b_builder`), which
+    builds without weights and loads the checkpoint strictly; `builder` lets tests inject another.
     """
     path = require_teacher_checkpoint(ckpt_path)
-    make = builder if builder is not None else (lambda p: build_mmseg_teacher(p, config_path))
+    if expected_sha256 is not None:
+        error = sha256_format_error(expected_sha256)
+        if error is not None:
+            raise TeacherChecksumFormatError(f"[{TeacherChecksumFormatError.code}] expected teacher "
+                                             f"sha256 {error}")
+    digest = _sha256(path) if (record_sha256 or expected_sha256 is not None) else None
+    if expected_sha256 is not None and digest != expected_sha256:
+        raise TeacherChecksumMismatch(expected_sha256, digest, path)
+    if builder is None:
+        from .segnext_teacher import segnext_builder  # local import: keeps teacher.py mmseg-free
+        make = segnext_builder(config_path)
+    else:
+        make = builder
     module = make(path)
+    record = getattr(module, "build_record", None) or {}
     prov = TeacherProvenance(
         builder=getattr(make, "__name__", type(make).__name__),
         ckpt_path=str(path),
-        ckpt_sha256=_sha256(path) if record_sha256 else None,
+        ckpt_sha256=digest,
         ckpt_bytes=path.stat().st_size,
+        expected_sha256=expected_sha256,
+        **{k: copy.deepcopy(record.get(k)) for k in BUILD_RECORD_KEYS},
     )
     return FrozenTeacher(module, provenance=prov)

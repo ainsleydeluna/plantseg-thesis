@@ -5,7 +5,8 @@ The teacher is a DESCRIPTIVE REFERENCE: this proves it can be resolved, validate
 an ordinary FP32 model, while never being turned into an inferential comparator. All fixtures are
 synthetic checkpoints in a temp dir outside the repository; PlantSeg is never touched. The one check
 on the real (non-stub) builder path detects the MMSeg stack the way the builder does: without it the
-path must fail loudly; with it, it must build the thesis teacher from its config.
+path must fail loudly; with it, it must refuse the 3-key fixture under the strict load (R6) and build
+the thesis teacher from a full-shape fixture.
 """
 from __future__ import annotations
 
@@ -219,17 +220,23 @@ def test_loading() -> None:
     expect("wrapper_refuses_wrong_logit_channels", CheckpointError,
            TeacherEvalModel(_WrongChannels()), torch.randn(1, 3, 32, 32))
 
-    # the real builder path fails loudly without the teacher stack; with it, it builds the thesis
-    # teacher from its config: the MMSeg SegNeXt adapter, frozen, with the M4-V stream (no stub).
-    # Construction only, not weight fidelity: mmengine loads the partial fixture non-strictly.
+    # the real builder path fails loudly without the teacher stack; with it, the strict load (R6) refuses
+    # the 3-key fixture, and a full-shape fixture (the thesis config's own random-init state) builds the
+    # MMSeg SegNeXt adapter, frozen, with the M4-V stream (no stub).
     from src.distill.teacher import TeacherStackMissing
     if not mmseg_stack_importable():
         expect("missing_teacher_stack_fails_loudly", TeacherStackMissing, load_teacher_model, resolved,
                config_path=str(TEACHER_CONFIG))
     else:
-        from src.distill.segnext_teacher import SegNeXtTeacherAdapter
+        from src.distill.segnext_teacher import SegNeXtTeacherAdapter, TeacherStateDictMismatch
+        expect("real_teacher_path_refuses_partial_fixture", TeacherStateDictMismatch, load_teacher_model,
+               resolved, config_path=str(TEACHER_CONFIG))
         try:
-            real, _ = load_teacher_model(resolved, config_path=str(TEACHER_CONFIG))
+            from mmseg.apis import init_model
+            full = TMP / "teacher_full_shape.pth"
+            torch.save({"meta": {}, "state_dict": init_model(str(TEACHER_CONFIG), None,
+                                                             device="cpu").state_dict()}, full)
+            real, _ = load_teacher_model(validate_teacher_artifact(full), config_path=str(TEACHER_CONFIG))
             policy = (real.nmf_policy or {}).get("policy")
             ok = (isinstance(real, TeacherEvalModel)
                   and isinstance(real.teacher.teacher, SegNeXtTeacherAdapter)
