@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Synthetic verification of the E1-E7 stage/artifact evaluation bridge. No dataset, no GPU.
+"""Synthetic check of the E1-E7 and A, F, G stage/artifact evaluation bridge. No dataset, no GPU.
 
 Every fixture is a synthetic checkpoint or provenance JSON in a temp dir outside the repository.
 The PlantSeg TEST split is never read: only row COUNTS are reasoned about, never rows.
@@ -18,9 +18,10 @@ import torch  # noqa: E402
 
 from src.eval.model_loading import sha256_file  # noqa: E402
 from src.eval.stage_artifacts import (OFFICIAL_ROWS, STAGE_ARTIFACTS, StageArtifactError,  # noqa: E402
-                                      governed_paths_error, official_launch_error,
-                                      resolve_evaluation_source, resolve_stage_artifact,
-                                      validate_fp32_artifact, validate_int8_artifact)
+                                      governed_paths_error, is_descriptive_only,
+                                      official_launch_error, resolve_evaluation_source,
+                                      resolve_stage_artifact, validate_fp32_artifact,
+                                      validate_int8_artifact)
 from src.models.student import build_student  # noqa: E402
 
 NC = 116
@@ -76,11 +77,13 @@ def prov(name: str, stage: str, source: str, method: str, art: Path, **over) -> 
 
 # ---------------------------------------------------------------- 1. stage contract
 def test_stage_contract() -> None:
-    check("all_stages_known", sorted(STAGE_ARTIFACTS) == ["E1", "E2", "E3", "E4", "E5", "E6",
-                                                          "E7", "TEACHER"],
-          "seven student stages plus the descriptive teacher")
+    check("all_stages_known", sorted(STAGE_ARTIFACTS) == ["A", "E1", "E2", "E3", "E4", "E5", "E6",
+                                                          "E7", "F", "G", "TEACHER"],
+          "seven student stages, the three exploratory arms and the descriptive teacher")
     for s, kind, prec in (("E1", "fp32_checkpoint", "fp32"), ("E2", "fp32_checkpoint", "fp32"),
-                          ("E3", "fp32_checkpoint", "fp32"), ("E4", "int8_artifact", "int8_ptq"),
+                          ("E3", "fp32_checkpoint", "fp32"), ("A", "fp32_checkpoint", "fp32"),
+                          ("F", "fp32_checkpoint", "fp32"), ("G", "fp32_checkpoint", "fp32"),
+                          ("E4", "int8_artifact", "int8_ptq"),
                           ("E5", "int8_artifact", "int8_qat"), ("E6", "int8_artifact", "int8_qat"),
                           ("E7", "int8_artifact", "int8_ptq")):
         spec = resolve_stage_artifact(s)
@@ -187,6 +190,40 @@ def test_fp32_metadata() -> None:
                 TMP / "nope.pt")
 
 
+def test_arms_and_declared_stage() -> None:
+    """DL-52 (L-CKPT-GUARD): the arms A, F, G are descriptive FP32 stages with E3's projection-free
+    check; E2, E3, A, F and G checkpoints must record their stage; E1 records none."""
+    for arm in ("A", "F", "G"):
+        check(f"{arm}_ckpt_accepted_with_declared_stage",
+              validate_fp32_artifact(arm, fp32_ckpt(f"{arm.lower()}.pt", arm))["declared_stage"] == arm)
+        check(f"{arm}_is_descriptive_only", is_descriptive_only(arm))
+        leak = TMP / f"{arm.lower()}_leak.pt"
+        st = _state(); st["cwd_projection.weight"] = torch.randn(320, 160, 1, 1)
+        torch.save({"stage": arm, "num_classes": NC, "model_state_dict": st}, leak)
+        try:
+            validate_fp32_artifact(arm, leak)
+            check(f"{arm}_projection_contamination_rejected", False, "no error")
+        except Exception as e:  # noqa: BLE001  (CWDProjectionLeak from the export contract)
+            check(f"{arm}_projection_contamination_rejected", "CWDProjectionLeak" in type(e).__name__,
+                  type(e).__name__)
+    check("teacher_and_arms_descriptive_students_not",
+          is_descriptive_only("teacher") and not any(is_descriptive_only(s) for s in ("E1", "E2", "E3")))
+    e1 = fp32_ckpt("e1_undeclared.pt", None)
+    for stage in ("E2", "E3", "A", "F", "G"):
+        expect_code(f"e1_ckpt_under_{stage}_is_stage_undeclared", "stage_undeclared",
+                    validate_fp32_artifact, stage, e1)
+    expect_code("a_ckpt_under_f_is_stage_mismatch", "stage_mismatch", validate_fp32_artifact, "F",
+                fp32_ckpt("a_as_f.pt", "A"))
+    expect_code("g_ckpt_under_e1_is_stage_mismatch", "stage_mismatch", validate_fp32_artifact, "E1",
+                fp32_ckpt("g_as_e1.pt", "G"))
+    from scripts.evaluate_model import build_parser
+    from src.eval.artifacts import STAGES
+    parsed = [build_parser().parse_args(["--stage", s, "--out-dir", str(TMP / "o")]).stage
+              for s in ("A", "F", "G")]
+    check("evaluator_cli_and_artifact_schema_accept_arms",
+          parsed == ["A", "F", "G"] and {"A", "F", "G"} <= set(STAGES), f"{parsed} {STAGES}")
+
+
 # ---------------------------------------------------------------- 5. official preconditions
 def test_official_launch_preconditions() -> None:
     """PRE-RUN facts only. `actual_rows` must not appear here — it does not exist yet."""
@@ -249,7 +286,7 @@ def main() -> int:
     print(f"temp: {TMP}")
     print("=" * 78)
     for fn in (test_stage_contract, test_kind_separation, test_provenance_validation,
-               test_fp32_metadata, test_official_launch_preconditions):
+               test_fp32_metadata, test_arms_and_declared_stage, test_official_launch_preconditions):
         print(f"\n--- {fn.__name__} ---")
         fn()
     print("\n[CHECKS]")

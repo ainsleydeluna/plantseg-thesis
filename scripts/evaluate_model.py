@@ -12,11 +12,11 @@ Drives the proven A2a flow in the frozen order:
       -> write_artifact                   (with the run.eval_runtime record)
 
 The CLI and its metadata are STAGE-NEUTRAL (any stage / role / precision / condition can be
-*described*). Implemented construction paths are the FP32 student (E1/E2/E3, `--checkpoint`), the
-converted INT8 student (E4-E7, `--provenance`, CPU/QNNPACK only) and the teacher (M4-V, CPU,
-`--checkpoint` + `--teacher-config` + `--teacher-ckpt-sha256`, the checkpoint's SHA-256, compared
-before the file is parsed; R6). Corruption construction remains rejected explicitly --
-metadata neutrality is never misrepresented as runtime support.
+*described*). Implemented construction paths are the FP32 student (E1/E2/E3 and the descriptive arms
+A/F/G, `--checkpoint`), the converted INT8 student (E4-E7, `--provenance`, CPU/QNNPACK only) and the
+teacher (M4-V, CPU, `--checkpoint` + `--teacher-config` + `--teacher-ckpt-sha256`, the checkpoint's
+SHA-256, compared before the file is parsed; R6). Corruption construction remains rejected
+explicitly -- metadata neutrality is never misrepresented as runtime support.
 
 INT8 model-source validation (stage, source stage, artifact hash, backend) happens BEFORE the
 dataset adapter exists, so a tampered or mismatched artifact can never touch the test split.
@@ -69,7 +69,7 @@ class Counters:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Stage-neutral PlantSeg evaluation runner.")
     p.add_argument("--stage", default="E1",
-                   choices=["teacher", "E1", "E2", "E3", "E4", "E5", "E6", "E7"])
+                   choices=["teacher", "E1", "E2", "E3", "A", "F", "G", "E4", "E5", "E6", "E7"])
     p.add_argument("--model-role", default="student", choices=["teacher", "student"])
     p.add_argument("--precision", default="fp32", choices=["fp32", "int8_ptq", "int8_qat"])
     p.add_argument("--split", default="val", choices=["val", "test"])
