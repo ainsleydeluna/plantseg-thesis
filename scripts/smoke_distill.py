@@ -385,10 +385,15 @@ def test_training_schedule() -> None:
 
 # ---------------------------------------------------------------- 5. stage composition
 def test_stage_composition() -> None:
+    # L-AM17B-FG: three per-term switches replace the combined `cwd` flag (the unit checks of the
+    # switches themselves live in scripts/smoke_distill_switches.py).
     e2, e3 = resolve_stage("e2"), resolve_stage("e3")
-    check("e2_is_logit_kd_only", e2["logit_kd"] and not e2["cwd"], str(e2["objective"]))
-    check("e3_is_logit_kd_plus_cwd", e3["logit_kd"] and e3["cwd"], str(e3["objective"]))
-    check("only_two_distill_stages", sorted(STAGES) == ["e2", "e3"])
+    check("e2_is_logit_kd_only", e2["logit_kd"] and not e2["cwd_feat"] and not e2["cwd_logit"],
+          str(e2["objective"]))
+    check("e3_is_logit_kd_plus_cwd", e3["logit_kd"] and e3["cwd_feat"] and e3["cwd_logit"],
+          str(e3["objective"]))
+    check("five_distill_stages", sorted(STAGES) == ["a", "e2", "e3", "f", "g"], str(sorted(STAGES)))
+    check("combined_cwd_key_gone", all("cwd" not in s for s in STAGES.values()))
     try:
         resolve_stage("e4")
         check("unknown_stage_rejected", False, "no exception raised")

@@ -4,18 +4,19 @@
 E3 = the E1 recipe plus the SAME Logit KD as E2 (reused unchanged, contract B3) plus Shu-2021
 Channel-Wise KD on the stride-16 C5 feature map and the head logit map:
 
-    L = L_CE + L_Dice + lambda_logit*L_LogitKD + 50*L_CWD_feat + 3*L_CWD_logit
+    L = L_CE + L_Dice + lambda_logit*L_LogitKD + alpha_cwd*L_CWD_feat + 3*L_CWD_logit
 
-Like E2 it starts from **E1 init, trained independently** — it does NOT resume from the trained E2
-checkpoint. The 1x1 CWD projection (student 160-ch C5 -> teacher 320-ch) is TRAINING-ONLY: it is
-stored under a separate checkpoint key so `model_state_dict` is already the projection-free student
-that E6 (QAT) and E7 (PTQ) consume. E3 itself stays FP32 with no QAT/PTQ.
+alpha_cwd comes from the AM-16 item 2 grid {25, 50, 100} (`--alpha`, default 50). Like E2 it starts
+from **E1 init, trained independently** — it does NOT resume from the trained E2 checkpoint. The 1x1
+CWD projection (student 160-ch C5 -> teacher 320-ch) is TRAINING-ONLY: it and its optimizer group are
+written to projection.pt beside the checkpoint, never into it, so `model_state_dict` is already the
+projection-free student that E6 (QAT) and E7 (PTQ) consume. E3 itself stays FP32 with no QAT/PTQ.
 
     python src/training/train_e3.py --dry-run
     python src/training/train_e3.py --real-run --confirm-real-run \
         --teacher-ckpt /workspace/teacher/segnext_b_plantseg.pth \
-        --lambda-logit <same value selected for E2> \
-        --ckpt-dir /workspace/e3_ckpts
+        --lambda-logit <same value selected for E2> --alpha 50 \
+        --ckpt-dir /workspace/e3_s42_alpha50
 """
 from __future__ import annotations
 

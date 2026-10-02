@@ -5,10 +5,11 @@ E6/E7 via state_dict edit prior to observer insertion"; IMPLEMENTATION_CONTRACT.
 projection is "absent from every evaluated model".
 
 This module enforces that structurally rather than by convention: `train_distill.py` never merges the
-projection into the student module, and writes it to a SEPARATE checkpoint key, so
-`checkpoint["model_state_dict"]` is already the clean deployment student that E6/E7 consume.
-`assert_clean_student_state` is the guard that proves it, and `strip_cwd_projection` repairs a
-state_dict that was produced some other way.
+projection into the student module, and writes it (with its optimizer group) to `projection.pt`
+beside the checkpoint rather than into the checkpoint (L-AM17B-FG; pre-lane checkpoints carried it
+under the separate `cwd_projection_state_dict` key), so `checkpoint["model_state_dict"]` is already
+the clean deployment student that E6/E7 consume. `assert_clean_student_state` is the guard that
+proves it, and `strip_cwd_projection` repairs a state_dict that was produced some other way.
 """
 
 from __future__ import annotations
@@ -36,7 +37,8 @@ def assert_clean_student_state(state: Mapping[str, object]) -> None:
         raise CWDProjectionLeak(
             f"the training-only CWD projection is present in the student state_dict: {leaked}. "
             "It must be absent from every evaluated/quantized model (contract B3/B4); E6/E7 load "
-            f"checkpoint['model_state_dict'], and the projection belongs under '{CWD_PROJECTION_KEY}'.")
+            "checkpoint['model_state_dict'], and the projection belongs in projection.pt beside the "
+            f"checkpoint (pre-lane checkpoints: under '{CWD_PROJECTION_KEY}').")
 
 
 def strip_cwd_projection(state: Mapping[str, object]) -> dict:
