@@ -239,6 +239,13 @@ def run(args, *, counters: Counters | None = None, teacher_builder=None) -> Path
         from src.eval.stage_artifacts import resolve_evaluation_source
         # A tampered artifact, a wrong source stage or a stage mismatch fails HERE.
         resolved = resolve_evaluation_source(args.stage, provenance=args.provenance)
+        if args.artifact_status == "official":
+            # an official E4/E7 needs the committed AM-10 list of record (L-AM10); sensitivity and
+            # synthetic calibration lists are scored descriptively only
+            from src.eval.stage_artifacts import int8_official_calibration_error
+            calibration_error = int8_official_calibration_error(resolved, repo_root=REPO)
+            if calibration_error:
+                raise CliError(calibration_error)
         quant_backend = select_int8_backend(require_qnnpack=True)   # refuses a non-QNNPACK build
         ckpt_path = str(resolved["artifact_path"])
         ckpt_sha = resolved["artifact_sha256"]

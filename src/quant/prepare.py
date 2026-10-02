@@ -60,16 +60,27 @@ def prepare_ptq(model: nn.Module, *, select_backend: bool = True) -> nn.Module:
     return prepared
 
 
+# AM-10: one image per calibration mini-batch (configs/quant.py `calibration_batch_size`).
+CALIBRATION_BATCH_SIZE = 1
+
+
 @torch.no_grad()
 def calibrate(prepared: nn.Module, batches: Iterable[torch.Tensor]) -> int:
     """Run calibration forwards to populate the observers. Returns the number of batches seen.
 
     The caller supplies batches drawn from the frozen 128-image TRAIN calibration subset with
     clean-test preprocessing and NO augmentation (contract B4 / `src.quant.calibration`).
+    AM-10 fixes ONE image per mini-batch: a batch that is not a single [1, C, H, W] image is refused
+    before it reaches an observer, so no calibration path can use another batch size.
     """
     prepared.eval()
     n = 0
     for batch in batches:
+        if not torch.is_tensor(batch) or batch.dim() != 4 or batch.shape[0] != CALIBRATION_BATCH_SIZE:
+            shape = tuple(batch.shape) if torch.is_tensor(batch) else type(batch).__name__
+            raise QuantPreparationError(
+                f"calibration batch {n} has shape {shape}; AM-10 fixes one image per mini-batch "
+                f"([{CALIBRATION_BATCH_SIZE}, C, H, W]) and any other batch size is refused")
         prepared(batch)
         n += 1
     if n == 0:

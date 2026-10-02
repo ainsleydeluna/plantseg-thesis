@@ -40,9 +40,9 @@ from configs.quant import QUANT                                     # noqa: E402
 from src.training.train_e1 import _assert_outside_repo              # noqa: E402  (reuse, unmodified)
 from .calibration import CalibrationIndexError                      # noqa: E402
 from .checkpoint import SourceCheckpointInvalid                     # noqa: E402
-from .prepare import (BN_FREEZE_PCT_RANGE, bn_freeze_iteration, calibrate, convert_model,  # noqa: E402
-                      disable_observers, freeze_bn_stats, qat_grad_clip_gate_error,
-                      quantization_coverage, try_converted_forward)
+from .prepare import (BN_FREEZE_PCT_RANGE, CALIBRATION_BATCH_SIZE, bn_freeze_iteration,  # noqa: E402
+                      calibrate, convert_model, disable_observers, freeze_bn_stats,
+                      qat_grad_clip_gate_error, quantization_coverage, try_converted_forward)
 from .qconfig import (QUANT_BACKEND, QuantBackendUnavailable, describe_qconfig, ptq_qconfig,  # noqa: E402
                       qat_qconfig, select_qnnpack_backend)
 from .stages import (load_source_for_stage, prepare_for_stage, require_shared_calibration_index,  # noqa: E402
@@ -318,7 +318,8 @@ def run_ptq(stage: dict, args, model, source_meta: dict, out_dir: Path, backend:
                             "--data-root must resolve to the PlantSeg root so the frozen "
                             "calibration identifiers can be read (TRAIN only)")
     prepared = prepare_for_stage(stage["key"], model, select_backend=False)
-    loader = build_calibration_loader(data_root, index["selected_ids"], args.batch_size or 1)
+    # AM-10: one image per mini-batch; main() has already refused any other --batch-size.
+    loader = build_calibration_loader(data_root, index["selected_ids"], CALIBRATION_BATCH_SIZE)
     n = calibrate(prepared, (img for img, _ in loader))
     converted = convert_model(prepared)
     coverage = quantization_coverage(converted)
@@ -491,6 +492,11 @@ def main(argv, stage_key: str) -> int:
         return 2
     if not args.confirm_real_run:
         print(f"REFUSING: --real-run requires --confirm-real-run for {stage['name']}.",
+              file=sys.stderr)
+        return 2
+    if stage["method"] == "ptq" and args.batch_size not in (None, CALIBRATION_BATCH_SIZE):
+        print(f"REFUSING: {stage['name']} calibrates one image per mini-batch (AM-10); "
+              f"--batch-size {args.batch_size} is refused. Nothing was read, loaded or written.",
               file=sys.stderr)
         return 2
     if stage["method"] == "qat":
