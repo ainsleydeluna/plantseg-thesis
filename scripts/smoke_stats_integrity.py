@@ -20,7 +20,8 @@ repository, and no statistics artifact with status `official` is written anywher
   B  acceptance (b): count warnings -- every task's B and jackknife count against its own expected
      value (1561 dataset-level, 1561 - k per-image), a per-image count != n_paired is fatal
   K  OK-2: the section 10.1 pins parsed from the contract, and the refusals of a reworded sentence
-  V  the verifier: a post-write edit, duplicate keys, an official-status artifact while unbound
+  V  the verifier: a post-write edit, duplicate keys, an artifact read as official while unbound
+     (relabelled in memory after the strict parse: no smoke writes an official status, P2)
 
 "Official request" cases patch the running stack to the pinned one (as smoke_stats_bootstrap does)
 and use cheap placeholder bootstrap tasks with B = 10,000: the gate refuses them before anything is
@@ -161,6 +162,22 @@ class Env:
         return dataclasses.replace(base, **over)
 
 
+class verifier_reads_official:
+    """The verifier reads family.json as status official with no warnings: relabelled in memory right
+    after the strict parse (check 10), so no smoke writes an official status to disk (P2)."""
+
+    def __enter__(self):
+        self.real = real = A._check_finite_values
+
+        def relabel(ctx):
+            real(ctx)
+            ctx.fam = dict(ctx.fam, artifact_status="official", warnings=[])
+        A._check_finite_values = relabel
+
+    def __exit__(self, *exc):
+        A._check_finite_values = self.real
+
+
 class pinned_stack:
     """Run as if on the section 10.1 stack (the existing smoke's monkeypatch of the running stack)."""
 
@@ -204,11 +221,11 @@ def part_a(env: Env, outs: Path) -> None:
           fam["software_environment"] == A.software_environment_block())
 
 
-def part_w(outs: Path) -> None:
+def part_w(env: Env, outs: Path) -> None:
     """The verifier alone: the valid artifact a-0001 copied, edited consistently (family.json and,
-    where needed, bootstrap.npz), its manifest regenerated, then verified artifact-only. The writer's
-    gate and its read-back comparison are not involved, so the named check is the only layer that can
-    refuse the edit."""
+    where needed, bootstrap.npz), its manifest regenerated, then verified artifact-only (W4b: with the
+    inputs, for the input part of check 4). The writer's gate and its read-back comparison are not
+    involved, so the named check is the only layer that can refuse the edit."""
     src = outs / "a-0001"
 
     def edited(tag, fam_fn=None, npz_fn=None):
@@ -224,9 +241,10 @@ def part_w(outs: Path) -> None:
         (d / A.MANIFEST_NAME).write_text(A._manifest_text(d), encoding="utf-8", newline="\n")
         return d
 
-    def case(name, d, expect_check):
-        kind, e = outcome(lambda: A.verify_statistics_artifact(d))
-        check(f"{name} -> artifact-only verification refuses: {expect_check}",
+    def case(name, d, expect_check, **kw):
+        kind, e = outcome(lambda: A.verify_statistics_artifact(d, **kw))
+        how = "verification with the inputs" if kw else "artifact-only verification"
+        check(f"{name} -> {how} refuses: {expect_check}",
               kind == "IntegrityError" and e.check == expect_check, f"{kind}: {e}")
 
     def upper_hex(f):
@@ -258,6 +276,36 @@ def part_w(outs: Path) -> None:
         a[key] = a[key][:-1]
     case("W4 a per-image task's jackknife count n_paired - 1 in family.json and bootstrap.npz alike",
          edited("04", short_json, short_npz), A.C_MATRIX)
+    ds = [t for t in BS.FROZEN_TASK_IDS if t.endswith(f"__{BS.DATASET_MIOU_DELTA}")]
+
+    def long_json(f):
+        for t in f["bootstrap_tasks"]:
+            if t["task_id"] in ds:
+                t["jackknife_count"] += 1
+        return f
+
+    def long_npz(a):
+        for tid in ds:
+            key = f"{tid}__jackknife"
+            a[key] = np.append(a[key], a[key][-1])
+    case("W4b every dataset-level task's jackknife count N + 1 in family.json and bootstrap.npz "
+         "alike (one N, still >= n)", edited("04b", long_json, long_npz), A.C_MATRIX,
+         input_root=env.fs.input_root)
+    pi = [t for t in BS.FROZEN_TASK_IDS if t not in ds]
+
+    def all_short_json(f):
+        for t in f["bootstrap_tasks"]:
+            if t["task_id"] in pi:
+                t["jackknife_count"] -= 1
+        return f
+
+    def all_short_npz(a):
+        for tid in pi:
+            key = f"{tid}__jackknife"
+            a[key] = a[key][:-1]
+    case(f"W4c every per-image task's ({len(pi)}) jackknife count n_paired - 1 in family.json and "
+         "bootstrap.npz alike (one n, still <= N)", edited("04c", all_short_json, all_short_npz),
+         A.C_MATRIX)
     j = BS.FROZEN_TASK_IDS.index("accuracy_e4_e5__hodges_lehmann_shift")
     bumped = {}
 
@@ -270,6 +318,20 @@ def part_w(outs: Path) -> None:
         a[f"{BS.FROZEN_TASK_IDS[j]}__observed"] = np.array([bumped["v"]], dtype=np.float64)
     case("W6 a Source-A observed value one ulp from its comparison record, family.json and "
          "bootstrap.npz alike", edited("06", observed_json, observed_npz), A.C_SOURCE)
+
+    def entropy_decimal(f):
+        t = f["bootstrap_tasks"][11]
+        t["seed_entropy_decimal"] = str(int(t["seed_entropy_decimal"]) + 1)
+        return f
+    case("W7 one task's seed_entropy_decimal off by one (root seed, digest and NPZ bytes intact)",
+         edited("07", entropy_decimal), A.C_SEED)
+
+    def display(f):
+        t = f["bootstrap_tasks"][12]
+        t["seed_input_display"] = t["seed_input_display"].replace("\\0", "|", 1)
+        return f
+    case("W7b one task's seed_input_display with a changed separator", edited("07b", display),
+         A.C_SEED)
 
     def z0_ulp(f):
         t = f["bootstrap_tasks"][4]
@@ -447,7 +509,8 @@ def part_f(env: Env, plant: Env, off: Env, work: Path, outs: Path) -> None:
 
     # ---- official requests (running stack patched to the pinned one) ----
     o3_real = [n for n, _ in A.code_provenance_unmet()]
-    unpinned_extra = [] if PINNED_STACK else ["numpy_version_differs"]
+    numpy_drift = np.__version__ != A.PINNED_ENVIRONMENT["numpy"]
+    unpinned_extra = ["numpy_version_differs"] if numpy_drift else []
     with pinned_stack():
         inp_off = off.inp("f-10", False)
         fam_off = A.build_family(inp_off)
@@ -455,8 +518,9 @@ def part_f(env: Env, plant: Env, off: Env, work: Path, outs: Path) -> None:
               fam_off["artifact_status"] == "official" and fam_off["warnings"] == [])
         expect = set(unpinned_extra + o3_real + [A.BINDING_CONDITION])
         gate_case("F11 a fully consistent official request (binding only; plus O3 entries on an "
-                  "uncommitted tree" + ("" if PINNED_STACK else "; numpy on an unpinned stack")
-                  + ")", outs / "f-10", expect,
+                  "uncommitted tree" + ("; numpy_version_differs: the running numpy is not the "
+                                        "pinned one" if numpy_drift else "") + ")",
+                  outs / "f-10", expect,
                   lambda: A.write_statistics_artifact(outs / "f-10", inp_off), exact=True)
         calls = []
         gate_case("F12 an official request carrying test hooks (OK-3: refused in the gate, before the "
@@ -472,7 +536,8 @@ def part_f(env: Env, plant: Env, off: Env, work: Path, outs: Path) -> None:
     conds = A.official_conditions(fam_off, views, off.craw, code_status_repo=clean_repo)
     base = {n for n, _ in conds}
     check("F13 official_conditions on that request with a clean code repository: exactly the "
-          "binding" + ("" if PINNED_STACK else " (and numpy_version_differs: unpinned stack)"),
+          "binding" + (" (and numpy_version_differs: the running numpy is not the pinned one)"
+                       if numpy_drift else ""),
           base == set(unpinned_extra + [A.BINDING_CONDITION]), sorted(base))
     official_clause_cases(fam_off, views, off, clean_repo, base)
     o3_cases(work)
@@ -695,16 +760,14 @@ def part_v(env: Env, outs: Path) -> None:
                    lambda: A.write_statistics_artifact(outs / "v-02", env.inp("v-02", True),
                                                        _tamper=tamper_at("payloads", dup)))
 
-    def official(fam):
-        fam["artifact_status"], fam["warnings"] = "official", []
-        return fam
-    kind, e = outcome(lambda: A.write_statistics_artifact(
-        outs / "v-03", env.inp("v-03", True),
-        _tamper=tamper_at("payloads", lambda d: rewrite_family(d, official))))
-    check("V3 an artifact relabelled official with no warnings -> refused while the binding is "
-          "unbound (officiality_policy_verified); nothing left",
-          kind == "IntegrityError" and e.check == A.C_POLICY and "unbound" in str(e)
-          and nothing_left(outs / "v-03"), f"{kind}: {e}")
+    with verifier_reads_official():
+        got = [outcome(lambda kw=kw: A.verify_statistics_artifact(src, **kw)) for kw in (
+            {"input_root": env.fs.input_root, "contract_bytes": env.craw}, {})]
+    check("V3 an artifact the verifier reads as official with no warnings (relabelled in memory; "
+          "nothing official on disk, P2) -> refused while the binding is unbound "
+          "(officiality_policy_verified), with the inputs and the contract and artifact-only",
+          all(k == "IntegrityError" and e.check == A.C_POLICY and "unbound" in str(e)
+              for k, e in got), [f"{k}: {e}" for k, e in got])
     renamed = outs / "v-04"
     shutil.copytree(src, renamed)
     kind, e = outcome(lambda: A.verify_statistics_artifact(renamed))
@@ -733,7 +796,7 @@ def main() -> int:
                   policy=Policy.OFFICIAL, analysis_id=BS.ANALYSIS_ID_OFFICIAL, B=BS.PRODUCTION_B,
                   name=DATASET_NAME, prefix="off", placeholder=True)
         part_a(smoke, outs)
-        part_w(outs)
+        part_w(smoke, outs)
         part_c(smoke, outs)
         part_f(smoke, plant, off, work, outs)
         part_b(smoke, off, outs)

@@ -15,9 +15,10 @@ the working tree (scripts/stats_fixtures.py), a nonofficial statistics artifact 
      mIoU-C against the fixture totals; the robustness label from it; z0 and an explicit containment
      column per interval; the stored NI sensitivity flags; E6-KD launches nothing; k; AM-6; the three
      extension points
-  D  refusals (exit 2): --repo-root without --synthetic-inputs, the canvas guard, an official-status
-     artifact, a tampered artifact, an existing --report-out, a synthetic declaration the artifact
-     does not carry, an official-mode flag
+  D  refusals (exit 2): --repo-root without --synthetic-inputs, the canvas guard, an artifact the
+     verifier reads as official (relabelled in memory; no smoke writes an official status, P2), a
+     tampered artifact, an existing --report-out, a synthetic declaration the artifact does not
+     carry, an official-mode flag
 
 Run:  python -B scripts/smoke_stats_report.py
 """
@@ -67,6 +68,34 @@ def raises(fn, exc=RP.ReportError, needle=""):
     except Exception:                                                    # noqa: BLE001
         return False
     return False
+
+
+def in_process(*args):
+    """run_stats.main in this process: (exit code, stdout, stderr)."""
+    import contextlib
+    import io
+
+    import run_stats
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        code = run_stats.main([str(a) for a in args])
+    return code, out.getvalue(), err.getvalue()
+
+
+class verifier_reads_official:
+    """The verifier reads family.json as status official with no warnings: relabelled in memory right
+    after the strict parse (check 10), so no smoke writes an official status to disk (P2)."""
+
+    def __enter__(self):
+        self.real = real = A._check_finite_values
+
+        def relabel(ctx):
+            real(ctx)
+            ctx.fam = dict(ctx.fam, artifact_status="official", warnings=[])
+        A._check_finite_values = relabel
+
+    def __exit__(self, *exc):
+        A._check_finite_values = self.real
 
 
 def cli(*args):
@@ -267,16 +296,11 @@ def part_d(work: Path, fs, art: Path) -> None:
     refused("D2 the canvas guard in report mode (an input relabelled non-canvas)",
             report(work / "r_d2", "--repo-root", moved, "--synthetic-inputs"), "canvas",
             work / "r_d2")
-    off = work / "stats_off" / "rep-0001"
-    shutil.copytree(art, off)
-    f = json.loads((off / A.FAMILY_JSON).read_text(encoding="utf-8"))
-    f["artifact_status"], f["warnings"] = "official", []
-    (off / A.FAMILY_JSON).write_text(A.canonical_json(f), encoding="utf-8", newline="\n")
-    (off / A.MANIFEST_NAME).write_text(A._manifest_text(off), encoding="utf-8", newline="\n")
-    refused("D3 an artifact relabelled official (manifest regenerated): refused while the binding is "
-            "unbound", cli("--mode", "report", "--artifact", off, "--report-out", work / "r_d3",
-                           "--repo-root", fs.input_root, "--synthetic-inputs"), "unbound",
-            work / "r_d3")
+    with verifier_reads_official():
+        res = in_process("--mode", "report", "--artifact", art, "--report-out", work / "r_d3",
+                         "--repo-root", fs.input_root, "--synthetic-inputs")
+    refused("D3 an artifact the verifier reads as official (relabelled in memory; nothing official "
+            "on disk, P2): refused while the binding is unbound", res, "unbound", work / "r_d3")
     tam = work / "stats_tam" / "rep-0001"
     shutil.copytree(art, tam)
     with open(tam / A.FAMILY_JSON, "a", encoding="utf-8") as fh:
