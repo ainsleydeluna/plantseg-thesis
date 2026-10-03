@@ -4,9 +4,15 @@ SYNTHETIC ONLY. No PlantSeg image, mask, split file or checkpoint is opened; no 
 inference, no GPU, no network. A small B is used for speed while production B = 10,000 is recorded
 in protocol metadata and exercised through the official validator. The artifact produced here is
 NONOFFICIAL by construction and is not a statistical result.
+
+Section 7 (lane L-STATS-OFFICIAL): the writer builds the family from typed inputs and re-reads the
+37 input artifacts the records name, so the artifact is built from 37 synthetic evaluation artifacts
+written through the unmodified evaluator writer into a temporary clean fixture repository outside the
+working tree (scripts/stats_fixtures.py) and read by the statistics driver (src/stats/driver.py).
 """
 from __future__ import annotations
 
+import dataclasses
 import json
 import math
 import shutil
@@ -18,9 +24,11 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "scripts"))
 
 from src.stats import artifact as A                                            # noqa: E402
 from src.stats import bootstrap as BS                                          # noqa: E402
+from src.stats import driver as D                                              # noqa: E402
 from src.stats import noninferiority as NI                                     # noqa: E402
 from src.stats.align import METRIC_DISEASE_ONLY, PairedVector                  # noqa: E402
 from src.stats.corruption_protocol import official_corruption_grid             # noqa: E402
@@ -28,6 +36,7 @@ from src.stats.ingest import Policy                                            #
 from src.stats.robustness import INFERENTIAL_SEVERITIES                        # noqa: E402
 from src.stats.tests import (CANONICAL_COMPARISON_IDS, StatsError, engineering_shifts,
                              hodges_lehmann, holm_family, run_comparison)      # noqa: E402
+import stats_fixtures as SF                                                    # noqa: E402
 
 PASS = FAILED = 0
 SECTION = ""
@@ -397,25 +406,14 @@ case("E6-KD decision rule is strictly_greater",
 # ==================================================================================================
 sec("7. FULL 35-TASK RUN AND ARTIFACT")
 ana = BS.ANALYSIS_ID_SMOKE
-pooled_by_cmp = {}
-for cid in list(CANONICAL_COMPARISON_IDS[:7]) + ["noninferiority_e3_e6"]:
-    pooled_by_cmp[cid] = NI.PooledStages.from_dense(make_dense(hash(cid) % 900 + 1),
-                                                    make_dense(hash(cid) % 900 + 2))
-task_results = []
-for spec in BS.FROZEN_TASK_MATRIX:
-    if spec.statistic_name == BS.DATASET_MIOU_DELTA:
-        ps = pooled_by_cmp[spec.comparison_id]
-        obs = ps.observed()
-        rf, jf = ps.replicate, ps.jackknife
-    else:
-        if spec.comparison_id == "descriptive_e1_e3":
-            dv, obs = desc_delta, desc.value(spec.statistic_name)
-        else:
-            r = results[CANONICAL_COMPARISON_IDS.index(spec.comparison_id)]
-            dv, obs = paired[spec.comparison_id].delta, BS.comparison_observed(
-                r, spec.statistic_name)
-        rf, jf = BS.scalar_callables(spec.statistic_name, dv)
-    task_results.append(BS.run_bootstrap_task(spec, ana, N, B_SMALL, obs, rf, jf))
+# 37 synthetic evaluation artifacts (N rows each, k = 0) in a temporary fixture repository, read by
+# the statistics driver under NONOFFICIAL_SMOKE; the 35 tasks run on what the driver assembles.
+WORK7 = Path(tempfile.mkdtemp(prefix="a3b_smoke_inputs_"))
+fx = SF.build_inventory(WORK7 / "fixture", n=N, k=0, split="val", status="smoke")
+inputs7 = D.load_inputs(D.load_input_list(SF.write_input_list(WORK7 / "inputs.json", fx)),
+                        fx.input_root, Policy.NONOFFICIAL_SMOKE)
+obs7 = D.assemble_observed(inputs7, Policy.NONOFFICIAL_SMOKE)
+task_results = list(D.run_tasks(obs7, ana, B_SMALL))
 case("all 35 tasks executed", len(task_results) == 35)
 case("task IDs are in canonical order",
      tuple(t.task.task_id for t in task_results) == BS.FROZEN_TASK_IDS)
@@ -424,12 +422,13 @@ case("no [B, n] index matrix retained on any result",
 
 shuffled = list(reversed(BS.FROZEN_TASK_MATRIX))
 one_spec = BS.TASK_BY_ID["accuracy_e5_e6__mean_delta"]
-r_a = BS.run_bootstrap_task(one_spec, ana, N, B_SMALL,
-                            BS.comparison_observed(results[5], BS.MEAN_DELTA),
-                            *BS.scalar_callables(BS.MEAN_DELTA, paired["accuracy_e5_e6"].delta))
-r_b = BS.run_bootstrap_task(one_spec, ana, N, B_SMALL,
-                            BS.comparison_observed(results[5], BS.MEAN_DELTA),
-                            *BS.scalar_callables(BS.MEAN_DELTA, paired["accuracy_e5_e6"].delta))
+pv56 = obs7.paired["accuracy_e5_e6"]
+r_a = BS.run_bootstrap_task(one_spec, ana, pv56.n, B_SMALL,
+                            BS.comparison_observed(obs7.result("accuracy_e5_e6"), BS.MEAN_DELTA),
+                            *BS.scalar_callables(BS.MEAN_DELTA, pv56.delta))
+r_b = BS.run_bootstrap_task(one_spec, ana, pv56.n, B_SMALL,
+                            BS.comparison_observed(obs7.result("accuracy_e5_e6"), BS.MEAN_DELTA),
+                            *BS.scalar_callables(BS.MEAN_DELTA, pv56.delta))
 orig = task_results[BS.FROZEN_TASK_IDS.index("accuracy_e5_e6__mean_delta")]
 case("comparison-order / statistic-order / scheduling independence",
      np.array_equal(r_a.replicates, orig.replicates)
@@ -449,33 +448,15 @@ case("inventory: severities 1-3 only, never 4 or 5",
      {r[2] for r in inv if r[2] is not None} == {1, 2, 3})
 case("inventory: all 37 identities unique", len(set(inv)) == 37)
 
-input_artifacts = []
-for stage, corr, sev in inv:
-    p = (f"runs/eval/{stage.lower()}_clean_test" if corr is None
-         else f"runs/eval/{stage.lower()}_{corr}_s{sev}_test")
-    input_artifacts.append({"stage": stage,
-                            "condition": {"type": "clean" if corr is None else "corruption",
-                                          "name": corr, "severity": sev},
-                            "repo_relative_path": p, "artifact_status": "smoke",
-                            "checkpoint_sha256": "0" * 64, "split_manifest_sha256": "1" * 64,
-                            "class_map_sha256": "2" * 64, "metric_impl_sha256": "3" * 64,
-                            "config_sha256": "4" * 64, "repo_commit": "9267ffe"})
-
-ni_stages = pooled_by_cmp["noninferiority_e3_e6"].stage_mious()
-ni_task = task_results[-1]
-ni_res = NI.build_non_inferiority(ni_stages[0], ni_stages[1], ni_task.bca.bounds[0])
-e6_res = NI.build_e6_kd(ni_stages[0], ni_stages[1])
 csha, craw = A.contract_sha256(ROOT)
 case("contract hash is 64 lowercase hex from raw bytes",
      len(csha) == 64 and csha == csha.lower() and csha == _h.sha256(craw).hexdigest())
 case("repository-baseline contract digest matches the checkpoint",
      csha == "d53c87dcd750fbc0fc288718ae214474e00a40b23863f293e4e0db3771b0f40a", csha[:16])
 
-inp = A.ArtifactInputs(analysis_id=ana, run_id="a3b-smoke-0001",
-                       created_at_utc="2026-07-31T00:00:00Z", contract_sha256=csha,
-                       input_artifacts=input_artifacts, comparison_results=results,
-                       holm_family=fam_holm, descriptive=desc, non_inferiority=ni_res,
-                       e6_kd=e6_res, task_results=tuple(task_results), synthetic=True)
+inp = D.artifact_inputs(obs7, inputs7, task_results, analysis_id=ana, run_id="a3b-smoke-0001",
+                        created_at_utc="2026-07-31T00:00:00Z", contract_sha256=csha,
+                        synthetic=True, input_root=fx.input_root)
 fam = A.build_family(inp)
 case("nineteen top-level keys in exact frozen order", tuple(fam.keys()) == A.TOP_LEVEL_KEYS)
 case("no additional top-level key", len(fam) == 19)
@@ -556,13 +537,16 @@ case("thirteen integrity checks in exact order, all true",
 tmp = Path(tempfile.mkdtemp(prefix="a3b_smoke_"))
 try:
     out = tmp / "a3b-smoke-0001"
-    A.write_statistics_artifact(out, fam, task_results)
+    A.write_statistics_artifact(out, inp)
     case("artifact directory contains exactly three files",
          sorted(p.name for p in out.iterdir()) == ["MANIFEST.sha256", "bootstrap.npz",
                                                    "family.json"])
-    reloaded = A.verify_statistics_artifact(out)
-    case("artifact re-verifies from disk", reloaded["run_id"] == "a3b-smoke-0001")
-    case("JSON<->NPZ exact equality holds on reload", True)
+    rep = A.verify_statistics_artifact(out, input_root=fx.input_root, contract_bytes=craw)
+    case("artifact re-verifies from disk: all 13 integrity checks re-established with the inputs "
+         "and the contract", rep.family["run_id"] == "a3b-smoke-0001"
+         and rep.established == A.INTEGRITY_CHECKS and not rep.not_reestablished)
+    case("JSON<->NPZ exact equality holds on reload",
+         "json_npz_exact_match" in rep.established and rep.family == fam)
     txt = (out / "family.json").read_text(encoding="utf-8")
     case("no NaN or Infinity token in family.json",
          "NaN" not in txt and "Infinity" not in txt)
@@ -575,14 +559,13 @@ try:
              z[BS.FROZEN_TASK_IDS[0] + "__bootstrap"].dtype == np.float64)
         case("NI task stores exactly one bound",
              z["noninferiority_e3_e6__dataset_miou_delta__bounds"].size == 1)
-    case("refuse-existing target", raises(lambda: A.write_statistics_artifact(out, fam,
-                                                                             task_results),
+    case("refuse-existing target", raises(lambda: A.write_statistics_artifact(out, inp),
                                           A.ArtifactError))
     out2 = tmp / "a3b-smoke-0002"
-    fam2 = dict(fam); fam2["run_id"] = "a3b-smoke-0002"
+    inp2 = dataclasses.replace(inp, run_id="a3b-smoke-0002")
     case("injected failure raises",
-         raises(lambda: A.write_statistics_artifact(out2, fam2, task_results,
-                                                    _inject_failure=True), A.ArtifactError))
+         raises(lambda: A.write_statistics_artifact(out2, inp2, _inject_failure=True),
+                A.ArtifactError))
     case("no partial directory after injected failure",
          not out2.exists() and not any(p.name.startswith(".a3b-smoke-0002")
                                        for p in tmp.iterdir()))
@@ -590,40 +573,44 @@ try:
                                      encoding="utf-8", newline="\n")
     case("manifest tamper detection",
          raises(lambda: A.verify_statistics_artifact(out), A.ArtifactError))
-    # Contract section 10.1: an official request refuses unless the software block matches the
-    # pinned statistics stack. The block is set explicitly on each side of the rule, so these checks
-    # test the rule itself on every stack -- the drifted dev stack and the pinned one alike.
-    def software_block(matches):
-        pinned = dict(A.PINNED_ENVIRONMENT)
-        observed = dict(pinned) if matches else dict(pinned, numpy=pinned["numpy"] + "+drifted")
-        return {"pinned": pinned, "observed": observed, "matches_pinned": observed == pinned}
-
-    def stack_gate_refuses(out_dir, fam_):
-        try:
-            A.write_statistics_artifact(out_dir, fam_, task_results)
-        except A.ArtifactError as e:
-            return "requires the pinned statistics stack" in str(e)
-        return False
-
+    # Contract section 10.1 and the section 12.4.3 writer gate (lane L-STATS-OFFICIAL): the writer
+    # takes the software block from the running stack, so a caller can claim neither the pin nor the
+    # status. The running stack is set on each side of the rule, so these checks test the rule
+    # itself on every stack -- the drifted dev stack and the pinned one alike.
+    real_env = A.observed_environment
+    try:
+        A.observed_environment = lambda: dict(real_env(), numpy=real_env()["numpy"] + "+drifted")
+        fam3 = A.build_family(dataclasses.replace(inp, run_id="a3b-smoke-0003"))
+    finally:
+        A.observed_environment = real_env
+    case("unpinned running stack: software_environment_unpinned and nonofficial, whatever the "
+         "caller wants", fam3["software_environment"]["matches_pinned"] is False
+         and A.W_SOFTWARE in fam3["warnings"] and fam3["artifact_status"] == "nonofficial")
     out3 = tmp / "a3b-smoke-0003"
-    fam3 = dict(fam); fam3["run_id"] = "a3b-smoke-0003"
-    fam3["artifact_status"] = "official"
-    fam3["software_environment"] = software_block(matches=False)
-    case("official request on the drifted dev stack refuses", stack_gate_refuses(out3, fam3))
-    case("refusal left no final directory and no temp directory",
-         not out3.exists() and not any(p.name.startswith(".a3b-smoke-0003")
-                                       for p in tmp.iterdir()))
-    out5 = tmp / "a3b-smoke-0005"
-    fam5 = dict(fam3); fam5["run_id"] = "a3b-smoke-0005"
-    fam5["software_environment"] = software_block(matches=True)
-    case("official request on the pinned stack passes the stack gate",
-         not stack_gate_refuses(out5, fam5))
-    fam4 = dict(fam); fam4["run_id"] = "Bad_Run_ID"
+    rehearsal = dataclasses.replace(
+        inp, run_id="a3b-smoke-0003",
+        comparison_results=tuple(dataclasses.replace(r, policy=Policy.REHEARSAL)
+                                 for r in inp.comparison_results),
+        descriptive=dataclasses.replace(inp.descriptive, policy=Policy.REHEARSAL.value))
+    case("a writer-gate refusal (a REHEARSAL policy) leaves no final directory and no temp "
+         "directory", raises(lambda: A.write_statistics_artifact(out3, rehearsal),
+                             A.WriterGateRefused)
+         and not out3.exists() and not any(p.name.startswith(".a3b-smoke-0003")
+                                           for p in tmp.iterdir()))
+    try:
+        A.observed_environment = lambda: dict(A.PINNED_ENVIRONMENT)
+        fam5 = A.build_family(dataclasses.replace(inp, run_id="a3b-smoke-0005"))
+    finally:
+        A.observed_environment = real_env
+    case("pinned running stack: the software block matches and carries no unpinned warning",
+         fam5["software_environment"]["matches_pinned"] is True
+         and A.W_SOFTWARE not in fam5["warnings"])
+    inp4 = dataclasses.replace(inp, run_id="Bad_Run_ID")
     case("invalid run_id refused",
-         raises(lambda: A.write_statistics_artifact(tmp / "Bad_Run_ID", fam4, task_results),
-                A.ArtifactError))
+         raises(lambda: A.write_statistics_artifact(tmp / "Bad_Run_ID", inp4), A.ArtifactError))
 finally:
     shutil.rmtree(tmp, ignore_errors=True)
+    shutil.rmtree(WORK7, ignore_errors=True)
 
 # ==================================================================================================
 print("\n" + "=" * 96)

@@ -459,6 +459,28 @@ def run_tasks(obs: Observed, analysis_id: str, B: int, *, jobs: int = 1
         return tuple(ex.map(run_job, work))
 
 
+def artifact_inputs(obs: Observed, inputs: Mapping[tuple, LoadedInput], tasks, *, analysis_id: str,
+                    run_id: str, created_at_utc: str, contract_sha256: str, synthetic: bool,
+                    input_root: Path):
+    """The writer's typed inputs: the 37 provenance records, the computed blocks, k and the driver's
+    hash snapshots. The NI decision reads the NI task's one stored lower bound (section 9.2)."""
+    from .artifact import ArtifactInputs
+    from .noninferiority import build_e6_kd, build_non_inferiority
+    tasks = tuple(tasks)
+    b, c = obs.pooled[NONINFERIORITY_E3_E6].stage_mious()
+    ni_id = f"{NONINFERIORITY_E3_E6}__{DATASET_MIOU_DELTA}"
+    ni_task = next(t for t in tasks if t.task_id == ni_id)
+    return ArtifactInputs(
+        analysis_id=analysis_id, run_id=run_id, created_at_utc=created_at_utc,
+        contract_sha256=contract_sha256,
+        input_artifacts=[provenance_record(li) for li in inputs.values()],
+        comparison_results=obs.results, holm_family=obs.holm, descriptive=obs.descriptive,
+        non_inferiority=build_non_inferiority(b, c, ni_task.bca.bounds[0]),
+        e6_kd=build_e6_kd(b, c), task_results=tasks, synthetic=synthetic,
+        am5_excluded_count=obs.am5_excluded_count, input_root=Path(input_root),
+        input_file_sha256={li.rel_path: dict(li.file_sha256) for li in inputs.values()})
+
+
 __all__ = [
     "METRIC_POOLED", "COMPARISON_TABLE", "CLEAN_COMPARISON_IDS", "ROBUSTNESS_ID", "STAGES",
     "CORRUPTION_STAGES", "STAGE_PRECISION", "CLEAN", "INPUT_FILES", "INPUT_LIST_SCHEMA",
@@ -466,5 +488,5 @@ __all__ = [
     "require_inventory", "refuse_non_canvas", "input_file_sha256",
     "manifest_digests", "snapshot_agrees", "LoadedInput", "load_input", "load_inputs",
     "provenance_record", "Observed", "am5_identity", "assemble_observed", "observed_value",
-    "observed_values", "TaskJob", "task_jobs", "run_job", "run_tasks",
+    "observed_values", "TaskJob", "task_jobs", "run_job", "run_tasks", "artifact_inputs",
 ]
