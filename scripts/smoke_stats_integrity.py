@@ -644,6 +644,9 @@ def part_f(env: Env, plant: Env, off: Env, work: Path, outs: Path) -> None:
     check("F25b a run_id with a trailing newline (section 12.4.2: no trailing whitespace) -> "
           "refused; nothing created", kind == "ArtifactError" and not (outs / lf).exists()
           and not A.stale_temp_dirs(outs / lf), f"{kind}: {e}")
+    kind, e = outcome(lambda: A.build_family(env.inp("f-25c\n", True)))
+    check("F25c ... build_family refuses that run_id itself (not only the out-dir pre-check)",
+          kind == "ArtifactError" and "run_id" in str(e), f"{kind}: {e}")
     check("F26 the TEST-manifest binding constant is 'unbound'", A.TEST_MANIFEST_BINDING == "unbound")
 
 
