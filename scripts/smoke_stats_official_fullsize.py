@@ -8,9 +8,10 @@ data, checkpoint, model or GPU is used, and nothing is written into this reposit
 
   D  doors and refusals through scripts/run_stats.py (exit 2, nothing written): the confirmation flag,
      the binding rule and the out-dir pre-check fire before any read (a non-existent --inputs path),
-     the pinned-stack door (Q6), --repo-root without --synthetic-inputs, both halves of the canvas
-     guard, the smoke-mode refusals (P15); exit 4 for an import failure, a worker failure and an
-     artifact that fails its post-rename verification (named)
+     the pinned-stack door (Q6; also simulated in process on any stack), --repo-root without
+     --synthetic-inputs, both halves of the canvas guard, the smoke-mode refusals (P15); exit 4 for
+     an import failure, a worker failure and an artifact that fails its post-rename verification
+     (named)
   A  acceptance (a): `--mode official --synthetic-inputs` at B = 10,000 and --jobs min(4, CPUs): exit
      0; all 13 checks re-established; every per-image task 1561 - k and every dataset-level task 1561;
      the only warning synthetic_input_data; each comparison's mean_delta, the descriptive delta and
@@ -114,6 +115,17 @@ def doors(work: Path, fs, lst: Path) -> None:
         refused("D6 an unpinned running stack: official mode refused before any read (Q6)",
                 cli(*base[:-1], "door-0003", "--confirm-official-test-analysis",
                     "--synthetic-inputs"), "pinned statistics stack", out / "door-0003")
+    real_obs = A.observed_environment
+    A.observed_environment = lambda: dict(real_obs(), numpy=real_obs()["numpy"] + "+drifted")
+    try:
+        code, text = in_process(base[:-1] + ["door-0005", "--confirm-official-test-analysis",
+                                             "--synthetic-inputs"])
+    finally:
+        A.observed_environment = real_obs
+    check("D6b a running stack other than the pin (simulated in process, any stack): official mode "
+          "refused before any read (Q6; the missing --inputs is never reached)",
+          code == 2 and "pinned statistics stack" in text and "does not exist" not in text
+          and not (out / "door-0005").exists(), text[-300:])
     refused("D7 --jobs 0", cli("--mode", "official", "--confirm-official-test-analysis",
                                "--synthetic-inputs", "--inputs", lst, "--out-dir", out, "--run-id",
                                "door-0004", "--jobs", "0"), "--jobs", out / "door-0004")
@@ -192,7 +204,8 @@ def canvas_and_smoke_mode(work: Path) -> None:
         code, text = in_process(args + ["--run-id", "ex-0001", "--jobs", "2"])
     finally:
         D.ProcessPoolExecutor = real_pool
-    check("D16 a worker failure -> exit 4, nothing written", code == 4 and "worker" in text
+    check("D16 a worker failure -> exit 4 with the named error (no traceback), nothing written",
+          code == 4 and "ERROR: a bootstrap worker failed" in text and "Traceback" not in text
           and not (out / "ex-0001").exists(), text[-300:])
     real_verify = A.verify_statistics_artifact
 

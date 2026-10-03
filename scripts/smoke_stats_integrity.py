@@ -318,6 +318,19 @@ def part_w(env: Env, outs: Path) -> None:
         a[f"{BS.FROZEN_TASK_IDS[j]}__observed"] = np.array([bumped["v"]], dtype=np.float64)
     case("W6 a Source-A observed value one ulp from its comparison record, family.json and "
          "bootstrap.npz alike", edited("06", observed_json, observed_npz), A.C_SOURCE)
+    jc = BS.FROZEN_TASK_IDS.index(f"accuracy_e1_e2__{BS.DATASET_MIOU_DELTA}")
+    pooled = {}
+
+    def source_c_json(f):
+        t = f["bootstrap_tasks"][jc]
+        t["observed"] = pooled["v"] = float(np.nextafter(t["observed"], 1.0))
+        return f
+
+    def source_c_npz(a):
+        a[f"{BS.FROZEN_TASK_IDS[jc]}__observed"] = np.array([pooled["v"]], dtype=np.float64)
+    case("W6c a Source-C (pooled) observed value one ulp off, family.json and bootstrap.npz alike "
+         "(no artifact-level counterpart; O4)", edited("06c", source_c_json, source_c_npz),
+         A.C_SOURCE, input_root=env.fs.input_root)
 
     def entropy_decimal(f):
         t = f["bootstrap_tasks"][11]
