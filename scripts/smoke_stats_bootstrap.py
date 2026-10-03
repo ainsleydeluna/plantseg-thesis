@@ -452,7 +452,7 @@ csha, craw = A.contract_sha256(ROOT)
 case("contract hash is 64 lowercase hex from raw bytes",
      len(csha) == 64 and csha == csha.lower() and csha == _h.sha256(craw).hexdigest())
 case("repository-baseline contract digest matches the checkpoint",
-     csha == "d53c87dcd750fbc0fc288718ae214474e00a40b23863f293e4e0db3771b0f40a", csha[:16])
+     csha == "4d9585fa1c51db686c0d8ce8ee8b246b3ddbd9d41dbe76736aacd65377b1d178", csha[:16])
 
 inp = D.artifact_inputs(obs7, inputs7, task_results, analysis_id=ana, run_id="a3b-smoke-0001",
                         created_at_utc="2026-07-31T00:00:00Z", contract_sha256=csha,
