@@ -446,6 +446,10 @@ def run_job(job: TaskJob) -> BootstrapTaskResult:
     return run_bootstrap_task(job.spec, job.analysis_id, n_images, job.B, job.observed, rf, jf)
 
 
+class WorkerFailure(RuntimeError):
+    """A bootstrap worker process failed. Never a refusal: the CLI exits 4 (P18)."""
+
+
 def run_tasks(obs: Observed, analysis_id: str, B: int, *, jobs: int = 1
               ) -> tuple[BootstrapTaskResult, ...]:
     """The 35 tasks in canonical order. jobs > 1 runs whole tasks in spawned worker processes; each
@@ -455,8 +459,11 @@ def run_tasks(obs: Observed, analysis_id: str, B: int, *, jobs: int = 1
     work = task_jobs(obs, analysis_id, B)
     if jobs == 1:
         return tuple(run_job(j) for j in work)
-    with ProcessPoolExecutor(max_workers=jobs, mp_context=get_context("spawn")) as ex:
-        return tuple(ex.map(run_job, work))
+    try:
+        with ProcessPoolExecutor(max_workers=jobs, mp_context=get_context("spawn")) as ex:
+            return tuple(ex.map(run_job, work))
+    except Exception as e:                                       # noqa: BLE001 -- any worker failure
+        raise WorkerFailure(f"a bootstrap worker failed: {type(e).__name__}: {e}") from e
 
 
 def artifact_inputs(obs: Observed, inputs: Mapping[tuple, LoadedInput], tasks, *, analysis_id: str,
@@ -481,6 +488,169 @@ def artifact_inputs(obs: Observed, inputs: Mapping[tuple, LoadedInput], tasks, *
         input_file_sha256={li.rel_path: dict(li.file_sha256) for li in inputs.values()})
 
 
+# --------------------------------------------------------------------------------------------------
+# 6. modes (scripts/run_stats.py is the command-line wrapper)
+# --------------------------------------------------------------------------------------------------
+class PostWriteVerifyFailed(RuntimeError):
+    """The artifact was renamed into place but its re-verification failed (P10: exit 4, naming it)."""
+
+
+@dataclass(frozen=True)
+class RunResult:
+    mode: str
+    artifact: Path
+    family: dict
+    established: tuple
+    unmet_official: tuple             # official mode: (name, detail) pairs (P30); () otherwise
+    am5_excluded_count: int
+    input_root: Path
+    seconds: float
+
+
+def _now_utc() -> str:
+    from datetime import datetime, timezone
+    from .artifact import TIMESTAMP_FORMAT
+    return datetime.now(timezone.utc).strftime(TIMESTAMP_FORMAT)
+
+
+def official_doors(*, confirm: bool, synthetic: bool) -> None:
+    """P13 doors 1 and 2, before any file is read: the confirmation flag, then the binding rule
+    (while the TEST-manifest binding is unbound, official mode runs only on inputs declared
+    synthetic; P2, P14)."""
+    from .artifact import TEST_MANIFEST_BINDING
+    if not confirm:
+        raise DriverRefusal("official mode reads the 37 TEST inputs of section 12.4.6 and requires "
+                            "--confirm-official-test-analysis")
+    if TEST_MANIFEST_BINDING != "unbound":                # fail closed: there is no bound branch
+        raise DriverRefusal(f"unknown TEST_MANIFEST_BINDING {TEST_MANIFEST_BINDING!r}")
+    if not synthetic:
+        raise DriverRefusal("the TEST-manifest binding is unbound: official mode runs only on inputs "
+                            "declared synthetic (--synthetic-inputs), and no official statistics "
+                            "artifact can be written (P2)")
+
+
+def require_pinned_stack() -> None:
+    """Official mode runs on the section 10.1 pinned stack only (Q6); refused before any read."""
+    from .artifact import software_environment_block
+    sw = software_environment_block()
+    if not sw["matches_pinned"]:
+        raise DriverRefusal(f"official mode requires the section 10.1 pinned statistics stack "
+                            f"{sw['pinned']}; the running stack is {sw['observed']}")
+
+
+def smoke_screen(entries, input_root: Path) -> None:
+    """P15, from each input's summary.json alone (before any per-image file is read): smoke mode
+    accepts only smoke-status inputs, and never an input with the evaluator's dataset name and
+    split test."""
+    from ..eval.adapters import DATASET_NAME
+    for stage, cond, rel in entries:
+        p = Path(input_root) / rel / "summary.json"
+        try:
+            s = json.loads(p.read_text(encoding="utf-8"))
+            status, name, split = (s["run"]["artifact_status"], s["dataset"]["name"],
+                                   s["dataset"]["split"])
+        except (OSError, ValueError, KeyError, TypeError) as e:
+            raise DriverRefusal(f"input {rel!r}: summary.json cannot be read ({e})") from e
+        if name == DATASET_NAME and split == "test":
+            raise DriverRefusal(f"input {rel!r}: smoke mode never reads a {DATASET_NAME} TEST "
+                                "artifact (P15)")
+        if status != "smoke":
+            raise DriverRefusal(f"input {rel!r}: smoke mode accepts only smoke-status inputs, this "
+                                f"one is {status!r} (P15)")
+
+
+def assemble_or_refuse(inputs: Mapping[tuple, LoadedInput], policy: Policy) -> Observed:
+    """assemble_observed with the frozen modules' integrity errors refused by name."""
+    from .align import AlignmentError
+    from .bootstrap import BootstrapError
+    from .ingest import IngestError
+    from .robustness import RobustnessError
+    from .tests import StatsError
+    try:
+        return assemble_observed(inputs, policy)
+    except (AlignmentError, BootstrapError, IngestError, RobustnessError, StatsError) as e:
+        raise DriverRefusal(f"the inputs cannot be analysed: {type(e).__name__}: {e}") from e
+
+
+def _verify_written(path: Path, input_root: Path):
+    from . import artifact as A
+    try:
+        rep = A.verify_statistics_artifact(path, input_root=input_root,
+                                           contract_bytes=A.contract_sha256()[1])
+    except Exception as e:                                       # noqa: BLE001 -- named, exit 4
+        raise PostWriteVerifyFailed(f"{path}: written but its re-verification failed: "
+                                    f"{type(e).__name__}: {e}") from e
+    if rep.not_reestablished or rep.established != A.INTEGRITY_CHECKS:
+        raise PostWriteVerifyFailed(f"{path}: written but checks {rep.not_reestablished} were not "
+                                    "re-established")
+    return rep
+
+
+def run_official(*, inputs_list, out_dir, run_id, confirm: bool, synthetic: bool,
+                 repo_root=None, B: int, jobs: int = 1, log=print) -> RunResult:
+    """--mode official. Doors (P13): confirmation flag, binding rule, out-dir pre-check (P10), pinned
+    stack (Q6), then reads. Inputs resolve against --repo-root (synthetic only; P16) or this code's
+    repository; the contract always comes from this code's repository."""
+    from . import artifact as A
+    from .bootstrap import ANALYSIS_ID_OFFICIAL
+    import time
+    t0 = time.time()
+    official_doors(confirm=confirm, synthetic=synthetic)
+    target = A.preflight_out_dir(Path(out_dir) / run_id)
+    require_pinned_stack()
+    input_root = Path(repo_root) if repo_root is not None else A.CODE_REPO
+    contract_hex, _ = A.contract_sha256()
+    created = _now_utc()
+    entries = load_input_list(inputs_list)                       # the first read
+    inputs = load_inputs(entries, input_root, Policy.OFFICIAL)
+    obs = assemble_or_refuse(inputs, Policy.OFFICIAL)
+    log(f"inputs: 37 loaded from {input_root}; AM-5 k = {obs.am5_excluded_count}; per-image n = "
+        f"{obs.results[0].n_paired}")
+    tasks = run_tasks(obs, ANALYSIS_ID_OFFICIAL, B, jobs=jobs)
+    inp = artifact_inputs(obs, inputs, tasks, analysis_id=ANALYSIS_ID_OFFICIAL, run_id=run_id,
+                          created_at_utc=created, contract_sha256=contract_hex, synthetic=True,
+                          input_root=input_root)
+    unmet = A.unmet_official_conditions(inp)
+    path = A.write_statistics_artifact(target, inp)
+    rep = _verify_written(path, input_root)
+    return RunResult("official", path, rep.family, rep.established, unmet, obs.am5_excluded_count,
+                     input_root, time.time() - t0)
+
+
+def run_smoke(*, inputs_list, out_dir, run_id, repo_root=None, B: int, jobs: int = 1,
+              log=print) -> RunResult:
+    """--mode smoke: smoke-status inputs only (P15), NONOFFICIAL_SMOKE, the smoke namespace; the
+    synthetic declaration is what the inputs' dataset names say (P6)."""
+    from . import artifact as A
+    from ..eval.adapters import DATASET_NAME
+    from .bootstrap import ANALYSIS_ID_SMOKE
+    import time
+    t0 = time.time()
+    target = A.preflight_out_dir(Path(out_dir) / run_id)
+    input_root = Path(repo_root) if repo_root is not None else A.CODE_REPO
+    contract_hex, _ = A.contract_sha256()
+    created = _now_utc()
+    entries = load_input_list(inputs_list)
+    smoke_screen(entries, input_root)
+    inputs = load_inputs(entries, input_root, Policy.NONOFFICIAL_SMOKE)
+    k, _ = am5_identity(inputs)
+    if k:
+        raise DriverRefusal(f"smoke mode needs inputs without AM-5 exclusions (k = {k}): "
+                            "NONOFFICIAL_SMOKE keeps those rows, so the per-image comparisons would "
+                            "carry undefined pairs")
+    obs = assemble_or_refuse(inputs, Policy.NONOFFICIAL_SMOKE)
+    log(f"inputs: 37 loaded from {input_root}; n = {obs.results[0].n_paired}")
+    tasks = run_tasks(obs, ANALYSIS_ID_SMOKE, B, jobs=jobs)
+    synthetic = any(li.summary["dataset"]["name"] != DATASET_NAME for li in inputs.values())
+    inp = artifact_inputs(obs, inputs, tasks, analysis_id=ANALYSIS_ID_SMOKE, run_id=run_id,
+                          created_at_utc=created, contract_sha256=contract_hex,
+                          synthetic=synthetic, input_root=input_root)
+    path = A.write_statistics_artifact(target, inp)
+    rep = _verify_written(path, input_root)
+    return RunResult("smoke", path, rep.family, rep.established, (), k, input_root,
+                     time.time() - t0)
+
+
 __all__ = [
     "METRIC_POOLED", "COMPARISON_TABLE", "CLEAN_COMPARISON_IDS", "ROBUSTNESS_ID", "STAGES",
     "CORRUPTION_STAGES", "STAGE_PRECISION", "CLEAN", "INPUT_FILES", "INPUT_LIST_SCHEMA",
@@ -488,5 +658,7 @@ __all__ = [
     "require_inventory", "refuse_non_canvas", "input_file_sha256",
     "manifest_digests", "snapshot_agrees", "LoadedInput", "load_input", "load_inputs",
     "provenance_record", "Observed", "am5_identity", "assemble_observed", "observed_value",
-    "observed_values", "TaskJob", "task_jobs", "run_job", "run_tasks", "artifact_inputs",
+    "observed_values", "TaskJob", "task_jobs", "run_job", "WorkerFailure", "run_tasks",
+    "artifact_inputs", "PostWriteVerifyFailed", "RunResult", "official_doors",
+    "require_pinned_stack", "smoke_screen", "assemble_or_refuse", "run_official", "run_smoke",
 ]
