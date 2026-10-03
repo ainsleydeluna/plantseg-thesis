@@ -391,8 +391,9 @@ def _diverged(run_dir: Path, rows: list[dict], torn_last: bool, ramp_iters: int)
             raise SelectionRefused("abort_record_invalid",
                                    f"{run_dir.name}: an AM-7 (a) abort at iter {ab['iter']} with detail "
                                    f"{json.dumps(detail)[:240]} cannot hold: it needs iter >= 2 (iteration "
-                                   "1 is step1_checks) and a non-finite loss, or a finite loss with a "
-                                   "non-finite grad_norm, named in that train row's `nonfinite` map")
+                                   "1 is step1_checks) and either a non-finite loss with grad_norm null in "
+                                   "the detail and in that train row (K8-2(c)), or a finite loss with a "
+                                   "non-finite grad_norm; that key named in the train row's `nonfinite` map")
     if ab["rule"] not in DIVERGENCE_RULES or ab["cause"] != DIVERGENCE_CAUSE \
             or ab.get("input_finite") is not True or ab.get("teacher_finite") is not True:
         raise SelectionRefused("run_aborted_other",

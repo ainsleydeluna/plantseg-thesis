@@ -42,10 +42,18 @@ Checks (docs/lane_specs/part2.md lane 2 (d) d2, and the cross-lane selection con
          diverged: AM-7 (b) at ramp_iters + 101, a float ratio of exactly 5.0 while window_mean > 5 x
          running_min holds (the pair found by search, both properties asserted), running_min 0 with
          ratio "inf", an overflowing quotient written "inf", and the AM-7 (a) norm case. A diverged
-         default candidate beside a num_workers or teacher checkpoint mismatch -> recipe_mismatch, not
-         default_candidate_diverged.
+         default candidate beside a num_workers mismatch, or a teacher checkpoint, config or resolved
+         model-config hash mismatch -> recipe_mismatch, not default_candidate_diverged.
   10b    the recipe of record: grad_clip_norm 1.0, batch 8, VAL every 2000 or capped, no ImageNet init,
-         a float horizon, differing num_workers or teacher checkpoints, or none -> recipe_mismatch.
+         a float horizon, differing num_workers or teacher checkpoint, config or model-config hashes, or
+         no teacher provenance -> recipe_mismatch naming the field.
+  cg     L-CKPT-GUARD: a teacher config_sha256 or model_cfg_sha256 absent, None, empty or not a string
+         -> recipe_mismatch; select_alpha's five K8-2(a) cases (no run loaded or three unfinished:
+         shortfall, exit 3; one wrong-lambda run beside two missing: lambda_mismatch; the default
+         diverged at the selection's lambda: default_candidate_diverged; at another lambda:
+         lambda_mismatch); the AM-7 comment names R8-1 (K8-2(b)); an AM-7 (a) loss record whose
+         grad_norm is not null in its detail (1.7, "nan", 0, False) or its train row (1.7, 0, False,
+         key absent) -> abort_record_invalid, end to end and unit (K8-2(c)).
 """
 from __future__ import annotations
 
@@ -564,6 +572,7 @@ def test_am7a_lambda_cli(tmp: Path) -> None:
     for label, kw in recipe.items():
         rc, log, doc, out, _ = lambda_case(tmp, f"l2_{label}", {2: kw})
         named = {"num_workers_differ": "differ in num_workers",
+                 "diverged_run_num_workers_differ": "differ in num_workers",
                  "teacher_ckpt_differs": "differ in teacher_ckpt_sha256",
                  "teacher_config_differs": "differ in teacher_config_sha256",
                  "teacher_model_cfg_differs": "differ in teacher_model_cfg_sha256"}.get(label, "")
@@ -783,6 +792,8 @@ def test_ckpt_guard(tmp: Path) -> None:
                       ("detail_grad_norm_0", dict(abort=dict(rule="AM-7(a)", detail={"grad_norm": 0}))),
                       ("detail_grad_norm_false", dict(abort=dict(rule="AM-7(a)", detail={"grad_norm": False}))),
                       ("row_grad_norm_1_7", dict(row_grad_norm=1.7)),
+                      ("row_grad_norm_0", dict(row_grad_norm=0)),
+                      ("row_grad_norm_false", dict(row_grad_norm=False)),
                       ("row_without_grad_norm", dict(row_grad_norm=None))):
         rc, log, doc, out, _ = lambda_case(tmp, f"cg_{label}", {2: {**loss_case, **kw}})
         check(f"k82c_am7a_loss_record_{label}_is_abort_record_invalid", rc == 2 and doc is None
