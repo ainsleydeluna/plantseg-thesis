@@ -348,6 +348,22 @@ def reducer_cases(tmp: Path, stems: dict, dup_json: Path) -> None:
         check("P24 a full set that does not reproduce S3's point (1e-9 > 1e-12) is a STOP, nothing written",
               code == 1 and not fx.output_files(tmp / "p9"))
 
+        # a summary.json value the sufficient statistics do not reproduce
+        a_te = tmp / "teacher_cpu_edited"
+        shutil.copytree(a_t, a_te)
+        sj = json.loads((a_te / "summary.json").read_text())
+        sj["dataset_level"]["all_class_miou"] = float(np.nextafter(np.float32(v_t), np.float32(1.0)))
+        (a_te / "summary.json").write_text(json.dumps(sj, indent=2) + "\n")
+        fx.rehash_artifact(a_te)
+        try:
+            art_te = load_val_artifact(a_te, label="te")
+            ge = fx.gap_output(tmp / "gap_edited.json", art_te, art_e)
+            code, err = run_quiet(d4, out_dir=tmp / "p10", **dict(base, teacher=a_te, gap_output=ge))
+        except Exception as e:  # noqa: BLE001 -- the ingest itself may refuse the edited summary
+            code, err = None, f"{type(e).__name__}: {e}"
+        check("P24 a full-set float32 value that differs from summary.json (one float32 step) is a STOP, "
+              "nothing written", code == 1 and not fx.output_files(tmp / "p10"), f"{code} {err[-200:]}")
+
         # --single (P25)
         code, err = run_quiet(d4, out_dir=tmp / "r_single", single=a_t, duplicates=dup_json, duplicates_sha256=dup_sha,
                               script_commit=HEAD, script_commit_dl_id="DL-67")

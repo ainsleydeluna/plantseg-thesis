@@ -80,9 +80,12 @@ def guard_strings(args) -> None:
 
 
 def guard_resolved(args) -> None:
-    for s in [args.data_root, *(os.path.join(args.data_root, f) for f in FOLDERS),
-              *(x for x in (args.out, args.strata) if x is not None)]:
-        td.refuse_test_path(s, "path")
+    """P21, after guard_strings: the same paths once symlinks are resolved."""
+    real = [os.path.realpath(s) for s in [args.data_root, *(os.path.join(args.data_root, f) for f in FOLDERS),
+                                          *(x for x in (args.out, args.strata) if x is not None)]]
+    bad = [r for r in real if "test" in r.lower()]
+    if bad:
+        raise td.Refused(f"a path resolving to a 'test' location is refused ({td.name_digests(bad)})")
 
 
 def list_folder(folder: str) -> list[str]:

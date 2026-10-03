@@ -198,6 +198,18 @@ def stats_cases() -> None:
           abs(cs.kl_logit_sum - rl) <= 1e-12 * max(1.0, abs(rl)), f"{cs.kl_logit_sum!r} vs {rl!r}")
     check("b5 KL_cwd sum equals the per-channel numpy reference to 1e-12",
           abs(cs.kl_cwd_sum - rc) <= 1e-12 * max(1.0, abs(rc)), f"{cs.kl_cwd_sum!r} vs {rc!r}")
+    z2 = rng.normal(0, 3.0, size=(8, 6, 4, 5)).astype(np.float32)
+    v2 = np.zeros((4, 5), dtype=bool)
+    v2[0, :3] = True                                           # |V| = 3, against the first crop's larger set
+    cs2 = ns.crop_statistics(z2, v2)
+    pooled = ns.summarize([cs, cs2])
+    want_cwd = (ref_kl_cwd(z, v) + ref_kl_cwd(z2, v2)) / (8 * 6 * 2)
+    want_logit = (rl + ref_kl_logit(z2, v2)) / (8 * (int(v.sum()) + 3))
+    check("b5 KL_cwd pools unweighted over (crop, draw, channel); KL_logit over (crop, draw, cell) -- two crops of "
+          "different |V|, against the numpy references to 1e-12",
+          abs(pooled["KL_cwd"]["value"] - want_cwd) <= 1e-12 * max(1.0, want_cwd)
+          and abs(pooled["KL_logit"]["value"] - want_logit) <= 1e-12 * max(1.0, want_logit),
+          f"{pooled['KL_cwd']['value']!r} vs {want_cwd!r}")
     same = np.repeat(z[:1], 8, axis=0)
     cs_same = ns.crop_statistics(same, v)
     check("b4/b5 identity: eight equal draws give KL_logit = KL_cwd = 0 within 1e-15",
@@ -363,14 +375,20 @@ def _seam_body(fx, td, tmp, ckpt, sha, args) -> None:
     # P9 split-forward checks
     check("P9 D1 shape [1, 116, 64, 64] from a 512x512 canvas, finite", tuple(z1.shape) == (1, 116, 64, 64))
     check("P9 a head call with no stream stops", raises(lambda: split.head(feats, None, feat_hash=h), td.Stop))
-    check("P9 a head call with a stream that is not the attached object stops",
-          raises(lambda: split.head(feats, NMFStream(42, "M4-KD"), feat_hash=h), td.Stop))
+    try:
+        split.head(feats, NMFStream(42, "M4-KD"), feat_hash=h)
+        msg = "no stop"
+    except td.Stop as ex:
+        msg = str(ex)
+    check("P9 a head call with a stream that is not the attached object stops (the identity check)",
+          "not the expected stream object" in msg, msg)
     check("P9 an unexpected logit shape stops",
           raises(lambda: split.head(feats, kd.stream, feat_hash=h, expect_shape=(1, 116, 63, 64)), td.Stop))
     check("P9 a changed feature hash stops", raises(lambda: split.head(feats, kd.stream, feat_hash="0" * 64),
                                                      td.Stop))
     for name, factory, why in (("in-place-mutating head", fx.mutating_factory, "features changed"),
                                ("NaN head", fx.nan_factory, "non-finite"),
+                               ("head drawing twice per call", fx.double_draw_factory, "by 2 draws"),
                                ("head drawing from the global CPU RNG", fx.global_draw_factory, "RNG")):
         _, bad, _ = gated_load(td, args(), factory=factory)
         sb = td.SplitTeacher(bad)
@@ -440,6 +458,9 @@ def _seam_body(fx, td, tmp, ckpt, sha, args) -> None:
     check("P2 stub refuses a build that leaves mmseg imported", r and not pre, f"mmseg imported before: {pre}")
     check("P2 stub refuses a model over 1e6 parameters",
           raises(lambda: gated_load(td, args(), factory=fx.big_factory), td.Refused))
+    check("P5 the format check alone (no file read) refuses an empty, uppercase or 63-character sha256",
+          all(raises(lambda b=b: td.check_teacher_flags(args(teacher_ckpt_sha256=b)), td.Refused)
+              for b in ("", sha.upper(), sha[:63])))
     for label, bad in (("empty", ""), ("uppercase", sha.upper()), ("63 characters", sha[:63]),
                        ("a well-formed wrong sha256", "0" * 64)):
         with fx.count_loads() as calls:

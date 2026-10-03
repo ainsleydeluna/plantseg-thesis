@@ -110,6 +110,13 @@ class GlobalDrawHamHead(StubHamHead):
         return super().forward(feats)
 
 
+class DoubleDrawHamHead(StubHamHead):
+    """Runs the isolated NMF module twice per call: the one-draw-per-head-call check must catch it."""
+
+    def forward(self, feats):
+        return self.conv_seg(self.ham(self.ham(self.squeeze(feats[1]))))
+
+
 class StubSegNeXt(nn.Module):
     def __init__(self, backbone=None, head=None):
         super().__init__()
@@ -145,6 +152,10 @@ def nan_factory(_config_path=None, _ckpt_path=None):
 
 def global_draw_factory(_config_path=None, _ckpt_path=None):
     return _seeded(lambda: StubSegNeXt(head=GlobalDrawHamHead()))
+
+
+def double_draw_factory(_config_path=None, _ckpt_path=None):
+    return _seeded(lambda: StubSegNeXt(head=DoubleDrawHamHead()))
 
 
 def big_factory(_config_path=None, _ckpt_path=None):
