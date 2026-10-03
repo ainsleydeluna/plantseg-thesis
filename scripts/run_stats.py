@@ -17,6 +17,11 @@
       The AM-17 item 9 dress rehearsal on the E1 seed 42/43/44 VAL artifacts (src/stats/rehearsal.py):
       nonofficial outputs under OUT-ROOT/<UTC>/, the out-root outside the repository; no section 12
       artifact. Exit 1 when a structural criterion fails (the outputs are kept).
+  --mode report    --artifact DIR --report-out DIR [--mde-entry FILE] [--repo-root DIR
+                   --synthetic-inputs]
+      Renders a section 12 artifact (src/stats/report.py) after the full verifier with the 37 inputs
+      and the contract; the profile is the verified status, never a flag. --repo-root (with
+      --synthetic-inputs only) resolves the inputs the artifact's records name.
 
 Every mode refuses a non-canvas input by name (EVALUATION_CONTRACT section 11(a)).
 
@@ -44,7 +49,7 @@ class Refused(Exception):
 
 def parse(argv):
     ap = argparse.ArgumentParser(description="PlantSeg statistics driver (section 12 artifact)")
-    ap.add_argument("--mode", required=True, choices=("official", "smoke", "rehearsal"))
+    ap.add_argument("--mode", required=True, choices=("official", "smoke", "rehearsal", "report"))
     ap.add_argument("--inputs", type=Path, help="input-list file (plantseg-stats-inputs/1.0.0)")
     ap.add_argument("--out-dir", type=Path, help="parent directory of the artifact directory")
     ap.add_argument("--run-id", help="the artifact directory name, ^[a-z0-9][a-z0-9._-]{0,63}$")
@@ -59,6 +64,8 @@ def parse(argv):
     ap.add_argument("--out-root", type=Path, help="rehearsal: outputs under OUT-ROOT/<UTC>/")
     ap.add_argument("--expect-k-val", type=int, help="rehearsal: refuse unless K_val equals this")
     ap.add_argument("--mde-entry", type=Path, help="the committed MDE entry (reported, see Q9)")
+    ap.add_argument("--artifact", type=Path, help="report: the statistics artifact directory")
+    ap.add_argument("--report-out", type=Path, help="report: a new directory for the report")
     return ap.parse_args(argv)
 
 
@@ -66,7 +73,8 @@ MODE_ARGS = {"official": ("inputs", "out_dir", "run_id", "repo_root", "B", "jobs
                           "confirm_official_test_analysis", "synthetic_inputs"),
              "smoke": ("inputs", "out_dir", "run_id", "repo_root", "B", "jobs"),
              "rehearsal": ("s42", "s43", "s44", "out_root", "B", "jobs", "expect_k_val",
-                           "mde_entry")}
+                           "mde_entry"),
+             "report": ("artifact", "report_out", "repo_root", "synthetic_inputs", "mde_entry")}
 DEFAULTS = {"B": 10_000, "jobs": 1, "confirm_official_test_analysis": False,
             "synthetic_inputs": False}
 
@@ -155,6 +163,24 @@ def main(argv=None) -> int:
             validate_counts(args)
             res = D.run_smoke(inputs_list=args.inputs, out_dir=args.out_dir, run_id=args.run_id,
                               repo_root=args.repo_root, B=args.B, jobs=args.jobs)
+        elif args.mode == "report":
+            if args.confirm_official_test_analysis:
+                raise Refused("--confirm-official-test-analysis belongs to official mode")
+            if args.repo_root is not None and not args.synthetic_inputs:
+                raise Refused("--repo-root is accepted only with --synthetic-inputs (P16)")
+            refuse_foreign(args)
+            require(args, "artifact", "report_out")
+            out, doc = RP.run_report(artifact=args.artifact, report_out=args.report_out,
+                                     repo_root=args.repo_root, synthetic=args.synthetic_inputs,
+                                     mde_entry=args.mde_entry)
+            print(f"report: {out}")
+            print(f"profile (the verified status): {doc['profile']}; warnings: {doc['warnings']}")
+            print(f"k (AM-5): {doc['am5_excluded_count_k']}")
+            for r in doc["family"]:
+                print(f"  {r['comparison_id']}: Holm reject {r['holm_reject']}, dataset-level "
+                      f"difference {r['dataset_level_difference']!r}: {r['label']}")
+            print(f"REPORT_DIR: {out}")
+            return EXIT_OK
         else:
             if args.repo_root is not None:
                 raise Refused("--repo-root is not accepted in rehearsal mode (P16: synthetic "

@@ -9,7 +9,12 @@ repository, and no statistics artifact with status `official` is written anywher
   A  a valid nonofficial artifact: written, all 13 checks established with the inputs and the
      contract; the artifact-only re-establishment reports the six input/contract checks
   C  acceptance (c): one break case per integrity check, each with its injection mechanism; each is
-     refused naming that check, and nothing is left behind (final or temporary directory)
+     refused naming that check, and nothing is left behind (final or temporary directory). A check
+     the gate establishes before anything is created is exercised with a recording tamper hook that
+     must never run, so a refusal that slipped from the gate to the final verifier pass is caught
+  W  the verifier alone: the valid artifact edited consistently (family.json and bootstrap.npz,
+     manifest regenerated) and verified artifact-only, for every check whose writer-side refusal is
+     layered (P37: a single dropped rule cannot hide behind another layer)
   F  acceptance (f): one refused case per writer-gate clause, the official-condition clauses by name,
      O3 code provenance (one test per refusal), P6 in both directions, the unpinned stack
   B  acceptance (b): count warnings -- every task's B and jackknife count against its own expected
@@ -78,6 +83,18 @@ def integrity_case(name, out: Path, expect_check: str, fn, note=""):
     kind, e = outcome(fn)
     ok = kind == "IntegrityError" and e.check == expect_check and nothing_left(out)
     check(f"{name} -> refused: {expect_check}; nothing left{note}", ok, f"{kind}: {e}")
+
+
+def gate_integrity_case(name, out: Path, expect_check: str, make_fn, note=""):
+    """An integrity check the gate (writer step 3) establishes before anything is created. The request
+    carries a recording tamper hook; a refusal from the writer's final verifier pass would have called
+    it, so an empty record shows the gate refused."""
+    calls: list[str] = []
+    kind, e = outcome(make_fn(lambda tmp, stage: calls.append(stage)))
+    ok = (kind == "IntegrityError" and e.check == expect_check and nothing_left(out)
+          and calls == [])
+    check(f"{name} -> refused by the gate before anything is created: {expect_check}; nothing "
+          f"left{note}", ok, f"{kind}: {e}; tamper hook calls {calls}")
 
 
 def gate_case(name, out: Path, expect_names, fn, *, exact=False):
@@ -187,6 +204,86 @@ def part_a(env: Env, outs: Path) -> None:
           fam["software_environment"] == A.software_environment_block())
 
 
+def part_w(outs: Path) -> None:
+    """The verifier alone: the valid artifact a-0001 copied, edited consistently (family.json and,
+    where needed, bootstrap.npz), its manifest regenerated, then verified artifact-only. The writer's
+    gate and its read-back comparison are not involved, so the named check is the only layer that can
+    refuse the edit."""
+    src = outs / "a-0001"
+
+    def edited(tag, fam_fn=None, npz_fn=None):
+        d = outs / f"w-{tag}" / src.name
+        shutil.copytree(src, d)
+        if fam_fn is not None:
+            rewrite_family(d, fam_fn)
+        if npz_fn is not None:
+            with np.load(d / A.BOOTSTRAP_NPZ, allow_pickle=False) as z:
+                arrays = {k: z[k] for k in z.files}
+            npz_fn(arrays)
+            np.savez_compressed(d / A.BOOTSTRAP_NPZ, **arrays)
+        (d / A.MANIFEST_NAME).write_text(A._manifest_text(d), encoding="utf-8", newline="\n")
+        return d
+
+    def case(name, d, expect_check):
+        kind, e = outcome(lambda: A.verify_statistics_artifact(d))
+        check(f"{name} -> artifact-only verification refuses: {expect_check}",
+              kind == "IntegrityError" and e.check == expect_check, f"{kind}: {e}")
+
+    def upper_hex(f):
+        r = f["input_artifacts"][0]
+        r["class_map_sha256"] = r["class_map_sha256"].upper()
+        return f
+    case("W1 an input record's class_map_sha256 in uppercase hex", edited("01", upper_hex),
+         A.C_PROVENANCE)
+
+    def bad_contract(f):
+        f["statistical_contract_sha256"] = f["statistical_contract_sha256"][:-1] + "z"
+        return f
+    case("W2 a statistical_contract_sha256 that is not 64 lowercase hex", edited("02", bad_contract),
+         A.C_CONTRACT)
+
+    def flip_reject(f):
+        m = f["a3a_family"]["holm"]["members"][2]
+        m["reject"] = not m["reject"]
+        return f
+    case("W3 a stored Holm member's reject flipped", edited("03", flip_reject), A.C_A3A)
+    i = BS.FROZEN_TASK_IDS.index("accuracy_e2_e3__mean_delta")
+
+    def short_json(f):
+        f["bootstrap_tasks"][i]["jackknife_count"] -= 1
+        return f
+
+    def short_npz(a):
+        key = f"{BS.FROZEN_TASK_IDS[i]}__jackknife"
+        a[key] = a[key][:-1]
+    case("W4 a per-image task's jackknife count n_paired - 1 in family.json and bootstrap.npz alike",
+         edited("04", short_json, short_npz), A.C_MATRIX)
+    j = BS.FROZEN_TASK_IDS.index("accuracy_e4_e5__hodges_lehmann_shift")
+    bumped = {}
+
+    def observed_json(f):
+        t = f["bootstrap_tasks"][j]
+        t["observed"] = bumped["v"] = float(np.nextafter(t["observed"], 1.0))
+        return f
+
+    def observed_npz(a):
+        a[f"{BS.FROZEN_TASK_IDS[j]}__observed"] = np.array([bumped["v"]], dtype=np.float64)
+    case("W6 a Source-A observed value one ulp from its comparison record, family.json and "
+         "bootstrap.npz alike", edited("06", observed_json, observed_npz), A.C_SOURCE)
+
+    def z0_ulp(f):
+        t = f["bootstrap_tasks"][4]
+        t["z0"] = float(np.nextafter(t["z0"], 1.0))
+        return f
+    case("W8 one task's z0 one ulp off in family.json only", edited("08", z0_ulp), A.C_JSON_NPZ)
+
+    def drop_b(f):
+        f["warnings"] = [w for w in f["warnings"] if w != A.W_B]
+        return f
+    case("W11 bootstrap_replicates_nonproduction removed while every task has B = 24 (status still "
+         "nonofficial)", edited("11", drop_b), A.C_POLICY)
+
+
 def part_c(env: Env, outs: Path) -> None:
     """Acceptance (c): one break case per integrity check. '(afd2d33 accepts)' marks a case the
     pre-lane writer and verifier accepted."""
@@ -197,12 +294,13 @@ def part_c(env: Env, outs: Path) -> None:
                                                    _tamper=hook)
     recs = [dict(r) for r in inp("x", True).input_artifacts]
     recs[3] = dict(recs[3], config_sha256="0" * 64)
-    integrity_case("C1 provenance: one record's config_sha256 replaced in ArtifactInputs "
-                   "(afd2d33 accepts)", outs / "c-01", A.C_PROVENANCE,
-                   run("c-01", input_artifacts=recs))
-    integrity_case("C2 contract: contract_sha256 recorded at run start is another contract's "
-                   "(afd2d33 accepts)", outs / "c-02", A.C_CONTRACT,
-                   run("c-02", contract_sha256=hashlib.sha256(b"another contract").hexdigest()))
+    gate_integrity_case("C1 provenance: one record's config_sha256 replaced in ArtifactInputs "
+                        "(afd2d33 accepts)", outs / "c-01", A.C_PROVENANCE,
+                        lambda h: run("c-01", hook=h, input_artifacts=recs))
+    gate_integrity_case("C2 contract: contract_sha256 recorded at run start is another contract's "
+                        "(afd2d33 accepts)", outs / "c-02", A.C_CONTRACT,
+                        lambda h: run("c-02", hook=h, contract_sha256=hashlib.sha256(
+                            b"another contract").hexdigest()))
     holm = env.obs.holm
     m0 = holm.members[0]
     bad_holm = dataclasses.replace(holm, members=(dataclasses.replace(m0, reject=not m0.reject),)
@@ -321,20 +419,22 @@ def part_f(env: Env, plant: Env, off: Env, work: Path, outs: Path) -> None:
     sha = {k: dict(v) for k, v in env.inp("x", True).input_file_sha256.items()}
     rel = sorted(sha)[5]
     sha[rel]["summary.json"] = "0" * 64
-    integrity_case("F4 P5: the driver's snapshot of one input differs from the files the gate "
-                   "re-reads", outs / "f-04", A.C_PROVENANCE, write(env, "f-04", True,
-                                                                    input_file_sha256=sha))
+    gate_integrity_case("F4 P5: the driver's snapshot of one input differs from the files the gate "
+                        "re-reads", outs / "f-04", A.C_PROVENANCE,
+                        lambda h: write(env, "f-04", True, input_file_sha256=sha, _tamper=h))
     copy_root = work / "moved"
     shutil.copytree(env.fs.input_root, copy_root)
     moved = env.inp("f-05", True, input_root=copy_root)
     target = copy_root / sorted(sha)[7]
     F.edit_summary(target, lambda s: (s["run"].__setitem__("timestamp_utc",
                                                            "2026-10-03T01:02:03Z"), s)[1])
-    integrity_case("F5 P5: an input edited (manifest kept consistent) after the driver read it",
-                   outs / "f-05", A.C_PROVENANCE,
-                   lambda: A.write_statistics_artifact(outs / "f-05", moved))
-    integrity_case("F6 P7: declared k = 1 while the inputs exclude 0 images", outs / "f-06",
-                   A.C_PROVENANCE, write(env, "f-06", True, am5_excluded_count=1))
+    gate_integrity_case("F5 P5: an input edited (manifest kept consistent) after the driver read it",
+                        outs / "f-05", A.C_PROVENANCE,
+                        lambda h: lambda: A.write_statistics_artifact(outs / "f-05", moved,
+                                                                      _tamper=h))
+    gate_integrity_case("F6 P7: declared k = 1 while the inputs exclude 0 images", outs / "f-06",
+                        A.C_PROVENANCE,
+                        lambda h: write(env, "f-06", True, am5_excluded_count=1, _tamper=h))
     gate_case("F7 P6: synthetic inputs declared not synthetic", outs / "f-07",
               ["synthetic_declaration"], write(env, "f-07", False))
     gate_case(f"F8 P6: inputs named {DATASET_NAME!r} declared synthetic", outs / "f-08",
@@ -533,10 +633,10 @@ def part_b(env: Env, off: Env, outs: Path) -> None:
         fam = A.build_family(off.inp("b-03", False, am5_excluded_count=K_OFF - 1))
         check("B3 n_paired != 1561 - k (k declared one lower) -> jackknife_count_nonproduction",
               fam["warnings"] == [A.W_JACKKNIFE], fam["warnings"])
-        integrity_case("B4 ... and the writer refuses that k against the inputs' AM-5 count",
-                       outs / "b-04", A.C_PROVENANCE,
-                       lambda: A.write_statistics_artifact(outs / "b-04", off.inp(
-                           "b-04", False, am5_excluded_count=K_OFF - 1)))
+        gate_integrity_case("B4 ... and the writer refuses that k against the inputs' AM-5 count",
+                            outs / "b-04", A.C_PROVENANCE,
+                            lambda h: lambda: A.write_statistics_artifact(outs / "b-04", off.inp(
+                                "b-04", False, am5_excluded_count=K_OFF - 1), _tamper=h))
     tasks = list(env.tasks)
     tasks[20] = dataclasses.replace(tasks[20], jackknife=tasks[20].jackknife[:-2])
     kind, e = outcome(lambda: A.build_family(env.inp("b-05", True, task_results=tuple(tasks))))
@@ -633,6 +733,7 @@ def main() -> int:
                   policy=Policy.OFFICIAL, analysis_id=BS.ANALYSIS_ID_OFFICIAL, B=BS.PRODUCTION_B,
                   name=DATASET_NAME, prefix="off", placeholder=True)
         part_a(smoke, outs)
+        part_w(outs)
         part_c(smoke, outs)
         part_f(smoke, plant, off, work, outs)
         part_b(smoke, off, outs)

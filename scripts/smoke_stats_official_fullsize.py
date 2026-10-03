@@ -15,7 +15,9 @@ data, checkpoint, model or GPU is used, and nothing is written into this reposit
      0; all 13 checks re-established; every per-image task 1561 - k and every dataset-level task 1561;
      the only warning synthetic_input_data; each comparison's mean_delta, the descriptive delta and
      the NI observed_delta equal the fixture arrays exactly; the unmet official conditions are exactly
-     the synthetic declaration and the binding (O3: this needs a committed clean tree)
+     the synthetic declaration and the binding (O3: this needs a committed clean tree); then
+     `--mode report` on that artifact: k = 7 reported, the profile the verified status, and the P28
+     dataset-level mIoU-C contrast equal to the fixture's nested mean exactly
 
 On a running stack other than the section 10.1 pin, official mode is refused up front (Q6): the A part
 is not run and the smoke checks that refusal instead.
@@ -248,6 +250,45 @@ def fixture_expectations(fs) -> dict:
     return out
 
 
+def fixture_miou_c(fs, stage: str) -> float:
+    """P28 from the fixture arrays: the mean over the five corruptions of the mean over severities 1-3
+    of each cell's pooled all-class mIoU (float64)."""
+    grid = official_corruption_grid()
+    per = [float(np.mean(np.array([pooled_miou_from_totals(*fs.scored[(stage, ("corruption", n, s))]
+                                                           .totals)
+                                   for s in INFERENTIAL_SEVERITIES], dtype=np.float64)))
+           for n in grid.names]
+    return float(np.mean(np.array(per, dtype=np.float64)))
+
+
+def report_mode(work: Path, fs, path: Path) -> None:
+    """`--mode report` on the (a) artifact: the full verifier with the 37 inputs and the contract."""
+    rdir = work / "report"
+    t0 = time.time()
+    code, so, se = cli("--mode", "report", "--artifact", path, "--report-out", rdir, "--repo-root",
+                       fs.input_root, "--synthetic-inputs")
+    wall = time.time() - t0
+    ok = code == 0 and (rdir / "report.json").is_file() and (rdir / "report.md").is_file()
+    check(f"A8 report mode on that artifact: exit 0, report.json and report.md (wall {wall:.0f} s)",
+          ok, se[-600:])
+    if not ok:
+        return
+    doc = json.loads((rdir / "report.json").read_text(encoding="utf-8"))
+    md = (rdir / "report.md").read_text(encoding="utf-8")
+    check(f"A9 k = {K} reported by the report layer: stdout, report.json and report.md",
+          f"k (AM-5): {K}" in so and doc["am5_excluded_count_k"] == K
+          and f"excluded from per-image analyses) = {K}." in md, so[-300:])
+    check("A10 the profile is the verified status (nonofficial, synthetic_input_data only) and all "
+          "13 checks were re-established", doc["profile"] == "nonofficial"
+          and doc["warnings"] == [A.W_SYNTHETIC]
+          and doc["integrity_checks_established"] == list(A.INTEGRITY_CHECKS), doc["warnings"])
+    e1, e6 = fixture_miou_c(fs, "E1"), fixture_miou_c(fs, "E6")
+    dm = doc["accuracy_on_corrupted_images"]["dataset_level_miou_c"]
+    check("A11 P28: each model's dataset-level mIoU-C and the contrast E6 - E1 equal the fixture's "
+          "nested mean of 15 cells exactly", (dm["E1"], dm["E6"], dm["difference_e6_minus_e1"])
+          == (e1, e6, e6 - e1), (dm, e1, e6))
+
+
 def full_run(work: Path, fs, lst: Path) -> None:
     out = work / "official"
     t0 = time.time()
@@ -294,6 +335,7 @@ def full_run(work: Path, fs, lst: Path) -> None:
           f"AM-5 k (zero-disease images excluded from per-image tasks): {K}" in so
           and "am5" not in json.dumps(list(fam)))
     print(f"FULL-SIZE WALL SECONDS: {wall:.1f}")
+    report_mode(work, fs, path)
 
 
 def main() -> int:

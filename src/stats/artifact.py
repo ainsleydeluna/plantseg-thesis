@@ -1154,6 +1154,7 @@ class VerifyReport:
     established: tuple[str, ...]          # INTEGRITY_CHECKS order
     not_reestablished: tuple[str, ...]    # need the input directories or the contract bytes
     family: dict
+    views: InputViews | None = None       # the inputs as loaded, when input_root was given
 
 
 def _check_exact_file_set(ctx: _Ctx) -> None:
@@ -1712,7 +1713,7 @@ def verify_statistics_artifact(path, *, input_root=None, contract_bytes: bytes |
         skipped |= {C_CONTRACT, C_POLICY}
     return VerifyReport(established=tuple(c for c in INTEGRITY_CHECKS if c not in skipped),
                         not_reestablished=tuple(c for c in INTEGRITY_CHECKS if c in skipped),
-                        family=ctx.fam)
+                        family=ctx.fam, views=ctx.views)
 
 
 __all__ = [
