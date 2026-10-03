@@ -174,6 +174,23 @@ def cases(tmp: Path, root: Path, stems: dict) -> None:
         m_usage = st.main([])
         m_real = st.main(fx.argv(out_dir=tmp / "o7", artifact_dir=tmp / "a7", **dict(real)))
     check("P29 the CLI: a usage error exits 2; real mode refuses until K-part (exit 2)", m_usage == 2 and m_real == 2)
+    code, err = fx.call_run(st, factory=None, out_dir=tmp / "o8", artifact_dir=tmp / "a8", **dict(real, max_samples=4))
+    check("P2 --max-samples in a real run is refused by its own gate", code == 2 and "--max-samples is a stub-mode flag" in err,
+          err)
+
+    # Q10: a TRAIN listing whose name order is not the stem order runs, and the fact is recorded False
+    from scripts.build_train_strata import train_split_list
+    s0, s1 = stems["train"][0], stems["train"][1]
+    for sub, ext in (("images", ".jpg"), ("annotations", ".png")):
+        (root / sub / "train" / f"{s1}{ext}").rename(root / sub / "train" / f"{s0} (1){ext}")
+    names = [x for x, _ in train_split_list(root)]
+    strata2 = fx.write_strata(tmp / "train_strata_renamed.json", names)
+    code, err = fx.call_run(st, out_dir=tmp / "o9", artifact_dir=tmp / "a9", **dict(base, strata=str(strata2)))
+    files = fx.output_files(tmp / "o9")
+    d9 = json.loads(files[0].read_text()) if files else {}
+    check("P19/Q10 'x (1).jpg' before 'x.jpg': the run is not gated, order_equals_sorted_stems is recorded False",
+          code == 0 and names[:2] == [f"{s0} (1)", s0] and d9.get("pass", {}).get("order_equals_sorted_stems") is False,
+          err)
 
 
 def main() -> int:

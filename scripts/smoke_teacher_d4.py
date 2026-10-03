@@ -44,7 +44,8 @@ import torch  # noqa: E402
 
 RESULTS: list[tuple[str, bool, str]] = []
 HEAD = "c" * 40
-X = 50                                             # the class whose only VAL ground truth is a duplicate
+X, X2 = 50, 51                                     # classes whose only VAL ground truth is a duplicate image
+Z = 69                                             # a class the teacher predicts once and no image holds
 
 
 def check(name: str, ok: bool, detail: str = "") -> None:
@@ -195,30 +196,42 @@ def hasher_cases(tmp: Path, root: Path, stems: dict, strata: Path) -> Path:
     check("P21/P22/P27/C2 refused: 845 VAL images, another strata split list, an --out holding the outputs, "
           "--generated-utc, no --script-commit, an --out inside the repository (reports/)",
           r == [2] * 6 and not (REPO / "reports" / "d4_hashes").exists(), str(r))
+    link = tmp / "plain_root_link"
+    os.symlink(tmp / ("x" + "TeSt" + "x"), link)               # the target is never created
+    r_link, err_link = run_quiet(hs, out=tmp / "h9", **dict(flags, data_root=str(link)))
+    check("P21 a data root whose resolved path names 'test' is refused (the resolved-path guard), by count and sha256",
+          r_link == 2 and "resolving" in err_link and "TeSt" not in err_link, err_link)
+    no_mask = lambda folder: [n for n in real_list(folder) if n != f"{stems['val'][20]}.png"]  # noqa: E731
+    with fx.patched(hs, list_folder=no_mask):
+        r_mask, err_mask = run_quiet(hs, out=tmp / "h10", **flags)
+    check("P21 a VAL image without its .png mask is refused", r_mask == 2 and "without a .png mask" in err_mask, err_mask)
     return jp
 
 
 # ---------------------------------------------------------------------------------------------------
 def label_maps(n: int = 846):
-    dis = [c for c in range(1, 116) if c != X]
+    dis = [c for c in range(1, 116) if c not in (X, X2, Z)]
     gts = torch.zeros(n, 4, 4, dtype=torch.long)
     for i in range(n):
-        gts[i, 1:3, 1:3] = X if i == 3 else dis[i % len(dis)]
+        gts[i, 1:3, 1:3] = X if i == 3 else (X2 if i == 4 else dis[i % len(dis)])
     t, e = gts.clone(), gts.clone()
     for i in (100, 200, 300):
         t[i, 1, 1] = 0                                            # the teacher misses three pixels
-    e[3, 1:3, 1:3] = 0                                            # E1 misses class X in image 3
+    t[10, 0, 0] = Z                                               # a prediction-only class (union- but not GT-present)
+    e[3, 1:3, 1:3] = 0                                            # E1 misses classes X and X2 (duplicate images)
+    e[4, 1:3, 1:3] = 0
     return gts, t, e
 
 
-def miou64(gts, preds, keep) -> float:
-    """Independent float64 union-present all-class mIoU over the kept images."""
+def miou64(gts, preds, keep, rule: str = "union") -> float:
+    """Independent float64 all-class mIoU over the kept images: union-present or GT-present."""
     g, p = gts[keep].reshape(-1), preds[keep].reshape(-1)
     terms = []
     for c in range(116):
         tp = int(((g == c) & (p == c)).sum())
-        un = int((g == c).sum()) + int((p == c).sum()) - tp
-        if un > 0:
+        gt = int((g == c).sum())
+        un = gt + int((p == c).sum()) - tp
+        if (un > 0) if rule == "union" else (gt > 0):
             terms.append(tp / un)
     return math.fsum(terms) / len(terms)
 
@@ -271,16 +284,26 @@ def reducer_cases(tmp: Path, stems: dict, dup_json: Path) -> None:
         check("P32(f) a class whose only ground truth is in a duplicate image leaves the eligible set and flips "
               "the margin's sign (full > 0, subset <= 0)",
               full_m > 0 and doc.get("margin_dedup", 1) < 0 and doc.get("margin_dedup_le_0") is True
-              and doc.get("teacher", {}).get("eligibility_changed", {}).get("union_present", {}).get("dropped") == [X]
-              and doc.get("e1", {}).get("eligibility_changed", {}).get("gt_present", {}).get("dropped") == [X])
+              and doc.get("teacher", {}).get("eligibility_changed", {}).get("union_present", {}).get("dropped") == [X, X2]
+              and doc.get("e1", {}).get("eligibility_changed", {}).get("gt_present", {}).get("dropped") == [X, X2])
         check("P24 the three signs agree; n_total, n_dup, n_kept; the full float32 values equal summary.json",
               doc.get("signs_agree") is True and set(doc.get("signs", {}).values()) == {-1}
               and (doc.get("teacher", {}).get("n_total"), doc.get("teacher", {}).get("n_dup"),
-                   doc.get("teacher", {}).get("n_kept")) == (846, 3, 843)
+                   doc.get("teacher", {}).get("n_kept"), doc.get("teacher", {}).get("n_kept_images_with_rows"))
+              == (846, 3, 843, 843)
               and doc.get("teacher", {}).get("full_float32_equals_summary") is True)
         check("P24 the exact margin (Fraction) agrees with the float64 margin within 1e-15",
               abs(float(Fraction(doc.get("exact_margin", "1/1"))) - doc.get("margin_dedup", 0)) <= 1e-15)
-        check("P24 the GT-present margin is written", isinstance(doc.get("gt_present_margin"), float))
+        allimg = torch.ones(846, dtype=torch.bool)
+        gp = {(m, part): doc.get(m, {}).get(part, {}).get("gt_present", {}).get("all_class", {}).get("value_float64")
+              for m in ("teacher", "e1") for part in ("full", "subset")}
+        want = {("teacher", "full"): miou64(gts, pt, allimg, "gt"), ("teacher", "subset"): miou64(gts, pt, keep, "gt"),
+                ("e1", "full"): miou64(gts, pe, allimg, "gt"), ("e1", "subset"): miou64(gts, pe, keep, "gt")}
+        t_sub_union = doc.get("teacher", {}).get("subset", {}).get("union_present", {}).get("all_class", {}).get("value_float64")
+        check("STATISTICS-1 the GT-present values (full and subset, both models) and the GT-present margin equal an "
+              "independent recomputation; with a prediction-only class they differ from union-present",
+              gp == want and doc.get("gt_present_margin") == want[("teacher", "subset")] - want[("e1", "subset")]
+              and t_sub_union != gp[("teacher", "subset")], f"{gp} vs {want}")
 
         # an empty duplicate list reproduces the full-VAL scores exactly
         empty = json.loads(dup_json.read_text())
@@ -305,6 +328,22 @@ def reducer_cases(tmp: Path, stems: dict, dup_json: Path) -> None:
         check("P24 sign disagreement: decide() flags it; end to end the status is 'sign disagreement', exit 1",
               unit["margin_status"] == "sign disagreement" and unit["signs_agree"] is False
               and code == 1 and sd.get("status") == "sign disagreement")
+
+        # S3's pairing checks: a pair failing check_pairing, a pair with other ground truth
+        art_t2 = load_val_artifact(a_t2, label="t2")
+        g_role = fx.gap_output(tmp / "gap_role.json", art_t, art_t2)
+        code, err = run_quiet(d4, out_dir=tmp / "r_role", **dict(base, e1=a_t2, gap_output=g_role))
+        check("P23 a pair that fails S3's check_pairing (a teacher artifact in the E1 slot) is refused",
+              code == 2 and "pairing" in err and "role e1" in err, err)
+        gts2 = gts.clone()
+        gts2[7, 1, 1] = 0                                          # one pixel of other ground truth
+        re2, man2 = fx.core_result(ids, gts2, pe)
+        a_eg = fx.write_rescore(tmp / "e1_other_gt", re2, man2, stage="E1", role="student", sha=fx.SYN_SHA_E,
+                                digest=fx.SYN_DIG_E, pin=pin)
+        g_gt = fx.gap_output(tmp / "gap_gt.json", art_t, load_val_artifact(a_eg, label="eg"))
+        code, err = run_quiet(d4, out_dir=tmp / "r_gt", **dict(base, e1=a_eg, gap_output=g_gt))
+        check("P23 a pair scored against other ground truth is refused (paired_totals_identical_gt)",
+              code == 2 and "ground-truth" in err, err)
 
         # a second teacher artifact that passes check_pairing is refused
         art_t2 = load_val_artifact(a_t2, label="t2")

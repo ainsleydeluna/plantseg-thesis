@@ -57,6 +57,26 @@ def calls(path: str) -> dict:
     return out
 
 
+def imported_repo_modules() -> list:
+    """Repository .py files imported (directly, anywhere in the file) by the DIAG scripts and modules."""
+    out = set()
+    for path in (*DIAG_SCRIPTS, "src/eval/teacher_diag.py", "src/eval/calibration.py", "src/eval/nmf_sensitivity.py"):
+        tree = ast.parse((REPO / path).read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                names = [a.name for a in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+                names = [node.module] + [f"{node.module}.{a.name}" for a in node.names]
+            else:
+                continue
+            for name in names:
+                if name.split(".")[0] in ("src", "scripts", "configs"):
+                    rel = name.replace(".", "/") + ".py"
+                    if (REPO / rel).is_file():
+                        out.add(rel)
+    return sorted(out)
+
+
 def main() -> int:
     import scripts.evaluate_model as em
     from src.eval import teacher_diag as td
@@ -77,6 +97,9 @@ def main() -> int:
           p.returncode == 0 and p.stdout.strip() == "[]", (p.stdout + p.stderr)[-300:])
     missing = [r for r in td.CODE_FILES if not (td.REPO / r).is_file()]
     check("R1 every CODE_FILES path exists (one code digest per pin)", not missing, str(missing))
+    uncovered = sorted(set(imported_repo_modules()) - set(td.CODE_FILES))
+    check("R1 every repository module a DIAG script or module imports (AST, direct imports) is in CODE_FILES",
+          not uncovered, str(uncovered))
     check("R1 CODE_FILES covers every DIAG script and module",
           all(p in td.CODE_FILES for p in DIAG_SCRIPTS) and all(
               p in td.CODE_FILES for p in ("src/eval/teacher_diag.py", "src/eval/calibration.py",

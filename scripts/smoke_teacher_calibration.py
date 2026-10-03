@@ -60,6 +60,34 @@ def acc_for(logits_rows, targets, num_classes):
     return acc.result()
 
 
+A9, A3 = math.log(27.0), math.log(9.0 / 7.0)          # e^a / (e^a + 3) = 0.9 and 0.3 with four classes
+
+
+def case_strict_099() -> bool:
+    """The share > 0.99 is strict: one valid pixel of max-probability p*; with the threshold patched to p* it is
+    not counted, with the next float below p* it is."""
+    import src.eval.calibration as cal
+    p_star = acc_for([[6.0, 0.0, 0.0]], [0], 3)["mean_max_prob_t1"]      # one pixel: the mean is its value
+    old = cal.HIGH_CONFIDENCE
+    try:
+        cal.HIGH_CONFIDENCE = p_star
+        at = acc_for([[6.0, 0.0, 0.0]], [0], 3)["n_max_prob_gt_0_99_t1"]
+        cal.HIGH_CONFIDENCE = float(np.nextafter(p_star, 0.0))
+        below = acc_for([[6.0, 0.0, 0.0]], [0], 3)["n_max_prob_gt_0_99_t1"]
+    finally:
+        cal.HIGH_CONFIDENCE = old
+    return at == 0 and below == 1
+
+
+def case_disease_by_ground_truth() -> bool:
+    """The disease subset is chosen by the target, not the prediction: a disease pixel predicted as background
+    (conf 0.9, wrong) counts, a background pixel predicted as a disease (conf 0.3) does not; with a disease
+    pixel predicted right (conf 0.3): ECE_disease = 0.5*|0 - 0.9| + 0.5*|1 - 0.3| = 0.8 over n_disease = 2.
+    (By prediction it would be 0.2.)"""
+    r = acc_for([[A9, 0, 0, 0], [0, 0, A3, 0], [0, 0, A3, 0]], [2, 0, 2], 4)
+    return r["n_disease"] == 2 and abs(r["ece_disease"] - 0.8) <= 1e-12
+
+
 def unit_cases() -> None:
     # d1: perfectly calibrated -- logits (0, 0): confidence exactly 0.5 at class 0, half the pixels right
     r = acc_for([[0.0, 0.0]] * 4, [0, 0, 1, 1], 2)
@@ -138,8 +166,11 @@ def unit_cases() -> None:
     check("means: max-probability and entropy at T=1 and T=4 match numpy to 1e-12", ok,
           str({k: (r[k], v) for k, v in ref.items()}))
     pmax = np.exp(zz - zz.max(0)) / np.exp(zz - zz.max(0)).sum(0)
-    check("share max-prob > 0.99 at T=1 (strict) matches numpy",
-          r["n_max_prob_gt_0_99_t1"] == int((pmax.max(0) > 0.99).sum()))
+    check("share max-prob > 0.99 at T=1 matches numpy", r["n_max_prob_gt_0_99_t1"] == int((pmax.max(0) > 0.99).sum()))
+    check("P16 the share > 0.99 is strict: a pixel exactly at the threshold is not counted, one just above it is",
+          case_strict_099())
+    check("d6 the disease subset follows the ground truth, not the prediction (ECE_disease 0.8, n 2)",
+          case_disease_by_ground_truth())
 
 
 def hook_cases() -> None:
@@ -216,6 +247,51 @@ def _rewrite_manifest(d: Path) -> None:
     lines = [f"{hashlib.sha256((d / n).read_bytes()).hexdigest()}  {n}\n"
              for n in ("per_image.jsonl", "sufficient_stats.npz", "summary.json")]
     (d / "MANIFEST.sha256").write_text("".join(lines), encoding="utf-8", newline="\n")
+
+
+PINNED = {"RECORD_SHA256": "8c0e649a1457782c99e02a3c81867c3b5aa55d924b697cc859455e6022179c4e",
+          "R3_VAL_MIOU": 0.38576993346214294, "R3_TOLERANCE": 1e-5,
+          "RECORD_CONFIG_BLOB": "3c6a7b28ebad5fce6187c307f87fd7fc91f81933"}
+
+
+def case_pinned_constants() -> bool:
+    """The real-mode pins equal the GO's literals (imported from PAIRING and FROZEN, never retyped)."""
+    from src.eval import teacher_diag as td
+    return all(getattr(td, k) == v for k, v in PINNED.items())
+
+
+def reference_variant(ref: Path, dst: Path, **edits) -> Path:
+    """A copy of the stub --val-reference with summary.json edited (run.* or dataset_level.all_class_miou) and
+    its manifest re-hashed, so only the edited field can be refused."""
+    import json
+    import shutil
+
+    from scripts import teacher_diag_fixtures as fx
+    shutil.copytree(ref, dst)
+    sj = json.loads((dst / "summary.json").read_text())
+    for k, v in edits.items():
+        if k == "all_class_miou":
+            sj["dataset_level"]["all_class_miou"] = v
+        else:
+            sj["run"][k] = v
+    (dst / "summary.json").write_text(json.dumps(sj, indent=2) + "\n")
+    fx.rehash_artifact(dst)
+    return dst
+
+
+def val_reference_real_outcomes(ref: Path, tmp: Path) -> dict:
+    """check_val_reference's real branch on edited copies: True where it refuses."""
+    from src.eval import teacher_diag as td
+    record = dict(checkpoint_sha256=td.RECORD_SHA256, artifact_status="provisional", all_class_miou=td.R3_VAL_MIOU)
+    variants = {"of record": record, "another checkpoint": dict(record, checkpoint_sha256="f" * 64),
+                "a smoke status": dict(record, artifact_status="smoke"),
+                "an mIoU 2e-5 from R3": dict(record, all_class_miou=td.R3_VAL_MIOU + 2e-5),
+                "stage E1": dict(record, stage="E1")}
+    out = {}
+    for i, (name, edits) in enumerate(variants.items()):
+        d = reference_variant(ref, tmp / f"ref_real_{i}", **edits)
+        out[name] = raises(lambda d=d: td.check_val_reference(d, stub=False, expected_rows=3), td.Refused)
+    return out
 
 
 def d2_cases() -> None:
@@ -329,6 +405,24 @@ def d2_cases() -> None:
               and len(adoc.get("artifact", {}).get("files_sha256", {})) == 4, err)
         check("P3 arm with --purpose is refused",
               call(out_dir=tmp / "o_a1", artifact_dir=tmp / "a_a1", **dict(arm, purpose="item1"))[0] == 2)
+
+        # the real-mode pins and --val-reference's real branch
+        check("P3/P18 the real-mode pins equal the GO's literals (record sha256, R3, its tolerance, config blob)",
+              case_pinned_constants())
+        out = val_reference_real_outcomes(ref, tmp)
+        check("P18 real --val-reference: the record checkpoint, a real status and an mIoU within 1e-5 of R3 pass; "
+              "another checkpoint, a smoke status, an mIoU 2e-5 away and stage E1 are refused",
+              out == {"of record": False, "another checkpoint": True, "a smoke status": True,
+                      "an mIoU 2e-5 from R3": True, "stage E1": True}, str(out))
+
+        # a control re-score of another teacher
+        other = json.loads(files[0].read_text())
+        other["teacher"]["loaded_state_sha256"] = "0" * 64
+        other_p = tmp / "item1_other_teacher.json"
+        other_p.write_text(json.dumps(other))
+        code, err = call(out_dir=tmp / "o_c4", artifact_dir=tmp / "a_c4", purpose="control", of_record_output=str(other_p))
+        check("P4 a control re-score whose teacher differs from the of-record output's is refused, nothing written",
+              code == 2 and "teacher differs" in err and not fx.output_files(tmp / "o_c4"), err)
 
         # refusals before any load
         bad_split = tmp / "ref_split"

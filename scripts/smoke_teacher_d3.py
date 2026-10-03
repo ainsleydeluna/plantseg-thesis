@@ -69,6 +69,7 @@ def fixtures(tmp: Path) -> dict:
     gt = rng.integers(2000, 90000, size=116).astype(np.int64)          # every class present on TRAIN
     tp = (gt * rng.uniform(0.05, 0.9, size=116)).astype(np.int64)
     pred = tp + rng.integers(0, 40000, size=116).astype(np.int64)
+    gt[77], tp[77], pred[77] = 0, 0, 0                                  # class 77: no TRAIN ground truth
     train = {"lane": td.LANE, "script": "scripts/score_teacher_train.py", "schema": "plantseg-teacher-train-scores/1.0.0",
              "artifact_status": "provisional", "mode": "real", "status": "written",
              "teacher": {"role": "record", "checkpoint": {"sha256_verified": td.RECORD_SHA256},
@@ -128,12 +129,19 @@ def cases(tmp: Path) -> None:
     check("D3 rows: one per disease class with stratum, rare, both supports and both IoUs", ok)
     check("D3 TRAIN - VAL = iou_train - iou_val; class 69 (no VAL ground truth) is not evaluable on VAL, "
           "difference null",
-          all(rows[c]["train_minus_val"] == rows[c]["iou_train"] - rows[c]["iou_val"] for c in rows if c != 69)
+          all(rows[c]["train_minus_val"] == rows[c]["iou_train"] - rows[c]["iou_val"] for c in rows if c not in (69, 77))
           and rows[69]["val_status"] == "not_evaluable" and rows[69]["train_minus_val"] is None
           and rows[69]["train_status"] == "ok")
+    check("D3 class 77 (no TRAIN ground truth) is not evaluable on TRAIN: IoU and difference null, in no TRAIN or "
+          "difference summary",
+          rows[77]["train_status"] == "not_evaluable" and rows[77]["iou_train"] is None
+          and rows[77]["train_minus_val"] is None
+          and 77 not in doc.get("summaries", {}).get("overall", {}).get("train", {}).get("classes", [77])
+          and doc.get("summaries", {}).get("overall", {}).get("not_evaluable_train") == [77])
     s = doc.get("summaries", {})
     ok = True
-    for g, sel in (("T1", lambda r: r["stratum"] == "T1"), ("rare", lambda r: r["rare"] is True),
+    for g, sel in (("T1", lambda r: r["stratum"] == "T1"), ("T2", lambda r: r["stratum"] == "T2"),
+                   ("T3", lambda r: r["stratum"] == "T3"), ("rare", lambda r: r["rare"] is True),
                    ("overall", lambda r: True)):
         mem = [r for r in rows.values() if sel(r)]
         for split, key, filt in (("train", "iou_train", lambda r: r["train_status"] == "ok"),
@@ -143,12 +151,13 @@ def cases(tmp: Path) -> None:
             got = s.get(g, {}).get(split, {})
             ok &= (got.get("n") == len(vals) and got.get("mean") == math.fsum(vals) / len(vals)
                    and got.get("median") == float(np.median(vals)))
-    check("P20 group summaries (T1, rare, overall): n, fsum mean and median on TRAIN, on VAL and of TRAIN - VAL "
+    check("P20 group summaries (T1, T2, T3, rare, overall): n, fsum mean and median on TRAIN, on VAL and of TRAIN - VAL "
           "equal an independent computation", ok)
     check("P20 class 69 enters no VAL summary and no difference summary, and is listed as not evaluable on VAL",
           69 not in s.get("overall", {}).get("val", {}).get("classes", [69])
           and 69 in s.get("overall", {}).get("train", {}).get("classes", [])
-          and s.get("overall", {}).get("not_evaluable_val") == [69] and s.get("overall", {}).get("val", {}).get("n") == 114)
+          and s.get("overall", {}).get("not_evaluable_val") == [69] and s.get("overall", {}).get("val", {}).get("n") == 114
+          and s.get("overall", {}).get("train_minus_val", {}).get("n") == 113)
     csv_p = [p for p in files if p.suffix == ".csv"]
     csv_ok = bool(csv_p) and hashlib.sha256(csv_p[0].read_bytes()).hexdigest() == doc.get("csv", {}).get("sha256")
     if csv_ok:

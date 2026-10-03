@@ -118,6 +118,51 @@ def ref_kl_cwd(z, valid, t=4.0):
     return total
 
 
+def case_tie_per_draw() -> bool:
+    """One draw tied (5, 5, 0), seven draws (5, 4, 0): first-index argmax gives class 0 everywhere, N == 0
+    (a last-index rule would give 7 flips)."""
+    z = np.zeros((8, 3, 1, 1), dtype=np.float32)
+    z[:, 0], z[:, 1] = 5.0, 4.0
+    z[0, 1] = 5.0
+    return ns.crop_statistics(z, np.ones((1, 1), bool)).N == 0
+
+
+def case_lesion_mean_probability() -> bool:
+    """Draw 1 logits (8, 0), draws 2-8 (0, 1): the mean probability peaks at class 1 (a lesion cell), the mean
+    logit (1, 0.875) at the background."""
+    z = np.zeros((8, 2, 1, 1), dtype=np.float32)
+    z[0, 0] = 8.0
+    z[1:, 1] = 1.0
+    return ns.crop_statistics(z, np.ones((1, 1), bool)).n_lesion == 1
+
+
+def case_halves_mean_probability() -> bool:
+    """Draws 1-4: (8, 0) once and (0, 1) three times, draws 5-8: (0, 1). The half means of probabilities both
+    say class 1 (no flip); the half means of logits would say 0 and 1 (a flip)."""
+    z = np.zeros((8, 2, 1, 1), dtype=np.float32)
+    z[0, 0] = 8.0
+    z[1:, 1] = 1.0
+    return ns.crop_statistics(z, np.ones((1, 1), bool)).H == 0
+
+
+def case_strict_099() -> bool:
+    """The share > 0.99 is strict: one valid cell whose max-probability is p*; with the threshold patched to
+    p* the cell is not counted, with the next float below p* it is."""
+    z = np.zeros((8, 3, 1, 1), dtype=np.float32)
+    z[:, 0] = 6.0
+    v = np.ones((1, 1), bool)
+    p_star = ns.crop_statistics(z, v).d2["max_prob_t1_sum"]         # one cell: the sum is its max-probability
+    old = ns.HIGH_CONFIDENCE
+    try:
+        ns.HIGH_CONFIDENCE = p_star
+        at = ns.crop_statistics(z, v).d2["n_max_prob_gt_0_99_t1"]
+        ns.HIGH_CONFIDENCE = float(np.nextafter(p_star, 0.0))
+        below = ns.crop_statistics(z, v).d2["n_max_prob_gt_0_99_t1"]
+    finally:
+        ns.HIGH_CONFIDENCE = old
+    return at == 0 and below == 1
+
+
 def stats_cases() -> None:
     # b1: pair counting
     check("b1 flips: labels 0000 1111 give 16 differing pairs; eight distinct labels give 28",
@@ -159,6 +204,7 @@ def stats_cases() -> None:
     z2[:, 2] = 5.0
     cs2 = ns.crop_statistics(z2, np.ones((1, 1), bool))
     check("b1 tie (0, 5, 5) peaks at class 1 (the first maximum), a lesion cell", cs2.n_lesion == 1)
+    check("b1 one tied draw (5, 5, 0) among seven (5, 4, 0): first index, N == 0", case_tie_per_draw())
     bad = np.zeros((8, 3, 2, 2), dtype=np.float32)
     bad[3, 1, 0, 0] = np.nan
     check("b1 a NaN logit is refused by the statistics", raises(lambda: ns.crop_statistics(bad, np.ones((2, 2), bool)),
@@ -187,6 +233,8 @@ def stats_cases() -> None:
     cs = ns.crop_statistics(z, v)
     s = ns.summarize([cs])
     check("b3 F_halves = 1 flip over 4 cells", cs.H == 1 and s["F_halves"]["value"] == 0.25, f"H={cs.H}")
+    check("b2 F_lesion's cells come from the mean probability, not the mean logit", case_lesion_mean_probability())
+    check("b3 F_halves compares half means of probabilities, not of logits", case_halves_mean_probability())
 
     # b4 / b5: KL against independent references
     rng = np.random.default_rng(3)
@@ -263,8 +311,12 @@ def stats_cases() -> None:
         reps = na[np.random.default_rng(1801).integers(0, n, size=(10000, n))].sum(1) / \
             da[np.random.default_rng(1801).integers(0, n, size=(10000, n))].sum(1)
         lo, hi = res.confidence_interval
-        check("b6 SciPy percentile bootstrap: replicates bit for bit, bounds within 1e-15",
-              np.array_equal(np.asarray(res.bootstrap_distribution), reps)
+        import hashlib
+        scipy_sha = hashlib.sha256(np.ascontiguousarray(np.asarray(res.bootstrap_distribution), dtype="<f8")
+                                   .tobytes()).hexdigest()
+        check("b6 SciPy percentile bootstrap: bootstrap_f's replicates equal SciPy's bit for bit (sha256), bounds "
+              "within 1e-15",
+              np.array_equal(np.asarray(res.bootstrap_distribution), reps) and bs1["replicates_sha256"] == scipy_sha
               and abs(lo - bs1["low"]) <= 1e-15 and abs(hi - bs1["high"]) <= 1e-15,
               f"scipy [{lo!r}, {hi!r}]")
     except ImportError:
@@ -282,8 +334,9 @@ def stats_cases() -> None:
     check("b7 d2_crops (first draw) means match numpy to 1e-12",
           all(abs(s[k] - ref[k]) <= 1e-12 for k in ref), str({k: (s[k], ref[k]) for k in ref}))
     e1 = np.exp(zf - np.max(zf, 0))
-    check("b7 share > 0.99 is strict and matches numpy",
-          s["n_max_prob_gt_0_99_t1"] == int(((e1 / e1.sum(0)).max(0) > 0.99).sum()))
+    check("b7 share > 0.99 matches numpy", s["n_max_prob_gt_0_99_t1"] == int(((e1 / e1.sum(0)).max(0) > 0.99).sum()))
+    check("b7 share > 0.99 is strict: a cell exactly at the threshold is not counted, one just above it is",
+          case_strict_099())
     empty = ns.crop_statistics(z, np.zeros((4, 5), bool))
     a, b = ns.summarize([cs]), ns.summarize([cs, empty])
     check("b7 a crop with no valid cell adds nothing",
@@ -307,6 +360,155 @@ def _seam_env():
         base.update(kw)
         return types.SimpleNamespace(**base)
     return fx, td, tmp, ckpt, sha, args
+
+
+_PROV_NAMES = ("builder", "ckpt_path", "ckpt_sha256", "ckpt_bytes", "config_sha256", "teacher_components_sha256",
+               "reused_module_hashes", "architecture_signature", "model_cfg_sha256", "field_10", "field_11", "field_12")
+
+
+def prov_class(n: int, *, drop_from_record: str | None = None):
+    """A stand-in TeacherProvenance with n fields (P8 cases independent of the merged dataclass)."""
+    def as_dict(self):
+        d = dataclasses.asdict(self)
+        d.pop(drop_from_record, None)
+        return d
+    return dataclasses.make_dataclass(f"Prov{n}", [(f, object) for f in _PROV_NAMES[:n]], namespace={"as_dict": as_dict})
+
+
+def case_p8_count(td) -> bool:
+    import src.distill.teacher as dt
+    from scripts import teacher_diag_fixtures as fx
+    with fx.patched(dt, TeacherProvenance=prov_class(11)):
+        eleven = raises(lambda: td.require_provenance_field_count(True), td.Refused)
+        stub_ok = not raises(lambda: td.require_provenance_field_count(False), Exception)
+    with fx.patched(dt, TeacherProvenance=prov_class(12)):
+        twelve = not raises(lambda: td.require_provenance_field_count(True), Exception)
+    return eleven and stub_ok and twelve
+
+
+def case_p8_nonempty(td, loaded, inputs) -> bool:
+    cls = prov_class(12)
+    vals = {f: "v" for f in _PROV_NAMES}
+    vals.update(ckpt_sha256=inputs.sha256, field_11=None, field_12="")
+    old = loaded.frozen.provenance
+    loaded.frozen.provenance = cls(**vals)
+    try:
+        td.after_load_checks(loaded, inputs, stub=False)
+        return False
+    except td.Refused as e:
+        return "field_11" in str(e) and "field_12" in str(e)
+    except Exception:  # noqa: BLE001
+        return False
+    finally:
+        loaded.frozen.provenance = old
+
+
+def case_p8_record(td, loaded, inputs, checks) -> bool:
+    import src.distill.teacher as dt
+    from scripts import teacher_diag_fixtures as fx
+    vals = {f: "v" for f in _PROV_NAMES}
+    vals["ckpt_sha256"] = inputs.sha256
+    old = loaded.frozen.provenance
+    try:
+        with fx.patched(dt, TeacherProvenance=prov_class(12)):
+            loaded.frozen.provenance = prov_class(12, drop_from_record="field_12")(**vals)
+            try:
+                td.teacher_record(loaded, inputs, checks, stub=False)
+                lacking = False
+            except td.Refused as e:
+                lacking = "field_12" in str(e)
+            loaded.frozen.provenance = prov_class(12)(**vals)
+            complete = not raises(lambda: td.teacher_record(loaded, inputs, checks, stub=False), Exception)
+    finally:
+        loaded.frozen.provenance = old
+    return lacking and complete
+
+
+def case_frozen_blob(td) -> bool:
+    from scripts import teacher_diag_fixtures as fx
+    first = next(iter(td.FROZEN))
+    table = dict(td.FROZEN)
+    table[first] = ("0" * 40, table[first][1])
+    with fx.patched(td, FROZEN=table):
+        return raises(td.frozen_blob_record, td.Refused)
+
+
+def _fresh(td, fx, args, factory=None):
+    return gated_load(td, args(), factory=factory or fx.stub_factory)
+
+
+def case_training_mode(td, fx, args) -> bool:
+    inputs, loaded, _ = _fresh(td, fx, args)
+    loaded.segmentor.train(True)
+    try:
+        td.after_load_checks(loaded, inputs, stub=True)
+        return False
+    except td.Stop as e:
+        return "training mode" in str(e)
+
+
+def case_extra_isolated(td, fx, args) -> bool:
+    inputs, loaded, _ = _fresh(td, fx, args)
+    loaded.segmentor.add_module("extra_ham", fx.StubIsolatedNMF())
+    try:
+        td.after_load_checks(loaded, inputs, stub=True)
+        return False
+    except td.Stop as e:
+        return "exactly one isolated NMF module" in str(e)
+
+
+def case_describe_mismatch(td, fx, args) -> bool:
+    from src.distill.segnext_teacher import SegNeXtTeacherAdapter
+    original = SegNeXtTeacherAdapter.begin_nmf_stream
+
+    def skewed(self, policy, seed=42):
+        d = original(self, policy, seed)
+        return None if d is None else dict(d, draws=d["draws"] + 1)
+    with fx.patched(SegNeXtTeacherAdapter, begin_nmf_stream=skewed):
+        try:
+            _fresh(td, fx, args)
+            return False
+        except td.Stop as e:
+            return "does not match" in str(e)
+        except Exception:  # noqa: BLE001
+            return False
+
+
+def case_c1_object(td, fx, args) -> bool:
+    try:
+        _, loaded, _ = _fresh(td, fx, args)
+    except Exception:  # noqa: BLE001
+        return False
+    return (loaded.stream is loaded.adapter.nmf_stream and loaded.stream_description == loaded.stream.describe()
+            and loaded.stream.draws == 0)
+
+
+def case_exit_codes(td) -> bool:
+    import argparse
+
+    from scripts.build_train_strata import StrataError
+    from src.distill.nmf_stream import NMFStreamError
+    from src.eval.artifacts import ArtifactRequestError, ArtifactWriteError
+    from src.eval.calibration import CalibrationStop
+    from src.eval.eval_runtime import EvalRuntimeError
+    from src.eval.evaluate import EvaluationIntegrityError
+    from src.eval.stage_artifacts import StageArtifactError
+    from src.quant.calibration import CalibrationIndexError
+    stops = (td.Stop, EvaluationIntegrityError, NMFStreamError, CalibrationStop, EvalRuntimeError, ArtifactWriteError)
+    refusals = (td.Refused, ArtifactRequestError, StageArtifactError, StrataError, CalibrationIndexError)
+    ok = all(td.exit_code_for(c.__new__(c)) == td.EXIT_STOP for c in stops)
+    ok &= all(td.exit_code_for(c.__new__(c)) == td.EXIT_REFUSED for c in refusals)
+    ok &= td.exit_code_for(KeyError("x")) is None
+
+    def boom(_args):
+        raise KeyError("unexpected")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--x")
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        ok &= td.cli_main(parser, boom, []) == td.EXIT_ERROR
+        ok &= td.cli_main(parser, lambda a: td.EXIT_OK, ["--bad"]) == td.EXIT_REFUSED
+        ok &= td.run_with_exit_codes(lambda: (_ for _ in ()).throw(EvaluationIntegrityError("x"))) == td.EXIT_STOP
+    return bool(ok)
 
 
 def gated_load(td, a, *, stub=True, mode="kd", factory=None):
@@ -499,13 +701,17 @@ def _seam_body(fx, td, tmp, ckpt, sha, args) -> None:
     check("P5 after the load, a provenance sha256 other than the verified one is refused",
           raises(lambda: td.after_load_checks(kd, dataclasses.replace(inputs, sha256="0" * 64), stub=True),
                  td.Refused))
-    n_fields = len(td.provenance_fields())
-    check("P8 real runs are refused while TeacherProvenance lacks the K-part fields; stub runs proceed",
-          (n_fields == td.EXPECTED_PROVENANCE_FIELDS)
-          or (raises(lambda: td.require_provenance_field_count(True), td.Refused)
-              and not raises(lambda: td.require_provenance_field_count(False), Exception)
-              and raises(lambda: td.after_load_checks(kd, inputs, stub=False), td.Refused)),
-          f"{n_fields} fields")
+    check("P8 the field count: an 11-field TeacherProvenance refuses a real run, a 12-field one does not; stub "
+          "runs never count (stand-in dataclasses, so the case holds before and after K-part)", case_p8_count(td))
+    check("P8 a real run refuses a provenance whose fields are None or empty, naming them", case_p8_nonempty(td, kd, inputs))
+    check("P8 the written record (as_dict) must hold every field: a record lacking one is refused",
+          case_p8_record(td, kd, inputs, checks))
+    check("P7 a frozen blob id other than the table's is refused", case_frozen_blob(td))
+    check("P7 a segmentor in training mode stops", case_training_mode(td, fx, args))
+    check("P9 a second isolated NMF module stops the after-load check", case_extra_isolated(td, fx, args))
+    check("C1 a begin description that differs from stream.describe() stops the load", case_describe_mismatch(td, fx, args))
+    check("C1 the stream is the adapter's live object after a fresh load", case_c1_object(td, fx, args))
+    check("P29 exit codes: STOP classes 1, refusal classes 2, anything else 4 from main", case_exit_codes(td))
 
     # flags (C2, P26, P27, P28) and the commit binding
     ns_ = types.SimpleNamespace
@@ -649,11 +855,73 @@ def _d1_env():
                teacher_config_sha256=td.file_sha256(cfg_copy))
     fx.call_run(d2, out_dir=tmp / "d2_arm", artifact_dir=tmp / "d2_arm_art", val_reference=str(ref), max_samples=3,
                 generated_utc=UTC, **dict(teacher, **arm))
+    arm2 = dict(arm, arm_id="R2")
+    fx.call_run(d2, out_dir=tmp / "d2_arm2", artifact_dir=tmp / "d2_arm2_art", val_reference=str(ref), max_samples=3,
+                generated_utc=UTC, **dict(teacher, **arm2))
     d2_json = fx.output_files(tmp / "d2")[0]
     return types.SimpleNamespace(
         d1=d1, d2=d2, fx=fx, td=td, tmp=tmp, root=root, stems=stems, ckpt=ckpt, sha=sha, strata=strata, ref=ref,
         teacher=teacher, arm=arm, d2_json=d2_json, d2_doc=json.loads(d2_json.read_text()),
-        d2_arm_json=fx.output_files(tmp / "d2_arm")[0])
+        d2_arm_json=fx.output_files(tmp / "d2_arm")[0], d2_arm2_json=fx.output_files(tmp / "d2_arm2")[0])
+
+
+def _stub_loaded(e, mode: str):
+    a = types.SimpleNamespace(**e.teacher, teacher_role="record", arm_id=None, arm_dl_id=None, teacher_config_sha256=None)
+    return e.td.load_teacher(mode, e.td.verify_teacher_inputs(a, stub=True), model_factory=e.fx.stub_factory)
+
+
+def crop_feature_hashes(e, n: int) -> list:
+    """Run-level wiring of crop i (TESTS-06): crops 0..n-1 rebuilt independently of the script -- the literal
+    random.Random(1801).sample, train_preprocess with RandomState(1801 + i), finalize -- on a fresh stub load."""
+    import random
+
+    from PIL import Image
+
+    from configs.augment import AUGMENT
+    from scripts.build_train_strata import train_split_list
+    from src.data.dataset import PlantSegDataset
+    from src.data.transforms import finalize, train_preprocess
+    td = e.td
+    stems = [s for s, _ in train_split_list(e.root)]
+    pairs = {p[0].stem: p for p in PlantSegDataset("train").pairs}
+    split = td.SplitTeacher(_stub_loaded(e, "kd"))
+    out = []
+    for i, sid in enumerate(random.Random(1801).sample(sorted(stems), 256)[:n]):
+        img_path, mask_path = pairs[sid]
+        with Image.open(img_path) as im, Image.open(mask_path) as mk:
+            image, _ = finalize(*train_preprocess(im, mk, np.random.RandomState(1801 + i), AUGMENT))
+        out.append(td.feature_sha256(split.features(image[None])))
+    return out
+
+
+def mean_probability_miou(e, n: int = 3) -> float:
+    """The D1 VAL part's mean-probability mIoU recomputed independently: eight fresh M4-V streams seeded 42..49,
+    the resize, a float64 softmax summed over the draws, the evaluator's confusion and union-present reducer."""
+    import torch
+    import torch.nn.functional as F
+    from src.distill.nmf_stream import NMFStream
+    from src.eval.adapters import PlantSegEvalDataset, deterministic_subset
+    from src.eval.metrics import confusion_matrix, miou_from_confusion
+    td = e.td
+    loaded = _stub_loaded(e, "evaluator")
+    split = td.SplitTeacher(loaded)
+    streams = [loaded.stream] + [NMFStream(s, "M4-V") for s in range(43, 50)]
+    ds = PlantSegEvalDataset("val", deterministic_subset(td.VAL_ROWS, n))
+    cm = torch.zeros(116, 116, dtype=torch.long)
+    for k in range(len(ds)):
+        item = ds[k]
+        x = item["image"][None]
+        feats = split.features(x)
+        h = td.feature_sha256(feats)
+        total = None
+        for s in streams:
+            split.attach(s)
+            z = F.interpolate(split.head(feats, s, feat_hash=h), size=tuple(x.shape[-2:]), mode="bilinear",
+                              align_corners=False)
+            p = torch.softmax(z.to(torch.float64), dim=1)
+            total = p if total is None else total + p
+        cm += confusion_matrix(total.argmax(1)[0], item["target"], 116, 255)
+    return miou_from_confusion(cm)
 
 
 def _crops_cases(e) -> None:
@@ -726,6 +994,8 @@ def _crops_cases(e) -> None:
           doc.get("inputs", {}).get("d2_val_output", {}).get("sha256") == td.file_sha256(e.d2_json)
           and td.same_teacher(doc.get("teacher", {}), e.d2_doc["teacher"]) == []
           and doc.get("correction") == {"state": "declined", "dl_id": "DL-62"})
+    check("a2 run-level wiring: the run's per-crop feature hashes equal crops 0..2 recomputed with RandomState(1801 + i)",
+          [p["feature_sha256"] for p in pc] == crop_feature_hashes(e, 3))
 
     # arm
     code, err = fx.call_run(d1, part="crops", out_dir=e.tmp / "d1_arm", strata=str(e.strata),
@@ -737,6 +1007,10 @@ def _crops_cases(e) -> None:
           code == 0 and [p.name for p in files] == ["teacher_d1_arm-R1_20261002T000000Z.json"]
           and adoc.get("gates") == "nothing" and "below_0_03" not in adoc.get("F", {})
           and "N" in adoc.get("F", {}), err)
+    code, err = fx.call_run(d1, part="crops", out_dir=e.tmp / "d1_arm_x", strata=str(e.strata),
+                            d2_val_output=str(e.d2_arm2_json), n_crops=2, generated_utc=UTC, **CORR,
+                            **dict(e.teacher, **e.arm))
+    check("P11 an arm R1 run refuses arm R2's D2 output", code == 2 and "arm R1" in err, err)
 
     # refusals and stops
     base = dict(part="crops", teacher_role="record", strata=str(e.strata), d2_val_output=str(e.d2_json), n_crops=2,
@@ -750,11 +1024,19 @@ def _crops_cases(e) -> None:
     code, _ = fx.call_run(d1, out_dir=e.tmp / "r2", **dict(base, d2_val_output=str(alt_p)))
     check("P11 a D2 output of another teacher (loaded_state_sha256) is refused after the load, nothing written",
           code == 2 and not fx.output_files(e.tmp / "r2"))
-    alt["artifact_status"] = "provisional"
+    prov_doc = json.loads(e.d2_json.read_text())
+    prov_doc["artifact_status"] = "provisional"                 # only the status differs
     alt_p2 = e.tmp / "d2_provisional.json"
-    alt_p2.write_text(json.dumps(alt))
-    check("P2 stub mode refuses a non-smoke --d2-val-output",
-          fx.call_run(d1, out_dir=e.tmp / "r3", **dict(base, d2_val_output=str(alt_p2)))[0] == 2)
+    alt_p2.write_text(json.dumps(prov_doc))
+    code, err = fx.call_run(d1, out_dir=e.tmp / "r3", **dict(base, d2_val_output=str(alt_p2)))
+    check("P2 stub mode refuses a non-smoke --d2-val-output (the smoke rule, not another check)",
+          code == 2 and "stub mode takes only a smoke output" in err, err)
+    try:
+        td.read_diag_output(e.d2_json, script="scripts/teacher_d2_calibration.py", stub=False, what="--d2-val-output")
+        m = ""
+    except td.Refused as ex:
+        m = str(ex)
+    check("P2 real mode refuses a smoke --d2-val-output", "a real run refuses it" in m, m)
     bad_strata = fx.write_strata(e.tmp / "strata_other.json", e.stems["train"][:-1] + ["plant_leaf_zzzz"])
     with fx.count_loads() as calls:
         r_strata = fx.call_run(d1, out_dir=e.tmp / "r4", **dict(base, strata=str(bad_strata)))[0]
@@ -778,15 +1060,18 @@ def _crops_cases(e) -> None:
           and not fx.output_files(e.tmp / "r8"))
     real = dict(base, generated_utc=None, n_crops=None, script_commit="c" * 40, script_commit_dl_id="DL-61")
     with fx.count_loads() as calls:
-        r_nocorr = fx.call_run(d1, factory=None, out_dir=e.tmp / "r9",
-                               **dict(real, correction_state=None, correction_dl_id=None))[0]
-        r_badcorr = fx.call_run(d1, factory=None, out_dir=e.tmp / "r10", **dict(real, correction_state="maybe"))[0]
-        r_p8 = fx.call_run(d1, factory=None, out_dir=e.tmp / "r11", **real)[0]
-        r_n = fx.call_run(d1, factory=None, out_dir=e.tmp / "r12", **dict(real, n_crops=3))[0]
-        r_nosha = fx.call_run(d1, factory=None, out_dir=e.tmp / "r13", **dict(real, teacher_ckpt_sha256=None))[0]
-    check("a6/P28/P8 real weights are refused without the correction flags, without --teacher-ckpt-sha256, "
-          "with --n-crops, and (until K-part) at all -- each before any load",
-          (r_nocorr, r_badcorr, r_p8, r_n, r_nosha) == (2, 2, 2, 2, 2) and sum(calls.values()) == 0)
+        cases = {"--correction-state": dict(real, correction_state=None, correction_dl_id=None),
+                 "--correction-state must be": dict(real, correction_state="maybe"),
+                 "--n-crops is a stub-mode flag": dict(real, n_crops=3),
+                 "--teacher-ckpt-sha256 must match": dict(real, teacher_ckpt_sha256=None)}
+        got = {why: fx.call_run(d1, factory=None, out_dir=e.tmp / f"r9_{k}", **kw) for k, (why, kw) in enumerate(cases.items())}
+        r_p8 = fx.call_run(d1, factory=None, out_dir=e.tmp / "r11", **real)
+    check("a6/P28 real weights are refused, each by its own gate (the message names it), before any load: no "
+          "correction flags, a malformed state, --n-crops, no --teacher-ckpt-sha256",
+          all(c == 2 and why in err for why, (c, err) in got.items()) and sum(calls.values()) == 0,
+          str({why: err[-120:] for why, (c, err) in got.items() if why not in err}))
+    check("P8 until K-part a well-formed real run is refused by the provenance field count",
+          r_p8[0] == 2 and "TeacherProvenance" in r_p8[1], r_p8[1])
 
 
 def _val_cases(e) -> None:
@@ -829,6 +1114,24 @@ def _val_cases(e) -> None:
           doc.get("reproduction", {}).get("passed") is True and doc.get("reproduction", {}).get("delta") == 0.0
           and isinstance(doc.get("mean_probability", {}).get("all_class_miou"), float))
 
+    mp_ref = mean_probability_miou(e)
+    check("c3 run-level wiring: the mean-probability mIoU equals an independent eight-stream recomputation "
+          "(and differs from stream 42's alone)",
+          doc.get("mean_probability", {}).get("all_class_miou") == mp_ref and ps and mp_ref != ps[0]["all_class_miou"],
+          f"{doc.get('mean_probability', {}).get('all_class_miou')!r} vs {mp_ref!r}")
+    import src.eval.metrics as em
+    real_cm = em.confusion_matrix
+
+    def skewed_cm(pred, target, num_classes, ignore_index=255):
+        cm = real_cm(pred, target, num_classes, ignore_index)
+        cm[0, 0] += 1
+        return cm
+    with fx.patched(em, confusion_matrix=skewed_cm):
+        code, err = fx.call_run(d1, part="val", out_dir=e.tmp / "v_cm", teacher_role="record", val_reference=str(e.ref),
+                                max_samples=3, generated_utc=UTC, **CORR, **e.teacher)
+    check("c2 a stream-42 confusion that differs from the evaluator core's stops (exit 1), nothing written",
+          code == 1 and "confusion differs" in err and not fx.output_files(e.tmp / "v_cm"), err)
+
     # c3: probabilities are averaged, not logits
     dk = [5.0, 5.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0]
     mp = d1.MeanProbability()
@@ -856,11 +1159,12 @@ def _val_cases(e) -> None:
         r_rows = fx.call_run(d1, out_dir=e.tmp / "v3", **dict(base, max_samples=2))[0]
         real = dict(base, max_samples=None, generated_utc=None, script_commit="c" * 40, script_commit_dl_id="DL-61")
         r_nocorr = fx.call_run(d1, factory=None, out_dir=e.tmp / "v4",
-                               **dict(real, correction_state=None, correction_dl_id=None))[0]
-        r_ms = fx.call_run(d1, factory=None, out_dir=e.tmp / "v5", **dict(real, max_samples=3))[0]
+                               **dict(real, correction_state=None, correction_dl_id=None))
+        r_ms = fx.call_run(d1, factory=None, out_dir=e.tmp / "v5", **dict(real, max_samples=3))
     check("P3/P28 the VAL part refuses the arm role, --strata, another row count, and real runs without the "
-          "correction flags or with --max-samples -- each before any load",
-          (r_arm, r_strata, r_rows, r_nocorr, r_ms) == (2, 2, 2, 2, 2) and sum(calls.values()) == 0)
+          "correction flags or with --max-samples (each by its own gate) -- before any load",
+          (r_arm, r_strata, r_rows, r_nocorr[0], r_ms[0]) == (2, 2, 2, 2, 2) and "--correction-state" in r_nocorr[1]
+          and "--max-samples is a stub-mode flag" in r_ms[1] and sum(calls.values()) == 0, r_nocorr[1] + r_ms[1])
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         m_real = d1.main(fx.argv(out_dir=e.tmp / "v6", **dict(base, max_samples=None, generated_utc=None,
                                                                 script_commit="c" * 40, script_commit_dl_id="DL-61")))

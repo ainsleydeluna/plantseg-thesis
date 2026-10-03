@@ -100,7 +100,8 @@ def build_env() -> Env:
     from scripts import teacher_diag_fixtures as fx
     from src.stats.val_artifacts import load_val_artifact
     e = Env()
-    e.s1, e.s3, e.s4, e.fx, e.d1, e.d2, e.d3, e.d4, e.hs = s1, s3, s4, fx, d1, d2, d3, d4, hs
+    from scripts import score_teacher_train as st
+    e.s1, e.s3, e.s4, e.fx, e.d1, e.d2, e.d3, e.d4, e.hs, e.st = s1, s3, s4, fx, d1, d2, d3, d4, hs, st
     e.fx_, e.td, e.tmp, e.ckpt, e.sha, e.args = s1._seam_env()
     e.n = 0
     e.root, e.stems = fx.make_data_root("diag_mut_data_")
@@ -108,6 +109,14 @@ def build_env() -> Env:
     e.strata = fx.write_strata(e.tmp / "train_strata_v1.json", e.stems["train"])
     e.planted = s4.plant_copies(e.root, e.stems)
     e.ref = fx.reference_artifact(e.tmp / "ref_artifact", e.ckpt, n=3)
+    e.cfg = str(e.td.REPO / e.td.TEACHER_CONFIG_REL)
+    e.teacher = dict(teacher_ckpt=str(e.ckpt), teacher_ckpt_sha256=e.sha, teacher_config=e.cfg)
+    fx.call_run(d2, out_dir=e.tmp / "d2_item1", artifact_dir=e.tmp / "d2_item1_art", teacher_role="record",
+                purpose="item1", val_reference=str(e.ref), max_samples=3, generated_utc=UTC, **e.teacher)
+    e.d2_json = fx.output_files(e.tmp / "d2_item1")[0]
+    cfg_copy = Path(shutil.copy(e.cfg, e.tmp / "arm_cfg.py"))
+    e.arm = dict(teacher_role="arm", arm_id="R1", arm_dl_id="DL-70", teacher_config=str(cfg_copy),
+                 teacher_config_sha256=e.td.file_sha256(cfg_copy))
     e.d3f = s3.fixtures(_mk(e.tmp / "d3"))
     e.hs_flags = dict(data_root=str(e.root), strata=str(e.strata), script_commit=HEAD, script_commit_dl_id="DL-66")
     code, _ = hs_run(e, out=e.tmp / "hashes")
@@ -119,6 +128,7 @@ def build_env() -> Env:
     e.ids = ids
     pin = fx.clean_git_pin(e.tmp / "pin_repo")
     e.gts, pt, pe = s4.label_maps()
+    e.pt, e.pe = pt, pe
     rt, man = fx.core_result(ids, e.gts, pt)
     re_, _ = fx.core_result(ids, e.gts, pe)
     w = lambda name, res, stage, role, sha, dig: fx.write_rescore(e.tmp / name, res, man, stage=stage, role=role,  # noqa: E731
@@ -147,6 +157,20 @@ def build_env() -> Env:
     keep = torch.ones(846, dtype=torch.bool)
     keep[[ids.index(i) for i in json.loads(e.dup_json.read_text())["duplicate_val_ids"]]] = False
     e.sub_m = s4.miou64(e.gts, pt, keep) - s4.miou64(e.gts, pe, keep)
+    e.keep = keep
+    with fx.synthetic_pairing(e.v_t, e.v_e):
+        e.g_role = fx.gap_output(e.tmp / "gap_role.json", load_val_artifact(e.a_t, label="t"),
+                                 load_val_artifact(e.a_t2, label="t2"))
+    gts2 = e.gts.clone()
+    gts2[7, 1, 1] = 0
+    re2, man2 = fx.core_result(ids, gts2, pe)
+    e.a_eg = fx.write_rescore(e.tmp / "e1_other_gt", re2, man2, stage="E1", role="student", sha=fx.SYN_SHA_E,
+                              digest=fx.SYN_DIG_E, pin=pin)
+    with fx.synthetic_pairing(e.v_t, e.v_e):
+        e.g_gt = fx.gap_output(e.tmp / "gap_gt.json", load_val_artifact(e.a_t, label="t"),
+                               load_val_artifact(e.a_eg, label="eg"))
+    e.link = e.tmp / "plain_root_link"
+    os.symlink(e.tmp / ("x" + "TeSt" + "x"), e.link)
     return e
 
 
@@ -174,6 +198,7 @@ def d4_run(e, *, zero=False, **flags):
     with e.fx.synthetic_pairing(e.v_t, v_e), e.fx.fake_git(head=HEAD):
         code, err = e.fx.call_run(e.d4, factory=None, out_dir=out, **base)
     files = e.fx.output_files(out)
+    e.last_err = err
     return code, (json.loads(files[0].read_text()) if files else {}), files
 
 
@@ -370,8 +395,7 @@ def killers(e) -> dict:
     k["P2 stub refuses a build that leaves mmseg imported"] = mmseg_build
     k["P2 stub refuses a model over 1e6 parameters"] = lambda: raises(
         lambda: s1.gated_load(td, e.args(), factory=fx.big_factory), td.Refused)
-    k["P8 real runs are refused while TeacherProvenance lacks the K-part fields"] = lambda: raises(
-        lambda: td.require_provenance_field_count(True), td.Refused)
+    k["P8 the field count on stand-ins: 11 fields refused, 12 not (holds before and after K-part)"] = lambda: s1.case_p8_count(td)
 
     def binding(head=HEAD, tree_status=None):
         with fx.fake_git(head=head, tree_status=tree_status):
@@ -509,7 +533,8 @@ def killers(e) -> dict:
     k["f margin_dedup equals an independent float64 recomputation"] = lambda: (
         lambda r: r[0] == 0 and r[1].get("margin_dedup") == e.sub_m)(d4_run(e))
     k["f the reducer drops exactly the listed rows (n_dup 3, n_kept 843)"] = lambda: (
-        lambda r: r[0] == 0 and r[1].get("teacher", {}).get("n_kept") == 843)(d4_run(e))
+        lambda r: r[0] == 0 and r[1].get("teacher", {}).get("n_dup") == 3
+        and r[1].get("teacher", {}).get("n_kept_images_with_rows") == 843)(d4_run(e))
     k["P24 a full-set value that differs from summary.json is a STOP"] = lambda: (
         lambda r: r[0] == 1 and not r[2])(d4_run(e, teacher=e.a_te, gap_output=e.ge))
     k["P24 a full set that does not reproduce S3's point is a STOP"] = lambda: (
@@ -524,6 +549,146 @@ def killers(e) -> dict:
         lambda r: r[0] == 0 and r[1].get("margin_dedup") == 0.0 and r[1].get("margin_dedup_le_0") is True)(
         d4_run(e, e1=e.a_e0, gap_output=e.g0))
     k["P32(f) a second teacher artifact that passes check_pairing is refused"] = lambda: d4_run(e, teacher=e.a_t2)[0] == 2
+
+    # ---- added after the DL-24 workflow (each mirrors a new smoke case)
+    k["b1 one tied draw (5, 5, 0) among seven (5, 4, 0): first index, N == 0"] = s1.case_tie_per_draw
+    k["b2 F_lesion's cells come from the mean probability, not the mean logit"] = s1.case_lesion_mean_probability
+    k["b3 F_halves compares half means of probabilities, not of logits"] = s1.case_halves_mean_probability
+    k["b7 D1's share > 0.99 is strict"] = s1.case_strict_099
+    k["P16 the ECE share > 0.99 is strict"] = sc.case_strict_099
+    k["d6 the disease subset follows the ground truth, not the prediction"] = sc.case_disease_by_ground_truth
+
+    def fresh_load():
+        return s1.gated_load(td, e.args(), factory=fx.stub_factory)
+    k["P8 a real run refuses None or empty provenance fields, naming them"] = lambda: (
+        lambda il: s1.case_p8_nonempty(td, il[1], il[0]))(fresh_load())
+    k["P8 the written record must hold every field"] = lambda: (
+        lambda il: s1.case_p8_record(td, il[1], il[0], il[2]))(fresh_load())
+    k["P7 a frozen blob id other than the table's is refused"] = lambda: s1.case_frozen_blob(td)
+    k["P7 a segmentor in training mode stops"] = lambda: s1.case_training_mode(td, fx, e.args)
+    k["P9 a second isolated NMF module stops the after-load check"] = lambda: s1.case_extra_isolated(td, fx, e.args)
+    k["C1 a begin description that differs from stream.describe() stops"] = lambda: s1.case_describe_mismatch(td, fx, e.args)
+    k["C1 the stream is the adapter's live object after a fresh load"] = lambda: s1.case_c1_object(td, fx, e.args)
+    k["P29 exit codes: STOP classes 1, refusal classes 2, anything else 4"] = lambda: s1.case_exit_codes(td)
+
+    def d1_flags(**kw):
+        base = dict(part="crops", correction_state="declined", correction_dl_id="DL-62", strata="s", d2_val_output="d",
+                    val_reference=None, max_samples=None, n_crops=None)
+        base.update(kw)
+        try:
+            e.d1.check_d1_flags(types.SimpleNamespace(**base), real=True)
+            return ""
+        except td.Refused as ex:
+            return str(ex)
+    k["P28 a real run requires the correction flags"] = lambda: "--correction-state" in d1_flags(
+        correction_state=None, correction_dl_id=None)
+    k["P2 --n-crops is refused in a real run"] = lambda: "--n-crops" in d1_flags(n_crops=3)
+
+    def d2_max_samples():
+        try:
+            e.d2.check_d2_flags(types.SimpleNamespace(teacher_role="record", purpose="item1", of_record_output=None,
+                                                      max_samples=3), real=True)
+            return False
+        except td.Refused as ex:
+            return "--max-samples" in str(ex)
+    k["P2 D2's --max-samples is refused in a real run"] = d2_max_samples
+
+    def train_max_samples():
+        from scripts import score_teacher_train as st
+        code, err = fx.call_run(st, factory=None, out_dir=fresh(e, "tr"), artifact_dir=fresh(e, "tra"), strata=str(e.strata),
+                                max_samples=4, script_commit=HEAD, script_commit_dl_id="DL-61", teacher_role="record",
+                                **e.teacher)
+        return code == 2 and "--max-samples is a stub-mode flag" in err
+    k["P2 TRAIN's --max-samples is refused in a real run"] = train_max_samples
+
+    corr = dict(correction_state="declined", correction_dl_id="DL-62")
+
+    def crops_run(**kw):
+        out = fresh(e, "crops")
+        code, err = fx.call_run(e.d1, part="crops", out_dir=out, strata=str(e.strata), d2_val_output=str(e.d2_json),
+                                n_crops=2, generated_utc=UTC, **corr, **{**dict(teacher_role="record", **e.teacher), **kw})
+        files = fx.output_files(out)
+        return code, err, (json.loads(files[0].read_text()) if files else {})
+
+    def crop_wiring():
+        code, _, doc = crops_run()
+        return code == 0 and [p["feature_sha256"] for p in doc.get("per_crop", [])] == s1.crop_feature_hashes(e, 2)
+    k["a2 run-level crop wiring: the run's crops are RandomState(1801 + i)"] = crop_wiring
+
+    def arm_mismatch():
+        code, err, _ = crops_run(**e.arm)
+        return code == 2 and "arm R1" in err
+    k["P11 an arm run refuses a D2 output that is not its own arm's"] = arm_mismatch
+
+    def val_run():
+        out = fresh(e, "d1val")
+        code, err = fx.call_run(e.d1, part="val", out_dir=out, teacher_role="record", val_reference=str(e.ref),
+                                max_samples=3, generated_utc=UTC, **corr, **e.teacher)
+        files = fx.output_files(out)
+        return code, err, (json.loads(files[0].read_text()) if files else {}), out
+
+    def mean_prob_wiring():
+        code, _, doc, _ = val_run()
+        return code == 0 and doc.get("mean_probability", {}).get("all_class_miou") == s1.mean_probability_miou(e)
+    k["c3 run-level wiring: the mean-probability mIoU equals an independent eight-stream recomputation"] = mean_prob_wiring
+
+    def core_confusion():
+        import src.eval.metrics as em
+        real_cm = em.confusion_matrix
+
+        def skewed(pred, target, num_classes, ignore_index=255):
+            cm = real_cm(pred, target, num_classes, ignore_index)
+            cm[0, 0] += 1
+            return cm
+        with fx.patched(em, confusion_matrix=skewed):
+            code, err, _, out = val_run()
+        return code == 1 and not fx.output_files(out)
+    k["c2 a stream-42 confusion that differs from the evaluator core's stops"] = core_confusion
+    want_ref = {"of record": False, "another checkpoint": True, "a smoke status": True, "an mIoU 2e-5 from R3": True,
+                "stage E1": True}
+    k["P18 real --val-reference: record passes; another checkpoint, smoke, 2e-5 off and stage E1 are refused"] = lambda: (
+        sc.val_reference_real_outcomes(e.ref, _mk(fresh(e, "refreal"))) == want_ref)
+
+    def control_other():
+        doc = json.loads(e.d2_json.read_text())
+        doc["teacher"]["loaded_state_sha256"] = "0" * 64
+        other = fresh(e, "item1_other")
+        other.write_text(json.dumps(doc))
+        out = fresh(e, "ctl")
+        code, err = fx.call_run(e.d2, out_dir=out, artifact_dir=fresh(e, "ctl_art"), teacher_role="record",
+                                purpose="control", of_record_output=str(other), val_reference=str(e.ref), max_samples=3,
+                                generated_utc=UTC, **e.teacher)
+        return code == 2 and not fx.output_files(out)
+    k["P4 a control re-score of another teacher is refused"] = control_other
+
+    def d3_77():
+        code, doc = d3_doc()
+        r = {x["class_id"]: x for x in doc.get("rows", [])}
+        return code == 0 and r[77]["train_status"] == "not_evaluable" and r[77]["train_minus_val"] is None
+    k["D3 a class without TRAIN ground truth is not evaluable on TRAIN"] = d3_77
+
+    def gt_present():
+        code, doc, _ = d4_run(e)
+        allimg = torch.ones(846, dtype=torch.bool)
+        got = doc.get("teacher", {}).get("full", {}).get("gt_present", {}).get("all_class", {}).get("value_float64")
+        sub = doc.get("teacher", {}).get("subset", {}).get("gt_present", {}).get("all_class", {}).get("value_float64")
+        return (code == 0 and got == e.s4.miou64(e.gts, e.pt, allimg, "gt")
+                and sub == e.s4.miou64(e.gts, e.pt, e.keep, "gt"))
+    k["STATISTICS-1 the GT-present values equal an independent recomputation"] = gt_present
+    k["P23 a pair failing S3's check_pairing is refused"] = lambda: (
+        d4_run(e, e1=e.a_t2, gap_output=e.g_role)[0] == 2 and "role e1" in e.last_err)
+    k["P23 a pair scored against other ground truth is refused"] = lambda: (
+        d4_run(e, e1=e.a_eg, gap_output=e.g_gt)[0] == 2 and "ground-truth" in e.last_err)
+    k["P21 the hasher refuses a data root resolving to a 'test' location"] = lambda: (
+        lambda r: r[0] == 2 and "resolving" in r[1])(hs_run(e, out=fresh(e, "h"), data_root=str(e.link)))
+
+    def missing_mask():
+        real_list = e.hs.list_folder
+        drop = f"{e.stems['val'][20]}.png"
+        with fx.patched(e.hs, list_folder=lambda f: [n for n in real_list(f) if n != drop]):
+            code, err = hs_run(e, out=fresh(e, "h"))
+        return code == 2 and "without a .png mask" in err
+    k["P21 a VAL image without its mask is refused"] = missing_mask
     return k
 
 
@@ -598,7 +763,7 @@ def mutations(e) -> list:
         # the seam
         ("P9 stream identity check removed", td.SplitTeacher, "head", [("if mods[0].nmf_stream is not stream:", F)],
          "P9 a head call with a stream that is not the attached object stops"),
-        ("C1 identity check removed (the dict passes)", td.SplitTeacher, "head", [("if mods[0].nmf_stream is not stream:", F)],
+        ("P9 identity check removed: the begin call's dict is taken as a stream", td.SplitTeacher, "head", [("if mods[0].nmf_stream is not stream:", F)],
          "C1 handing the head check the begin call's dict stops"),
         ("P9 one-draw check removed", td.SplitTeacher, "head", [("if stream.draws != before + 1:", F)],
          "P9 a head drawing twice per call stops"),
@@ -623,7 +788,7 @@ def mutations(e) -> list:
          "P2 stub refuses a model over 1e6 parameters"),
         ("P8 provenance field count removed", td, "require_provenance_field_count",
          [("if real and len(names) != EXPECTED_PROVENANCE_FIELDS:", F)],
-         "P8 real runs are refused while TeacherProvenance lacks the K-part fields"),
+         "P8 the field count on stand-ins: 11 fields refused, 12 not (holds before and after K-part)"),
         ("P26 HEAD == --script-commit removed", td, "require_commit_binding", [("if head != script_commit:", F)],
          "P26 a HEAD other than --script-commit is refused"),
         ("P26 clean-tree check removed", td, "require_commit_binding", [("if tree is None or tree.strip():", F)],
@@ -682,6 +847,105 @@ def mutations(e) -> list:
         ("P23 artifact binding to the gap output removed", d4, "_run",
          [('if ((gdoc.get("inputs") or {}).get(role) or {}).get("artifact_sha256s") != art.file_sha256s:', F)],
          "P32(f) a second teacher artifact that passes check_pairing is refused"),
+        # added after the DL-24 workflow
+        ("argmax takes the last of tied classes", ns, "crop_statistics",
+         [("labels = np.argmax(zv, axis=1)", "labels = zv.shape[1] - 1 - np.argmax(zv[:, ::-1], axis=1)")],
+         "b1 one tied draw (5, 5, 0) among seven (5, 4, 0): first index, N == 0"),
+        ("F_lesion's peak from the mean logit", ns, "crop_statistics",
+         [("mean_all = p1.sum(axis=0) / K_DRAWS", "mean_all = z64.sum(axis=0) / K_DRAWS")],
+         "b2 F_lesion's cells come from the mean probability, not the mean logit"),
+        ("F_halves from half means of logits", ns, "crop_statistics",
+         [("half_a = np.argmax(p1[:4].sum(axis=0) / 4.0, axis=0)", "half_a = np.argmax(z64[:4].sum(axis=0), axis=0)"),
+          ("half_b = np.argmax(p1[4:].sum(axis=0) / 4.0, axis=0)", "half_b = np.argmax(z64[4:].sum(axis=0), axis=0)")],
+         "b3 F_halves compares half means of probabilities, not of logits"),
+        ("D1 share >= 0.99 instead of > 0.99", ns, "crop_statistics",
+         [("int(np.count_nonzero(max1 > HIGH_CONFIDENCE))", "int(np.count_nonzero(max1 >= HIGH_CONFIDENCE))")],
+         "b7 D1's share > 0.99 is strict"),
+        ("ECE share >= 0.99 instead of > 0.99", cal.CalibrationAccumulator, "update",
+         [("int(np.count_nonzero(max1 > HIGH_CONFIDENCE))", "int(np.count_nonzero(max1 >= HIGH_CONFIDENCE))")],
+         "P16 the ECE share > 0.99 is strict"),
+        ("disease subset chosen by the prediction", cal.CalibrationAccumulator, "update",
+         [("dmask = (tvn >= self.disease_lo) & (tvn <= self.disease_hi)",
+           "pvn = pv.numpy(); dmask = (pvn >= self.disease_lo) & (pvn <= self.disease_hi)")],
+         "d6 the disease subset follows the ground truth, not the prediction"),
+        ("P8 empty-field check removed", td, "after_load_checks",
+         [('empty = [f.name for f in fields if getattr(prov, f.name) in (None, "")]', "empty = []")],
+         "P8 a real run refuses None or empty provenance fields, naming them"),
+        ("P8 record check removed", td, "teacher_record",
+         [('bad = [n for n in provenance_fields() if provenance.get(n) in (None, "")]', "bad = []")],
+         "P8 the written record must hold every field"),
+        ("P7 frozen blob comparison removed", td, "frozen_blob_record", [("if got != blob:", F)],
+         "P7 a frozen blob id other than the table's is refused"),
+        ("P7 training-mode check removed", td, "after_load_checks", [("if loaded.segmentor.training is not False:", F)],
+         "P7 a segmentor in training mode stops"),
+        ("P9 one-isolated-module check removed after the load", td, "after_load_checks",
+         [("if len(mods) != 1 or mods[0].nmf_stream is not loaded.stream:", F)],
+         "P9 a second isolated NMF module stops the after-load check"),
+        ("C1 describe() == description check removed", td, "load_teacher", [("if stream.describe() != description:", F)],
+         "C1 a begin description that differs from stream.describe() stops"),
+        ("C1 the begin call's dict used as the stream", td, "load_teacher",
+         [('stream = getattr(adapter, "nmf_stream", None)', "stream = description")],
+         "C1 the stream is the adapter's live object after a fresh load"),
+        ("P29 imported STOP classes not mapped to 1", td, "exit_code_for",
+         [("if isinstance(exc, Stop) or isinstance(exc, _loaded_classes(_STOP_CLASSES)):", "if isinstance(exc, Stop):")],
+         "P29 exit codes: STOP classes 1, refusal classes 2, anything else 4"),
+        ("P29 an unexpected exception exits 2", td, "cli_main", [("return EXIT_ERROR", "return EXIT_REFUSED")],
+         "P29 exit codes: STOP classes 1, refusal classes 2, anything else 4"),
+        ("P28 correction flags optional in a real run", d1, "check_d1_flags",
+         [("if real or args.correction_state is not None or args.correction_dl_id is not None:",
+           "if args.correction_state is not None or args.correction_dl_id is not None:")],
+         "P28 a real run requires the correction flags"),
+        ("P2 --n-crops accepted in a real run", d1, "check_d1_flags",
+         [("if args.n_crops is not None and (real or not 1 <= args.n_crops <= SAMPLE_COUNT):",
+           "if args.n_crops is not None and (not 1 <= args.n_crops <= SAMPLE_COUNT):")],
+         "P2 --n-crops is refused in a real run"),
+        ("P2 D2 --max-samples accepted in a real run", d2, "check_d2_flags",
+         [('if real:\n            raise td.Refused("--max-samples', 'if False:\n            raise td.Refused("--max-samples')],
+         "P2 D2's --max-samples is refused in a real run"),
+        ("P2 TRAIN --max-samples accepted in a real run", e.st, "_run",
+         [("(real or not 1 <= args.max_samples <= td.TRAIN_ROWS)", "(not 1 <= args.max_samples <= td.TRAIN_ROWS)")],
+         "P2 TRAIN's --max-samples is refused in a real run"),
+        ("every crop drawn with RandomState(1801)", d1, "crop",
+         [("np.random.RandomState(CROP_SEED_BASE + i)", "np.random.RandomState(CROP_SEED_BASE)")],
+         "a2 run-level crop wiring: the run's crops are RandomState(1801 + i)"),
+        ("the mean probability fed by stream 42 only", d1.EightStreamForward, "_forward_all",
+         [("mean.add(z)", "mean.add(z) if k == 0 else None")],
+         "c3 run-level wiring: the mean-probability mIoU equals an independent eight-stream recomputation"),
+        ("core confusion == stream 42 check removed", d1, "_run_val", [("if not core_equal:", F)],
+         "c2 a stream-42 confusion that differs from the evaluator core's stops"),
+        ("--val-reference record-sha check removed", td, "check_val_reference",
+         [('if run.get("checkpoint_sha256") != RECORD_SHA256:', F)],
+         "P18 real --val-reference: record passes; another checkpoint, smoke, 2e-5 off and stage E1 are refused"),
+        ("--val-reference real-status check removed", td, "check_val_reference",
+         [('if run.get("artifact_status") not in ("provisional", "official"):', F)],
+         "P18 real --val-reference: record passes; another checkpoint, smoke, 2e-5 off and stage E1 are refused"),
+        ("--val-reference R3 tolerance check removed", td, "check_val_reference",
+         [("if abs(miou - R3_VAL_MIOU) > R3_TOLERANCE:", F)],
+         "P18 real --val-reference: record passes; another checkpoint, smoke, 2e-5 off and stage E1 are refused"),
+        ("--val-reference stage/role/precision check removed", td, "check_val_reference",
+         [('if (run.get("stage"), run.get("model_role"), run.get("precision")) != ("teacher", "teacher", "fp32"):', F)],
+         "P18 real --val-reference: record passes; another checkpoint, smoke, 2e-5 off and stage E1 are refused"),
+        ("P4 control teacher identity removed", d2, "_run",
+         [('diffs = td.same_teacher(teacher, of_record["doc"].get("teacher") or {})', "diffs = []")],
+         "P4 a control re-score of another teacher is refused"),
+        ("P11 arm-id check of --d2-val-output removed", d1, "_run_crops",
+         [('if role == "arm" and (d2t.get("role") != "arm" or d2t.get("arm_id") != args.arm_id):', F)],
+         "P11 an arm run refuses a D2 output that is not its own arm's"),
+        ("D3 every class evaluable on TRAIN", d3, "build_rows", [("t_ok = tgt > 0", "t_ok = True")],
+         "D3 a class without TRAIN ground truth is not evaluable on TRAIN"),
+        ("D4 GT-present computed with the union-present rule", d4, "scores",
+         [("dm = dataset_miou(tot, classes, rule)", "dm = dataset_miou(tot, classes, UNION_PRESENT)")],
+         "STATISTICS-1 the GT-present values equal an independent recomputation"),
+        ("P23 check_pairing removed", d4, "_run", [("gap.check_pairing(art_t, art_e)", "pass")],
+         "P23 a pair failing S3's check_pairing is refused"),
+        ("P23 identical ground truth check removed", d4, "_run", [("paired_totals_identical_gt(stages)", "pass")],
+         "P23 a pair scored against other ground truth is refused"),
+        ("P21 hasher resolved-path guard removed", hs, "guard_resolved",
+         [('bad = [r for r in real if "test" in r.lower()]', "bad = []")],
+         "P21 the hasher refuses a data root resolving to a 'test' location"),
+        ("hasher accepts an image without its mask", hs, "_run",
+         [('missing = [s for s in stems if s + MASK_SUFFIX not in lst[split]["masks"]]', "missing = []")],
+         "P21 a VAL image without its mask is refused"),
     ]
 
 
