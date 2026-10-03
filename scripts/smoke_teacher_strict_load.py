@@ -38,10 +38,12 @@ Sections:
 --of-record PATH --sha256 HEX (deferred check 1, local, teacher image): load the checkpoint of record
 strictly and print the five counts and the duplicate count, the entry and dtype census, the
 parameter count, the checkpoint's top-level keys, the twelve provenance values and the
-old-path/new-path equality. A non-zero count (the duplicate count included), an inequality, or a
+old-path/new-path equality. A non-zero count (the duplicate count included), an inequality, a
 frozen value (config_sha256, teacher_components_sha256, reused_module_hashes) other than the
-runbook freeze is a FAIL; an architecture_signature or model_cfg_sha256 other than the sandbox
-value is reported, not failed (the image's value becomes the value of record).
+runbook freeze, or ham_kwargs other than patch 22's row 5g is a FAIL; a refused load raises
+(TeacherStateDictMismatch names every count) and exits 1. An architecture_signature or
+model_cfg_sha256 other than the sandbox value is reported, not failed (the image's value becomes
+the value of record).
 
 Writes only under tempfile.mkdtemp(); never in the repository.
 Run:  python -B scripts/smoke_teacher_strict_load.py [--of-record PATH --sha256 HEX]
@@ -88,6 +90,8 @@ FREEZE = {
         "src/distill/nmf_stream.py": "053e53cc441d58a2477affbd281331d7321dd2023e9f09c9f75010b9b36a64d4",
         "src/data/isolation.py": "74a063313cc04c1e327dce22b0faa4ae3a9334a01e6cf7c58eb1bee13c2e5014"},
 }
+# patch 22: ham_kwargs is as in row 5g (the NMF settings of the resolved config); a difference is a FAIL
+HAM_KWARGS = {"MD_S": 1, "MD_R": 16, "train_steps": 6, "eval_steps": 7, "inv_t": 100, "rand_init": True}
 SANDBOX = {"architecture_signature": "aa3a73b9a3a34c60c05f0b89dc9ddd08b6280779f5a946992c5614f716429e76",
            "model_cfg_sha256": "d0bfa1215ef575e9f7e16354c8b06a684acf47c4e136af30cfc5c1daa716507b"}
 FULL_ENTRIES, FULL_FLOAT32, FULL_INT64, FULL_PARAMS = 854, 807, 47, 27_618_868
@@ -206,7 +210,7 @@ def test_stub() -> None:
           rec["strict_load"] == {"missing": 0, "unexpected": 0, "shape": 0, "dtype": 0, "non_tensor": 0,
                                  "duplicate": 0, "entries": len(state)}
           and all(torch.equal(loaded[k], v) for k, v in state.items()), str(rec["strict_load"]))
-    check("S_signature_recorded_and_built_before_the_load",
+    check("S_signature_recorded_equals_a_fresh_build",
           rec["architecture_signature"] == architecture_signature(StubSegNeXt()))
     first = sorted(state)[0]
     renamed = dict(state)
@@ -354,6 +358,21 @@ def full_refusal(name: str, state) -> object:
 def old_path_state(path: Path) -> dict:
     from mmseg.apis import init_model
     return init_model(str(CONFIG), str(path), device="cpu").state_dict()
+
+
+# the F section's checks, each a named SKIP when the MMSeg stack is absent
+F_CHECKS = ("F_exact_load_854_entries_zero_in_every_class",
+            "F_provenance_twelve_keys_with_the_thesis_values",
+            "F_ham_kwargs_is_the_resolved_config_as_a_plain_dict",
+            "F_provenance_values_are_plain_types_weights_only_loadable",
+            "F_old_path_and_new_path_give_bitwise_equal_state", "F_signature_equal_across_two_builds",
+            "F_signature_changes_at_150_classes", "F_renamed_key_is_one_missing_one_unexpected",
+            "F_missing_key_refused", "F_extra_key_refused", "F_conv_seg_weight_shape_refused",
+            "F_150_class_head_refused", "F_float64_tensor_refused",
+            "F_int64_tensor_in_float32_slot_refused",
+            "F_state_without_num_batches_tracked_is_47_missing", "F_non_tensor_value_refused",
+            "F_module_prefixed_loads_equal", "F_raw_without_meta_loads_equal",
+            "F_wrong_sha256_never_calls_torch_load")
 
 
 def test_full_shape(state: dict, good: Path) -> object:
@@ -530,6 +549,8 @@ def of_record(path: Path, expected: str) -> int:
     if not equal:
         fails.append("old_new_inequality")
     fails += [f"frozen:{k}" for k, v in FREEZE.items() if prov[k] != v]
+    if prov["ham_kwargs"] != HAM_KWARGS:
+        fails.append("ham_kwargs")
     reported = [f"{k} {prov[k]} (sandbox {v}; the image's value becomes the value of record)"
                 for k, v in SANDBOX.items() if prov[k] != v]
     for line in reported:
@@ -560,9 +581,7 @@ def main(argv=None) -> int:
         prov = test_full_shape(state, good)
     else:
         good = TMP / "absent.pth"
-        for name in ("F_exact_load_854_entries_zero_in_every_class",
-                     "F_provenance_twelve_keys_with_the_thesis_values",
-                     "F_old_path_and_new_path_give_bitwise_equal_state", "F_full_shape_refusals"):
+        for name in F_CHECKS:
             skip(name, "no MMSeg stack: runs in the teacher image")
     test_kd_run(good, prov)
     print("\n[CHECKS]")

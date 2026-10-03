@@ -58,7 +58,8 @@ class TeacherCheckpointInvalid(ValueError):
 
 
 class TeacherStateDictMismatch(TeacherCheckpointInvalid):
-    """R6: the checkpoint's state does not match the built teacher exactly. One code for every class.
+    """R6: the checkpoint's state is refused by the strict teacher check: it does not match the built
+    teacher exactly, or the `module.` strip collapses keys (raised before any build). One code.
 
     The five classes are exact counts, and their key lists are fields: `missing` (in the model, not in
     the checkpoint), `unexpected` (the reverse), `shape`, `dtype` and `non_tensor`. `duplicate` lists
@@ -75,8 +76,8 @@ class TeacherStateDictMismatch(TeacherCheckpointInvalid):
         self.missing, self.unexpected, self.shape = list(missing), list(unexpected), list(shape)
         self.dtype, self.non_tensor, self.duplicate = list(dtype), list(non_tensor), list(duplicate)
         counts = " ".join(f"{c}={len(getattr(self, c))}" for c in (*self.CLASSES, "duplicate"))
-        lines = [f"[{self.code}] teacher checkpoint {source} does not match the built teacher "
-                 f"exactly: {counts}"]
+        lines = [f"[{self.code}] teacher checkpoint {source} is refused by the strict teacher check: "
+                 f"{counts}"]
         for c in (*self.CLASSES, "duplicate"):
             names = getattr(self, c)
             if names:
@@ -172,7 +173,8 @@ def strict_load_teacher_state(model: nn.Module, state: dict, *, source: str = ""
     The comparison is this function's own: every model key present, no other key, every value a
     tensor of the model's shape and dtype. Any non-zero count raises `TeacherStateDictMismatch`. Only
     then `load_state_dict(strict=True)` copies the weights. Returns the five counts and the duplicate
-    count (all 0; a duplicate is refused earlier, by load_teacher_state_dict) and the number of entries."""
+    count (all 0; a duplicate is refused earlier, by load_teacher_state_dict) and the number of
+    entries."""
     target = model.state_dict()
     missing = sorted(k for k in target if k not in state)
     unexpected = sorted(k for k in state if k not in target)
