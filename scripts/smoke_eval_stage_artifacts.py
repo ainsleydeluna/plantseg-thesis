@@ -86,7 +86,11 @@ def test_stage_contract() -> None:
                           ("E4", "int8_artifact", "int8_ptq"),
                           ("E5", "int8_artifact", "int8_qat"), ("E6", "int8_artifact", "int8_qat"),
                           ("E7", "int8_artifact", "int8_ptq")):
-        spec = resolve_stage_artifact(s)
+        try:
+            spec = resolve_stage_artifact(s)
+        except StageArtifactError as e:
+            check(f"{s}_resolves_correctly", False, f"{e.code}: {e}")
+            continue
         check(f"{s}_resolves_correctly", spec["kind"] == kind and spec["precision"] == prec,
               f"{kind}/{prec} from {spec['source_stage']}")
     check("e4_e5_derive_from_e1",
@@ -194,9 +198,16 @@ def test_arms_and_declared_stage() -> None:
     """DL-52 (L-CKPT-GUARD): the arms A, F, G are descriptive FP32 stages with E3's projection-free
     check; E2, E3, A, F and G checkpoints must record their stage; E1 records none."""
     for arm in ("A", "F", "G"):
-        check(f"{arm}_ckpt_accepted_with_declared_stage",
-              validate_fp32_artifact(arm, fp32_ckpt(f"{arm.lower()}.pt", arm))["declared_stage"] == arm)
-        check(f"{arm}_is_descriptive_only", is_descriptive_only(arm))
+        try:
+            declared = validate_fp32_artifact(arm, fp32_ckpt(f"{arm.lower()}.pt", arm))["declared_stage"]
+        except Exception as e:  # noqa: BLE001 - a raise is a FAIL of this check
+            declared = f"{type(e).__name__}: {e}"
+        check(f"{arm}_ckpt_accepted_with_declared_stage", declared == arm, str(declared)[:120])
+        try:
+            descriptive = is_descriptive_only(arm)
+        except Exception as e:  # noqa: BLE001
+            descriptive = f"{type(e).__name__}: {e}"
+        check(f"{arm}_is_descriptive_only", descriptive is True, str(descriptive)[:120])
         leak = TMP / f"{arm.lower()}_leak.pt"
         st = _state(); st["cwd_projection.weight"] = torch.randn(320, 160, 1, 1)
         torch.save({"stage": arm, "num_classes": NC, "model_state_dict": st}, leak)

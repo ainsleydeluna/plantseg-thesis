@@ -12,7 +12,8 @@ Sections:
   TE  scripts/evaluate_model.run for the teacher (M4-V, batch size 1) under both protocols on a
       synthetic PlantSeg-layout VAL root, from a temp file holding the same random-init weights:
       upstream rows and shapes, scoring at the original resolution, the 512x512 image scored
-      identically under both protocols, the canvas artifact without protocol fields
+      identically under both protocols, the canvas artifact without protocol fields; run() hands
+      the checkpoint's --teacher-ckpt-sha256 to load_teacher_model (R6, L-CKPT-GUARD)
 
 Writes only under tempfile.mkdtemp() (removed in `finally`); the project repository's git state is
 never read.
@@ -206,13 +207,24 @@ def section_te(work: Path, segmentor, cfg) -> None:
             artifact_status="smoke", batch_size=1, max_samples=4, confirm_test_split=False,
             run_id=f"am13_teacher_{protocol}", device="cpu", protocol=protocol))()
 
+    import src.eval.model_loading as ML
+    handed: list = []                       # R6: what run() hands load_teacher_model
+    real_load = ML.load_teacher_model
+
+    def recording_load(*a, **k):
+        handed.append(k.get("expected_sha256"))
+        return real_load(*a, **k)
+
     saved_root, saved_repo = DATA["root"], CLI.REPO
-    DATA["root"], CLI.REPO = str(root), repo
+    DATA["root"], CLI.REPO, ML.load_teacher_model = str(root), repo, recording_load
     try:
         up = CLI.run(args(work / "te_up", "upstream"))
         cv = CLI.run(args(work / "te_canvas", "canvas"))
     finally:
-        DATA["root"], CLI.REPO = saved_root, saved_repo
+        DATA["root"], CLI.REPO, ML.load_teacher_model = saved_root, saved_repo, real_load
+    sha = hashlib.sha256(ckpt.read_bytes()).hexdigest()
+    check("TE run() hands --teacher-ckpt-sha256 to load_teacher_model under both protocols (R6)",
+          handed == [sha, sha], str(handed))
     s_up, s_cv = verify_artifact(up), verify_artifact(cv)
     rows_up = [json.loads(ln) for ln in (up / "per_image.jsonl").read_text("utf-8").splitlines()]
     rows_cv = [json.loads(ln) for ln in (cv / "per_image.jsonl").read_text("utf-8").splitlines()]

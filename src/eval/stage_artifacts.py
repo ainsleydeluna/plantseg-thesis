@@ -1,4 +1,4 @@
-"""Bridge between produced E1-E7 artifacts and the existing evaluator. Resolver + gates only.
+"""Bridge between produced E1-E7 and A/F/G artifacts and the existing evaluator. Resolver + gates only.
 
 This module does NOT re-implement evaluation, metrics, or the artifact contract. It answers three
 questions the evaluator currently cannot, and delegates everything else:
@@ -15,8 +15,9 @@ deliberately holds no second copy of that rule. Governed-path cleanliness is lik
 the existing implementation, so no global repository-cleanliness requirement is introduced and the
 protected reference PDF remains allowlisted.
 
-For E4-E7 the input is the run-provenance JSON written by `src/quant/runner.py`; for E1-E3 it is the
-FP32 checkpoint read through the existing `src.eval.model_loading` contract.
+For E4-E7 the input is the run-provenance JSON written by `src/quant/runner.py`; for E1-E3 and the
+exploratory arms A, F, G it is the FP32 checkpoint read through the existing
+`src.eval.model_loading` contract.
 """
 
 from __future__ import annotations
