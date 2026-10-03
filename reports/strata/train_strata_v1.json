@@ -1,0 +1,1194 @@
+{
+  "schema": "plantseg-train-strata/1.0.0",
+  "lane": "L-AM17-STRATA",
+  "authority": "AM-17 item 8 (DRAFT, adviser approval pending); docs/lane_specs/part1.md lane 5",
+  "artifact_status": "provisional",
+  "split": "train",
+  "split_list_sha256": "0a216e8e3d9e646d0fc4328795fec46e42e474a836c39ebd37d1beaf7c60b943",
+  "split_list_definition": "sha256 of the name-sorted TRAIN image stems (images/train, .jpg/.jpeg), one per line, UTF-8, LF, trailing LF; each stem's mask is annotations/train/<stem>.png",
+  "data_root_note": "TRAIN only, read at /workspace/plantseg_data/plantseg: images/train (names, never decoded) and annotations/train (masks at original resolution); VAL and TEST are never listed or opened, and any path containing 'test' is refused",
+  "n_images": 5367,
+  "num_classes": 116,
+  "background_index": 0,
+  "ignore_index": 255,
+  "rare_threshold": 20,
+  "rank_rule": "share descending; ties broken by the smaller class id",
+  "tercile_rule": "ranks 1-38 T1, 39-76 T2, 77-115 T3 (floor(n/3), floor(n/3), the rest)",
+  "rare_rule": "images < 20",
+  "share_rule": "pixels_c / sum of pixels over the disease classes (background excluded)",
+  "per_class": [
+    {
+      "class_id": 1,
+      "pixels": 2632054,
+      "share": 0.002993880724346299,
+      "images": 43,
+      "rank": 74,
+      "tercile": "T2",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 2,
+      "pixels": 8433554,
+      "share": 0.00959290909621673,
+      "images": 52,
+      "rank": 33,
+      "tercile": "T1",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 3,
+      "pixels": 4908023,
+      "share": 0.005582725679012777,
+      "images": 64,
+      "rank": 60,
+      "tercile": "T2",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 4,
+      "pixels": 9129368,
+      "share": 0.010384376187063003,
+      "images": 115,
+      "rank": 32,
+      "tercile": "T1",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 5,
+      "pixels": 2406389,
+      "share": 0.002737193705896219,
+      "images": 35,
+      "rank": 76,
+      "tercile": "T2",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 6,
+      "pixels": 33745956,
+      "share": 0.038384990274910144,
+      "images": 79,
+      "rank": 3,
+      "tercile": "T1",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 7,
+      "pixels": 3290074,
+      "share": 0.003742358298983579,
+      "images": 56,
+      "rank": 68,
+      "tercile": "T2",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 8,
+      "pixels": 3349039,
+      "share": 0.0038094291785746057,
+      "images": 22,
+      "rank": 66,
+      "tercile": "T2",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 9,
+      "pixels": 7586744,
+      "share": 0.008629688685015558,
+      "images": 19,
+      "rank": 35,
+      "tercile": "T1",
+      "rare": true,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 10,
+      "pixels": 1780901,
+      "share": 0.002025720283804606,
+      "images": 33,
+      "rank": 89,
+      "tercile": "T3",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 11,
+      "pixels": 7421054,
+      "share": 0.008441221390189184,
+      "images": 28,
+      "rank": 36,
+      "tercile": "T1",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 12,
+      "pixels": 1891173,
+      "share": 0.002151151302786403,
+      "images": 24,
+      "rank": 87,
+      "tercile": "T3",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 13,
+      "pixels": 1812693,
+      "share": 0.002061882709039201,
+      "images": 19,
+      "rank": 88,
+      "tercile": "T3",
+      "rare": true,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 14,
+      "pixels": 14852654,
+      "share": 0.01689443853203048,
+      "images": 54,
+      "rank": 17,
+      "tercile": "T1",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 15,
+      "pixels": 988114,
+      "share": 0.0011239493787197068,
+      "images": 34,
+      "rank": 103,
+      "tercile": "T3",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 16,
+      "pixels": 3485558,
+      "share": 0.003964715355304654,
+      "images": 54,
+      "rank": 64,
+      "tercile": "T2",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 17,
+      "pixels": 672980,
+      "share": 0.0007654941159530057,
+      "images": 16,
+      "rank": 112,
+      "tercile": "T3",
+      "rare": true,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 18,
+      "pixels": 1464632,
+      "share": 0.0016659739933378148,
+      "images": 12,
+      "rank": 92,
+      "tercile": "T3",
+      "rare": true,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 19,
+      "pixels": 2070421,
+      "share": 0.0023550404069148235,
+      "images": 21,
+      "rank": 86,
+      "tercile": "T3",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 20,
+      "pixels": 1217602,
+      "share": 0.0013849849424538792,
+      "images": 13,
+      "rank": 97,
+      "tercile": "T3",
+      "rare": true,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 21,
+      "pixels": 1252048,
+      "share": 0.0014241662113149407,
+      "images": 19,
+      "rank": 96,
+      "tercile": "T3",
+      "rare": true,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 22,
+      "pixels": 5285769,
+      "share": 0.006012400172050882,
+      "images": 22,
+      "rank": 53,
+      "tercile": "T2",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 23,
+      "pixels": 2963120,
+      "share": 0.003370458148626512,
+      "images": 22,
+      "rank": 72,
+      "tercile": "T2",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 24,
+      "pixels": 5508781,
+      "share": 0.006266069484343836,
+      "images": 36,
+      "rank": 51,
+      "tercile": "T2",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 25,
+      "pixels": 5678581,
+      "share": 0.006459211778154677,
+      "images": 21,
+      "rank": 50,
+      "tercile": "T2",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 26,
+      "pixels": 866616,
+      "share": 0.0009857491289350798,
+      "images": 7,
+      "rank": 107,
+      "tercile": "T3",
+      "rare": true,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 27,
+      "pixels": 3073479,
+      "share": 0.003495988127440827,
+      "images": 24,
+      "rank": 70,
+      "tercile": "T2",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 28,
+      "pixels": 9501497,
+      "share": 0.010807661514822335,
+      "images": 63,
+      "rank": 30,
+      "tercile": "T1",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 29,
+      "pixels": 5095472,
+      "share": 0.0057959431691926855,
+      "images": 34,
+      "rank": 57,
+      "tercile": "T2",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 30,
+      "pixels": 3328992,
+      "share": 0.00378662633072993,
+      "images": 32,
+      "rank": 67,
+      "tercile": "T2",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 31,
+      "pixels": 1002613,
+      "share": 0.0011404415466700212,
+      "images": 29,
+      "rank": 102,
+      "tercile": "T3",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 32,
+      "pixels": 763525,
+      "share": 0.0008684862772786987,
+      "images": 13,
+      "rank": 110,
+      "tercile": "T3",
+      "rare": true,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 33,
+      "pixels": 5735175,
+      "share": 0.006523585717942256,
+      "images": 27,
+      "rank": 49,
+      "tercile": "T2",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 34,
+      "pixels": 2370390,
+      "share": 0.0026962459471512453,
+      "images": 12,
+      "rank": 78,
+      "tercile": "T3",
+      "rare": true,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 35,
+      "pixels": 1487825,
+      "share": 0.0016923553197238858,
+      "images": 7,
+      "rank": 91,
+      "tercile": "T3",
+      "rare": true,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 36,
+      "pixels": 982024,
+      "share": 0.001117022190443452,
+      "images": 22,
+      "rank": 104,
+      "tercile": "T3",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 37,
+      "pixels": 2967608,
+      "share": 0.00337556311102123,
+      "images": 46,
+      "rank": 71,
+      "tercile": "T2",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 38,
+      "pixels": 2146826,
+      "share": 0.002441948751783006,
+      "images": 16,
+      "rank": 85,
+      "tercile": "T3",
+      "rare": true,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 39,
+      "pixels": 9197252,
+      "share": 0.010461592155691125,
+      "images": 225,
+      "rank": 31,
+      "tercile": "T1",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 40,
+      "pixels": 7092903,
+      "share": 0.00806795968903299,
+      "images": 66,
+      "rank": 40,
+      "tercile": "T2",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 41,
+      "pixels": 1177236,
+      "share": 0.0013390698551042418,
+      "images": 47,
+      "rank": 99,
+      "tercile": "T3",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 42,
+      "pixels": 54975,
+      "share": 6.253237692727345e-05,
+      "images": 2,
+      "rank": 115,
+      "tercile": "T3",
+      "rare": true,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 43,
+      "pixels": 266869,
+      "share": 0.00030355530510603983,
+      "images": 11,
+      "rank": 114,
+      "tercile": "T3",
+      "rare": true,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 44,
+      "pixels": 11841235,
+      "share": 0.013469041751785772,
+      "images": 75,
+      "rank": 24,
+      "tercile": "T1",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 45,
+      "pixels": 5394837,
+      "share": 0.006136461677948179,
+      "images": 49,
+      "rank": 52,
+      "tercile": "T2",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 46,
+      "pixels": 5897986,
+      "share": 0.0067087782385408246,
+      "images": 65,
+      "rank": 47,
+      "tercile": "T2",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 47,
+      "pixels": 34431625,
+      "share": 0.03916491773930935,
+      "images": 84,
+      "rank": 2,
+      "tercile": "T1",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 48,
+      "pixels": 16307899,
+      "share": 0.018549735100680413,
+      "images": 91,
+      "rank": 13,
+      "tercile": "T1",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 49,
+      "pixels": 15982534,
+      "share": 0.018179642389103474,
+      "images": 105,
+      "rank": 14,
+      "tercile": "T1",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 50,
+      "pixels": 6641632,
+      "share": 0.007554652762823848,
+      "images": 53,
+      "rank": 42,
+      "tercile": "T2",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 51,
+      "pixels": 18847868,
+      "share": 0.02143887196091852,
+      "images": 107,
+      "rank": 10,
+      "tercile": "T1",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 52,
+      "pixels": 3867556,
+      "share": 0.004399226367973406,
+      "images": 27,
+      "rank": 62,
+      "tercile": "T2",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 53,
+      "pixels": 7178545,
+      "share": 0.008165374838188163,
+      "images": 19,
+      "rank": 39,
+      "tercile": "T2",
+      "rare": true,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 54,
+      "pixels": 6475378,
+      "share": 0.007365543935290116,
+      "images": 14,
+      "rank": 44,
+      "tercile": "T2",
+      "rare": true,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 55,
+      "pixels": 2307638,
+      "share": 0.002624867471172341,
+      "images": 58,
+      "rank": 80,
+      "tercile": "T3",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 56,
+      "pixels": 3456640,
+      "share": 0.0039318220169511685,
+      "images": 53,
+      "rank": 65,
+      "tercile": "T2",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 57,
+      "pixels": 272891,
+      "share": 0.0003104051454672229,
+      "images": 15,
+      "rank": 113,
+      "tercile": "T3",
+      "rare": true,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 58,
+      "pixels": 799348,
+      "share": 0.0009092338414199578,
+      "images": 39,
+      "rank": 108,
+      "tercile": "T3",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 59,
+      "pixels": 10271555,
+      "share": 0.011683578879294592,
+      "images": 60,
+      "rank": 28,
+      "tercile": "T1",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 60,
+      "pixels": 23857232,
+      "share": 0.027136869920243927,
+      "images": 148,
+      "rank": 7,
+      "tercile": "T1",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 61,
+      "pixels": 4565214,
+      "share": 0.005192790952281323,
+      "images": 50,
+      "rank": 61,
+      "tercile": "T2",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 62,
+      "pixels": 3752490,
+      "share": 0.004268342320979069,
+      "images": 22,
+      "rank": 63,
+      "tercile": "T2",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 63,
+      "pixels": 14568542,
+      "share": 0.016571269843107125,
+      "images": 36,
+      "rank": 18,
+      "tercile": "T1",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 64,
+      "pixels": 769224,
+      "share": 0.0008749687150432922,
+      "images": 13,
+      "rank": 109,
+      "tercile": "T3",
+      "rare": true,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 65,
+      "pixels": 2832952,
+      "share": 0.0032223960396702716,
+      "images": 40,
+      "rank": 73,
+      "tercile": "T2",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 66,
+      "pixels": 5020080,
+      "share": 0.0057101870807652,
+      "images": 6,
+      "rank": 58,
+      "tercile": "T2",
+      "rare": true,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 67,
+      "pixels": 14300594,
+      "share": 0.016266487208583997,
+      "images": 68,
+      "rank": 20,
+      "tercile": "T1",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 68,
+      "pixels": 13499016,
+      "share": 0.015354716810537428,
+      "images": 79,
+      "rank": 22,
+      "tercile": "T1",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 69,
+      "pixels": 932479,
+      "share": 0.0010606662720285041,
+      "images": 4,
+      "rank": 106,
+      "tercile": "T3",
+      "rare": true,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 70,
+      "pixels": 6524408,
+      "share": 0.007421314056995331,
+      "images": 38,
+      "rank": 43,
+      "tercile": "T2",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 71,
+      "pixels": 726790,
+      "share": 0.0008267013411000104,
+      "images": 6,
+      "rank": 111,
+      "tercile": "T3",
+      "rare": true,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 72,
+      "pixels": 5004090,
+      "share": 0.00569199894603001,
+      "images": 31,
+      "rank": 59,
+      "tercile": "T2",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 73,
+      "pixels": 2161107,
+      "share": 0.002458192951417356,
+      "images": 21,
+      "rank": 83,
+      "tercile": "T3",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 74,
+      "pixels": 1057804,
+      "share": 0.0012032196169745805,
+      "images": 15,
+      "rank": 101,
+      "tercile": "T3",
+      "rare": true,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 75,
+      "pixels": 2186822,
+      "share": 0.0024874429754771074,
+      "images": 11,
+      "rank": 82,
+      "tercile": "T3",
+      "rare": true,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 76,
+      "pixels": 3247989,
+      "share": 0.003694487901839708,
+      "images": 50,
+      "rank": 69,
+      "tercile": "T2",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 77,
+      "pixels": 5238530,
+      "share": 0.005958667257932329,
+      "images": 53,
+      "rank": 55,
+      "tercile": "T2",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 78,
+      "pixels": 1415297,
+      "share": 0.001609856943484117,
+      "images": 18,
+      "rank": 93,
+      "tercile": "T3",
+      "rare": true,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 79,
+      "pixels": 1118708,
+      "share": 0.0012724960496144834,
+      "images": 14,
+      "rank": 100,
+      "tercile": "T3",
+      "rare": true,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 80,
+      "pixels": 1213404,
+      "share": 0.0013802098461675545,
+      "images": 8,
+      "rank": 98,
+      "tercile": "T3",
+      "rare": true,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 81,
+      "pixels": 2360694,
+      "share": 0.0026852170444375237,
+      "images": 15,
+      "rank": 79,
+      "tercile": "T3",
+      "rare": true,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 82,
+      "pixels": 2568501,
+      "share": 0.0029215911354266264,
+      "images": 37,
+      "rank": 75,
+      "tercile": "T2",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 83,
+      "pixels": 2282288,
+      "share": 0.0025960326234214294,
+      "images": 42,
+      "rank": 81,
+      "tercile": "T3",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 84,
+      "pixels": 19864269,
+      "share": 0.022594996934838622,
+      "images": 41,
+      "rank": 8,
+      "tercile": "T1",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 85,
+      "pixels": 12926178,
+      "share": 0.014703131149159249,
+      "images": 42,
+      "rank": 23,
+      "tercile": "T1",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 86,
+      "pixels": 15047184,
+      "share": 0.017115710442601878,
+      "images": 56,
+      "rank": 16,
+      "tercile": "T1",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 87,
+      "pixels": 33626118,
+      "share": 0.03824867822422873,
+      "images": 111,
+      "rank": 4,
+      "tercile": "T1",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 88,
+      "pixels": 14311559,
+      "share": 0.016278959559889273,
+      "images": 61,
+      "rank": 19,
+      "tercile": "T1",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 89,
+      "pixels": 19319192,
+      "share": 0.021974988559788373,
+      "images": 45,
+      "rank": 9,
+      "tercile": "T1",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 90,
+      "pixels": 64715686,
+      "share": 0.07361210859589037,
+      "images": 96,
+      "rank": 1,
+      "tercile": "T1",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 91,
+      "pixels": 937723,
+      "share": 0.0010666311612437225,
+      "images": 20,
+      "rank": 105,
+      "tercile": "T3",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 92,
+      "pixels": 2384950,
+      "share": 0.002712807500731256,
+      "images": 13,
+      "rank": 77,
+      "tercile": "T3",
+      "rare": true,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 93,
+      "pixels": 2157528,
+      "share": 0.00245412194865205,
+      "images": 27,
+      "rank": 84,
+      "tercile": "T3",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 94,
+      "pixels": 1311524,
+      "share": 0.0014918183377383425,
+      "images": 34,
+      "rank": 95,
+      "tercile": "T3",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 95,
+      "pixels": 1628218,
+      "share": 0.0018520480526743306,
+      "images": 14,
+      "rank": 90,
+      "tercile": "T3",
+      "rare": true,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 96,
+      "pixels": 6378742,
+      "share": 0.0072556234482188285,
+      "images": 22,
+      "rank": 45,
+      "tercile": "T2",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 97,
+      "pixels": 7232938,
+      "share": 0.00822724520795997,
+      "images": 64,
+      "rank": 38,
+      "tercile": "T1",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 98,
+      "pixels": 5254860,
+      "share": 0.005977242132242877,
+      "images": 103,
+      "rank": 54,
+      "tercile": "T2",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 99,
+      "pixels": 5826172,
+      "share": 0.006627092015409306,
+      "images": 84,
+      "rank": 48,
+      "tercile": "T2",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 100,
+      "pixels": 6954918,
+      "share": 0.007911005982251548,
+      "images": 71,
+      "rank": 41,
+      "tercile": "T2",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 101,
+      "pixels": 1404162,
+      "share": 0.001597191222391162,
+      "images": 29,
+      "rank": 94,
+      "tercile": "T3",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 102,
+      "pixels": 11093892,
+      "share": 0.012618962003355407,
+      "images": 66,
+      "rank": 27,
+      "tercile": "T1",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 103,
+      "pixels": 5195127,
+      "share": 0.005909297676199279,
+      "images": 43,
+      "rank": 56,
+      "tercile": "T2",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 104,
+      "pixels": 17764193,
+      "share": 0.020206224874667257,
+      "images": 53,
+      "rank": 12,
+      "tercile": "T1",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 105,
+      "pixels": 11633727,
+      "share": 0.013233007764129116,
+      "images": 161,
+      "rank": 26,
+      "tercile": "T1",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 106,
+      "pixels": 15633775,
+      "share": 0.017782939719803263,
+      "images": 53,
+      "rank": 15,
+      "tercile": "T1",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 107,
+      "pixels": 7289042,
+      "share": 0.008291061787771298,
+      "images": 101,
+      "rank": 37,
+      "tercile": "T1",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 108,
+      "pixels": 27699074,
+      "share": 0.03150684740162692,
+      "images": 119,
+      "rank": 6,
+      "tercile": "T1",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 109,
+      "pixels": 13717696,
+      "share": 0.015603458605652593,
+      "images": 95,
+      "rank": 21,
+      "tercile": "T1",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 110,
+      "pixels": 11690209,
+      "share": 0.013297254307350695,
+      "images": 56,
+      "rank": 25,
+      "tercile": "T1",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 111,
+      "pixels": 18524065,
+      "share": 0.021070555976449544,
+      "images": 160,
+      "rank": 11,
+      "tercile": "T1",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 112,
+      "pixels": 5952639,
+      "share": 0.006770944350340848,
+      "images": 38,
+      "rank": 46,
+      "tercile": "T2",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 113,
+      "pixels": 8398599,
+      "share": 0.009553148855461971,
+      "images": 25,
+      "rank": 34,
+      "tercile": "T1",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 114,
+      "pixels": 30883755,
+      "share": 0.03512932439453508,
+      "images": 90,
+      "rank": 5,
+      "tercile": "T1",
+      "rare": false,
+      "zero_train_pixels": false
+    },
+    {
+      "class_id": 115,
+      "pixels": 10268881,
+      "share": 0.01168053728628134,
+      "images": 39,
+      "rank": 29,
+      "tercile": "T1",
+      "rare": false,
+      "zero_train_pixels": false
+    }
+  ],
+  "tercile_sizes": [
+    38,
+    38,
+    39
+  ],
+  "total_disease_pixels": 879144576,
+  "background": {
+    "class_id": 0,
+    "pixels": 3703512045,
+    "images": 5366
+  },
+  "ignore_pixels": 0,
+  "zero_train_pixel_classes": [],
+  "csv_sha256": "c793c11ff59d9436f300e666c1fccd1df2c61a66eff8fe0f47b16c14e36b8005",
+  "script_commit": "afd2d3321ad122802bb05c8f62617b1df7847356",
+  "script_clean_at_commit": true,
+  "script_sha256": "90506351df9e7dcf186f5fd2a4fe9cc01b6d2294b6a5845cb203f916b08443f7",
+  "environment": {
+    "python": "3.11.16",
+    "numpy": "1.26.4",
+    "pillow": "12.3.0"
+  },
+  "generated_utc": "2026-10-03T01:22:36Z"
+}

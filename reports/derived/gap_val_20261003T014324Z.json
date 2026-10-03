@@ -1,0 +1,293 @@
+{
+  "lane": "L-AM17B-GAP",
+  "authority": "AM-17b item 2 (DRAFT, adviser approval pending); docs/lane_specs/part1.md lane 7; DL-35 G3 and G5",
+  "artifact_status": "provisional",
+  "descriptive": "reported before any KD result; it gates, selects and replaces nothing",
+  "direction": "teacher_minus_e1",
+  "inputs": {
+    "teacher": {
+      "dir_name": "teacher_val_cpu",
+      "run_id": "teacher_val_cpu_am17b2c",
+      "stage": "teacher",
+      "model_role": "teacher",
+      "precision": "fp32",
+      "artifact_status": "provisional",
+      "checkpoint_sha256": "8c0e649a1457782c99e02a3c81867c3b5aa55d924b697cc859455e6022179c4e",
+      "repo_commit": "afd2d3321ad122802bb05c8f62617b1df7847356",
+      "governed_paths_clean": true,
+      "metric_impl_sha256": "9898d6dc0ec68f15c8c90cebb5889914c0a2de2e3bd409c3fba9ba14e1be86d9",
+      "device": "cpu",
+      "model_device": "cpu",
+      "batch_size": 1,
+      "image_digest": "sha256:cb413304e2445e5c8ac3786f7a370f2ed05a07d11843b11687bb9eb23dc32c2b",
+      "timestamp_utc": "2026-10-03T01:41:57Z",
+      "split": "val",
+      "split_manifest_sha256": "35f6788e840a2dc22cf0c5caa552b9c6a85d3dbd1bbbe594c1b52102aa828fa3",
+      "preprocess_protocol": "core_preprocess/1.0.0",
+      "artifact_schema_version": "plantseg-eval-artifact/1.2.0",
+      "all_class_miou": 0.38576993346214294,
+      "artifact_sha256s": {
+        "MANIFEST.sha256": "3a30afe8a7452034713791e43154a8657fb608c9ad7f8a65c13a38c98dcc42e6",
+        "per_image.jsonl": "3f3683d4fc26590bbbf8105f67f3babdb9b45e7dc9603190018a2c035186276d",
+        "sufficient_stats.npz": "96c66dedf187f58a5840ba57cf631340f256637fffdbc39f712103d84a209346",
+        "summary.json": "341a711a28c48e38a3eb936ebb169548f9bd03d99fd407ca680fae6c13602147"
+      }
+    },
+    "e1": {
+      "dir_name": "e1_s42_val_cpu",
+      "run_id": "e1_s42_val_cpu_am17b2c",
+      "stage": "E1",
+      "model_role": "student",
+      "precision": "fp32",
+      "artifact_status": "provisional",
+      "checkpoint_sha256": "cf0879f7007dfacbd0d510085ff28a4b47ee845ddb8fd599611d74109e1d6a03",
+      "repo_commit": "afd2d3321ad122802bb05c8f62617b1df7847356",
+      "governed_paths_clean": true,
+      "metric_impl_sha256": "9898d6dc0ec68f15c8c90cebb5889914c0a2de2e3bd409c3fba9ba14e1be86d9",
+      "device": "cpu",
+      "model_device": "cpu",
+      "batch_size": 1,
+      "image_digest": "sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf",
+      "timestamp_utc": "2026-10-03T01:27:53Z",
+      "split": "val",
+      "split_manifest_sha256": "35f6788e840a2dc22cf0c5caa552b9c6a85d3dbd1bbbe594c1b52102aa828fa3",
+      "preprocess_protocol": "core_preprocess/1.0.0",
+      "artifact_schema_version": "plantseg-eval-artifact/1.2.0",
+      "all_class_miou": 0.36307525634765625,
+      "artifact_sha256s": {
+        "MANIFEST.sha256": "e346f6983f7bc6ec262f1e8cebb4b5d92026567abc259690e5bc257b9a2cf358",
+        "per_image.jsonl": "a6bcf271070e89956af1c670ee93b22b0ee92a945414ace036e8a0df4124d82b",
+        "sufficient_stats.npz": "bde08ba1e3871c6ca870ba8fce1c6ad221f236c3cd65c962423b372932bea7ca",
+        "summary.json": "2e981df24dc55e6352b63ee52046bc04154309d7778b1a8daef484cb5a768624"
+      }
+    },
+    "pairing": {
+      "split": "val",
+      "n_images": 846,
+      "split_manifest_sha256": "35f6788e840a2dc22cf0c5caa552b9c6a85d3dbd1bbbe594c1b52102aa828fa3",
+      "metric_impl_sha256": "9898d6dc0ec68f15c8c90cebb5889914c0a2de2e3bd409c3fba9ba14e1be86d9",
+      "repo_commit": "afd2d3321ad122802bb05c8f62617b1df7847356",
+      "preprocess_protocol": "core_preprocess/1.0.0",
+      "device": "cpu",
+      "batch_size": 1
+    },
+    "eligibility_variants": {
+      "teacher": {
+        "path": "/out/eligibility/teacher_val_cpu_am17b2c_eligibility_variants.json",
+        "sha256": "6c9ca8a4d643ed4b4948b73acf117b45648bd5e4af93f15cab0ece5f73f611aa"
+      },
+      "e1": {
+        "path": "/out/eligibility/e1_s42_val_cpu_am17b2c_eligibility_variants.json",
+        "sha256": "301e552990562797b7617c0271178d86e2a9d04e82fe323ce9e3846df2404c4d"
+      }
+    }
+  },
+  "rules": {
+    "union_present": {
+      "point": 0.022694691891384178,
+      "ci_low": -0.014660375098724233,
+      "ci_high": 0.039516132824246944,
+      "method": "BCa",
+      "B": 10000,
+      "seed": 42,
+      "confidence_level": 0.95,
+      "point_pp": 2.2694691891384178,
+      "ci_low_pp": -1.4660375098724234,
+      "ci_high_pp": 3.9516132824246943,
+      "fallback_reason": null,
+      "acceleration": -0.013978691382207932,
+      "z0": -0.693812185132763,
+      "contains_point": true,
+      "teacher_miou": 0.38576992602166993,
+      "e1_miou": 0.36307523413028575,
+      "n_eligible_teacher": 115,
+      "n_eligible_e1": 116,
+      "bootstrap_standard_error": 0.013393991806828489,
+      "replicates_sha256": "8412a6ad1d07de4dc049337dfb7f06b8efaad917ee3ead4a13d0fb62b1aa32d3",
+      "warnings": [],
+      "scipy_version": "1.11.4"
+    },
+    "gt_present": {
+      "point": 0.0195375159424252,
+      "ci_low": -0.009447853326576276,
+      "ci_high": 0.0404446621807336,
+      "method": "BCa",
+      "B": 10000,
+      "seed": 42,
+      "confidence_level": 0.95,
+      "point_pp": 1.9537515942425199,
+      "ci_low_pp": -0.9447853326576275,
+      "ci_high_pp": 4.04446621807336,
+      "fallback_reason": null,
+      "acceleration": -0.011239273983199984,
+      "z0": -0.3414032882357272,
+      "contains_point": true,
+      "teacher_miou": 0.38576992602166993,
+      "e1_miou": 0.36623241007924473,
+      "n_eligible_teacher": 115,
+      "n_eligible_e1": 115,
+      "bootstrap_standard_error": 0.01287104504431158,
+      "replicates_sha256": "572f14d3c4cf52a4d6fd93e7737143646309991d372cea82711baea406ffe28f",
+      "warnings": [],
+      "scipy_version": "1.11.4"
+    }
+  },
+  "disease_only": {
+    "union_present": {
+      "point": 0.02269019590061272,
+      "ci_low": -0.01483852733616319,
+      "ci_high": 0.03971733137719005,
+      "method": "BCa",
+      "B": 10000,
+      "seed": 42,
+      "confidence_level": 0.95,
+      "point_pp": 2.269019590061272,
+      "ci_low_pp": -1.483852733616319,
+      "ci_high_pp": 3.971733137719005,
+      "fallback_reason": null,
+      "acceleration": -0.013909191883293504,
+      "z0": -0.6874487279618835,
+      "contains_point": true,
+      "teacher_miou": 0.3812318824975863,
+      "e1_miou": 0.3585416865969736,
+      "n_eligible_teacher": 114,
+      "n_eligible_e1": 115,
+      "bootstrap_standard_error": 0.01348684728966525,
+      "replicates_sha256": "44a72d68c39e4f76d1fada5471ca446cee66ef96da6464754db517618c552dd3",
+      "warnings": [],
+      "scipy_version": "1.11.4"
+    },
+    "gt_present": {
+      "point": 0.01954509338660415,
+      "ci_low": -0.009690419886110026,
+      "ci_high": 0.040635865056025955,
+      "method": "BCa",
+      "B": 10000,
+      "seed": 42,
+      "confidence_level": 0.95,
+      "point_pp": 1.954509338660415,
+      "ci_low_pp": -0.9690419886110027,
+      "ci_high_pp": 4.063586505602595,
+      "fallback_reason": null,
+      "acceleration": -0.011248747489560748,
+      "z0": -0.34193474655239553,
+      "contains_point": true,
+      "teacher_miou": 0.3812318824975863,
+      "e1_miou": 0.3616867891109822,
+      "n_eligible_teacher": 114,
+      "n_eligible_e1": 114,
+      "bootstrap_standard_error": 0.012984946664775553,
+      "replicates_sha256": "aaf8aec337e0399a8beac5d8d16867dd98cdb74bd3f2f2ca986ae2a56c130158",
+      "warnings": [],
+      "scipy_version": "1.11.4"
+    }
+  },
+  "per_image": {
+    "n": 846,
+    "median": 0.006882756948471069,
+    "q25": -0.03432004153728485,
+    "q75": 0.08317607641220093,
+    "iqr": 0.11749611794948578,
+    "mean": 0.018174529432849716,
+    "sd": 0.2326758813319717,
+    "share_teacher_better": 0.5177304964539007,
+    "share_e1_better": 0.3628841607565012,
+    "share_ties": 0.11938534278959811,
+    "hl_shift": 0.016262531280517578,
+    "metric": "per-image disease-only mIoU (GT-present), teacher - E1",
+    "am5_rule": "no_disease_gt",
+    "n_excluded_am5": 0,
+    "n_included": 846,
+    "excluded_ids_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "validity_deltas": {
+    "e1": {
+      "value": 0.36307525634765625,
+      "reference": 0.36307525634765625,
+      "delta": 0.0,
+      "abs_delta": 0.0,
+      "tolerance": 1e-05,
+      "within": true,
+      "reference_source": "the B66-prep Q12 CPU re-score of E1 seed 42"
+    },
+    "teacher": {
+      "value": 0.38576993346214294,
+      "reference": 0.38576993346214294,
+      "delta": 0.0,
+      "abs_delta": 0.0,
+      "tolerance": 1e-05,
+      "within": true,
+      "reference_source": "R3, the teacher of record on VAL (CPU, batch 1, evaluator 3c43f89)"
+    }
+  },
+  "e1_tolerance": {
+    "value": 1e-05,
+    "allowed": [
+      1e-07,
+      1e-05
+    ],
+    "rule": "1e-7 when the Q12 E1 CPU re-score ran at batch size 1; 1e-5 when it did not or its batch size is unknown, recorded as an erratum before the re-score runs (ruling 2026-09-28)"
+  },
+  "d5_cross_check": {
+    "tolerance": 1e-12,
+    "source": "L-AM17-GTPRESENT rules_float64",
+    "all_class": {
+      "union_present": {
+        "point": 0.022694691891384178,
+        "rules_float64_difference": 0.022694691891384178,
+        "abs_diff": 0.0,
+        "teacher_equal": true,
+        "e1_equal": true,
+        "holds": true
+      },
+      "gt_present": {
+        "point": 0.0195375159424252,
+        "rules_float64_difference": 0.0195375159424252,
+        "abs_diff": 0.0,
+        "teacher_equal": true,
+        "e1_equal": true,
+        "holds": true
+      }
+    },
+    "disease_only": {
+      "union_present": {
+        "point": 0.02269019590061272,
+        "rules_float64_difference": 0.02269019590061272,
+        "abs_diff": 0.0,
+        "teacher_equal": true,
+        "e1_equal": true,
+        "holds": true
+      },
+      "gt_present": {
+        "point": 0.01954509338660415,
+        "rules_float64_difference": 0.01954509338660415,
+        "abs_diff": 0.0,
+        "teacher_equal": true,
+        "e1_equal": true,
+        "holds": true
+      }
+    }
+  },
+  "bootstrap_call": "scipy.stats.bootstrap((idx,), stat, n_resamples=10000, method='BCa', random_state=numpy.random.default_rng(42), vectorized=False); the percentile interval of the same replicates when the jackknife acceleration is non-finite, when BCa raises, or when BCa returns a non-finite bound (SciPy warns DegenerateDataWarning and returns NaN instead of raising); fallback_reason names the condition",
+  "code": {
+    "code_commit": "afd2d3321ad122802bb05c8f62617b1df7847356",
+    "code_clean_at_commit": true,
+    "code_files": {
+      "scripts/gap_bootstrap_val.py": "d1a243dc8292ff251e6a1c64ec1eb36937d848782373952056b38ed6f5dd2b4b",
+      "src/stats/gap.py": "9bcac9f90cd8062b0f60544b06ea47a1638fe58a4be4050eb01c5937cb7a0040",
+      "src/stats/val_artifacts.py": "ea365d3d905cd78206c010bdb9d8476ee112596894d73624cf4718250d1a3aec",
+      "src/stats/eligibility.py": "7447b76fab33d708e1e5403f03d922f520745e4d970b9c96301e96d9f605eb4c",
+      "src/stats/noninferiority.py": "125a76de1b5113afdc06247c05dea41f44f5b7f8e11f39a52e9dadb93d72cce9",
+      "src/stats/align.py": "61c48956358e1d8b258b412fa5d4dcde29c6d3c46156243f8d68d102dd1df309",
+      "src/stats/ingest.py": "bf44a0fafa4ccbca53caaaa8e1e1d429424387eaace6bc6c45b99e5ca8732fca",
+      "src/stats/tests.py": "aec41268b14c99acd9e8ca03905169209dcc9f75371c3200dede2f2218fcf189"
+    }
+  },
+  "environment": {
+    "python": "3.11.16",
+    "numpy": "1.26.4",
+    "scipy": "1.11.4",
+    "torch": "2.1.0+cu121"
+  },
+  "generated_utc": "2026-10-03T01:43:24Z"
+}

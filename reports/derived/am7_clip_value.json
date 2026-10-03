@@ -1,0 +1,45 @@
+{
+  "format": "am7_clip_value/1",
+  "rule": "AM-7a item 5: the smallest 1-2-5 series value >= 1.5 x the largest pre-clip grad_norm over all train rows of the E1 runs of seeds 43 and 44",
+  "inputs": [
+    {
+      "path": "/in/e1_seed43/e1_telemetry.jsonl",
+      "sha256": "6b2bf27909618496f9d7f3eaba80692116b1e03294999c82173f2a88cfb68a07",
+      "seed": 43
+    },
+    {
+      "path": "/in/e1_seed44/e1_telemetry.jsonl",
+      "sha256": "56b65b88b86f7a8713beaf90d74e98c8c1aa8695abc4028aa5e68ae71a261a6b",
+      "seed": 44
+    }
+  ],
+  "per_seed": {
+    "43": {
+      "max_grad_norm": 31.054649353027344,
+      "max_grad_norm_text": "31.054649353027344",
+      "iter": 26341,
+      "n_train_rows": 80000,
+      "max_iters": 80000
+    },
+    "44": {
+      "max_grad_norm": 37.523643493652344,
+      "max_grad_norm_text": "37.523643493652344",
+      "iter": 28110,
+      "n_train_rows": 80000,
+      "max_iters": 80000
+    }
+  },
+  "max_grad_norm": 37.523643493652344,
+  "max_grad_norm_text": "37.523643493652344",
+  "max_seed": 44,
+  "factor": 1.5,
+  "target_text": "56.2854652404785160",
+  "series": "1-2-5",
+  "series_value": 100.0,
+  "series_value_text": "100",
+  "generated_utc": "2026-10-03T01:44:59Z",
+  "script": {
+    "path": "scripts/am7_clip_value.py",
+    "sha256": "fd2a64496afd0332501a86e7860779de4d2a221b08fc339963e5365be67acd3d"
+  }
+}
