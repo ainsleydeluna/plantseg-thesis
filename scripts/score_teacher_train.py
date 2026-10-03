@@ -156,9 +156,9 @@ def _run(args, *, model_factory=None) -> int:
                                        check_post_eval, evaluate_capturing_warnings, resolve_model_device)
     from src.eval.protocols import CANVAS, PROTOCOL_IDS
     listing = list_split_stems("train")
-    order_sorted = listing == sorted(listing) and listing == stems
-    if not order_sorted:
-        raise td.Stop("the evaluator's TRAIN listing is not the sorted TRAIN split list")
+    if listing != stems:
+        raise td.Stop("the evaluator's TRAIN listing is not the strata TRAIN split list")
+    order_sorted = listing == sorted(listing)          # P19, Q10: recorded, never gated
     source_indices = (deterministic_subset(td.TRAIN_ROWS, args.max_samples) if args.max_samples is not None
                       else list(range(td.TRAIN_ROWS)))
     expected_manifest = build_expected_manifest_for("train", source_indices)
@@ -178,10 +178,10 @@ def _run(args, *, model_factory=None) -> int:
 
     loaded = td.load_teacher("evaluator", inputs, model_factory=model_factory)
     checks = td.after_load_checks(loaded, inputs, stub=stub)
-    teacher = td.teacher_record(loaded, inputs, checks)
+    teacher = td.teacher_record(loaded, inputs, checks, stub=stub)
     model_device = resolve_model_device("cpu", cpu_only=True)
     fwd = ModelDeviceForward(model_device)
-    watch = td.RngWatchForward(fwd)
+    watch = td.RngWatchForward(fwd, total=len(source_indices), label="train")
     loader = build_eval_loader(dataset, 1, num_workers=EVAL_NUM_WORKERS)
     result, warn_summary = evaluate_capturing_warnings(
         evaluate_model, loaded.eval_model, loader, expected_manifest=expected_manifest,
@@ -205,13 +205,13 @@ def _run(args, *, model_factory=None) -> int:
                   "strict_val_readers": "refuse this artifact (schema_version and split)"}
     art_dir = write_train_artifact(result, request, provenance, eval_runtime=runtime, diagnostic=diagnostic)
     doc = td.base_document(SCRIPT, args, stub=stub, start_utc=start, code=code, extra={
-        "schema": SCHEMA, "role": "record", "repeat": repeat, "gates": "nothing (descriptive; D3 input)",
+        "schema": SCHEMA, "role": "record", "arm_id": None, "purpose": None, "repeat": repeat, "gates": "nothing (descriptive; D3 input)",
         "teacher": teacher,
         "inputs": {"strata": strata, "data_root": str(root), "m11": m11},
         "pass": {"split": "train", "rows": n, "protocol": PROTOCOL_IDS[CANVAS], "device": "cpu", "batch_size": 1,
                  "split_manifest_sha256": provenance.split_manifest_sha256, "order_equals_sorted_stems": order_sorted,
                  "eval_warnings": runtime["eval_warnings"]},
-        "checks": {"rng_state_unchanged": True, "rng_state_sha256": rng_state,
+        "checks": {"rng_state_unchanged": watch.unchanged(), "rng_state_sha256": rng_state,
                    "nmf_stream": {"begin": loaded.stream_description, "end": loaded.stream.describe(),
                                   "draws": loaded.stream.draws, "expected_draws": n}},
         "dataset_level": dict(result.dataset_level),

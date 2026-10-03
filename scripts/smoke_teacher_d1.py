@@ -353,7 +353,7 @@ def _seam_body(fx, td, tmp, ckpt, sha, args) -> None:
     check("seam loaded_state_sha256: two loads agree; one changed weight changes it",
           checks2["loaded_state_sha256"] == checks["loaded_state_sha256"]
           and td.loaded_state_sha256(kd2.segmentor) != checks["loaded_state_sha256"])
-    rec = td.teacher_record(kd, inputs, checks)
+    rec = td.teacher_record(kd, inputs, checks, stub=True)
     check("seam teacher_record: provenance is the loaded as_dict, sha verified, same_teacher(a, a) == []",
           rec["provenance"] == kd.frozen.provenance.as_dict() and rec["checkpoint"]["sha256_verified"] == sha
           and rec["nmf_stream_begin"]["policy"] == "M4-KD" and td.same_teacher(rec, rec) == [])

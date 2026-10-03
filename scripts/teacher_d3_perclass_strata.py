@@ -66,7 +66,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def read_inputs(args) -> tuple[dict, dict, dict, dict]:
     """(train scores, S3's table, strata document, the inputs block). Refuses anything not of record."""
-    from src.stats.perclass import load_strata
+    from src.stats.perclass import PerclassError, load_strata
     train, train_sha = td.read_diag_output(args.train_scores, script=TRAIN_SCRIPT, stub=False, what="--train-scores")
     t = train.get("teacher") or {}
     if train.get("schema") != TRAIN_SCHEMA or (train.get("pass") or {}).get("split") != "train":
@@ -90,7 +90,10 @@ def read_inputs(args) -> tuple[dict, dict, dict, dict]:
     sp = Path(args.strata)
     if not sp.is_file():
         raise td.Refused(f"--strata not found: {sp}")
-    strata_doc, strata_sha = load_strata(sp)
+    try:
+        strata_doc, strata_sha = load_strata(sp)
+    except (PerclassError, ValueError, OSError) as e:
+        raise td.Refused(f"--strata cannot be read: {type(e).__name__}: {e}") from e
     if strata_doc.get("artifact_status") != "provisional":
         raise td.Refused(f"--strata has artifact_status {strata_doc.get('artifact_status')!r}; the registered "
                          "build is provisional")

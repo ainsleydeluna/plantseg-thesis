@@ -25,7 +25,8 @@ n_total, n_dup, n_kept.
 --single DIR (P25): the duplicate-free mIoU of one VAL artifact by the same code path, without pairing; it
 gates nothing.
 
-Outputs: teacher_d4_dedup_<UTC>.json or val_dedup_single_<UTC>.json in --out-dir (outside the repository).
+Outputs: teacher_d4_dedup_<UTC>.json, or val_dedup_single_<first 12 hex of the input's checkpoint sha256>_<UTC>.json
+(one --single output per input checkpoint), in --out-dir (outside the repository).
 Every run is of record (--script-commit, --script-commit-dl-id; --generated-utc refused). Exit codes: 0
 written, 1 STOP or sign disagreement, 2 refusal or usage, 4 unexpected exception.
 """
@@ -71,7 +72,7 @@ def build_parser() -> argparse.ArgumentParser:
 # --------------------------------------------------------------------------------------------------
 def read_duplicates(path, sha_flag: str) -> tuple[list[str], dict]:
     from src.eval.artifacts import am5_excluded_ids_sha256
-    if not td.SHA256_RE.match(sha_flag or ""):
+    if not td.SHA256_RE.fullmatch(sha_flag or ""):
         raise td.Refused("--duplicates-sha256 must match ^[0-9a-f]{64}$")
     p = Path(path)
     if not p.is_file():
@@ -118,15 +119,16 @@ def drop_positions(art, ids: list[str], label: str) -> list[int]:
 # arithmetic (P24)
 # --------------------------------------------------------------------------------------------------
 def subset_totals(stats, drop: list[int]):
-    """(ClassTotals of the kept rows, number of images whose rows were dropped)."""
+    """(ClassTotals of the kept rows, images whose rows were dropped, images whose rows were kept)."""
     import numpy as np
 
     from src.stats.eligibility import class_totals
     keep = ~np.isin(stats.image_index, np.asarray(drop, dtype=stats.image_index.dtype))
     dropped_images = int(np.unique(stats.image_index[~keep]).size)
+    kept_images = int(np.unique(stats.image_index[keep]).size)
     tot = class_totals({"class_id": stats.class_id[keep], "tp": stats.tp[keep], "gt": stats.gt[keep],
                         "pred": stats.pred[keep]}, num_classes=NUM_CLASSES)
-    return tot, dropped_images
+    return tot, dropped_images, kept_images
 
 
 def exact_mean(tot, classes, rule: str) -> Fraction | None:
@@ -198,7 +200,8 @@ def model_block(art, ids, label: str) -> tuple[dict, object, dict, dict]:
     drop = drop_positions(art, ids, label)
     full_tot = class_totals({"class_id": stats.class_id, "tp": stats.tp, "gt": stats.gt, "pred": stats.pred},
                             num_classes=NUM_CLASSES)
-    sub_tot, dropped = subset_totals(stats, drop)
+    sub_tot, dropped, kept = subset_totals(stats, drop)
+    n_total = len(stats.manifest_ids)
     if dropped != len(ids):
         raise td.Refused(f"{label}: rows of {dropped} image(s) were dropped for {len(ids)} listed id(s)")
     full, sub = scores(full_tot), scores(sub_tot)
@@ -207,8 +210,8 @@ def model_block(art, ids, label: str) -> tuple[dict, object, dict, dict]:
         if full["union_present"][scope]["value"] != dl.get(key):
             raise td.Stop(f"{label}: the full-set {scope} value {full['union_present'][scope]['value']!r} != "
                           f"summary.json {key} {dl.get(key)!r} (bitwise)")
-    n_total = len(stats.manifest_ids)
-    rec = {"artifact": art.describe(), "n_total": n_total, "n_dup": len(ids), "n_kept": n_total - len(ids),
+    rec = {"artifact": art.describe(), "n_total": n_total, "n_dup": dropped, "n_kept": n_total - dropped,
+           "n_kept_images_with_rows": kept,
            "full": full, "subset": sub, "eligibility_changed": eligibility_changes(full, sub),
            "full_float32_equals_summary": True}
     return rec, sub_tot, full, sub
@@ -230,15 +233,16 @@ def _run(args) -> int:
     td.check_common_flags(args, real=True)
     out_dir = td.require_outside_repo(args.out_dir, "--out-dir")
     code = td.require_commit_binding(args.script_commit, args.script_commit_dl_id)
-    kind = KIND_SINGLE if single else KIND_PAIR
+    ids, dup_info = read_duplicates(args.duplicates, args.duplicates_sha256)
+    art = load(args.single, "single") if single else None
+    # one --single output per input checkpoint (an arm R1 and an arm R2 artifact are two kinds)
+    kind = f"{KIND_SINGLE}_{art.summary['run']['checkpoint_sha256'][:12]}" if single else KIND_PAIR
     repeat = td.require_single_output(out_dir, kind, args)
     out_path = out_dir / f"{kind}_{td.output_stamp(args, start)}.json"
     if out_path.exists():
         raise td.Refused(f"{out_path.name} already exists")
-    ids, dup_info = read_duplicates(args.duplicates, args.duplicates_sha256)
 
     if single:
-        art = load(args.single, "single")
         if art.summary["dataset"]["split_manifest_sha256"] != dup_info["val_manifest_sha256"]:
             raise td.Refused("the duplicates file's VAL manifest hash differs from the artifact's")
         rec, _, _, _ = model_block(art, ids, "single")

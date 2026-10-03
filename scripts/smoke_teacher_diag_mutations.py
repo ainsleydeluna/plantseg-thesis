@@ -609,7 +609,7 @@ def mutations(e) -> list:
         ("P9 caller-RNG check removed", td.SplitTeacher, "head", [("if rng_state_sha256() != rng:", F)],
          "P9 a head drawing from the global CPU RNG stops"),
         ("P5 sha256 format regex removed", td, "check_teacher_flags",
-         [("if sha is None or not SHA256_RE.match(sha):", "if sha is None:")],
+         [("if sha is None or not SHA256_RE.fullmatch(sha):", "if sha is None:")],
          "P5 the format check alone refuses empty, uppercase and 63-character sha256"),
         ("P5 own sha256 == flag removed", td, "verify_teacher_inputs", [("if sha != args.teacher_ckpt_sha256:", F)],
          "P5 a well-formed wrong sha256 is refused with the load counter at 0"),

@@ -168,7 +168,7 @@ def _run(args, *, model_factory=None) -> int:
     # ---- the load (evaluator form), after-load checks, the one provenance call site ----
     loaded = td.load_teacher("evaluator", inputs, model_factory=model_factory)
     checks = td.after_load_checks(loaded, inputs, stub=stub)
-    teacher = td.teacher_record(loaded, inputs, checks)
+    teacher = td.teacher_record(loaded, inputs, checks, stub=stub)
     if of_record is not None:
         diffs = td.same_teacher(teacher, of_record["doc"].get("teacher") or {})
         if diffs:
@@ -178,7 +178,7 @@ def _run(args, *, model_factory=None) -> int:
     # ---- the pass ----
     model_device = resolve_model_device("cpu", cpu_only=True)
     fwd = ModelDeviceForward(model_device)
-    watch = td.RngWatchForward(fwd)
+    watch = td.RngWatchForward(fwd, total=len(source_indices), label="d2 val")
     acc = CalibrationAccumulator()
     hook = CalibratingBatchForward(watch, acc)
     loader = build_eval_loader(adapter, 1, num_workers=EVAL_NUM_WORKERS)
@@ -228,14 +228,15 @@ def _run(args, *, model_factory=None) -> int:
                  "all_class_miou": miou, "eval_warnings": runtime["eval_warnings"],
                  "accumulation_warnings": list(hook.accumulation_warnings)},
         "calibration": cal,
-        "checks": {"sum_correct_equals_sum_tp": True, "n_equals_sum_gt": True, "sum_tp": sum_tp, "sum_gt": sum_gt,
+        "checks": {"sum_correct_equals_sum_tp": cal["correct"] == sum_tp, "n_equals_sum_gt": cal["n"] == sum_gt,
+                   "sum_tp": sum_tp, "sum_gt": sum_gt,
                    "hook_calls": hook.calls, "forward_batches": result.forward_batches,
-                   "rng_state_unchanged": True, "rng_state_sha256": rng_state,
+                   "rng_state_unchanged": watch.unchanged(), "rng_state_sha256": rng_state,
                    "rng_rule": "the caller's CPU RNG hash before the first forward == after the last, and "
                                "unchanged at every forward in between (P9)",
                    "nmf_stream": {"begin": loaded.stream_description, "end": loaded.stream.describe(),
                                   "draws": loaded.stream.draws, "expected_draws": n_rows,
-                                  "object_is_adapter_stream": True}},
+                                  "object_is_adapter_stream": loaded.adapter.nmf_stream is loaded.stream}},
     })
     if args.purpose == "control":
         rec_cal = of_record["doc"].get("calibration") or {}

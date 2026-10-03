@@ -94,7 +94,7 @@ CODE_FILES = (
     "src/eval/teacher_diag.py",
     "src/quant/calibration.py",
     "src/stats/align.py", "src/stats/eligibility.py", "src/stats/gap.py", "src/stats/ingest.py",
-    "src/stats/noninferiority.py", "src/stats/val_artifacts.py",
+    "src/stats/noninferiority.py", "src/stats/perclass.py", "src/stats/val_artifacts.py",
     "src/training/losses.py", "src/training/teacher_components.py",
 )
 
@@ -157,9 +157,14 @@ def require_outside_repo(path, what: str) -> Path:
 
 
 def read_json_strict(path) -> dict:
+    """An input JSON object; a missing, unreadable, malformed or non-finite file is a refusal (exit 2)."""
     def _reject(c):
         raise Refused(f"{Path(path).name}: non-finite JSON constant {c!r}")
-    doc = json.loads(Path(path).read_text(encoding="utf-8"), parse_constant=_reject)
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+        doc = json.loads(text, parse_constant=_reject)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as e:
+        raise Refused(f"{Path(path).name} cannot be read as JSON: {type(e).__name__}: {e}") from e
     if not isinstance(doc, dict):
         raise Refused(f"{Path(path).name} is not a JSON object")
     return doc
@@ -208,7 +213,7 @@ def _git(*args) -> str | None:
 
 def git_head() -> str | None:
     out = (_git("rev-parse", "HEAD") or "").strip()
-    return out if COMMIT_RE.match(out) else None
+    return out if COMMIT_RE.fullmatch(out) else None
 
 
 def git_status(paths) -> str | None:
@@ -262,30 +267,30 @@ def check_common_flags(args, *, real: bool) -> None:
         if real:
             raise Refused("--generated-utc is refused in a real run: outputs are stamped from the script's "
                           "own clock")
-        if not UTC_RE.match(gen):
+        if not UTC_RE.fullmatch(gen):
             raise Refused(f"--generated-utc must look like 2026-10-01T00:00:00Z, got {gen!r}")
     commit, dl = getattr(args, "script_commit", None), getattr(args, "script_commit_dl_id", None)
     if real and (commit is None or dl is None):
         raise Refused("a real run requires --script-commit and --script-commit-dl-id")
-    if commit is not None and not COMMIT_RE.match(commit):
+    if commit is not None and not COMMIT_RE.fullmatch(commit):
         raise Refused("--script-commit must be 40 lowercase hex characters")
-    if dl is not None and not DL_ID_RE.match(dl):
+    if dl is not None and not DL_ID_RE.fullmatch(dl):
         raise Refused("--script-commit-dl-id must look like DL-<n>")
     rep = [getattr(args, k, None) for k in ("repeat_of", "repeat_case", "repeat_dl_id")]
     if any(v is not None for v in rep):
         if not all(v is not None for v in rep):
             raise Refused("--repeat-of, --repeat-case and --repeat-dl-id go together")
-        if not SHA256_RE.match(rep[0]):
+        if not SHA256_RE.fullmatch(rep[0]):
             raise Refused("--repeat-of must be a 64-hex sha256")
         if rep[1] not in REPEAT_CASES:
             raise Refused(f"--repeat-case must be one of {REPEAT_CASES}")
-        if not DL_ID_RE.match(rep[2]):
+        if not DL_ID_RE.fullmatch(rep[2]):
             raise Refused("--repeat-dl-id must look like DL-<n>")
 
 
 def check_teacher_flags(args, *, roles=ROLES) -> None:
     sha = getattr(args, "teacher_ckpt_sha256", None)
-    if sha is None or not SHA256_RE.match(sha):
+    if sha is None or not SHA256_RE.fullmatch(sha):
         raise Refused("--teacher-ckpt-sha256 must match ^[0-9a-f]{64}$ (missing, empty, uppercase or short "
                       "values are refused)")
     if not getattr(args, "teacher_ckpt", None) or not getattr(args, "teacher_config", None):
@@ -297,9 +302,9 @@ def check_teacher_flags(args, *, roles=ROLES) -> None:
     if role == "arm":
         if arm[0] not in ARM_IDS:
             raise Refused(f"the arm role requires --arm-id in {ARM_IDS}")
-        if arm[1] is None or not DL_ID_RE.match(arm[1]):
+        if arm[1] is None or not DL_ID_RE.fullmatch(arm[1]):
             raise Refused("the arm role requires --arm-dl-id DL-<n>")
-        if arm[2] is None or not SHA256_RE.match(arm[2]):
+        if arm[2] is None or not SHA256_RE.fullmatch(arm[2]):
             raise Refused("the arm role requires --teacher-config-sha256 (64 lowercase hex)")
     elif any(v is not None for v in arm):
         raise Refused("--arm-id, --arm-dl-id and --teacher-config-sha256 belong to the arm role")
@@ -310,7 +315,7 @@ def check_correction_flags(args) -> None:
     if getattr(args, "correction_state", None) not in CORRECTION_STATES:
         raise Refused(f"--correction-state must be one of {CORRECTION_STATES}")
     dl = getattr(args, "correction_dl_id", None)
-    if dl is None or not re.match(r"^DL-\d+$", dl):
+    if dl is None or not DL_ID_RE.fullmatch(dl):
         raise Refused("--correction-dl-id must match ^DL-\\d+$")
 
 
@@ -424,7 +429,7 @@ def load_teacher(mode: str, inputs: TeacherInputs, *, model_factory=None) -> Loa
     from src.distill.nmf_stream import M4_NMF_SEED
     from src.distill.segnext_teacher import SegNeXtTeacherAdapter, segnext_builder
     from src.distill.teacher import TeacherStackMissing, load_frozen_teacher
-    from src.eval.model_loading import load_teacher_model
+    from src.eval.model_loading import CheckpointError, load_teacher_model
     from src.eval.stage_artifacts import StageArtifactError, validate_teacher_artifact
 
     if mode not in ("kd", "evaluator"):
@@ -445,6 +450,8 @@ def load_teacher(mode: str, inputs: TeacherInputs, *, model_factory=None) -> Loa
             description = eval_model.nmf_policy
     except TeacherStackMissing as e:
         raise Refused(f"the teacher stack is missing: {e}") from e
+    except CheckpointError as e:                 # the evaluator form's refusals (e.g. no NMF stream)
+        raise Refused(f"load_teacher_model: {e}") from e
     adapter = frozen.teacher
     if not isinstance(adapter, SegNeXtTeacherAdapter):
         raise Refused(f"the loaded teacher is a {type(adapter).__name__}, not the SegNeXt KD adapter")
@@ -513,9 +520,14 @@ def after_load_checks(loaded: LoadedTeacher, inputs: TeacherInputs, *, stub: boo
             "frozen_blob_ids": frozen_blob_record(), "parameters": int(n_params)}
 
 
-def teacher_record(loaded: LoadedTeacher, inputs: TeacherInputs, checks: dict) -> dict:
-    """Every teacher output's identity block; the one provenance call site (P7, P8)."""
+def teacher_record(loaded: LoadedTeacher, inputs: TeacherInputs, checks: dict, *, stub: bool) -> dict:
+    """Every teacher output's identity block; the one provenance call site (P7, P8). A real run refuses
+    unless the written record holds every TeacherProvenance field, none of them None or ""."""
     provenance = loaded.frozen.provenance.as_dict()
+    if not stub:
+        bad = [n for n in provenance_fields() if provenance.get(n) in (None, "")]
+        if bad:
+            raise Refused(f"the provenance record lacks or blanks TeacherProvenance field(s) {bad} (P8)")
     return {
         "role": inputs.role, "arm_id": inputs.arm_id, "arm_dl_id": inputs.arm_dl_id,
         "checkpoint": {"path": str(inputs.ckpt), "sha256_verified": inputs.sha256, "bytes": inputs.ckpt_bytes},
@@ -565,16 +577,23 @@ class RngWatchForward:
     first forward must equal the state after the last, and no forward or loader step in between may move it.
     """
 
-    def __init__(self, fwd):
+    def __init__(self, fwd, *, total: int | None = None, label: str = "pass"):
+        import time
         self.fwd = fwd
         self.hashes: list[str] = []
         self.calls = 0
+        self.total, self.label, self._t0 = total, label, time.monotonic()
 
     def __call__(self, model, images):
         self.hashes.append(rng_state_sha256())
         out = self.fwd(model, images)
         self.hashes.append(rng_state_sha256())
         self.calls += 1
+        if self.calls == 8 and self.total and self.total > 8:      # the first 8 items and an estimated finish
+            import time
+            spent = time.monotonic() - self._t0
+            print(f"[{self.label}] 8 of {self.total} images in {spent:.1f} s; about "
+                  f"{spent / 8 * (self.total - 8) / 60:.1f} min to go", file=sys.stderr)
         return out
 
     def unchanged(self) -> bool:
@@ -689,6 +708,8 @@ def check_val_reference(path, *, stub: bool, expected_rows: int) -> dict:
     from src.eval.protocols import CANVAS_PROTOCOL_ID
 
     d = Path(path)
+    if not (d / "summary.json").is_file():
+        raise Refused(f"--val-reference: no summary.json under {d}")
     summary = read_json_strict(d / "summary.json")
     ds, run = summary.get("dataset") or {}, summary.get("run") or {}
     if ds.get("split") != "val":

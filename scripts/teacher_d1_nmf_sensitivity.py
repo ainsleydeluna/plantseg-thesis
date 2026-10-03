@@ -162,7 +162,7 @@ def _run_crops(args, *, model_factory, stub, start, t0, code, kind, repeat, out_
 
     loaded = td.load_teacher("kd", inputs, model_factory=model_factory)
     checks = td.after_load_checks(loaded, inputs, stub=stub)
-    teacher = td.teacher_record(loaded, inputs, checks)
+    teacher = td.teacher_record(loaded, inputs, checks, stub=stub)
     diffs = td.same_teacher(teacher, d2t)
     if diffs:
         raise td.Refused(f"--d2-val-output names another teacher (P11): {diffs}")
@@ -203,7 +203,8 @@ def _run_crops(args, *, model_factory, stub, start, t0, code, kind, repeat, out_
     stats["F"]["ci95"]["note"] = "image-level percentile bootstrap; only the point estimate selects the branch"
     produced = stats["F"]["status"] != "F not produced"
     doc = td.base_document(SCRIPT, args, stub=stub, start_utc=start, code=code, extra={
-        "schema": SCHEMA_CROPS, "part": "crops", "role": role, "arm_id": args.arm_id, "repeat": repeat,
+        "schema": SCHEMA_CROPS, "part": "crops", "role": role, "arm_id": args.arm_id, "purpose": None,
+        "repeat": repeat,
         "gates": "the F branch (integers): K = 8 averaged targets or not" if gated else "nothing",
         "correction": {"state": args.correction_state, "dl_id": args.correction_dl_id},
         "teacher": teacher,
@@ -217,7 +218,7 @@ def _run_crops(args, *, model_factory, stub, start, t0, code, kind, repeat, out_
         "nmf": {"policy": "M4-KD", "begin": loaded.stream_description, "end": stream.describe(),
                 "draws": stream.draws, "expected_draws": ns.K_DRAWS * n, "k": ns.K_DRAWS},
         "checks": {"backbone_calls": split.backbone_calls, "head_calls": split.head_calls,
-                   "feature_hash_unchanged_across_head_calls": True, "rng_state_unchanged": True,
+                   "feature_hash_unchanged_across_head_calls": True, "rng_state_unchanged": len(set(rng_hashes)) == 1,
                    "rng_state_sha256": rng_hashes[0] if rng_hashes else None,
                    "logit_grid": list(GRID), "domain": "losses.downsample_validity all-valid min-pool"},
         "per_crop": per_crop,
@@ -351,14 +352,14 @@ def _run_val(args, *, model_factory, stub, start, t0, code, kind, repeat, out_pa
 
     loaded = td.load_teacher("evaluator", inputs, model_factory=model_factory)
     checks = td.after_load_checks(loaded, inputs, stub=stub)
-    teacher = td.teacher_record(loaded, inputs, checks)
+    teacher = td.teacher_record(loaded, inputs, checks, stub=stub)
     streams = [loaded.stream] + [NMFStream(s, "M4-V") for s in VAL_SEEDS[1:]]
     if [s.seed for s in streams] != list(VAL_SEEDS) or any(s.policy != "M4-V" for s in streams):
         raise td.Stop("the eight VAL streams must be M4-V seeded 42..49, stream 42 the evaluator's own")
 
     model_device = resolve_model_device("cpu", cpu_only=True)
     fwd = ModelDeviceForward(model_device)
-    watch = td.RngWatchForward(fwd)
+    watch = td.RngWatchForward(fwd, total=len(source_indices), label="d1 val")
     split = td.SplitTeacher(loaded)
     eight = EightStreamForward(split, streams, watch)
     loader = build_eval_loader(adapter, 1, num_workers=EVAL_NUM_WORKERS)
@@ -393,7 +394,7 @@ def _run_val(args, *, model_factory, stub, start, t0, code, kind, repeat, out_pa
             "reference_source": "--val-reference (stub mode)" if stub else "R3", "tolerance": td.R3_TOLERANCE,
             "value": miou42, "delta": delta, "passed": passed}
     doc = td.base_document(SCRIPT, args, stub=stub, start_utc=start, code=code, extra={
-        "schema": SCHEMA_VAL, "part": "val", "role": "record", "arm_id": None, "repeat": repeat,
+        "schema": SCHEMA_VAL, "part": "val", "role": "record", "arm_id": None, "purpose": None, "repeat": repeat,
         "gates": "nothing (descriptive); stream 42 must reproduce R3 for the statistics to be written",
         "reproduction": gate,
         "correction": {"state": args.correction_state, "dl_id": args.correction_dl_id},
@@ -402,9 +403,10 @@ def _run_val(args, *, model_factory, stub, start, t0, code, kind, repeat, out_pa
         "pass": {"split": "val", "rows": n, "protocol": PROTOCOL_IDS[CANVAS], "device": "cpu", "batch_size": 1,
                  "split_manifest_sha256": manifest_sha, "eval_warnings": warn_summary["eval_warnings"],
                  "evaluator_artifact": None},
-        "checks": {"core_confusion_equals_stream_42": True, "rng_state_unchanged": True, "rng_state_sha256": rng_state,
+        "checks": {"core_confusion_equals_stream_42": core_equal, "rng_state_unchanged": watch.unchanged(),
+                   "rng_state_sha256": rng_state,
                    "backbone_calls": split.backbone_calls, "head_calls": split.head_calls,
-                   "stream_42_reattached": True, "input_devices": sorted(fwd.input_devices)},
+                   "stream_42_reattached": mods[0].nmf_stream is loaded.stream, "input_devices": sorted(fwd.input_devices)},
         "nmf": {"policy": "M4-V", "seeds": list(VAL_SEEDS), "stream_42_begin": loaded.stream_description,
                 "draws": [s.draws for s in streams], "end_state_sha256": [s.state_sha256() for s in streams]},
     })
