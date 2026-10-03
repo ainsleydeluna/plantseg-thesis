@@ -422,9 +422,12 @@ class TaskJob:
     dense: tuple | None                      # pooled tasks: (base tp, gt, pred, cand tp, gt, pred)
 
 
-def task_jobs(obs: Observed, analysis_id: str, B: int) -> tuple[TaskJob, ...]:
+def task_jobs(obs: Observed, analysis_id: str, B: int, *, only=None) -> tuple[TaskJob, ...]:
+    """The tasks of FROZEN_TASK_MATRIX in canonical order; `only` (task ids) keeps a subset."""
     jobs = []
     for spec in FROZEN_TASK_MATRIX:
+        if only is not None and spec.task_id not in only:
+            continue
         if spec.statistic_name == DATASET_MIOU_DELTA:
             ps = obs.pooled[spec.comparison_id]
             dense = (ps.base_tp, ps.base_gt, ps.base_pred, ps.cand_tp, ps.cand_gt, ps.cand_pred)
@@ -450,13 +453,16 @@ class WorkerFailure(RuntimeError):
     """A bootstrap worker process failed. Never a refusal: the CLI exits 4 (P18)."""
 
 
-def run_tasks(obs: Observed, analysis_id: str, B: int, *, jobs: int = 1
-              ) -> tuple[BootstrapTaskResult, ...]:
-    """The 35 tasks in canonical order. jobs > 1 runs whole tasks in spawned worker processes; each
-    task owns its Generator, so the results are identical to a sequential run (section 8.7.4)."""
+def _require_jobs(jobs) -> None:
     if not isinstance(jobs, int) or isinstance(jobs, bool) or jobs < 1:
         raise DriverRefusal(f"--jobs must be a positive integer, got {jobs!r}")
-    work = task_jobs(obs, analysis_id, B)
+
+
+def run_job_list(work, *, jobs: int = 1) -> tuple[BootstrapTaskResult, ...]:
+    """Run task jobs in order. jobs > 1 runs whole tasks in spawned worker processes; each task owns
+    its Generator, so the results are identical to a sequential run (section 8.7.4)."""
+    _require_jobs(jobs)
+    work = tuple(work)
     if jobs == 1:
         return tuple(run_job(j) for j in work)
     try:
@@ -464,6 +470,13 @@ def run_tasks(obs: Observed, analysis_id: str, B: int, *, jobs: int = 1
             return tuple(ex.map(run_job, work))
     except Exception as e:                                       # noqa: BLE001 -- any worker failure
         raise WorkerFailure(f"a bootstrap worker failed: {type(e).__name__}: {e}") from e
+
+
+def run_tasks(obs: Observed, analysis_id: str, B: int, *, jobs: int = 1
+              ) -> tuple[BootstrapTaskResult, ...]:
+    """The 35 tasks in canonical order (see run_job_list)."""
+    _require_jobs(jobs)
+    return run_job_list(task_jobs(obs, analysis_id, B), jobs=jobs)
 
 
 def artifact_inputs(obs: Observed, inputs: Mapping[tuple, LoadedInput], tasks, *, analysis_id: str,
@@ -658,7 +671,8 @@ __all__ = [
     "require_inventory", "refuse_non_canvas", "input_file_sha256",
     "manifest_digests", "snapshot_agrees", "LoadedInput", "load_input", "load_inputs",
     "provenance_record", "Observed", "am5_identity", "assemble_observed", "observed_value",
-    "observed_values", "TaskJob", "task_jobs", "run_job", "WorkerFailure", "run_tasks",
+    "observed_values", "TaskJob", "task_jobs", "run_job", "WorkerFailure", "run_job_list",
+    "run_tasks",
     "artifact_inputs", "PostWriteVerifyFailed", "RunResult", "official_doors",
     "require_pinned_stack", "smoke_screen", "assemble_or_refuse", "run_official", "run_smoke",
 ]

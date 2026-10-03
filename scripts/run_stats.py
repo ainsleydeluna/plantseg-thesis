@@ -12,6 +12,11 @@
       the code provenance always come from this repository (P16).
   --mode smoke     --inputs LIST.json --out-dir DIR --run-id ID [--repo-root DIR] [--B N] [--jobs N]
       Smoke-status inputs only, never a PlantSeg TEST input (P15); NONOFFICIAL_SMOKE; nonofficial.
+  --mode rehearsal --s42 DIR --s43 DIR --s44 DIR --out-root DIR [--B 10000] [--expect-k-val K]
+                   [--mde-entry FILE] [--jobs N]
+      The AM-17 item 9 dress rehearsal on the E1 seed 42/43/44 VAL artifacts (src/stats/rehearsal.py):
+      nonofficial outputs under OUT-ROOT/<UTC>/, the out-root outside the repository; no section 12
+      artifact. Exit 1 when a structural criterion fails (the outputs are kept).
 
 Every mode refuses a non-canvas input by name (EVALUATION_CONTRACT section 11(a)).
 
@@ -39,7 +44,7 @@ class Refused(Exception):
 
 def parse(argv):
     ap = argparse.ArgumentParser(description="PlantSeg statistics driver (section 12 artifact)")
-    ap.add_argument("--mode", required=True, choices=("official", "smoke"))
+    ap.add_argument("--mode", required=True, choices=("official", "smoke", "rehearsal"))
     ap.add_argument("--inputs", type=Path, help="input-list file (plantseg-stats-inputs/1.0.0)")
     ap.add_argument("--out-dir", type=Path, help="parent directory of the artifact directory")
     ap.add_argument("--run-id", help="the artifact directory name, ^[a-z0-9][a-z0-9._-]{0,63}$")
@@ -49,7 +54,31 @@ def parse(argv):
     ap.add_argument("--repo-root", type=Path, help="resolve input paths here (synthetic or smoke)")
     ap.add_argument("--B", type=int, default=10_000, help="bootstrap replicates (official: 10000)")
     ap.add_argument("--jobs", type=int, default=1, help="worker processes, whole tasks each")
+    for seed in ("s42", "s43", "s44"):
+        ap.add_argument(f"--{seed}", type=Path, help=f"rehearsal: the E1 {seed} VAL artifact")
+    ap.add_argument("--out-root", type=Path, help="rehearsal: outputs under OUT-ROOT/<UTC>/")
+    ap.add_argument("--expect-k-val", type=int, help="rehearsal: refuse unless K_val equals this")
+    ap.add_argument("--mde-entry", type=Path, help="the committed MDE entry (reported, see Q9)")
     return ap.parse_args(argv)
+
+
+MODE_ARGS = {"official": ("inputs", "out_dir", "run_id", "repo_root", "B", "jobs",
+                          "confirm_official_test_analysis", "synthetic_inputs"),
+             "smoke": ("inputs", "out_dir", "run_id", "repo_root", "B", "jobs"),
+             "rehearsal": ("s42", "s43", "s44", "out_root", "B", "jobs", "expect_k_val",
+                           "mde_entry")}
+DEFAULTS = {"B": 10_000, "jobs": 1, "confirm_official_test_analysis": False,
+            "synthetic_inputs": False}
+
+
+def refuse_foreign(args) -> None:
+    """An argument that belongs to another mode is refused by name, never ignored."""
+    allowed = set(MODE_ARGS[args.mode])
+    foreign = [n for n in vars(args) if n != "mode" and n not in allowed
+               and getattr(args, n) not in (None, DEFAULTS.get(n))]
+    if foreign:
+        raise Refused(f"--mode {args.mode} does not accept " + ", ".join(
+            "--" + n.replace("_", "-") for n in sorted(foreign)))
 
 
 def require(args, *names) -> None:
@@ -99,29 +128,53 @@ def main(argv=None) -> int:
             sys.path.insert(0, str(REPO))
         from src.stats import artifact as A
         from src.stats import driver as D
+        from src.stats import rehearsal as RH
+        from src.stats import report as RP
     except Exception:                                         # noqa: BLE001
         traceback.print_exc()
         print("ERROR: the statistics modules could not be imported", file=sys.stderr)
         return EXIT_ERROR
-    refusals = (Refused, D.DriverRefusal, A.ArtifactError)
+    refusals = (Refused, D.DriverRefusal, A.ArtifactError, RH.RehearsalRefusal, RP.ReportError)
     try:
         if args.mode == "official":
             D.official_doors(confirm=args.confirm_official_test_analysis,      # doors 1 and 2
                              synthetic=args.synthetic_inputs)
+            refuse_foreign(args)
             require(args, "inputs", "out_dir", "run_id")
             validate_counts(args)
             res = D.run_official(inputs_list=args.inputs, out_dir=args.out_dir,
                                  run_id=args.run_id, confirm=args.confirm_official_test_analysis,
                                  synthetic=args.synthetic_inputs, repo_root=args.repo_root,
                                  B=args.B, jobs=args.jobs)
-        else:
+        elif args.mode == "smoke":
             if args.confirm_official_test_analysis or args.synthetic_inputs:
                 raise Refused("--confirm-official-test-analysis and --synthetic-inputs belong to "
                               "official mode")
+            refuse_foreign(args)
             require(args, "inputs", "out_dir", "run_id")
             validate_counts(args)
             res = D.run_smoke(inputs_list=args.inputs, out_dir=args.out_dir, run_id=args.run_id,
                               repo_root=args.repo_root, B=args.B, jobs=args.jobs)
+        else:
+            if args.repo_root is not None:
+                raise Refused("--repo-root is not accepted in rehearsal mode (P16: synthetic "
+                              "official mode and smoke mode only)")
+            if args.confirm_official_test_analysis or args.synthetic_inputs:
+                raise Refused("--confirm-official-test-analysis and --synthetic-inputs belong to "
+                              "official mode")
+            refuse_foreign(args)
+            validate_counts(args)
+            reh = RH.run_rehearsal(s42=args.s42, s43=args.s43, s44=args.s44,
+                                   out_root=args.out_root, B=args.B, jobs=args.jobs,
+                                   expect_k=args.expect_k_val, mde_entry=args.mde_entry)
+            print(f"rehearsal outputs: {reh.out_dir}")
+            print(f"K_val (AM-5 zero-disease VAL images): {reh.k_val}")
+            print("INVESTIGATE (AM-17 item 9): " + (
+                "FIRED -- " + "; ".join(reh.investigate) if reh.investigate else "not fired"))
+            print(f"criteria: {'all passed' if reh.criteria_passed else 'FAILED (exit 1)'}")
+            print(f"REHEARSAL_DIR: {reh.out_dir}")
+            print(f"WALL_SECONDS: {reh.seconds:.1f}")
+            return EXIT_OK if reh.criteria_passed else EXIT_CRITERIA
     except refusals as e:
         print(f"REFUSED: {e}", file=sys.stderr)
         return EXIT_REFUSED
