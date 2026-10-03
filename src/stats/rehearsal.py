@@ -26,14 +26,22 @@ accuracy_e1_e6 in every field except comparison_id and metric. 19 tasks are boot
 rehearsed comparisons' four tasks, the three structural robustness tasks, the three descriptive tasks
 and the non-inferiority task; the 16 tasks of the four clean placeholders are not run.
 
-Criteria (P23; any failure exits 1, outputs kept): closed containment of every rehearsed interval
-(lower <= estimate <= upper; lower <= estimate one-sided), with z0 and p0 printed on failure; Holm
-decisions equal a hand-rolled strict Holm for the 8-entry family and the 3-member family; t statistic
-and mean difference of equal sign (sign(0) = 0; skipped for a null statistic) and
-t_test.mean_difference == shifts.mean_delta == cohens_dz.mean bitwise; per-image counts 846 - K_val
-and dataset-level counts 846; the 15-cell invariant; the structural comparison. INVESTIGATE (AM-17
-item 9; O5) fires on a rejection in the 8-entry Holm family or in the 3-member Holm of the three
-rehearsed tests; it is printed, never a failure.
+Criteria (P23 and acceptance (e); any failure exits 1, outputs kept): closed containment of every
+rehearsed interval (lower <= estimate <= upper; lower <= estimate one-sided), with z0 and p0 printed
+on failure; every rehearsed p-value and Holm-adjusted p in [0, 1]; Holm-adjusted p equal to
+statsmodels multipletests(method='holm') to 1e-12 and Holm decisions equal to a hand-rolled strict
+Holm, for the 8-entry family and the 3-member family; t statistic and mean difference of equal sign
+(sign(0) = 0; skipped for a null statistic) and t_test.mean_difference == shifts.mean_delta ==
+cohens_dz.mean bitwise; per-image counts 846 - K_val and dataset-level counts 846; the 15-cell
+invariant; the structural comparison. INVESTIGATE (AM-17 item 9; O5) fires on a rejection in the
+8-entry Holm family or in the 3-member Holm of the three rehearsed tests; it is printed, never a
+failure.
+
+Report (lane item 7): the family table, the 3-member Holm, structural robustness, descriptive, NI with
+its sensitivity, E6-KD, the intervals, k, AM-6 per seed (union-present and GT-present), the AM-17
+labels with the item 3(f) caveat read from the committed MDE entry ("pending" when there is none), the
+three extension points and the criteria. Analysis errors of the frozen modules are refusals (exit 2);
+any other error is unexpected (exit 4).
 
 Import-time behaviour is side-effect free.
 """
@@ -54,18 +62,20 @@ import numpy as np
 from statsmodels.stats.multitest import multipletests
 
 from . import driver as D
-from .align import METRIC_DISEASE_ONLY, align_runs
+from .align import METRIC_DISEASE_ONLY, AlignmentError, align_runs
 from .artifact import (CODE_REPO, canonical_json, contract_sha256, serialize_a3a,
                        software_environment_block)
 from .bootstrap import (ANALYSIS_ID_OFFICIAL, DATASET_MIOU_DELTA, DESCRIPTIVE_E1_E3,
-                        FROZEN_TASK_MATRIX, NONINFERIORITY_E3_E6, ONE_SIDED_LOWER,
+                        FROZEN_TASK_MATRIX, NONINFERIORITY_E3_E6, ONE_SIDED_LOWER, BootstrapError,
                         descriptive_scalars)
 from .corruption_protocol import official_corruption_grid
-from .ingest import EXPECTED_ROWS_VAL, Policy, am5_pair
+from .ingest import EXPECTED_ROWS_VAL, IngestError, Policy, am5_pair
 from .noninferiority import PooledStages, build_e6_kd, build_non_inferiority
-from .report import contrast_label, load_mde_entry
-from .robustness import INFERENTIAL_SEVERITIES, align_miou_c, assemble_miou_c
-from .tests import ALPHA, CANONICAL_COMPARISON_IDS, holm_audit, holm_family, run_comparison
+from .report import (EXTENSION_POINTS, LABEL_INCONCLUSIVE, committed_caveat, contrast_label,
+                     gt_present_table, load_mde_entry, mde_fields)
+from .robustness import INFERENTIAL_SEVERITIES, RobustnessError, align_miou_c, assemble_miou_c
+from .tests import (ALPHA, CANONICAL_COMPARISON_IDS, StatsError, holm_audit, holm_family,
+                    run_comparison)
 from .val_artifacts import (ValArtifactError, code_provenance, load_val_artifact,
                             require_comparable, require_role)
 
@@ -96,6 +106,12 @@ CODE_FILES = ("src/stats/rehearsal.py", "src/stats/report.py", "src/stats/driver
 
 class RehearsalRefusal(RuntimeError):
     """A rehearsal request or input refused by name, before anything is written."""
+
+
+#: The frozen modules' named analysis errors: a refusal of the inputs (exit 2). Anything else is an
+#: unexpected error (exit 4; A3).
+ANALYSIS_ERRORS = (AlignmentError, BootstrapError, IngestError, RobustnessError, StatsError,
+                   ValArtifactError)
 
 
 # --------------------------------------------------------------------------------------------------
@@ -252,7 +268,7 @@ def compute(arts: dict, *, B: int, jobs: int = 1, expect_k=None) -> Rehearsal:
     try:
         for a, b in (("s42", "s43"), ("s42", "s44")):
             am5_pair(runs[a], runs[b])
-    except Exception as e:                                           # noqa: BLE001
+    except ANALYSIS_ERRORS as e:
         raise RehearsalRefusal(f"AM-5: {e}") from e
     k_val = runs["s42"].n_excluded_am5
     if expect_k is not None and k_val != expect_k:
@@ -268,13 +284,14 @@ def compute(arts: dict, *, B: int, jobs: int = 1, expect_k=None) -> Rehearsal:
             if cid in REHEARSED:
                 paired[cid] = pv
                 pooled[cid] = PooledStages.from_runs(runs[b], runs[c])
-        mc = {"s42": structural_miou_c(runs["s42"], "E1", grid),
-              "s44": structural_miou_c(runs["s44"], "E6", grid)}
+        rb, rc, _ = D.COMPARISON_TABLE[ROBUSTNESS]
+        mc = {"s42": structural_miou_c(runs["s42"], rb, grid),
+              "s44": structural_miou_c(runs["s44"], rc, grid)}
         results[ROBUSTNESS] = run_comparison(ROBUSTNESS, align_miou_c(mc["s42"], mc["s42"],
                                                                       policy=POLICY),
-                                             baseline_stage="E1", candidate_stage="E6")
+                                             baseline_stage=rb, candidate_stage=rc)
         pv_rob = align_miou_c(mc["s42"], mc["s44"], policy=POLICY)
-        structural = run_comparison(ROBUSTNESS, pv_rob, baseline_stage="E1", candidate_stage="E6")
+        structural = run_comparison(ROBUSTNESS, pv_rob, baseline_stage=rb, candidate_stage=rc)
         paired[ROBUSTNESS] = pv_rob
         holm8 = holm_family([results[c] for c in CANONICAL_COMPARISON_IDS])
         holm3 = holm_members([(c, float(results[c].primary_p)) for c in REHEARSED])
@@ -283,9 +300,7 @@ def compute(arts: dict, *, B: int, jobs: int = 1, expect_k=None) -> Rehearsal:
         desc = descriptive_scalars(pv_d.delta, metric=pv_d.metric, policy=pv_d.policy.value,
                                    alignment_status=pv_d.alignment_status)
         pooled[NONINFERIORITY_E3_E6] = PooledStages.from_runs(runs["s44"], runs["s42"])
-    except RehearsalRefusal:
-        raise
-    except Exception as e:                                           # noqa: BLE001
+    except ANALYSIS_ERRORS as e:
         raise RehearsalRefusal(f"the seeds cannot be analysed: {type(e).__name__}: {e}") from e
 
     task_obs = D.Observed(policy=POLICY, results=tuple(
@@ -316,10 +331,23 @@ def criteria(reh: Rehearsal, runs: dict) -> list[tuple[str, bool, str]]:
         out.append((f"containment {t.task_id}", ok,
                     "" if ok else f"bounds {t.bca.bounds}, estimate {est!r}, z0 {t.bca.z0!r}, "
                                   f"p0 {p0_of(t)!r}"))
+    ps = ([(f"{c} p", reh.results[c].wilcoxon.p_value) for c in REHEARSED]
+          + [(f"{m.comparison_id} p_adjusted (8)", m.p_adjusted) for m in reh.holm8.members
+             if m.comparison_id in REHEARSED]
+          + [(f"{m['comparison_id']} p_adjusted (3)", m["p_adjusted"]) for m in reh.holm3])
+    bad_p = [(n, p) for n, p in ps if not (type(p) is float and 0.0 <= p <= 1.0)]
+    out.append(("p in [0, 1]: the rehearsed tests' p-values and their Holm-adjusted p", not bad_p,
+                str(bad_p)))
     p8 = [m.p_raw for m in reh.holm8.members]
+    p3 = [m["p_raw"] for m in reh.holm3]
+    for label, raw, adj in (("8 entries", p8, [m.p_adjusted for m in reh.holm8.members]),
+                            ("3 rehearsed tests", p3, [m["p_adjusted"] for m in reh.holm3])):
+        lib = multipletests(raw, alpha=ALPHA, method="holm")[1]
+        dev = max(abs(float(a) - float(b)) for a, b in zip(adj, lib))
+        out.append((f"Holm ({label}) adjusted p equals statsmodels multipletests(method='holm') to "
+                    "1e-12", dev <= 1e-12, f"max |difference| {dev!r}"))
     out.append(("Holm (8 entries) equals a hand-rolled strict Holm",
                 [m.reject for m in reh.holm8.members] == hand_holm(p8), str(p8)))
-    p3 = [m["p_raw"] for m in reh.holm3]
     out.append(("Holm (3 rehearsed tests) equals a hand-rolled strict Holm",
                 [m["reject"] for m in reh.holm3] == hand_holm(p3), str(p3)))
     for cid in REHEARSED:
@@ -376,11 +404,22 @@ def _task_entry(t) -> dict:
 
 
 def _labels(reh: Rehearsal, mde: dict | None) -> dict:
-    caveat = (mde or {}).get("power_caveat") if mde and not mde.get("problems") else None
+    """AM-17 item 2 labels of the rehearsed contrasts; item 3(f) from the committed MDE entry only
+    (lane item 7): a non-rejection reads "inconclusive ..." with MDE_W when its power caveat holds,
+    and carries "power caveat pending" when there is no committed, valid entry."""
+    caveat, mde_w = committed_caveat(mde)
     obs = {t.task_id: float(t.observed) for t in reh.tasks}
     reject = {m.comparison_id: m.reject for m in reh.holm8.members}
-    return {cid: contrast_label(reject[cid], obs[f"{cid}__{DATASET_MIOU_DELTA}"],
-                                power_caveat=caveat) for cid in REHEARSED}
+    out = {}
+    for cid in REHEARSED:
+        label = contrast_label(reject[cid], obs[f"{cid}__{DATASET_MIOU_DELTA}"],
+                               power_caveat=caveat is True)
+        if label == LABEL_INCONCLUSIVE:
+            label += f" (MDE_W = {mde_w})"
+        elif not reject[cid] and caveat == "pending":
+            label += "; power caveat pending (no committed MDE entry)"
+        out[cid] = label
+    return out
 
 
 def build_documents(reh: Rehearsal, *, B: int, jobs: int, created: str, mde: dict | None) -> dict:
@@ -401,7 +440,7 @@ def build_documents(reh: Rehearsal, *, B: int, jobs: int, created: str, mde: dic
         "mde_entry": mde,
     }
     results = {
-        "mode": "rehearsal", "artifact_status": "nonofficial", "statistics_namespace": NAMESPACE,
+        "artifact_status": "nonofficial", "statistics_namespace": NAMESPACE,
         "K_val": reh.k_val, "n_per_image": EXPECTED_ROWS_VAL - reh.k_val,
         "n_dataset": EXPECTED_ROWS_VAL, "not_rehearsed": list(NOT_REHEARSED),
         "comparisons": [dict(serialize_a3a(reh.results[c]),
@@ -421,6 +460,10 @@ def build_documents(reh: Rehearsal, *, B: int, jobs: int, created: str, mde: dic
                                  "sensitivity": [{"margin": s.margin, "passed": s.passed}
                                                  for s in reh.ni.sensitivity]},
         "e6_kd_trigger": {"observed_drop": reh.e6.observed_drop, "triggered": reh.e6.triggered},
+        "power_caveat": committed_caveat(mde)[0],
+        "gt_present_am6": gt_present_table({s: arts[s].run.stats for s in SEEDS}, key="seed"),
+        "extension_points": [{"name": n, "content": d, "populated": False}
+                             for n, d in EXTENSION_POINTS],
         "tasks": [_task_entry(t) for t in reh.tasks],
         "tasks_not_run": [t.task_id for t in FROZEN_TASK_MATRIX if t.task_id not in RUN_TASK_IDS],
         "criteria": [{"name": n, "passed": ok, "detail": d} for n, ok, d in reh.criteria],
@@ -446,16 +489,21 @@ def render_report(docs: dict) -> str:
         lines.append(f"| {s} | {d['run_id']} | {str(d['checkpoint_sha256'])[:16]} | {d['path']} |")
     lines += ["", "## Family (8 entries; placeholders are self-pairs with p = 1, not rehearsed)", "",
               banner, "",
-              "| comparison | role | p (raw) | p (Holm) | reject | mean delta | HL shift | t (p) |"
-              " label |", "|---|---|---|---|---|---|---|---|---|"]
+              "| comparison | role | W | z | p (raw) | p (Holm) | reject | r_rb | HL shift | dz | "
+              "mean delta [BCa 95 %] | t (p) | label |",
+              "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     holm = {x["comparison_id"]: x for x in r["holm_8"]["members"]}
+    tasks = {t["task_id"]: t for t in r["tasks"]}
     for c in r["comparisons"]:
-        cid, h, t = c["comparison_id"], holm[c["comparison_id"]], c["t_test"]
+        cid, h, t, w = c["comparison_id"], holm[c["comparison_id"]], c["t_test"], c["wilcoxon"]
         label = r["labels"].get(cid, "--")
-        lines.append(f"| {cid} | {c['role']} | {h['p_raw']:.6g} | {h['p_adjusted']:.6g} | "
-                     f"{h['reject']} | {c['shifts']['mean_delta']:.6g} | "
-                     f"{c['hodges_lehmann_shift']:.6g} | {_g(t['statistic'])} ({_g(t['p_value'])}) | "
-                     f"{label} |")
+        md = tasks.get(f"{cid}__mean_delta") if c["role"] == "rehearsed" else None
+        ci = f" [{_g(md['lower_bound'])}, {_g(md.get('upper_bound'))}]" if md else " (not run)"
+        lines.append(f"| {cid} | {c['role']} | {_g(w['statistic'])} | {_g(w['zstatistic'])} | "
+                     f"{h['p_raw']:.6g} | {h['p_adjusted']:.6g} | {h['reject']} | "
+                     f"{_g(c['rank_biserial']['value'])} | {c['hodges_lehmann_shift']:.6g} | "
+                     f"{_g(c['cohens_dz']['value'])} | {c['shifts']['mean_delta']:.6g}{ci} | "
+                     f"{_g(t['statistic'])} ({_g(t['p_value'])}) | {label} |")
     lines += ["", "## The three rehearsed tests: raw p-values and their 3-member Holm (P24)", "",
               banner, "", "| comparison | p (raw) | p (Holm, 3) | reject |", "|---|---|---|---|"]
     for x in r["holm_3"]:
@@ -485,15 +533,26 @@ def render_report(docs: dict) -> str:
         lines.append(f"| {t['task_id']} | {t['observed']:.6g} | {t['lower_bound']:.6g} | "
                      f"{t.get('upper_bound', float('nan')):.6g} | {t['z0']:.4g} | {t['p0']:.4g} | "
                      f"{t['interval_method']} |")
+    lines += ["", "## AM-6: dataset-level mIoU under the GT-present rule, per seed (descriptive)", "",
+              banner, "", "| seed | union-present all-class | GT-present all-class | union-present "
+              "disease-only | GT-present disease-only |", "|---|---|---|---|---|"]
+    for g in r["gt_present_am6"]:
+        lines.append(f"| {g['seed']} | {_g(g['union_present_all_class'])} | "
+                     f"{_g(g['gt_present_all_class'])} | {_g(g['union_present_disease_only'])} | "
+                     f"{_g(g['gt_present_disease_only'])} |")
+    lines += ["", "## Extension points (not populated by the rehearsal)", "", banner, ""]
+    lines += [f"- {e['name']}: {e['content']}" for e in r["extension_points"]]
     lines += ["", "## Criteria (P23)", "", banner, ""]
     for c in r["criteria"]:
         lines.append(f"- [{'PASS' if c['passed'] else 'FAIL'}] {c['name']}"
                      + ("" if c["passed"] else f" -- {c['detail']}"))
     mde = m["mde_entry"]
-    lines += ["", "## MDE entry", "", (f"{mde['path']}: sha256 {mde['sha256']}, committed "
-                                       f"{mde['tracked'] and mde['clean_at_head']}, last commit "
-                                       f"{mde['last_commit']}, problems {mde['problems']}"
-                                       if mde else "none given"), ""]
+    lines += ["", "## MDE entry (AM-17 item 3(f))", "",
+              (f"{mde['path']}: sha256 {mde['sha256']}, committed "
+               f"{bool(mde['tracked'] and mde['clean_at_head'])}, last commit {mde['last_commit']}; "
+               f"mde_w {mde['mde_w']}, tau_p {mde['tau_p']}, power_caveat {mde['power_caveat']}; "
+               f"problems {mde['problems']}" if mde else "none given")
+              + f". Power caveat: {r['power_caveat']}.", ""]
     return "\n".join(lines)
 
 
@@ -548,8 +607,7 @@ def run_rehearsal(*, s42, s43, s44, out_root, B: int, jobs: int = 1, expect_k=No
     mde = None
     if mde_entry is not None:
         doc, status, problems = load_mde_entry(mde_entry)
-        mde = dict(status, mde_w=doc.get("mde_w"), tau_p=doc.get("tau_p"),
-                   power_caveat=doc.get("power_caveat"), problems=list(problems))
+        mde = dict(status, **mde_fields(doc), problems=list(problems))
     arts = load_seeds({"s42": s42, "s43": s43, "s44": s44})
     created = datetime.now(timezone.utc)
     reh = compute(arts, B=B, jobs=jobs, expect_k=expect_k)
@@ -565,7 +623,8 @@ def run_rehearsal(*, s42, s43, s44, out_root, B: int, jobs: int = 1, expect_k=No
 
 
 __all__ = ["POLICY", "NAMESPACE", "SEEDS", "MAPPING", "REHEARSED", "NOT_REHEARSED", "RUN_TASK_IDS",
-           "FILES", "SUMS", "RehearsalRefusal", "require_out_root", "check_preconditions",
+           "FILES", "SUMS", "RehearsalRefusal", "ANALYSIS_ERRORS", "require_out_root",
+           "check_preconditions",
            "load_seeds", "relabel", "structural_cells", "structural_miou_c",
            "invariant_mismatches", "holm_members", "hand_holm", "p0_of", "Rehearsal", "compute",
            "criteria", "build_documents", "render_report", "write_outputs", "RehearsalRun",

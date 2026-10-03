@@ -9,16 +9,18 @@ data, checkpoint, model or GPU is used, and nothing is written into this reposit
   D  doors and refusals through scripts/run_stats.py (exit 2, nothing written): the confirmation flag,
      the binding rule and the out-dir pre-check fire before any read (a non-existent --inputs path),
      the pinned-stack door (Q6; also simulated in process on any stack), --repo-root without
-     --synthetic-inputs, both halves of the canvas guard, the smoke-mode refusals (P15); exit 4 for
-     an import failure, a worker failure and an artifact that fails its post-rename verification
-     (named)
+     --synthetic-inputs (Q2), a --run-id that is not one valid path component, an --out-dir that is a
+     file, both halves of the canvas guard, the smoke-mode refusals (P15); exit 4 for an import
+     failure, a worker failure, an artifact that fails its post-rename verification (named) and a
+     summary that cannot be printed after a successful write
   A  acceptance (a): `--mode official --synthetic-inputs` at B = 10,000 and --jobs min(4, CPUs): exit
      0; all 13 checks re-established; every per-image task 1561 - k and every dataset-level task 1561;
      the only warning synthetic_input_data; each comparison's mean_delta, the descriptive delta and
      the NI observed_delta equal the fixture arrays exactly; the unmet official conditions are exactly
      the synthetic declaration and the binding (O3: this needs a committed clean tree); then
-     `--mode report` on that artifact: k = 7 reported, the profile the verified status, and the P28
-     dataset-level mIoU-C contrast equal to the fixture's nested mean exactly
+     `--mode report` on that artifact: k = 7 reported, the profile the verified status, the P28
+     dataset-level mIoU-C contrast equal to the fixture's nested mean exactly, and the AM-6 table
+     equal to rule_variants for the seven clean stages
 
 On a running stack other than the section 10.1 pin, official mode is refused up front (Q6): the A part
 is not run and the smoke checks that refusal instead.
@@ -52,6 +54,7 @@ from src.stats import artifact as A                                      # noqa:
 from src.stats import bootstrap as BS                                    # noqa: E402
 from src.stats import driver as D                                        # noqa: E402
 from src.stats.corruption_protocol import official_corruption_grid       # noqa: E402
+from src.stats.eligibility import GT_PRESENT, UNION_PRESENT, rule_variants  # noqa: E402
 from src.stats.noninferiority import pooled_miou_from_totals             # noqa: E402
 from src.stats.robustness import INFERENTIAL_SEVERITIES                  # noqa: E402
 
@@ -97,9 +100,9 @@ def doors(work: Path, fs, lst: Path) -> None:
             cli(*base), "--confirm-official-test-analysis", out / "door-0001")
     refused("D2 confirmed, not declared synthetic: the binding rule (still before any read)",
             cli(*base, "--confirm-official-test-analysis"), "binding is unbound", out / "door-0001")
-    refused("D3 --repo-root without --synthetic-inputs (P16)",
-            cli(*base, "--confirm-official-test-analysis", "--repo-root", fs.input_root),
-            "binding is unbound", out / "door-0001")
+    refused("D3 --repo-root without --synthetic-inputs (Q2, P16; its own rule, ahead of the binding "
+            "rule)", cli(*base, "--confirm-official-test-analysis", "--repo-root", fs.input_root),
+            "accepted in official mode only with --synthetic-inputs", out / "door-0001")
     (out / "door-0001").mkdir(parents=True)
     refused("D4 an existing target: the out-dir pre-check fires before any read (P10, P13)",
             cli(*base, "--confirm-official-test-analysis", "--synthetic-inputs"), "overwrite")
@@ -107,6 +110,16 @@ def doors(work: Path, fs, lst: Path) -> None:
     refused("D5 a stale temporary sibling: refused before any read (P10)",
             cli(*base[:-1], "door-0002", "--confirm-official-test-analysis", "--synthetic-inputs"),
             "stale", out / "door-0002")
+    on = ["--confirm-official-test-analysis", "--synthetic-inputs"]
+    refused("D5b --run-id 'a/b' (two path components) -> refused before any read",
+            cli(*base[:-1], "a/b", *on), "--run-id", out / "a")
+    refused("D5c --run-id with a trailing newline -> refused before any read",
+            cli(*base[:-1], "door-lf\n", *on), "--run-id", out / "door-lf\n")
+    a_file = work / "an_out_dir_that_is_a_file"
+    a_file.write_text("x", encoding="utf-8")
+    refused("D5d --out-dir that is a regular file -> refused before any read",
+            cli("--mode", "official", "--inputs", missing, "--out-dir", a_file, "--run-id",
+                "door-0006", *on), "not a directory")
     if PINNED_STACK:
         refused("D6 every door passed: the first read is the input list (the missing file)",
                 cli(*base[:-1], "door-0003", "--confirm-official-test-analysis",
@@ -220,6 +233,18 @@ def canvas_and_smoke_mode(work: Path) -> None:
         A.verify_statistics_artifact = real_verify
     check("D17 an artifact that fails its post-rename verification -> exit 4 naming the directory",
           code == 4 and str(out / "ex-0002") in text, text[-300:])
+    real_report = run_stats.report
+
+    def failing_report(res):
+        raise UnicodeEncodeError("ascii", "\u00e9", 0, 1, "simulated unprintable path")
+    run_stats.report = failing_report
+    try:
+        code, text = in_process(args + ["--run-id", "ex-0003"])
+    finally:
+        run_stats.report = real_report
+    check("D19 printing the summary of a written, re-verified artifact fails -> exit 4 naming it, "
+          "never exit 1 (P18)", code == 4 and "was written and re-verified" in text
+          and (out / "ex-0003").is_dir(), text[-300:])
 
 
 def official_canvas(work: Path, fs, lst: Path) -> None:
@@ -300,6 +325,15 @@ def report_mode(work: Path, fs, path: Path) -> None:
     check("A11 P28: each model's dataset-level mIoU-C and the contrast E6 - E1 equal the fixture's "
           "nested mean of 15 cells exactly", (dm["E1"], dm["E6"], dm["difference_e6_minus_e1"])
           == (e1, e6, e6 - e1), (dm, e1, e6))
+    rows = {g["stage"]: g for g in doc["gt_present_am6"]}
+    rv = {st: rule_variants(np.load(fs.path(st) / "sufficient_stats.npz", allow_pickle=False))
+          for st in D.STAGES}
+    check(f"A12 AM-6 with k = {K}: all seven stages, both rules and both class spaces equal "
+          "rule_variants of each stage's clean statistics",
+          sorted(rows) == sorted(D.STAGES) and all(
+              rows[st][f"{rule}_{space}"] == rv[st][rule][space].value_float64
+              for st in D.STAGES for rule in (UNION_PRESENT, GT_PRESENT)
+              for space in ("all_class", "disease_only")))
 
 
 def full_run(work: Path, fs, lst: Path) -> None:

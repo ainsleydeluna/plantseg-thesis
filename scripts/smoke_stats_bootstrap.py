@@ -545,8 +545,18 @@ try:
     case("artifact re-verifies from disk: all 13 integrity checks re-established with the inputs "
          "and the contract", rep.family["run_id"] == "a3b-smoke-0001"
          and rep.established == A.INTEGRITY_CHECKS and not rep.not_reestablished)
-    case("JSON<->NPZ exact equality holds on reload",
-         "json_npz_exact_match" in rep.established and rep.family == fam)
+    with np.load(out / "bootstrap.npz", allow_pickle=False) as z:
+        npz_eq = all(
+            float(z[f"{t['task_id']}__observed"][0]) == t["observed"]
+            and float(z[f"{t['task_id']}__z0"][0]) == t["z0"]
+            and [float(x) for x in z[f"{t['task_id']}__bounds"]]
+            == [t["lower_bound"]] + ([t["upper_bound"]] if "upper_bound" in t else [])
+            and z[f"{t['task_id']}__bootstrap"].shape[0] == t["bootstrap_replicates"]
+            and z[f"{t['task_id']}__jackknife"].shape[0] == t["jackknife_count"]
+            for t in rep.family["bootstrap_tasks"])
+    case("JSON<->NPZ exact equality holds on reload: every task's observed, z0, bounds and array "
+         "lengths in bootstrap.npz equal family.json, which equals the family the writer built",
+         npz_eq and rep.family == fam)
     txt = (out / "family.json").read_text(encoding="utf-8")
     case("no NaN or Infinity token in family.json",
          "NaN" not in txt and "Infinity" not in txt)

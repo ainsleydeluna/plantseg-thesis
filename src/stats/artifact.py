@@ -16,8 +16,9 @@ tasks, section 12.3.7 as amended by AM-5), `synthetic_input_data` is the caller'
 equal what the inputs' dataset names say, and `artifact_status` is derived. Before anything is created
 the gate (`check_writer_gate`) re-reads every input directory the records name and refuses, by name, a
 policy other than `official` or `nonofficial_smoke`, a section 10.1 pin the contract does not state,
-and an official request: while `TEST_MANIFEST_BINDING` is "unbound" every official request is refused,
-listing every unmet condition. The thirteen checks are then established on the files in the temporary
+a driver snapshot (P5) that does not name every input's four files, and an official request: while
+`TEST_MANIFEST_BINDING` is "unbound" every official request is refused, listing every unmet
+condition. The thirteen checks are then established on the files in the temporary
 directory by `verify_statistics_artifact`, with the input directories and the contract bytes; only then
 is the directory renamed. Any failure removes the temporary directory.
 
@@ -136,6 +137,7 @@ ARTIFACT_POLICIES = (Policy.OFFICIAL.value, Policy.NONOFFICIAL_SMOKE.value)
 #: The evaluator's input statuses (section 12.4.3: a different vocabulary from the top level).
 INPUT_STATUSES = ("official", "provisional", "smoke")
 BIT_GENERATOR = "PCG64"
+# Applied with fullmatch only: `$` alone also matches just before a trailing newline.
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 _HEX40 = re.compile(r"^[0-9a-f]{40}$")
 
@@ -437,7 +439,7 @@ def build_family(inp: ArtifactInputs) -> dict:
     assert_a3a_source_schema()
     if inp.analysis_id not in ANALYSIS_IDS:
         raise ArtifactError(f"analysis_id {inp.analysis_id!r} is not one of {ANALYSIS_IDS}")
-    if not isinstance(inp.run_id, str) or not re.match(RUN_ID_PATTERN, inp.run_id):
+    if not isinstance(inp.run_id, str) or not re.fullmatch(RUN_ID_PATTERN, inp.run_id):
         raise ArtifactError(f"run_id {inp.run_id!r} violates {RUN_ID_PATTERN}")
     if not _valid_timestamp(inp.created_at_utc):
         raise ArtifactError(f"created_at_utc {inp.created_at_utc!r} is not {TIMESTAMP_FORMAT}")
@@ -830,9 +832,9 @@ def official_conditions(fam: dict, views: InputViews, contract_bytes: bytes | No
                          (isinstance(rt, dict)
                           and rt.get("eval_runtime_version") == EVAL_RUNTIME_VERSION,
                           "eval_runtime_missing"),
-                         (bool(_HEX64.match(str(run.get("checkpoint_sha256") or ""))),
+                         (bool(_HEX64.fullmatch(str(run.get("checkpoint_sha256") or ""))),
                           "checkpoint_not_64_hex"),
-                         (bool(_HEX40.match(str(run.get("repo_commit") or ""))),
+                         (bool(_HEX40.fullmatch(str(run.get("repo_commit") or ""))),
                           "repo_commit_not_40_hex"),
                          (run.get("metric_impl_sha256") == metrics_sha,
                           "metric_impl_not_this_checkout"),
@@ -881,6 +883,22 @@ def _require_contract_hash(recorded, contract_bytes: bytes) -> None:
                           f"contract bytes at finalization {now!r}")
 
 
+def _require_driver_snapshot(snapshot, records) -> None:
+    """P5: the writer compares the files it re-reads with the driver's snapshot, so the snapshot is
+    required -- exactly the records' inputs, each mapping the four input files to 64-hex digests."""
+    from .driver import INPUT_FILES
+    paths = sorted(r["repo_relative_path"] for r in records)
+    if not isinstance(snapshot, Mapping) or sorted(snapshot) != paths:
+        _fail(C_PROVENANCE, "input_file_sha256 (the driver's P5 snapshot) must name exactly the "
+                            "records' inputs")
+    for rel in paths:
+        files = snapshot[rel]
+        if (not isinstance(files, Mapping) or sorted(files) != sorted(INPUT_FILES)
+                or not all(isinstance(v, str) and _HEX64.fullmatch(v) for v in files.values())):
+            _fail(C_PROVENANCE, f"{rel}: input_file_sha256 must map {list(INPUT_FILES)} to 64-hex "
+                                "digests (P5)")
+
+
 def check_writer_gate(inp: ArtifactInputs, fam: dict, contract_bytes: bytes, *,
                       hooks: bool = False) -> InputViews:
     """Writer step 3: before anything is created. Refuses by name (WriterGateRefused) or raises the
@@ -891,6 +909,7 @@ def check_writer_gate(inp: ArtifactInputs, fam: dict, contract_bytes: bytes, *,
         require_contract_pins(contract_bytes)
     except ArtifactError as e:
         raise WriterGateRefused((f"contract_pins: {e}",)) from e
+    _require_driver_snapshot(inp.input_file_sha256, fam["input_artifacts"])
     views = load_input_views(fam["input_artifacts"], inp.input_root, policy)
     check_input_provenance(fam["input_artifacts"], views, expected_sha256=inp.input_file_sha256,
                            declared_k=inp.am5_excluded_count)
@@ -926,7 +945,7 @@ def preflight_out_dir(out_dir) -> Path:
     """P10: the run_id pattern, refuse-existing, and no stale temporary sibling from an interrupted
     write. The driver calls this before computing; the writer again before creating anything."""
     out_dir = Path(out_dir)
-    if not re.match(RUN_ID_PATTERN, out_dir.name):
+    if not re.fullmatch(RUN_ID_PATTERN, out_dir.name):
         raise ArtifactError(f"run_id {out_dir.name!r} violates {RUN_ID_PATTERN}")
     if out_dir.exists() or out_dir.is_symlink():
         raise ArtifactError(f"refusing to overwrite {out_dir}")
@@ -1546,7 +1565,7 @@ def _check_officiality(ctx: _Ctx) -> None:
     re-derived with the inputs' k."""
     fam = ctx.fam
     ws = fam["warnings"]
-    if not re.match(RUN_ID_PATTERN, fam["run_id"]) or fam["run_id"] != ctx.final_name:
+    if not re.fullmatch(RUN_ID_PATTERN, fam["run_id"]) or fam["run_id"] != ctx.final_name:
         _fail(C_POLICY, f"run_id {fam['run_id']!r} violates the pattern or differs from the "
                         f"directory name {ctx.final_name!r}")
     if not _valid_timestamp(fam["created_at_utc"]):
@@ -1597,7 +1616,7 @@ def _check_contract_hash(ctx: _Ctx) -> None:
     """Check 2 (statistical_contract_hash_verified): section 12.4.4 -- 64 lowercase hex; with the
     contract bytes, their SHA-256 (raw bytes, never re-encoded) equals the recorded digest."""
     rec = ctx.fam["statistical_contract_sha256"]
-    if not _HEX64.match(rec):
+    if not _HEX64.fullmatch(rec):
         _fail(C_CONTRACT, f"statistical_contract_sha256 {rec!r} is not 64 lowercase hex")
     if ctx.contract_bytes is not None:
         _require_contract_hash(rec, ctx.contract_bytes)
@@ -1631,11 +1650,11 @@ def _check_input_records(ctx: _Ctx) -> None:
         problems = [(_relative_posix(rel), "repo_relative_path is not relative POSIX"),
                     (r["artifact_status"] in INPUT_STATUSES, "artifact_status vocabulary"),
                     ((ckpt is None and r["artifact_status"] == "smoke")
-                     or (ckpt is not None and bool(_HEX64.match(ckpt))), "checkpoint_sha256"),
-                    (all(_HEX64.match(r[k]) for k in ("split_manifest_sha256", "class_map_sha256",
-                                                      "metric_impl_sha256", "config_sha256")),
-                     "digests"),
-                    (bool(_HEX40.match(r["repo_commit"])), "repo_commit")]
+                     or (ckpt is not None and bool(_HEX64.fullmatch(ckpt))), "checkpoint_sha256"),
+                    (all(_HEX64.fullmatch(r[k]) for k in (
+                        "split_manifest_sha256", "class_map_sha256", "metric_impl_sha256",
+                        "config_sha256")), "digests"),
+                    (bool(_HEX40.fullmatch(r["repo_commit"])), "repo_commit")]
         bad = [what for ok, what in problems if not ok]
         if bad:
             _fail(C_PROVENANCE, f"{rel}: {bad}")

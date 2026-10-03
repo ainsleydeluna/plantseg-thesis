@@ -16,7 +16,9 @@ repository, and no statistics artifact with status `official` is written anywher
      manifest regenerated) and verified artifact-only, for every check whose writer-side refusal is
      layered (P37: a single dropped rule cannot hide behind another layer)
   F  acceptance (f): one refused case per writer-gate clause, the official-condition clauses by name,
-     O3 code provenance (one test per refusal), P6 in both directions, the unpinned stack
+     each clause of check_input_provenance (the function the gate runs on the inputs it re-reads), O3
+     code provenance (one test per refusal), P6 in both directions, the unpinned stack (section 10.1
+     forces nonofficial), the driver's P5 snapshot required
   B  acceptance (b): count warnings -- every task's B and jackknife count against its own expected
      value (1561 dataset-level, 1561 - k per-image), a per-image count != n_paired is fatal
   K  OK-2: the section 10.1 pins parsed from the contract, and the refusals of a reworded sentence
@@ -254,6 +256,13 @@ def part_w(env: Env, outs: Path) -> None:
     case("W1 an input record's class_map_sha256 in uppercase hex", edited("01", upper_hex),
          A.C_PROVENANCE)
 
+    def lf_hex(f):
+        r = f["input_artifacts"][0]
+        r["config_sha256"] = r["config_sha256"] + "\n"
+        return f
+    case("W1b an input record's config_sha256 with a trailing newline (65 characters)",
+         edited("01b", lf_hex), A.C_PROVENANCE)
+
     def bad_contract(f):
         f["statistical_contract_sha256"] = f["statistical_contract_sha256"][:-1] + "z"
         return f
@@ -265,6 +274,22 @@ def part_w(env: Env, outs: Path) -> None:
         m["reject"] = not m["reject"]
         return f
     case("W3 a stored Holm member's reject flipped", edited("03", flip_reject), A.C_A3A)
+
+    def holm_failed(f):
+        f["a3a_family"]["holm"]["status"] = "failed"
+        return f
+    case("W3b a3a_family.holm.status 'failed' (a frozen literal: check 10 owns the key sets, types "
+         "and frozen values of every block, the accepted P0 design)", edited("03b", holm_failed),
+         A.C_FINITE)
+
+    def swapped_keys(f):
+        c = f["a3a_family"]["comparisons"][0]
+        keys = list(c)
+        keys[0], keys[1] = keys[1], keys[0]
+        f["a3a_family"]["comparisons"][0] = {k: c[k] for k in keys}
+        return f
+    case("W3c the first two keys of a3a_family.comparisons[0] swapped (key order: check 10)",
+         edited("03c", swapped_keys), A.C_FINITE)
     i = BS.FROZEN_TASK_IDS.index("accuracy_e2_e3__mean_delta")
 
     def short_json(f):
@@ -451,6 +476,16 @@ def part_c(env: Env, outs: Path) -> None:
                    run("c-12", hook=tamper_at("manifest", lambda d: (d / "notes.txt").write_text(
                        "x", encoding="utf-8"))))
 
+    def symlink_family(tmp):
+        target = outs.parent / "c12b_family.json"
+        shutil.copyfile(tmp / A.FAMILY_JSON, target)
+        (tmp / A.FAMILY_JSON).unlink()
+        (tmp / A.FAMILY_JSON).symlink_to(target)
+    integrity_case("C12b file set: tamper hook replaces family.json by a symlink to an identical copy "
+                   "(afd2d33 accepts: it compared names only)", outs / "c-12b", A.C_FILES,
+                   run("c-12b", hook=tamper_at("manifest", symlink_family)))
+    (outs.parent / "c12b_family.json").unlink()
+
     def drop_line(tmp):
         lines = (tmp / A.MANIFEST_NAME).read_text(encoding="utf-8").splitlines(keepends=True)
         (tmp / A.MANIFEST_NAME).write_text(lines[1], encoding="utf-8", newline="\n")
@@ -497,6 +532,13 @@ def part_f(env: Env, plant: Env, off: Env, work: Path, outs: Path) -> None:
     gate_integrity_case("F4 P5: the driver's snapshot of one input differs from the files the gate "
                         "re-reads", outs / "f-04", A.C_PROVENANCE,
                         lambda h: write(env, "f-04", True, input_file_sha256=sha, _tamper=h))
+    gate_integrity_case("F4b P5: a request without the driver's snapshot (input_file_sha256=None)",
+                        outs / "f-04b", A.C_PROVENANCE,
+                        lambda h: write(env, "f-04b", True, input_file_sha256=None, _tamper=h))
+    short = {k: v for k, v in sha.items() if k != rel}
+    gate_integrity_case("F4c P5: a driver snapshot that omits one input", outs / "f-04c",
+                        A.C_PROVENANCE,
+                        lambda h: write(env, "f-04c", True, input_file_sha256=short, _tamper=h))
     copy_root = work / "moved"
     shutil.copytree(env.fs.input_root, copy_root)
     moved = env.inp("f-05", True, input_root=copy_root)
@@ -543,6 +585,16 @@ def part_f(env: Env, plant: Env, off: Env, work: Path, outs: Path) -> None:
                       outs / "f-12", off.inp("f-12", False), _inject_failure=True,
                       _tamper=lambda d, s: calls.append(s)))
         check("F12b the tamper hook of a refused official request was never called", calls == [])
+        gate_case("F12c an official request carrying only _inject_failure (OK-3)", outs / "f-12c",
+                  {"test_hooks_on_official_request", A.BINDING_CONDITION},
+                  lambda: A.write_statistics_artifact(outs / "f-12c", off.inp("f-12c", False),
+                                                      _inject_failure=True))
+        only_tamper = []
+        gate_case("F12d an official request carrying only a (recording) _tamper hook (OK-3)",
+                  outs / "f-12d", {"test_hooks_on_official_request", A.BINDING_CONDITION},
+                  lambda: A.write_statistics_artifact(outs / "f-12d", off.inp("f-12d", False),
+                                                      _tamper=lambda d, st: only_tamper.append(st)))
+        check("F12e that hook was never called", only_tamper == [])
         views = A.load_input_views(fam_off["input_artifacts"], off.fs.input_root, Policy.OFFICIAL)
     clean_repo = work / "o3_clean"
     o3_fixture(clean_repo)
@@ -553,6 +605,7 @@ def part_f(env: Env, plant: Env, off: Env, work: Path, outs: Path) -> None:
                        if numpy_drift else ""),
           base == set(unpinned_extra + [A.BINDING_CONDITION]), sorted(base))
     official_clause_cases(fam_off, views, off, clean_repo, base)
+    provenance_clause_cases(env)
     o3_cases(work)
     real_obs = A.observed_environment
     A.observed_environment = lambda: dict(real_obs(), numpy=real_obs()["numpy"] + "+drifted")
@@ -586,6 +639,11 @@ def part_f(env: Env, plant: Env, off: Env, work: Path, outs: Path) -> None:
     kind, e = outcome(lambda: A.write_statistics_artifact(outs / "Bad_Run", env.inp("Bad_Run", True)))
     check("F25 a run_id outside the frozen pattern -> refused", kind == "ArtifactError",
           f"{kind}: {e}")
+    lf = "f-25b\n"
+    kind, e = outcome(lambda: A.write_statistics_artifact(outs / lf, env.inp(lf, True)))
+    check("F25b a run_id with a trailing newline (section 12.4.2: no trailing whitespace) -> "
+          "refused; nothing created", kind == "ArtifactError" and not (outs / lf).exists()
+          and not A.stale_temp_dirs(outs / lf), f"{kind}: {e}")
     check("F26 the TEST-manifest binding constant is 'unbound'", A.TEST_MANIFEST_BINDING == "unbound")
 
 
@@ -621,6 +679,79 @@ def o3_cases(work: Path) -> None:
           [n for n, _ in got] == ["code_provenance_unprovable"], got)
     check("F33 O3: a clean committed code repository -> no condition",
           A.code_provenance_unmet(work / "o3_clean") == [])
+
+
+def provenance_clause_cases(env: Env) -> None:
+    """P34 and P4: each clause of check_input_provenance -- the function the gate runs on the inputs it
+    re-reads -- refuses by name. The loaded views are edited in memory and the records rebuilt from
+    them (driver.provenance_record), so only the targeted clause can fire."""
+    from src.eval.artifacts import hash_split_manifest
+    from src.eval.evaluate import ManifestEntry
+    recs = list(env.inp("x", True).input_artifacts)
+    order = [r["repo_relative_path"] for r in recs]
+    views = A.load_input_views(recs, env.fs.input_root, env.policy)
+
+    def edit(key, summary_fn=None, rows_fn=None):
+        loaded, rows = dict(views.loaded), dict(views.rows)
+        li = loaded[key]
+        s = copy.deepcopy(li.summary)
+        r = [dict(o) for o in rows[li.rel_path]]
+        if rows_fn is not None:
+            rows_fn(r, s)
+        if summary_fn is not None:
+            summary_fn(s)
+        loaded[key] = dataclasses.replace(li, summary=s)
+        rows[li.rel_path] = tuple(r)
+        v = dataclasses.replace(views, loaded=loaded, rows=rows)
+        by = v.by_path()
+        return [D.provenance_record(by[p]) for p in order], v
+
+    def rehash(r, s):
+        s["dataset"]["split_manifest_sha256"] = hash_split_manifest(
+            [ManifestEntry(o["manifest_index"], o["image_id"], o["clean_image_id"]) for o in r])
+
+    def first(r, **kv):
+        r[0] = dict(r[0], **kv)
+
+    clean = {st: (st, D.CLEAN) for st in D.STAGES}
+    cell = next(k for k in views.loaded if k[0] == "E1" and k[1] != D.CLEAN)
+    e1_run_id = views.loaded[clean["E1"]].summary["run"]["run_id"]
+    control = edit(clean["E3"])
+    check("F17.0 control: the records rebuilt from unedited views pass check_input_provenance",
+          outcome(lambda: A.check_input_provenance(*control))[0] == "ok")
+
+    def stems(r, s):
+        first(r, clean_image_id=r[0]["image_id"] + "_c")
+        rehash(r, s)
+
+    def other_manifest(r, s):
+        first(r, image_id="zz_" + r[0]["image_id"], clean_image_id="zz_" + r[0]["image_id"])
+        rehash(r, s)
+    cases = [
+        ("split manifest recomputed from the rows", "split manifest recomputed",
+         edit(clean["E3"], rows_fn=lambda r, s: first(r, manifest_index=r[0]["manifest_index"]
+                                                      + 100_000))),
+        ("each row's condition", "carry another condition",
+         edit(clean["E3"], rows_fn=lambda r, s: first(r, condition={"kind": "other"}))),
+        ("bare stems (O1)", "bare stems", edit(clean["E3"], rows_fn=stems)),
+        ("a per-image value that is a JSON int", "not a JSON float",
+         edit(clean["E5"], rows_fn=lambda r, s: first(r, all_class_miou=1))),
+        ("a per-image value above 1", "not a JSON float",
+         edit(clean["E5"], rows_fn=lambda r, s: first(r, disease_only_miou=1.5))),
+        ("student role and stage precision (Q11)", "role/precision",
+         edit(clean["E4"], summary_fn=lambda s: s["run"].__setitem__("precision", "fp32"))),
+        ("37 distinct run_ids", "run_ids repeat",
+         edit(clean["E2"], summary_fn=lambda s: s["run"].__setitem__("run_id", e1_run_id))),
+        ("one split manifest across the 37 (O1)", "split manifests; O1 requires one",
+         edit(clean["E7"], rows_fn=other_manifest)),
+        ("every E1/E6 cell carries its stage's clean checkpoint", "carry a checkpoint other",
+         edit(cell, summary_fn=lambda s: s["run"].__setitem__("checkpoint_sha256", "f" * 64))),
+    ]
+    for i, (name, needle, (records, v)) in enumerate(cases, 1):
+        kind, e = outcome(lambda records=records, v=v: A.check_input_provenance(records, v))
+        check(f"F17.{i} gate clause: {name} -> refused: input_artifact_provenance_verified, naming "
+              "it", kind == "IntegrityError" and e.check == A.C_PROVENANCE and needle in str(e),
+              f"{kind}: {e}")
 
 
 def official_clause_cases(fam, views, off: Env, clean_repo: Path, base: set) -> None:
@@ -680,6 +811,12 @@ def official_clause_cases(fam, views, off: Env, clean_repo: Path, base: set) -> 
     ]
     for w in A.OFFICIALITY_WARNINGS:
         cases.append((w, names(f=fam_with(lambda f, w=w: f.__setitem__("warnings", [w])))))
+    for clause, key, n in (("checkpoint_not_64_hex", "checkpoint_sha256", 64),
+                           ("repo_commit_not_40_hex", "repo_commit", 40)):
+        got = names(v=views_with(1, lambda s, key=key, n=n: s["run"].__setitem__(key,
+                                                                                 "c" * n + "\n")))
+        check(f"F14b official clause {clause}: {n} hex characters plus a trailing newline -> named",
+              got == base | {clause}, sorted(got - base))
     metric = names(v=views_with(1, lambda s: s["run"].__setitem__("metric_impl_sha256", "2" * 64)))
     for clause, got in cases:
         check(f"F14 official clause {clause} -> named", got == base | {clause},
@@ -791,6 +928,14 @@ def part_v(env: Env, outs: Path) -> None:
         if (d / A.FAMILY_JSON).is_file():
             statuses.append(json.loads((d / A.FAMILY_JSON).read_text(encoding="utf-8"))[
                 "artifact_status"])
+    lf = outs / "v-06" / "a-0001"
+    shutil.copytree(src, lf)
+    rewrite_family(lf, lambda f: dict(f, run_id="a-0001\n"))
+    (lf / A.MANIFEST_NAME).write_text(A._manifest_text(lf), encoding="utf-8", newline="\n")
+    kind, e = outcome(lambda: A.verify_statistics_artifact(lf, final_name="a-0001\n"))
+    check("V6 an artifact whose run_id (and directory name) end in a newline -> refused "
+          "(officiality_policy_verified; section 12.4.2)",
+          kind == "IntegrityError" and e.check == A.C_POLICY, f"{kind}: {e}")
     check("V5 no statistics artifact written by this smoke has status official",
           statuses and set(statuses) == {"nonofficial"}, statuses)
 

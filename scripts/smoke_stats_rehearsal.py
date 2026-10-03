@@ -8,16 +8,21 @@ working tree. No PlantSeg data, checkpoint, model or GPU; the out-root is a temp
 outside the repository.
 
   R  `--mode rehearsal` through scripts/run_stats.py: exit 0, outputs only under <out-root>/<UTC>/,
-     the five rehearsal files and nothing named like a section 12 artifact; the manifest's P25 fields;
-     `not_rehearsed`, the placeholders at p = 1 and outside every criterion and label; the counts
-     846 - k and 846; every criterion passed; SHA256SUMS; the three raw p-values and the 3-member Holm
+     the five rehearsal files and nothing named like a section 12 artifact; "mode" only in the
+     manifest; the manifest's P25 fields; `not_rehearsed`, the placeholders at p = 1 and outside every
+     criterion and label; the counts 846 - k and 846; every criterion passed, p in [0, 1] and the
+     statsmodels Holm check to 1e-12 among them; SHA256SUMS exactly the four files; the three raw
+     p-values and the 3-member Holm; the item 3(f) caveat pending without a committed MDE entry; AM-6
+     per seed and the three extension points
   I  INVESTIGATE fires (printed, exit 0) when a rehearsed test rejects
   N  P21: the 15-cell invariant is exact, and a one-float32-ulp perturbation of one cell breaks it
   H  the hand-rolled strict Holm, including the equality boundary
   X  refusals (exit 2, nothing written): an out-root inside the repository, a value that is not
      float32-representable, a row with clean_image_id != image_id, a TEST artifact, the same seed
-     twice, --expect-k-val mismatch, a non-canvas input; and exit 1 (outputs kept) on a failed
-     criterion
+     twice, --expect-k-val mismatch, a non-canvas input; exit 1 (outputs kept) on a failed
+     criterion; a malformed MDE entry recorded, never fatal; an unexpected error exits 4, not 2
+  C  the acceptance (e) criteria fail when their condition fails: a p-value of 1.5, a halved
+     Holm-adjusted p
   P  P22: the rehearsal module imports neither build_family nor the statistics writer
 
 Run:  python -B scripts/smoke_stats_rehearsal.py
@@ -49,6 +54,8 @@ import run_stats                                                         # noqa:
 import stats_fixtures as F                                               # noqa: E402
 from src.eval.evaluate import Condition                                  # noqa: E402
 from src.stats import rehearsal as R                                     # noqa: E402
+from src.stats import report as RP                                       # noqa: E402
+from src.stats.eligibility import GT_PRESENT, UNION_PRESENT, rule_variants  # noqa: E402
 from src.stats.corruption_protocol import official_corruption_grid       # noqa: E402
 
 CHECKS: list[tuple[str, bool, str]] = []
@@ -126,11 +133,21 @@ def part_r(work: Path) -> None:
     sums_ok = all(hashlib.sha256((run / n).read_bytes()).hexdigest() == dgst for dgst, n in (
         ln.split("  ", 1) for ln in (run / R.SUMS).read_text(encoding="utf-8").splitlines()))
     check("R3 SHA256SUMS covers the four files and verifies", sums_ok)
+    raw_sums = (run / R.SUMS).read_text(encoding="utf-8")
+    lines = raw_sums.split("\n")
+    form = [ln.split("  ", 1) for ln in lines[:-1]]
+    check("R3b SHA256SUMS is exactly four '<64 hex>  <name>' lines, LF-terminated, names sorted and "
+          "equal to the four files", raw_sums.endswith("\n") and lines[-1] == ""
+          and len(form) == 4 and all(len(x) == 2 and len(x[0]) == 64
+                                     and all(ch in "0123456789abcdef" for ch in x[0]) for x in form)
+          and [x[1] for x in form] == sorted(R.FILES), raw_sums)
     m = json.loads((run / "rehearsal_manifest.json").read_text(encoding="utf-8"))
     r = json.loads((run / "rehearsal_results.json").read_text(encoding="utf-8"))
     check("R4 manifest: mode rehearsal, artifact_status nonofficial, not registered as a result",
           m["mode"] == "rehearsal" and m["artifact_status"] == "nonofficial"
           and m["registered_as_result"] is False and r["artifact_status"] == "nonofficial")
+    check("R4b \"mode\" appears only in rehearsal_manifest.json (the section 12.4.3 note)",
+          "mode" not in r and '"mode"' not in (run / "report.md").read_text(encoding="utf-8"))
     p25 = ("inputs", "code_provenance", "software_environment", "cpu_features", "B", "K_val",
            "mapping", "statistical_contract_sha256", "src_stats_path")
     check("R5 manifest carries P25: input identities and file hashes, code provenance, stack, CPU "
@@ -168,6 +185,33 @@ def part_r(work: Path) -> None:
           == {"comparison_id", "metric"})
     check("R12 investigate not fired on seed noise here (printed flag, never a failure)",
           r["investigate"]["fired"] is False and "not fired" in report)
+    crit = {c["name"]: c["passed"] for c in r["criteria"]}
+    sm = [n for n in crit if "statsmodels multipletests" in n and "1e-12" in n]
+    check("R13 acceptance (e): 'p in [0, 1]' and the statsmodels Holm check to 1e-12 (8 entries and "
+          "3 rehearsed tests) are criteria, and pass",
+          crit.get("p in [0, 1]: the rehearsed tests' p-values and their Holm-adjusted p") is True
+          and len(sm) == 2 and all(crit[n] for n in sm), sorted(crit)[:4])
+    rejected = {x["comparison_id"] for x in r["holm_8"]["members"] if x["reject"]}
+    check("R14 no MDE entry: the item 3(f) caveat is pending on every non-rejected rehearsed contrast "
+          "(lane item 7)", r["power_caveat"] == "pending"
+          and all((RP.CAVEAT_PENDING in lab) is (c not in rejected) for c, lab in r["labels"].items())
+          and RP.CAVEAT_PENDING in report, r["labels"])
+    am6 = {g["seed"]: g for g in r["gt_present_am6"]}
+    want = {x: rule_variants(np.load(s[x] / "sufficient_stats.npz", allow_pickle=False))
+            for x in R.SEEDS}
+    check("R15 AM-6 per seed from src/stats/eligibility.py, and the three extension points, in "
+          "rehearsal_results.json and report.md",
+          sorted(am6) == sorted(R.SEEDS)
+          and all(am6[x]["gt_present_all_class"] == want[x][GT_PRESENT]["all_class"].value_float64
+                  and am6[x]["union_present_disease_only"]
+                  == want[x][UNION_PRESENT]["disease_only"].value_float64 for x in R.SEEDS)
+          and [e["name"] for e in r["extension_points"]] == [n for n, _ in RP.EXTENSION_POINTS]
+          and all(e["populated"] is False for e in r["extension_points"])
+          and "AM-6" in report and "Extension points" in report)
+    check("R16 the family table (lane item 7) renders W, z, r_rb, dz and each rehearsed contrast's "
+          "mean delta with its BCa interval; placeholders show no interval",
+          "| W | z |" in report and "| r_rb |" in report and "| dz |" in report
+          and "[BCa 95 %]" in report and report.count("(not run)") == len(R.NOT_REHEARSED))
 
 
 def part_i(work: Path) -> None:
@@ -265,6 +309,55 @@ def part_x(work: Path) -> None:
     check("X9 a failed structural criterion -> exit 1, outputs kept", code == 1 and run is not None
           and not json.loads((run / "rehearsal_results.json").read_text(encoding="utf-8"))[
               "criteria_passed"], (code, err.getvalue()[-300:]))
+    bad_mde = work / "mde_entry_array.json"
+    bad_mde.write_text("[0.0137, 0.01, true]", encoding="utf-8")
+    code, so, se = rehearse(s, work / "o_x10", "--mde-entry", bad_mde)
+    run = only_run_dir(work / "o_x10")
+    m = json.loads((run / "rehearsal_manifest.json").read_text(encoding="utf-8")) if run else {}
+    check("X10 a malformed MDE entry (a JSON array) is recorded with its problems, never fatal "
+          "(Q9, P25)", code == 0 and m.get("mde_entry", {}).get("problems")
+          and m["mde_entry"]["mde_w"] is None, (code, se[-300:]))
+    real_desc = R.descriptive_scalars
+
+    def broken(*a, **k):
+        raise ZeroDivisionError("simulated defect")
+    R.descriptive_scalars = broken
+    out, err = io.StringIO(), io.StringIO()
+    try:
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = run_stats.main(["--mode", "rehearsal", "--s42", str(s["s42"]), "--s43",
+                                   str(s["s43"]), "--s44", str(s["s44"]), "--out-root",
+                                   str(work / "o_x11"), "--B", "50"])
+    finally:
+        R.descriptive_scalars = real_desc
+    check("X11 an unexpected error (not a frozen module's named analysis error) exits 4, not 2; "
+          "nothing written", code == 4 and "REFUSED" not in err.getvalue()
+          and not (work / "o_x11").exists(), (code, err.getvalue()[-300:]))
+
+
+def part_c(work: Path) -> None:
+    """Acceptance (e) criteria fail when their condition fails (in memory, on a computed rehearsal)."""
+    s = seeds(work / "fx_c", tag="c")
+    arts = R.load_seeds(s)
+    runs = {x: arts[x].run for x in R.SEEDS}
+    reh = R.compute(arts, B=20)
+    base = {n: ok for n, ok, _ in R.criteria(reh, runs)}
+    cid = R.REHEARSED[0]
+    r0 = reh.results[cid]
+    bad = dataclasses.replace(r0, wilcoxon=dataclasses.replace(r0.wilcoxon, p_value=1.5))
+    got = {n: ok for n, ok, _ in R.criteria(dataclasses.replace(
+        reh, results=dict(reh.results, **{cid: bad})), runs)}
+    name = "p in [0, 1]: the rehearsed tests' p-values and their Holm-adjusted p"
+    check("C1 a rehearsed p-value of 1.5 fails the 'p in [0, 1]' criterion",
+          base.get(name) is True and got.get(name) is False)
+    m0 = reh.holm8.members[0]
+    holm = dataclasses.replace(reh.holm8, members=(dataclasses.replace(
+        m0, p_adjusted=m0.p_adjusted / 2),) + reh.holm8.members[1:])
+    got = {n: ok for n, ok, _ in R.criteria(dataclasses.replace(reh, holm8=holm), runs)}
+    sm = "Holm (8 entries) adjusted p equals statsmodels multipletests(method='holm') to 1e-12"
+    check("C2 a Holm-adjusted p halved (decisions unchanged) fails the statsmodels check to 1e-12",
+          base.get(sm) is True and got.get(sm) is False
+          and got.get("Holm (8 entries) equals a hand-rolled strict Holm") is True)
 
 
 def part_p() -> None:
@@ -293,6 +386,7 @@ def main() -> int:
         part_n(work)
         part_h()
         part_x(work)
+        part_c(work)
         part_p()
     except Exception:                                                    # noqa: BLE001
         traceback.print_exc()

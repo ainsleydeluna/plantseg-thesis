@@ -31,8 +31,11 @@ descriptive point value of the report layer only: never in family.json, never bo
 never named after the rejected section 8.7.1 alias.
 
 The MDE entry (docs/lane_specs/part1.md lane 6: reports/derived/mde_entry_<UTC>.json) is validated
-only for mde_w, tau_p = 0.010 and power_caveat == (mde_w > tau_p) (orchestrator answer Q9). An
-official report requires exactly one committed entry; a nonofficial report records its state.
+only for mde_w, tau_p = 0.010 and power_caveat == (mde_w > tau_p) (orchestrator answer Q9). The item
+3(f) caveat is read from the committed entry only (lane item 7): an official report requires exactly
+one committed entry and refuses otherwise; a nonofficial report and the rehearsal report record the
+given entry's state, and without a committed, valid entry every non-rejection reads "power caveat
+pending". A malformed entry is recorded (JSON-safe), never fatal.
 
 Import-time behaviour is side-effect free; Git runs only inside the functions that name it.
 """
@@ -58,6 +61,7 @@ LABEL_BELOW_SESOI = "detected, below the smallest effect of interest"
 LABEL_NOT_REJECTED = "not rejected"
 LABEL_INCONCLUSIVE = "inconclusive at the smallest effect of interest"
 LABELS = (LABEL_SIZABLE, LABEL_BELOW_SESOI, LABEL_NOT_REJECTED, LABEL_INCONCLUSIVE)
+CAVEAT_PENDING = "power caveat pending (no committed MDE entry)"
 CODE_REPO = Path(__file__).resolve().parents[2]
 MDE_GLOB = "reports/derived/mde_entry_*.json"
 REPORT_SCHEMA = "plantseg-stats-report/1.0.0"
@@ -111,6 +115,31 @@ def validate_mde_entry(doc) -> tuple[str, ...]:
     return tuple(problems)
 
 
+def _json_safe(v):
+    if v is None or isinstance(v, (bool, str)):
+        return v
+    if isinstance(v, (int, float)) and math.isfinite(v):
+        return v
+    return repr(v)
+
+
+def mde_fields(doc) -> dict:
+    """mde_w, tau_p and power_caveat as given, JSON-safe: a non-finite or non-scalar value is kept as
+    its repr (validate_mde_entry reports it), so a malformed entry is recorded, never fatal."""
+    d = doc if isinstance(doc, dict) else {}
+    return {k: _json_safe(d.get(k)) for k in ("mde_w", "tau_p", "power_caveat")}
+
+
+def committed_caveat(mde: dict | None):
+    """AM-17 item 3(f) from the committed MDE entry only (lane item 7): (power_caveat, mde_w) when the
+    given entry is inside the code repository, tracked, unmodified at HEAD and valid; otherwise
+    ("pending", None)."""
+    if (mde and not mde.get("problems") and mde.get("inside_repository") and mde.get("tracked")
+            and mde.get("clean_at_head")):
+        return mde["power_caveat"], mde["mde_w"]
+    return "pending", None
+
+
 def _git(repo: Path, *args):
     try:
         p = subprocess.run(["git", *args], cwd=str(repo), capture_output=True, text=True,
@@ -147,8 +176,9 @@ def load_mde_entry(path, repo: Path = CODE_REPO) -> tuple[dict, dict, tuple[str,
     """(entry, git status, validation problems). Refuses only an unreadable file."""
     try:
         doc = json.loads(Path(path).read_text(encoding="utf-8"))
-    except (OSError, ValueError) as e:
-        raise ReportError(f"MDE entry {path}: cannot be read as JSON ({e})") from e
+    except (OSError, ValueError, RecursionError) as e:
+        raise ReportError(f"MDE entry {path}: cannot be read as JSON ({type(e).__name__}: "
+                          f"{str(e)[:120]})") from e
     return doc, mde_entry_status(path, repo), validate_mde_entry(doc)
 
 
@@ -160,9 +190,10 @@ def tracked_mde_entries(repo: Path = CODE_REPO):
     return sorted(x for x in p.stdout.splitlines() if x)
 
 
-def require_official_mde(doc, status, problems, tracked) -> None:
+def require_official_mde(doc, status, problems, tracked, repo: Path = CODE_REPO) -> None:
     """P29: an official report needs exactly one committed MDE entry, valid on mde_w, tau_p and
-    power_caveat. Pure: every input is passed in, so the refusal is testable on in-memory data."""
+    power_caveat; the given file must be that entry (its resolved path equals repo / tracked[0]).
+    Pure: every input is passed in, so the refusal is testable on in-memory data."""
     if doc is None or status is None:
         raise ReportError("an official report requires --mde-entry (exactly one committed MDE entry)")
     if tracked is None:
@@ -172,7 +203,7 @@ def require_official_mde(doc, status, problems, tracked) -> None:
                           f"{len(tracked)} are tracked: {tracked}")
     if not (status.get("tracked") and status.get("clean_at_head")):
         raise ReportError(f"MDE entry {status.get('path')} is not committed and unmodified at HEAD")
-    if not str(status.get("path", "")).replace("\\", "/").endswith(tracked[0]):
+    if Path(str(status.get("path", ""))).resolve() != (Path(repo) / tracked[0]).resolve():
         raise ReportError(f"MDE entry {status.get('path')} is not the committed entry {tracked[0]}")
     if problems:
         raise ReportError(f"MDE entry {status.get('path')}: {list(problems)}")
@@ -204,15 +235,14 @@ def dataset_miou_c_contrast(views) -> dict:
             "cells_per_model": 15}
 
 
-def gt_present_rows(views) -> list[dict]:
-    """AM-6 (AM-17 item 1(b)), descriptive: each clean stage's dataset-level mIoU under the
-    union-present headline rule and the GT-present rule (exact float64 means)."""
-    from .driver import CLEAN, STAGES
+def gt_present_table(stats_by_key, *, key: str) -> list[dict]:
+    """AM-6 (AM-17 item 1(b)), descriptive: each run's dataset-level mIoU under the union-present
+    headline rule and the GT-present rule (src/stats/eligibility.py; exact float64 means)."""
     from .eligibility import GT_PRESENT, UNION_PRESENT, rule_variants
     rows = []
-    for stage in STAGES:
-        rv = rule_variants(views.loaded[(stage, CLEAN)].run.stats)
-        row = {"stage": stage}
+    for name, stats in stats_by_key.items():
+        rv = rule_variants(stats)
+        row = {key: name}
         for rule in (UNION_PRESENT, GT_PRESENT):
             for space in ("all_class", "disease_only"):
                 d = rv[rule][space]
@@ -222,9 +252,22 @@ def gt_present_rows(views) -> list[dict]:
     return rows
 
 
+def gt_present_rows(views) -> list[dict]:
+    """AM-6 for the seven clean stages of a section 12 artifact's inputs."""
+    from .driver import CLEAN, STAGES
+    return gt_present_table({st: views.loaded[(st, CLEAN)].run.stats for st in STAGES}, key="stage")
+
+
 # --------------------------------------------------------------------------------------------------
 # 3. report mode
 # --------------------------------------------------------------------------------------------------
+def estimate_inside(lower, upper, estimate) -> bool:
+    """P26: an explicit, closed containment test -- the report never assumes an interval contains its
+    estimate: lower <= estimate for a one-sided interval (upper None), lower <= estimate <= upper
+    otherwise."""
+    return bool(lower <= estimate) if upper is None else bool(lower <= estimate <= upper)
+
+
 def _fmt(v, digits=6) -> str:
     if v is None:
         return "null"
@@ -237,27 +280,36 @@ def _fmt(v, digits=6) -> str:
 
 def family_rows(fam: dict, robustness_difference: float, *, power_caveat=None, mde_w=None
                 ) -> list[dict]:
-    """The family table: one row per Holm contrast, labelled from the finalized Holm decision
-    (`holm.members[].reject`, never `library_reject`) and the dataset-level difference: the
-    `__dataset_miou_delta` observed value, or `robustness_difference` (P28) for the robustness
-    contrast (P27). Pure: reads only `fam`."""
-    from .bootstrap import DATASET_MIOU_DELTA
+    """The family table (lane item 7): one row per Holm contrast with W, z, p, Holm-adjusted p, r_rb,
+    HL, dz, the mean delta and its BCa interval, and the paired t-test sensitivity column, labelled
+    from the finalized Holm decision (`holm.members[].reject`, never `library_reject`) and the
+    dataset-level difference: the `__dataset_miou_delta` observed value, or `robustness_difference`
+    (P28) for the robustness contrast (P27). `power_caveat` is True or False from the committed MDE
+    entry, or "pending" (a non-rejection then says so). Pure: reads only `fam`."""
+    from .bootstrap import DATASET_MIOU_DELTA, MEAN_DELTA
     from .tests import CANONICAL_COMPARISON_IDS
     holm = {m["comparison_id"]: m for m in fam["a3a_family"]["holm"]["members"]}
-    obs = {t["task_id"]: t["observed"] for t in fam["bootstrap_tasks"]}
+    tasks = {t["task_id"]: t for t in fam["bootstrap_tasks"]}
     rows = []
     for c in fam["a3a_family"]["comparisons"]:
         cid = c["comparison_id"]
         diff = (robustness_difference if cid == CANONICAL_COMPARISON_IDS[7]
-                else obs[f"{cid}__{DATASET_MIOU_DELTA}"])
-        label = contrast_label(holm[cid]["reject"], diff, power_caveat=power_caveat)
+                else tasks[f"{cid}__{DATASET_MIOU_DELTA}"]["observed"])
+        label = contrast_label(holm[cid]["reject"], diff, power_caveat=power_caveat is True)
+        if label == LABEL_NOT_REJECTED and power_caveat == "pending":
+            label = f"{label}; {CAVEAT_PENDING}"
+        md = tasks[f"{cid}__{MEAN_DELTA}"]
         rows.append({"comparison_id": cid, "baseline_stage": c["baseline_stage"],
                      "candidate_stage": c["candidate_stage"], "metric": c["metric"],
-                     "n_paired": c["n_paired"], "wilcoxon_p": c["wilcoxon"]["p_value"],
+                     "n_paired": c["n_paired"], "wilcoxon_statistic": c["wilcoxon"]["statistic"],
+                     "wilcoxon_z": c["wilcoxon"]["zstatistic"], "wilcoxon_p": c["wilcoxon"]["p_value"],
                      "wilcoxon_status": c["wilcoxon"]["status"],
                      "holm_p_adjusted": holm[cid]["p_adjusted"], "holm_reject": holm[cid]["reject"],
                      "library_reject": holm[cid]["library_reject"],
+                     "rank_biserial": c["rank_biserial"]["value"],
+                     "cohens_dz": c["cohens_dz"]["value"],
                      "mean_delta": c["shifts"]["mean_delta"],
+                     "mean_delta_bca": [md["lower_bound"], md.get("upper_bound")],
                      "median_delta": c["shifts"]["median_delta"],
                      "hodges_lehmann_shift": c["hodges_lehmann_shift"],
                      "t_statistic": c["t_test"]["statistic"], "t_p_value": c["t_test"]["p_value"],
@@ -288,20 +340,16 @@ def build_report(artifact_dir, *, input_root, mde_entry=None, synthetic_declared
     doc = status = problems = None
     if mde_entry is not None:
         doc, status, problems = load_mde_entry(mde_entry)
-        mde = dict(status, mde_w=doc.get("mde_w") if isinstance(doc, dict) else None,
-                   tau_p=doc.get("tau_p") if isinstance(doc, dict) else None,
-                   power_caveat=doc.get("power_caveat") if isinstance(doc, dict) else None,
-                   problems=list(problems))
+        mde = dict(status, **mde_fields(doc), problems=list(problems))
     if profile == A.STATUS_OFFICIAL:                         # unreachable while the binding is unbound
         require_official_mde(doc, status, problems, tracked_mde_entries())
-    caveat = mde["power_caveat"] if mde and not mde["problems"] else None
+    caveat, mde_w = committed_caveat(mde)
     robust = dataset_miou_c_contrast(views)
-    rows = family_rows(fam, robust["difference_e6_minus_e1"], power_caveat=caveat,
-                       mde_w=mde["mde_w"] if mde else None)
+    rows = family_rows(fam, robust["difference_e6_minus_e1"], power_caveat=caveat, mde_w=mde_w)
     intervals = []
     for t in fam["bootstrap_tasks"]:
         lo, up, est = t["lower_bound"], t.get("upper_bound"), t["observed"]
-        inside = (lo <= est) if up is None else (lo <= est <= up)
+        inside = estimate_inside(lo, up, est)
         intervals.append({"task_id": t["task_id"], "estimate": est, "lower_bound": lo,
                           "upper_bound": up, "z0": t["z0"], "interval_method": t["interval_method"],
                           "estimate_inside_interval": inside, "warnings": t["warnings"]})
@@ -314,7 +362,7 @@ def build_report(artifact_dir, *, input_root, mde_entry=None, synthetic_declared
         "code_commit": head.stdout.strip() if head is not None and head.returncode == 0 else None,
         "statistical_contract_sha256": fam["statistical_contract_sha256"],
         "integrity_checks_established": list(rep.established),
-        "mde_entry": mde,
+        "mde_entry": mde, "power_caveat": caveat,
         "inputs": {li.rel_path: dict(li.file_sha256) for li in views.loaded.values()},
         "am5_excluded_count_k": views.am5_excluded_count,
         "family": rows, "intervals": intervals,
@@ -348,18 +396,22 @@ def render_markdown(doc: dict) -> str:
            f" code commit `{doc['code_commit']}`; all 13 integrity checks re-established. k (AM-5 "
            f"zero-disease images excluded from per-image analyses) = {doc['am5_excluded_count_k']}.",
            "", "## Holm family (eight superiority contrasts)", "", b,
-           "| contrast | n | Wilcoxon p | Holm p | reject | mean delta | median delta | HL shift | "
-           "t (p) | dataset-level delta | label |",
-           "|---|---|---|---|---|---|---|---|---|---|---|"]
+           "| contrast | n | W | z | Wilcoxon p | Holm p | reject | r_rb | HL shift | dz | mean "
+           "delta [BCa 95 %] | median delta | t (p) | dataset-level delta | label |",
+           "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for r in doc["family"]:
         label = r["label"] + (f" (MDE_W = {r['mde_w']})" if r["mde_w"] is not None else "")
+        lo, up = r["mean_delta_bca"]
         out.append(f"| {r['comparison_id']} ({r['baseline_stage']} -> {r['candidate_stage']}) | "
-                   f"{r['n_paired']} | {_fmt(r['wilcoxon_p'])} | {_fmt(r['holm_p_adjusted'])} | "
-                   f"{r['holm_reject']} | {_fmt(r['mean_delta'])} | {_fmt(r['median_delta'])} | "
-                   f"{_fmt(r['hodges_lehmann_shift'])} | {_fmt(r['t_statistic'])} "
-                   f"({_fmt(r['t_p_value'])}) | {_fmt(r['dataset_level_difference'])} | {label} |")
+                   f"{r['n_paired']} | {_fmt(r['wilcoxon_statistic'])} | {_fmt(r['wilcoxon_z'])} | "
+                   f"{_fmt(r['wilcoxon_p'])} | {_fmt(r['holm_p_adjusted'])} | {r['holm_reject']} | "
+                   f"{_fmt(r['rank_biserial'])} | {_fmt(r['hodges_lehmann_shift'])} | "
+                   f"{_fmt(r['cohens_dz'])} | {_fmt(r['mean_delta'])} [{_fmt(lo)}, {_fmt(up)}] | "
+                   f"{_fmt(r['median_delta'])} | {_fmt(r['t_statistic'])} ({_fmt(r['t_p_value'])}) "
+                   f"| {_fmt(r['dataset_level_difference'])} | {label} |")
     out += ["", "Labels: AM-17 item 2 (Holm decision and the dataset-level difference against 0.010, "
-                "compared as stored fractions); item 3(f) when the MDE entry's power caveat holds.",
+                "compared as stored fractions); item 3(f) from the committed MDE entry (power caveat: "
+                f"{doc['power_caveat']}).",
             "", "## Bootstrap intervals (95 % BCa or the percentile fallback; z0 per interval)", "",
             b, "| task | estimate | lower | upper | z0 | method | estimate inside |",
             "|---|---|---|---|---|---|---|"]
@@ -382,7 +434,8 @@ def render_markdown(doc: dict) -> str:
     out += ["", "## Accuracy on corrupted images (E1 -> E6, mIoU-C)", "", b,
             "| quantity | E1 | E6 | difference |", "|---|---|---|---|",
             f"| per-image mIoU-C test: mean delta (Holm p {_fmt(r['holm_p_adjusted'])}, label "
-            f"{r['label']}) | | | {_fmt(r['mean_delta'])} |",
+            f"{r['label']}" + (f" (MDE_W = {r['mde_w']})" if r["mde_w"] is not None else "")
+            + f") | | | {_fmt(r['mean_delta'])} |",
             f"| dataset-level mIoU-C ({d['class_space']}; 15 cells per model, nested mean) | "
             f"{_fmt(d['E1'])} | {_fmt(d['E6'])} | {_fmt(d['difference_e6_minus_e1'])} |"]
     de = doc["descriptive_e1_e3"]
@@ -409,7 +462,7 @@ def render_markdown(doc: dict) -> str:
             (f"`{m['path']}` sha256 `{m['sha256']}`, tracked {m['tracked']}, unmodified at HEAD "
              f"{m['clean_at_head']}, last commit `{m['last_commit']}`; mde_w {m['mde_w']}, tau_p "
              f"{m['tau_p']}, power_caveat {m['power_caveat']}; problems {m['problems']}"
-             if m else "none given"), ""]
+             if m else "none given") + f". Power caveat: {doc['power_caveat']}.", ""]
     return "\n".join(out)
 
 
@@ -417,7 +470,7 @@ def write_report(report_out, doc: dict) -> Path:
     """Atomic: a temporary sibling with report.json and report.md, renamed to --report-out."""
     from .artifact import canonical_json
     final = Path(report_out)
-    if final.exists():
+    if final.exists() or final.is_symlink():
         raise ReportError(f"refusing to overwrite {final}")
     final.parent.mkdir(parents=True, exist_ok=True)
     tmp = final.parent / f".{final.name}.tmp-{uuid.uuid4().hex[:12]}"
@@ -439,18 +492,25 @@ def run_report(*, artifact, report_out, repo_root=None, synthetic: bool = False,
         raise ReportError("--repo-root is accepted only with --synthetic-inputs (P16)")
     if artifact is None or report_out is None:
         raise ReportError("report mode requires --artifact and --report-out")
-    if Path(report_out).exists():
+    if Path(report_out).exists() or Path(report_out).is_symlink():
         raise ReportError(f"refusing to overwrite {report_out}")
     from .artifact import CODE_REPO as ROOT
-    doc = build_report(artifact, input_root=Path(repo_root) if repo_root is not None else ROOT,
-                       mde_entry=mde_entry, synthetic_declared=synthetic)
+    input_root = Path(repo_root) if repo_root is not None else ROOT
+    doc = build_report(artifact, input_root=input_root, mde_entry=mde_entry,
+                       synthetic_declared=synthetic)
+    out = Path(report_out).resolve()
+    for d in [Path(artifact).resolve()] + [(input_root / rel).resolve() for rel in doc["inputs"]]:
+        if out == d or out.is_relative_to(d):
+            raise ReportError(f"--report-out {report_out} is inside {d}: the artifact and the input "
+                              "directories keep their exact file sets")
     return write_report(report_out, doc), doc
 
 
 __all__ = ["SESOI", "TAU_P", "LABEL_SIZABLE", "LABEL_BELOW_SESOI", "LABEL_NOT_REJECTED",
            "LABEL_INCONCLUSIVE", "LABELS", "MDE_GLOB", "REPORT_SCHEMA", "REPORT_FILES",
-           "CLASS_SPACE", "EXTENSION_POINTS", "ReportError", "contrast_label",
-           "validate_mde_entry", "mde_entry_status", "load_mde_entry", "tracked_mde_entries",
-           "require_official_mde", "family_rows", "dataset_miou_c", "dataset_miou_c_contrast",
-           "gt_present_rows", "build_report", "banner", "render_markdown", "write_report",
-           "run_report"]
+           "CLASS_SPACE", "EXTENSION_POINTS", "CAVEAT_PENDING", "ReportError", "contrast_label",
+           "validate_mde_entry", "mde_fields", "committed_caveat", "mde_entry_status",
+           "load_mde_entry", "tracked_mde_entries", "require_official_mde", "estimate_inside",
+           "family_rows",
+           "dataset_miou_c", "dataset_miou_c_contrast", "gt_present_table", "gt_present_rows",
+           "build_report", "banner", "render_markdown", "write_report", "run_report"]

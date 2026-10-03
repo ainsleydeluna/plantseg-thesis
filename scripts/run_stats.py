@@ -57,8 +57,8 @@ def parse(argv):
     ap.add_argument("--synthetic-inputs", action="store_true",
                     help="declare the inputs synthetic (official mode, while the binding is unbound)")
     ap.add_argument("--repo-root", type=Path, help="resolve input paths here (synthetic or smoke)")
-    ap.add_argument("--B", type=int, default=10_000, help="bootstrap replicates (official: 10000)")
-    ap.add_argument("--jobs", type=int, default=1, help="worker processes, whole tasks each")
+    ap.add_argument("--B", type=int, help="bootstrap replicates (default and official: 10000)")
+    ap.add_argument("--jobs", type=int, help="worker processes, whole tasks each (default 1)")
     for seed in ("s42", "s43", "s44"):
         ap.add_argument(f"--{seed}", type=Path, help=f"rehearsal: the E1 {seed} VAL artifact")
     ap.add_argument("--out-root", type=Path, help="rehearsal: outputs under OUT-ROOT/<UTC>/")
@@ -75,18 +75,21 @@ MODE_ARGS = {"official": ("inputs", "out_dir", "run_id", "repo_root", "B", "jobs
              "rehearsal": ("s42", "s43", "s44", "out_root", "B", "jobs", "expect_k_val",
                            "mde_entry"),
              "report": ("artifact", "report_out", "repo_root", "synthetic_inputs", "mde_entry")}
-DEFAULTS = {"B": 10_000, "jobs": 1, "confirm_official_test_analysis": False,
-            "synthetic_inputs": False}
+DEFAULTS = {"B": 10_000, "jobs": 1}
 
 
 def refuse_foreign(args) -> None:
-    """An argument that belongs to another mode is refused by name, never ignored."""
+    """An argument that belongs to another mode is refused by name, never ignored: every option
+    defaults to None (or False for a flag), so a given value is never mistaken for an omitted one."""
     allowed = set(MODE_ARGS[args.mode])
     foreign = [n for n in vars(args) if n != "mode" and n not in allowed
-               and getattr(args, n) not in (None, DEFAULTS.get(n))]
+               and getattr(args, n) not in (None, False)]
     if foreign:
         raise Refused(f"--mode {args.mode} does not accept " + ", ".join(
             "--" + n.replace("_", "-") for n in sorted(foreign)))
+    for name, value in DEFAULTS.items():
+        if getattr(args, name) is None:
+            setattr(args, name, value)
 
 
 def require(args, *names) -> None:
@@ -146,7 +149,7 @@ def main(argv=None) -> int:
     try:
         if args.mode == "official":
             D.official_doors(confirm=args.confirm_official_test_analysis,      # doors 1 and 2
-                             synthetic=args.synthetic_inputs)
+                             synthetic=args.synthetic_inputs, repo_root=args.repo_root)
             refuse_foreign(args)
             require(args, "inputs", "out_dir", "run_id")
             validate_counts(args)
@@ -211,7 +214,13 @@ def main(argv=None) -> int:
         traceback.print_exc()
         print("ERROR: unexpected failure", file=sys.stderr)
         return EXIT_ERROR
-    report(res)
+    try:
+        report(res)
+    except Exception:                                         # noqa: BLE001
+        traceback.print_exc()
+        print(f"ERROR: the artifact {res.artifact!r} was written and re-verified, but its summary "
+              "could not be printed", file=sys.stderr)
+        return EXIT_ERROR
     return EXIT_OK
 
 

@@ -224,7 +224,7 @@ def manifest_digests(run_dir: Path) -> dict[str, str]:
     out: dict[str, str] = {}
     for ln in lines:
         digest, sep, name = ln.partition("  ")
-        if not sep or not _HEX64.match(digest) or name in out or "/" in name or "\\" in name:
+        if not sep or not _HEX64.fullmatch(digest) or name in out or "/" in name or "\\" in name:
             raise DriverRefusal(f"{run_dir}: malformed MANIFEST.sha256 line {ln!r}")
         out[name] = digest
     if sorted(out) != sorted(ARTIFACT_FILES):
@@ -526,20 +526,36 @@ def _now_utc() -> str:
     return datetime.now(timezone.utc).strftime(TIMESTAMP_FORMAT)
 
 
-def official_doors(*, confirm: bool, synthetic: bool) -> None:
-    """P13 doors 1 and 2, before any file is read: the confirmation flag, then the binding rule
-    (while the TEST-manifest binding is unbound, official mode runs only on inputs declared
-    synthetic; P2, P14)."""
+def official_doors(*, confirm: bool, synthetic: bool, repo_root=None) -> None:
+    """P13 doors 1 and 2, before any file is read: the confirmation flag, then the binding and
+    synthetic rules -- --repo-root only with --synthetic-inputs (Q2, P16), and, while the TEST-manifest
+    binding is unbound, official mode only on inputs declared synthetic (P2, P14)."""
     from .artifact import TEST_MANIFEST_BINDING
     if not confirm:
         raise DriverRefusal("official mode reads the 37 TEST inputs of section 12.4.6 and requires "
                             "--confirm-official-test-analysis")
+    if repo_root is not None and not synthetic:
+        raise DriverRefusal("--repo-root is accepted in official mode only with --synthetic-inputs "
+                            "(Q2, P16): official inputs resolve inside this code's repository")
     if TEST_MANIFEST_BINDING != "unbound":                # fail closed: there is no bound branch
         raise DriverRefusal(f"unknown TEST_MANIFEST_BINDING {TEST_MANIFEST_BINDING!r}")
     if not synthetic:
         raise DriverRefusal("the TEST-manifest binding is unbound: official mode runs only on inputs "
                             "declared synthetic (--synthetic-inputs), and no official statistics "
                             "artifact can be written (P2)")
+
+
+def out_dir_door(out_dir, run_id) -> Path:
+    """P10 and section 12.4.2, before any read: run_id itself matches the frozen pattern (one path
+    component), --out-dir is a directory when it exists, and the target is new with no stale
+    temporary sibling."""
+    from . import artifact as A
+    if not isinstance(run_id, str) or not re.fullmatch(A.RUN_ID_PATTERN, run_id):
+        raise DriverRefusal(f"--run-id {run_id!r} violates {A.RUN_ID_PATTERN}")
+    parent = Path(out_dir)
+    if parent.exists() and not parent.is_dir():
+        raise DriverRefusal(f"--out-dir {parent} exists and is not a directory")
+    return A.preflight_out_dir(parent / run_id)
 
 
 def require_pinned_stack() -> None:
@@ -608,8 +624,8 @@ def run_official(*, inputs_list, out_dir, run_id, confirm: bool, synthetic: bool
     from .bootstrap import ANALYSIS_ID_OFFICIAL
     import time
     t0 = time.time()
-    official_doors(confirm=confirm, synthetic=synthetic)
-    target = A.preflight_out_dir(Path(out_dir) / run_id)
+    official_doors(confirm=confirm, synthetic=synthetic, repo_root=repo_root)
+    target = out_dir_door(out_dir, run_id)
     require_pinned_stack()
     input_root = Path(repo_root) if repo_root is not None else A.CODE_REPO
     contract_hex, _ = A.contract_sha256()
@@ -639,7 +655,7 @@ def run_smoke(*, inputs_list, out_dir, run_id, repo_root=None, B: int, jobs: int
     from .bootstrap import ANALYSIS_ID_SMOKE
     import time
     t0 = time.time()
-    target = A.preflight_out_dir(Path(out_dir) / run_id)
+    target = out_dir_door(out_dir, run_id)
     input_root = Path(repo_root) if repo_root is not None else A.CODE_REPO
     contract_hex, _ = A.contract_sha256()
     created = _now_utc()
@@ -672,7 +688,7 @@ __all__ = [
     "manifest_digests", "snapshot_agrees", "LoadedInput", "load_input", "load_inputs",
     "provenance_record", "Observed", "am5_identity", "assemble_observed", "observed_value",
     "observed_values", "TaskJob", "task_jobs", "run_job", "WorkerFailure", "run_job_list",
-    "run_tasks",
+    "run_tasks", "out_dir_door",
     "artifact_inputs", "PostWriteVerifyFailed", "RunResult", "official_doors",
     "require_pinned_stack", "smoke_screen", "assemble_or_refuse", "run_official", "run_smoke",
 ]
