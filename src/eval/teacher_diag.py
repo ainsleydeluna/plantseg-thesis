@@ -819,8 +819,28 @@ def read_diag_output(path, *, script: str, stub: bool, what: str) -> tuple[dict,
 # --------------------------------------------------------------------------------------------------
 # CLI plumbing (P29)
 # --------------------------------------------------------------------------------------------------
-def add_common_flags(p) -> None:
-    p.add_argument("--out-dir", required=True, help="where the JSON goes; must resolve outside the repo")
+def write_files_exclusive(items) -> None:
+    """[(path, bytes)]: all serialized by the caller first; each created exclusively; a failure removes
+    every file this call created, so either all of them exist or none."""
+    paths = [Path(p) for p, _ in items]
+    existing = [p for p in paths if os.path.lexists(p)]
+    if existing:
+        raise Refused(f"refusing to overwrite {len(existing)} existing output(s): {[p.name for p in existing]}")
+    made = []
+    try:
+        for p, data in items:
+            Path(p).parent.mkdir(parents=True, exist_ok=True)
+            with open(p, "xb") as fh:
+                made.append(Path(p))
+                fh.write(data)
+    except BaseException:
+        for p in made:
+            p.unlink(missing_ok=True)
+        raise
+
+
+def add_common_flags(p, *, out_flag: str = "--out-dir") -> None:
+    p.add_argument(out_flag, required=True, help="where the outputs go; must resolve outside the repo")
     p.add_argument("--script-commit", help="40-hex HEAD of the dedicated clone (real runs, P26)")
     p.add_argument("--script-commit-dl-id", help="DL-<n> logging that commit (real runs, P26)")
     p.add_argument("--generated-utc", help="stub and smoke runs only: pin the output stamp (C2)")
@@ -914,7 +934,8 @@ __all__ = [
     "loaded_state_sha256", "frozen_blob_record", "after_load_checks", "teacher_record", "same_teacher",
     "feature_sha256", "rng_state_sha256", "RngWatchForward", "SplitTeacher", "train_canvas_dataset", "check_val_reference",
     "check_strata", "check_m11",
-    "environment_block", "base_document", "output_stamp", "read_diag_output", "add_common_flags",
+    "environment_block", "base_document", "output_stamp", "read_diag_output", "write_files_exclusive",
+    "add_common_flags",
     "add_teacher_flags", "add_correction_flags", "exit_code_for", "run_with_exit_codes", "cli_main",
     "finish_output",
 ]

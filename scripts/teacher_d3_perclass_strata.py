@@ -205,19 +205,7 @@ def csv_bytes(rows: list[dict], background: dict) -> bytes:
 
 def write_pair(json_path: Path, doc: dict, csv_path: Path, csv_b: bytes) -> None:
     """Both serialized first; both created exclusively; a failure leaves neither behind."""
-    data = td.json_bytes(doc)
-    if json_path.exists() or csv_path.exists():
-        raise td.Refused(f"{json_path.name} or {csv_path.name} already exists")
-    made = []
-    try:
-        for path, b in ((csv_path, csv_b), (json_path, data)):
-            with open(path, "xb") as fh:
-                made.append(path)
-                fh.write(b)
-    except BaseException:
-        for path in made:
-            path.unlink(missing_ok=True)
-        raise
+    td.write_files_exclusive([(csv_path, csv_b), (json_path, td.json_bytes(doc))])
 
 
 def run(args) -> int:
