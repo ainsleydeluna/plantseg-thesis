@@ -32,7 +32,7 @@ SegNeXtTeacherAdapter and FrozenTeacher, so the M4-KD stream path is the real on
 load_frozen_teacher(--teacher-ckpt, --teacher-config) from the code under test, with
 --teacher-ckpt-sha256 as expected_sha256 when that loader takes it; local only (teacher image and the
 checkpoint of record). Each worker runs with its working directory at the output folder's parent, so the
-two paths are absolute.
+two paths must be absolute (smoke_invariance_distill refuses relative ones).
 
 Exports use `git archive <commit> -- <explicit paths>` (docs/lane_specs/errata.md E-5): src, configs
 and the class-weight file the trainer reads. Nothing under docs/ is exported, read or listed.

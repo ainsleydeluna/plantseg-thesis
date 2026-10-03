@@ -1271,8 +1271,8 @@ def main(argv=None, stage_default: str | None = None) -> int:
                  if mode == "real" else (args.max_iters or 4))
 
     def both_mode_gates() -> int | None:
-        """L-KD-HARDEN items 2j and 2c and the log cadence (Q10), in both modes; a real run checks them
-        after M11 and the device."""
+        """L-KD-HARDEN items 2j and 2c, the log cadence (Q10) and R6's --teacher-ckpt-sha256 format and
+        without-ckpt gates, in both modes; a real run checks them after M11 and the device."""
         sem_error = lambda_semantics_gate_error(args.lambda_semantics, args.allow_semantics_mismatch)
         if sem_error is not None:
             return refuse("lambda_semantics", sem_error)

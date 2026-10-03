@@ -43,11 +43,12 @@ can be built even if one of them failed.
       would show as a load). A host without symlink rights (Windows) SKIPs the symlink case, and a
       working directory on another drive SKIPs the relative one: a named SKIP, never a PASS.
   R6   --teacher-ckpt-sha256: absent in a real run -> [teacher_ckpt_sha256_required] (after the TF32
-      gate); "", 63 characters or uppercase -> [teacher_ckpt_sha256_format] and without --teacher-ckpt
-      -> [teacher_ckpt_sha256_without_ckpt], in both modes; the legal launch hands the value to the
-      teacher load; the REAL loader refuses a wrong value with [teacher_ckpt_sha256_mismatch] before any
-      torch.load or builder call; a loader raising TeacherStateDictMismatch or TeacherChecksumMismatch
-      exits 2 in both modes; a dry run with --teacher-ckpt and no value stays legal
+      gate, before the CUDA-order gate); "", 63 characters or uppercase -> [teacher_ckpt_sha256_format]
+      and without --teacher-ckpt -> [teacher_ckpt_sha256_without_ckpt], in both modes; the legal launch
+      hands the value to the teacher load; the REAL loader refuses a wrong value with
+      [teacher_ckpt_sha256_mismatch] before any torch.load or builder call; a loader raising
+      TeacherStateDictMismatch or TeacherChecksumMismatch exits 2 in both modes; a dry run with
+      --teacher-ckpt and no value stays legal
   abort  main() turns run()'s RunAborted into exit code 3 (td.ABORTED_EXIT, distinct from 0, 1 and 2) and
       one RESULT: ABORTED line on stdout (a stub run() that raises)
   legal  each stage's legal launch reaches run() with the recipe values (mode real, 80,000 iterations,
@@ -207,7 +208,10 @@ def without(argv: list[str], flag: str) -> list[str]:
 
 def refused(label: str, argv: list[str], code: str, *, teacher: int = 0) -> None:
     reset()
-    rc, err = call_main(argv)
+    try:
+        rc, err = call_main(argv)
+    except Exception as e:  # noqa: BLE001 - a raise instead of a refusal is a FAIL of this check
+        rc, err = None, f"raised {type(e).__name__}: {e}"
     check(f"{label}_refused_{code}", rc == 2 and f"[{code}]" in err and COUNT["loader"] == 0
           and COUNT["teacher"] == teacher and COUNT["run"] == 0,
           f"rc={rc} teacher={COUNT['teacher']} loader={COUNT['loader']} run={COUNT['run']} "
@@ -335,6 +339,19 @@ def test_teacher_sha256() -> None:
     """R6 (L-CKPT-GUARD): the --teacher-ckpt-sha256 gates, the pass-through and the two load refusals."""
     refused("r6_real_without_sha256", without(legal("g"), "--teacher-ckpt-sha256"),
             "teacher_ckpt_sha256_required")
+    # placement (patch 7): after the TF32 gate, before the CUDA-order gate of the teacher load
+    torch.backends.cudnn.allow_tf32 = False
+    try:
+        refused("r6_tf32_gate_precedes_the_sha256_gate", without(legal("g"), "--teacher-ckpt-sha256"), "tf32")
+    finally:
+        torch.backends.cudnn.allow_tf32 = True
+    real_is_init = torch.cuda.is_initialized
+    torch.cuda.is_initialized = lambda: True
+    try:
+        refused("r6_sha256_gate_precedes_the_cuda_order_gate", without(legal("g"), "--teacher-ckpt-sha256"),
+                "teacher_ckpt_sha256_required")
+    finally:
+        torch.cuda.is_initialized = real_is_init
     for label, value in (("empty", ""), ("63_chars", TEACHER_SHA256[:63]),
                          ("uppercase", TEACHER_SHA256.upper())):
         refused(f"r6_real_sha256_{label}", with_value(legal("g"), "--teacher-ckpt-sha256", value),
