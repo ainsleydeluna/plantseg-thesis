@@ -230,13 +230,15 @@ def hook_cases() -> None:
 # ---------------------------------------------------------------------------------------------------
 # the D2 VAL pass (scripts/teacher_d2_calibration.py) on the stub teacher and a synthetic data root
 # ---------------------------------------------------------------------------------------------------
-def _reference(fx, td, tmp, ckpt, n=3):
-    """The R3-equivalent reference: scripts/evaluate_model.py run() on the same stub teacher."""
+def _reference(fx, td, tmp, ckpt, sha, n=3):
+    """The R3-equivalent reference: scripts/evaluate_model.py run() on the same stub teacher, with the sha256
+    write_stub_ckpt returned (the evaluator's teacher stage requires it, R6)."""
     from scripts import evaluate_model as em
     from src.distill.segnext_teacher import segnext_builder
     out = tmp / "ref_artifact"
     args = em.build_parser().parse_args([
         "--stage", "teacher", "--model-role", "teacher", "--split", "val", "--checkpoint", str(ckpt),
+        "--teacher-ckpt-sha256", sha,
         "--teacher-config", str(td.REPO / td.TEACHER_CONFIG_REL), "--artifact-status", "smoke",
         "--max-samples", str(n), "--batch-size", "1", "--out-dir", str(out), "--run-id", "ref_run"])
     return em.run(args, teacher_builder=segnext_builder(model_factory=fx.stub_factory))
@@ -311,7 +313,7 @@ def d2_cases() -> None:
         root, _ = fx.make_data_root("diag_d2_data_")
         fx.set_data_root(root)
         ckpt, sha = fx.write_stub_ckpt(tmp / "stub_teacher.pth")
-        ref = _reference(fx, td, tmp, ckpt)
+        ref = _reference(fx, td, tmp, ckpt, sha)
         cfg = str(td.REPO / td.TEACHER_CONFIG_REL)
         utc = "2026-10-02T00:00:00Z"
 

@@ -433,6 +433,64 @@ def case_frozen_blob(td) -> bool:
         return raises(td.frozen_blob_record, td.Refused)
 
 
+def case_stub_ckpt_exact(td, fx, tmp, loaded) -> bool:
+    """h1: write_stub_ckpt holds exactly the factory's state_dict (keys, dtypes, shapes, values), for the default
+    and the big factory, and the strictly loaded stub's state equals the factory's own seeded state."""
+    import torch
+    ok = True
+    for factory, tag in ((None, "h1_default"), (fx.big_factory, "h1_big")):
+        p, _ = fx.write_stub_ckpt(Path(tmp) / f"{tag}.pth", tag=tag, factory=factory)
+        saved = torch.load(p, map_location="cpu")["state_dict"]
+        ref = (factory or fx.stub_factory)().state_dict()
+        ok &= sorted(saved) == sorted(ref) and all(
+            saved[k].dtype == ref[k].dtype and saved[k].shape == ref[k].shape and torch.equal(saved[k], ref[k])
+            for k in ref)
+        p.unlink()
+    ok &= td.loaded_state_sha256(loaded.segmentor) == td.loaded_state_sha256(fx.stub_factory())
+    return bool(ok)
+
+
+def case_reference_sha(fx, tmp, ckpt, sha) -> tuple[bool, str]:
+    """h3: fx.reference_artifact passes --teacher-ckpt-sha256 (the sha write_stub_ckpt returned): with it the
+    evaluator builds the reference and records that sha; a well-formed wrong sha is refused by its hash check."""
+    import json
+    import tempfile
+
+    from src.eval.stage_artifacts import StageArtifactError
+    tmp = Path(tempfile.mkdtemp(prefix="ref_h3_", dir=tmp))      # a fresh folder per call (the harness repeats it)
+    try:
+        d = fx.reference_artifact(Path(tmp) / "ref_h3", ckpt, sha, n=1, run_id="ref_h3")
+        got = json.loads((Path(d) / "summary.json").read_text(encoding="utf-8"))["run"]["checkpoint_sha256"]
+        built, detail = got == sha, f"recorded {got}"
+    except Exception as exc:  # noqa: BLE001
+        built, detail = False, f"{type(exc).__name__}: {exc}"[:300]
+    try:
+        fx.reference_artifact(Path(tmp) / "ref_h3_wrong", ckpt, "0" * 64, n=1, run_id="ref_h3_wrong")
+        wrong = False
+    except StageArtifactError as exc:
+        wrong = exc.code == "teacher_hash_mismatch"
+    except Exception:  # noqa: BLE001
+        wrong = False
+    return built and wrong, detail
+
+
+def case_big_model(td, fx, tmp, args) -> tuple[bool, str]:
+    """h2: the oversized stub loads strictly from a checkpoint written from big_factory (about 8 MB, under the
+    16 MiB stat guard), so the parameter guard is what refuses; its message must name the parameter count."""
+    ckpt, sha = fx.write_stub_ckpt(Path(tmp) / "big_model_stub.pth", tag="big_model", factory=fx.big_factory)
+    n = sum(p.numel() for p in fx.big_factory().parameters())
+    try:
+        gated_load(td, args(teacher_ckpt=str(ckpt), teacher_ckpt_sha256=sha), factory=fx.big_factory)
+        msg = "no refusal"
+    except td.Refused as e:
+        msg = str(e)
+    except Exception as e:  # noqa: BLE001
+        msg = f"{type(e).__name__}: {e}"
+    ok = (n > td.STUB_MAX_PARAMETERS and ckpt.stat().st_size <= td.STUB_MAX_CKPT_BYTES
+          and f"a model with {n} parameters" in msg)
+    return ok, f"n={n} bytes={ckpt.stat().st_size} msg={msg[:200]}"
+
+
 def _fresh(td, fx, args, factory=None):
     return gated_load(td, args(), factory=factory or fx.stub_factory)
 
@@ -539,6 +597,8 @@ def _seam_body(fx, td, tmp, ckpt, sha, args) -> None:
     check("seam kd load: the stream is the adapter's live object, M4-KD seed 42, description == describe()",
           kd.stream is kd.adapter.nmf_stream and kd.stream.policy == "M4-KD" and kd.stream.seed == 42
           and kd.stream_description == kd.stream.describe() and kd.stream_description["draws"] == 0)
+    check("h1 the stub checkpoint holds exactly the factory's state_dict (default and big factory); the strictly "
+          "loaded stub's state equals the factory's own seeded state", case_stub_ckpt_exact(td, fx, tmp, kd))
     _, ev, checks_ev = gated_load(td, args(), mode="evaluator", factory=fx.stub_factory)
     check("seam evaluator load: M4-V stream, nmf_policy is the description, same loaded state as kd",
           ev.stream is ev.adapter.nmf_stream and ev.stream.policy == "M4-V"
@@ -658,8 +718,9 @@ def _seam_body(fx, td, tmp, ckpt, sha, args) -> None:
         if not pre:
             sys.modules.pop("mmseg", None)
     check("P2 stub refuses a build that leaves mmseg imported", r and not pre, f"mmseg imported before: {pre}")
-    check("P2 stub refuses a model over 1e6 parameters",
-          raises(lambda: gated_load(td, args(), factory=fx.big_factory), td.Refused))
+    big_ok, big_msg = case_big_model(td, fx, tmp, args)
+    check("P2 stub refuses a model over 1e6 parameters: its own checkpoint (big_factory, <= 16 MiB) loads strictly, "
+          "and the refusal names the parameter count (h2)", big_ok, big_msg)
     check("P5 the format check alone (no file read) refuses an empty, uppercase or 63-character sha256",
           all(raises(lambda b=b: td.check_teacher_flags(args(teacher_ckpt_sha256=b)), td.Refused)
               for b in ("", sha.upper(), sha[:63])))
@@ -845,7 +906,7 @@ def _d1_env():
     fx.set_data_root(root)
     ckpt, sha = fx.write_stub_ckpt(tmp / "stub_teacher.pth")
     strata = fx.write_strata(tmp / "train_strata_v1.json", stems["train"])
-    ref = fx.reference_artifact(tmp / "ref_artifact", ckpt, n=3)
+    ref = fx.reference_artifact(tmp / "ref_artifact", ckpt, sha, n=3)
     cfg = str(td.REPO / td.TEACHER_CONFIG_REL)
     teacher = dict(teacher_ckpt=str(ckpt), teacher_ckpt_sha256=sha, teacher_config=cfg)
     fx.call_run(d2, out_dir=tmp / "d2", artifact_dir=tmp / "d2_art", teacher_role="record", purpose="item1",
@@ -1072,6 +1133,9 @@ def _crops_cases(e) -> None:
           str({why: err[-120:] for why, (c, err) in got.items() if why not in err}))
     check("P8 until K-part a well-formed real run is refused by the provenance field count",
           r_p8[0] == 2 and "TeacherProvenance" in r_p8[1], r_p8[1])
+    h3_ok, h3_detail = case_reference_sha(fx, e.tmp, e.ckpt, e.sha)
+    check("h3 the reference builder passes --teacher-ckpt-sha256: the evaluator builds it and records that sha; a "
+          "wrong sha is refused (teacher_hash_mismatch)", h3_ok, h3_detail)
 
 
 def _val_cases(e) -> None:

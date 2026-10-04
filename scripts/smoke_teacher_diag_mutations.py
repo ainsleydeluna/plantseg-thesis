@@ -108,7 +108,7 @@ def build_env() -> Env:
     fx.set_data_root(e.root)
     e.strata = fx.write_strata(e.tmp / "train_strata_v1.json", e.stems["train"])
     e.planted = s4.plant_copies(e.root, e.stems)
-    e.ref = fx.reference_artifact(e.tmp / "ref_artifact", e.ckpt, n=3)
+    e.ref = fx.reference_artifact(e.tmp / "ref_artifact", e.ckpt, e.sha, n=3)
     e.cfg = str(e.td.REPO / e.td.TEACHER_CONFIG_REL)
     e.teacher = dict(teacher_ckpt=str(e.ckpt), teacher_ckpt_sha256=e.sha, teacher_config=e.cfg)
     fx.call_run(d2, out_dir=e.tmp / "d2_item1", artifact_dir=e.tmp / "d2_item1_art", teacher_role="record",
@@ -393,8 +393,12 @@ def killers(e) -> dict:
             if not pre:
                 sys.modules.pop("mmseg", None)
     k["P2 stub refuses a build that leaves mmseg imported"] = mmseg_build
-    k["P2 stub refuses a model over 1e6 parameters"] = lambda: raises(
-        lambda: s1.gated_load(td, e.args(), factory=fx.big_factory), td.Refused)
+    k["P2 stub refuses a model over 1e6 parameters (own big_factory checkpoint; the message names the count)"] = (
+        lambda: s1.case_big_model(td, fx, e.tmp, e.args)[0])
+    k["h1 the stub checkpoint holds exactly the factory's state_dict; the loaded stub equals the factory's state"] = (
+        lambda: s1.case_stub_ckpt_exact(td, fx, e.tmp, s1.gated_load(td, e.args(), factory=fx.stub_factory)[1]))
+    k["h3 the reference builder passes --teacher-ckpt-sha256 (built and recorded; a wrong sha refused)"] = (
+        lambda: s1.case_reference_sha(fx, e.tmp, e.ckpt, e.sha)[0])
     k["P8 the field count on stand-ins: 11 fields refused, 12 not (holds before and after K-part)"] = lambda: s1.case_p8_count(td)
 
     def binding(head=HEAD, tree_status=None):
@@ -698,7 +702,7 @@ def killers(e) -> dict:
 def mutations(e) -> list:
     from src.eval import calibration as cal
     from src.eval import nmf_sensitivity as ns
-    td, d1, d2, d3, d4, hs = e.td, e.d1, e.d2, e.d3, e.d4, e.hs
+    td, d1, d2, d3, d4, hs, fx = e.td, e.d1, e.d2, e.d3, e.d4, e.hs, e.fx
     F = "if False:"
     return [
         # P33
@@ -785,7 +789,7 @@ def mutations(e) -> list:
         ("P2 mmseg guard removed", td, "after_load_checks", [('if "mmseg" in sys.modules:', F)],
          "P2 stub refuses a build that leaves mmseg imported"),
         ("P2 parameter guard removed", td, "after_load_checks", [("if n_params > STUB_MAX_PARAMETERS:", F)],
-         "P2 stub refuses a model over 1e6 parameters"),
+         "P2 stub refuses a model over 1e6 parameters (own big_factory checkpoint; the message names the count)"),
         ("P8 provenance field count removed", td, "require_provenance_field_count",
          [("if real and len(names) != EXPECTED_PROVENANCE_FIELDS:", F)],
          "P8 the field count on stand-ins: 11 fields refused, 12 not (holds before and after K-part)"),
@@ -946,6 +950,14 @@ def mutations(e) -> list:
         ("hasher accepts an image without its mask", hs, "_run",
          [('missing = [s for s in stems if s + MASK_SUFFIX not in lst[split]["masks"]]', "missing = []")],
          "P21 a VAL image without its mask is refused"),
+        # P41 follow-up (GO-2 of 2026-10-04): appended, so M01-M89 keep their numbers
+        ("h1 the stub checkpoint written as zeros (not the factory's state)", fx, "write_stub_ckpt",
+         [("state = {k: v.detach().clone() for k, v in (factory or stub_factory)().state_dict().items()}",
+           "state = {k: torch.zeros_like(v) for k, v in (factory or stub_factory)().state_dict().items()}")],
+         "h1 the stub checkpoint holds exactly the factory's state_dict; the loaded stub equals the factory's state"),
+        ("h3 the reference builder omits --teacher-ckpt-sha256", fx, "reference_artifact",
+         [('"--teacher-ckpt-sha256", sha256,', "")],
+         "h3 the reference builder passes --teacher-ckpt-sha256 (built and recorded; a wrong sha refused)"),
     ]
 
 
