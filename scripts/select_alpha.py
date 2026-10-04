@@ -20,6 +20,12 @@ still a required input. The rule runs over the finished candidates (a sole finis
 no band and no tie); a winner at an edge of the finished set next to a diverged value is a boundary
 result too. A diverged default candidate (alpha 50) keeps AM-7 in full: refused.
 
+Order of the refusals (K8-2(a)): the candidates' recipe (recipe_mismatch), then the shared lambda over
+every loaded run, finished or diverged (lambda_mismatch; skipped when no run loaded, so a sweep still
+training stays a shortfall), then a diverged default (default_candidate_diverged), then the shortfall,
+then the rule. A diverged default run at a lambda other than the selection's is a lambda_mismatch: the
+run is not a candidate of this sweep.
+
 Band file (the DL-27 decision-log entry, written after B66 and before the sweep):
     {"e1_best_val": {"42": <float>, "43": <float>, "44": <float>}, "s": <float>, "band": <float, optional>}
 s is the n = 3 sample SD of E1's best VAL all-class mIoU; band = max(0.005, sqrt(2) * s). s is recomputed
@@ -45,8 +51,9 @@ sys.path.insert(0, str(REPO))
 
 from src.training.sweep_select import (RULES_PATH, UNEXPECTED_ERROR_EXIT,  # noqa: E402
                                        SelectionRefused, apply_rule, collect_candidates, dl27_band,
-                                       load_rules, missing_grid_values, read_json, refuse_test_path,
-                                       sha256_file, write_selection)
+                                       load_rules, missing_grid_values, read_json,
+                                       refuse_diverged_default, refuse_test_path, sha256_file,
+                                       write_selection)
 
 KEY = "alpha_cwd"
 
@@ -86,8 +93,15 @@ def select(runs, band_path: Path, out: Path, rules_path: Path = RULES_PATH,
     lambda_path = Path(lambda_selection) if lambda_selection is not None else \
         REPO / "reports" / "derived" / "lambda_selection.json"
     lam_record = lambda_of_record(lambda_path)
-    finished, diverged, shortfall = collect_candidates(runs, sweep, KEY)
-    missing = missing_grid_values(finished + diverged, sweep)
+    finished, diverged, shortfall = collect_candidates(runs, sweep, KEY, check_default=False)
+    loaded = finished + diverged
+    lambdas = sorted({c["lambda_logit"] for c in loaded}, key=repr)
+    if loaded and (len(lambdas) != 1 or lambdas[0] is None or float(lambdas[0]) != lam_record):
+        raise SelectionRefused("lambda_mismatch", f"the alpha runs must share one lambda_logit equal to "
+                                                  f"the lambda selection's winner {lam_record!r}; got "
+                                                  f"{lambdas}")
+    refuse_diverged_default(diverged, sweep, KEY)
+    missing = missing_grid_values(loaded, sweep)
     if shortfall or missing:
         absent = ["{} ({})".format(x["run_dir"], x["code"]) for x in shortfall]
         raise SelectionRefused(
@@ -97,11 +111,6 @@ def select(runs, band_path: Path, out: Path, rules_path: Path = RULES_PATH,
             f"grid values without a finished or diverged run: {missing}; absent or unfinished: {absent} "
             "(diverged candidates are not shortfalls: pass their directories). Lane 2 STOP; a cut sweep "
             "means alpha = 50 (AM-16 item 2) and no selection file.")
-    lambdas = sorted({c["lambda_logit"] for c in finished + diverged}, key=repr)
-    if len(lambdas) != 1 or lambdas[0] is None or float(lambdas[0]) != lam_record:
-        raise SelectionRefused("lambda_mismatch", f"the alpha runs must share one lambda_logit equal to "
-                                                  f"the lambda selection's winner {lam_record!r}; got "
-                                                  f"{lambdas}")
     res = apply_rule(finished, sweep, band, "alpha", diverged=diverged)
     rec = lambda c: {"alpha": c["value"], "run_id": c["run_id"], "best_val": c["best_val"],  # noqa: E731
                      "ckpt_sha256": c["ckpt_sha256"]}

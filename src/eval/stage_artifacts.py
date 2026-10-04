@@ -1,4 +1,4 @@
-"""Bridge between produced E1-E7 artifacts and the existing evaluator. Resolver + gates only.
+"""Bridge between produced E1-E7 and A/F/G artifacts and the existing evaluator. Resolver + gates only.
 
 This module does NOT re-implement evaluation, metrics, or the artifact contract. It answers three
 questions the evaluator currently cannot, and delegates everything else:
@@ -15,8 +15,9 @@ deliberately holds no second copy of that rule. Governed-path cleanliness is lik
 the existing implementation, so no global repository-cleanliness requirement is introduced and the
 protected reference PDF remains allowlisted.
 
-For E4-E7 the input is the run-provenance JSON written by `src/quant/runner.py`; for E1-E3 it is the
-FP32 checkpoint read through the existing `src.eval.model_loading` contract.
+For E4-E7 the input is the run-provenance JSON written by `src/quant/runner.py`; for E1-E3 and the
+exploratory arms A, F, G it is the FP32 checkpoint read through the existing
+`src.eval.model_loading` contract.
 """
 
 from __future__ import annotations
@@ -37,6 +38,11 @@ STAGE_ARTIFACTS: dict[str, dict] = {
     "E1": {"kind": "fp32_checkpoint", "precision": "fp32", "source_stage": None, "method": None},
     "E2": {"kind": "fp32_checkpoint", "precision": "fp32", "source_stage": None, "method": None},
     "E3": {"kind": "fp32_checkpoint", "precision": "fp32", "source_stage": None, "method": None},
+    # The exploratory arms (AM-17 item 7; AM-17b items 1(a), 1(b); L-CKPT-GUARD): FP32 students that
+    # train_distill writes like E2/E3. Descriptive only (DESCRIPTIVE_ONLY_STAGES).
+    "A": {"kind": "fp32_checkpoint", "precision": "fp32", "source_stage": None, "method": None},
+    "F": {"kind": "fp32_checkpoint", "precision": "fp32", "source_stage": None, "method": None},
+    "G": {"kind": "fp32_checkpoint", "precision": "fp32", "source_stage": None, "method": None},
     "E4": {"kind": "int8_artifact", "precision": "int8_ptq", "source_stage": "E1", "method": "ptq"},
     "E5": {"kind": "int8_artifact", "precision": "int8_qat", "source_stage": "E1", "method": "qat"},
     "E6": {"kind": "int8_artifact", "precision": "int8_qat", "source_stage": "E3", "method": "qat"},
@@ -49,9 +55,16 @@ STAGE_ARTIFACTS: dict[str, dict] = {
                 "method": None},
 }
 PROJECTION_FREE_STAGES = ("E6", "E7")
+# FP32 checkpoints train_distill writes, which record their stage (DL-52): refused when they record none.
+# E1 (train_e1) records none and is not listed.
+STAGE_DECLARING_FP32_STAGES = ("E2", "E3", "A", "F", "G")
+# FP32 stages whose student state must hold no training-only CWD projection key.
+PROJECTION_FREE_FP32_STAGES = ("E3", "A", "F", "G")
 TEACHER_STAGE = "TEACHER"
 STUDENT_ROLE, TEACHER_ROLE = "student", "teacher"
-DESCRIPTIVE_ONLY_STAGES = ("TEACHER",)
+# Never a comparator in an inferential test. Nothing in the evaluator enforces this; the statistics
+# driver must refuse these stages as comparators.
+DESCRIPTIVE_ONLY_STAGES = ("TEACHER", "A", "F", "G")
 
 
 class StageArtifactError(RuntimeError):
@@ -67,16 +80,14 @@ def _fail(code: str, message: str):
 
 
 def resolve_stage_artifact(stage: str) -> dict:
-    """Return the artifact contract for a stage. Teacher is deliberately absent.
+    """Return the artifact contract for a stage: E1-E7, the arms A, F and G, or the teacher.
 
-    The existing evaluator rejects `model_role='teacher'`; inventing teacher-artifact behaviour here
-    would misrepresent runtime support, so unknown stages fail loudly instead.
+    Unknown stages fail loudly; nothing here invents a contract for a stage the table does not hold.
     """
     key = str(stage).upper()
     if key not in STAGE_ARTIFACTS:
         _fail("unknown_stage",
-              f"no artifact contract for stage {stage!r}; known stages: {sorted(STAGE_ARTIFACTS)} "
-              "(teacher evaluation is not implemented by the evaluator and is not invented here)")
+              f"no artifact contract for stage {stage!r}; known stages: {sorted(STAGE_ARTIFACTS)}")
     return {"stage": key, **STAGE_ARTIFACTS[key]}
 
 
@@ -176,9 +187,14 @@ def int8_official_calibration_error(resolved: dict, repo_root: str | Path | None
     return None if err is None else f"refusing an official {resolved['spec']['stage']} score: {err}"
 
 
-# ------------------------------------------------------------------ FP32 (E1-E3)
+# ------------------------------------------------------------------ FP32 (E1-E3, A, F, G)
 def validate_fp32_artifact(stage: str, checkpoint_path: str | Path) -> dict:
-    """Validate an E1/E2/E3 FP32 checkpoint. Uses the existing checkpoint contract, not a new one."""
+    """Validate an E1, E2, E3, A, F or G FP32 checkpoint. Uses the existing checkpoint contract.
+
+    DL-52: a checkpoint of a stage in STAGE_DECLARING_FP32_STAGES must record its stage
+    (`stage_undeclared`) and record the requested one (`stage_mismatch`); an E1 checkpoint records
+    none, so it is refused under those stages. Then the projection-free check for
+    PROJECTION_FREE_FP32_STAGES (`CWDProjectionLeak`)."""
     import torch
 
     from src.eval.model_loading import sha256_file
@@ -199,10 +215,15 @@ def validate_fp32_artifact(stage: str, checkpoint_path: str | Path) -> dict:
         _fail("checkpoint_is_quantized",
               f"{p} carries quantization state; an FP32 stage cannot consume an INT8 artifact")
     declared = ckpt.get("stage")
+    if declared is None and spec["stage"] in STAGE_DECLARING_FP32_STAGES:
+        _fail("stage_undeclared",
+              f"{p} records no stage; a {spec['stage']} checkpoint written by train_distill records "
+              "its stage (an E1 checkpoint records none and is not a "
+              f"{spec['stage']} checkpoint)")
     if declared is not None and str(declared).upper() != spec["stage"]:
         _fail("stage_mismatch",
               f"checkpoint is stage {declared!r}, requested {spec['stage']}")
-    if spec["stage"] == "E3":
+    if spec["stage"] in PROJECTION_FREE_FP32_STAGES:
         from src.distill.export import assert_clean_student_state
         assert_clean_student_state(state)          # projection must be absent from the student
     if ckpt.get("num_classes") is not None and int(ckpt["num_classes"]) != NUM_CLASSES:
@@ -213,12 +234,12 @@ def validate_fp32_artifact(stage: str, checkpoint_path: str | Path) -> dict:
 
 
 def expected_model_role(stage: str) -> str:
-    """`teacher` for the teacher stage, `student` for E1-E7."""
+    """`teacher` for the teacher stage, `student` for E1-E7 and the arms A, F, G."""
     return TEACHER_ROLE if resolve_stage_artifact(stage)["stage"] == TEACHER_STAGE else STUDENT_ROLE
 
 
 def is_descriptive_only(stage: str) -> bool:
-    """True when the stage may never act as an inferential comparator (teacher)."""
+    """True when the stage may never act as an inferential comparator (the teacher, A, F, G)."""
     return resolve_stage_artifact(stage)["stage"] in DESCRIPTIVE_ONLY_STAGES
 
 
@@ -231,14 +252,28 @@ def validate_teacher_artifact(checkpoint_path: str | Path, *,
     loader already refuses non-dict payloads, empty/tensor-free states, and anything lacking both
     `backbone.*` and `decode_head.*` keys, so an unrelated or ADE20K-only-shaped file cannot be
     silently substituted.
+
+    R6: when `expected_sha256` is not None it must be 64 lowercase hex characters
+    (`teacher_ckpt_sha256_format`, "" included), and the file is hashed once and compared BEFORE the
+    parse (`teacher_hash_mismatch`); that hash is the recorded `checkpoint_sha256`.
     """
     from src.distill.segnext_teacher import TeacherCheckpointInvalid, load_teacher_state_dict
+    from src.distill.teacher import sha256_format_error
     from src.eval.model_loading import sha256_file
 
     spec = resolve_stage_artifact(TEACHER_STAGE)
+    if expected_sha256 is not None:
+        error = sha256_format_error(expected_sha256)
+        if error is not None:
+            _fail("teacher_ckpt_sha256_format", f"expected teacher sha256 {error}")
     p = Path(checkpoint_path)
     if not p.is_file():
         _fail("teacher_checkpoint_missing", f"teacher checkpoint not found: {p}")
+    digest = sha256_file(p)
+    if expected_sha256 is not None and digest != expected_sha256:
+        _fail("teacher_hash_mismatch",
+              f"teacher checkpoint hash {digest} does not match the expected {expected_sha256}; the "
+              "file was not parsed")
     try:
         state = load_teacher_state_dict(p)
     except TeacherCheckpointInvalid as e:
@@ -251,12 +286,6 @@ def validate_teacher_artifact(checkpoint_path: str | Path, *,
     if any("_packed_params" in k or "activation_post_process" in k for k in state):
         _fail("teacher_is_quantized_artifact",
               "this is a quantized artifact; the teacher is evaluated in FP32")
-
-    digest = sha256_file(p)
-    if expected_sha256 and digest != expected_sha256:
-        _fail("teacher_hash_mismatch",
-              f"teacher checkpoint hash {digest[:16]}… does not match the expected "
-              f"{str(expected_sha256)[:16]}…")
     return {"spec": spec, "checkpoint_path": p, "checkpoint_sha256": digest,
             "state_keys": len(state), "descriptive_only": True}
 

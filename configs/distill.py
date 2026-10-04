@@ -40,7 +40,9 @@ DISTILL_STAGES = {
 
 # ---------------------------------------------------------------- AM-7 divergence rule (b) (L-AM7)
 # AM-7 (docs/PREREGISTRATION_AMENDMENTS.md; DL-04) stops a diverging run: (a) a non-finite total loss,
-# or a non-finite pre-clip gradient norm; (b) a rolling mean of the logged total loss over `window`
+# or a non-finite pre-clip gradient norm, from iteration 2 on (orchestrator ruling R8-1: a non-finite
+# value AT iteration 1 is a step-1 failure, rule step1_checks, not AM-7 (a); before the first update
+# nothing can diverge); (b) a rolling mean of the logged total loss over `window`
 # post-ramp iterations STRICTLY greater than `factor` x the running minimum of the earlier such means.
 # Rule (b) runs after the first-epoch ramp only (post_ramp_only): ramp iterations never enter a window
 # or the minimum. These are pre-registered: train_distill refuses to import other values, and its real

@@ -35,6 +35,11 @@ default mode, on this checkout (or --code-root DIR):
 N = 8 steps with the stub teacher (one full epoch of the 16-image set at batch 2, so the whole
 first-epoch ramp is exercised); the acceptance run with --teacher real uses --steps 4. Outputs go to
 --work-dir (a new temp dir by default), never into the repository.
+
+--teacher real (L-CKPT-GUARD) needs --teacher-ckpt and --teacher-config as absolute paths and
+--teacher-ckpt-sha256: the driver hashes the checkpoint before any worker starts, each worker hands
+the value to load_frozen_teacher when the code under test takes it, and every worker's run_meta must
+record that hash as teacher_provenance.ckpt_sha256.
 """
 from __future__ import annotations
 
@@ -111,6 +116,17 @@ def host_facts() -> dict:
                      "NVIDIA_TF32_OVERRIDE": os.environ.get("NVIDIA_TF32_OVERRIDE")}}
 
 
+def check_recorded_teacher_sha256(runs: dict, a) -> None:
+    """--teacher real (L-CKPT-GUARD): every worker's run_meta records the checkpoint the driver hashed."""
+    if a.teacher != "real":
+        return
+    for k, r in runs.items():
+        rows = (r["summary"] or {}).get("run_meta") or [{}]
+        prov = rows[0].get("teacher_provenance") or {}
+        check(f"teacher_sha256_recorded_{k}", prov.get("ckpt_sha256") == a.teacher_ckpt_sha256,
+              f"{prov.get('ckpt_sha256')} vs {a.teacher_ckpt_sha256}")
+
+
 def load_steps(d: Path) -> list[dict]:
     return [json.loads(p.read_text(encoding="utf-8")) for p in sorted(d.glob("step_*.json"))]
 
@@ -121,14 +137,16 @@ def single(work: Path, data_root: Path, code_root: Path, a) -> dict:
     for s in a.stages:
         runs[s] = run_worker(code_root=code_root, data_root=data_root, out_dir=work / f"run_{s}",
                              stage=s, steps=a.steps, val_interval=a.val_interval, teacher=a.teacher,
-                             teacher_ckpt=a.teacher_ckpt, teacher_config=a.teacher_config,
-                             threads=a.threads)
+                             teacher_ckpt=a.teacher_ckpt,
+                             teacher_ckpt_sha256=a.teacher_ckpt_sha256,
+                             teacher_config=a.teacher_config, threads=a.threads)
     if not a.no_repeat and "e3" in a.stages:
         runs["e3_repeat"] = run_worker(code_root=code_root, data_root=data_root,
                                        out_dir=work / "run_e3_repeat", stage="e3", steps=a.steps,
                                        val_interval=a.val_interval, teacher=a.teacher,
-                                       teacher_ckpt=a.teacher_ckpt, teacher_config=a.teacher_config,
-                                       threads=a.threads)
+                                       teacher_ckpt=a.teacher_ckpt,
+                                       teacher_ckpt_sha256=a.teacher_ckpt_sha256,
+                                       teacher_config=a.teacher_config, threads=a.threads)
         rep = compare_step_dirs(work / "run_e3", work / "run_e3_repeat")
         check("H0_repeat_e3_step_jsons_byte_identical", rep["identical"],
               f"{rep['n_old']} steps; mismatches={rep['mismatches'][:1]}")
@@ -246,6 +264,7 @@ def single(work: Path, data_root: Path, code_root: Path, a) -> dict:
               and end.get("best_val_miou_all_class") == best.get("best_val_miou_all_class")
               and end.get("best_ckpt") == Path(str(best.get("best_ckpt", ""))).name, json.dumps(end))
         check(f"no_test_surface_{s}", sm["data_layout"] == DATA_LAYOUT, str(sm["data_layout"]))
+    check_recorded_teacher_sha256(runs, a)
     return runs
 
 
@@ -258,12 +277,14 @@ def cross(work: Path, data_root: Path, old_root: Path, new_root: Path, a) -> dic
                                               out_dir=work / f"{label}_{s}", stage=s, steps=a.steps,
                                               val_interval=a.val_interval, teacher=a.teacher,
                                               teacher_ckpt=a.teacher_ckpt,
+                                              teacher_ckpt_sha256=a.teacher_ckpt_sha256,
                                               teacher_config=a.teacher_config, threads=a.threads)
         # the dry global-norm clipping path (a real run refuses --grad-clip-norm under AM-7)
         runs[f"{label}_e3_clip"] = run_worker(code_root=root, data_root=data_root,
                                               out_dir=work / f"{label}_e3_clip", stage="e3",
                                               steps=a.steps, val_interval=a.val_interval,
                                               teacher=a.teacher, teacher_ckpt=a.teacher_ckpt,
+                                              teacher_ckpt_sha256=a.teacher_ckpt_sha256,
                                               teacher_config=a.teacher_config, grad_clip_norm=1.0,
                                               threads=a.threads)
     for tag, alpha in (("alpha50", 50.0), ("alpha25", 25.0)):
@@ -271,8 +292,10 @@ def cross(work: Path, data_root: Path, old_root: Path, new_root: Path, a) -> dic
                                            out_dir=work / f"new_e3_{tag}", stage="e3", steps=a.steps,
                                            val_interval=a.val_interval, teacher=a.teacher,
                                            teacher_ckpt=a.teacher_ckpt,
+                                           teacher_ckpt_sha256=a.teacher_ckpt_sha256,
                                            teacher_config=a.teacher_config, alpha=alpha,
                                            threads=a.threads)
+    check_recorded_teacher_sha256(runs, a)
     for k, r in runs.items():
         sm = r["summary"] or {}
         check(f"cross_{k}_completes", r["returncode"] == 0
@@ -311,6 +334,9 @@ def main(argv=None) -> int:
     ap.add_argument("--threads", type=int, default=4)
     ap.add_argument("--teacher", choices=("stub", "real"), default="stub")
     ap.add_argument("--teacher-ckpt", default=None)
+    ap.add_argument("--teacher-ckpt-sha256", default=None,
+                    help="--teacher real: the checkpoint's sha256, checked by the driver before any "
+                         "worker and against every worker's recorded teacher_provenance.ckpt_sha256")
     ap.add_argument("--teacher-config", default=None)
     ap.add_argument("--code-root", default=None, help="single-commit mode: the code root (default: "
                                                       "this checkout)")
@@ -323,8 +349,15 @@ def main(argv=None) -> int:
                     help="cross-commit only: dotted step-JSON fields the lane under test adds (e.g. "
                          "telemetry.ce); removed from NEW before the byte comparison, never from OLD")
     a = ap.parse_args(argv)
-    if a.teacher == "real" and not (a.teacher_ckpt and a.teacher_config):
-        ap.error("--teacher real needs --teacher-ckpt and --teacher-config")
+    if a.teacher == "real" and not (a.teacher_ckpt and a.teacher_config and a.teacher_ckpt_sha256):
+        ap.error("--teacher real needs --teacher-ckpt, --teacher-config and --teacher-ckpt-sha256")
+    if a.teacher == "real":
+        if not (Path(a.teacher_ckpt).is_absolute() and Path(a.teacher_config).is_absolute()):
+            ap.error("--teacher-ckpt and --teacher-config must be absolute: each worker runs with its "
+                     "working directory at the output folder's parent")
+        if sha256_file(Path(a.teacher_ckpt)) != a.teacher_ckpt_sha256:
+            ap.error(f"--teacher-ckpt {a.teacher_ckpt} does not hash to --teacher-ckpt-sha256 "
+                     f"{a.teacher_ckpt_sha256}; no worker was started")
     if bool(a.old_root) != bool(a.new_root) or (a.old_root and a.cross_commit):
         ap.error("use either --cross-commit OLD NEW or both --old-root and --new-root")
 

@@ -326,7 +326,7 @@ class TeacherEvalModel(torch.nn.Module):
 
 
 def load_teacher_model(resolved: dict, *, builder=None, config_path: str | None = None,
-                       num_classes: int = FROZEN_NUM_CLASSES):
+                       num_classes: int = FROZEN_NUM_CLASSES, expected_sha256: str | None = None):
     """Build the frozen teacher from an ALREADY-VALIDATED resolved teacher artifact.
 
     `resolved` comes from `src.eval.stage_artifacts.validate_teacher_artifact`. `builder` is the
@@ -339,6 +339,10 @@ def load_teacher_model(resolved: dict, *, builder=None, config_path: str | None 
     seeded 42 here, before the first forward; the caller runs the whole split once, batch size 1, in
     the frozen manifest order. Only the NMF basis draw consumes the stream; the caller's CPU RNG and
     every CUDA generator are untouched. The stream description is exposed as `model.nmf_policy`.
+
+    R6: `expected_sha256` (not None) is passed to `load_frozen_teacher`, which hashes the file again and
+    compares it before any parse or build, so a file changed after validation is refused
+    (`TeacherChecksumMismatch`); the default builder then loads the checkpoint strictly.
     """
     from ..distill.nmf_stream import M4_NMF_SEED
     from ..distill.teacher import load_frozen_teacher
@@ -347,7 +351,7 @@ def load_teacher_model(resolved: dict, *, builder=None, config_path: str | None 
         raise CheckpointError("the real teacher evaluation requires the thesis teacher config "
                               "(--teacher-config): its IsolatedNMFLightHamHead implements M4-V")
     frozen = load_frozen_teacher(str(resolved["checkpoint_path"]), builder=builder,
-                                 config_path=config_path)
+                                 config_path=config_path, expected_sha256=expected_sha256)
     if frozen.trainable_parameters():
         raise CheckpointError("teacher exposes trainable parameters; it must be frozen")
     nmf = frozen.begin_nmf_stream("M4-V", M4_NMF_SEED)

@@ -35,9 +35,12 @@ Refusal codes (exit 2 in the select scripts), besides the format and consistency
                               alpha 50) diverged: AM-7 applies in full (stop the stage, apply the AM-7a
                               item 5 clipping value, rerun the FP32 stages); no selection is made. Only
                               checked once the candidates agree on RECIPE_IDENTICAL (num_workers and the
-                              teacher checkpoint; recipe_mismatch first). select_alpha checks the shared
-                              lambda after this, so a diverged default run at another lambda still reads
-                              as default_candidate_diverged, not lambda_mismatch.
+                              teacher's checkpoint, config and resolved model-config hashes;
+                              recipe_mismatch first), by refuse_diverged_default(). select_lambda runs it
+                              inside collect_candidates; select_alpha runs it after its shared-lambda
+                              check (K8-2(a)), so a diverged default run at another lambda reads as
+                              lambda_mismatch, and the lambda check is skipped when no run loaded (a
+                              sweep still training stays a shortfall, exit 3).
   run_aborted_other           a run_abort that is not a student divergence (another rule, a non-finite
                               input or teacher output), or a train row flagged `nonfinite` (or a val row
                               whose all-class mIoU is) with no run_abort after it (the abort record is
@@ -52,9 +55,12 @@ Refusal codes (exit 2 in the select scripts), besides the format and consistency
                                 threshold == AM7B_FACTOR x running_min, and ratio == window_mean /
                                 running_min ("inf" when running_min is 0 or the quotient overflows);
                               AM-7 (a) unless iter >= 2 (a non-finite value at iteration 1 is recorded
-                                as step1_checks, R8-1) and either detail.loss is "nan", "inf" or "-inf",
-                                or detail.loss is finite and detail.grad_norm is non-finite, with that
-                                key named in the `nonfinite` map of the train row at the abort iteration.
+                                as step1_checks, R8-1) and either detail.loss is "nan", "inf" or "-inf"
+                                with detail.grad_norm null and the train row at the abort iteration
+                                holding the key grad_norm with value null (the loss stop precedes
+                                backward, K8-2(c)), or detail.loss is finite and detail.grad_norm is
+                                non-finite; in both cases that key is named in the `nonfinite` map of
+                                the train row at the abort iteration.
   recipe_mismatch             a run_meta that violates RECIPE_EXPECT or lacks a RECIPE_IDENTICAL value,
                               or candidates whose RECIPE_IDENTICAL values differ.
 
@@ -93,7 +99,11 @@ ABORT_DETAIL_KEYS = ("loss", "grad_norm", "window_mean", "running_min", "ratio",
 # identical across the candidates of one sweep.
 RECIPE_EXPECT = {"grad_clip_norm": None, "batch_size": 16, "val_interval": 4000, "max_val_batches": None,
                  "used_pretrained": True, "poly_horizon": 80000}
-RECIPE_IDENTICAL = ("num_workers", "teacher_provenance.ckpt_sha256")
+# The teacher's config and resolved model-config hashes join its checkpoint hash (L-CKPT-GUARD): the NMF
+# settings, eval_steps among them, come from the config and the installed mmseg base config.
+RECIPE_IDENTICAL = ("num_workers", "teacher_provenance.ckpt_sha256", "teacher_provenance.config_sha256",
+                    "teacher_provenance.model_cfg_sha256")
+TEACHER_HASH_FIELDS = RECIPE_IDENTICAL[1:]
 
 
 class SelectionRefused(RuntimeError):
@@ -173,10 +183,15 @@ def _am7a_record_key(it: int, detail: dict, train_row: dict) -> str | None:
     """Q4: the non-finite quantity of an AM-7 (a) detail ("loss" or "grad_norm"), or None when the record
     fails a check every train_distill record passes: iteration 2 or later (R8-1); a non-finite loss (the
     loss case), or a finite loss and a non-finite grad_norm (the norm case); and the aborting iteration's
-    train row naming that key in its `nonfinite` map. The loss case does not require grad_norm to be null,
-    although the trainer always writes it null there."""
+    train row naming that key in its `nonfinite` map. K8-2(c): the loss stop precedes backward, so in the
+    loss case the record's detail.grad_norm is null and the train row holds the key grad_norm with value
+    null, as the trainer writes them."""
     loss, grad_norm = detail.get("loss"), detail.get("grad_norm")
     if loss in NONFINITE_TAGS:
+        row_norm_null = isinstance(train_row, dict) and "grad_norm" in train_row \
+            and train_row["grad_norm"] is None
+        if grad_norm is not None or not row_norm_null:
+            return None
         key = "loss"
     elif _finite_number(loss) and grad_norm in NONFINITE_TAGS:
         key = "grad_norm"
@@ -314,8 +329,7 @@ def _read_run_meta(run_dir: Path, meta_p: Path, sweep: dict, key: str) -> dict:
                                                   f"record {bad} (got, want)")
     shared = {f: _dotted(m, f) for f in RECIPE_IDENTICAL}
     if not (isinstance(shared["num_workers"], int) and not isinstance(shared["num_workers"], bool)
-            and isinstance(shared["teacher_provenance.ckpt_sha256"], str)
-            and shared["teacher_provenance.ckpt_sha256"]):
+            and all(isinstance(shared[f], str) and shared[f] for f in TEACHER_HASH_FIELDS)):
         raise SelectionRefused("recipe_mismatch", f"{run_dir.name}: run_meta lacks a comparable "
                                                   f"{list(RECIPE_IDENTICAL)}: {shared}")
     ramp = m.get("ramp_iters")
@@ -377,8 +391,9 @@ def _diverged(run_dir: Path, rows: list[dict], torn_last: bool, ramp_iters: int)
             raise SelectionRefused("abort_record_invalid",
                                    f"{run_dir.name}: an AM-7 (a) abort at iter {ab['iter']} with detail "
                                    f"{json.dumps(detail)[:240]} cannot hold: it needs iter >= 2 (iteration "
-                                   "1 is step1_checks) and a non-finite loss, or a finite loss with a "
-                                   "non-finite grad_norm, named in that train row's `nonfinite` map")
+                                   "1 is step1_checks) and either a non-finite loss with grad_norm null in "
+                                   "the detail and in that train row (K8-2(c)), or a finite loss with a "
+                                   "non-finite grad_norm; that key named in the train row's `nonfinite` map")
     if ab["rule"] not in DIVERGENCE_RULES or ab["cause"] != DIVERGENCE_CAUSE \
             or ab.get("input_finite") is not True or ab.get("teacher_finite") is not True:
         raise SelectionRefused("run_aborted_other",
@@ -408,7 +423,10 @@ def load_candidate(run_dir: Path, sweep: dict, key: str) -> dict:
     common = {"value": value, "run_id": run_dir.name, "run_dir": str(run_dir),
               "run_meta_sha256": sha256_file(meta_p), "telemetry_sha256": sha256_file(tel_p),
               "lambda_logit": m.get("lambda_logit"), "num_workers": m["num_workers"],
-              "teacher_ckpt_sha256": m["teacher_provenance"]["ckpt_sha256"], "ramp_iters": m["ramp_iters"]}
+              "teacher_ckpt_sha256": m["teacher_provenance"]["ckpt_sha256"],
+              "teacher_config_sha256": m["teacher_provenance"]["config_sha256"],
+              "teacher_model_cfg_sha256": m["teacher_provenance"]["model_cfg_sha256"],
+              "ramp_iters": m["ramp_iters"]}
 
     rows, torn_last = _scan_telemetry(tel_p)
     if any(r.get("event") == "run_abort" for r in rows):
@@ -498,9 +516,12 @@ def load_candidate(run_dir: Path, sweep: dict, key: str) -> dict:
             "checkpoint": ck_path.name, "best_json_sha256": sha256_file(best_p)}
 
 
-def collect_candidates(run_dirs, sweep: dict, key: str) -> tuple[list[dict], list[dict], list[dict]]:
+def collect_candidates(run_dirs, sweep: dict, key: str, *,
+                       check_default: bool = True) -> tuple[list[dict], list[dict], list[dict]]:
     """(finished, diverged, shortfall). A malformed input refuses at once; a missing or unfinished run
-    is collected as shortfall so the caller can name the rule that governs it."""
+    is collected as shortfall so the caller can name the rule that governs it. With
+    `check_default=False` the caller runs refuse_diverged_default() itself (select_alpha, after its
+    shared-lambda check: K8-2(a))."""
     finished, diverged, shortfall = [], [], []
     for d in run_dirs:
         try:
@@ -520,12 +541,20 @@ def collect_candidates(run_dirs, sweep: dict, key: str) -> tuple[list[dict], lis
     if off:
         raise SelectionRefused("grid_mismatch", f"{key} {off} not in the registered grid {grid}")
     # Q3: the candidates' RECIPE_IDENTICAL values must agree BEFORE a divergence is read (select_alpha's
-    # shared-lambda check still follows; see the module docstring).
-    for field in ("num_workers", "teacher_ckpt_sha256"):
+    # shared-lambda check follows, then the default check; see the module docstring).
+    for field in ("num_workers", "teacher_ckpt_sha256", "teacher_config_sha256",
+                  "teacher_model_cfg_sha256"):
         seen = {repr(c[field]) for c in finished + diverged}
         if len(seen) > 1:
             raise SelectionRefused("recipe_mismatch", f"the candidates differ in {field}: "
                                                       f"{sorted(seen)} (a sweep's runs share one value)")
+    if check_default:
+        refuse_diverged_default(diverged, sweep, key)
+    return finished, diverged, shortfall
+
+
+def refuse_diverged_default(diverged: list[dict], sweep: dict, key: str) -> None:
+    """AM-7a: a diverged default candidate keeps AM-7 in full; no selection is made."""
     default = float(sweep["default_candidate"])
     for c in diverged:
         if c["value"] == default:
@@ -534,7 +563,6 @@ def collect_candidates(run_dirs, sweep: dict, key: str) -> tuple[list[dict], lis
                 f"the default candidate {key} = {default:g} (run {c['run_id']}) diverged at iter "
                 f"{c['abort']['iter']} under {c['abort']['rule']}: AM-7 applies in full: stop the stage, "
                 "apply the AM-7a item 5 clipping value, rerun the FP32 stages; no selection is made")
-    return finished, diverged, shortfall
 
 
 def missing_grid_values(cands: list[dict], sweep: dict) -> list[float]:

@@ -14,7 +14,8 @@ projection-free student that E6 (QAT) and E7 (PTQ) consume. E3 itself stays FP32
 
     python src/training/train_e3.py --dry-run
     python src/training/train_e3.py --real-run --confirm-real-run \
-        --teacher-ckpt /workspace/teacher/segnext_b_plantseg.pth \
+        --teacher-ckpt /workspace/teacher/iter_24000.pth \
+        --teacher-ckpt-sha256 <the checkpoint's sha256, 64 lowercase hex> \
         --lambda-logit <same value selected for E2> --alpha 50 --num-workers 12 \
         --ckpt-dir /workspace/e3_s42_alpha50
 """

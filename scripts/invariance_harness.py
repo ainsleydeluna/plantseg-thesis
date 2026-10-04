@@ -29,8 +29,10 @@ Teachers. `stub`: a fixed-weight tiny MSCAN-shaped network with the teacher of r
 shapes ([B,116,64,64] logits, [B,320,32,32] Stage 3). Its ham head draws its NMF bases through the
 attached NMFStream in `_build_bases`, and it is wrapped in the code-under-test's own
 SegNeXtTeacherAdapter and FrozenTeacher, so the M4-KD stream path is the real one. `real`:
-load_frozen_teacher(--teacher-ckpt, --teacher-config) from the code under test; local only (teacher
-image and the checkpoint of record).
+load_frozen_teacher(--teacher-ckpt, --teacher-config) from the code under test, with
+--teacher-ckpt-sha256 as expected_sha256 when that loader takes it; local only (teacher image and the
+checkpoint of record). Each worker runs with its working directory at the output folder's parent, so the
+two paths must be absolute (smoke_invariance_distill refuses relative ones).
 
 Exports use `git archive <commit> -- <explicit paths>` (docs/lane_specs/errata.md E-5): src, configs
 and the class-weight file the trainer reads. Nothing under docs/ is exported, read or listed.
@@ -160,7 +162,8 @@ def export_commit(repo: Path, commit: str, dest: Path, paths=EXPORT_PATHS) -> di
 def run_worker(*, code_root: Path, data_root: Path, out_dir: Path, stage: str, steps: int,
                val_interval: int = 4, teacher: str = "stub", teacher_ckpt=None, teacher_config=None,
                alpha: float | None = None, grad_clip_norm: float | None = None, threads: int = 4,
-               python: str = sys.executable, timeout: int = 7200) -> dict:
+               python: str = sys.executable, timeout: int = 7200,
+               teacher_ckpt_sha256: str | None = None) -> dict:
     """Run one worker in a fresh process and return its exit code and run summary."""
     cmd = [python, str(HARNESS), "worker", "--code-root", str(code_root), "--data-root", str(data_root),
            "--out", str(out_dir), "--stage", stage, "--steps", str(steps),
@@ -173,6 +176,8 @@ def run_worker(*, code_root: Path, data_root: Path, out_dir: Path, stage: str, s
         cmd += ["--teacher-ckpt", str(teacher_ckpt)]
     if teacher_config:
         cmd += ["--teacher-config", str(teacher_config)]
+    if teacher_ckpt_sha256:
+        cmd += ["--teacher-ckpt-sha256", str(teacher_ckpt_sha256)]
     env = dict(os.environ)
     env.pop("PYTHONPATH", None)
     env.update({"PYTHONHASHSEED": "0", "PYTHONDONTWRITEBYTECODE": "1", "OMP_NUM_THREADS": str(threads),
@@ -600,6 +605,7 @@ def worker(argv=None) -> int:
     ap.add_argument("--teacher", choices=("stub", "real"), default="stub")
     ap.add_argument("--teacher-ckpt", default=None)
     ap.add_argument("--teacher-config", default=None)
+    ap.add_argument("--teacher-ckpt-sha256", default=None)
     ap.add_argument("--alpha", type=float, default=None)
     ap.add_argument("--grad-clip-norm", type=float, default=None)
     ap.add_argument("--threads", type=int, default=4)
@@ -639,7 +645,13 @@ def worker(argv=None) -> int:
     if a.teacher == "stub":
         teacher = FrozenTeacher(SegNeXtTeacherAdapter(build_stub_segnext()))
     else:
-        teacher = td.load_frozen_teacher(a.teacher_ckpt, config_path=a.teacher_config)
+        # R6 (L-CKPT-GUARD): the expected sha256 goes to the loader only when the code under test
+        # takes it (an older code root loads without it; the driver checks the recorded hash).
+        load_kw = {"config_path": a.teacher_config}
+        if a.teacher_ckpt_sha256 is not None \
+                and "expected_sha256" in inspect.signature(td.load_frozen_teacher).parameters:
+            load_kw["expected_sha256"] = a.teacher_ckpt_sha256
+        teacher = td.load_frozen_teacher(a.teacher_ckpt, **load_kw)
 
     stage = td.resolve_stage(a.stage)
     run_params = inspect.signature(td.run).parameters

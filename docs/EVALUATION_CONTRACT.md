@@ -2,7 +2,7 @@
 
 > **Status: FROZEN (2026-07-26).** This is the authoritative definition of *how every evaluation number in
 > this thesis is computed* and *what every evaluation run must emit*. A1 (metric tests) and A2 (evaluator)
-> implement this document and must not invent additional metric or schema decisions. **[UPDATED 2026-09-24 — B66-prep L-EVAL-DET, DL-17]** §10 adds one optional, separately versioned block (`run.eval_runtime`) and the evaluation determinism rule; `schema_version` is unchanged. **[UPDATED 2026-09-28 — L-AM13]** §11 adds the descriptive upstream evaluation protocol (`upstream/1.0.0`) and artifact layout `plantseg-eval-artifact/1.2.0`; `schema_version`, `metric_protocol` and the canvas protocol are unchanged.
+> implement this document and must not invent additional metric or schema decisions. **[UPDATED 2026-09-24 — B66-prep L-EVAL-DET, DL-17]** §10 adds one optional, separately versioned block (`run.eval_runtime`) and the evaluation determinism rule; `schema_version` is unchanged. **[UPDATED 2026-09-28 — L-AM13]** §11 adds the descriptive upstream evaluation protocol (`upstream/1.0.0`) and artifact layout `plantseg-eval-artifact/1.2.0`; `schema_version`, `metric_protocol` and the canvas protocol are unchanged. **[UPDATED 2026-10-02 — L-CKPT-GUARD]** §7.4 adds the exploratory arms A, F and G as descriptive FP32 stages, the declared checkpoint stage and the teacher checkpoint's identity; `schema_version` and `artifact_schema_version` (`plantseg-eval-artifact/1.2.0`) are unchanged.
 >
 > Companion to [IMPLEMENTATION_CONTRACT.md](IMPLEMENTATION_CONTRACT.md) §(f) (which states *which* metrics
 > the thesis reports) and [open_questions.md](open_questions.md) D3/D4 (the decision records).
@@ -398,7 +398,7 @@ official statistics.
   "run": {
     "run_id":            "string",   // unique, e.g. e1_test_clean_20260726T101500Z
     "artifact_status":   "official | provisional | smoke",
-    "stage":             "teacher | E1 | E2 | E3 | E4 | E5 | E6 | E7",
+    "stage":             "teacher | E1 | E2 | E3 | A | F | G | E4 | E5 | E6 | E7",   // A, F, G [UPDATED 2026-10-02 — L-CKPT-GUARD]: §7.4
     "model_role":        "teacher | student",
     "precision":         "fp32 | int8_ptq | int8_qat",
     "quant_backend":     "string | null",      // e.g. qnnpack, fbgemm/x86
@@ -675,6 +675,16 @@ are proven to use the exact same evaluation implementation.
 **[AM-3, AM-4, 2026-09-23] INT8 VAL scoring.** QAT checkpoint selection (AM-4) and the E6-KD trigger
 (AM-3) score VAL on the **converted INT8** (QNNPACK) model on CPU, not on the fake-quant model.
 Code: lanes L-AM4 and L-AM3.
+
+### 7.4 Exploratory arms A, F, G; declared checkpoint stage; teacher checkpoint identity [added 2026-10-02, lane L-CKPT-GUARD]
+
+**Arms.** The evaluator scores the exploratory arms A (both channel-wise terms; AM-17 item 7), F (feature-map term only; AM-17b item 1(a)) and G (logit-map term only; AM-17b item 1(b)) as stages of their own: `scripts/evaluate_model.py --stage A|F|G` with `--model-role student --precision fp32 --checkpoint <the arm's best checkpoint>`. In `src/eval/stage_artifacts.py` they are `fp32_checkpoint` stages and, with the teacher, members of `DESCRIPTIVE_ONLY_STAGES`. An arm's checkpoint passes the same projection-free check as E3 (`assert_clean_student_state`: no training-only CWD projection key in `model_state_dict`). §5.3's `run.stage` admits A, F and G; `schema_version` (`plantseg-eval/1.0.0`) and `artifact_schema_version` (`plantseg-eval-artifact/1.2.0`) are unchanged: the field gains values and no field changes.
+
+**Descriptive only.** No evaluator code enforces it: an artifact of the teacher, A, F or G is an ordinary artifact. The statistics driver must refuse the teacher, A, F and G as comparators in any inferential test.
+
+**Declared stage.** Every checkpoint `src/training/train_distill.py` writes records its stage (`E2`, `E3`, `A`, `F` or `G`). Before any dataset or model exists, the evaluator refuses an E2, E3, A, F or G checkpoint that records no stage (`stage_undeclared`) or another stage (`stage_mismatch`). E1 checkpoints record none (`train_e1.save_checkpoint`): `--stage E1` accepts a checkpoint without a stage and refuses one that records another, and an E1 checkpoint is refused under `--stage E2`, `E3`, `A`, `F` or `G`.
+
+**Teacher checkpoint identity.** The teacher stage requires `--teacher-ckpt-sha256`, the checkpoint's SHA-256 as 64 lowercase hex characters (`[teacher_ckpt_sha256_required]`, `[teacher_ckpt_sha256_format]`); any other stage refuses the flag (`[teacher_ckpt_sha256_not_teacher]`). The file is hashed and compared before it is parsed (`teacher_hash_mismatch`), hashed again before the model is built, and its state must match the built teacher exactly at load (IMPLEMENTATION_CONTRACT B1, the L-CKPT-GUARD note). R3 (`scripts/teacher_readiness_r3.py`) passes the checkpoint's SHA-256 after verifying that it equals the `checkpoint_sha256` of `teacher_selection.json`. The rule is the same under both protocols (`canvas` and `upstream`, §11). The file evaluated is the M12-selected `iter_<N>.pth` (the teacher of record is `iter_24000.pth`); `best_mIoU_full_iter_<N>.pth` is another file with another hash and is refused. Every evaluator refusal exits 1.
 
 ---
 

@@ -37,10 +37,18 @@ can be built even if one of them failed.
       relative path and a path through a symlink that resolve into it; the test of train_e1's
       _assert_outside_repo) -> [ckpt_dir_in_repo] in a real run, before the fresh-directory gate, and
       nothing is created; a path whose resolution fails (pathlib's symlink-loop RuntimeError, simulated)
-      raises before any teacher or loader and is never refused as in-repo; --log-every < 1 ->
+      is refused with [ckpt_dir_unresolvable] before any teacher or loader and never as in-repo
+      (K8-2(d): also a simulated OSError and a real NUL-byte path); --log-every < 1 ->
       [log_every] in both modes (the dry cases pass --teacher-ckpt, so a gate after the teacher load
       would show as a load). A host without symlink rights (Windows) SKIPs the symlink case, and a
       working directory on another drive SKIPs the relative one: a named SKIP, never a PASS.
+  R6   --teacher-ckpt-sha256: absent in a real run -> [teacher_ckpt_sha256_required] (after the TF32
+      gate, before the CUDA-order gate); "", 63 characters or uppercase -> [teacher_ckpt_sha256_format]
+      and without --teacher-ckpt -> [teacher_ckpt_sha256_without_ckpt], in both modes; the legal launch
+      hands the value to the teacher load; the REAL loader refuses a wrong value with
+      [teacher_ckpt_sha256_mismatch] before any torch.load or builder call; a loader raising
+      TeacherStateDictMismatch or TeacherChecksumMismatch exits 2 in both modes; a dry run with
+      --teacher-ckpt and no value stays legal
   abort  main() turns run()'s RunAborted into exit code 3 (td.ABORTED_EXIT, distinct from 0, 1 and 2) and
       one RESULT: ABORTED line on stdout (a stub run() that raises)
   legal  each stage's legal launch reaches run() with the recipe values (mode real, 80,000 iterations,
@@ -50,6 +58,7 @@ can be built even if one of them failed.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import io
 import os
 import sys
@@ -63,6 +72,8 @@ import torch  # noqa: E402
 
 import src.data.isolation as isolation  # noqa: E402
 import src.training.train_distill as td  # noqa: E402
+from src.distill.segnext_teacher import TeacherCheckpointInvalid, TeacherStateDictMismatch  # noqa: E402
+from src.distill.teacher import TeacherChecksumMismatch  # noqa: E402
 from configs.e1_student import E1_STUDENT  # noqa: E402
 from src.distill import FrozenTeacher, MockTeacher  # noqa: E402
 
@@ -71,6 +82,7 @@ results: list[tuple[str, bool, str]] = []
 SKIPPED: list[tuple[str, str]] = []
 COUNT = {"teacher": 0, "loader": 0, "run": 0, "student": 0}
 SEEN: list[dict] = []
+LOAD_KW: list[dict] = []
 
 
 def check(name: str, ok: bool, detail: str = "") -> None:
@@ -87,8 +99,9 @@ class _WouldBuildStudent(Exception):
     pass
 
 
-def stub_load_frozen_teacher(*_a, **_k):
+def stub_load_frozen_teacher(*_a, **k):
     COUNT["teacher"] += 1
+    LOAD_KW.append(dict(k))
     return FrozenTeacher(MockTeacher(NC))
 
 
@@ -112,6 +125,7 @@ def reset() -> None:
     for k in COUNT:
         COUNT[k] = 0
     SEEN.clear()
+    LOAD_KW.clear()
 
 
 def call_main(argv: list[str]) -> tuple[int, str]:
@@ -151,8 +165,9 @@ def fresh(name: str) -> str:
 
 TEACHER = TMP / "teacher.pth"
 TEACHER.write_bytes(b"not read before the teacher load")
+TEACHER_SHA256 = hashlib.sha256(TEACHER.read_bytes()).hexdigest()
 BASE = ["--real-run", "--confirm-real-run", "--device", "cuda", "--teacher-ckpt", str(TEACHER),
-        "--num-workers", "12"]
+        "--teacher-ckpt-sha256", TEACHER_SHA256, "--num-workers", "12"]
 
 
 def legal(stage: str, **over) -> list[str]:
@@ -193,7 +208,10 @@ def without(argv: list[str], flag: str) -> list[str]:
 
 def refused(label: str, argv: list[str], code: str, *, teacher: int = 0) -> None:
     reset()
-    rc, err = call_main(argv)
+    try:
+        rc, err = call_main(argv)
+    except Exception as e:  # noqa: BLE001 - a raise instead of a refusal is a FAIL of this check
+        rc, err = None, f"raised {type(e).__name__}: {e}"
     check(f"{label}_refused_{code}", rc == 2 and f"[{code}]" in err and COUNT["loader"] == 0
           and COUNT["teacher"] == teacher and COUNT["run"] == 0,
           f"rc={rc} teacher={COUNT['teacher']} loader={COUNT['loader']} run={COUNT['run']} "
@@ -285,24 +303,28 @@ def test_ckpt_dir_in_repo_and_log_every() -> None:
     created = [p for p in (under, REPO / "kdh_ckpt_never_created_rel", REPO / "kdh_ckpt_never_created_link")
                if p.exists()]
     check("q10_nothing_created_in_repo", not created, str(created))
+    # K8-2(d): a --ckpt-dir whose resolution fails is refused by name, exit 2, never as in-repo
     marker = "kdh_unresolvable_ckpt_dir"
     real_resolve = Path.resolve
-
-    def resolve(self, strict=False):              # pathlib's error for a symlink loop (Python <= 3.12)
-        if marker in str(self):
-            raise RuntimeError(f"Symlink loop from {str(self)!r}")
-        return real_resolve(self, strict=strict)
-    reset()
-    Path.resolve = resolve
-    try:
-        rc, err = call_main(legal("g", ckpt_dir=str(TMP / marker / "g_s42")))
-        outcome = f"rc={rc} {err.strip()[-120:]}"
-    except RuntimeError as e:
-        outcome = f"raised {e}"
-    finally:
-        Path.resolve = real_resolve
-    check("q10_unresolvable_ckpt_dir_raises_not_in_repo", outcome.startswith("raised Symlink loop")
-          and COUNT["teacher"] == 0 and COUNT["loader"] == 0 and COUNT["run"] == 0, outcome)
+    for label, error in (("symlink_loop", RuntimeError), ("oserror", OSError)):
+        def resolve(self, strict=False, _error=error):   # pathlib's symlink-loop error (Python <= 3.12)
+            if marker in str(self):
+                raise _error(f"Symlink loop from {str(self)!r}")
+            return real_resolve(self, strict=strict)
+        reset()
+        Path.resolve = resolve
+        try:
+            rc, err = call_main(legal("g", ckpt_dir=str(TMP / marker / "g_s42")))
+            outcome = f"rc={rc} {err.strip()[-120:]}"
+        except Exception as e:  # noqa: BLE001 - a raise is the failure this check detects
+            rc, err, outcome = None, "", f"raised {type(e).__name__}: {e}"
+        finally:
+            Path.resolve = real_resolve
+        check(f"q10_unresolvable_ckpt_dir_{label}_refused_ckpt_dir_unresolvable",
+              rc == 2 and "[ckpt_dir_unresolvable]" in err and "[ckpt_dir_in_repo]" not in err
+              and COUNT["teacher"] == 0 and COUNT["loader"] == 0 and COUNT["run"] == 0, outcome)
+    refused("q10_nul_byte_ckpt_dir", legal("g", ckpt_dir=str(TMP / "kdh_nul\x00byte" / "g_s42")),
+            "ckpt_dir_unresolvable")
     for bad in ("0", "-1"):
         refused(f"q10_real_log_every_{bad}", legal("g", log_every=bad), "log_every")
         refused(f"q10_dry_log_every_{bad}", ["--stage", "e2", "--dry-run", "--teacher-ckpt", str(TEACHER),
@@ -311,6 +333,96 @@ def test_ckpt_dir_in_repo_and_log_every() -> None:
     rc, err = call_main(["--stage", "e2", "--dry-run", "--log-every", "1"])
     check("q10_dry_log_every_1_accepted", rc == 0 and COUNT["run"] == 1 and SEEN[-1].get("log_every") == 1,
           err.strip()[-120:])
+
+
+def test_teacher_sha256() -> None:
+    """R6 (L-CKPT-GUARD): the --teacher-ckpt-sha256 gates, the pass-through and the two load refusals."""
+    refused("r6_real_without_sha256", without(legal("g"), "--teacher-ckpt-sha256"),
+            "teacher_ckpt_sha256_required")
+    # placement (patch 7): after the TF32 gate, before the CUDA-order gate of the teacher load
+    torch.backends.cudnn.allow_tf32 = False
+    try:
+        refused("r6_tf32_gate_precedes_the_sha256_gate", without(legal("g"), "--teacher-ckpt-sha256"), "tf32")
+    finally:
+        torch.backends.cudnn.allow_tf32 = True
+    real_is_init = torch.cuda.is_initialized
+    torch.cuda.is_initialized = lambda: True
+    try:
+        refused("r6_sha256_gate_precedes_the_cuda_order_gate", without(legal("g"), "--teacher-ckpt-sha256"),
+                "teacher_ckpt_sha256_required")
+    finally:
+        torch.cuda.is_initialized = real_is_init
+    for label, value in (("empty", ""), ("63_chars", TEACHER_SHA256[:63]),
+                         ("uppercase", TEACHER_SHA256.upper())):
+        refused(f"r6_real_sha256_{label}", with_value(legal("g"), "--teacher-ckpt-sha256", value),
+                "teacher_ckpt_sha256_format")
+        refused(f"r6_dry_sha256_{label}", ["--stage", "e2", "--dry-run", "--teacher-ckpt", str(TEACHER),
+                                           "--teacher-ckpt-sha256", value], "teacher_ckpt_sha256_format")
+    refused("r6_real_sha256_without_ckpt", without(legal("g"), "--teacher-ckpt"),
+            "teacher_ckpt_sha256_without_ckpt")
+    refused("r6_dry_sha256_without_ckpt", ["--stage", "e2", "--dry-run", "--teacher-ckpt-sha256",
+                                           TEACHER_SHA256], "teacher_ckpt_sha256_without_ckpt")
+    reset()
+    rc, err = call_main(legal("e3"))
+    check("r6_legal_launch_passes_sha256_to_the_teacher_load",
+          rc == 0 and LOAD_KW and LOAD_KW[-1].get("expected_sha256") == TEACHER_SHA256,
+          f"rc={rc} {LOAD_KW} {err.strip()[-120:]}")
+    reset()
+    rc, err = call_main(["--stage", "e2", "--dry-run", "--teacher-ckpt", str(TEACHER)])
+    check("r6_dry_with_ckpt_and_no_sha256_stays_legal", rc == 0 and COUNT["run"] == 1
+          and LOAD_KW and LOAD_KW[-1].get("expected_sha256") is None, f"rc={rc} {err.strip()[-120:]}")
+    # the REAL loader: a wrong value is refused before any torch.load or builder call
+    import src.distill.segnext_teacher as st
+    calls = {"torch_load": 0, "builder": 0}
+    real_torch_load, real_builder = torch.load, st.segnext_builder
+
+    def counting_load(*a, **k):
+        calls["torch_load"] += 1
+        return real_torch_load(*a, **k)
+
+    def counting_builder(*a, **k):
+        calls["builder"] += 1
+        return real_builder(*a, **k)
+    torch.load, st.segnext_builder = counting_load, counting_builder
+    td.load_frozen_teacher = REAL_LOAD
+    reset()
+    try:
+        rc, err = call_main(with_value(legal("g"), "--teacher-ckpt-sha256", "0" * 64))
+    finally:
+        torch.load, st.segnext_builder = real_torch_load, real_builder
+        td.load_frozen_teacher = stub_load_frozen_teacher
+    check("r6_wrong_sha256_refused_before_any_load", rc == 2 and "[teacher_ckpt_sha256_mismatch]" in err
+          and calls == {"torch_load": 0, "builder": 0} and COUNT["run"] == 0,
+          f"rc={rc} {calls} {err.strip()[-160:]}")
+    # a loader raising either load refusal exits 2 in both modes; any other loader error is not mapped
+    for exc in (TeacherStateDictMismatch(missing=["backbone.x"], source="fixture"),
+                TeacherChecksumMismatch("0" * 64, "1" * 64, "fixture")):
+        def raising(*_a, _exc=exc, **_k):
+            COUNT["teacher"] += 1
+            raise _exc
+        td.load_frozen_teacher = raising
+        try:
+            for mode, argv in (("real", legal("g")),
+                               ("dry", ["--stage", "e2", "--dry-run", "--teacher-ckpt", str(TEACHER)])):
+                reset()
+                rc, err = call_main(argv)
+                check(f"r6_{mode}_{type(exc).__name__}_exits_2", rc == 2 and f"[{exc.code}]" in err
+                      and COUNT["run"] == 0, f"rc={rc} {err.strip()[-160:]}")
+        finally:
+            td.load_frozen_teacher = stub_load_frozen_teacher
+
+    def invalid(*_a, **_k):
+        raise TeacherCheckpointInvalid("an unrelated loader error")
+    td.load_frozen_teacher = invalid
+    reset()
+    try:
+        call_main(legal("g"))
+        outcome = "returned"
+    except TeacherCheckpointInvalid:
+        outcome = "raised"
+    finally:
+        td.load_frozen_teacher = stub_load_frozen_teacher
+    check("r6_other_loader_errors_are_not_mapped", outcome == "raised", outcome)
 
 
 def test_abort_exit() -> None:
@@ -551,6 +663,7 @@ def test_gate_order() -> None:
 
 
 REAL_RUN = td.run
+REAL_LOAD = td.load_frozen_teacher
 
 
 def main() -> int:
@@ -568,7 +681,7 @@ def main() -> int:
         for fn in (test_legal_launches, test_lambda, test_ckpt_dir, test_ckpt_dir_in_repo_and_log_every,
                    test_abort_exit, test_schedule, test_val, test_workers, test_seed_batch_init, test_clip,
                    test_tf32, test_cuda_order, test_alpha_and_semantics, test_run_entry_repeats,
-                   test_gate_order):
+                   test_gate_order, test_teacher_sha256):
             fn()
     finally:
         td.DATA["root"] = saved[0]

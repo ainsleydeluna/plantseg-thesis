@@ -52,7 +52,7 @@ ARTIFACT_SCHEMA_VERSION = "plantseg-eval-artifact/1.2.0"
 AM5_RULE = "no_disease_gt"
 
 ARTIFACT_STATUSES = ("official", "provisional", "smoke")
-STAGES = ("teacher", "E1", "E2", "E3", "E4", "E5", "E6", "E7")
+STAGES = ("teacher", "E1", "E2", "E3", "A", "F", "G", "E4", "E5", "E6", "E7")
 MODEL_ROLES = ("teacher", "student")
 PRECISIONS = ("fp32", "int8_ptq", "int8_qat")
 SPLITS = ("val", "test")

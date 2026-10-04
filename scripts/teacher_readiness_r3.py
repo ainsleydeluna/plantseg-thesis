@@ -119,10 +119,13 @@ def decide(all_class_miou: float) -> dict:
             "rule": "teacher VAL all-class mIoU > comparator; no margin"}
 
 
-def evaluator_args(args) -> argparse.Namespace:
+def evaluator_args(args, checkpoint_sha256: str) -> argparse.Namespace:
+    """The evaluator's arguments for R3. `checkpoint_sha256` is the selection record's verified hash
+    (`verified_checkpoint_sha256`), passed as --teacher-ckpt-sha256 (R6): no new R3 flag."""
     from scripts.evaluate_model import build_parser
     argv = ["--stage", "teacher", "--model-role", "teacher", "--split", "val",
             "--checkpoint", str(args.checkpoint), "--teacher-config", str(args.teacher_config),
+            "--teacher-ckpt-sha256", checkpoint_sha256,
             "--batch-size", "1", "--artifact-status", ARTIFACT_STATUS,
             "--out-dir", str(args.out_dir), "--device", args.device]
     if args.run_id:
@@ -136,7 +139,7 @@ def run_r3(args, *, evaluate=None, teacher_builder=None, resolve_manifest=None) 
     manifest_sha = verify_val_manifest(selection, rows)          # refused here -> nothing is evaluated
     if evaluate is None:
         from scripts.evaluate_model import run as evaluate
-    ev_args = evaluator_args(args)
+    ev_args = evaluator_args(args, selection["verified_checkpoint_sha256"])
     artifact_dir = Path(evaluate(ev_args, teacher_builder=teacher_builder))
     summary = json.loads((artifact_dir / "summary.json").read_text(encoding="utf-8"))
     level = summary["dataset_level"]

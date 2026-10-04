@@ -28,6 +28,7 @@ scripts/smoke_invariance_distill.py. Lane checks (docs/lane_specs/part2.md; erra
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import io
 import math
 import sys
@@ -417,7 +418,7 @@ def test_cli_gates() -> None:
     td.load_frozen_teacher = fake_load
     # L-KD-HARDEN item 2: no --grad-clip-norm (AM-7) and an explicit --num-workers in a real launch.
     base = ["--real-run", "--confirm-real-run", "--device", "cuda", "--teacher-ckpt", str(ckpt),
-            "--num-workers", "12"]
+            "--teacher-ckpt-sha256", hashlib.sha256(ckpt.read_bytes()).hexdigest(), "--num-workers", "12"]
     try:
         for label, argv, want in (
                 ("e3_dir_without_token", ["--stage", "e3", "--lambda-logit", "1", "--alpha", "50",
