@@ -210,12 +210,10 @@ def _run(args, *, model_factory=None) -> int:
 
     miou = result.dataset_level["all_class_miou"]
     if args.teacher_role == "record":
-        reference = ref["all_class_miou"] if stub else td.R3_VAL_MIOU
-        delta = None if miou is None else abs(miou - reference)
-        passed = delta is not None and delta <= td.R3_TOLERANCE
-        gate = {"rule": "|all_class_miou - reference| <= tolerance, before the artifact is written (P18)",
-                "reference": reference, "reference_source": "--val-reference (stub mode)" if stub else "R3",
-                "tolerance": td.R3_TOLERANCE, "value": miou, "delta": delta, "passed": passed}
+        gate = td.reproduction_gate(
+            miou, ref["all_class_miou"], stub=stub,
+            rule="|all_class_miou - reference| <= tolerance, before the artifact is written (P18)")
+        passed = gate["passed"]
     else:
         gate, passed = "nothing", True
 

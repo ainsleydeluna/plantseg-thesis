@@ -774,6 +774,22 @@ def check_val_reference(path, *, stub: bool, expected_rows: int) -> dict:
             "files_sha256": files}
 
 
+def reproduction_gate(value, ref_miou, *, stub: bool, rule: str) -> dict:
+    """The record role's reproduction gate (P18; D2 VAL and D1's VAL part), decided before anything is written.
+
+    Real mode compares the produced all-class mIoU itself with R3_VAL_MIOU (0.38576993346214294, from
+    PAIRING), not with the --val-reference artifact's value (AM-PC-1 finding 27); check_val_reference
+    separately requires that artifact within the same tolerance of R3. Stub mode compares with the
+    --val-reference artifact. `passed` needs |value - reference| <= R3_TOLERANCE (1e-5); None or NaN fails.
+    Returns the gate block the outputs record, `rule` the caller's wording."""
+    reference = ref_miou if stub else R3_VAL_MIOU
+    delta = None if value is None else abs(value - reference)
+    passed = delta is not None and delta <= R3_TOLERANCE
+    return {"rule": rule, "reference": reference,
+            "reference_source": "--val-reference (stub mode)" if stub else "R3", "tolerance": R3_TOLERANCE,
+            "value": value, "delta": delta, "passed": passed}
+
+
 def check_strata(path, stems, *, stub: bool) -> dict:
     """The AM-17 item 8 strata file, read directly (P1): its schema and lane, the registered build in a
     real run, and its split-list sha256 equal to the TRAIN split list's."""
@@ -993,6 +1009,7 @@ __all__ = [
     "require_single_output", "TeacherInputs", "verify_teacher_inputs", "LoadedTeacher", "load_teacher",
     "loaded_state_sha256", "frozen_blob_record", "after_load_checks", "teacher_record", "same_teacher",
     "feature_sha256", "rng_state_sha256", "RngWatchForward", "SplitTeacher", "train_canvas_dataset", "check_val_reference",
+    "reproduction_gate",
     "check_strata", "check_m11",
     "environment_block", "base_document", "output_stamp", "read_diag_output", "write_files_exclusive",
     "add_common_flags",

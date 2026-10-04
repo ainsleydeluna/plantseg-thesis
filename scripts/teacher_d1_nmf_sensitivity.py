@@ -388,12 +388,9 @@ def _run_val(args, *, model_factory, stub, start, t0, code, kind, repeat, out_pa
         return None if x is None or math.isnan(x) else float(x)
 
     miou42 = result.dataset_level["all_class_miou"]
-    reference = ref["all_class_miou"] if stub else td.R3_VAL_MIOU
-    delta = None if miou42 is None else abs(miou42 - reference)
-    passed = delta is not None and delta <= td.R3_TOLERANCE
-    gate = {"rule": "stream 42's |all_class_miou - reference| <= tolerance", "reference": reference,
-            "reference_source": "--val-reference (stub mode)" if stub else "R3", "tolerance": td.R3_TOLERANCE,
-            "value": miou42, "delta": delta, "passed": passed}
+    gate = td.reproduction_gate(miou42, ref["all_class_miou"], stub=stub,
+                                rule="stream 42's |all_class_miou - reference| <= tolerance")
+    passed = gate["passed"]
     doc = td.base_document(SCRIPT, args, stub=stub, start_utc=start, code=code, extra={
         "schema": SCHEMA_VAL, "part": "val", "role": "record", "arm_id": None, "purpose": None, "repeat": repeat,
         "gates": "nothing (descriptive); stream 42 must reproduce R3 for the statistics to be written",
@@ -414,7 +411,7 @@ def _run_val(args, *, model_factory, stub, start, t0, code, kind, repeat, out_pa
     if not passed:
         doc["status"] = "not reproduced"
         td.finish_output(out_path, doc, start, t0)
-        print(f"STOP: not reproduced: stream 42 all_class_miou {miou42!r}, delta {delta!r}", file=sys.stderr)
+        print(f"STOP: not reproduced: stream 42 all_class_miou {miou42!r}, delta {gate['delta']!r}", file=sys.stderr)
         return td.EXIT_STOP
 
     per_stream = []

@@ -569,6 +569,10 @@ def killers(e) -> dict:
     k["b7 D1's share > 0.99 is strict"] = s1.case_strict_099
     k["P16 the ECE share > 0.99 is strict"] = sc.case_strict_099
     k["d6 the disease subset follows the ground truth, not the prediction"] = sc.case_disease_by_ground_truth
+    k["d the real branch's reference is R3 itself, not the --val-reference artifact (finding 27)"] = lambda: sc.case_gate_real_reference(td)
+    k["d R3_VAL_MIOU is the literal 0.38576993346214294 and PAIRING's value; tolerance 1e-5"] = lambda: sc.case_gate_constants(td)
+    k["d real mode: 9e-6 from R3 passes and 1.1e-5 is refused, on both sides"] = lambda: sc.case_gate_tolerance(td)
+    k["d None and NaN are refused"] = lambda: sc.case_gate_none_nan(td)
 
     def fresh_load():
         return s1.gated_load(td, e.args(), factory=fx.stub_factory)
@@ -822,7 +826,7 @@ def mutations(e) -> list:
          [("p = torch.softmax(logits.to(torch.float64), dim=1)", "p = logits.to(torch.float64)")],
          "c3 the mean-probability prediction averages probabilities, not logits"),
         ("P18 the reproduction gate removed", d2, "_run",
-         [("passed = delta is not None and delta <= td.R3_TOLERANCE", "passed = True")],
+         [('passed = gate["passed"]', "passed = True")],
          "P18 a failed gate: exit 1, no evaluator artifact"),
         ("D3 median replaced by the mean", d3, "_stats",
          [("float(np.median(np.asarray(values, dtype=np.float64)))", "float(np.mean(np.asarray(values, dtype=np.float64)))")],
@@ -997,6 +1001,22 @@ def mutations(e) -> list:
         ("P8 the record site's dataclass check removed", td, "teacher_record",
          [("require_provenance_names(provenance_fields(), \"dataclasses.fields(TeacherProvenance)\")", "pass")],
          "P8 the written record's keys and dataclasses.fields must be the K-part fields in order"),
+        ("d the real branch inverted (the artifact in real mode, R3 in stub mode)", td, "reproduction_gate",
+         [("reference = ref_miou if stub else R3_VAL_MIOU", "reference = R3_VAL_MIOU if stub else ref_miou")],
+         "d the real branch's reference is R3 itself, not the --val-reference artifact (finding 27)"),
+        ("d a changed digit of R3 in the gate", td, "reproduction_gate",
+         [("reference = ref_miou if stub else R3_VAL_MIOU", "reference = ref_miou if stub else 0.38576993346215294")],
+         "d R3_VAL_MIOU is the literal 0.38576993346214294 and PAIRING's value; tolerance 1e-5"),
+        ("d a changed tolerance (2e-5)", td, "reproduction_gate",
+         [("passed = delta is not None and delta <= R3_TOLERANCE", "passed = delta is not None and delta <= 2e-5")],
+         "d real mode: 9e-6 from R3 passes and 1.1e-5 is refused, on both sides"),
+        ("d a None value passes", td, "reproduction_gate",
+         [("passed = delta is not None and delta <= R3_TOLERANCE", "passed = delta is None or delta <= R3_TOLERANCE")],
+         "d None and NaN are refused"),
+        ("d a NaN value passes (a negated comparison)", td, "reproduction_gate",
+         [("passed = delta is not None and delta <= R3_TOLERANCE",
+           "passed = delta is not None and not delta > R3_TOLERANCE")],
+         "d None and NaN are refused"),
     ]
 
 
