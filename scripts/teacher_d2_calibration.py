@@ -7,7 +7,10 @@ difference: the evaluator core gets `batch_forward=CalibratingBatchForward(Model
 instead of `forward=ModelDeviceForward(cpu)`, because the ECE needs the targets. The hook calls the same
 forward, accumulates from the tensor the core argmaxes and hands that tensor back unchanged
 (src/eval/calibration.py). Canvas protocol, CPU, batch size 1, the VAL manifest of record, the M4-V NMF
-stream seeded 42 begun by load_teacher_model.
+stream seeded 42 begun by load_teacher_model. The mirror is pinned to run() at 60c1417 (P34), K-part's R6
+included: the checkpoint's sha256 is required and format-checked before any file is read (check_teacher_flags,
+as validate_cli_args), and validate_teacher_artifact and load_teacher_model both receive it as
+expected_sha256 (src/eval/teacher_diag.load_teacher).
 
 Roles and purposes (P3, P4):
   --teacher-role record --purpose item1     the item 1(b) pass        teacher_d2_<UTC>.json
