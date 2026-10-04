@@ -769,6 +769,9 @@ class Lexer:
                 raise Unparsable("unterminated $'")
             self.add_text("".join(out), quoted=True)
             return j + 1
+        if i + 1 < self.n and s[i + 1] in "?*@#$!-0123456789":
+            self.add_text(s[i:i + 2])                   # a special parameter ($?, $*, $1 ...): never a glob
+            return i + 2
         self.add("$")
         return i + 1
 
@@ -1060,6 +1063,17 @@ def is_test_exclude(t):
         return False
     words = {w.strip().lower() for w in m.group(1).split(",")}
     return {"exclude", "icase"} <= words and not words & {"glob", "literal"} and m.group(2) == "*test*"
+
+
+def blob_path(t):
+    """The path of a `<rev>:<path>`, `:<path>` or `:<n>:<path>` object name; None for anything else
+    (a plain revision, `:/<text>` commit search, pathspec magic, a Windows drive path)."""
+    if t.startswith(":"):
+        m = re.match(r"^:(?:[0-3]:)?(?![(/!^])(.+)$", t)
+        return m.group(1) if m else None
+    if ":" in t and not re.match(r"^[A-Za-z]:[\\/]", t):
+        return t.split(":", 1)[1]
+    return None
 
 
 def is_exclude_spec(t):
@@ -2409,8 +2423,9 @@ class Analyzer:
         plain_revs = 0
         for w in before:
             t = w.text
-            if ":" in t and not t.startswith(":") and not re.match(r"^[A-Za-z]:[\\/]", t):
-                revpaths.append(w)
+            bp = blob_path(t)
+            if bp is not None:                          # one blob (or tree) object: <rev>:<path>, :<path>
+                revpaths.append(bp)
             elif self.sens(w, st, d):
                 specs.append(w)
             else:
@@ -2420,8 +2435,7 @@ class Analyzer:
                 else:
                     plain_revs += 1
         root = State(self.c.project or st.cwd, st.vars)
-        for w in revpaths:
-            path = w.text.split(":", 1)[1]
+        for path in revpaths:
             if sensitive(path):
                 return self.deny(sg, "B4")
             if path in ("", ".", "./") or path.endswith("/") or self.c.is_dir(self.res(path, root, d)):

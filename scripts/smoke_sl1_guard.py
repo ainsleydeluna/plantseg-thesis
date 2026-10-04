@@ -55,7 +55,47 @@ GROUPS = {"A": "file tools (rule 1)", "B": "Grep/Glob tools (rule 2)", "C": "rec
           "D": "everyday commands", "E": "bare listings", "F": "recursive and glob listings",
           "G": "filter and count exemptions", "H": "git", "I": "pytest", "J": "test-named and NAMED paths",
           "K": "Monitor", "L": "destructive (rule 4)", "M": "nesting and parsing", "N": "archives",
-          "W": "Windows path forms", "O": "launcher, modes, settings, invariants"}
+          "W": "Windows path forms", "P": "GO forms (verbatim)", "O": "launcher, modes, settings, invariants"}
+GO1_STEP1 = [
+    "git rev-parse --is-shallow-repository",
+    "git fetch --unshallow",
+    "git fetch origin master",
+    "git rev-parse FETCH_HEAD",
+    "git ls-remote origin master",
+    "git merge-base --is-ancestor c689634617ef9b59473b1a6c5ea64bc99cb08a29 6067e662b1d5f4036b38cef7179f8cd94b56e50e;"
+    " echo $?          # 0",
+    "git diff --quiet c689634617ef9b59473b1a6c5ea64bc99cb08a29 6067e662b1d5f4036b38cef7179f8cd94b56e50e -- .claude;"
+    " echo $?         # 0",
+]
+PB1A = [
+    "git symbolic-ref HEAD",
+    "git rev-parse HEAD",
+    "git status --porcelain=v1 -- . ':(exclude)docs/reference/reference.pdf'",
+    "git ls-remote --heads origin lane/sl1-guard",
+    "git branch lane/sl1-guard 6067e662b1d5f4036b38cef7179f8cd94b56e50e && git symbolic-ref HEAD "
+    "refs/heads/lane/sl1-guard && git checkout --no-overlay HEAD -- . ':(exclude)docs/reference/reference.pdf'",
+    "git rev-parse HEAD                     # 6067e662b1d5f4036b38cef7179f8cd94b56e50e",
+    "git symbolic-ref HEAD                  # refs/heads/lane/sl1-guard",
+    "git status --porcelain=v1 -- . ':(exclude)docs/reference/reference.pdf'"
+    "                                                   # nothing",
+    "git diff --quiet 6067e662b1d5f4036b38cef7179f8cd94b56e50e -- . ':(exclude)docs/reference/reference.pdf'; echo $?"
+    "           # 0",
+    "git diff --cached --quiet 6067e662b1d5f4036b38cef7179f8cd94b56e50e -- . ':(exclude)docs/reference/reference.pdf';"
+    " echo $?  # 0",
+    "git status --porcelain=v1 -- docs/reference/reference.pdf"
+    "                                                                  # nothing; run exactly this once, as a whole command",
+]
+GO2_ACCEPTANCE = [
+    # orchestrator erratum (no pathspec): stays a deny case; the last row is the corrected acceptance line
+    ("git diff --name-status 3d99edd2c16ed57821129d0b5f0aacb49ce10ce3 HEAD", "B2"),
+    ("git diff --quiet 6067e662b1d5f4036b38cef7179f8cd94b56e50e HEAD -- . ':(exclude)docs/reference/reference.pdf' "
+     "':(exclude).claude/settings.json' ':(exclude).claude/hooks/sl1_guard.sh' ':(exclude).claude/hooks/sl1_guard.py' "
+     "':(exclude)scripts/smoke_sl1_guard.py' ':(exclude)docs/lane_reports/sl1-guard.md'; echo $?", None),
+    ("git push origin lane/sl1-guard", None),
+    ("git ls-remote --heads origin lane/sl1-guard", None),
+    ("git diff --name-status 3d99edd2c16ed57821129d0b5f0aacb49ce10ce3 HEAD -- . "
+     "':(exclude)docs/reference/reference.pdf' ':(exclude,icase)*test*'", None),
+]
 
 
 def _tmpdir():
@@ -226,6 +266,11 @@ def build_cases():
     bash("D49", "acceptance_name_status", f"git diff --name-status 6067e66 HEAD -- . {PDF_EXCL} {TEST_EXCL}", None)
     bash("D50", "acceptance_quiet", f"git diff --quiet 6067e66 HEAD -- . {PDF_EXCL} "
                                     "':(exclude).claude/settings.json' ':(exclude)scripts/smoke_sl1_guard.py'", None)
+    bash("D51", "special_param_status", "echo $?", None)
+    bash("D52", "quiet_diff_then_status", "git diff --quiet c689634 HEAD -- .claude/hooks "
+                                          "':(exclude).claude/hooks/sl1_guard.*'; echo $?", None)
+    bash("D53", "special_param_count", "echo $#", None)
+    bash("D54", "positional_param", "echo $1", None)
     # E: bare listings in the repository
     bash("E01", "bare_ls", "ls", "B1")
     bash("E02", "bare_ls_la", "ls -la", "B1")
@@ -260,6 +305,8 @@ def build_cases():
     bash("F21", "unresolved_var", 'ls -R "$SL1_UNSET_DIR"', "B1")
     bash("F22", "du_summary_glob", "du -sh /workspace/plantseg_runs/*", "B1")
     bash("F23", "echo_glob_expansion", "echo scripts/*", "B1")
+    bash("F24", "ls_glob_md", "ls *.md", "B1")
+    bash("F25", "ls_param_then_glob", "ls $1*", "B1")
     # G: filter and count exemptions
     bash("G01", "grep_r_filtered", "grep -rn seed src | grep -vi test", None)
     bash("G02", "find_filtered_head", "find . -name '*.py' | grep -iv test | head -n 20", None)
@@ -309,6 +356,24 @@ def build_cases():
     bash("H18", "git_diff_stat_explicit_file", "git diff --stat -- src/eval/metrics.py", None)
     bash("H19", "git_literal_env_prefix", f"GIT_LITERAL_PATHSPECS=1 git ls-files -- {TEST_EXCL}", "B2")
     bash("H20", "git_archive", "git archive HEAD", "B6")
+    bash("H21", "git_show_index_blob", "git show :src/eval/metrics.py", None)
+    bash("H22", "git_show_index_test_blob", "git show :scripts/test_teacher_init.py", "B4")
+    bash("H23", "git_show_stage_named_blob", "git show :0:data/plantseg_exact_duplicates.csv", "B4")
+    bash("H24", "git_show_rev_blob", "git show 6067e66:src/eval/metrics.py", None)
+    bash("H25", "git_show_rev_named_blob", "git show HEAD:b66_harness/inputs/zenodo_17/meta.json", "B4")
+    bash("H26", "git_show_commit_search_not_path", "git show :/fix", "B6")
+    # P: the GO forms, verbatim
+    names = (["go1_step1_shallow_probe", "go1_step1_unshallow", "go1_step1_fetch_master", "go1_step1_fetch_head",
+              "go1_step1_ls_remote_master", "go1_step1_is_ancestor_echo_status", "go1_step1_quiet_claude_echo_status"]
+             + ["pb1a_record_symbolic_ref", "pb1a_record_rev_parse", "pb1a_precheck_status", "pb1a_precheck_ls_remote",
+                "pb1a_chain", "pb1a_post_rev_parse", "pb1a_post_symbolic_ref", "pb1a_post_status",
+                "pb1a_post_quiet_diff", "pb1a_post_cached_quiet_diff", "pb1a_post_protected_probe"]
+             + ["go2_erratum_bare_name_status", "go2_go1_quiet_check", "go2_push", "go2_ls_remote",
+                "go2_corrected_name_status"])
+    rows = [(c, None) for c in GO1_STEP1 + PB1A] + GO2_ACCEPTANCE
+    assert len(names) == len(rows)
+    for k, ((cmd, exp), name) in enumerate(zip(rows, names), 1):
+        bash(f"P{k:02d}", name, cmd, exp)
     # I: pytest
     bash("I01", "pytest_bare", "pytest", "B3")
     bash("I02", "python_m_pytest", "python -m pytest -q scripts", "B3")

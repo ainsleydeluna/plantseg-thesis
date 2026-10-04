@@ -553,3 +553,114 @@ Run in the merged local checkout, outside Claude Code unless a step says otherwi
 **Observations**
 - The existing L-PROT hook refused `git hash-object` and `ls ~/.claude/sl1_guard.log` in this session (rule S treats `~` as unresolvable). Read the SL1 log with Python or outside Claude Code.
 - DL-26 lists `switch` among the commands denied to Claude Code. The PB-1a chain (`git branch`, `git symbolic-ref`, `git checkout --no-overlay`) passed L-PROT.
+
+## 11. Fix after review (GO-2, orchestrator, 2026-10-05 00:21)
+
+**Commit.** This one fix commit has parent `3d99edd2c16ed57821129d0b5f0aacb49ce10ce3`. A commit can't name its own SHA, so it is given in the session's chat reply. Files, all modified:
+- `.claude/hooks/sl1_guard.py`
+- `scripts/smoke_sl1_guard.py`
+- `docs/lane_reports/sl1-guard.md`
+
+The MODE line still reads `log`.
+
+**Fixes**
+1. **Special parameters.** `Lexer.dollar_bash` now takes a `$` followed by one of `? * @ # $ ! -` or a digit as literal text, with no glob mark.
+   - Before the fix, an unquoted `echo $?` or `echo $*` was a glob word, so `…; echo $?` was B1. The live log found this at 16:10:33Z (MEASURED).
+   - A real glob is still a glob: `ls *.md` and `ls $1*` remain B1 (F24, F25).
+2. **Blob reads in `git show`.** The new `blob_path()` parses `<rev>:<path>`, `:<path>` and `:<n>:<path>`.
+   - A test-named or NAMED_DENY blob path is B4. Any other blob path is allowed, never B6 (H21–H25).
+   - A tree path, such as `<rev>:<dir>` or `<rev>:`, is still a B2 listing (H13 unchanged).
+   - `:/<text>` is a commit search, not a path, so `git show :/fix` shows a commit patch and is B6 (H26).
+   - This closes the false positive recorded in §10.
+
+**Orchestrator erratum.** GO-2's ACCEPTANCE line `git diff --name-status 3d99edd… HEAD` had no pathspec.
+- Under GO-1 rule 3 it is a B2 listing.
+- The existing L-PROT hook already refuses it, under rule G: "git diff without `--` covers the whole tree" (MEASURED by running the L-PROT policy on the text).
+- On the orchestrator's ruling it stays a deny case (P19).
+- The corrected acceptance line is P23, `git diff --name-status 3d99edd… HEAD -- . ':(exclude)docs/reference/reference.pdf' ':(exclude,icase)*test*'`, together with the five-path `--quiet` check.
+- This is an erratum in the GO, not an exception to any rule.
+
+**Observation.** P18, the protected-file status probe copied verbatim with its trailing `# nothing; …` comment, is allowed by SL1 but refused by L-PROT rule N: the comment means it is no longer the exact whole command. Run the probe without the comment.
+
+**Gap carried, outside GO-2's scope.** `git cat-file -p :<path>`, the index form, is not parsed by `blob_path()`. `git cat-file -p :scripts/test_x.py` is allowed, while `git cat-file -p HEAD:scripts/test_x.py` is B4 (MEASURED). The fix is to route cat-file object names through `blob_path()` in a later commit.
+
+**New counts (MEASURED, cloud).** `python -B scripts/smoke_sl1_guard.py` printed `RESULT PASS: smoke_sl1_guard 319/319 (MODE=log)`: 287 decision cases, each run in process, in log mode and in deny mode, plus 32 launcher, settings and invariant checks.
+
+| Group | in-process | log mode | deny mode |
+|---|---|---|---|
+| A file tools | 16/16 | 16/16 | 16/16 |
+| B Grep/Glob tools | 20/20 | 20/20 | 20/20 |
+| C recorded slips | 6/6 | 6/6 | 6/6 |
+| D everyday commands | 54/54 | 54/54 | 54/54 |
+| E bare listings | 9/9 | 9/9 | 9/9 |
+| F recursive and glob listings | 25/25 | 25/25 | 25/25 |
+| G filter and count exemptions | 26/26 | 26/26 | 26/26 |
+| H git | 26/26 | 26/26 | 26/26 |
+| I pytest | 5/5 | 5/5 | 5/5 |
+| J test-named and NAMED paths | 20/20 | 20/20 | 20/20 |
+| K Monitor | 3/3 | 3/3 | 3/3 |
+| L destructive | 27/27 | 27/27 | 27/27 |
+| M nesting and parsing | 11/11 | 11/11 | 11/11 |
+| N archives | 9/9 | 9/9 | 9/9 |
+| P GO forms (verbatim, new) | 23/23 | 23/23 | 23/23 |
+| W Windows path forms | 7/7 | 7/7 | 7/7 |
+| O launcher, settings, invariants | 32/32 | | |
+
+- **Timing:** median 62.4 ms, p95 86.6 ms, max 106.4 ms over 287 log-mode launcher calls.
+- **`scripts/smoke_frozen_blobs.py`:** `RESULT: FROZEN BLOBS OK (10/10)`.
+- **Cases:** 35 new and none changed; every expectation from 3d99edd is kept. P01–P07 are GO-1 step 1, P08–P18 are PB-1a, and P19–P23 are GO-2's acceptance lines, all verbatim.
+
+**Acceptance (MEASURED on the staged tree before this commit; the chat reply repeats it against the tip)**
+
+- The new tip's parent will be `3d99edd2c16ed57821129d0b5f0aacb49ce10ce3`: the commit is made on that HEAD.
+- **Corrected name-status line (P23 form)** against `3d99edd…` printed exactly the three paths:
+
+```
+M	.claude/hooks/sl1_guard.py
+M	docs/lane_reports/sl1-guard.md
+M	scripts/smoke_sl1_guard.py
+```
+
+- **Nothing else changed since `3d99edd…`.** The `--quiet` check excluding the protected file and the three paths exits 0, so no other file changed, test-named files included.
+- **GO-1's five-path `--quiet` check against `6067e66…`** still exits 0.
+- **Mode and trailers.** There is one `MODE = "log"` line, and the commit carries 0 trailer lines.
+
+### New cases (GO-2)
+
+| ID | Case | Tool | Input (R = repo root, $TMP = smoke temp dir) | Deny mode | Status |
+|---|---|---|---|---|---|
+| D51 | special_param_status | Bash | `echo $?` | allow | new (GO-2) |
+| D52 | quiet_diff_then_status | Bash | `git diff --quiet c689634 HEAD -- .claude/hooks ':(exclude).claude/hooks/sl1_guard.*'; echo $?` | allow | new (GO-2) |
+| D53 | special_param_count | Bash | `echo $#` | allow | new (GO-2) |
+| D54 | positional_param | Bash | `echo $1` | allow | new (GO-2) |
+| F24 | ls_glob_md | Bash | `ls *.md` | B1 | new (GO-2) |
+| F25 | ls_param_then_glob | Bash | `ls $1*` | B1 | new (GO-2) |
+| H21 | git_show_index_blob | Bash | `git show :src/eval/metrics.py` | allow | new (GO-2) |
+| H22 | git_show_index_test_blob | Bash | `git show :scripts/test_teacher_init.py` | B4 | new (GO-2) |
+| H23 | git_show_stage_named_blob | Bash | `git show :0:data/plantseg_exact_duplicates.csv` | B4 | new (GO-2) |
+| H24 | git_show_rev_blob | Bash | `git show 6067e66:src/eval/metrics.py` | allow | new (GO-2) |
+| H25 | git_show_rev_named_blob | Bash | `git show HEAD:b66_harness/inputs/zenodo_17/meta.json` | B4 | new (GO-2) |
+| H26 | git_show_commit_search_not_path | Bash | `git show :/fix` | B6 | new (GO-2) |
+| P01 | go1_step1_shallow_probe | Bash | `git rev-parse --is-shallow-repository` | allow | new (GO-2) |
+| P02 | go1_step1_unshallow | Bash | `git fetch --unshallow` | allow | new (GO-2) |
+| P03 | go1_step1_fetch_master | Bash | `git fetch origin master` | allow | new (GO-2) |
+| P04 | go1_step1_fetch_head | Bash | `git rev-parse FETCH_HEAD` | allow | new (GO-2) |
+| P05 | go1_step1_ls_remote_master | Bash | `git ls-remote origin master` | allow | new (GO-2) |
+| P06 | go1_step1_is_ancestor_echo_status | Bash | `git merge-base --is-ancestor c689634617ef9b59473b1a6c5ea64bc99cb08a29 6067e662b1d5f4036b38cef...` | allow | new (GO-2) |
+| P07 | go1_step1_quiet_claude_echo_status | Bash | `git diff --quiet c689634617ef9b59473b1a6c5ea64bc99cb08a29 6067e662b1d5f4036b38cef7179f8cd94b5...` | allow | new (GO-2) |
+| P08 | pb1a_record_symbolic_ref | Bash | `git symbolic-ref HEAD` | allow | new (GO-2) |
+| P09 | pb1a_record_rev_parse | Bash | `git rev-parse HEAD` | allow | new (GO-2) |
+| P10 | pb1a_precheck_status | Bash | `git status --porcelain=v1 -- . ':(exclude)docs/reference/reference.pdf'` | allow | new (GO-2) |
+| P11 | pb1a_precheck_ls_remote | Bash | `git ls-remote --heads origin lane/sl1-guard` | allow | new (GO-2) |
+| P12 | pb1a_chain | Bash | `git branch lane/sl1-guard 6067e662b1d5f4036b38cef7179f8cd94b56e50e && git symbolic-ref HEAD r...` | allow | new (GO-2) |
+| P13 | pb1a_post_rev_parse | Bash | `git rev-parse HEAD                     # 6067e662b1d5f4036b38cef7179f8cd94b56e50e` | allow | new (GO-2) |
+| P14 | pb1a_post_symbolic_ref | Bash | `git symbolic-ref HEAD                  # refs/heads/lane/sl1-guard` | allow | new (GO-2) |
+| P15 | pb1a_post_status | Bash | `git status --porcelain=v1 -- . ':(exclude)docs/reference/reference.pdf'                      ...` | allow | new (GO-2) |
+| P16 | pb1a_post_quiet_diff | Bash | `git diff --quiet 6067e662b1d5f4036b38cef7179f8cd94b56e50e -- . ':(exclude)docs/reference/refe...` | allow | new (GO-2) |
+| P17 | pb1a_post_cached_quiet_diff | Bash | `git diff --cached --quiet 6067e662b1d5f4036b38cef7179f8cd94b56e50e -- . ':(exclude)docs/refer...` | allow | new (GO-2) |
+| P18 | pb1a_post_protected_probe | Bash | `git status --porcelain=v1 -- docs/reference/reference.pdf                                    ...` | allow | new (GO-2) |
+| P19 | go2_erratum_bare_name_status | Bash | `git diff --name-status 3d99edd2c16ed57821129d0b5f0aacb49ce10ce3 HEAD` | B2 | new (GO-2) |
+| P20 | go2_go1_quiet_check | Bash | `git diff --quiet 6067e662b1d5f4036b38cef7179f8cd94b56e50e HEAD -- . ':(exclude)docs/reference...` | allow | new (GO-2) |
+| P21 | go2_push | Bash | `git push origin lane/sl1-guard` | allow | new (GO-2) |
+| P22 | go2_ls_remote | Bash | `git ls-remote --heads origin lane/sl1-guard` | allow | new (GO-2) |
+| P23 | go2_corrected_name_status | Bash | `git diff --name-status 3d99edd2c16ed57821129d0b5f0aacb49ce10ce3 HEAD -- . ':(exclude)docs/ref...` | allow | new (GO-2) |
