@@ -28,8 +28,9 @@
 
 Both parts take --correction-state {available,declined,no_approval} and --correction-dl-id DL-<n>
 (P28; required in a real run, checked before any file is read). Exit codes: 0 written, 1 STOP, 2 refusal
-or usage, 4 unexpected exception. Real mode (the CLI) refuses every run until K-part (P8); the stub
-teacher is reachable only from scripts/smoke_teacher_d1.py through run(args, model_factory=...).
+or usage, 4 unexpected exception. Real mode (the CLI) runs only at the pinned commit (P26) with K-part's
+TeacherProvenance (P8); the stub teacher is reachable only from scripts/smoke_teacher_d1.py through
+run(args, model_factory=...).
 """
 from __future__ import annotations
 

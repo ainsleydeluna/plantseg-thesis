@@ -406,7 +406,8 @@ def killers(e) -> dict:
         lambda: s1.case_h4_checksum(td, fx, e.tmp, e.args)[0])
     k["h4 a checkpoint the strict load refuses is refused with exit 2 (TeacherStateDictMismatch)"] = (
         lambda: s1.case_h4_state_dict(td, fx, e.tmp, e.args)[0])
-    k["P8 the field count on stand-ins: 11 fields refused, 12 not (holds before and after K-part)"] = lambda: s1.case_p8_count(td)
+    k["P8 names and order on stand-ins: 11 fields, the 12 reordered or one renamed refused; the merged 12 pass"] = (
+        lambda: s1.case_p8_names(td))
 
     def binding(head=HEAD, tree_status=None):
         with fx.fake_git(head=head, tree_status=tree_status):
@@ -571,10 +572,12 @@ def killers(e) -> dict:
 
     def fresh_load():
         return s1.gated_load(td, e.args(), factory=fx.stub_factory)
-    k["P8 a real run refuses None or empty provenance fields, naming them"] = lambda: (
+    k['P8 a real run refuses None, "", {} or [] and a missing field after the load, naming them'] = lambda: (
         lambda il: s1.case_p8_nonempty(td, il[1], il[0]))(fresh_load())
-    k["P8 the written record must hold every field"] = lambda: (
+    k["P8 the written record's keys and dataclasses.fields must be the K-part fields in order"] = lambda: (
         lambda il: s1.case_p8_record(td, il[1], il[0], il[2]))(fresh_load())
+    k["P8 an empty container is refused in real mode after the load and in the record (DG-5 ruling 1)"] = lambda: (
+        lambda il: s1.case_p8_empty_container(td, il[1], il[0], il[2]))(fresh_load())
     k["P7 a frozen blob id other than the table's is refused"] = lambda: s1.case_frozen_blob(td)
     k["P7 a segmentor in training mode stops"] = lambda: s1.case_training_mode(td, fx, e.args)
     k["P9 a second isolated NMF module stops the after-load check"] = lambda: s1.case_extra_isolated(td, fx, e.args)
@@ -797,9 +800,9 @@ def mutations(e) -> list:
          "P2 stub refuses a build that leaves mmseg imported"),
         ("P2 parameter guard removed", td, "after_load_checks", [("if n_params > STUB_MAX_PARAMETERS:", F)],
          "P2 stub refuses a model over 1e6 parameters (own big_factory checkpoint; the message names the count)"),
-        ("P8 provenance field count removed", td, "require_provenance_field_count",
-         [("if real and len(names) != EXPECTED_PROVENANCE_FIELDS:", F)],
-         "P8 the field count on stand-ins: 11 fields refused, 12 not (holds before and after K-part)"),
+        ("P8 provenance names check removed (before any file is read)", td, "require_provenance_field_count",
+         [("if real:", F)],
+         "P8 names and order on stand-ins: 11 fields, the 12 reordered or one renamed refused; the merged 12 pass"),
         ("P26 HEAD == --script-commit removed", td, "require_commit_binding", [("if head != script_commit:", F)],
          "P26 a HEAD other than --script-commit is refused"),
         ("P26 clean-tree check removed", td, "require_commit_binding", [("if tree is None or tree.strip():", F)],
@@ -880,11 +883,11 @@ def mutations(e) -> list:
            "pvn = pv.numpy(); dmask = (pvn >= self.disease_lo) & (pvn <= self.disease_hi)")],
          "d6 the disease subset follows the ground truth, not the prediction"),
         ("P8 empty-field check removed", td, "after_load_checks",
-         [('empty = [f.name for f in fields if getattr(prov, f.name) in (None, "")]', "empty = []")],
-         "P8 a real run refuses None or empty provenance fields, naming them"),
-        ("P8 record check removed", td, "teacher_record",
-         [('bad = [n for n in provenance_fields() if provenance.get(n) in (None, "")]', "bad = []")],
-         "P8 the written record must hold every field"),
+         [("empty = [n for n in fields if provenance_value_empty(getattr(prov, n))]", "empty = []")],
+         'P8 a real run refuses None, "", {} or [] and a missing field after the load, naming them'),
+        ("P8 record blank check removed", td, "teacher_record",
+         [("bad = [n for n in TEACHER_PROVENANCE_FIELDS if provenance_value_empty(provenance.get(n))]", "bad = []")],
+         "P8 an empty container is refused in real mode after the load and in the record (DG-5 ruling 1)"),
         ("P7 frozen blob comparison removed", td, "frozen_blob_record", [("if got != blob:", F)],
          "P7 a frozen blob id other than the table's is refused"),
         ("P7 training-mode check removed", td, "after_load_checks", [("if loaded.segmentor.training is not False:", F)],
@@ -979,6 +982,21 @@ def mutations(e) -> list:
         ("h4 TeacherStateDictMismatch dropped from the refusal classes", td, "exit_code_for",
          [("_loaded_classes(_REFUSAL_CLASSES)", "_loaded_classes(_REFUSAL_CLASSES[:5])")],
          "h4 a checkpoint the strict load refuses is refused with exit 2 (TeacherStateDictMismatch)"),
+        ("P8 the order check weakened to a set comparison", td, "require_provenance_names",
+         [("if names != list(TEACHER_PROVENANCE_FIELDS):", "if sorted(names) != sorted(TEACHER_PROVENANCE_FIELDS):")],
+         "P8 names and order on stand-ins: 11 fields, the 12 reordered or one renamed refused; the merged 12 pass"),
+        ("P8 an empty container no longer counts as empty", td, "provenance_value_empty",
+         [("return isinstance(value, (dict, list)) and len(value) == 0", "return False")],
+         "P8 an empty container is refused in real mode after the load and in the record (DG-5 ruling 1)"),
+        ("P8 the after-load names check removed", td, "after_load_checks",
+         [("require_provenance_names(fields, \"the loaded teacher's provenance fields\")", "pass")],
+         'P8 a real run refuses None, "", {} or [] and a missing field after the load, naming them'),
+        ("P8 the record's keys check removed", td, "teacher_record",
+         [("require_provenance_names(provenance.keys(), \"the provenance record's keys\")", "pass")],
+         "P8 the written record's keys and dataclasses.fields must be the K-part fields in order"),
+        ("P8 the record site's dataclass check removed", td, "teacher_record",
+         [("require_provenance_names(provenance_fields(), \"dataclasses.fields(TeacherProvenance)\")", "pass")],
+         "P8 the written record's keys and dataclasses.fields must be the K-part fields in order"),
     ]
 
 

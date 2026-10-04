@@ -21,7 +21,7 @@ and exits 1 (P18). The evaluator artifact goes to --artifact-dir/<run id> (outsi
 four file hashes are recorded, with per_image_equal and npz_equal against --val-reference as information.
 
 Exit codes: 0 written, 1 STOP, 2 refusal or usage, 4 unexpected exception. Real mode (the CLI) needs
---script-commit and --script-commit-dl-id and refuses every run until K-part (P8). The stub teacher is
+--script-commit and --script-commit-dl-id (P26) and K-part's TeacherProvenance (P8). The stub teacher is
 reachable only from scripts/smoke_teacher_calibration.py, which calls run(args, model_factory=...).
 """
 from __future__ import annotations

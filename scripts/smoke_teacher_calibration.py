@@ -11,7 +11,7 @@ The D2 VAL pass (scripts/teacher_d2_calibration.py) on the stub teacher and a sy
 its evaluator artifact equals scripts/evaluate_model.py run()'s under EVALUATION_CONTRACT 10(d); the
 gate runs before the write (P18: "not reproduced", no artifact, exit 1); control and arm (P3, P4);
 --val-reference read summary-first, its manifest identity and verification; refusals before any load;
-real mode (the CLI) refused until K-part (P8); the RNG watch of P9.
+real mode (the CLI) refused unless pinned to HEAD (P26); the RNG watch of P9.
 Synthetic inputs only; no PlantSeg data, no checkpoint of record, no GPU.
 
     python -B scripts/smoke_teacher_calibration.py
@@ -487,7 +487,8 @@ def d2_cases() -> None:
                                      teacher_ckpt_sha256=sha, teacher_config=cfg, teacher_role="record",
                                      purpose="item1", val_reference=str(ref), script_commit="c" * 40,
                                      script_commit_dl_id="DL-61"))
-        check("P29 the CLI: a usage error exits 2; the CLI is real mode and refuses until K-part (exit 2)",
+        check("P29 the CLI: a usage error exits 2; the CLI is real mode and refuses a --script-commit that is not HEAD "
+              "(exit 2)",
               m_usage == 2 and m_real == 2)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

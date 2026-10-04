@@ -18,8 +18,8 @@ Outputs: the TRAIN artifact under --artifact-dir/<run id> and teacher_train_scor
 all-class union-present mIoU, the per-class table for D3, the artifact's four file hashes). Record role
 only (P3). A data root or TRAIN folder whose path contains "test" is refused by its string before any
 filesystem call (P21). Exit codes: 0 written, 1 STOP, 2 refusal or usage, 4 unexpected exception. Real
-mode (the CLI) refuses every run until K-part (P8); the stub teacher is reachable only from
-scripts/smoke_score_teacher_train.py through run(args, model_factory=...).
+mode (the CLI) runs only at the pinned commit (P26) with K-part's TeacherProvenance (P8); the stub teacher
+is reachable only from scripts/smoke_score_teacher_train.py through run(args, model_factory=...).
 """
 from __future__ import annotations
 

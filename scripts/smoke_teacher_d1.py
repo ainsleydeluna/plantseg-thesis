@@ -362,66 +362,137 @@ def _seam_env():
     return fx, td, tmp, ckpt, sha, args
 
 
-_PROV_NAMES = ("builder", "ckpt_path", "ckpt_sha256", "ckpt_bytes", "config_sha256", "teacher_components_sha256",
-               "reused_module_hashes", "architecture_signature", "model_cfg_sha256", "field_10", "field_11", "field_12")
+#: K-part's TeacherProvenance fields, in order, typed here independently of src/eval/teacher_diag.py (P8).
+_PROV_NAMES = ("builder", "ckpt_path", "ckpt_sha256", "ckpt_bytes", "expected_sha256", "config_path", "config_sha256",
+               "ham_kwargs", "architecture_signature", "teacher_components_sha256", "reused_module_hashes",
+               "model_cfg_sha256")
 
 
-def prov_class(n: int, *, drop_from_record: str | None = None):
-    """A stand-in TeacherProvenance with n fields (P8 cases independent of the merged dataclass)."""
+def prov_class(names=_PROV_NAMES, *, drop_from_record: str | None = None, record_order=None):
+    """A stand-in TeacherProvenance with these fields (P8 cases independent of the merged dataclass). Its record
+    (as_dict) may drop one key, or list its keys in another order."""
     def as_dict(self):
         d = dataclasses.asdict(self)
         d.pop(drop_from_record, None)
-        return d
-    return dataclasses.make_dataclass(f"Prov{n}", [(f, object) for f in _PROV_NAMES[:n]], namespace={"as_dict": as_dict})
+        return {k: d[k] for k in record_order} if record_order else d
+    return dataclasses.make_dataclass(f"Prov{len(names)}", [(f, object) for f in names], namespace={"as_dict": as_dict})
 
 
-def case_p8_count(td) -> bool:
+def prov_values(sha: str, **over) -> dict:
+    """Non-empty values of the real path's types (both containers non-empty), with overrides."""
+    vals = {"builder": "segnext_mscan_b_builder", "ckpt_path": "/ckpt/teacher.pth", "ckpt_sha256": sha,
+            "ckpt_bytes": 1, "expected_sha256": sha, "config_path": "/cfg/teacher.py", "config_sha256": "c" * 64,
+            "ham_kwargs": {"MD_S": 1}, "architecture_signature": "d" * 64, "teacher_components_sha256": "e" * 64,
+            "reused_module_hashes": {"teacher_components": "f" * 64}, "model_cfg_sha256": "0" * 64}
+    vals.update(over)
+    return vals
+
+
+def _swapped(names, i=4, j=5) -> tuple:
+    out = list(names)
+    out[i], out[j] = out[j], out[i]
+    return tuple(out)
+
+
+def refusal_text(fn) -> str | None:
+    """The Refused message of fn(), or None when fn() does not refuse (any other exception counts as None)."""
+    try:
+        fn()
+    except Exception as e:  # noqa: BLE001
+        return str(e) if type(e).__name__ == "Refused" else None
+    return None
+
+
+def case_p8_constant(td) -> bool:
+    """The 12-name constant equals this smoke's literal list and the merged dataclass's fields, by name, in order."""
+    from src.distill.teacher import TeacherProvenance
+    merged = [f.name for f in dataclasses.fields(TeacherProvenance)]
+    return list(td.TEACHER_PROVENANCE_FIELDS) == list(_PROV_NAMES) == merged and td.EXPECTED_PROVENANCE_FIELDS == 12
+
+
+def case_p8_names(td) -> bool:
+    """Real mode, before any file is read: 11 fields, the 12 in another order, or 12 with one renamed are refused,
+    each naming the difference; the merged 12 pass; stub mode never checks."""
     import src.distill.teacher as dt
     from scripts import teacher_diag_fixtures as fx
-    with fx.patched(dt, TeacherProvenance=prov_class(11)):
-        eleven = raises(lambda: td.require_provenance_field_count(True), td.Refused)
-        stub_ok = not raises(lambda: td.require_provenance_field_count(False), Exception)
-    with fx.patched(dt, TeacherProvenance=prov_class(12)):
-        twelve = not raises(lambda: td.require_provenance_field_count(True), Exception)
-    return eleven and stub_ok and twelve
+
+    def text(names, real=True):
+        with fx.patched(dt, TeacherProvenance=prov_class(tuple(names))):
+            return refusal_text(lambda: td.require_provenance_field_count(real))
+    eleven, swapped = text(_PROV_NAMES[:11]), text(_swapped(_PROV_NAMES))
+    renamed = text(_PROV_NAMES[:11] + ("field_12",))
+    return bool(eleven and "missing ['model_cfg_sha256']" in eleven
+                and swapped and "(missing [], extra [])" in swapped
+                and renamed and "extra ['field_12']" in renamed
+                and text(_PROV_NAMES) is None and text(_PROV_NAMES[:11], real=False) is None)
+
+
+def _with_provenance(loaded, prov, fn):
+    old = loaded.frozen.provenance
+    loaded.frozen.provenance = prov
+    try:
+        return fn()
+    finally:
+        loaded.frozen.provenance = old
 
 
 def case_p8_nonempty(td, loaded, inputs) -> bool:
-    cls = prov_class(12)
-    vals = {f: "v" for f in _PROV_NAMES}
-    vals.update(ckpt_sha256=inputs.sha256, field_11=None, field_12="")
-    old = loaded.frozen.provenance
-    loaded.frozen.provenance = cls(**vals)
-    try:
-        td.after_load_checks(loaded, inputs, stub=False)
-        return False
-    except td.Refused as e:
-        return "field_11" in str(e) and "field_12" in str(e)
-    except Exception:  # noqa: BLE001
-        return False
-    finally:
-        loaded.frozen.provenance = old
+    """After the load, real mode: None, "", {} and [] are each refused and named; an 11-field provenance object is
+    refused by name; a complete one passes."""
+    cls = prov_class()
+    blank = prov_values(inputs.sha256, expected_sha256=None, config_path="", ham_kwargs={}, reused_module_hashes=[])
+    t_blank = _with_provenance(loaded, cls(**blank), lambda: refusal_text(
+        lambda: td.after_load_checks(loaded, inputs, stub=False)))
+    short = {k: v for k, v in prov_values(inputs.sha256).items() if k != "model_cfg_sha256"}
+    t_short = _with_provenance(loaded, prov_class(_PROV_NAMES[:11])(**short), lambda: refusal_text(
+        lambda: td.after_load_checks(loaded, inputs, stub=False)))
+    complete = _with_provenance(loaded, cls(**prov_values(inputs.sha256)), lambda: not raises(
+        lambda: td.after_load_checks(loaded, inputs, stub=False), Exception))
+    return bool(t_blank and all(f"'{n}'" in t_blank for n in ("expected_sha256", "config_path", "ham_kwargs",
+                                                               "reused_module_hashes"))
+                and t_short and "missing ['model_cfg_sha256']" in t_short and complete)
+
+
+def case_p8_empty_container(td, loaded, inputs, checks) -> bool:
+    """DG-5 ruling 1: in real mode an empty container ({} or []) is refused like None, after the load and in the
+    written record, and named; stub mode never checks it."""
+    import src.distill.teacher as dt
+    from scripts import teacher_diag_fixtures as fx
+    cls = prov_class()
+    out = []
+    with fx.patched(dt, TeacherProvenance=cls):
+        for field, empty in (("reused_module_hashes", {}), ("ham_kwargs", []), ("ham_kwargs", {})):
+            prov = cls(**prov_values(inputs.sha256, **{field: empty}))
+            t_after = _with_provenance(loaded, prov, lambda: refusal_text(
+                lambda: td.after_load_checks(loaded, inputs, stub=False)))
+            t_record = _with_provenance(loaded, prov, lambda: refusal_text(
+                lambda: td.teacher_record(loaded, inputs, checks, stub=False)))
+            stub_ok = _with_provenance(loaded, prov, lambda: not raises(
+                lambda: td.teacher_record(loaded, inputs, checks, stub=True), Exception))
+            out.append(bool(t_after and f"'{field}'" in t_after and t_record and f"'{field}'" in t_record
+                            and "blanks" in t_record and stub_ok))
+    return all(out)
 
 
 def case_p8_record(td, loaded, inputs, checks) -> bool:
+    """The written record: its keys must be the K-part fields in order (a record lacking one, or listing them in
+    another order, is refused by the keys check), and dataclasses.fields(TeacherProvenance) must be too."""
     import src.distill.teacher as dt
     from scripts import teacher_diag_fixtures as fx
-    vals = {f: "v" for f in _PROV_NAMES}
-    vals["ckpt_sha256"] = inputs.sha256
-    old = loaded.frozen.provenance
-    try:
-        with fx.patched(dt, TeacherProvenance=prov_class(12)):
-            loaded.frozen.provenance = prov_class(12, drop_from_record="field_12")(**vals)
-            try:
-                td.teacher_record(loaded, inputs, checks, stub=False)
-                lacking = False
-            except td.Refused as e:
-                lacking = "field_12" in str(e)
-            loaded.frozen.provenance = prov_class(12)(**vals)
-            complete = not raises(lambda: td.teacher_record(loaded, inputs, checks, stub=False), Exception)
-    finally:
-        loaded.frozen.provenance = old
-    return lacking and complete
+    vals = prov_values(inputs.sha256)
+
+    def text(prov, dataclass=prov_class()):
+        with fx.patched(dt, TeacherProvenance=dataclass):
+            return _with_provenance(loaded, prov, lambda: refusal_text(
+                lambda: td.teacher_record(loaded, inputs, checks, stub=False)))
+    lacking = text(prov_class(drop_from_record="model_cfg_sha256")(**vals))
+    reordered = text(prov_class(record_order=_swapped(_PROV_NAMES))(**vals))
+    dataclass_order = text(prov_class()(**vals), dataclass=prov_class(_swapped(_PROV_NAMES)))
+    complete = text(prov_class()(**vals))
+    return bool(lacking and "the provenance record's keys" in lacking and "missing ['model_cfg_sha256']" in lacking
+                and reordered and "the provenance record's keys" in reordered
+                and dataclass_order and "dataclasses.fields(TeacherProvenance)" in dataclass_order
+                and complete is None)
 
 
 def case_frozen_blob(td) -> bool:
@@ -816,10 +887,16 @@ def _seam_body(fx, td, tmp, ckpt, sha, args) -> None:
     check("P5 after the load, a provenance sha256 other than the verified one is refused",
           raises(lambda: td.after_load_checks(kd, dataclasses.replace(inputs, sha256="0" * 64), stub=True),
                  td.Refused))
-    check("P8 the field count: an 11-field TeacherProvenance refuses a real run, a 12-field one does not; stub "
-          "runs never count (stand-in dataclasses, so the case holds before and after K-part)", case_p8_count(td))
-    check("P8 a real run refuses a provenance whose fields are None or empty, naming them", case_p8_nonempty(td, kd, inputs))
-    check("P8 the written record (as_dict) must hold every field: a record lacking one is refused",
+    check("P8 the 12-name constant equals the merged dataclasses.fields(TeacherProvenance), by name and in order",
+          case_p8_constant(td))
+    check("P8 names and order before any file is read: 11 fields, the 12 reordered, or one renamed refuse a real run, "
+          "each named; the merged 12 do not; stub runs never check (stand-in dataclasses)", case_p8_names(td))
+    check("P8 a real run refuses a provenance whose fields are None, \"\", {} or [] (each named) or that lacks a "
+          "field; a complete one passes", case_p8_nonempty(td, kd, inputs))
+    check("P8 an empty container ({} or []) is refused in real mode, after the load and in the written record, and "
+          "named; stub mode does not check it (DG-5 ruling 1)", case_p8_empty_container(td, kd, inputs, checks))
+    check("P8 the written record's keys must be the K-part fields in order (lacking one or reordered: refused), and "
+          "so must dataclasses.fields(TeacherProvenance); a complete record passes",
           case_p8_record(td, kd, inputs, checks))
     check("P7 a frozen blob id other than the table's is refused", case_frozen_blob(td))
     check("P7 a segmentor in training mode stops", case_training_mode(td, fx, args))
@@ -1181,12 +1258,18 @@ def _crops_cases(e) -> None:
                  "--teacher-ckpt-sha256 must match": dict(real, teacher_ckpt_sha256=None)}
         got = {why: fx.call_run(d1, factory=None, out_dir=e.tmp / f"r9_{k}", **kw) for k, (why, kw) in enumerate(cases.items())}
         r_p8 = fx.call_run(d1, factory=None, out_dir=e.tmp / "r11", **real)
+        import src.distill.teacher as dt
+        with fx.patched(dt, TeacherProvenance=prov_class(_PROV_NAMES[:11])):
+            r_p8_11 = fx.call_run(d1, factory=None, out_dir=e.tmp / "r12", **real)
     check("a6/P28 real weights are refused, each by its own gate (the message names it), before any load: no "
           "correction flags, a malformed state, --n-crops, no --teacher-ckpt-sha256",
           all(c == 2 and why in err for why, (c, err) in got.items()) and sum(calls.values()) == 0,
           str({why: err[-120:] for why, (c, err) in got.items() if why not in err}))
-    check("P8 until K-part a well-formed real run is refused by the provenance field count",
-          r_p8[0] == 2 and "TeacherProvenance" in r_p8[1], r_p8[1])
+    check("P8 at K-part a well-formed real run passes the provenance names gate and is refused by the next one, the "
+          "commit binding; an 11-field TeacherProvenance is refused by P8 first; no load either way",
+          r_p8[0] == 2 and "--script-commit" in r_p8[1] and "TeacherProvenance" not in r_p8[1]
+          and r_p8_11[0] == 2 and "missing ['model_cfg_sha256']" in r_p8_11[1] and sum(calls.values()) == 0,
+          r_p8[1][-200:] + " | " + r_p8_11[1][-200:])
     h3_ok, h3_detail = case_reference_sha(fx, e.tmp, e.ckpt, e.sha)
     check("h3 the reference builder passes --teacher-ckpt-sha256: the evaluator builds it and records that sha; a "
           "wrong sha is refused (teacher_hash_mismatch)", h3_ok, h3_detail)
@@ -1286,7 +1369,7 @@ def _val_cases(e) -> None:
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         m_real = d1.main(fx.argv(out_dir=e.tmp / "v6", **dict(base, max_samples=None, generated_utc=None,
                                                                 script_commit="c" * 40, script_commit_dl_id="DL-61")))
-    check("P29 the CLI is real mode and refuses until K-part (exit 2)", m_real == 2)
+    check("P29 the CLI is real mode: a real run whose --script-commit is not HEAD is refused (exit 2)", m_real == 2)
 
 
 def d1_cases() -> None:
