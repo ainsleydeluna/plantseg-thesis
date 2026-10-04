@@ -399,6 +399,13 @@ def killers(e) -> dict:
         lambda: s1.case_stub_ckpt_exact(td, fx, e.tmp, s1.gated_load(td, e.args(), factory=fx.stub_factory)[1]))
     k["h3 the reference builder passes --teacher-ckpt-sha256 (built and recorded; a wrong sha refused)"] = (
         lambda: s1.case_reference_sha(fx, e.tmp, e.ckpt, e.sha)[0])
+    k["a both load lines pass the verified sha (expected_sha256 recorded in the kd and evaluator form)"] = (
+        lambda: s1.case_expected_sha(s1.gated_load(td, e.args(), factory=fx.stub_factory)[1],
+                                     s1.gated_load(td, e.args(), mode="evaluator", factory=fx.stub_factory)[1], e.sha))
+    k["h4 a checkpoint changed after validation is refused with exit 2 (TeacherChecksumMismatch)"] = (
+        lambda: s1.case_h4_checksum(td, fx, e.tmp, e.args)[0])
+    k["h4 a checkpoint the strict load refuses is refused with exit 2 (TeacherStateDictMismatch)"] = (
+        lambda: s1.case_h4_state_dict(td, fx, e.tmp, e.args)[0])
     k["P8 the field count on stand-ins: 11 fields refused, 12 not (holds before and after K-part)"] = lambda: s1.case_p8_count(td)
 
     def binding(head=HEAD, tree_status=None):
@@ -958,6 +965,20 @@ def mutations(e) -> list:
         ("h3 the reference builder omits --teacher-ckpt-sha256", fx, "reference_artifact",
          [('"--teacher-ckpt-sha256", sha256,', "")],
          "h3 the reference builder passes --teacher-ckpt-sha256 (built and recorded; a wrong sha refused)"),
+        ("a the kd load line drops expected_sha256", td, "load_teacher",
+         [("load_frozen_teacher(str(inputs.ckpt), config_path=str(inputs.config), expected_sha256=sha, **kw)",
+           "load_frozen_teacher(str(inputs.ckpt), config_path=str(inputs.config), **kw)")],
+         "a both load lines pass the verified sha (expected_sha256 recorded in the kd and evaluator form)"),
+        ("a the evaluator load line drops expected_sha256", td, "load_teacher",
+         [("load_teacher_model(resolved, config_path=str(inputs.config), expected_sha256=sha, **kw)",
+           "load_teacher_model(resolved, config_path=str(inputs.config), **kw)")],
+         "a both load lines pass the verified sha (expected_sha256 recorded in the kd and evaluator form)"),
+        ("h4 TeacherChecksumMismatch dropped from the refusal classes", td, "exit_code_for",
+         [("_loaded_classes(_REFUSAL_CLASSES)", "_loaded_classes(_REFUSAL_CLASSES[:4] + _REFUSAL_CLASSES[5:])")],
+         "h4 a checkpoint changed after validation is refused with exit 2 (TeacherChecksumMismatch)"),
+        ("h4 TeacherStateDictMismatch dropped from the refusal classes", td, "exit_code_for",
+         [("_loaded_classes(_REFUSAL_CLASSES)", "_loaded_classes(_REFUSAL_CLASSES[:5])")],
+         "h4 a checkpoint the strict load refuses is refused with exit 2 (TeacherStateDictMismatch)"),
     ]
 
 

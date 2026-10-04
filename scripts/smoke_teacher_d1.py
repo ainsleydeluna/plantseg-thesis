@@ -474,6 +474,50 @@ def case_reference_sha(fx, tmp, ckpt, sha) -> tuple[bool, str]:
     return built and wrong, detail
 
 
+def case_expected_sha(kd, ev, sha) -> bool:
+    """SCOPE a: both load lines pass the verified sha, so the record holds expected_sha256 (KP-1 ruling 2)."""
+    return all(x.frozen.provenance.expected_sha256 == sha and x.frozen.provenance.as_dict()["expected_sha256"] == sha
+               for x in (kd, ev))
+
+
+def _exit_and_stderr(td, fn) -> tuple:
+    err = io.StringIO()
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+        code = td.run_with_exit_codes(fn)
+    return code, err.getvalue()
+
+
+def case_h4_checksum(td, fx, tmp, args) -> tuple[bool, str]:
+    """h4: a checkpoint whose bytes change after validate_teacher_artifact passed is refused by the load line's
+    second hash (TeacherChecksumMismatch, before anything parses it) with exit 2, as the KD trainer refuses it."""
+    import tempfile
+
+    import src.eval.stage_artifacts as sa
+    d = Path(tempfile.mkdtemp(prefix="h4_sum_", dir=tmp))
+    ckpt, sha = fx.write_stub_ckpt(d / "stub.pth", tag="h4_sum")
+    real_validate = sa.validate_teacher_artifact
+
+    def validate_then_swap(*a, **k):
+        out = real_validate(*a, **k)
+        fx.write_stub_ckpt(ckpt, tag="h4_swapped")           # the same state in new bytes: a new sha256
+        return out
+    with fx.patched(sa, validate_teacher_artifact=validate_then_swap):
+        code, err = _exit_and_stderr(td, lambda: gated_load(td, args(teacher_ckpt=str(ckpt), teacher_ckpt_sha256=sha),
+                                                           factory=fx.stub_factory))
+    return code == td.EXIT_REFUSED and "TeacherChecksumMismatch" in err, f"exit {code}: {err[-200:]}"
+
+
+def case_h4_state_dict(td, fx, tmp, args) -> tuple[bool, str]:
+    """h4: a checkpoint the strict load refuses (big_factory's state into the default stub: shape mismatches) is
+    refused with exit 2 (TeacherStateDictMismatch), as the KD trainer refuses it."""
+    import tempfile
+    d = Path(tempfile.mkdtemp(prefix="h4_state_", dir=tmp))
+    ckpt, sha = fx.write_stub_ckpt(d / "big_state.pth", tag="h4_state", factory=fx.big_factory)
+    code, err = _exit_and_stderr(td, lambda: gated_load(td, args(teacher_ckpt=str(ckpt), teacher_ckpt_sha256=sha),
+                                                       factory=fx.stub_factory))
+    return code == td.EXIT_REFUSED and "TeacherStateDictMismatch" in err, f"exit {code}: {err[-200:]}"
+
+
 def case_big_model(td, fx, tmp, args) -> tuple[bool, str]:
     """h2: the oversized stub loads strictly from a checkpoint written from big_factory (about 8 MB, under the
     16 MiB stat guard), so the parameter guard is what refuses; its message must name the parameter count."""
@@ -600,6 +644,8 @@ def _seam_body(fx, td, tmp, ckpt, sha, args) -> None:
     check("h1 the stub checkpoint holds exactly the factory's state_dict (default and big factory); the strictly "
           "loaded stub's state equals the factory's own seeded state", case_stub_ckpt_exact(td, fx, tmp, kd))
     _, ev, checks_ev = gated_load(td, args(), mode="evaluator", factory=fx.stub_factory)
+    check("a both load lines pass the verified sha: the record's expected_sha256 equals it in the kd and the "
+          "evaluator form (KP-1 ruling 2)", case_expected_sha(kd, ev, sha))
     check("seam evaluator load: M4-V stream, nmf_policy is the description, same loaded state as kd",
           ev.stream is ev.adapter.nmf_stream and ev.stream.policy == "M4-V"
           and ev.eval_model.nmf_policy == ev.stream_description
@@ -718,6 +764,14 @@ def _seam_body(fx, td, tmp, ckpt, sha, args) -> None:
         if not pre:
             sys.modules.pop("mmseg", None)
     check("P2 stub refuses a build that leaves mmseg imported", r and not pre, f"mmseg imported before: {pre}")
+    h4_ok, h4_msg = case_h4_checksum(td, fx, tmp, args)
+    check("h4 a checkpoint changed after validation is refused by the load line's second hash with exit 2 "
+          "(TeacherChecksumMismatch)", h4_ok, h4_msg)
+    h4_ok, h4_msg = case_h4_state_dict(td, fx, tmp, args)
+    check("h4 a checkpoint the strict load refuses is refused with exit 2 (TeacherStateDictMismatch)", h4_ok, h4_msg)
+    from src.distill.teacher import TeacherChecksumFormatError
+    check("h4 TeacherChecksumFormatError stays unexpected (exit 4): P5 refuses a malformed sha before any load",
+          td.exit_code_for(TeacherChecksumFormatError("x")) is None)
     big_ok, big_msg = case_big_model(td, fx, tmp, args)
     check("P2 stub refuses a model over 1e6 parameters: its own checkpoint (big_factory, <= 16 MiB) loads strictly, "
           "and the refusal names the parameter count (h2)", big_ok, big_msg)

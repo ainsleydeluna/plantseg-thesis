@@ -7,9 +7,14 @@ file is edited: the KD adapter, the NMF stream and the evaluator are reached thr
 paths and attributes.
 
 The teacher load (`load_teacher`) has exactly two call lines, one per mode:
-  kd         load_frozen_teacher(ckpt, config_path=cfg)       the KD trainer's form (train_distill.py)
-  evaluator  load_teacher_model(resolved, config_path=cfg)    the evaluator's form (evaluate_model.py run)
-A stub passes `builder=segnext_builder(model_factory=...)` to the same two calls. The NMF stream the
+  kd         load_frozen_teacher(ckpt, config_path=cfg, expected_sha256=sha)     the KD trainer's form
+                                                                                  (train_distill.py)
+  evaluator  load_teacher_model(resolved, config_path=cfg, expected_sha256=sha)  the evaluator's form
+                                                                                  (evaluate_model.py run)
+`sha` is the verified --teacher-ckpt-sha256, so K-part's loader hashes the file again before it parses it
+and the record holds expected_sha256 (R6; KP-1 ruling 2). A checksum or strict-load mismatch is refused
+(exit 2), as the KD trainer refuses it. A stub passes `builder=segnext_builder(model_factory=...)` to the
+same two calls. The NMF stream the
 checks use is the adapter's live object (`frozen.teacher.nmf_stream`), read right after the begin call;
 the dict that call returns is kept as the description and must equal `stream.describe()` at that moment.
 
@@ -435,17 +440,18 @@ def load_teacher(mode: str, inputs: TeacherInputs, *, model_factory=None) -> Loa
     if mode not in ("kd", "evaluator"):
         raise ValueError(f"unknown load mode {mode!r}")
     kw = {} if model_factory is None else {"builder": segnext_builder(model_factory=model_factory)}
+    sha = inputs.sha256                      # the verified --teacher-ckpt-sha256 (P5), passed to both load lines
     try:
         resolved = validate_teacher_artifact(inputs.ckpt, expected_sha256=inputs.sha256)
     except StageArtifactError as e:
         raise Refused(f"validate_teacher_artifact: {e}") from e
     try:
         if mode == "kd":
-            frozen = load_frozen_teacher(str(inputs.ckpt), config_path=str(inputs.config), **kw)
+            frozen = load_frozen_teacher(str(inputs.ckpt), config_path=str(inputs.config), expected_sha256=sha, **kw)
             eval_model = None
             description = frozen.begin_nmf_stream("M4-KD", M4_NMF_SEED)
         else:
-            eval_model, _ = load_teacher_model(resolved, config_path=str(inputs.config), **kw)
+            eval_model, _ = load_teacher_model(resolved, config_path=str(inputs.config), expected_sha256=sha, **kw)
             frozen = eval_model.teacher
             description = eval_model.nmf_policy
     except TeacherStackMissing as e:
@@ -888,7 +894,11 @@ def add_correction_flags(p) -> None:
 _REFUSAL_CLASSES = (("src.eval.artifacts", "ArtifactRequestError"),
                     ("src.eval.stage_artifacts", "StageArtifactError"),
                     ("scripts.build_train_strata", "StrataError"),
-                    ("src.quant.calibration", "CalibrationIndexError"))
+                    ("src.quant.calibration", "CalibrationIndexError"),
+                    # the load lines' R6 refusals, exit 2 as at src/training/train_distill.py:1303 (GO-2 h4);
+                    # TeacherChecksumFormatError stays unexpected: P5 refuses a malformed sha before any load
+                    ("src.distill.teacher", "TeacherChecksumMismatch"),
+                    ("src.distill.segnext_teacher", "TeacherStateDictMismatch"))
 _STOP_CLASSES = (("src.eval.calibration", "CalibrationStop"), ("src.eval.evaluate", "EvaluationIntegrityError"),
                  ("src.eval.eval_runtime", "EvalRuntimeError"), ("src.eval.artifacts", "ArtifactWriteError"),
                  ("src.distill.nmf_stream", "NMFStreamError"))
