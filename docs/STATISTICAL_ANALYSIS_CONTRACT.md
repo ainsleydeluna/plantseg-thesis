@@ -758,6 +758,8 @@ scored by different metric code are not comparable.
 > AM-17 item 9 dress rehearsal and the L-AM5 d5 check): `artifact_status` provisional or official, no
 > random initialization, `split = val`, 846 rows; it never reads TEST.
 
+**[NOTE 2026-10-03 — L-STATS-OFFICIAL]** The canvas guard of EVALUATION_CONTRACT §11(a) is enforced by the statistics driver (`scripts/run_stats.py`, `src/stats/driver.py`) in every mode, report mode included: an input whose `dataset.preprocess_protocol` is not `core_preprocess/1.0.0`, or that carries a `summary.protocol` block, is refused by name before any statistic is computed. The OFFICIAL ingest branch is unchanged. Official mode reads exactly the 37 inputs of §12.4.6, named in an input-list file, and requires an explicit confirmation flag. Until the TEST-manifest binding is implemented, official mode runs only on inputs declared synthetic, and no code path writes or verifies an `official` statistics artifact.
+
 **Forbidden:** silent deletion · pairwise-complete fallback · mean/median/zero imputation ·
 reordering without identity verification.
 
@@ -1108,6 +1110,8 @@ include `src/stats/artifact.py`, whose `build_family` still compares task 0's ja
 (`OFFICIAL_JACKKNIFE_N`). An artifact built from AM-5-filtered inputs with k > 0 is therefore marked
 non-official. Open; it needs an owner before TEST.
 
+**[NOTE 2026-10-03 — L-STATS-OFFICIAL]** Implemented: the writer compares every task with its own expected count — `1561 − k` for the 27 tasks on per-image values and `1561` for the 8 dataset-level tasks — and every task's `bootstrap_replicates` with 10,000, where k is the AM-5 count read from the inputs. A task that differs from its expected value records `jackknife_count_nonproduction` or `bootstrap_replicates_nonproduction`; a per-image task whose count differs from its comparison's `n_paired` is fatal. k is reported by the report layer, not in `family.json`. This closes the open item in the note above.
+
 For a **non-official** synthetic artifact, `bootstrap_replicates` may be smaller and `jackknife_count`
 may differ, but both must still equal their corresponding NPZ array lengths and the task's verified
 paired-image count.
@@ -1225,6 +1229,8 @@ unestablished `integrity` check (§12.4.11) — remove the temporary directory a
 artifact. They are never downgraded into a nonofficial warning. Task-level numerical warnings
 (bias-correction clipping, saturation, percentile fallback; §12.3.5) are **never** copied to top level
 and never make an otherwise valid artifact nonofficial.
+
+**[NOTE 2026-10-03 — L-STATS-OFFICIAL]** Implemented writer gate: before anything is created, `write_statistics_artifact` builds the family from typed inputs, takes the `software_environment` block from the running stack, re-derives the five derivable warnings (`synthetic_input_data` remains the caller's declaration and is forced when an input's dataset name is not the evaluator's) and derives `artifact_status` from them; an official request on an unpinned stack, or whose §10 requirements do not hold, is refused and nothing is left behind. The AM-17 item 9 dress rehearsal leaves this vocabulary unchanged: its outputs are `nonofficial`, `"mode": "rehearsal"` appears only in its `rehearsal_manifest.json`, and it writes no §12 artifact.
 
 #### 12.4.4 `alpha`, `expected_comparison_ids`, `statistical_contract_sha256`
 
@@ -1567,6 +1573,8 @@ directory may be atomically renamed **only** afterwards. If any check cannot be 
 temporary directory is removed and **no final artifact exists**. `MANIFEST.sha256` remains the
 cryptographic integrity source, does not hash itself, and `family.json` contains **no** self-hash and
 no manifest hash.
+
+**[NOTE 2026-10-03 — L-STATS-OFFICIAL]** Implemented: `write_statistics_artifact` establishes each of the thirteen checks before the rename, on the files in the temporary directory, by running `verify_statistics_artifact` on it with the input directories and the contract bytes; a check that cannot be established removes the temporary directory and raises, so no artifact exists. The block is serialized all-`true` because that is the only legal finalized value (before this lane it was written without any check: `src/stats/artifact.py:285` at `ccac3cf`). Called without the input directories and contract bytes, `verify_statistics_artifact` re-establishes only the artifact-only checks and reports the ones it did not re-establish.
 
 #### 12.4.12 Canonical ordering and strict validation
 
