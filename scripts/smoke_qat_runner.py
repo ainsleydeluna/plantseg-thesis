@@ -49,6 +49,7 @@ from src.distill.export import CWD_PROJECTION_KEY  # noqa: E402
 from src.models.student import build_student  # noqa: E402
 from src.quant import qat as Q  # noqa: E402
 from src.quant.prepare import qat_freeze_steps  # noqa: E402
+from src.quant.qconfig import QuantBackendUnavailable  # noqa: E402
 from src.quant.stages import resolve_quant_stage  # noqa: E402
 
 NC = 116
@@ -703,6 +704,124 @@ def test_gates() -> None:
     check("load_source_refuses_projection_in_e6_student", code_of(Q.load_source, e6, pl) == "source_invalid")
     model, meta = Q.load_source(e6, p3)
     check("load_source_e6_projection_free", meta["sha256"] == s3 and not any("cwd" in k for k in model.state_dict()))
+    # ---- each refusal occurrence of P8-P10 with its own case (scripts/smoke_qat_mutations.py removes them)
+    d = TMP / "e1_notjson"
+    s8 = write_e1_parent(d)
+    (d / "best.json").write_text("{not json", encoding="utf-8")
+    check("refuses_parent_best_json_not_json", code_of(Q.resolve_parent, e5, d, s8, 42) == "parent_best_json_format")
+    d = TMP / "e1_nomode"
+    s8 = write_e1_parent(d)
+    (d / "e1_telemetry.jsonl").write_text(json.dumps({"event": "run_meta", "seed": 42, "max_iters": 80000}) + "\n"
+                                          + json.dumps({"event": "val", "iter": 80000}) + "\n", encoding="utf-8")
+    check("refuses_parent_run_meta_without_mode", code_of(Q.resolve_parent, e5, d, s8, 42) == "parent_run_meta_key")
+    d = TMP / "e1_otherstage"
+    s8 = write_e1_parent(d)
+    (d / "e1_telemetry.jsonl").write_text(json.dumps({"event": "run_meta", "mode": "real", "seed": 42, "stage": "E2",
+                                                      "max_iters": 80000}) + "\n"
+                                          + json.dumps({"event": "val", "iter": 80000}) + "\n", encoding="utf-8")
+    check("refuses_e1_parent_of_another_stage", code_of(Q.resolve_parent, e5, d, s8, 42) == "parent_stage_mismatch")
+    notjson = TMP / "clip_selection_notjson.json"
+    notjson.write_text("{not json", encoding="utf-8")
+    nocand = TMP / "clip_selection_nocandidate.json"
+    nocand.write_text(json.dumps({"format": "qat_clip_selection/1", "winner": {"clip_norm": 2.0}}), encoding="utf-8")
+    latest = TMP / "latest_clip_selection.json"
+    got = code_of(cb, "E5", 44, 5.0, u4_pilot=False, clip_selection=str(latest), clip_selection_sha256=ssha)
+    check("refuses_clip_selection_test_path", got == "clip_selection_test_path" and not latest.exists(), f"[{got}]")
+    for name, f in (("refuses_clip_selection_not_json", notjson),
+                    ("refuses_clip_selection_winner_not_a_candidate", nocand)):
+        got = code_of(cb, "E5", 44, 5.0, u4_pilot=False, clip_selection=str(f), clip_selection_sha256=sha_file(f))
+        check(name, got == "clip_selection_format", f"[{got}]")
+    (repo / "sel" / "notjson.json").write_text("{not json", encoding="utf-8")
+    git(repo, "add", "sel/notjson.json")
+    git(repo, "commit", "-q", "-m", "a selection that is not JSON")
+    got = code_of(rts, "sel/notjson.json", sha_file(repo / "sel" / "notjson.json"), "lambda_selection/1", "lambda",
+                  repo)
+    check("refuses_selection_not_json", got == "selection_format", f"[{got}]")
+
+    def no_backend():
+        raise QuantBackendUnavailable("qnnpack is not available here")
+    check("gate_refuses_backend_unavailable",
+          gate(base, patches={**cuda, (Q, "select_qnnpack_backend"): no_backend}) == "backend_unavailable")
+    import src.quant.runner as runner_mod
+    with patched(runner_mod, "check_source", lambda stage, path: (student(), {}, {"sha256": "0" * 64})):
+        check("load_source_refuses_changed_source", code_of(Q.load_source, e6, p3) == "source_changed")
+    leaky = student()
+    leaky.register_buffer("cwd_projection_weight", torch.zeros(1))
+    with patched(runner_mod, "check_source", lambda stage, path: (leaky, {}, {"sha256": p3["checkpoint_sha256"]})):
+        check("load_source_refuses_projection_keys", code_of(Q.load_source, e6, p3) == "source_projection_keys")
+
+    # ---- run_qat's later refusals and STOPs, reached on the CPU through patches; nothing is trained
+    class FakeLoader:
+        def __init__(self, n: int, batch_size: int, drop_last: bool):
+            self.n, self.batch_size, self.drop_last = n, batch_size, drop_last
+            self.dataset = range(n * batch_size)
+
+        def __len__(self):
+            return self.n
+
+        def __iter__(self):
+            return iter(())
+
+    def real_attempt(name: str, want: str, patches: dict, **kw) -> None:
+        o = TMP / f"run_real_{name}"
+        args = dict(stage="e5", mode="real", model=student(), source_meta=SOURCE, out_dir=o, seed=42, clip_norm=1.0,
+                    clip_source="u4_pilot", device="cuda", num_workers=1, log=lambda *a: None)
+        args.update(kw)
+        # on a CUDA pod d1 has initialised CUDA in this process: each case states the flag it needs
+        with contextlib.ExitStack() as stack:
+            for (obj, attr), value in {(torch.cuda, "is_initialized"): (lambda: False), **patches}.items():
+                stack.enter_context(patched(obj, attr, value))
+            got = code_of(Q.run_qat, **args)
+        check(name, got == want and not o.exists(), f"[{got}]")
+
+    of_record = lambda seed, nw: (FakeLoader(335, 16, True), FakeLoader(53, 16, False))   # noqa: E731
+    real_attempt("run_refuses_cuda_initialised_in_real", "cuda_initialized_before_seed",
+                 {(torch.cuda, "is_initialized"): (lambda: True)})
+    real_attempt("run_refuses_steps_per_epoch_in_real", "steps_per_epoch",
+                 {(Q, "build_qat_loaders"): (lambda seed, nw: (FakeLoader(2, 16, True), FakeLoader(1, 16, False)))})
+    real_attempt("run_refuses_loader_not_of_record_in_real", "loader_of_record",
+                 {(Q, "build_qat_loaders"): (lambda seed, nw: (FakeLoader(335, 8, True), FakeLoader(53, 8, False)))})
+    real_attempt("run_refuses_unfused_bn_in_real", "unfused_batchnorm",
+                 {(Q, "build_qat_loaders"): of_record, (Q, "unfused_batchnorm"): (lambda m: ["features.0.0.bn"])})
+    o = TMP / "run_smoke_empty_loader"
+    empty = DataLoader(TensorDataset(torch.zeros(0, 3, 64, 64), torch.zeros(0, 64, 64, dtype=torch.long)),
+                       batch_size=16, drop_last=True)
+    got = code_of(Q.run_qat, stage="e5", mode="smoke", model=student(), source_meta=SOURCE, out_dir=o, seed=42,
+                  clip_norm=1.0, clip_source="smoke", device="cpu", num_workers=0, loaders=(empty, make_loaders()[1]),
+                  log=lambda *a: None)
+    check("run_refuses_empty_loader", got == "empty_loader" and not o.exists(), f"[{got}]")
+    o = TMP / "run_smoke_no_backend"
+    with patched(Q, "select_qnnpack_backend", no_backend):
+        got = code_of(Q.run_qat, stage="e5", mode="smoke", model=student(), source_meta=SOURCE, out_dir=o, seed=42,
+                      clip_norm=1.0, clip_source="smoke", device="cpu", num_workers=0, loaders=make_loaders(),
+                      log=lambda *a: None)
+    check("run_refuses_unavailable_backend", got == "backend_unavailable" and not o.exists(), f"[{got}]")
+
+    def stop_of(**kw) -> str | None:
+        try:
+            Q.run_qat(stage="e5", mode="smoke", model=student(), source_meta=SOURCE, seed=42, clip_norm=1.0,
+                      clip_source="smoke", device="cpu", num_workers=0, loaders=make_loaders(), log=lambda *a: None,
+                      **kw)
+        except Q.QATStop as e:
+            return e.code
+        return None
+    o = TMP / "run_smoke_optimizer"
+    with patched(Q, "optimizer_record", lambda opt, model: {"class": "SGD", "param_groups": 1, "momentum": 0.0}):
+        got = stop_of(out_dir=o)
+    check("run_stops_on_an_optimizer_not_of_record", got == "optimizer_of_record"
+          and not (o / Q.TELEMETRY_NAME).exists(), f"[{got}]")
+
+    class Meddler(Q.QATHooks):
+        def before_val(self, epoch, prepared):
+            bn = next(m for m in prepared.modules() if isinstance(m, torch.nn.modules.batchnorm._BatchNorm))
+            bn.running_mean.add_(1.0)
+    o = TMP / "run_smoke_meddled_val"
+    got = stop_of(out_dir=o, hooks=Meddler(), max_steps=2, max_val_batches=1)
+    rows = [json.loads(x) for x in (o / Q.TELEMETRY_NAME).read_text(encoding="utf-8").splitlines()] \
+        if (o / Q.TELEMETRY_NAME).is_file() else []
+    check("run_stops_when_val_changes_the_state", got == "val_bracket_changed_state"
+          and rows and rows[-1].get("event") == "run_stop" and rows[-1].get("code") == "val_bracket_changed_state",
+          f"[{got}]")
     # ---- main(): a refused launch prints one RESULT line and writes nothing
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):

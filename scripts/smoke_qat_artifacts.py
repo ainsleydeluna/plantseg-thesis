@@ -52,7 +52,7 @@ from src.quant.ptq import (graph_census, output_parity, runtime_census, syntheti
 from src.quant.qconfig import select_qnnpack_backend  # noqa: E402
 
 results: list[tuple[str, bool, str]] = []
-SECTIONS = ("units", "e5", "e6", "nan", "stop", "guard")
+SECTIONS = ("units", "records", "e5", "e6", "nan", "stop", "guard")
 DRIVER = evaluator_driver(TMP / "evaluator_driver.py")
 os.environ["SMOKE_REPO"] = str(REPO)
 HOST = "cloud-smoke"
@@ -153,10 +153,142 @@ def test_units() -> None:
           and not A.bytes_equal(nan_t, torch.tensor([float("nan"), 2.0])))
 
 
+def clone_run(src: Path, dst: Path) -> Path:
+    """A copy of a run (the checkpoints copied, so one may be rewritten)."""
+    shutil.copytree(src, dst)
+    return dst
+
+
+def rewrite_checkpoint(run: Path, epoch: int, edit) -> None:
+    """Rewrite eNN.pt with `edit(state)` applied and record its new sha256 in the run's epoch_end row."""
+    p = run / Q.EPOCH_DIR / f"e{epoch:02d}.pt"
+    payload = torch.load(p, map_location="cpu", weights_only=True)
+    edit(payload["model_state_dict"])
+    torch.save(payload, p)
+    tel = run / Q.TELEMETRY_NAME
+    rows = [json.loads(line) for line in tel.read_text(encoding="utf-8").splitlines()]
+    for r in rows:
+        if r.get("event") == "epoch_end" and r["epoch"] == epoch:
+            r["checkpoint_sha256"] = Q.sha256_file(p)
+    tel.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+
+
+def fake_convert_record(run: Path, ev: Path, *, purpose: str = "record", epochs=range(1, 16), **edit) -> None:
+    """A qat_convert.json as `convert` writes it (no conversion): score's own checks run on it."""
+    rec = A.read_run_record(run)
+    ev.mkdir(parents=True)
+    doc = {"format": QEE.CONVERT_FORMAT, "run_dir": rec["run_dir"], "run_id": rec["run_id"],
+           "stage": rec["run_meta"]["stage"], "telemetry_sha256": rec["telemetry_sha256"], "purpose": purpose,
+           "host_label": HOST, "cpu_model": Q.cpu_model(), "git_head": None, "smoke_inputs": True,
+           "outcomes": [{"epoch": e, "status": "converted"} for e in epochs], **edit}
+    (ev / QEE.CONVERT_RECORD).write_text(json.dumps(doc), encoding="utf-8")
+
+
+def test_records(cache: Path | None) -> None:
+    """convert's and score's own refusals (P24, P26) and the freeze cross-check STOP (P16): nothing converts."""
+    run = TMP / "run_records"
+    if cache is not None and (cache / "READY").is_file():
+        clone_run(cache / "run_records", run)
+    else:
+        torch.manual_seed(0)
+        from src.models.student import build_student
+        make_qat_run(run, model=build_student(pretrained=False).eval(), stage="e5", clip=1.0)
+        if cache is not None:
+            cache.mkdir(parents=True, exist_ok=True)
+            clone_run(run, cache / "run_records")
+            (cache / "READY").write_text("raw smoke run\n", encoding="utf-8")
+    sha = Q.sha256_file(run / Q.TELEMETRY_NAME)
+    base = ["--run-dir", str(run), "--purpose", "record", "--host-label", HOST, "--allow-smoke-inputs"]
+
+    def refused(name: str, argv: list[str], code: str, rc_want: int = 2, absent: Path | None = None) -> None:
+        rc, res = qee(argv)
+        check(name, rc == rc_want and f"[{code}]" in res and (absent is None or not absent.exists()), res)
+
+    ev = TMP / "ev_records"
+    refused("d4_convert_record_requires_telemetry_sha", ["convert", "--eval-dir", str(ev), *base],
+            "expect_telemetry_sha256_required", absent=ev)
+    refused("d4_convert_record_takes_no_epochs",
+            ["convert", "--eval-dir", str(ev), *base, "--expect-telemetry-sha256", sha, "--epochs", "3"],
+            "epochs_with_record", absent=ev)
+    refused("d4_convert_epochs_out_of_range",
+            ["convert", "--eval-dir", str(ev), *[a if a != "record" else "timing" for a in base], "--epochs", "16"],
+            "epochs_range", absent=ev)
+    refused("d4_convert_telemetry_sha_mismatch",
+            ["convert", "--eval-dir", str(ev), *base, "--expect-telemetry-sha256", "f" * 64],
+            "telemetry_sha256_mismatch", absent=ev)
+    refused("d4_convert_smoke_run_refused",
+            ["convert", "--eval-dir", str(ev), *[a for a in base if a != "--allow-smoke-inputs"],
+             "--expect-telemetry-sha256", sha], "run_not_real", absent=ev)
+    refused("d4_convert_test_path_refused",
+            ["convert", "--eval-dir", str(TMP / "latest_ev"), *base, "--expect-telemetry-sha256", sha],
+            "eval_dir_test_path", absent=TMP / "latest_ev")
+    used = TMP / "ev_used"
+    used.mkdir()
+    (used / "note.txt").write_text("used", encoding="utf-8")
+    refused("d4_convert_eval_dir_not_fresh",
+            ["convert", "--eval-dir", str(used), *base, "--expect-telemetry-sha256", sha], "eval_dir_not_fresh")
+    inc = clone_run(run, TMP / "run_records_incomplete")
+    lines = (inc / Q.TELEMETRY_NAME).read_text(encoding="utf-8").splitlines()[:-1]
+    (inc / Q.TELEMETRY_NAME).write_text("\n".join(lines) + "\n", encoding="utf-8")
+    refused("d4_convert_incomplete_run_exit_3",
+            ["convert", "--eval-dir", str(ev), *[a if a != str(run) else str(inc) for a in base],
+             "--expect-telemetry-sha256", Q.sha256_file(inc / Q.TELEMETRY_NAME)], "run_incomplete", 3, absent=ev)
+    # P16: a BN statistic that moved after the epoch-11 freeze stops the conversion before any epoch converts
+    moved = clone_run(run, TMP / "run_records_bn_moved")
+    bn_key = next(k for k in state_of(run, 12) if k.endswith("running_mean"))
+    rewrite_checkpoint(moved, 12, lambda st: st[bn_key].add_(1.0))
+    ev_m = TMP / "ev_bn_moved"
+    rc, res = qee(["convert", "--eval-dir", str(ev_m), *[a if a != str(run) else str(moved) for a in base],
+                   "--expect-telemetry-sha256", Q.sha256_file(moved / Q.TELEMETRY_NAME)])
+    stop = ev_m / QEE.CONVERT_STOP
+    check("d4_convert_stops_when_a_freeze_did_not_take",
+          rc == 1 and "[freeze_cross_check]" in res and stop.is_file() and not (ev_m / A.CONVERTED_DIR).exists()
+          and "bn e12" in json.dumps(json.loads(stop.read_text()).get("freeze_cross_check", {})), res)
+    # score refuses on the records alone (no evaluator runs)
+    sbase = ["score", *[a for a in base]]
+
+    def score_refused(name: str, ev_dir: Path, code: str, rc_want: int = 2, extra=(), purpose="record") -> None:
+        argv = [a if a != "record" else purpose for a in sbase] + ["--eval-dir", str(ev_dir), *extra]
+        rc, res = qee(argv)
+        check(name, rc == rc_want and f"[{code}]" in res and not (ev_dir / A.SCORES_DIR).exists(), res)
+
+    empty = TMP / "ev_score_empty"
+    empty.mkdir()
+    score_refused("d4_score_without_convert_record_exit_3", empty, "convert_record_missing", 3)
+    other = TMP / "ev_score_other_run"
+    fake_convert_record(run, other, telemetry_sha256="0" * 64)
+    score_refused("d4_score_convert_record_of_another_run", other, "convert_record_mismatch")
+    timing = TMP / "ev_score_timing"
+    fake_convert_record(run, timing, purpose="timing", epochs=[15])
+    score_refused("d4_score_purpose_mismatch", timing, "purpose_mismatch")
+    score_refused("d4_score_unconverted_epoch_refused", timing, "epoch_not_converted", extra=("--epochs", "14"),
+                  purpose="timing")
+    part = TMP / "ev_score_partial"
+    fake_convert_record(run, part, epochs=range(1, 15))
+    score_refused("d4_score_record_needs_all_15_epochs", part, "convert_record_epochs")
+    score_refused("d4_score_record_takes_no_epochs", part, "epochs_with_record", extra=("--epochs", "3"))
+    stopped = TMP / "ev_score_stopped"
+    fake_convert_record(run, stopped)
+    (stopped / A.CONVERTED_DIR).mkdir()
+    (stopped / A.CONVERTED_DIR / A.epoch_names(5)["stop"]).write_text("{}", encoding="utf-8")
+    score_refused("d4_score_refuses_a_stop_file", stopped, "stop_present")
+    busy = TMP / "ev_score_busy"
+    fake_convert_record(run, busy)
+    (busy / A.SCORES_DIR / "e01").mkdir(parents=True)
+    rc, res = qee([a for a in sbase] + ["--eval-dir", str(busy)])
+    check("d4_score_scores_dir_not_fresh", rc == 2 and "[scores_not_fresh]" in res, res)
+    done = TMP / "ev_score_done"
+    fake_convert_record(run, done)
+    (done / QEE.EVAL_RECORD).write_text("{}", encoding="utf-8")
+    score_refused("d4_score_runs_once", done, "output_exists")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--sections", default=",".join(SECTIONS))
-    want = set(ap.parse_args().sections.split(","))
+    ap.add_argument("--cache-dir", default=None, help="keep (or reuse) the records section's trained run here")
+    args = ap.parse_args()
+    want = set(args.sections.split(","))
     ran: set[str] = set()
     if want - set(SECTIONS):
         print(f"RESULT: ERROR unknown sections {sorted(want - set(SECTIONS))}")
@@ -169,6 +301,9 @@ def main() -> int:
     if "units" in want:
         ran.add("units")
         test_units()
+    if "records" in want:
+        ran.add("records")
+        test_records(Path(args.cache_dir) if args.cache_dir else None)
     src = r5 = r6 = None
     if want & {"e5", "e6", "nan", "stop", "guard"}:
         t0 = time.time()

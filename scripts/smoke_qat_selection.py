@@ -97,9 +97,9 @@ def clone_run(src: Path, dst: Path) -> Path:
 # ---------------------------------------------------------------- fabricated eval directories
 def summary(value: float, run_id: str, ts_sha: str, stage: str, *, rows: int = 846, split: str = "val",
             commit: str = "a" * 40, digest: str | None = "sha256:" + "6" * 64, protocol="core_preprocess/1.0.0",
-            status="provisional", metric: str = "b" * 64) -> dict:
+            status="provisional", metric: str = "b" * 64, gt_sum: int | None = None) -> dict:
     gt = [1000] * 116
-    gt[0] = (GT_SUM if rows == 846 else rows * 100_000) - 115_000
+    gt[0] = (gt_sum if gt_sum is not None else GT_SUM if rows == 846 else rows * 100_000) - 115_000
     return {"schema_version": "plantseg-eval/1.0.0",
             "run": {"run_id": run_id, "artifact_status": status, "stage": stage, "model_role": "student",
                     "precision": "int8_qat", "quant_backend": "qnnpack", "checkpoint_sha256": ts_sha,
@@ -403,21 +403,26 @@ def d3_no_convertible_epoch_refused_exit_2():
 
 
 # ---- d3: refusals of the chain (P23-P26), one link at a time
-def _tamper_case(name: str, tamper: dict, expect_rc: int, code: str):
+def _tamper_case(name: str, tamper: dict, expect_rc: int, code: str, needle: str = "", absent: str = ""):
     def run():
         r1 = FX["base"][1.0]
         ev = TMP / f"ev_{name}"
         fabricate(r1, ev, vals(e07=0.5), tamper=tamper)
         rc, res, _ = select(r1, ev, FX["sha"][1.0])
-        check(name, rc == expect_rc and f"[{code}]" in res, res)
+        check(name, rc == expect_rc and f"[{code}]" in res and needle in res and not (absent and absent in res), res)
     return run
 
 
-for _n, _t, _rc, _c in [
+for _n, _t, _rc, _c, *_more in [
         ("d3_partial_eval_incomplete", {"drop_epoch": 9}, 3, "eval_incomplete"),
         ("d3_identity_sha_mismatch_refused", {("identity_ck", 6): "0" * 64}, 2, "chain_broken"),
         ("d3_provenance_checkpoint_mismatch_refused", {("prov_ck", 6): "0" * 64}, 2, "chain_broken"),
         ("d3_capped_summary_refused", {("summary", 4): {"rows": 64}}, 2, "summary_values"),
+        # each guard of a capped summary alone: the row counts (gt_support complete), and the gt_support sum
+        ("d3_capped_rows_alone_refused", {("summary", 4): {"rows": 64, "gt_sum": GT_SUM}}, 2, "summary_values",
+         "rows expected 64", "gt_support"),
+        ("d3_gt_support_sum_refused", {("summary", 4): {"gt_sum": GT_SUM - 1}}, 2, "summary_values",
+         "sum(per_class.gt_support)", "rows expected"),
         ("d3_non_val_split_refused", {("summary", 4): {"split": "train"}}, 2, "summary_values"),
         ("d3_upstream_protocol_refused", {("summary", 4): {"protocol": "upstream/1.0.0"}}, 2, "summary_values"),
         ("d3_smoke_status_refused", {("summary", 4): {"status": "smoke"}}, 2, "summary_values"),
@@ -429,7 +434,7 @@ for _n, _t, _rc, _c in [
         ("d3_timing_purpose_refused", {"purpose": "timing"}, 2, "purpose_not_record"),
         ("d3_two_commits_refused", {"convert_head": "9" * 40}, 2, "eval_dir_mixed"),
         ("d3_smoke_input_records_refused", {"smoke_inputs": True}, 2, "smoke_inputs")]:
-    register("refusals", _n, _tamper_case(_n, _t, _rc, _c))
+    register("refusals", _n, _tamper_case(_n, _t, _rc, _c, *_more))
 
 
 def _edit_case(name: str, edit, expect_rc: int, code: str, needle: str = ""):
