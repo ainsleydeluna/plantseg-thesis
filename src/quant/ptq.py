@@ -435,10 +435,10 @@ def torchscript_bytes(converted: nn.Module, meta: dict) -> tuple[bytes, list[str
     return buf.getvalue(), notes
 
 
-def state_dict_bytes(converted: nn.Module, stage_name: str) -> bytes:
+def state_dict_bytes(converted: nn.Module, stage_name: str, method: str = "ptq") -> bytes:
     """The converted state_dict in the exact src/quant/runner.py schema."""
     buf = io.BytesIO()
-    torch.save({"stage": stage_name, "quantization": "ptq", "num_classes": NUM_CLASSES,
+    torch.save({"stage": stage_name, "quantization": method, "num_classes": NUM_CLASSES,
                 "model": converted.state_dict()}, buf)
     return buf.getvalue()
 
@@ -773,7 +773,7 @@ def run_ptq(*, stage: str, source_ckpt, expect_source_sha256: str, calibration_l
         raise PTQRefused("stage_unknown", str(e)) from e
     if st["method"] != "ptq":
         raise PTQRefused("stage_not_ptq", f"{st['name']} is a {st['method'].upper()} stage; PTQ is E4/E7")
-    if torch.jit._state._python_cu.get_class(STUDENT_TS_CLASS) is not None:
+    if student_traced_in_process():
         raise PTQRefused("fresh_process_required",
                          "the student was already traced in this process, so this run's TorchScript "
                          "files would carry renamed classes and not reproduce byte for byte (d3); run "
@@ -1066,6 +1066,12 @@ def compare_runs(meta_a, meta_b) -> dict:
             "threads": [a["environment"]["torch_num_threads"], b["environment"]["torch_num_threads"]]}
 
 
+def student_traced_in_process() -> bool:
+    """True once the student was traced in this process. TorchScript then renames its classes, so a
+    second trace would not reproduce the first one's bytes (d3); QAT converts one epoch per process."""
+    return torch.jit._state._python_cu.get_class(STUDENT_TS_CLASS) is not None
+
+
 __all__ = ["CALIBRATION_BATCH_SIZE", "CHECKSUM_DEFINITION", "LIST_FILENAME", "LIST_SCHEMA", "LIST_SEEDS",
            "LIST_SHARED_BY", "LIST_PROCEDURE", "LIST_STATUS_REGISTERED", "PTQRefused", "PTQStop",
            "PTQ_RUN_ROLES", "ROLE_OF_RECORD", "ROLE_SENSITIVITY", "SEED_OF_RECORD", "SENSITIVITY_SEEDS",
@@ -1074,6 +1080,6 @@ __all__ = ["CALIBRATION_BATCH_SIZE", "CHECKSUM_DEFINITION", "LIST_FILENAME", "LI
            "ids_checksum", "iter_calibration", "iter_calibration_images", "list_of_record_error", "list_role",
            "load_calibration_list", "load_x86_latency_torchscript", "output_parity", "pixel_agreement",
            "quantize_qnnpack", "quantize_x86_copy", "refuse_eval_split_dir", "refuse_eval_split_file",
-           "refuse_test_path", "refuse_val_dir", "run_ptq", "runtime_census", "state_dict_bytes",
+           "refuse_test_path", "refuse_val_dir", "run_ptq", "runtime_census", "state_dict_bytes", "student_traced_in_process",
            "synthetic_parity_inputs", "torchscript_bytes", "verify_calibration_list",
            "weight_scheme_report", "write_exclusive"]

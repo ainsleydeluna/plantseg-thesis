@@ -14,10 +14,10 @@ REUSE, NOT DUPLICATION. Fusion, calibration and conversion come from `src.quant.
 reimplemented). Only the QConfig and the backend differ from the accuracy path.
 
 E4/E7 (PTQ) rebuild from their FP32 source plus the frozen shared calibration subset. E5/E6 (QAT)
-rebuild from the AUXILIARY pre-convert QAT sidecar the runner writes alongside the official
-converted artifact, by TRANSLATION ONLY — same trained weights, same learned activation-range
-evidence, backend-appropriate x86 quantizer parameters, zero optimizer steps. E5/E6 are never
-re-trained under x86 to obtain a latency artifact: that would be a different model.
+rebuild from the pre-convert QAT state of the selected epoch (epoch_ckpts/eNN.pt, which
+src/quant/qat.py writes in this sidecar schema), by TRANSLATION ONLY — same trained weights, same
+learned activation-range evidence, backend-appropriate x86 quantizer parameters, zero optimizer steps.
+E5/E6 are never re-trained under x86 to obtain a latency artifact: that would be a different model.
 """
 from __future__ import annotations
 
@@ -156,7 +156,8 @@ def _recompute_x86_qparams(prepared: nn.Module) -> int:
     return updated
 
 
-def _copy_trained_state(prepared: nn.Module, incoming: dict) -> tuple[int, list[str]]:
+@torch.no_grad()
+def copy_qat_state_by_name(prepared: nn.Module, incoming: dict) -> tuple[int, list[str]]:
     """Copy trained tensors into the prepared model BY NAME, bypassing `load_state_dict`.
 
     WHY NOT `load_state_dict`. A freshly `prepare_qat`-ed model has EMPTY per-channel observer
@@ -189,6 +190,9 @@ def _copy_trained_state(prepared: nn.Module, incoming: dict) -> tuple[int, list[
     return copied, unexpected
 
 
+_copy_trained_state = copy_qat_state_by_name           # the pre-lane name, kept for its callers
+
+
 @torch.no_grad()
 def translate_qat_state_to_x86(stage: str, model: nn.Module, sidecar: dict, *,
                                select_backend: bool = True) -> tuple[nn.Module, dict]:
@@ -215,7 +219,7 @@ def translate_qat_state_to_x86(stage: str, model: nn.Module, sidecar: dict, *,
 
     carried = {k: v for k, v in source_state.items() if not _is_qparam(k)}
     skipped = sorted(k for k in source_state if _is_qparam(k))
-    copied, unexpected = _copy_trained_state(prepared, carried)
+    copied, unexpected = copy_qat_state_by_name(prepared, carried)
     if unexpected:
         raise X86LatencyCopyError(
             "qat_sidecar_key_mismatch",
@@ -380,6 +384,6 @@ def x86_artifact_provenance(*, stage: str, engine: str, source_sha256: str | Non
 __all__ = ["ACCURACY_ARTIFACT_ROLE", "ARTIFACT_ROLES", "QAT_SIDECAR_KIND", "QAT_SIDECAR_ROLE",
            "QAT_SIDECAR_SUFFIX", "X86_LATENCY_ARTIFACT_ROLE", "X86_PTQ_STAGES", "X86_QAT_STAGES",
            "X86_RECONSTRUCTIBLE_STAGES", "X86LatencyCopyError", "assert_trained_state_preserved",
-           "build_x86_latency_copy", "load_qat_sidecar", "prepare_x86_ptq", "prepare_x86_qat",
+           "build_x86_latency_copy", "copy_qat_state_by_name", "load_qat_sidecar", "prepare_x86_ptq", "prepare_x86_qat",
            "qat_sidecar_missing_error", "require_x86_calibration_identity",
            "translate_qat_state_to_x86", "validate_qat_sidecar", "x86_artifact_provenance"]

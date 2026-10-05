@@ -426,6 +426,14 @@ def test_runner_sidecar() -> None:
           "the epoch is selected after training (scripts/select_qat_epoch.py), never in the trainer")
     check("epoch_checkpoint_sha256_recorded", '"checkpoint_sha256": ck_sha' in src,
           "every epoch_end row carries its checkpoint's sha256")
+    import io as _io
+    from src.quant.ptq import state_dict_bytes
+    art = (REPO / "src/quant/qat_artifacts.py").read_text(encoding="utf-8")
+    obj = torch.load(_io.BytesIO(state_dict_bytes(torch.nn.Conv2d(1, 1, 1), "E5", "qat")), weights_only=False)
+    check("official_converted_schema_qat",
+          'state_dict_bytes(converted, st["name"], "qat")' in art and obj["quantization"] == "qat"
+          and obj["stage"] == "E5" and obj["num_classes"] == 116 and "model" in obj,
+          "the runner's converted state_dict schema with quantization 'qat', from src/quant/qat_artifacts.py")
 
 
 # ---------------------------------------------------------------- 5. calibration identity
