@@ -26,9 +26,6 @@ from torch.ao.quantization import convert, disable_observer, enable_observer, pr
 
 from .qconfig import ptq_qconfig, qat_qconfig, select_qnnpack_backend
 
-# Contract B4 pins a RANGE for the BN-stat freeze ("after ~65-70% of training"), not a value.
-BN_FREEZE_PCT_RANGE = (0.65, 0.70)
-
 
 class QuantPreparationError(RuntimeError):
     """Raised when a model cannot be prepared for quantization as the contract requires."""
@@ -114,14 +111,14 @@ def convert_model(prepared: nn.Module) -> nn.Module:
 
 # ------------------------------------------------------------------ QAT schedule helpers
 def freeze_bn_stats(model: nn.Module) -> nn.Module:
-    """Freeze BN running statistics (contract B4: after ~65-70% of training)."""
+    """Freeze BN running statistics in every fused QAT ConvBn module (AM-4a item 1: top of epoch 11)."""
     from torch.ao.nn.intrinsic.qat import freeze_bn_stats as _freeze
     model.apply(_freeze)
     return model
 
 
 def disable_observers(model: nn.Module) -> nn.Module:
-    """Freeze activation ranges (contract B4: "shortly after BN freeze")."""
+    """Disable every FakeQuantize observer, weight and activation (AM-4a item 1: top of epoch 13)."""
     model.apply(disable_observer)
     return model
 
@@ -131,33 +128,54 @@ def enable_observers(model: nn.Module) -> nn.Module:
     return model
 
 
-def bn_freeze_iteration(total_iters: int, pct: float) -> int:
-    """Convert a BN-freeze percentage into an iteration index.
+def qat_freeze_steps(steps_per_epoch: int, bn_freeze_epoch: int | None = None,
+                     obs_freeze_epoch: int | None = None) -> tuple[int, int]:
+    """AM-4a item 1: the completed optimizer steps after which BN statistics, then every observer, freeze.
 
-    The contract pins only the RANGE 65-70%, so `pct` must be supplied explicitly at launch — this
-    helper exposes the mechanism and refuses a value outside the locked range rather than picking
-    one silently.
+    BN statistics freeze at the top of epoch bn_freeze_epoch + 1 and every observer at the top of epoch
+    obs_freeze_epoch + 1, so both counts are whole epochs: (10 x spe, 12 x spe), i.e. (3,350, 4,020) at
+    the 335 steps per epoch of record and (20, 24) in the smokes' 2-step geometry. The epochs default to
+    configs/quant.py qat_real_run.
     """
-    lo, hi = BN_FREEZE_PCT_RANGE
-    if not isinstance(pct, (int, float)) or not math.isfinite(pct) or not (lo <= pct <= hi):
-        raise QuantPreparationError(
-            f"BN-freeze percentage must be an explicit value inside the locked range "
-            f"[{lo}, {hi}], got {pct!r}. Contract B4 fixes the range, not the value.")
-    return max(1, int(round(total_iters * pct)))
+    if bn_freeze_epoch is None or obs_freeze_epoch is None:
+        from configs.quant import QUANT
+        run = QUANT["qat_real_run"]
+        bn_freeze_epoch = run["bn_freeze_epoch"] if bn_freeze_epoch is None else bn_freeze_epoch
+        obs_freeze_epoch = run["obs_freeze_epoch"] if obs_freeze_epoch is None else obs_freeze_epoch
+    for name, v in (("steps_per_epoch", steps_per_epoch), ("bn_freeze_epoch", bn_freeze_epoch),
+                    ("obs_freeze_epoch", obs_freeze_epoch)):
+        if isinstance(v, bool) or not isinstance(v, int) or v < 1:
+            raise QuantPreparationError(f"{name} must be a positive integer, got {v!r}")
+    if not bn_freeze_epoch < obs_freeze_epoch:
+        raise QuantPreparationError(f"the BN freeze (after epoch {bn_freeze_epoch}) must precede the observer "
+                                    f"freeze (after epoch {obs_freeze_epoch})")
+    return bn_freeze_epoch * steps_per_epoch, obs_freeze_epoch * steps_per_epoch
+
+
+def unfused_batchnorm(model: nn.Module) -> list[str]:
+    """BatchNorm modules outside a fused QAT ConvBn / ConvBnReLU module.
+
+    freeze_bn_stats reaches a BN only through its fused module, so the epoch-11 freeze would miss any
+    BN listed here; a real QAT run requires the list to be empty.
+    """
+    from torch.ao.nn.intrinsic.qat.modules.conv_fused import _ConvBnNd
+    fused = {id(m.bn) for m in model.modules() if isinstance(m, _ConvBnNd)}
+    return [n for n, m in model.named_modules()
+            if isinstance(m, nn.modules.batchnorm._BatchNorm) and id(m) not in fused]
 
 
 def qat_grad_clip_gate_error(value: float | None) -> str | None:
-    """Validate `--grad-clip-norm` for a REAL E5 launch. Returns an error string, or None if OK.
+    """Validate a global-norm clipping threshold for E5/E6 QAT. Returns an error string, or None if OK.
 
-    Contract B4 requires global-norm gradient clipping for QAT but fixes no numeric `max_norm`
-    (`configs/quant.py` records only the method family "global_norm"). Rather than inventing a
-    threshold, a real E5 run must supply it explicitly — the same discipline as the E2/E3 gate.
+    Contract B4 requires global-norm gradient clipping for QAT and AM-4a item 3 selects the threshold
+    from the U4 candidates (configs/quant.py qat_grad_clip_pilot). This primitive accepts any positive
+    finite value; candidate membership and the binding to the U4 selection are src/quant/qat.py's.
     """
     if value is None:
-        return ("--grad-clip-norm is required for a real E5 run. Contract B4 mandates global-norm "
-                "gradient clipping for QAT but fixes no numeric max_norm (configs/quant.py records "
-                "the method family only), so the threshold stays an explicit experiment-level "
-                "decision: re-run with --grad-clip-norm <positive finite value>.")
+        return ("--grad-clip-norm is required for a real E5/E6 run. Contract B4 mandates global-norm "
+                "gradient clipping for QAT and AM-4a item 3 selects the threshold from the U4 "
+                "candidates (configs/quant.py qat_grad_clip_pilot): re-run with --grad-clip-norm "
+                "<positive finite value>.")
     if not math.isfinite(value) or value <= 0.0:
         return (f"--grad-clip-norm must be a positive finite value, got {value!r}. Zero, negative, "
                 "NaN and Inf are rejected.")

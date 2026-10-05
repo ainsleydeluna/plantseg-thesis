@@ -12,20 +12,15 @@ classes, an out-of-repo output directory (via E1's own guard), the QNNPACK backe
 PTQ — the exact shared calibration artifact. Random initialization is impossible: every stage loads
 a validated source checkpoint. Nothing here downloads, substitutes a model, or falls back silently.
 
-UNRESOLVED EXPERIMENT VALUES ARE HARD-GATED, NEVER INVENTED. `configs/quant.py` locks the QAT
-optimizer family (SGD, momentum 0.9, lr 3e-4, cosine, ~15 epochs, no weight EMA, CE+Dice supervised,
-best-val-mIoU selection) but leaves the global-norm `max_norm` unspecified, the BN-stat freeze as a
-**range** ("65-70%"), the observer freeze as a **relation** ("shortly after BN freeze"), and neither
-the QAT batch size nor its weight decay appears in B4 at all. A real E5/E6 launch must supply each
-of those explicitly; the runner refuses and lists every missing one.
+E5/E6 QAT is src/quant/qat.py's (AM-4/AM-4a, lanes L-AM4 + L-AM1q): `main` hands those two stages to
+`src.quant.qat.main` before any PTQ argument is parsed; scripts/run_e5.py and run_e6.py reach it through
+`main`.
 """
 
 from __future__ import annotations
 
-import copy
 import hashlib
 import json
-import math
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -40,19 +35,15 @@ from configs.quant import QUANT                                     # noqa: E402
 from src.training.train_e1 import _assert_outside_repo              # noqa: E402  (reuse, unmodified)
 from .calibration import CalibrationIndexError                      # noqa: E402
 from .checkpoint import SourceCheckpointInvalid                     # noqa: E402
-from .prepare import (BN_FREEZE_PCT_RANGE, CALIBRATION_BATCH_SIZE, bn_freeze_iteration,  # noqa: E402
-                      calibrate, convert_model, disable_observers, freeze_bn_stats,
-                      qat_grad_clip_gate_error, quantization_coverage, try_converted_forward)
+from .prepare import (CALIBRATION_BATCH_SIZE, calibrate, convert_model,  # noqa: E402
+                      quantization_coverage, try_converted_forward)
 from .qconfig import (QUANT_BACKEND, QuantBackendUnavailable, describe_qconfig, ptq_qconfig,  # noqa: E402
                       qat_qconfig, select_qnnpack_backend)
 from .stages import (load_source_for_stage, prepare_for_stage, require_shared_calibration_index,  # noqa: E402
                      resolve_quant_stage)
-from .x86_latency import QAT_SIDECAR_KIND, QAT_SIDECAR_ROLE, QAT_SIDECAR_SUFFIX  # noqa: E402
 
 NUM_CLASSES = 116
-QAT = QUANT["qat"]
 PTQ = QUANT["ptq"]
-DRY_EPOCHS = QAT["epochs_approx"]      # synthetic/structural use ONLY — never a real-run default
 
 
 class QuantRunError(RuntimeError):
@@ -134,93 +125,6 @@ def check_calibration(stage: dict, index_path: str | None, expected_checksum: st
         return require_shared_calibration_index(index_path, expected_checksum=expected_checksum)
     except CalibrationIndexError as e:
         raise QuantRunError("calibration_invalid", str(e)) from e
-
-
-def unresolved_qat_values(args) -> list[str]:
-    """Every locked-but-unvalued QAT quantity a real E5/E6 launch must supply. Never guessed."""
-    missing: list[str] = []
-    err = qat_grad_clip_gate_error(args.grad_clip_norm)
-    if err:
-        missing.append(f"--grad-clip-norm ({err.splitlines()[0]})")
-    if args.batch_size is None or args.batch_size <= 0:
-        missing.append("--batch-size (B4's QAT table fixes no batch size; E1's 16 is the "
-                       "E1/E2/E3 recipe, not the QAT one)")
-    # Weight decay: B4's QAT table locks optimizer/momentum/lr/schedule and has NO weight-decay row
-    # (the 0.01 and 1e-4 in the contract belong to B1 teacher AdamW and B2 student SGD). Genuinely
-    # unspecified -> an explicit real-run decision. Any finite value >= 0 is acceptable, including 0.
-    if (args.weight_decay is None or not math.isfinite(args.weight_decay)
-            or args.weight_decay < 0):
-        missing.append("--weight-decay, any finite value >= 0 (B4's QAT table locks SGD, momentum, "
-                       "lr and cosine but has no weight-decay row at all)")
-    # Epoch budget: the contract says "~15 epochs" and the config field is literally named
-    # `epochs_approx`. Approximate guidance is NOT an exact locked value, so a real run must state
-    # the budget it is actually committing to (supplying 15 makes 15 the recorded decision).
-    if args.epochs is None or args.epochs <= 0:
-        missing.append(f"--epochs <positive integer> (contract says '~{QAT['epochs_approx']}' and "
-                       "the config field is `epochs_approx`; an approximation is not a locked value)")
-    # Early stopping: the metric IS pinned (`early_stop: 'val_miou'`) but no patience is governed
-    # anywhere, so the mechanism is implemented and the value is required at launch.
-    if args.early_stop_patience is None or args.early_stop_patience <= 0:
-        missing.append("--early-stop-patience <positive integer> (contract pins early stopping on "
-                       f"'{QAT['early_stop']}' but fixes no patience)")
-    lo, hi = BN_FREEZE_PCT_RANGE
-    if args.bn_freeze_pct is None or not (lo <= args.bn_freeze_pct <= hi):
-        missing.append(f"--bn-freeze-pct inside the locked range [{lo}, {hi}] "
-                       f"(contract fixes the range '{QAT['bn_freeze_pct']}%', not a value)")
-    if args.observer_freeze_pct is None:
-        missing.append(f"--observer-freeze-pct (contract says only '{QAT['observer_freeze']}')")
-    elif args.bn_freeze_pct is not None and args.observer_freeze_pct < args.bn_freeze_pct:
-        missing.append("--observer-freeze-pct must be >= --bn-freeze-pct "
-                       f"('{QAT['observer_freeze']}')")
-    elif not (0.0 < args.observer_freeze_pct <= 1.0):
-        missing.append("--observer-freeze-pct must lie in (0, 1]")
-    return missing
-
-
-# ------------------------------------------------------------------ early stopping
-class EarlyStopper:
-    """Early stopping on all-class validation mIoU (contract B4: "early-stop on val mIoU").
-
-    Improvement uses the SAME strict comparison as best-checkpoint selection, `miou > best`. No
-    minimum delta is governed anywhere in the contract, so none is invented: a plateau counts as a
-    non-improvement. The counter advances only at validation points and resets on any improvement.
-    Kept separate from the training loop so its semantics can be proven against a synthetic score
-    sequence, and so E5 and E6 provably share one implementation.
-    """
-
-    def __init__(self, patience: int):
-        if not isinstance(patience, int) or patience <= 0:
-            raise QuantRunError("early_stop_patience_invalid",
-                                f"early-stopping patience must be a positive integer, got {patience!r}")
-        self.patience = patience
-        self.best = float("-inf")
-        self.best_step: int | None = None
-        self.num_bad = 0
-        self.triggered = False
-
-    def update(self, miou: float, step: int, *, stop_eligible: bool = True) -> bool:
-        """Record a validation result. Returns True when it improved on the best so far.
-
-        `stop_eligible=False` keeps BEST-CHECKPOINT tracking running while refusing to accrue
-        patience. A QAT run must not be able to terminate before its quantization schedule has
-        executed: with a 15-epoch budget and per-epoch validation, an unguarded patience of 3 could
-        stop around epoch 3-4, i.e. long before the BN freeze at 65% and the observer freeze at 70% of
-        the planned optimizer steps. Early-stop eligibility therefore begins only after observer
-        freezing, while the best-mIoU checkpoint is still tracked from the first validation onward.
-        """
-        if miou > self.best:
-            self.best, self.best_step, self.num_bad = miou, step, 0
-            return True
-        if not stop_eligible:
-            return False
-        self.num_bad += 1
-        if self.num_bad >= self.patience:
-            self.triggered = True
-        return False
-
-    @property
-    def should_stop(self) -> bool:
-        return self.triggered
 
 
 # ------------------------------------------------------------------ calibration data
@@ -309,7 +213,7 @@ def _qconfig_summary(method: str) -> dict:
     return {"activation": flat["activation"], "weight": flat["weight"], "fingerprint": fingerprint}
 
 
-# ------------------------------------------------------------------ PTQ / QAT execution
+# ------------------------------------------------------------------ PTQ execution
 def run_ptq(stage: dict, args, model, source_meta: dict, out_dir: Path, backend: str) -> dict:
     index = check_calibration(stage, args.calibration_index, args.calibration_sha256)
     data_root = Path(args.data_root) if args.data_root else None
@@ -341,120 +245,6 @@ def run_ptq(stage: dict, args, model, source_meta: dict, out_dir: Path, backend:
         training=None, converted_path=path, coverage=coverage, forward=fwd, backend=backend)
 
 
-def run_qat(stage: dict, args, model, source_meta: dict, out_dir: Path, backend: str) -> dict:
-    from src.data import build_dataloader
-    from src.training.losses import CombinedCEDiceLoss
-    from src.training.train_e1 import cycle, load_ce_weights, validate
-
-    device = torch.device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
-    prepared = prepare_for_stage(stage["key"], model, select_backend=False).to(device)
-    prepared.train()
-
-    train_loader = build_dataloader("train", args.batch_size, num_workers=args.num_workers)
-    val_loader = build_dataloader("val", args.batch_size, num_workers=args.num_workers)
-    # The TEST split is never constructed here.
-    iters_per_epoch = len(train_loader)
-    total_iters = iters_per_epoch * args.epochs
-    # Freeze points are OPTIMIZER-STEP fractions of the planned budget, not rounded epoch prose.
-    # Rounding convention: `round(total_iters * pct)` (Python banker's rounding), floored at step 1,
-    # and the observer freeze is additionally clamped to never precede the BN freeze.
-    bn_freeze_at = bn_freeze_iteration(total_iters, args.bn_freeze_pct)
-    obs_freeze_at = max(bn_freeze_at, int(round(total_iters * args.observer_freeze_pct)))
-
-    weights = load_ce_weights().to(device)
-    criterion = CombinedCEDiceLoss(weight=weights).to(device)     # supervised-only; no distillation
-    optimizer = torch.optim.SGD(prepared.parameters(), lr=QAT["learning_rate"],
-                                momentum=QAT["momentum"], weight_decay=args.weight_decay)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_iters)
-
-    stopper = EarlyStopper(args.early_stop_patience)
-    best_state, it, completed_epochs = None, 0, 0
-    for img, mask in cycle(train_loader):
-        it += 1
-        if it > total_iters:
-            break
-        img, mask = img.to(device), mask.to(device)
-        optimizer.zero_grad(set_to_none=True)
-        loss = criterion(prepared(img), mask)
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(prepared.parameters(), args.grad_clip_norm)
-        optimizer.step()
-        scheduler.step()
-        if it == bn_freeze_at:
-            freeze_bn_stats(prepared)
-        if it == obs_freeze_at:
-            disable_observers(prepared)
-        if it % iters_per_epoch == 0 or it == total_iters:
-            completed_epochs = math.ceil(it / iters_per_epoch)
-            all_miou, _, _, _ = validate(prepared, val_loader, device, NUM_CLASSES, None)
-            # Best-checkpoint tracking runs from the first validation; patience accrues only once the
-            # observer freeze has happened, so the quantization schedule always executes in full.
-            if stopper.update(all_miou, it, stop_eligible=it >= obs_freeze_at):
-                best_state = copy.deepcopy(prepared.state_dict())
-            prepared.train()
-            if stopper.should_stop:               # patience exhausted -> stop early, keep the best
-                break
-
-    if best_state is None:
-        raise QuantRunError("qat_no_checkpoint", "QAT produced no validated checkpoint")
-    best_miou, best_iter = stopper.best, stopper.best_step
-    # AUXILIARY COMPANION ARTIFACT (not the deployment artifact). The pre-convert QAT state is what
-    # makes a backend-specific latency representation reconstructible WITHOUT retraining, so its
-    # role markers are explicit and machine-checkable. The official converted artifact written below
-    # is unchanged, and best-validation selection semantics above are untouched.
-    qat_path = out_dir / f"{stage['key']}{QAT_SIDECAR_SUFFIX}"
-    torch.save({"stage": stage["name"], "quantization": QAT_SIDECAR_KIND, "iter": best_iter,
-                "best_val_miou_all_class": best_miou, "model_state_dict": best_state,
-                "num_classes": NUM_CLASSES,
-                "artifact_role": QAT_SIDECAR_ROLE,
-                "is_official_accuracy_artifact": False,
-                "is_deployment_artifact": False,
-                "training_quant_backend": backend,
-                "source_stage": stage["source_stage"],
-                "source_checkpoint_sha256": source_meta["sha256"],
-                "purpose": "auxiliary pre-convert QAT state; enables backend-specific latency "
-                           "reconstruction from the same trained weights without retraining. "
-                           "Never an accuracy, robustness, size or deployment artifact."},
-               qat_path)
-
-    prepared.load_state_dict(best_state)
-    converted = convert_model(prepared.cpu())
-    coverage = quantization_coverage(converted)
-    fwd = try_converted_forward(converted, torch.randn(1, 3, 512, 512))
-    if not fwd["ok"]:
-        raise QuantRunError("converted_forward_failed",
-                            f"converted {stage['name']} model does not run: {fwd['error']}")
-    path = out_dir / f"{stage['key']}_int8_student.pt"
-    torch.save({"stage": stage["name"], "quantization": "qat", "num_classes": NUM_CLASSES,
-                "model": converted.state_dict()}, path)
-    return build_run_provenance(
-        stage=stage, source_meta=source_meta, method="qat",
-        qconfig_summary=_qconfig_summary("qat"), calibration=None,
-        training={"optimizer": f"SGD lr={QAT['learning_rate']} momentum={QAT['momentum']} "
-                               f"weight_decay={args.weight_decay}",
-                  "weight_decay": args.weight_decay,
-                  "schedule": QAT["lr_schedule"],
-                  "requested_max_epochs": args.epochs,
-                  "completed_epochs": completed_epochs, "completed_iters": it,
-                  "early_stop_metric": QAT["early_stop"],
-                  "early_stop_patience": args.early_stop_patience,
-                  "early_stop_triggered": stopper.triggered,
-                  "early_stop_min_delta": None,   # none governed; strict improvement comparison
-                  "best_epoch": (None if best_iter is None
-                                 else math.ceil(best_iter / iters_per_epoch)),
-                  "batch_size": args.batch_size, "iters_per_epoch": iters_per_epoch,
-                  "total_iters": total_iters, "grad_clip_norm": args.grad_clip_norm,
-                  "bn_freeze_pct": args.bn_freeze_pct, "bn_freeze_iter": bn_freeze_at,
-                  "observer_freeze_pct": args.observer_freeze_pct,
-                  "observer_freeze_iter": obs_freeze_at,
-                  "weight_ema": QAT["weight_ema"], "distillation": QAT["distillation_during_qat"],
-                  "objective": "CE+Dice (supervised only)",
-                  "selection": "best all-class validation mIoU", "best_iter": best_iter,
-                  "best_val_miou_all_class": best_miou,
-                  "qat_state_artifact": str(qat_path), "test_split_used": False},
-        converted_path=path, coverage=coverage, forward=fwd, backend=backend)
-
-
 # ------------------------------------------------------------------ CLI
 def add_common_args(p):
     p.add_argument("--real-run", action="store_true")
@@ -468,20 +258,15 @@ def add_common_args(p):
     # PTQ
     p.add_argument("--calibration-index", default=None)
     p.add_argument("--calibration-sha256", default=None)
-    # QAT — every one of these is an unresolved experiment value, never defaulted for a REAL run.
-    # `DRY_EPOCHS` exists only so synthetic/structural exercises of the loop have a budget.
-    p.add_argument("--epochs", type=int, default=None)
-    p.add_argument("--early-stop-patience", type=int, default=None)
-    p.add_argument("--weight-decay", type=float, default=None)
-    p.add_argument("--grad-clip-norm", type=float, default=None)
-    p.add_argument("--bn-freeze-pct", type=float, default=None)
-    p.add_argument("--observer-freeze-pct", type=float, default=None)
     return p
 
 
 def main(argv, stage_key: str) -> int:
     import argparse
     stage = resolve_quant_stage(stage_key)
+    if stage["method"] == "qat":
+        from .qat import main as qat_main
+        return qat_main(argv, stage_key)
     parser = add_common_args(argparse.ArgumentParser(
         description=f"{stage['name']}: {stage['objective']} (stage is PINNED, not selectable)"))
     args = parser.parse_args(argv)
@@ -499,21 +284,11 @@ def main(argv, stage_key: str) -> int:
               f"--batch-size {args.batch_size} is refused. Nothing was read, loaded or written.",
               file=sys.stderr)
         return 2
-    if stage["method"] == "qat":
-        missing = unresolved_qat_values(args)
-        if missing:
-            print(f"REFUSING to start the real {stage['name']} QAT run — these values are locked "
-                  "by the contract only as families/ranges and must be supplied explicitly:",
-                  file=sys.stderr)
-            for m in missing:
-                print(f"  - {m}", file=sys.stderr)
-            return 2
     try:
         out_dir = check_output_dir(args.out_dir, create=True)
         model, _, source_meta = check_source(stage, args.source_ckpt)
         backend = check_backend()
-        prov = (run_ptq if stage["method"] == "ptq" else run_qat)(
-            stage, args, model, source_meta, out_dir, backend)
+        prov = run_ptq(stage, args, model, source_meta, out_dir, backend)
     except QuantRunError as e:
         print(f"{stage['name']} PREFLIGHT/RUN FAILED [{e.code}]: {e}", file=sys.stderr)
         return 2

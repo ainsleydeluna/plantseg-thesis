@@ -6,11 +6,11 @@
 # Analysis/config artifact only — contains NO training logic.
 
 QUANT = {
-    # AMENDED 2026-09-23 by AM-4 (docs/PREREGISTRATION_AMENDMENTS.md): 15 fixed epochs, no early stopping,
-    # BN freeze after epoch 10, observers after epoch 12, per-epoch checkpoints selected on converted
-    # (QNNPACK) VAL mIoU on CPU. The "qat" and "qat_real_run" values below remain the runtime surface
-    # (read by src/quant/runner.py and scripts/smoke_realrun_decisions.py) until lane L-AM4 changes the
-    # runner, these values and the smokes together.
+    # AM-4 and AM-4a (docs/PREREGISTRATION_AMENDMENTS.md), implemented by lanes L-AM4 + L-AM1q in
+    # src/quant/qat.py: 15 fixed epochs and no early stopping; BN statistics frozen at the top of epoch 11 and
+    # every observer, weight and activation, at the top of epoch 13; one checkpoint per epoch; the epoch selected
+    # on its converted (QNNPACK) VAL all-class mIoU on CPU (scripts/select_qat_epoch.py). src/quant/qat.py holds
+    # the AM-4a values as constants and refuses to run when a value below differs.
     # INT8 Quantization-Aware Training (E5 from E1; E6 from E3 head-removed, identical config to E5)
     "qat": {
         "backend": "QNNPACK",
@@ -19,15 +19,15 @@ QUANT = {
         "momentum": 0.9,
         "learning_rate": 3e-4,
         "lr_schedule": "cosine",
-        "epochs_approx": 15,                         # "~15 epochs" per ch3
-        "early_stop": "val_miou",
+        "lr_t_max": "15 x steps_per_epoch optimizer steps (5,025 at 335 per epoch), eta_min 0",
+        "epochs": 15,                                # AM-4: a fixed budget; no early stopping
         "activation_quant_start": "step 0",
         "observer": "moving_average",
-        "bn_freeze_pct": "65-70",
-        "observer_freeze": "shortly after BN freeze",
+        "bn_freeze_epoch": 10,                       # AM-4a item 1: BN statistics frozen at the top of epoch 11
+        "obs_freeze_epoch": 12,                      # AM-4a item 1: every observer disabled at the top of epoch 13
         "gradient_clipping": "global_norm",
         "weight_ema": False,
-        "checkpoint_selection": "best_val_miou",
+        "checkpoint_selection": "converted QNNPACK VAL all-class mIoU of each epoch, on CPU (AM-4a item 2)",
         "distillation_during_qat": False,            # E5/E6 supervised-only
         "weight_quant": "per-channel symmetric INT8 (all conv)",
         "activation_quant": "per-tensor asymmetric UINT8 (full 8-bit range)",
@@ -45,7 +45,8 @@ QUANT = {
     # though they were. Every entry applies IDENTICALLY to E5 and E6 (`shared_by`), so the two stages
     # differ only in source checkpoint and distillation history rather than in QAT tuning.
     #
-    # A real launch still supplies each value explicitly; the runner defaults none of them.
+    # AM-4a item 1 pins every value here; no launch flag sets one, and src/quant/qat.py refuses to run
+    # when a value differs from its constants.
     "qat_real_run": {
         "status": "LOCKED",
         "basis": "thesis implementation choice (authorized); not specified by the source papers",
@@ -57,29 +58,24 @@ QUANT = {
         "batch_size_physical": 16,
         "gradient_accumulation": None,        # never silently enabled; see docs note
         "batch_semantics": "physical batch of 16; if it cannot fit, that is an experiment-design issue",
+        "drop_last_train": True,              # E1's TRAIN loader: 5,367 images -> 335 steps per epoch
 
         # Preserves the registered student regularization scale rather than introducing a new one.
         "weight_decay": 1e-4,
 
-        # Converts the methodology's "~15 epochs" into a reproducible MAXIMUM budget. Early stopping
-        # decides the actual length; best-val-mIoU selection remains a separate mechanism.
-        "max_epochs": 15,
+        # AM-4: a fixed budget of 15 epochs; every epoch is checkpointed and the epoch is selected after
+        # training on its converted VAL score (AM-4a item 2).
+        "epochs": 15,
 
-        # Makes the already-required early stopping executable. Counted in validation checks.
-        "early_stop_patience": 3,
-
-        # Optimizer-step FRACTIONS of the planned budget (not rounded epoch prose). 0.65 is the lower
-        # registered endpoint of the methodology's 65-70% BN-freeze window; 0.70 places observer
-        # freezing shortly afterwards. Rounding convention: round(total_iters * pct), floored at step 1,
-        # with the observer freeze clamped never to precede the BN freeze.
-        "bn_freeze_pct": 0.65,
-        "observer_freeze_pct": 0.70,
-        "freeze_rounding": "round(total_iters * pct), min step 1, observer >= bn",
-
-        # A QAT run must not end before its quantization schedule has run. Patience therefore accrues
-        # only after observer freeze; best-checkpoint tracking still starts at the first validation.
+        # AM-4a item 1: whole-epoch boundaries, applied at the top of the epoch loop.
+        "bn_freeze_epoch": 10,
+        "obs_freeze_epoch": 12,
+        "freeze_rule": ("epoch boundaries: BN statistics at the top of epoch 11, every observer at the top of "
+                        "epoch 13 (src/quant/prepare.py qat_freeze_steps: 3,350 and 4,020 completed steps)"),
         "fake_quant_start": "step 0",
-        "early_stop_eligible_after": "observer_freeze",
+
+        # AM-4a item 4 (L-AM1q): set_seed(--seed) before CUDA initialises; both loaders take seed=--seed.
+        "seeding": "set_seed(--seed) before CUDA initialises; TRAIN and VAL loaders built with seed=--seed",
 
         # The QAT clipping threshold is NOT part of this locked set — see `qat_grad_clip_pilot`.
         "grad_clip": "PILOT_REQUIRED",
@@ -99,17 +95,21 @@ QUANT = {
         "candidates": (1.0, 5.0),                # both positive finite
         "applies_to": ("E5", "E6"),
         "run_on": "E5",
-        "source_checkpoint": "official E1 FP32 checkpoint",
+        "source_checkpoint": "the E1 seed-42 best.json checkpoint (the E5 seed-42 parent)",
         "seed": 42,
         "splits_used": ("train", "val"),
         "test_used_for_selection": False,
-        "pilot_budget_epochs": 5,                # shortened; the official maximum stays 15
-        "official_max_epochs": 15,
+        "pilot_budget_epochs": 15,               # AM-4a item 3: two full 15-epoch E5 seed-42 runs
+        "official_epochs": 15,
         "selection_rule": (
-            "1) reject a candidate whose training becomes non-finite or numerically unstable; "
-            "2) otherwise pick the higher dataset-level validation mIoU under the identical pilot "
-            "budget; 3) on a tie within the repository's existing validation tie/noise rule prefer "
-            "5.0 as the LESS INTRUSIVE clipping threshold."),
+            "1) reject a candidate whose run state became non-finite (AM-21 item 3); with both rejected "
+            "there is no winner and a new amendment decides the value; 2) otherwise pick the higher "
+            "converted QNNPACK VAL all-class mIoU of each run's selected epoch (AM-4a items 2-3); 3) on a "
+            "tie within 0.1 pp, exact (|Fraction(a) - Fraction(b)| <= 1/1000), prefer 5.0 as the LESS "
+            "INTRUSIVE clipping threshold; the loser is retained and reported."),
+        "tie_band": "1/1000",
+        "rules_file": "configs/qat_selection_rules.json",
+        "inherited_by": ("E5 seed 43", "E5 seed 44", "E6 (all seeds)", "E6-KD"),
         "no_new_significance_test": True,
         "inherits_distillation_value": False,    # never auto-reused from the E2/E3 decision
         "label": "HYPERPARAMETER SELECTION / PILOT",

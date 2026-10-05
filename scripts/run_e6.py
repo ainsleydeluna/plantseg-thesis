@@ -2,7 +2,8 @@
 """E6 — INT8 QAT from the projection-free E3 student (identical config to E5).
 
 The stage is PINNED below and is deliberately NOT a command-line option, so this entry point can
-never be redirected to another experiment. All mechanics live in `src/quant/runner.py`.
+never be redirected to another experiment. `src/quant/runner.py` main hands the QAT stages to
+`src/quant/qat.py`, which holds the AM-4/AM-4a recipe and every launch gate.
 """
 from __future__ import annotations
 

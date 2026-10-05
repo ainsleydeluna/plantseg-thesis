@@ -14,8 +14,8 @@ FP32 E1 student:
 
 The E1 schema comes from `train_e1.py :: save_checkpoint`: keys `iter`, `model_state_dict`,
 `optimizer_state_dict`, `scheduler_state_dict`, `scheduler`, `best_val_miou_all_class`,
-`num_classes`. The distillation checkpoints add `stage` and `cwd_projection_state_dict`, which is
-exactly what makes an E2/E3 source detectable here.
+`num_classes`. The distillation checkpoints add `stage`, which makes an E2/E3 source detectable;
+pre-L-AM17B-FG ones also carried `cwd_projection_state_dict`, which now lives in projection.pt.
 """
 
 from __future__ import annotations
@@ -131,12 +131,12 @@ def load_e3_source_checkpoint(path: str | Path, *, expected_num_classes: int = 1
     Contract B4 stage table: **E6 <- E3 (CWD head removed)** and **E7 <- E3 (CWD head removed)**;
     IMPLEMENTATION_CONTRACT also states the training-only projection is "absent from every evaluated
     model". `src/distill/export.py` is the authority for that interface: E3 writes the student under
-    `model_state_dict` (already projection-free) and the training-only projection under the separate
-    `cwd_projection_state_dict` field.
+    `model_state_dict` (already projection-free) and the training-only projection, with its optimizer
+    group, to projection.pt beside the checkpoint (L-AM17B-FG); checkpoints written before that lane
+    carried it under a separate `cwd_projection_state_dict` field instead.
 
-    This loader therefore takes the FULL E3 training checkpoint, validates via
-    `deployment_student_state` that the projection is genuinely absent from `model_state_dict`, and
-    then **explicitly ignores** the separate projection field — it is never loaded into the student.
+    This loader takes the FULL E3 checkpoint, validates via `deployment_student_state` that the
+    projection is absent from `model_state_dict`, and loads no projection from either place.
 
     Stricter than the literal contract wording in one respect, deliberately: `stage` metadata is
     REQUIRED and must be `E3`. Our own `train_distill.py` always writes it, so a missing or

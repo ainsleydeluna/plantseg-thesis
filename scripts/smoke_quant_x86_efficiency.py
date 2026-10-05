@@ -404,28 +404,28 @@ def test_qat_translation() -> None:
 
 # ---------------------------------------------------------------- 4c. runner sidecar contract
 def test_runner_sidecar() -> None:
-    src = (REPO / "src/quant/runner.py").read_text(encoding="utf-8")
+    src = (REPO / "src/quant/qat.py").read_text(encoding="utf-8")
     check("runner_writes_sidecar",
-          "QAT_SIDECAR_SUFFIX" in src and "QAT_SIDECAR_KIND" in src
-          and "model_state_dict" in src)
+          "QAT_SIDECAR_KIND" in src and '"model_state_dict": state' in src and "EPOCH_DIR" in src,
+          "src/quant/qat.py writes every epoch's pre-convert state in the sidecar schema")
     check("sidecar_marked_auxiliary",
           '"is_official_accuracy_artifact": False' in src
           and '"is_deployment_artifact": False' in src
           and "QAT_SIDECAR_ROLE" in src)
-    check("official_converted_schema_unchanged",
-          '"quantization": "qat", "num_classes": NUM_CLASSES,' in src
-          and '"model": converted.state_dict()' in src,
-          "existing E5/E6 consumers keep the same primary artifact")
-    # Matched without the argument list so adding a keyword (e.g. early-stop eligibility) cannot fail
-    # this check: the invariant is that best-val-mIoU improvement still gates the checkpoint copy and
-    # that the best state is reloaded before conversion, not the exact call text.
-    check("selection_semantics_preserved",
-          "stopper.update(all_miou, it" in src
-          and "best_state = copy.deepcopy(prepared.state_dict())" in src
-          and "prepared.load_state_dict(best_state)" in src,
-          "best all-class validation mIoU selection untouched")
-    check("sidecar_path_recorded_in_provenance", '"qat_state_artifact": str(qat_path)' in src,
-          "pre-existing provenance field already carries it; no duplicate key added")
+    from src.quant.qat import save_epoch_checkpoint, state_digest
+    state = {"w": torch.ones(2)}
+    ck, _sha, _n = save_epoch_checkpoint(TMP / "qat_epochs", stage_name="E5", source_stage="E1", epoch=1,
+                                         step=2, state=state, state_sha256=state_digest(state), seed=42,
+                                         clip_norm=1.0, run_id="r", source_sha256="0" * 64)
+    loaded = x86.load_qat_sidecar(ck)
+    check("epoch_checkpoint_loads_as_sidecar",
+          loaded["quantization"] == x86.QAT_SIDECAR_KIND and loaded["artifact_role"] == x86.QAT_SIDECAR_ROLE
+          and loaded["epoch"] == 1 and ck.name == "e01.pt", ck.name)
+    check("no_selection_in_trainer",
+          "best_state" not in src and "load_state_dict(" not in src and "stopper" not in src,
+          "the epoch is selected after training (scripts/select_qat_epoch.py), never in the trainer")
+    check("epoch_checkpoint_sha256_recorded", '"checkpoint_sha256": ck_sha' in src,
+          "every epoch_end row carries its checkpoint's sha256")
 
 
 # ---------------------------------------------------------------- 5. calibration identity
