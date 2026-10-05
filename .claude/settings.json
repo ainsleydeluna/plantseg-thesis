@@ -17,6 +17,16 @@
             "timeout": 30
           }
         ]
+      },
+      {
+        "matcher": "Read|Edit|Write|NotebookEdit|Grep|Glob|Bash|PowerShell|Monitor",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"${CLAUDE_PROJECT_DIR}/.claude/hooks/sl1_guard.sh\"; [ -r \"$f\" ] || exit 0; sh \"$f\"",
+            "timeout": 10
+          }
+        ]
       }
     ]
   }
