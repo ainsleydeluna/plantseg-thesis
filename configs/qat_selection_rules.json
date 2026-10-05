@@ -1,0 +1,44 @@
+{
+  "format": "qat_selection_rules/1",
+  "note": "Read by scripts/select_qat_epoch.py and scripts/select_clip.py through src/quant/qat_select.py (lane 6, L-AM4 + L-AM1q). Must agree with configs/quant.py; src/quant/qat_select.py refuses a disagreement.",
+  "qat_epoch": {
+    "source": "AM-4; AM-4a item 2; AM-19 item 3(a); DL-09; DL-38",
+    "stages": ["E5", "E6"],
+    "epochs": 15,
+    "value": "dataset_level.all_class_miou of the epoch's converted QNNPACK TorchScript artifact, scored by scripts/evaluate_model.py",
+    "evaluator": {
+      "split": "val",
+      "expected_rows": 846,
+      "precision": "int8_qat",
+      "quant_backend": "qnnpack",
+      "device": "cpu",
+      "preprocess_protocol": "core_preprocess/1.0.0",
+      "artifact_status": "provisional",
+      "governed_paths_clean": true,
+      "eval_runtime": {"batch_size": 1, "forward_batches": 846, "num_workers": 0},
+      "gt_support_sum": 159279104
+    },
+    "equal_across_summaries": ["run.repo_commit", "run.metric_impl_sha256", "run.config_sha256",
+                               "dataset.split_manifest_sha256", "dataset.class_map_sha256", "run.env.torch",
+                               "run.eval_runtime.torch_num_threads", "run.eval_runtime.image_digest"],
+    "non_null": ["run.repo_commit", "run.eval_runtime.image_digest"],
+    "compare": "strict_greater",
+    "tie": "earliest_epoch",
+    "excluded": "an epoch whose state is non-finite: excluded: non-finite state (AM-19 item 3(a))",
+    "never_selects": ["fake_quant_val_all_class_miou"]
+  },
+  "qat_clip": {
+    "source": "AM-4a item 3; AM-21 item 3; DL-38 (U4)",
+    "stage": "E5",
+    "seed": 42,
+    "candidates": [1.0, 5.0],
+    "value": "each run's qat_selection.json winner value",
+    "rejected": "a run with nonfinite_since_step set or any epoch_end state_finite false (AM-21 item 3); both rejected: no winner",
+    "band": {"numerator": 1, "denominator": 1000,
+             "rule": "tie iff |Fraction(a) - Fraction(b)| <= Fraction(1, 1000) on the stored float64 values"},
+    "tie": 5.0,
+    "winner_is": "E5 seed 42 of record",
+    "loser": "retained and reported",
+    "inherited_by": ["E5 seed 43", "E5 seed 44", "E6 (all seeds)", "E6-KD"]
+  }
+}
