@@ -62,6 +62,16 @@ def check(name: str, ok, detail: str = "") -> None:
     results.append((name, bool(ok), detail))
 
 
+@contextlib.contextmanager
+def patched_attr(obj, name, value):
+    old = getattr(obj, name)
+    setattr(obj, name, value)
+    try:
+        yield
+    finally:
+        setattr(obj, name, old)
+
+
 def qee(argv: list[str]) -> tuple[int, str]:
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
@@ -83,16 +93,80 @@ def convert(run: Path, ev: Path, purpose: str = "record", epochs=None) -> tuple[
 
 
 def score(run: Path, ev: Path, purpose: str, cap: str | None) -> tuple[int, str]:
+    """The stand-in evaluator, its summaries naming the HEAD the eval records name and an image digest (P23's
+    non-null fields), so select_qat_epoch can take the scored directory (P34)."""
     old = QEE.EVALUATOR_SCRIPT
     QEE.EVALUATOR_SCRIPT = str(DRIVER)
+    env_before = {k: os.environ.get(k) for k in ("SMOKE_MAX_SAMPLES", "SMOKE_GIT_HEAD", "PLANTSEG_IMAGE_DIGEST")}
     if cap:
         os.environ["SMOKE_MAX_SAMPLES"] = cap
+    os.environ["SMOKE_GIT_HEAD"] = Q.code_identity()["git_head"] or "0" * 40
+    os.environ.setdefault("PLANTSEG_IMAGE_DIGEST", "sha256:" + "6" * 64)
     try:
         return qee(["score", "--run-dir", str(run), "--eval-dir", str(ev), "--purpose", purpose,
                     "--host-label", HOST, "--allow-smoke-inputs"])
     finally:
         QEE.EVALUATOR_SCRIPT = old
-        os.environ.pop("SMOKE_MAX_SAMPLES", None)
+        for k, v in env_before.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
+def lane_cli(script: str, *argv: str) -> tuple[int, str]:
+    """A lane script in a fresh process (finalize traces), from the repository root."""
+    p = subprocess.run([sys.executable, "-B", str(REPO / "scripts" / script), *argv], cwd=str(REPO),
+                       capture_output=True, text=True, timeout=2400)
+    lines = [ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")]
+    return p.returncode, (lines[-1] if lines else p.stderr.strip()[-300:])
+
+
+def end_to_end(run: Path, ev: Path) -> tuple[int, str, int, str, dict, dict]:
+    """select_qat_epoch, then finalize, on what convert and score wrote (P34; smoke inputs)."""
+    rc_s, res_s = lane_cli("select_qat_epoch.py", "--run-dir", str(run), "--eval-dir", str(ev),
+                           "--expect-telemetry-sha256", Q.sha256_file(run / Q.TELEMETRY_NAME), "--allow-smoke-inputs")
+    sel = json.loads((ev / QEE.SELECTION_RECORD).read_text()) if rc_s == 0 else {}
+    rc_f, res_f = lane_cli("qat_epoch_eval.py", "finalize", "--run-dir", str(run), "--eval-dir", str(ev),
+                           "--allow-smoke-inputs")
+    fin = json.loads((ev / QEE.FINALIZE_RECORD).read_text()) if rc_f == 0 else {}
+    return rc_s, res_s, rc_f, res_f, sel, fin
+
+
+def as_seed(run: Path, seed: int) -> None:
+    """The trained run relabelled to another seed, payloads and run_meta (its state unchanged): an E5 seed-42
+    run is a U4 pilot run, finalized through select_clip only (d5); d4's end-to-end pass is a non-pilot run."""
+    for e in range(1, Q.EPOCHS + 1):
+        rewrite_payload(run, e, seed=seed)
+    tel = run / Q.TELEMETRY_NAME
+    rows = [json.loads(line) for line in tel.read_text(encoding="utf-8").splitlines()]
+    rows[0]["seed"] = seed
+    tel.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+
+
+def projection_source_code(model) -> str | None:
+    """An E3 parent whose student state carries a CWD projection key: the E6 source load refuses it (P34)."""
+    from src.quant.checkpoint import CWD_PROJECTION_KEY
+    from src.quant.stages import resolve_quant_stage
+    d = TMP / "e3_parent_projection"
+    d.mkdir()
+    state = {k: v.detach().clone() for k, v in model.state_dict().items()}
+    state["cwd_projection.weight"] = torch.zeros(320, 160, 1, 1)
+    ck = d / "e3_student_best_iter80000.pt"
+    torch.save({"stage": "E3", "num_classes": Q.NUM_CLASSES, "model_state_dict": state,
+                CWD_PROJECTION_KEY: {"weight": torch.zeros(320, 160, 1, 1)}}, ck)
+    (d / "best.json").write_text(json.dumps({"best_ckpt": str(ck), "best_val_miou_all_class": 0.31}),
+                                 encoding="utf-8")
+    (d / "e3_run_meta.jsonl").write_text(json.dumps({"event": "run_meta", "stage": "E3", "mode": "real", "seed": 42,
+                                                     "lambda_logit": 1.0, "alpha_cwd": 50.0}) + "\n", encoding="utf-8")
+    (d / "e3_telemetry.jsonl").write_text(json.dumps({"event": "run_end", "iter": 80000, "checks_passed": True})
+                                          + "\n", encoding="utf-8")
+    e6 = resolve_quant_stage("e6")
+    try:
+        Q.load_source(e6, Q.resolve_parent(e6, d, Q.sha256_file(ck), 42))
+        return None
+    except Q.QATRefused as e:
+        return e.code
 
 
 def state_of(run: Path, epoch: int) -> dict:
@@ -148,6 +222,15 @@ def test_units() -> None:
         except Q.QATStop as e:
             got = e.code
         check(name, got == "state_key_mismatch", str(got))
+    import src.quant.x86_latency as x86_mod
+    real_copy = x86_mod.copy_qat_state_by_name
+    with patched_attr(x86_mod, "copy_qat_state_by_name", lambda m, st: (real_copy(m, st)[0], [])):
+        try:
+            A.load_state_by_name(A.prepared_skeleton(), state)
+            got = None
+        except Q.QATStop as e:
+            got = e.code
+    check("d4_alias_mismatch_stops", got == "state_alias_mismatch", str(got))
     nan_t = torch.tensor([float("nan"), 1.0])
     check("d4_bytes_equal_is_bitwise", A.bytes_equal(nan_t, nan_t.clone()) and not torch.equal(nan_t, nan_t.clone())
           and not A.bytes_equal(nan_t, torch.tensor([float("nan"), 2.0])))
@@ -171,6 +254,29 @@ def rewrite_checkpoint(run: Path, epoch: int, edit) -> None:
         if r.get("event") == "epoch_end" and r["epoch"] == epoch:
             r["checkpoint_sha256"] = Q.sha256_file(p)
     tel.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+
+
+def rewrite_payload(run: Path, epoch: int, **fields) -> None:
+    """Rewrite eNN.pt's payload fields (not its state) and record its new sha256 in the run's epoch_end row."""
+    p = run / Q.EPOCH_DIR / f"e{epoch:02d}.pt"
+    payload = torch.load(p, map_location="cpu", weights_only=True)
+    payload.update(fields)
+    torch.save(payload, p)
+    tel = run / Q.TELEMETRY_NAME
+    rows = [json.loads(line) for line in tel.read_text(encoding="utf-8").splitlines()]
+    for r in rows:
+        if r.get("event") == "epoch_end" and r["epoch"] == epoch:
+            r["checkpoint_sha256"] = Q.sha256_file(p)
+    tel.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+
+
+def rewrite_run_meta(run: Path, **fields) -> str:
+    """The run's run_meta row with `fields` replaced; the telemetry's new sha256."""
+    tel = run / Q.TELEMETRY_NAME
+    rows = [json.loads(line) for line in tel.read_text(encoding="utf-8").splitlines()]
+    rows[0].update(fields)
+    tel.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+    return Q.sha256_file(tel)
 
 
 def fake_convert_record(run: Path, ev: Path, *, purpose: str = "record", epochs=range(1, 16), **edit) -> None:
@@ -244,6 +350,73 @@ def test_records(cache: Path | None) -> None:
     check("d4_convert_stops_when_a_freeze_did_not_take",
           rc == 1 and "[freeze_cross_check]" in res and stop.is_file() and not (ev_m / A.CONVERTED_DIR).exists()
           and "bn e12" in json.dumps(json.loads(stop.read_text()).get("freeze_cross_check", {})), res)
+    # convert-epoch checks the record before anything converts (P15 step 2; P24's first link)
+    ev_x = TMP / "ev_convert_epoch"
+    refused("d4_convert_epoch_unknown_epoch_refused",
+            ["convert-epoch", "--eval-dir", str(ev_x), *base, "--epoch", "16"], "epoch_unknown", absent=ev_x)
+    refused("d4_convert_epoch_telemetry_sha_mismatch",
+            ["convert-epoch", "--eval-dir", str(ev_x), *base, "--epoch", "1", "--expect-telemetry-sha256", "f" * 64],
+            "telemetry_sha256_mismatch", absent=ev_x)
+    changed = clone_run(run, TMP / "run_records_ck_changed")
+    ck3 = changed / Q.EPOCH_DIR / "e03.pt"
+    ck3.write_bytes(ck3.read_bytes() + b"\0")
+    refused("d4_convert_epoch_checkpoint_changed_refused",
+            ["convert-epoch", "--eval-dir", str(ev_x), *[a if a != str(run) else str(changed) for a in base],
+             "--epoch", "3"], "checkpoint_sha256_mismatch", absent=ev_x)
+    # P16's other half: an observer buffer that moved after the epoch-13 freeze stops the conversion
+    obs_moved = clone_run(run, TMP / "run_records_obs_moved")
+    s14 = state_of(run, 14)
+    _bn, obs_keys = A.freeze_key_sets(A.prepared_skeleton())
+    obs_key = next(k for k in obs_keys if k.endswith("activation_post_process.max_val") and s14[k].numel() == 1
+                   and bool(torch.isfinite(s14[k]).all()))
+    rewrite_checkpoint(obs_moved, 14, lambda st: st[obs_key].add_(1.0))
+    ev_o = TMP / "ev_obs_moved"
+    rc, res = qee(["convert", "--eval-dir", str(ev_o), *[a if a != str(run) else str(obs_moved) for a in base],
+                   "--expect-telemetry-sha256", Q.sha256_file(obs_moved / Q.TELEMETRY_NAME)])
+    stop_o = ev_o / QEE.CONVERT_STOP
+    check("d4_convert_stops_when_an_observer_moved_after_its_freeze",
+          rc == 1 and "[freeze_cross_check]" in res and stop_o.is_file() and not (ev_o / A.CONVERTED_DIR).exists()
+          and "obs e14" in json.dumps(json.loads(stop_o.read_text()).get("freeze_cross_check", {})), res)
+    # P15: the worker's own checks, before anything is traced (convert-epoch in this process)
+    wrong_id = clone_run(run, TMP / "run_records_other_id")
+    rewrite_payload(wrong_id, 1, run_id="another_run")
+    wid = [a if a != str(run) else str(wrong_id) for a in base]
+    refused("d4_convert_epoch_identity_refused", ["convert-epoch", "--eval-dir", str(TMP / "ev_wrong_id"), *wid,
+                                                   "--epoch", "1"], "checkpoint_identity", absent=TMP / "ev_wrong_id")
+    flags13 = clone_run(run, TMP / "run_records_flags13")
+    rewrite_checkpoint(flags13, 13, lambda st: [v.fill_(1) for k, v in st.items() if k.endswith(".observer_enabled")])
+    ev_f = TMP / "ev_flags13"
+    rc, res = qee(["convert-epoch", "--eval-dir", str(ev_f), *[a if a != str(run) else str(flags13) for a in base],
+                   "--epoch", "13"])
+    check("d4_convert_epoch_stored_flags_stop", rc == 1 and "[stored_flags]" in res
+          and (ev_f / A.CONVERTED_DIR / A.epoch_names(13)["stop"]).is_file(), res)
+    dtype5 = clone_run(run, TMP / "run_records_dtype5")
+    w_key = next(k for k in state_of(run, 5) if k.endswith(".weight") and state_of(run, 5)[k].dtype == torch.float32)
+    rewrite_checkpoint(dtype5, 5, lambda st: st.update({w_key: st[w_key].double()}))
+    ev_d = TMP / "ev_dtype5"
+    rc, res = qee(["convert-epoch", "--eval-dir", str(ev_d), *[a if a != str(run) else str(dtype5) for a in base],
+                   "--epoch", "5"])
+    check("d4_convert_epoch_copy_dtype_stop", rc == 1 and "[state_copy_mismatch]" in res, res)
+    qc = clone_run(run, TMP / "run_records_qconfig")
+    rewrite_run_meta(qc, qconfig={**(A.read_run_record(run)["run_meta"].get("qconfig") or {}), "fingerprint": "0" * 64})
+    ev_q = TMP / "ev_qconfig"
+    engine = torch.backends.quantized.engine               # convert-epoch selects QNNPACK in this process
+    try:
+        rc, res = qee(["convert-epoch", "--eval-dir", str(ev_q), *[a if a != str(run) else str(qc) for a in base],
+                       "--epoch", "1"])
+    finally:
+        torch.backends.quantized.engine = engine
+    check("d4_convert_epoch_qconfig_changed_stop", rc == 1 and "[qconfig_changed]" in res
+          and (ev_q / A.CONVERTED_DIR / A.epoch_names(1)["stop"]).is_file(), res)
+    # P26: a worker that fails spends the eval directory: convert_STOP.json, the RESULT word of its exit code
+    ev_w = TMP / "ev_worker_refused"
+    rc, res = qee(["convert", "--eval-dir", str(ev_w), *wid, "--expect-telemetry-sha256",
+                   Q.sha256_file(wrong_id / Q.TELEMETRY_NAME)])
+    rc2, res2 = qee(["convert", "--eval-dir", str(ev_w), *wid, "--expect-telemetry-sha256",
+                     Q.sha256_file(wrong_id / Q.TELEMETRY_NAME)])
+    check("d4_convert_worker_refusal_spends_the_eval_dir",
+          rc == 2 and res.startswith("RESULT: REFUSED -- e01 worker exited 2") and (ev_w / QEE.CONVERT_STOP).is_file()
+          and rc2 == 2 and "[eval_dir_not_fresh]" in res2, f"{res} | {res2}")
     # score refuses on the records alone (no evaluator runs)
     sbase = ["score", *[a for a in base]]
 
@@ -281,6 +454,21 @@ def test_records(cache: Path | None) -> None:
     fake_convert_record(run, done)
     (done / QEE.EVAL_RECORD).write_text("{}", encoding="utf-8")
     score_refused("d4_score_runs_once", done, "output_exists")
+    # P26: only a score pass creates scores/; an evaluator that fails spends the eval directory (score_STOP.json)
+    empty_scores = TMP / "ev_score_empty_scores"
+    fake_convert_record(run, empty_scores)
+    (empty_scores / A.SCORES_DIR).mkdir()
+    rc, res = qee([*sbase, "--eval-dir", str(empty_scores)])
+    check("d4_score_refuses_an_empty_scores_dir", rc == 2 and "[scores_not_fresh]" in res, res)
+    failing_evaluator = TMP / "failing_evaluator.py"
+    failing_evaluator.write_text("import sys\nsys.exit(1)\n", encoding="utf-8")
+    failing = TMP / "ev_score_failing"
+    fake_convert_record(run, failing)
+    with patched_attr(QEE, "EVALUATOR_SCRIPT", str(failing_evaluator)):
+        rc, res = qee([*sbase, "--eval-dir", str(failing)])
+        rc2, res2 = qee([*sbase, "--eval-dir", str(failing)])
+    check("d4_score_failure_spends_the_eval_dir", rc == 3 and (failing / QEE.SCORE_STOP).is_file()
+          and rc2 == 2 and "[stop_present]" in res2, f"{res} | {res2}")
 
 
 def main() -> int:
@@ -314,6 +502,8 @@ def main() -> int:
             t0 = time.time()
             run = TMP / f"run_{stage}"
             make_qat_run(run, model=src, stage=stage)
+            if stage == "e5":
+                as_seed(run, 43)
             print(f"[train] {stage}: 15 epochs in {time.time() - t0:.0f}s")
             r5, r6 = (run, r6) if stage == "e5" else (r5, run)
     names = A.epoch_names(15)
@@ -410,15 +600,22 @@ def main() -> int:
         print(f"[agreement] by margin band: {json.dumps(agr['by_margin_band'])}")
         print(f"[agreement] controls: observers not carried {ctl_obs['agreement']}, "
               f"BN not carried {ctl_bn['agreement']}")
+        x0, y0 = color_task(8, 128, seed=99, band=0)               # every pixel valid: reported, not checked
+        agr0 = A.argmax_agreement(fq, ts, [x0[i:i + 1] for i in range(8)], lsb,
+                                  valid_masks=[y0[i:i + 1] != 255 for i in range(8)])
+        print(f"[agreement] band 0 (every pixel valid): overall {agr0['agreement']}, confident fraction "
+              f"{agr0['confident_fraction']}, confident agreement {agr0['confident_agreement']}, max |diff| "
+              f"{agr0['max_logit_diff_lsb']:.2f} LSB, p99.9 {agr0['p999_logit_diff_lsb']:.2f} LSB")
         check("d4_confident_pixels_agree", agr["confident_pixels"] > 0 and agr["confident_agreement"] == 1.0,
               f"margin >= 8 LSB: {agr['confident_pixels']} pixels, agreement {agr['confident_agreement']}")
         check("d4_fixture_confident", (agr["confident_fraction"] or 0) >= 0.90,
               f"{agr['confident_fraction']} of valid pixels have margin >= 8 LSB"
               + ("" if (agr["confident_fraction"] or 0) >= 0.90 else " -- fixture not confident"))
         check("d4_argmax_agreement_ge_99pct", (agr["agreement"] or 0) >= 0.99, f"{agr['agreement']}")
-        check("d4_control_observers_not_carried_below_50pct", (ctl_obs["agreement"] or 1) < 0.5,
-              f"{ctl_obs['agreement']}")
-        check("d4_control_bn_not_carried_below_50pct", (ctl_bn["agreement"] or 1) < 0.5, f"{ctl_bn['agreement']}")
+        check("d4_control_observers_not_carried_below_50pct",
+              ctl_obs["agreement"] is not None and ctl_obs["agreement"] < 0.5, f"{ctl_obs['agreement']}")
+        check("d4_control_bn_not_carried_below_50pct",
+              ctl_bn["agreement"] is not None and ctl_bn["agreement"] < 0.5, f"{ctl_bn['agreement']}")
 
         # ---------------- score E5 (record, every epoch; VAL rows capped by the driver)
         t0 = time.time()
@@ -462,6 +659,14 @@ def main() -> int:
               and tsum.get("dataset", {}).get("actual_rows") == 64
               and tsum.get("run", {}).get("artifact_status") == "smoke"
               and "--max-samples" in trows[0]["evaluator_command"], res_t)
+        # ---------------- the end-to-end pass (P34): select and finalize what convert and score wrote
+        rc_s, res_s, rc_f, res_f, sel5, fin5 = end_to_end(r5, ev5)
+        w5 = sel5.get("winner") or {}
+        check("d4_e5_end_to_end_select_and_finalize",
+              rc_s == 0 and res_s.startswith("RESULT: SELECTED epoch ") and "(E5, seed 43, clip 1.0" in res_s
+              and rc_f == 0 and res_f == f"RESULT: FINALIZED (E5, seed 43, epoch {w5.get('epoch', 0):02d})"
+              and (fin5.get("artifact_of_record") or {}).get("torchscript") == w5.get("artifact_of_record"),
+              f"{res_s} | {res_f}")
 
     if "e6" in want:
         ran.add("e6")
@@ -478,6 +683,15 @@ def main() -> int:
               and prov6.get("cwd_projection_loaded") is False and ok6, res6)
         rc6s, res6s = score(r6, ev6, "record", cap="1")
         check("d4_e6_scores", rc6s == 0, res6s)
+        rc_s, res_s, rc_f, res_f, sel6, fin6 = end_to_end(r6, ev6)
+        w6 = sel6.get("winner") or {}
+        check("d4_e6_end_to_end_select_and_finalize",
+              rc_s == 0 and res_s.startswith("RESULT: SELECTED epoch ") and "(E6, seed 42, clip 1.0" in res_s
+              and rc_f == 0 and res_f == f"RESULT: FINALIZED (E6, seed 42, epoch {w6.get('epoch', 0):02d})"
+              and (fin6.get("artifact_of_record") or {}).get("torchscript") == w6.get("artifact_of_record"),
+              f"{res_s} | {res_f}")
+        code6 = projection_source_code(src)
+        check("d4_e6_projection_source_refused", code6 == "source_invalid", f"[{code6}]")
 
     if "nan" in want:
         ran.add("nan")

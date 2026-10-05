@@ -114,8 +114,9 @@ def make_qat_run(out_dir, *, model, stage: str = "e5", seed: int = 42, clip: flo
 EVALUATOR_DRIVER = r'''"""Smoke stand-in for scripts/evaluate_model.py: the same main(), only its git calls stubbed.
 
 A cloud lane session never lists the whole repository (docs/reference/ stays unlisted), so the artifact
-writer's whole-repository `git status` is replaced by an empty porcelain and a fixed commit, exactly as
-scripts/smoke_run_ptq.py does in-process. SMOKE_MAX_SAMPLES, when set, caps the VAL rows.
+writer's whole-repository `git status` is replaced by an empty porcelain and a given commit, as
+scripts/smoke_run_ptq.py does in-process: SMOKE_GIT_HEAD (the HEAD the eval records name, so the summaries
+can be selected), else a fixed one. SMOKE_MAX_SAMPLES, when set, caps the VAL rows.
 """
 import os
 import sys
@@ -124,7 +125,7 @@ repo = os.environ["SMOKE_REPO"]
 sys.path.insert(0, repo)
 import src.eval.artifacts as artifacts
 artifacts.git_porcelain_bytes = lambda r: b""
-artifacts.git_commit = lambda r: "0" * 40
+artifacts.git_commit = lambda r: os.environ.get("SMOKE_GIT_HEAD") or "0" * 40
 from scripts.evaluate_model import main
 argv = sys.argv[1:]
 cap = os.environ.get("SMOKE_MAX_SAMPLES")

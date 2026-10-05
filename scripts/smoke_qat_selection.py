@@ -96,17 +96,19 @@ def clone_run(src: Path, dst: Path) -> Path:
 
 # ---------------------------------------------------------------- fabricated eval directories
 def summary(value: float, run_id: str, ts_sha: str, stage: str, *, rows: int = 846, split: str = "val",
-            commit: str = "a" * 40, digest: str | None = "sha256:" + "6" * 64, protocol="core_preprocess/1.0.0",
-            status="provisional", metric: str = "b" * 64, gt_sum: int | None = None) -> dict:
+            commit: str | None = "a" * 40, digest: str | None = "sha256:" + "6" * 64, protocol="core_preprocess/1.0.0",
+            status="provisional", metric: str = "b" * 64, gt_sum: int | None = None, precision: str = "int8_qat",
+            backend: str = "qnnpack", device: str = "cpu", governed: bool = True, batch: int = 1,
+            workers: int = 0, role: str = "student") -> dict:
     gt = [1000] * 116
     gt[0] = (gt_sum if gt_sum is not None else GT_SUM if rows == 846 else rows * 100_000) - 115_000
     return {"schema_version": "plantseg-eval/1.0.0",
-            "run": {"run_id": run_id, "artifact_status": status, "stage": stage, "model_role": "student",
-                    "precision": "int8_qat", "quant_backend": "qnnpack", "checkpoint_sha256": ts_sha,
-                    "random_init": False, "repo_commit": commit, "governed_paths_clean": True,
+            "run": {"run_id": run_id, "artifact_status": status, "stage": stage, "model_role": role,
+                    "precision": precision, "quant_backend": backend, "checkpoint_sha256": ts_sha,
+                    "random_init": False, "repo_commit": commit, "governed_paths_clean": governed,
                     "metric_impl_sha256": metric, "config_sha256": "c" * 64,
-                    "env": {"torch": "2.1.0+cpu", "device": "cpu"},
-                    "eval_runtime": {"batch_size": 1, "forward_batches": rows, "num_workers": 0,
+                    "env": {"torch": "2.1.0+cpu", "device": device},
+                    "eval_runtime": {"batch_size": batch, "forward_batches": rows, "num_workers": workers,
                                      "torch_num_threads": 4, "image_digest": digest}},
             "dataset": {"split": split, "expected_rows": rows, "actual_rows": rows, "preprocess_protocol": protocol,
                         "split_manifest_sha256": "d" * 64, "class_map_sha256": "e" * 64},
@@ -154,6 +156,7 @@ def fabricate(run: Path, ev: Path, values: dict, *, excluded=(), tamper: dict | 
     """converted/, scores/, qat_convert.json and qat_epoch_eval.json for `run`, scored with `values`."""
     tamper = tamper or {}
     commit, host_label = tamper.get("commit_all", "a" * 40), tamper.get("host_label", "fab-host")
+    every = tamper.get("summary_all", {})                      # summary values set in all 15 summaries
     rec = A.read_run_record(run)
     meta = rec["run_meta"]
     conv, scores = ev / A.CONVERTED_DIR, ev / A.SCORES_DIR
@@ -177,7 +180,8 @@ def fabricate(run: Path, ev: Path, values: dict, *, excluded=(), tamper: dict | 
                  "run_id": rec["run_id"], "qconfig_fingerprint": "f" * 16, "state_dict_companion": names["state_dict"]}
         ts = conv / names["torchscript"]
         with zipfile.ZipFile(ts, "w") as z:
-            z.writestr(f"e{e:02d}/extra/plantseg_int8.json", json.dumps(ident))
+            if not tamper.get(("no_identity", e)):
+                z.writestr(f"e{e:02d}/extra/plantseg_int8.json", json.dumps(ident))
             z.writestr(f"e{e:02d}/data.pkl", f"fabricated {rec['run_id']} e{e:02d}")
         ts_sha = Q.sha256_file(ts)
         sd = conv / names["state_dict"]
@@ -194,7 +198,7 @@ def fabricate(run: Path, ev: Path, values: dict, *, excluded=(), tamper: dict | 
         pp = conv / names["run_meta"]
         pp.write_text(json.dumps(prov), encoding="utf-8")
         run_id = f"{rec['run_id']}_e{e:02d}_{ck_sha[:12]}"
-        kw = {"commit": commit, **tamper.get(("summary", e), {})}
+        kw = {"commit": commit, **every, **tamper.get(("summary", e), {})}
         write_artifact(scores / f"e{e:02d}", summary(values[e], run_id, ts_sha, meta["stage"], **kw))
         outcomes.append({"epoch": e, "status": "converted"})
         rows.append({"epoch": e, "checkpoint_sha256": ck_sha, "status": "scored", "run_id": run_id,
@@ -299,18 +303,46 @@ def ev_clip5() -> Path:
     return selected_eval(FX["base"][5.0], FX["sha"][5.0], "ev_clip5_selected", vals(e07=0.31))
 
 
-@functools.cache
-def nan5_run() -> Path:
-    """Clip 5.0's run with its record non-finite from epoch 14 (AM-21 item 3 rejects it)."""
-    run = clone_run(FX["base"][5.0], TMP / "run_clip5_nan")
+def marked_run(clip: float, name: str, *, finite_flag: bool = True, since: bool = True) -> Path:
+    """A clone of a pilot run whose record turns non-finite from epoch 14 (AM-21 item 3 rejects it):
+    state_finite false and/or nonfinite_since_step 27 on those epoch_end rows. Its checkpoints stay finite,
+    so the run still has a valid selection: a rejection that is skipped lets it win."""
+    run = clone_run(FX["base"][clip], TMP / name)
     tel = run / Q.TELEMETRY_NAME
     rows = [json.loads(line) for line in tel.read_text(encoding="utf-8").splitlines()]
     for r in rows:
         if r.get("event") == "epoch_end" and r["epoch"] >= 14:
-            r["state_finite"] = False
-            r["nonfinite_since_step"] = 27
+            if finite_flag:
+                r["state_finite"] = False
+            if since:
+                r["nonfinite_since_step"] = 27
     tel.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
     return run
+
+
+@functools.cache
+def nan5_run() -> Path:
+    return marked_run(5.0, "run_clip5_nan")
+
+
+def better_selected(run: Path, name: str) -> Path:
+    """A selected eval directory (with its conversion record) whose winner, e02 at 0.9, beats every live run."""
+    return selected_eval(run, Q.sha256_file(run / Q.TELEMETRY_NAME), name, vals(e02=0.9))
+
+
+@functools.cache
+def ev_nan5_better() -> Path:
+    return better_selected(nan5_run(), "ev_nan5_better")
+
+
+def conversion_record(run: Path, ev: Path, **over) -> Path:
+    """Only qat_convert.json: what anchors a rejected candidate's record (P24)."""
+    rec = A.read_run_record(run)
+    ev.mkdir(parents=True)
+    doc = {"format": "qat_convert/1", "run_id": rec["run_id"], "telemetry_sha256": rec["telemetry_sha256"],
+           "purpose": "record", **over}
+    (ev / "qat_convert.json").write_text(json.dumps(doc), encoding="utf-8")
+    return ev
 
 
 # ---- d3: the epoch rule
@@ -433,6 +465,20 @@ for _n, _t, _rc, _c, *_more in [
         ("d3_evaluator_not_literal_refused", {"command": ["-B", "/tmp/driver.py"]}, 2, "evaluator_not_literal"),
         ("d3_timing_purpose_refused", {"purpose": "timing"}, 2, "purpose_not_record"),
         ("d3_two_commits_refused", {"convert_head": "9" * 40}, 2, "eval_dir_mixed"),
+        ("d3_precision_refused", {("summary", 4): {"precision": "fp32"}}, 2, "summary_values", "run.precision"),
+        ("d3_quant_backend_refused", {("summary", 4): {"backend": "fbgemm"}}, 2, "summary_values",
+         "run.quant_backend"),
+        ("d3_device_refused", {("summary", 4): {"device": "cuda"}}, 2, "summary_values", "run.env.device"),
+        ("d3_governed_paths_not_clean_refused", {("summary", 4): {"governed": False}}, 2, "summary_values",
+         "run.governed_paths_clean"),
+        ("d3_batch_size_refused", {("summary", 4): {"batch": 2}}, 2, "summary_values", "run.eval_runtime.batch_size"),
+        ("d3_num_workers_refused", {("summary", 4): {"workers": 1}}, 2, "summary_values",
+         "run.eval_runtime.num_workers"),
+        ("d3_teacher_role_refused", {("summary", 4): {"role": "teacher"}}, 2, "summary_values", "run.model_role"),
+        ("d3_null_image_digest_everywhere_refused", {"summary_all": {"digest": None}}, 2, "summaries_differ",
+         "run.eval_runtime.image_digest non-null"),
+        ("d3_null_commit_everywhere_refused", {"commit_all": None}, 2, "summaries_differ", "run.repo_commit non-null"),
+        ("d3_torchscript_without_identity_refused", {("no_identity", 6): True}, 2, "identity_missing"),
         ("d3_smoke_input_records_refused", {"smoke_inputs": True}, 2, "smoke_inputs")]:
     register("refusals", _n, _tamper_case(_n, _t, _rc, _c, *_more))
 
@@ -543,6 +589,74 @@ def d3_incomplete_run_refused_exit_3():
     check("d3_incomplete_run_refused_exit_3", rc == 3 and "[run_incomplete]" in res, res)
 
 
+# ---- the run's own record and its checkpoints: read_run_record, and P24's first link (eNN.pt = its row)
+def _tel_lines(run: Path) -> list[str]:
+    return (run / Q.TELEMETRY_NAME).read_text(encoding="utf-8").splitlines()
+
+
+def _set_tel_lines(run: Path, lines: list[str]) -> None:
+    (run / Q.TELEMETRY_NAME).write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _end_edit(e: int, **kv):
+    def edit(run: Path) -> None:
+        rows = [json.loads(ln) for ln in _tel_lines(run)]
+        for r in rows:
+            if r.get("event") == "epoch_end" and r.get("epoch") == e:
+                r.update(kv)
+        _set_tel_lines(run, [json.dumps(r) for r in rows])
+    return edit
+
+
+def _duplicate_end(run: Path) -> None:
+    lines = _tel_lines(run)
+    i = next(i for i, ln in enumerate(lines) if json.loads(ln).get("event") == "epoch_end")
+    _set_tel_lines(run, lines[:i + 1] + [lines[i]] + lines[i + 1:])
+
+
+def _not_strict(run: Path) -> None:
+    lines = _tel_lines(run)
+    lines[2] = '{"event": "train", "step": 2, "loss": NaN}'
+    _set_tel_lines(run, lines)
+
+
+def _checkpoint_replaced(e: int, extra: bytes | None):
+    """eNN.pt is a hard link into the cache: it is unlinked and rewritten, never written into."""
+    def edit(run: Path) -> None:
+        p = run / Q.EPOCH_DIR / f"e{e:02d}.pt"
+        data = p.read_bytes()
+        p.unlink()
+        if extra is not None:
+            p.write_bytes(data + extra)
+    return edit
+
+
+def _record_case(name: str, edit, code: str, expect_rc: int, fabricated: bool):
+    def run():
+        r = clone_run(FX["base"][1.0], TMP / f"run_{name}")
+        edit(r)
+        tel = r / Q.TELEMETRY_NAME
+        ev = TMP / f"ev_{name}"
+        if fabricated:
+            fabricate(r, ev, vals(e07=0.5))
+        rc, res, _ = select(r, ev, Q.sha256_file(tel) if tel.is_file() else "0" * 64)
+        check(name, rc == expect_rc and f"[{code}]" in res, res)
+    return run
+
+
+for _n, _ed, _c, _rc, _fab in [
+        ("d3_run_without_telemetry_refused", lambda r: (r / Q.TELEMETRY_NAME).unlink(), "telemetry_missing", 2, False),
+        ("d3_telemetry_not_strict_json_refused", _not_strict, "telemetry_not_strict_json", 2, False),
+        ("d3_first_row_not_run_meta_refused", lambda r: _set_tel_lines(r, [*_tel_lines(r)[1:2], _tel_lines(r)[0],
+                                                                           *_tel_lines(r)[2:]]),
+         "run_meta_rows", 2, False),
+        ("d3_duplicate_epoch_end_refused", _duplicate_end, "epoch_end_duplicate", 2, False),
+        ("d3_checkpoint_name_refused", _end_edit(5, checkpoint="epoch_ckpts/e99.pt"), "checkpoint_name", 2, True),
+        ("d3_missing_checkpoint_exit_3", _checkpoint_replaced(5, None), "checkpoint_missing", 3, True),
+        ("d3_checkpoint_bytes_changed_refused", _checkpoint_replaced(5, b"\0"), "checkpoint_sha256_mismatch", 2, True)]:
+    register("refusals", _n, _record_case(_n, _ed, _c, _rc, _fab))
+
+
 @case("refusals")
 def d3_rules_disagreeing_with_config_refused():
     bad_rules = TMP / "rules_bad.json"
@@ -638,34 +752,81 @@ def _pair_case(name: str, v1: float, v5: float, expect: float, tie: bool):
 
 for _n, _v1, _v5, _e, _tie in [("d5_boundary_pair_ties_to_5", 0.40099999999999997, 0.4, 5.0, True),
                                ("d5_just_above_not_tie", 0.401, 0.4, 1.0, False),
+                               ("d5_just_above_not_tie_mirror", 0.4, 0.401, 5.0, False),
                                ("d5_exact_not_naive_float", 0.001, 0.0, 1.0, False),
                                ("d5_tie_to_5_either_order", 0.4, 0.40099999999999997, 5.0, True),
                                ("d5_higher_5_wins", 0.30, 0.35, 5.0, False)]:
     register("d5", _n, _pair_case(_n, _v1, _v5, _e, _tie))
 
 
-def _rejected_case(tag: str, nan_first: bool):
+def _rejected_case(name: str, dead_fn, live_clip: float, dead_first: bool):
+    """The rejected candidate holds the better selection (0.9 against 0.30 or 0.31): it loses all the same."""
     def run():
-        live = (FX["base"][1.0], ev_clip1())
-        dead = (nan5_run(), TMP / "ev_none")
-        out = TMP / f"clip_o1_{tag}.json"
-        rc, res = clip_cli([dead, live] if nan_first else [live, dead], out)
+        live = (FX["base"][live_clip], ev_clip1() if live_clip == 1.0 else ev_clip5())
+        dead = dead_fn()
+        out = TMP / f"clip_{name}.json"
+        rc, res = clip_cli([dead, live] if dead_first else [live, dead], out)
         d = json.loads(out.read_text()) if rc == 0 else {}
-        check(f"d5_nonfinite_candidate_rejected_{tag}",
-              rc == 0 and d["winner"]["clip_norm"] == 1.0 and d["loser"]["rejected"] is True
-              and any("rejected: non-finite state (AM-21 item 3)" in t for t in d["rule_trace"])
+        check(name, rc == 0 and d["winner"]["clip_norm"] == live_clip and d["loser"]["rejected"] is True
+              and d["tie"] is False and any("rejected: non-finite state (AM-21 item 3)" in t for t in d["rule_trace"])
               and "rejected: non-finite state (AM-21 item 3)" in res, res)
     return run
 
 
-register("d5", "d5_nonfinite_candidate_rejected_a", _rejected_case("a", False))
-register("d5", "d5_nonfinite_candidate_rejected_b", _rejected_case("b", True))
+@functools.cache
+def _dead_1_0():
+    r = marked_run(1.0, "run_clip1_marked")
+    return r, better_selected(r, "ev_clip1_marked_better")
+
+
+@functools.cache
+def _dead_flag_only():
+    r = marked_run(5.0, "run_clip5_flag_only", since=False)
+    return r, better_selected(r, "ev_clip5_flag_only_better")
+
+
+@functools.cache
+def _dead_since_only():
+    r = marked_run(5.0, "run_clip5_since_only", finite_flag=False)
+    return r, better_selected(r, "ev_clip5_since_only_better")
+
+
+for _n, _dead, _live, _first in [
+        ("d5_nonfinite_candidate_rejected_a", lambda: (nan5_run(), ev_nan5_better()), 1.0, False),
+        ("d5_nonfinite_candidate_rejected_b", lambda: (nan5_run(), ev_nan5_better()), 1.0, True),
+        ("d5_nonfinite_clip_1_rejected_a", _dead_1_0, 5.0, False),
+        ("d5_nonfinite_clip_1_rejected_b", _dead_1_0, 5.0, True),
+        ("d5_state_finite_false_alone_rejected", _dead_flag_only, 1.0, False),
+        ("d5_nonfinite_since_step_alone_rejected", _dead_since_only, 1.0, True)]:
+    register("d5", _n, _rejected_case(_n, _dead, _live, _first))
+
+
+@case("d5")
+def d5_rejected_candidate_without_conversion_record_exit_3():
+    rc, res = clip_cli([(FX["base"][1.0], ev_clip1()), (nan5_run(), TMP / "ev_absent")], TMP / "clip_absent.json")
+    check("d5_rejected_candidate_without_conversion_record_exit_3", rc == 3 and "[eval_record_missing]" in res, res)
+
+
+@case("d5")
+def d5_rejected_candidate_record_mismatch_refused():
+    ev = conversion_record(nan5_run(), TMP / "ev_nan5_other_record", telemetry_sha256="0" * 64)
+    rc, res = clip_cli([(FX["base"][1.0], ev_clip1()), (nan5_run(), ev)], TMP / "clip_other_record.json")
+    check("d5_rejected_candidate_record_mismatch_refused", rc == 2 and "[eval_record_mismatch]" in res, res)
+
+
+@case("d5")
+def d5_rejected_candidate_timing_record_refused():
+    ev = conversion_record(nan5_run(), TMP / "ev_nan5_timing_record", purpose="timing")
+    rc, res = clip_cli([(FX["base"][1.0], ev_clip1()), (nan5_run(), ev)], TMP / "clip_timing_record.json")
+    check("d5_rejected_candidate_timing_record_refused", rc == 2 and "[purpose_not_record]" in res, res)
 
 
 def _both_rejected_case(tag: str, nan5_first: bool):
     def run():
         nan1b = clone_run(FX["nan10"], TMP / f"run_clip1_nan_{tag}")
-        pairs = [(nan1b, TMP / "ev_none1"), (nan5_run(), TMP / "ev_none")]
+        ev1 = TMP / f"ev_clip1_nan_{tag}"
+        fabricate(nan1b, ev1, vals(), excluded=range(5, 16))              # its conversion record of the run
+        pairs = [(nan1b, ev1), (nan5_run(), ev_nan5_better())]
         out = TMP / f"clip_none_{tag}.json"
         rc, res = clip_cli(pairs[::-1] if nan5_first else pairs, out)
         check(f"d5_both_rejected_no_winner_exit_2_{tag}", rc == 2 and "[no_winner]" in res
@@ -691,6 +852,29 @@ def d5_incomplete_run_refused():
     (inc5 / Q.TELEMETRY_NAME).write_text("\n".join(lines) + "\n", encoding="utf-8")
     rc, res = clip_cli([(FX["base"][1.0], ev_clip1()), (inc5, ev_clip5())], TMP / "clip_inc.json")
     check("d5_incomplete_run_refused", rc == 3 and "[run_incomplete]" in res, res)
+
+
+@case("d5")
+def d5_refuses_existing_output():
+    out = TMP / "clip_exists.json"
+    out.write_text("{}", encoding="utf-8")
+    rc, res = clip_cli([(FX["base"][1.0], TMP / "ev_unused_1"), (FX["base"][5.0], TMP / "ev_unused_5")], out)
+    check("d5_refuses_existing_output", rc == 2 and "[output_exists]" in res and out.read_text() == "{}", res)
+
+
+@case("d5")
+def d5_nonfinite_row_only_rejected():
+    """AM-21 item 3: a nonfinite_since_step recorded in any telemetry row rejects the run (epoch_end rows finite)."""
+    r5 = clone_run(FX["base"][5.0], TMP / "run_clip5_row_nonfinite")
+    lines = _tel_lines(r5)
+    lines.insert(5, json.dumps({"event": "state_nonfinite", "wall_clock": 1.8e9, "epoch": 3, "step": 5,
+                                "nonfinite_since_step": 5, "failing": ["fabricated"]}))
+    _set_tel_lines(r5, lines)
+    out = TMP / "clip_row_nonfinite.json"
+    rc, res = clip_cli([(FX["base"][1.0], ev_clip1()), (r5, better_selected(r5, "ev_row_nonfinite_better"))], out)
+    d = json.loads(out.read_text()) if rc == 0 else {}
+    check("d5_nonfinite_row_only_rejected", rc == 0 and d["winner"]["clip_norm"] == 1.0
+          and d["loser"]["rejected"] is True and "rejected: non-finite state (AM-21 item 3)" in res, res)
 
 
 def _variant_case(name: str, code: str, needle: str = "", *, meta=None, host=None, fingerprints=None, tamper=None,
@@ -753,6 +937,9 @@ def _edited_selection_case(name: str, edit, code: str):
 register("d5", "d5_edited_epoch_selection_refused",
          _edited_selection_case("d5_edited_epoch_selection_refused",
                                 lambda d: d["winner"].update(value=0.99), "selection_differs"))
+register("d5", "d5_edited_selection_trace_refused",
+         _edited_selection_case("d5_edited_selection_trace_refused",
+                                lambda d: d["rule_trace"].append("edited after selection"), "selection_differs"))
 register("d5", "d5_selection_of_other_rules_refused",
          _edited_selection_case("d5_selection_of_other_rules_refused",
                                 lambda d: d.update(rules_sha256="0" * 64), "epoch_selection_format"))
@@ -893,6 +1080,22 @@ def finalize_serves_the_winner():
           f"{x86.get('engine')}, checks {x86.get('checks')}")
     rc2, res2 = finalize_cli(r5, win_ev, "--clip-selection", str(fx["clip"]))
     check("finalize_runs_once", rc2 == 2 and "[output_exists]" in res2, res2)
+
+
+@case("finalize")
+def finalize_refuses_an_edited_winner_clip():
+    """The winner's clip_selection.json with only winner.clip_norm edited (its sha256 not pinned), on eval
+    directories of its own (finalize_serves_the_winner finalizes the shared ones)."""
+    base, sha = FX["base"], FX["sha"]
+    evs = {c: selected_eval(base[c], sha[c], f"ev_wclip_{c}", vals(e07=v)) for c, v in ((1.0, 0.40), (5.0, 0.4005))}
+    p = TMP / "clip_edited_winner_clip.json"
+    rc0, res0 = clip_cli([(base[1.0], evs[1.0]), (base[5.0], evs[5.0])], p)
+    doc = json.loads(p.read_text(encoding="utf-8")) if rc0 == 0 else {"winner": {}}
+    doc["winner"]["clip_norm"] = 1.0
+    p.write_text(json.dumps(doc), encoding="utf-8")
+    rc, res = finalize_cli(base[5.0], evs[5.0], "--clip-selection", str(p))
+    check("finalize_refuses_an_edited_winner_clip", rc0 == 0 and rc == 2 and "[clip_selection_winner_clip]" in res
+          and not (evs[5.0] / "qat_finalize.json").exists(), f"{res0} | {res}")
 
 
 @case("finalize")

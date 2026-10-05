@@ -39,6 +39,8 @@ NO_WINNER = "no winner (AM-21 item 3): a new amendment decides the clip value"
 CLIP_EXEMPT_KEYS = ("clip_norm", "wall_clock", "out_dir", "run_id", "host.hostname", "host.pod_id")
 # what one selection's evaluations share, and both pilot runs' evaluations share too (P23, P26)
 EVAL_IDENTITY_KEYS = ("git_head", "host_label", "cpu_model", "purpose")
+# a stored selection is compared with its recomputation key by key, except where it was mounted
+SELECTION_PATH_KEYS = ("run_dir", "eval_dir")
 
 
 def _get(d: dict, dotted: str):
@@ -61,7 +63,8 @@ def load_rules(path=RULES_PATH) -> tuple[dict, str]:
             ("qat_epoch", "tie"): "earliest_epoch", ("qat_clip", "candidates"): list(pilot["candidates"]),
             ("qat_clip", "stage"): pilot["run_on"], ("qat_clip", "seed"): pilot["seed"], ("qat_clip", "tie"): 5.0,
             ("qat_clip", "band", "numerator"): 1, ("qat_clip", "band", "denominator"): 1000,
-            ("qat_clip", "inherited_by"): list(pilot["inherited_by"])}
+            ("qat_clip", "inherited_by"): list(pilot["inherited_by"]),
+            ("qat_epoch", "equal_across_evaluations"): list(EVAL_IDENTITY_KEYS), ("qat_epoch", "purpose"): "record"}
     wrong = {".".join(k): _get(rules, ".".join(k)) for k, v in want.items() if _get(rules, ".".join(k)) != v}
     if pilot["tie_band"] != "1/1000":
         wrong["configs/quant.py qat_grad_clip_pilot.tie_band"] = pilot["tie_band"]
@@ -78,6 +81,13 @@ def band(rules: dict) -> Fraction:
 def exact_tie(a: float, b: float, within: Fraction) -> tuple[bool, Fraction]:
     d = abs(Fraction(a) - Fraction(b))
     return d <= within, d
+
+
+def selection_differences(stored: dict, recomputed: dict) -> list[str]:
+    """The keys where a stored qat_selection.json and its recomputation differ (mount paths aside)."""
+    keys = (set(stored) | set(recomputed)) - set(SELECTION_PATH_KEYS)
+    return sorted(k for k in keys
+                  if json.dumps(stored.get(k), sort_keys=True) != json.dumps(recomputed.get(k), sort_keys=True))
 
 
 # ------------------------------------------------------------------ one run's epoch
@@ -104,8 +114,9 @@ def _check_summary(s: dict, *, stage: str, ev: dict, smoke: bool) -> list[str]:
     exp, act = _get(s, "dataset.expected_rows"), _get(s, "dataset.actual_rows")
     fwd = _get(s, "run.eval_runtime.forward_batches")
     if not smoke:
-        if not (exp == act == rows == fwd):
-            bad.append(f"rows expected {exp} / actual {act} / forward batches {fwd}, the rules require {rows}")
+        if not (exp == act == rows and fwd == ev["eval_runtime"]["forward_batches"]):
+            bad.append(f"rows expected {exp} / actual {act} / forward batches {fwd}, the rules require {rows} / "
+                       f"{ev['eval_runtime']['forward_batches']}")
         gt = _get(s, "per_class.gt_support")
         if not isinstance(gt, list) or sum(gt) != ev["gt_support_sum"]:
             bad.append(f"sum(per_class.gt_support) = {sum(gt) if isinstance(gt, list) else gt!r}, "
@@ -134,9 +145,9 @@ def epoch_selection(run_dir, eval_dir, *, expect_telemetry_sha256: str | None, r
         raise QATRefused("stage", f"stage {stage!r} is not a QAT stage of the rules")
     E = Path(eval_dir)
     stops = sorted(p.name for p in (E / A.CONVERTED_DIR).glob("e*_STOP.json")) if (E / A.CONVERTED_DIR).is_dir() else []
-    if (E / "convert_STOP.json").exists() or stops:
-        raise QATRefused("stop_present", f"{E} holds a STOP file {stops or ['convert_STOP.json']}; it is never "
-                                         "selected")
+    spent = [n for n in ("convert_STOP.json", "score_STOP.json") if (E / n).exists()]
+    if spent or stops:
+        raise QATRefused("stop_present", f"{E} holds a STOP file {spent + stops}; it is never selected")
     conv_p, ev_p = E / "qat_convert.json", E / "qat_epoch_eval.json"
     for p in (conv_p, ev_p):
         if not p.is_file():
@@ -329,9 +340,9 @@ def _recipe(meta: dict) -> dict:
 
 
 def run_rejected(rec: dict) -> bool:
-    ends = rec["ends"].values()
-    return (any(r.get("nonfinite_since_step") is not None for r in ends)
-            or any(r.get("state_finite") is False for r in ends))
+    """AM-21 item 3: any telemetry row records nonfinite_since_step, or an epoch_end row has state_finite false."""
+    return (any(r.get("nonfinite_since_step") is not None for r in rec["rows"])
+            or any(r.get("state_finite") is False for r in rec["ends"].values()))
 
 
 def step_fingerprints(rec: dict) -> list[str]:
@@ -366,7 +377,20 @@ def clip_selection(candidates: list[tuple[str, str]], *, rules: dict, rules_sha2
         rejected = run_rejected(rec)                         # AM-21 item 3: decided by the run's own record
         sel_p = Path(eval_dir) / "qat_selection.json"
         stored, selection, sel_sha = None, None, None
-        if not rejected:
+        if rejected:
+            # the record that rejects it is the one its conversion of record was anchored to (pod-captured sha)
+            conv_p = Path(eval_dir) / "qat_convert.json"
+            if not conv_p.is_file():
+                raise QATIncomplete("eval_record_missing", f"{conv_p} is missing: a rejected candidate is anchored by "
+                                                           "its conversion record")
+            conv = _json(conv_p)
+            if conv.get("telemetry_sha256") != rec["telemetry_sha256"] or conv.get("run_id") != rec["run_id"]:
+                raise QATRefused("eval_record_mismatch", f"{conv_p} names run {conv.get('run_id')!r}, telemetry "
+                                                         f"{conv.get('telemetry_sha256')}; the run is "
+                                                         f"{rec['run_id']!r}")
+            if conv.get("purpose") != "record" and not smoke:
+                raise QATRefused("purpose_not_record", f"{conv_p} was written for purpose {conv.get('purpose')!r}")
+        else:
             if not sel_p.is_file():
                 raise QATIncomplete("epoch_selection_missing", f"{sel_p} is missing: run select_qat_epoch first")
             stored = _json(sel_p)
@@ -375,10 +399,7 @@ def clip_selection(candidates: list[tuple[str, str]], *, rules: dict, rules_sha2
                                                            f"committed rules ({stored.get('rules_sha256')})")
             selection = epoch_selection(run_dir, eval_dir, expect_telemetry_sha256=stored.get("telemetry_sha256"),
                                         rules=rules, rules_sha256=rules_sha256, allow_smoke_inputs=smoke)
-            keep = ("winner", "values", "tied_epochs", "excluded_epochs", "telemetry_sha256", "run_id",
-                    "summary_fields", "eval_identity")
-            diff = [k for k in keep
-                    if json.dumps(selection.get(k), sort_keys=True) != json.dumps(stored.get(k), sort_keys=True)]
+            diff = selection_differences(stored, selection)
             if diff:
                 raise QATRefused("selection_differs", f"{sel_p}: recomputing gives different {diff}")
             sel_sha = Q.sha256_file(sel_p)
@@ -458,5 +479,5 @@ def clip_selection(candidates: list[tuple[str, str]], *, rules: dict, rules_sha2
 
 
 __all__ = ["CLIP_EXEMPT_KEYS", "EPOCH_SELECTION_FORMAT", "EVAL_IDENTITY_KEYS", "NO_WINNER", "REJECTED_NONFINITE",
-           "RULES_PATH", "band",
-           "clip_selection", "epoch_selection", "exact_tie", "load_rules", "run_rejected", "step_fingerprints"]
+           "RULES_PATH", "SELECTION_PATH_KEYS", "band", "clip_selection", "epoch_selection", "exact_tie", "load_rules",
+           "run_rejected", "selection_differences", "step_fingerprints"]

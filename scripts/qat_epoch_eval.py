@@ -48,6 +48,7 @@ CONVERT_FORMAT = "qat_convert/1"
 FINALIZE_FORMAT = "qat_finalize/1"
 CONVERT_RECORD = "qat_convert.json"
 CONVERT_STOP = "convert_STOP.json"
+SCORE_STOP = "score_STOP.json"
 EVAL_RECORD = "qat_epoch_eval.json"
 SELECTION_RECORD = "qat_selection.json"
 FINALIZE_RECORD = "qat_finalize.json"
@@ -139,6 +140,10 @@ def _epoch_list(eps) -> str:
     return " ".join(f"e{e:02d}" for e in eps)
 
 
+def _result_word(code: int) -> str:
+    return {EXIT_STOP: "STOP", EXIT_REFUSED: "REFUSED", EXIT_ABORTED: "INCOMPLETE"}.get(code, "ERROR")
+
+
 # ------------------------------------------------------------------ convert
 def cmd_convert(args) -> int:
     eps = _epochs(args) or list(range(1, Q.EPOCHS + 1))
@@ -146,7 +151,7 @@ def cmd_convert(args) -> int:
         raise QATRefused("expect_telemetry_sha256_required", "--purpose record requires --expect-telemetry-sha256 "
                                                              "(the run's qat_telemetry.jsonl sha256 recorded after it)")
     A.refuse_test_path(args.eval_dir, "eval_dir")
-    E = Path(args.eval_dir)
+    E = Path(args.eval_dir).resolve()                  # the workers run from the checkout: absolute paths only
     err = _fresh_dir_error(E)
     if err:
         raise QATRefused("eval_dir_not_fresh", err)
@@ -170,8 +175,8 @@ def cmd_convert(args) -> int:
                                             f"{E / CONVERT_STOP}")
     outcomes = []
     for e in eps:
-        argv = [sys.executable, "-B", str(SCRIPT), "convert-epoch", "--run-dir", str(args.run_dir), "--eval-dir",
-                str(args.eval_dir), "--epoch", str(e), "--purpose", args.purpose, "--host-label", args.host_label]
+        argv = [sys.executable, "-B", str(SCRIPT), "convert-epoch", "--run-dir", rec["run_dir"], "--eval-dir",
+                str(E), "--epoch", str(e), "--purpose", args.purpose, "--host-label", args.host_label]
         if args.expect_telemetry_sha256:
             argv += ["--expect-telemetry-sha256", args.expect_telemetry_sha256]
         if args.allow_smoke_inputs:
@@ -186,12 +191,18 @@ def cmd_convert(args) -> int:
         outcomes.append({"epoch": e, "status": status, "exit_code": p.returncode, "seconds": time.time() - t0,
                          "result": tail[-1] if tail else None})
         print(f"[convert] e{e:02d}: {status} (exit {p.returncode}, {time.time() - t0:.1f}s)")
-        if p.returncode != EXIT_OK:
+        if p.returncode != EXIT_OK or status == "failed":
+            # a worker that failed, or exited 0 without its output, spends the eval directory (P26)
+            code = (p.returncode if p.returncode in (EXIT_STOP, EXIT_REFUSED, EXIT_ABORTED) else EXIT_ERROR)
             sys.stderr.write(p.stderr[-2000:])
-            print(f"RESULT: {'STOP' if p.returncode == EXIT_STOP else 'INCOMPLETE'} -- e{e:02d} worker exited "
-                  f"{p.returncode}: {tail[-1] if tail else p.stderr.strip()[-300:]}. The eval directory {E} is "
-                  "spent; a re-run uses a new one.")
-            return p.returncode if p.returncode in (EXIT_STOP, EXIT_REFUSED, EXIT_ABORTED) else EXIT_ERROR
+            from src.quant.ptq import write_exclusive
+            if not (E / CONVERT_STOP).exists():
+                write_exclusive({E / CONVERT_STOP: A.json_bytes({**head, "status": "STOP", "code": "worker_failed",
+                                                                 "outcomes": outcomes})})
+            print(f"RESULT: {_result_word(code)} -- e{e:02d} worker exited {p.returncode} ({status}): "
+                  f"{tail[-1] if tail else p.stderr.strip()[-300:]}. The eval directory {E} is spent; a re-run "
+                  "uses a new one.")
+            return code
     from src.quant.ptq import write_exclusive
     write_exclusive({E / CONVERT_RECORD: A.json_bytes({**head, "status": "converted", "outcomes": outcomes,
                                                        "created_wall_clock": time.time()})})
@@ -228,11 +239,11 @@ def evaluator_command(stage_name: str, provenance: Path, out_dir: Path, run_id: 
 def cmd_score(args) -> int:
     asked = _epochs(args)
     A.refuse_test_path(args.eval_dir, "eval_dir")
-    E = Path(args.eval_dir)
+    E = Path(args.eval_dir).resolve()                  # the evaluator runs from the checkout: absolute paths
     rec = A.read_run_record(args.run_dir)
     A.require_complete(rec)
     conv_rec = E / CONVERT_RECORD
-    if (E / CONVERT_STOP).exists() or list((E / A.CONVERTED_DIR).glob("e*_STOP.json")):
+    if (E / CONVERT_STOP).exists() or (E / SCORE_STOP).exists() or list((E / A.CONVERTED_DIR).glob("e*_STOP.json")):
         raise QATRefused("stop_present", f"{E} holds a STOP file; it is spent and is never scored")
     if not conv_rec.is_file():
         raise A.QATIncomplete("convert_record_missing", f"{conv_rec} is missing: run `convert` first")
@@ -254,8 +265,9 @@ def cmd_score(args) -> int:
             raise QATRefused("epoch_not_converted", f"--epochs {asked}: {_epoch_list(missing)} not converted in {E}")
     todo = asked if asked is not None else sorted(outcomes)
     scores = E / A.SCORES_DIR
-    if scores.exists() and any(scores.iterdir()):
-        raise QATRefused("scores_not_fresh", f"{scores} is not empty; an eval directory is scored once")
+    if scores.exists():
+        raise QATRefused("scores_not_fresh", f"{scores} exists: only a score pass creates it, and an eval directory "
+                                             "is scored once")
     if (E / EVAL_RECORD).exists():
         raise QATRefused("output_exists", f"{E / EVAL_RECORD} exists")
     stage = rec["run_meta"]["stage"]
@@ -282,7 +294,13 @@ def cmd_score(args) -> int:
         summ = out / "summary.json"
         if p.returncode != 0 or not summ.is_file():
             sys.stderr.write(p.stdout[-1500:] + p.stderr[-2500:])
-            print(f"RESULT: INCOMPLETE -- the evaluator exited {p.returncode} on e{e:02d}; {E} is spent")
+            from src.quant.ptq import write_exclusive
+            write_exclusive({E / SCORE_STOP: A.json_bytes({"format": EVAL_FORMAT, "status": "STOP",
+                                                           "run_id": rec["run_id"], "epoch": e,
+                                                           "evaluator_exit_code": p.returncode, "scored": rows,
+                                                           **_host(args), "created_wall_clock": time.time()})})
+            print(f"RESULT: INCOMPLETE -- the evaluator exited {p.returncode} on e{e:02d}; {E} is spent "
+                  f"({SCORE_STOP})")
             return EXIT_ABORTED
         s = json.loads(summ.read_text(encoding="utf-8"))
         rt = (s.get("run") or {}).get("eval_runtime") or {}
@@ -343,6 +361,9 @@ def _pilot_clip_winner(args, rec: dict, sel_sha: str) -> dict:
         raise QATRefused("clip_selection_stale", f"{p} names qat_selection.json sha256 "
                                                  f"{(w.get('qat_selection') or {}).get('sha256')}; the eval directory "
                                                  f"holds {sel_sha}")
+    if w.get("clip_norm") != rec["run_meta"].get("clip_norm"):
+        raise QATRefused("clip_selection_winner_clip", f"{p} names winner clip {w.get('clip_norm')!r}; this run's "
+                                                       f"clip is {rec['run_meta'].get('clip_norm')!r}")
     return {"path": str(p.resolve()), "sha256": sha, "winner_clip_norm": w["clip_norm"],
             "winner_run_id": w["run_id"], "tie": doc.get("tie"),
             "sha256_pinned": args.clip_selection_sha256 is not None}

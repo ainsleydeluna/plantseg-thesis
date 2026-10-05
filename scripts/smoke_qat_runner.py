@@ -101,7 +101,7 @@ class Recorder(Q.QATHooks):
     """Observes the trainer's own loop: the norm at optimizer.step, buffer digests, flags inside VAL."""
 
     def __init__(self):
-        self.at_call, self.bn, self.obs = [], [], []
+        self.at_call, self.applied_lr, self.bn, self.obs, self.train_mode_at_val = [], [], [], [], {}
         self.val_flags, self.ckpt_before_val, self.after_val_digest, self.ends = {}, {}, {}, {}
         self._seen, self._handles = set(), []
 
@@ -114,6 +114,7 @@ class Recorder(Q.QATHooks):
 
         def wrapped(*a, **k):
             self.at_call.append(grad_norm(p for g in optimizer.param_groups for p in g["params"]))
+            self.applied_lr.append(optimizer.param_groups[0]["lr"])        # the lr this step applies
             return orig(*a, **k)
         wrapped._with_counter = True              # the scheduler's own counter still runs inside `orig`
         optimizer.step = wrapped
@@ -123,6 +124,7 @@ class Recorder(Q.QATHooks):
         self.obs.append(Q.observer_buffer_digest(prepared))
 
     def before_val(self, epoch, prepared):
+        self.train_mode_at_val[epoch] = prepared.training
         self.ckpt_before_val[epoch] = (self.out_dir / Q.EPOCH_DIR / f"e{epoch:02d}.pt").is_file()
         self._seen = set()
         self._handles = [m.register_forward_pre_hook(
@@ -204,6 +206,17 @@ def test_d1(device: str) -> dict:
           len(lrs) == 30 and all(abs(lr - closed_form(t, 30)) <= 1e-12 * closed_form(t, 30)
                                  for t, lr in enumerate(lrs)),
           "1.5e-4 x (1 + cos(pi t / 30)), rel tol 1e-12")
+    applied = rec.applied_lr
+    check("d1_lr_applied_at_each_optimizer_step",
+          len(applied) == 30 and applied[0] == 3e-4 and applied == lrs
+          and all(abs(lr - closed_form(t, 30)) <= 1e-12 * closed_form(t, 30) for t, lr in enumerate(applied)),
+          "the lr optimizer.step applies at step t+1 is the closed form at t: scheduler.step() follows it")
+    ends_ = rows_of(c, "epoch_end")
+    check("d1_row_flags_match_the_freeze_epochs",
+          len(train) == 30 and len(ends_) == 15
+          and all(r.get("bn_frozen") is (r["epoch"] > 10) and r.get("observers_enabled") is (r["epoch"] <= 12)
+                  for r in train + ends_),
+          "train and epoch_end rows: bn_frozen from epoch 11, observers off from epoch 13")
     opt = getattr(rec, "optimizer", None)
     rec_opt = meta.get("optimizer") or {}
     check("d1_optimizer_of_record",
@@ -341,9 +354,10 @@ def test_nonfinite(device: str, clean: dict | None) -> None:
               all(r.get("state_nonfinite") is True for r in steps if r["step"] >= k)
               and all(r.get("state_nonfinite") is False for r in steps if r["step"] < k)
               and all(r.get("state_finite") is False and r.get("nonfinite_since_step") == k
-                      for r in ends if r["epoch"] >= first_bad)
-              and all(r.get("state_finite") is True for r in ends if r["epoch"] < first_bad),
-              f"epoch_end state_finite false from epoch {first_bad}")
+                      and r.get("state_nonfinite") is True for r in ends if r["epoch"] >= first_bad)
+              and all(r.get("state_finite") is True and r.get("state_nonfinite") is False
+                      for r in ends if r["epoch"] < first_bad),
+              f"epoch_end state_finite false and state_nonfinite true from epoch {first_bad}")
         check(f"d1_schedule_and_batches_continue_step{k}",
               len(steps) == 30 and len(clean_train) == 30
               and [r["lr"] for r in steps] == [r["lr"] for r in clean_train]
@@ -361,14 +375,40 @@ def test_nonfinite(device: str, clean: dict | None) -> None:
                   bool(errs) and all(r["step"] > k and r.get("state_nonfinite") is True for r in errs),
                   f"{len(errs)} step_error rows (a raising forward once the state is non-finite)")
         shutil.rmtree(c["out"], ignore_errors=True)
+    # a VAL pass that raises once the state is non-finite: recorded, the run goes on, in train mode (P12)
+    import src.training.train_e1 as te1
+    real_validate, calls = te1.validate, []
+
+    def raising_once(model, *a, **k):
+        calls.append(1)
+        if len(calls) == 5:                                      # epoch 5's VAL: the NaN came at step 10
+            model.eval()                                         # as validate() does before its loop
+            raise RuntimeError("a VAL pass that raises in a non-finite state")
+        return real_validate(model, *a, **k)
+    with patched(te1, "validate", raising_once):
+        c = run_case("d1_nan_step10_val_raises", clip=1.0, device=device, nan_at=(10,))
+    vals, mode = rows_of(c, "val"), c["rec"].train_mode_at_val
+    v5 = next((r for r in vals if r.get("epoch") == 5), {})
+    check("d1_val_error_recorded_and_train_mode_restored",
+          c["error"] is None and c["summary"] and c["summary"]["complete"] and len(vals) == 15
+          and v5.get("all_class_miou") is None and "RuntimeError" in str(v5.get("error"))
+          and v5.get("state_nonfinite") is True and not rows_of(c, "run_abort")
+          and sorted(mode) == list(range(1, 16)) and all(mode.values()),
+          f"{c['error'] or ''} epoch-5 VAL {v5.get('error')!r}; train mode at each VAL start "
+          f"{[e for e, m in sorted(mode.items()) if not m]} off")
+    shutil.rmtree(c["out"], ignore_errors=True)
 
 
 # ---------------------------------------------------------------- launch gates, one refusal at a time
 def code_of(fn, *a, **kw) -> str | None:
+    """fn's refusal code; None when it returns; "raised:<type>" for any other exception, so a refusal that is
+    missing fails its own named check instead of ending the section."""
     try:
         fn(*a, **kw)
     except Q.QATRefused as e:
         return e.code
+    except Exception as e:                                      # noqa: BLE001 -- reported in the check's detail
+        return f"raised:{type(e).__name__}"
     return None
 
 
@@ -804,6 +844,8 @@ def test_gates() -> None:
                       **kw)
         except Q.QATStop as e:
             return e.code
+        except Exception as e:                                  # noqa: BLE001 -- the named check fails
+            return f"raised:{type(e).__name__}"
         return None
     o = TMP / "run_smoke_optimizer"
     with patched(Q, "optimizer_record", lambda opt, model: {"class": "SGD", "param_groups": 1, "momentum": 0.0}):
@@ -822,6 +864,14 @@ def test_gates() -> None:
     check("run_stops_when_val_changes_the_state", got == "val_bracket_changed_state"
           and rows and rows[-1].get("event") == "run_stop" and rows[-1].get("code") == "val_bracket_changed_state",
           f"[{got}]")
+    # ---- a checkpoint name holding "test"; a clip selection given by its sha256 alone
+    d = TMP / "e1_ckname"
+    s9 = write_e1_parent(d, best={"best_ckpt": "/workspace/e1_ckpts/latest.pt", "best_val_miou_all_class": 0.3})
+    got = code_of(Q.resolve_parent, e5, d, s9, 42)
+    check("refuses_parent_checkpoint_test_name", got == "parent_checkpoint_test_path", f"[{got}]")
+    got = code_of(Q.read_clip_selection, None, ssha)
+    check("refuses_clip_selection_path_absent", got == "clip_selection_missing", f"[{got}]")
+
     # ---- main(): a refused launch prints one RESULT line and writes nothing
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
@@ -829,6 +879,34 @@ def test_gates() -> None:
     lines = [ln for ln in buf.getvalue().splitlines() if ln.startswith("RESULT:")]
     check("main_refusal_exit_2_one_result_line", rc == 2 and len(lines) == 1 and "REFUSED [" in lines[0]
           and not Path(out_ok).exists(), lines[0] if lines else buf.getvalue()[-200:])
+    # an exception before the run_meta row is an ERROR (exit 4); after it, the run ABORTED (exit 3)
+    fake_gates = {"clip": {"clip_source": "u4_pilot", "u4_pilot": True, "clip_selection": None}, "parent": {},
+                  "e6_binding": None, "data_root": "none", "isolation": {"counts": {}}, "identity": {}}
+
+    def main_with(argv, run_fn) -> tuple[int, list[str]]:
+        out_buf = io.StringIO()
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(contextlib.redirect_stdout(out_buf))
+            stack.enter_context(patched(Q, "real_run_gates", lambda args, stage, **kw: fake_gates))
+            stack.enter_context(patched(Q, "load_source", lambda stage, parent: (student(), SOURCE)))
+            stack.enter_context(patched(Q, "run_qat", run_fn))
+            code = Q.main(argv, "e5")
+        return code, [ln for ln in out_buf.getvalue().splitlines() if ln.startswith("RESULT:")]
+
+    def fails_before_telemetry(**kw):
+        raise RuntimeError("out of memory before the first row")
+
+    def fails_after_telemetry(**kw):
+        o_dir = Path(kw["out_dir"])
+        o_dir.mkdir(parents=True)
+        (o_dir / Q.TELEMETRY_NAME).write_text(json.dumps({"event": "run_meta"}) + "\n", encoding="utf-8")
+        raise RuntimeError("a failure after the run_meta row")
+    rc, lines = main_with([a if a != out_ok else str(TMP / "qat_out_early") for a in base], fails_before_telemetry)
+    check("main_error_before_telemetry_exit_4", rc == 4 and len(lines) == 1
+          and lines[0].startswith("RESULT: ERROR [RuntimeError]"), lines[0] if lines else "")
+    rc, lines = main_with([a if a != out_ok else str(TMP / "qat_out_late") for a in base], fails_after_telemetry)
+    check("main_abort_after_telemetry_exit_3", rc == 3 and len(lines) == 1
+          and lines[0].startswith("RESULT: ABORTED [exception]"), lines[0] if lines else "")
 
 
 # ---------------------------------------------------------------- import isolation
@@ -914,6 +992,7 @@ def test_profile() -> None:
         ("parent_seed", "parent", {**launch["parent"], "seed": 43}), ("mode", "mode", "smoke"),
         ("seed", "seed", 43), ("clip", "clip_norm", 5.0), ("dampening_as_int", "dampening", 0),
         ("cuda_initialised_at_seed", "cuda_initialized_at_seed", True), ("val_cap", "val_batches_cap", 4),
+        ("stage", "stage", "E6"),
     ]:
         r = json.loads(json.dumps(row))
         set_dotted(r, key, value)
@@ -936,6 +1015,19 @@ def test_profile() -> None:
     check("profile_e5_s43_bound_to_clip_selection_passes", rc == 0 and res == "RESULT: CHECK-RUN-META PASS", res)
     rc, res, out = cli("e5_s43_other_sha", r43, [a if a != csha else "e" * 64 for a in a43])
     check("profile_stops_on_other_clip_selection", rc == 1 and "clip_selection" in out, res[:160])
+    # the bound file is read again at check time: its bytes changed after the launch, or no file given
+    clip_q = TMP / "profile_clip_selection_changed.json"
+    clip_q.write_text(clip_p.read_text(encoding="utf-8"), encoding="utf-8")
+    qsha = sha_file(clip_q)
+    r43q = json.loads(json.dumps(r43))
+    r43q["clip_selection"] = {"path": str(clip_q), "sha256": qsha, "winner": 5.0}
+    a43q = [str(clip_q) if a == str(clip_p) else (qsha if a == csha else a) for a in a43]
+    clip_q.write_text(json.dumps({"format": Q.CLIP_SELECTION_FORMAT, "winner": {"clip_norm": 5.0}, "note": "edited"}),
+                      encoding="utf-8")
+    rc, res, out = cli("e5_s43_file_changed", r43q, a43q)
+    check("profile_stops_on_clip_selection_file_changed", rc == 1 and "clip_selection_file" in out, res[:160])
+    rc, res, out = cli("e5_s43_sha_without_file", r43, without(a43, "--clip-selection"))
+    check("profile_stops_on_clip_selection_sha_without_file", rc == 1 and "clip_selection_file" in out, res[:160])
     rc, res, out = cli("e5_s43_u4", r43, a43 + ["--u4-pilot"])
     check("profile_stops_on_u4_pilot_for_s43", rc == 1 and "clip_source" in out, res[:160])
     r43u = json.loads(json.dumps(r43))

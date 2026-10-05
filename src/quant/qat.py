@@ -111,9 +111,10 @@ QAT_CODE_PATHS = (
     "src/quant/qat.py", "src/quant/qat_artifacts.py", "src/quant/qat_select.py",
     "src/quant/prepare.py", "src/quant/qconfig.py", "src/quant/stages.py", "src/quant/checkpoint.py",
     "src/quant/calibration.py", "src/quant/x86_latency.py", "src/quant/ptq.py", "src/quant/runner.py",
-    "src/quant/__init__.py", "src/models/student.py", "src/data/__init__.py", "src/data/dataset.py",
-    "src/data/transforms.py", "src/data/isolation.py", "src/training/train_e1.py",
-    "src/training/losses.py", "src/seeds.py", "src/eval/metrics.py",
+    "src/quant/__init__.py", "src/__init__.py", "src/models/__init__.py", "src/models/student.py",
+    "src/data/__init__.py", "src/data/dataset.py", "src/data/transforms.py", "src/data/isolation.py",
+    "src/training/__init__.py", "src/training/train_e1.py", "src/training/losses.py", "src/seeds.py",
+    "src/eval/__init__.py", "src/eval/metrics.py", "src/distill/__init__.py", "src/distill/export.py",
     "configs/quant.py", "configs/qat_selection_rules.json", "configs/data.py", "configs/augment.py",
     "configs/model.py", "configs/e1_student.py", "reports/e1_class_weights.json",
     "scripts/run_e5.py", "scripts/run_e6.py", "scripts/qat_epoch_eval.py",
@@ -141,6 +142,12 @@ class QATStop(RuntimeError):
 
 def _refuse(code: str, message: str):
     raise QATRefused(code, message)
+
+
+def names_test(value) -> bool:
+    """SL-1: a path is refused when its given or its resolved form contains "test", before it is opened."""
+    p = Path(value)
+    return "test" in str(p).lower() or "test" in str(p.resolve()).lower()
 
 
 # ------------------------------------------------------------------ small helpers
@@ -194,8 +201,9 @@ def cpu_model() -> str:
 
 
 def host_identity() -> dict:
-    """Host identifiers: recorded, and never compared across the two pilot runs (two pods of the same
-    GPU type may differ in CPU model; gpu_name stays a compared run_meta key)."""
+    """Host identifiers. select_clip reports the host name and the pod id and never compares them; it compares
+    the CPU model (P27), so both pilot runs run on one pod or on pods of the same CPU model; gpu_name is a
+    compared run_meta key too."""
     return {"hostname": socket.gethostname(), "pod_id": os.environ.get("RUNPOD_POD_ID") or None,
             "cpu_model": cpu_model()}
 
@@ -462,7 +470,7 @@ def resolve_parent(stage: dict, run_dir, expect_sha256: str, seed: int, *,
     best.json names a file in the directory whose sha256 equals --expect-source-sha256.
     """
     d = Path(run_dir) if run_dir else None
-    if d is not None and "test" in str(d.resolve()).lower():
+    if d is not None and names_test(d):
         _refuse("parent_dir_test_path", f"--source-run-dir {d} contains 'test'")
     if d is None or not d.is_dir():
         _refuse("parent_dir_missing", f"--source-run-dir {run_dir!r} is not a directory")
@@ -478,9 +486,12 @@ def resolve_parent(stage: dict, run_dir, expect_sha256: str, seed: int, *,
     if not isinstance(best, dict) or sorted(best) != ["best_ckpt", "best_val_miou_all_class"]:
         _refuse("parent_best_json_format", f"{best_p} keys {sorted(best) if isinstance(best, dict) else best!r} "
                                            "!= ['best_ckpt', 'best_val_miou_all_class']")
-    ck = d / Path(str(best["best_ckpt"])).name
+    ck_name = Path(str(best["best_ckpt"])).name
+    if "test" in ck_name.lower():
+        _refuse("parent_checkpoint_test_path", f"best.json names {ck_name!r}, which contains 'test'")
+    ck = d / ck_name
     if not ck.is_file():
-        _refuse("parent_checkpoint_missing", f"best.json names {Path(str(best['best_ckpt'])).name}, absent from {d}")
+        _refuse("parent_checkpoint_missing", f"best.json names {ck_name}, absent from {d}")
     ck_sha = sha256_file(ck)
     if ck_sha != expect_sha256:
         _refuse("parent_sha256_mismatch", f"{ck.name} has sha256 {ck_sha}, expected {expect_sha256}")
@@ -545,8 +556,10 @@ def read_clip_selection(path, expect_sha256: str | None) -> dict:
     """A clip_selection.json (scripts/select_clip.py), checked against its pinned sha256."""
     if not expect_sha256 or not _HEX64.match(expect_sha256):
         _refuse("clip_selection_sha256_format", "--clip-selection-sha256 must be 64 lowercase hex characters")
+    if not path:
+        _refuse("clip_selection_missing", "--clip-selection-sha256 was given without --clip-selection")
     p = Path(path)
-    if "test" in str(p.resolve()).lower():
+    if names_test(p):
         _refuse("clip_selection_test_path", f"--clip-selection {p} contains 'test'")
     if not p.is_file():
         _refuse("clip_selection_missing", f"{p} is not a file")
@@ -1011,6 +1024,7 @@ def run_qat(*, stage: str, mode: str, model: nn.Module, source_meta: dict, out_d
                 if nonfinite_since is None:
                     restore_observer_flags(prepared, flags)
                     raise
+                prepared.train()                           # validate() returns the model to train mode only on success
                 all_miou = disease_miou = None
                 cm, n_val_batches = None, 0
                 val_error = f"{type(e).__name__}: {str(e)[:300]}"
@@ -1040,7 +1054,7 @@ def run_qat(*, stage: str, mode: str, model: nn.Module, source_meta: dict, out_d
                        "nonfinite_loss_steps": ep["nonfinite_loss"], "nonfinite_grad_steps": ep["nonfinite_grad"],
                        "step_errors": ep["step_errors"], "clipped_steps": ep["clipped"],
                        "max_pre_clip_norm": ep["max_pre_clip_norm"], "state_finite": bool(finite),
-                       "nonfinite_since_step": nonfinite_since,
+                       "nonfinite_since_step": nonfinite_since, "state_nonfinite": nonfinite_since is not None,
                        "run_complete": epoch == EPOCHS and max_steps is None}
             end_row = tel.write(end_row)
             if hooks is not None:
@@ -1090,14 +1104,14 @@ def build_parser(stage: dict) -> argparse.ArgumentParser:
 
 def _out_dir_error(value) -> str | None:
     from .runner import QuantRunError, check_output_dir
+    if value and names_test(value):                      # before the directory is looked at
+        return f"--out-dir {value} contains 'test'"
     try:
         out = check_output_dir(value, create=False)
     except QuantRunError as e:
         return str(e)
     if out.exists() and (not out.is_dir() or any(out.iterdir())):
         return f"--out-dir {out} exists and is not an empty directory; a run starts in a fresh directory"
-    if "test" in str(out).lower():
-        return f"--out-dir {out} contains 'test'"
     return None
 
 
@@ -1217,7 +1231,11 @@ def main(argv, stage_key: str) -> int:
     except QATStop as e:
         print(f"RESULT: STOP [{e.code}] -- {e}")
         return EXIT_STOP
-    except Exception as e:                                 # noqa: BLE001 -- recorded as run_abort
+    except Exception as e:                                 # noqa: BLE001 -- after the run_meta row: run_abort
+        tel_p = Path(args.out_dir) / TELEMETRY_NAME
+        if not (tel_p.is_file() and tel_p.stat().st_size > 0):  # the run_meta row is the first one written
+            print(f"RESULT: ERROR [{type(e).__name__}] -- {e}. No run_meta row was written: nothing was launched.")
+            return EXIT_ERROR
         print(f"RESULT: ABORTED [exception] -- {type(e).__name__}: {e}")
         return EXIT_ABORTED
     print(result_line(summary))
@@ -1229,7 +1247,7 @@ __all__ = [
     "OBS_FREEZE_EPOCH", "QAT_CODE_PATHS", "QATHooks", "QATRefused", "QATStop", "REAL_SEEDS",
     "REAL_STEPS_PER_EPOCH", "REAL_T_MAX", "TELEMETRY_NAME", "WEIGHT_DECAY", "batch_sha256",
     "bn_buffer_digest", "build_parser", "build_qat_loaders", "clip_binding", "config_pins_error",
-    "e6_parent_binding", "fake_quant_modules", "flag_summary", "main", "never_observed_modules",
+    "e6_parent_binding", "fake_quant_modules", "flag_summary", "main", "names_test", "never_observed_modules",
     "observer_buffer_digest", "observer_census", "read_clip_selection", "read_jsonl",
     "read_tracked_selection", "real_run_gates", "resolve_parent", "run_qat", "save_epoch_checkpoint",
     "state_digest", "state_kinds", "state_predicate", "strict_row",

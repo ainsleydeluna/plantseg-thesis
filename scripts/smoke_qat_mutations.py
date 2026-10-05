@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """(h) The mutation smoke (lane 6, L-AM4 + L-AM1q): M1-M24 and P36's refusal table, each killed by a named check.
 
+The X mutations undo the DL-24 verification fixes, each killed by the check added with its fix.
+
 The explicit paths of SHADOW_PATHS are copied into a temporary shadow of the repository and committed there
 (one fixed commit, so the trainer records a git_head as in the checkout); the repository itself is never
 written. One edit is applied at a time: a mutation replaces an exact string (which must occur exactly once);
 a refusal is removed by replacing its statement (a `_refuse(...)` call or a `raise QAT...(...)`) with `pass`.
 The smoke holding the killing check then runs in a subprocess inside the shadow (that check's section, or
-that case alone), and the check must FAIL there, having PASSED on the unmutated shadow. The refusals are
+that case alone), and the named check must be reported FAIL there, having PASSED on the unmutated shadow in
+the same run (same argv); a check the smoke never reaches, or a timeout, is not a kill. The refusals are
 those of P8-P10 (the launch gates, the parent, the clip binding), O2 (E6's λ/α binding) and P23-P27 (the
 selections), with the record checks of convert, score, finalize and check-run-meta that P14, P24, P26 and
 P28 rely on.
@@ -101,6 +104,7 @@ SHADOW_PATHS: tuple[str, ...] = (
 
 QAT, PREP, SEL, ART, QEE = ("src/quant/qat.py", "src/quant/prepare.py", "src/quant/qat_select.py",
                             "src/quant/qat_artifacts.py", "scripts/qat_epoch_eval.py")
+SQE, SCL = "scripts/select_qat_epoch.py", "scripts/select_clip.py"
 RUNNER, SEEDING, SELECTION, ARTIFACTS = ("smoke_qat_runner", "smoke_qat_seeding", "smoke_qat_selection",
                                          "smoke_qat_artifacts")
 
@@ -122,7 +126,12 @@ UNITS = (ARTIFACTS, ("--sections", "units"))
 
 
 def M(mid: str, what: str, file: str, old: str, new: str, run: tuple, *kills: str) -> dict:
-    return {"id": mid, "what": what, "file": file, "old": old, "new": new, "run": run, "kills": kills}
+    return MM(mid, what, file, [(old, new)], run, *kills)
+
+
+def MM(mid: str, what: str, file: str, pairs: list, run: tuple, *kills: str) -> dict:
+    """A mutation made of several exact replacements in one file (each target occurs exactly once)."""
+    return {"id": mid, "what": what, "file": file, "pairs": pairs, "run": run, "kills": kills}
 
 
 MUTATIONS = [
@@ -204,14 +213,15 @@ MUTATIONS = [
       '"provenance qat_checkpoint_sha256": True,',
       case("d3_provenance_checkpoint_mismatch_refused"), "d3_provenance_checkpoint_mismatch_refused"),
     M("M20a", "a 64-sample summary accepted (a record summary's row-count and gt_support guards dropped)", SEL,
-      "    if not smoke:\n        if not (exp == act == rows == fwd):\n",
-      "    if False:\n        if not (exp == act == rows == fwd):\n",
+      '    if not smoke:\n        if not (exp == act == rows and fwd == ev["eval_runtime"]["forward_batches"]):\n',
+      '    if False:\n        if not (exp == act == rows and fwd == ev["eval_runtime"]["forward_batches"]):\n',
       case("d3_capped_summary_refused"), "d3_capped_summary_refused"),
     M("M20b", "an upstream-protocol summary accepted", SEL,
       '"dataset.preprocess_protocol": ev["preprocess_protocol"],', "",
       case("d3_upstream_protocol_refused"), "d3_upstream_protocol_refused"),
     M("M20c", "a record summary's row counts not compared with the rules (one guard of M20a)", SEL,
-      "        if not (exp == act == rows == fwd):\n", "        if not (exp == act == fwd):\n",
+      '        if not (exp == act == rows and fwd == ev["eval_runtime"]["forward_batches"]):\n',
+      "        if not (exp == act == fwd):\n",
       case("d3_capped_rows_alone_refused"), "d3_capped_rows_alone_refused"),
     M("M20d", "the gt_support sum not compared with the rules (the other guard of M20a)", SEL,
       '        if not isinstance(gt, list) or sum(gt) != ev["gt_support_sum"]:\n',
@@ -236,6 +246,61 @@ MUTATIONS = [
     M("M24b", "E6's λ/α binding removed from check-run-meta", QEE,
       '            Q.e6_parent_binding(meta.get("parent") or {}, args.seed, lam, alpha)\n', "",
       runner("profile"), "profile_stops_on_e6_parent_lambda"),
+    # DL-24 (C6): each fix of the verification workflow, with the check that kills its undoing
+    MM("X1", "scheduler.step() moved before optimizer.step() (P1)", QAT,
+       [("                    optimizer.step()\n                except Exception as e:",
+         "                    scheduler.step()\n                    optimizer.step()\n"
+         "                except Exception as e:"),
+        ("                scheduler.step()\n                loss_v, ce_v, dice_v, gn = ",
+         "                loss_v, ce_v, dice_v, gn = ")],
+       runner("d1"), "d1_lr_applied_at_each_optimizer_step"),
+    M("X2", "check-run-meta's repeat of the clip binding dropped (P10)", QEE,
+      "    # the clip and its source (P10)\n    if stage == Q.U4_STAGE and args.seed == Q.U4_SEED:\n",
+      "    # the clip and its source (P10)\n    if True:\n        pass\n"
+      "    elif stage == Q.U4_STAGE and args.seed == Q.U4_SEED:\n",
+      runner("profile"), "profile_pilot_checked_without_u4_pilot_stops", "profile_stops_on_other_clip_selection"),
+    M("X3", "train mode not restored after a VAL pass that raised in a non-finite state (P12)", QAT,
+      "                prepared.train()                           # validate() returns the model to train mode only "
+      "on success\n", "", runner("nan"), "d1_val_error_recorded_and_train_mode_restored"),
+    M("X4", "an exception before the run_meta row reported as an aborted run (P37)", QAT,
+      "        if not (tel_p.is_file() and tel_p.stat().st_size > 0):", "        if False:",
+      runner("gates"), "main_error_before_telemetry_exit_4"),
+    M("X6", "epoch_end rows not marked state_nonfinite (P12)", QAT,
+      '"nonfinite_since_step": nonfinite_since, "state_nonfinite": nonfinite_since is not None,',
+      '"nonfinite_since_step": nonfinite_since,', runner("nan"), "d1_nonfinite_rows_marked_step10"),
+    M("X8", "a non-finite run rejected on its epoch_end rows only (AM-21 item 3)", SEL,
+      '    return (any(r.get("nonfinite_since_step") is not None for r in rec["rows"])\n',
+      '    return (any(r.get("nonfinite_since_step") is not None for r in rec["ends"].values())\n',
+      case("d5_nonfinite_row_only_rejected"), "d5_nonfinite_row_only_rejected"),
+    M("X9", "a failed convert worker leaves its eval directory unspent (P26)", QEE,
+      "            if not (E / CONVERT_STOP).exists():\n", "            if False:\n",
+      records(), "d4_convert_worker_refusal_spends_the_eval_dir"),
+    M("X10", "a failed evaluator leaves its eval directory unspent (P26)", QEE,
+      "            write_exclusive({E / SCORE_STOP: ", "            (lambda d: None)({E / SCORE_STOP: ",
+      records(), "d4_score_failure_spends_the_eval_dir"),
+    M("X11", "P16's observer half dropped from the freeze cross-check", ART,
+      '            "ok": not any(bn_diff.values()) and not any(obs_diff.values())}',
+      '            "ok": not any(bn_diff.values())}',
+      records(), "d4_convert_stops_when_an_observer_moved_after_its_freeze"),
+    M("X12", "the stored observer and fake-quant flags not checked (P15)", ART,
+      '    if flags["observer_enabled"] != want or flags["fake_quant_enabled"] != [1]:\n', "    if False:\n",
+      records(), "d4_convert_epoch_stored_flags_stop"),
+    M("X13", "the copy's dtype comparison dropped (P15; torch.equal ignores dtype)", ART,
+      "live[k].shape == v.shape and live[k].dtype == v.dtype and torch.equal",
+      "live[k].shape == v.shape and torch.equal", records(), "d4_convert_epoch_copy_dtype_stop"),
+    M("X14", "the checkpoint's identity not checked against the run (P15)", ART,
+      "    wrong = {k: payload.get(k) for k, v in ident.items() if payload.get(k) != v}\n", "    wrong = {}\n",
+      records(), "d4_convert_epoch_identity_refused"),
+    M("X15", "the by-name copy's alias-key check dropped (P15)", ART,
+      "    if sorted(unexpected) != aliases:\n", "    if False:\n", UNITS, "d4_alias_mismatch_stops"),
+    M("X16", "the run's qconfig fingerprint not compared at conversion (P15)", ART,
+      '    if qsum["fingerprint"] != (meta.get("qconfig") or {}).get("fingerprint"):\n', "    if False:\n",
+      records(), "d4_convert_epoch_qconfig_changed_stop"),
+    M("X17", "select_clip compares the stored selection on the old eight keys only (P27)", SEL,
+      "    keys = (set(stored) | set(recomputed)) - set(SELECTION_PATH_KEYS)\n",
+      '    keys = {"winner", "values", "tied_epochs", "excluded_epochs", "telemetry_sha256", "run_id",\n'
+      '            "summary_fields", "eval_identity"}\n',
+      case("d5_edited_selection_trace_refused"), "d5_edited_selection_trace_refused"),
 ]
 
 # ------------------------------------------------------------------ the refusal table (P36)
@@ -244,8 +309,12 @@ SCOPE = {
     QAT: {"resolve_parent", "read_clip_selection", "clip_binding", "read_tracked_selection", "e6_parent_binding",
           "real_run_gates", "load_source", "run_qat"},
     SEL: None,                                                   # every function
-    QEE: {"_epochs", "cmd_convert", "cmd_score", "_read_json", "_pilot_clip_winner", "cmd_finalize",
-          "cmd_check_run_meta"},
+    QEE: {"_epochs", "cmd_convert", "cmd_convert_epoch", "cmd_score", "_read_json", "_pilot_clip_winner",
+          "cmd_finalize", "cmd_check_run_meta"},
+    # the run's record and P24's first link, read by both selectors, convert and finalize
+    ART: {"refuse_test_path", "read_run_record", "require_complete", "verified_checkpoint", "read_ts_identity"},
+    SQE: {"main"},
+    SCL: {"main"},
 }
 GATES, PROFILE = runner("gates"), runner("profile")
 RECORDS = records()
@@ -263,6 +332,7 @@ KILLS = dict([
     K(QAT, "resolve_parent", "parent_best_json_missing", GATES, "refuses_parent_best_json_missing"),
     K(QAT, "resolve_parent", "parent_best_json_format", GATES, "refuses_parent_best_json_not_json"),
     K(QAT, "resolve_parent", "parent_best_json_format", GATES, "refuses_parent_best_json_format", k=1),
+    K(QAT, "resolve_parent", "parent_checkpoint_test_path", GATES, "refuses_parent_checkpoint_test_name"),
     K(QAT, "resolve_parent", "parent_checkpoint_missing", GATES, "refuses_parent_checkpoint_missing"),
     K(QAT, "resolve_parent", "parent_sha256_mismatch", GATES, "refuses_parent_sha256_mismatch"),
     K(QAT, "resolve_parent", "parent_records_missing", GATES, "refuses_parent_records_missing",
@@ -280,7 +350,8 @@ KILLS = dict([
     # P10: the clip and its source
     K(QAT, "read_clip_selection", "clip_selection_sha256_format", GATES, "refuses_clip_selection_sha_format"),
     K(QAT, "read_clip_selection", "clip_selection_test_path", GATES, "refuses_clip_selection_test_path"),
-    K(QAT, "read_clip_selection", "clip_selection_missing", GATES, "refuses_clip_selection_file_missing"),
+    K(QAT, "read_clip_selection", "clip_selection_missing", GATES, "refuses_clip_selection_path_absent"),
+    K(QAT, "read_clip_selection", "clip_selection_missing", GATES, "refuses_clip_selection_file_missing", k=1),
     K(QAT, "read_clip_selection", "clip_selection_sha256_mismatch", GATES, "refuses_clip_selection_sha_mismatch"),
     K(QAT, "read_clip_selection", "clip_selection_format", GATES, "refuses_clip_selection_not_json"),
     K(QAT, "read_clip_selection", "clip_selection_format", GATES, "refuses_clip_selection_format", k=1),
@@ -405,13 +476,21 @@ KILLS = dict([
     K(SEL, "epoch_selection", "no_convertible_epoch", case("d3_no_convertible_epoch_refused_exit_2"),
       "d3_no_convertible_epoch_refused_exit_2"),
     K(SEL, "epoch_selection", "summaries_differ", case("d3_metric_impl_differs_across_summaries",
-                                                       "d3_null_image_digest_refused"),
-      "d3_metric_impl_differs_across_summaries", "d3_null_image_digest_refused"),
+                                                       "d3_null_image_digest_everywhere_refused",
+                                                       "d3_null_commit_everywhere_refused"),
+      "d3_metric_impl_differs_across_summaries", "d3_null_image_digest_everywhere_refused",
+      "d3_null_commit_everywhere_refused"),
     K(SEL, "epoch_selection", "winner_changed", case("d3_winner_changed_during_selection_refused"),
       "d3_winner_changed_during_selection_refused"),
     # P27 and O1: the U4 clip
     K(SEL, "clip_selection", "candidates", case("d5_one_candidate_refused"), "d5_one_candidate_refused"),
     K(SEL, "clip_selection", "not_a_pilot_run", case("d5_non_pilot_run_refused"), "d5_non_pilot_run_refused"),
+    K(SEL, "clip_selection", "eval_record_missing", case("d5_rejected_candidate_without_conversion_record_exit_3"),
+      "d5_rejected_candidate_without_conversion_record_exit_3"),
+    K(SEL, "clip_selection", "eval_record_mismatch", case("d5_rejected_candidate_record_mismatch_refused"),
+      "d5_rejected_candidate_record_mismatch_refused"),
+    K(SEL, "clip_selection", "purpose_not_record", case("d5_rejected_candidate_timing_record_refused"),
+      "d5_rejected_candidate_timing_record_refused"),
     K(SEL, "clip_selection", "epoch_selection_missing", case("d5_missing_run_refused"), "d5_missing_run_refused"),
     K(SEL, "clip_selection", "epoch_selection_format", case("d5_selection_of_other_rules_refused"),
       "d5_selection_of_other_rules_refused"),
@@ -428,6 +507,29 @@ KILLS = dict([
       "d5_pilot_summary_commits_differ_refused", "d5_pilot_host_labels_differ_refused"),
     K(SEL, "clip_selection", "no_winner", case("d5_both_rejected_no_winner_exit_2_a"),
       "d5_both_rejected_no_winner_exit_2_a"),
+    # P24, P26: the run's record and its checkpoints, read by both selectors (and convert, score, finalize)
+    K(ART, "refuse_test_path", "f'{what}_test_path'", case("d3_test_path_refused"), "d3_test_path_refused"),
+    K(ART, "read_run_record", "telemetry_missing", case("d3_run_without_telemetry_refused"),
+      "d3_run_without_telemetry_refused"),
+    K(ART, "read_run_record", "telemetry_not_strict_json", case("d3_telemetry_not_strict_json_refused"),
+      "d3_telemetry_not_strict_json_refused"),
+    K(ART, "read_run_record", "run_meta_rows", case("d3_first_row_not_run_meta_refused"),
+      "d3_first_row_not_run_meta_refused"),
+    K(ART, "read_run_record", "epoch_end_duplicate", case("d3_duplicate_epoch_end_refused"),
+      "d3_duplicate_epoch_end_refused"),
+    K(ART, "require_complete", "run_incomplete", case("d3_incomplete_run_refused_exit_3"),
+      "d3_incomplete_run_refused_exit_3"),
+    K(ART, "verified_checkpoint", "epoch_unknown", RECORDS, "d4_convert_epoch_unknown_epoch_refused"),
+    K(ART, "verified_checkpoint", "checkpoint_name", case("d3_checkpoint_name_refused"), "d3_checkpoint_name_refused"),
+    K(ART, "verified_checkpoint", "checkpoint_missing", case("d3_missing_checkpoint_exit_3"),
+      "d3_missing_checkpoint_exit_3"),
+    K(ART, "verified_checkpoint", "checkpoint_sha256_mismatch", case("d3_checkpoint_bytes_changed_refused"),
+      "d3_checkpoint_bytes_changed_refused"),
+    K(ART, "read_ts_identity", "identity_missing", case("d3_torchscript_without_identity_refused"),
+      "d3_torchscript_without_identity_refused"),
+    K(SQE, "main", "output_exists", case("d3_refuses_existing_output"), "d3_refuses_existing_output"),
+    K(SCL, "main", "output_exists", case("d5_refuses_existing_output"), "d5_refuses_existing_output"),
+    K(QEE, "cmd_convert_epoch", "telemetry_sha256_mismatch", RECORDS, "d4_convert_epoch_telemetry_sha_mismatch"),
     # P24, P26: convert's and score's own record checks; P16's freeze cross-check
     K(QEE, "_epochs", "epochs_with_record", RECORDS, "d4_convert_record_takes_no_epochs",
       "d4_score_record_takes_no_epochs"),
@@ -454,6 +556,8 @@ KILLS = dict([
       "finalize_checks_a_pinned_clip_selection_sha"),
     K(QEE, "_pilot_clip_winner", "clip_selection_format", case("finalize_clip_selection_of_another_format"),
       "finalize_clip_selection_of_another_format"),
+    K(QEE, "_pilot_clip_winner", "clip_selection_winner_clip", case("finalize_refuses_an_edited_winner_clip"),
+      "finalize_refuses_an_edited_winner_clip"),
     K(QEE, "_pilot_clip_winner", "not_the_clip_winner", case("finalize_refuses_the_retained_loser"),
       "finalize_refuses_the_retained_loser"),
     K(QEE, "_pilot_clip_winner", "clip_selection_stale", case("finalize_refuses_a_stale_clip_selection"),
@@ -599,7 +703,7 @@ def check(name: str, ok, detail: str = "") -> None:
 
 def jobs_of(shadow: Path, refusals: bool) -> list[dict]:
     jobs = [{"id": m["id"], "rel": m["file"], "what": m["what"], "run": m["run"], "kills": m["kills"],
-             "edit": ("replace", m["old"], m["new"])} for m in MUTATIONS]
+             "edit": ("replace", m["pairs"])} for m in MUTATIONS]
     if not refusals:
         return jobs
     found = set()
@@ -622,10 +726,11 @@ def jobs_of(shadow: Path, refusals: bool) -> list[dict]:
 
 def edited(text: str, rel: str, edit: tuple) -> str:
     if edit[0] == "replace":
-        _, old, new = edit
-        if text.count(old) != 1:
-            raise ValueError(f"the target occurs {text.count(old)} times in {rel}")
-        out = text.replace(old, new)
+        out = text
+        for old, new in edit[1]:
+            if out.count(old) != 1:
+                raise ValueError(f"the target occurs {out.count(old)} times in {rel}")
+            out = out.replace(old, new)
     else:
         site = next(x for x in refusal_sites(text, rel) if (rel, x["func"], x["code"], x["k"]) == edit[1])
         out = removed(text, site["node"])
@@ -658,19 +763,38 @@ def main() -> int:
     print(f"{len(jobs)} edits | {len(SHADOW_PATHS)} shadow files x {len(shadows)} at commit {heads.pop()[:12]} | "
           f"temp {root}")
     print("=" * 78)
-    # the baselines: every killing check passes on the unmutated shadow
+    # the baselines: every killing check passes on the unmutated shadow, in the run each job makes (same argv)
     specs = []
     for j in jobs:
-        spec = (SELECTION, ("--cache-dir", "{cache}/selection")) if j["run"][0] == SELECTION else j["run"]
-        if spec not in specs:
-            specs.append(spec)
+        if j["run"] not in specs:
+            specs.append(j["run"])
     base = {}
-    for spec in specs:
-        statuses, res, secs = run_smoke(shadows[0], cache, spec)
+
+    def baseline(sh: Path, spec: tuple) -> None:
+        statuses, res, secs = run_smoke(sh, cache, spec)
         base[spec] = statuses
-        print(f"[baseline] {spec[0]} {' '.join(spec[1]).replace('{cache}', 'CACHE')}: {res} ({secs:.0f}s)")
+        print(f"[baseline] {spec[0]} {' '.join(spec[1]).replace('{cache}', 'CACHE')}: {res} ({secs:.0f}s)",
+              flush=True)
+    # one run per smoke first, on one shadow (it fills that smoke's cache); then the rest on every shadow
+    warm = list({spec[0]: spec for spec in reversed(specs)}.values())
+    for spec in warm:
+        baseline(shadows[0], spec)
+    from concurrent.futures import ThreadPoolExecutor
+    import queue
+    idle: "queue.Queue[Path]" = queue.Queue()
+    for sh in shadows:
+        idle.put(sh)
+
+    def baseline_on_idle(spec: tuple) -> None:
+        sh = idle.get()
+        try:
+            baseline(sh, spec)
+        finally:
+            idle.put(sh)
+    with ThreadPoolExecutor(max_workers=len(shadows)) as pool:
+        list(pool.map(baseline_on_idle, [s for s in specs if s not in warm]))
     for j in jobs:
-        spec = (SELECTION, ("--cache-dir", "{cache}/selection")) if j["run"][0] == SELECTION else j["run"]
+        spec = j["run"]
         bad = [c for c in j["kills"] if base[spec].get(c) != "PASS"]
         if j["run"][0] == SELECTION:
             bad += [c for c in j["run"][1][1].split(",") if base[spec].get(c) != "PASS"]
@@ -706,9 +830,10 @@ def main() -> int:
             failed = [c for c in j["kills"] if statuses.get(c) == "FAIL"]
             unreached = [c for c in j["kills"] if c not in statuses]
             usage_error = res.startswith("RESULT: ERROR unknown")
-            killed = j["baseline_ok"] and not usage_error and bool(failed or unreached)
+            killed = j["baseline_ok"] and not usage_error and bool(failed)       # a named check reported FAIL
             how = (f"by {', '.join(failed)}" if failed else
-                   f"the smoke did not reach {', '.join(unreached)} ({res})" if unreached else "SURVIVED")
+                   f"NOT KILLED: the smoke did not reach {', '.join(unreached)} ({res})" if unreached
+                   else "SURVIVED")
             with lock:
                 done["n"] += 1
                 print(f"  [{done['n']}/{len(todo)}] {j['id']:58} {'KILLED' if killed else 'SURVIVED'}  {how} "
