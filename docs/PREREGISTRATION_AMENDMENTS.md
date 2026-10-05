@@ -30,7 +30,7 @@ leaves the original readable beside it.
 | AM-14 | conflicts #9; PREREGISTRATION §12 disagreement 1 | The inferential family |
 | AM-15 | DL-14 (completes AM-11) | Contingencies not invoked |
 | AM-16 | — (amends AM-1, AM-8, AM-10, AM-11 and AM-13; notes AM-9) | Run additions |
-| AM-17 | — (extends AM-1, AM-8, AM-13, AM-14 and AM-16) | Teacher record, effect-size rules, CWD-only arm, strata, TEST schedule and a descriptive SegNeXt-L arm (DRAFT) |
+| AM-17 | — (extends AM-1, AM-8, AM-13, AM-14 and AM-16) | Teacher record, effect-size rules, CWD-only arm, strata, TEST schedule and a descriptive SegNeXt-L arm (~~DRAFT~~ approved by the adviser, DL-65) |
 | AM-17b | — (extends AM-17 items 7, 9 and 1(f)) | Channel-wise decomposition arms and teacher–student gap robustness (DRAFT) |
 | AM-8a | — (extends AM-8) | Repeat rule for failed runs |
 | AM-4a | — (extends AM-4 and AM-1) | QAT recipe pins, converted-model selection and the U4 clipping pilot (DRAFT) |
@@ -312,7 +312,7 @@ is recorded here before the affected run.
 
 ## AM-17 — Teacher record, effect-size rules, CWD-only arm, strata, TEST schedule and a descriptive SegNeXt-L arm (extends AM-1, AM-8, AM-13, AM-14 and AM-16)
 
-Dated 2026-09-28. Status: DRAFT (group-recorded; adviser approval pending). State at amendment: E1
+Dated 2026-09-28. Status: DRAFT (group-recorded; adviser approval pending). [Approved by the adviser: decision log DL-65, recorded 2026-10-05.] State at amendment: E1
 seed 42 exists (best VAL all-class mIoU 0.36314016580581665); the SegNeXt-B teacher run exists and
 passed R3 (item 1). No E1 seed-43/44, E2–E7, KD, SegNeXt-L or TEST result exists; TEST has not been
 evaluated. No item adds a test to the Holm family or changes an existing test, threshold, family
