@@ -36,7 +36,7 @@ ACCURACY_ARTIFACT_ROLE = "accuracy"
 X86_LATENCY_ARTIFACT_ROLE = "x86_cpu_proxy_latency"
 ARTIFACT_ROLES = (ACCURACY_ARTIFACT_ROLE, X86_LATENCY_ARTIFACT_ROLE)
 
-# Auxiliary pre-convert QAT companion artifact written by `src.quant.runner.run_qat`.
+# Auxiliary pre-convert QAT state: `src.quant.qat.run_qat` writes one per epoch, epoch_ckpts/eNN.pt.
 QAT_SIDECAR_KIND = "qat-train-state"
 QAT_SIDECAR_ROLE = "preconvert_qat_state"
 QAT_SIDECAR_SUFFIX = "_qat_state.pt"
@@ -384,6 +384,7 @@ def x86_artifact_provenance(*, stage: str, engine: str, source_sha256: str | Non
 __all__ = ["ACCURACY_ARTIFACT_ROLE", "ARTIFACT_ROLES", "QAT_SIDECAR_KIND", "QAT_SIDECAR_ROLE",
            "QAT_SIDECAR_SUFFIX", "X86_LATENCY_ARTIFACT_ROLE", "X86_PTQ_STAGES", "X86_QAT_STAGES",
            "X86_RECONSTRUCTIBLE_STAGES", "X86LatencyCopyError", "assert_trained_state_preserved",
-           "build_x86_latency_copy", "copy_qat_state_by_name", "load_qat_sidecar", "prepare_x86_ptq", "prepare_x86_qat",
+           "build_x86_latency_copy", "copy_qat_state_by_name", "load_qat_sidecar", "prepare_x86_ptq",
+           "prepare_x86_qat",
            "qat_sidecar_missing_error", "require_x86_calibration_identity",
            "translate_qat_state_to_x86", "validate_qat_sidecar", "x86_artifact_provenance"]

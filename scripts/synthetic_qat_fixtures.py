@@ -111,7 +111,7 @@ def make_qat_run(out_dir, *, model, stage: str = "e5", seed: int = 42, clip: flo
                      extra_meta=extra_meta, log=log or (lambda *a: None))
 
 
-EVALUATOR_DRIVER = r'''"""Smoke stand-in for scripts/evaluate_model.py: the same main(), with only its git calls stubbed.
+EVALUATOR_DRIVER = r'''"""Smoke stand-in for scripts/evaluate_model.py: the same main(), only its git calls stubbed.
 
 A cloud lane session never lists the whole repository (docs/reference/ stays unlisted), so the artifact
 writer's whole-repository `git status` is replaced by an empty porcelain and a fixed commit, exactly as

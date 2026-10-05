@@ -192,7 +192,8 @@ def main() -> int:
         t0 = time.time()
         rc, res = convert(r5, ev5)
         conv = json.loads((ev5 / QEE.CONVERT_RECORD).read_text()) if (ev5 / QEE.CONVERT_RECORD).is_file() else {}
-        check("convert_e5_all_15_epochs", rc == 0 and [o["status"] for o in conv.get("outcomes", [])] == ["converted"] * 15
+        check("convert_e5_all_15_epochs", rc == 0 and res == "RESULT: CONVERTED 15/15 (record)"
+              and [o["status"] for o in conv.get("outcomes", [])] == ["converted"] * 15
               and conv.get("freeze_cross_check", {}).get("ok") is True, f"{res} ({time.time() - t0:.0f}s)")
         names = A.epoch_names(15)
         cdir = ev5 / A.CONVERTED_DIR
@@ -200,7 +201,8 @@ def main() -> int:
         for label in ("b", "c"):
             ev = TMP / f"eval_e5_e15_{label}"
             rc_t, res_t = convert(r5, ev, purpose="timing", epochs=[15])
-            shas[label] = tuple(Q.sha256_file(ev / A.CONVERTED_DIR / names[k]) if (ev / A.CONVERTED_DIR / names[k]).is_file()
+            shas[label] = tuple(Q.sha256_file(ev / A.CONVERTED_DIR / names[k])
+                                if (ev / A.CONVERTED_DIR / names[k]).is_file()
                                 else None for k in ("torchscript", "state_dict"))
         rec_shas = tuple(Q.sha256_file(cdir / names[k]) if (cdir / names[k]).is_file() else None
                          for k in ("torchscript", "state_dict"))
@@ -214,7 +216,8 @@ def main() -> int:
               tuple(sorted(ident)) == tuple(sorted(A.IDENTITY_KEYS)) and ident.get("quantization") == "qat"
               and ident.get("engine") == "qnnpack" and ident.get("artifact_role") == "accuracy"
               and ident.get("schema") == "plantseg-int8-torchscript/1.0.0" and ident.get("num_classes") == 116
-              and ident.get("stage") == "E5" and ident.get("qat_checkpoint_sha256") == sha15 and ident.get("epoch") == 15
+              and ident.get("stage") == "E5" and ident.get("qat_checkpoint_sha256") == sha15
+              and ident.get("epoch") == 15
               and ident.get("run_id") == rec5["run_id"] and ident.get("state_dict_companion") == names["state_dict"],
               str(sorted(ident)))
         prov_p = cdir / names["run_meta"]
@@ -243,7 +246,8 @@ def main() -> int:
         eager = convert_model(A.fake_quant_model(s15))
         par_ts_sd = output_parity({"torchscript": ts, "state_dict": sd}, synthetic_parity_inputs(),
                                   [("torchscript", "state_dict")])
-        par_eager = output_parity({"eager": eager, "torchscript": ts}, synthetic_parity_inputs(), [("eager", "torchscript")])
+        par_eager = output_parity({"eager": eager, "torchscript": ts}, synthetic_parity_inputs(),
+                                  [("eager", "torchscript")])
         check("d4_torchscript_equals_state_dict_bitwise", par_ts_sd["all_equal"], json.dumps(par_ts_sd["pairs"])[:160])
         check("d4_eager_equals_torchscript", par_eager["all_equal"], json.dumps(par_eager["pairs"])[:160])
         w_ts, w_e = weight_scheme_report(ts), weight_scheme_report(eager)
@@ -269,14 +273,16 @@ def main() -> int:
               f"confident agreement {agr['confident_agreement']}, max |diff| {agr['max_logit_diff_lsb']:.2f} LSB, "
               f"p99.9 {agr['p999_logit_diff_lsb']:.2f} LSB")
         print(f"[agreement] by margin band: {json.dumps(agr['by_margin_band'])}")
-        print(f"[agreement] controls: observers not carried {ctl_obs['agreement']}, BN not carried {ctl_bn['agreement']}")
+        print(f"[agreement] controls: observers not carried {ctl_obs['agreement']}, "
+              f"BN not carried {ctl_bn['agreement']}")
         check("d4_confident_pixels_agree", agr["confident_pixels"] > 0 and agr["confident_agreement"] == 1.0,
               f"margin >= 8 LSB: {agr['confident_pixels']} pixels, agreement {agr['confident_agreement']}")
         check("d4_fixture_confident", (agr["confident_fraction"] or 0) >= 0.90,
               f"{agr['confident_fraction']} of valid pixels have margin >= 8 LSB"
               + ("" if (agr["confident_fraction"] or 0) >= 0.90 else " -- fixture not confident"))
         check("d4_argmax_agreement_ge_99pct", (agr["agreement"] or 0) >= 0.99, f"{agr['agreement']}")
-        check("d4_control_observers_not_carried_below_50pct", (ctl_obs["agreement"] or 1) < 0.5, f"{ctl_obs['agreement']}")
+        check("d4_control_observers_not_carried_below_50pct", (ctl_obs["agreement"] or 1) < 0.5,
+              f"{ctl_obs['agreement']}")
         check("d4_control_bn_not_carried_below_50pct", (ctl_bn["agreement"] or 1) < 0.5, f"{ctl_bn['agreement']}")
 
         # ---------------- score E5 (record, every epoch; VAL rows capped by the driver)
@@ -294,9 +300,11 @@ def main() -> int:
         except Exception as e:                                   # noqa: BLE001
             verified = False
             res += f" verify_artifact: {e}"
-        run_ids_ok = s_ok and all(r["run_id"] == f"{rec5['run_id']}_e{r['epoch']:02d}_{r['checkpoint_sha256'][:12]}" for r in rows)
+        run_ids_ok = s_ok and all(r["run_id"] == f"{rec5['run_id']}_e{r['epoch']:02d}_{r['checkpoint_sha256'][:12]}"
+                                  for r in rows)
         check("evaluate_model_scores_e5_val",
-              rc == 0 and s_ok and verified and run_ids_ok and summ.get("dataset", {}).get("split") == "val"
+              rc == 0 and res == "RESULT: SCORED 15/15 (record)" and s_ok and verified and run_ids_ok
+              and summ.get("dataset", {}).get("split") == "val"
               and summ["run"]["precision"] == "int8_qat" and summ["run"]["quant_backend"] == "qnnpack"
               and summ["run"]["checkpoint_sha256"] == rec_shas[0] and summ["run"]["run_id"] == rows[-1]["run_id"],
               f"{res} ({time.time() - t0:.0f}s)")
@@ -306,7 +314,8 @@ def main() -> int:
         check("score_runs_the_evaluator_flags_of_record",
               all(cmd[cmd.index(a) + 1] == b for a, b in zip(of_record[0::2], of_record[1::2]) if a in cmd)
               and all(a in cmd for a in of_record[0::2]) and "--threads" not in cmd
-              and all(isinstance(r.get("torch_num_threads"), int) and isinstance(r.get("affinity_cpus"), int) for r in rows)
+              and all(isinstance(r.get("torch_num_threads"), int) and isinstance(r.get("affinity_cpus"), int)
+                      for r in rows)
               and ev_doc.get("threads_note", "").endswith("QNNPACK's thread pool keeps its default"),
               " ".join(cmd[1:]) if cmd else "")
         ev_t = TMP / "eval_e5_e15_b"
@@ -314,7 +323,8 @@ def main() -> int:
         trows = json.loads((ev_t / QEE.EVAL_RECORD).read_text())["epochs"] if (ev_t / QEE.EVAL_RECORD).is_file() else []
         tsum = json.loads((ev_t / trows[0]["summary"]["path"]).read_text()) if trows else {}
         check("timing_purpose_is_smoke_status_64_rows",
-              rc_t == 0 and len(trows) == 1 and tsum.get("dataset", {}).get("actual_rows") == 64
+              rc_t == 0 and res_t == "RESULT: SCORED 1/1 (timing, 64 samples)" and len(trows) == 1
+              and tsum.get("dataset", {}).get("actual_rows") == 64
               and tsum.get("run", {}).get("artifact_status") == "smoke"
               and "--max-samples" in trows[0]["evaluator_command"], res_t)
 
@@ -346,7 +356,9 @@ def main() -> int:
         nc = evn / A.CONVERTED_DIR / A.epoch_names(5)["not_convertible"]
         ncd = json.loads(nc.read_text()) if nc.is_file() else {}
         check("d4_not_convertible_recorded",
-              rcn == 0 and statuses == ["converted"] * 4 + ["not convertible"] * 11
+              rcn == 0 and resn == ("RESULT: CONVERTED 4/15 (record; not convertible: "
+                                    + " ".join(f"e{e:02d}" for e in range(5, 16)) + ")")
+              and statuses == ["converted"] * 4 + ["not convertible"] * 11
               and ncd.get("status") == "not convertible" and ncd.get("rule") == A.NOT_CONVERTIBLE_RULE
               and ncd.get("qat_checkpoint_sha256") == A.read_run_record(rn)["ends"][5]["checkpoint_sha256"]
               and ncd.get("failing"), f"{resn}; {statuses.count('not convertible')} not convertible")
@@ -363,9 +375,11 @@ def main() -> int:
         stop_driver.write_text(
             "import sys\nsys.dont_write_bytecode = True\nsys.path.insert(0, %r)\n"
             "import src.quant.ptq as ptq\nreal = ptq.output_parity\n"
-            "def failing(models, inputs, pairs):\n    r = real(models, inputs, pairs)\n    r['all_equal'] = False\n    return r\n"
+            "def failing(models, inputs, pairs):\n    r = real(models, inputs, pairs)\n"
+            "    r['all_equal'] = False\n    return r\n"
             "ptq.output_parity = failing\n"
-            "from scripts.qat_epoch_eval import main\nraise SystemExit(main(sys.argv[1:]))\n" % str(REPO), encoding="utf-8")
+            "from scripts.qat_epoch_eval import main\nraise SystemExit(main(sys.argv[1:]))\n" % str(REPO),
+            encoding="utf-8")
         old = QEE.SCRIPT
         QEE.SCRIPT = stop_driver
         try:

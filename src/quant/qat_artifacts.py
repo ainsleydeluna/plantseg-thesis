@@ -456,7 +456,8 @@ def _convert_checked(rec, st, epoch, ck_sha, state, skeleton, paths, names, comm
                    "bytes": meta.get("source_checkpoint_bytes")}
     prov = build_run_provenance(
         stage=st, source_meta=source_meta, method="qat",
-        qconfig_summary={"activation": qsum["activation"], "weight": qsum["weight"], "fingerprint": qsum["fingerprint"]},
+        qconfig_summary={"activation": qsum["activation"], "weight": qsum["weight"],
+                         "fingerprint": qsum["fingerprint"]},
         calibration=None,
         training={"run_id": rec["run_id"], "epoch": epoch, "step": rec["ends"][epoch]["step"], "seed": meta["seed"],
                   "clip_norm": meta["clip_norm"], "clip_source": meta.get("clip_source"), "epochs": Q.EPOCHS,

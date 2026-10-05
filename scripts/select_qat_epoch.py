@@ -63,7 +63,8 @@ def main(argv=None) -> int:
     excluded = sel["excluded_epochs"]
     tail = f"; excluded: {' '.join(f'e{e:02d}' for e in excluded)}" if excluded else ""
     print(f"[select] e{w['epoch']:02d}: converted VAL all-class mIoU {w['value']!r} -> {out}")
-    print(f"RESULT: SELECTED epoch {w['epoch']:02d} ({sel['stage']}, seed {sel['seed']}, clip {sel['clip_norm']}{tail})")
+    print(f"RESULT: SELECTED epoch {w['epoch']:02d} ({sel['stage']}, seed {sel['seed']}, "
+          f"clip {sel['clip_norm']}{tail})")
     return EXIT_OK
 
 

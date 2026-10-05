@@ -1080,6 +1080,7 @@ __all__ = ["CALIBRATION_BATCH_SIZE", "CHECKSUM_DEFINITION", "LIST_FILENAME", "LI
            "ids_checksum", "iter_calibration", "iter_calibration_images", "list_of_record_error", "list_role",
            "load_calibration_list", "load_x86_latency_torchscript", "output_parity", "pixel_agreement",
            "quantize_qnnpack", "quantize_x86_copy", "refuse_eval_split_dir", "refuse_eval_split_file",
-           "refuse_test_path", "refuse_val_dir", "run_ptq", "runtime_census", "state_dict_bytes", "student_traced_in_process",
+           "refuse_test_path", "refuse_val_dir", "run_ptq", "runtime_census", "state_dict_bytes",
+           "student_traced_in_process",
            "synthetic_parity_inputs", "torchscript_bytes", "verify_calibration_list",
            "weight_scheme_report", "write_exclusive"]

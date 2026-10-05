@@ -9,9 +9,13 @@ and two with a real NaN injected into the loss, once at step 10 (observers on) a
 (observers off). The launch gates are exercised one refusal at a time. No dataset, no checkpoint, no
 download; every file goes to a temp directory outside the repository.
 
-    python -B scripts/smoke_qat_runner.py                 # CPU
-    python -B scripts/smoke_qat_runner.py --device cuda   # the same trainings on the GPU (before run 1)
-    python -B scripts/smoke_qat_runner.py --sections gates,isolation
+    python -B scripts/smoke_qat_runner.py
+    python -B scripts/smoke_qat_runner.py --device cuda
+    python -B scripts/smoke_qat_runner.py --sections gates,isolation,profile
+
+Without --device every section runs on the CPU. --device cuda runs the same three trainings on the GPU (P38;
+block A, before pilot run 1) and ends with RESULT: ERROR, exit 4, where no CUDA device exists. The profile
+section checks scripts/qat_epoch_eval.py check-run-meta against run_meta rows the trainer wrote (P14).
 
 Ends with one RESULT line; exit 0 only when every check passes.
 """
@@ -20,6 +24,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import hashlib
+import io
 import json
 import math
 import os
@@ -47,7 +52,7 @@ from src.quant.prepare import qat_freeze_steps  # noqa: E402
 from src.quant.stages import resolve_quant_stage  # noqa: E402
 
 NC = 116
-SECTIONS = ("d1", "nan", "gates", "isolation")
+SECTIONS = ("d1", "nan", "gates", "isolation", "profile")
 SKIP_ADD_NEVER_OBSERVED = [f"features.{i}.skip_add.activation_post_process" for i in (11, 13, 2, 4, 7)]
 EXPECTED_CENSUS = {"FixedQParamsObserver": 9, "MovingAverageMinMaxObserver": 110,
                    "MovingAveragePerChannelMinMaxObserver": 65}
@@ -120,7 +125,8 @@ class Recorder(Q.QATHooks):
         self.ckpt_before_val[epoch] = (self.out_dir / Q.EPOCH_DIR / f"e{epoch:02d}.pt").is_file()
         self._seen = set()
         self._handles = [m.register_forward_pre_hook(
-            lambda mod, inp: self._seen.add(int(mod.observer_enabled.item()))) for _, m in Q.fake_quant_modules(prepared)]
+            lambda mod, inp: self._seen.add(int(mod.observer_enabled.item())))
+            for _, m in Q.fake_quant_modules(prepared)]
 
     def after_val(self, epoch, prepared):
         for h in self._handles:
@@ -190,10 +196,12 @@ def test_d1(device: str) -> dict:
           and (meta.get("scheduler") or {}).get("T_max") == 30, f"{len(train)} train rows")
     lrs = [r.get("lr") for r in train]
     check("d1_lr_first_3e-4", bool(lrs) and lrs[0] == 3e-4, repr(lrs[:1]))
-    check("d1_lr_last_closed_form", len(lrs) == 30 and abs(lrs[29] - closed_form(29, 30)) <= 1e-12 * closed_form(29, 30),
+    check("d1_lr_last_closed_form",
+          len(lrs) == 30 and abs(lrs[29] - closed_form(29, 30)) <= 1e-12 * closed_form(29, 30),
           f"{lrs[29] if len(lrs) == 30 else None!r} vs {closed_form(29, 30)!r}")
     check("d1_lr_all_steps_match_closed_form",
-          len(lrs) == 30 and all(abs(lr - closed_form(t, 30)) <= 1e-12 * closed_form(t, 30) for t, lr in enumerate(lrs)),
+          len(lrs) == 30 and all(abs(lr - closed_form(t, 30)) <= 1e-12 * closed_form(t, 30)
+                                 for t, lr in enumerate(lrs)),
           "1.5e-4 x (1 + cos(pi t / 30)), rel tol 1e-12")
     opt = getattr(rec, "optimizer", None)
     rec_opt = meta.get("optimizer") or {}
@@ -257,7 +265,8 @@ def test_d1(device: str) -> dict:
           "every FakeQuantize ran with observer_enabled 0 in VAL; the state after VAL equals the checkpoint's")
     order_ok = True
     for e in range(1, 16):
-        idx = [i for i, r in enumerate(c["rows"]) if r.get("epoch") == e and r.get("event") in ("train", "val", "epoch_end")]
+        idx = [i for i, r in enumerate(c["rows"])
+               if r.get("epoch") == e and r.get("event") in ("train", "val", "epoch_end")]
         kinds = [c["rows"][i]["event"] for i in idx]
         order_ok &= kinds == ["train", "train", "val", "epoch_end"]
     check("d1_epoch_order_train_val_epoch_end", order_ok and len(ends) == 15)
@@ -286,7 +295,8 @@ def test_d1(device: str) -> dict:
           f"missing {sorted(want_keys - set(meta))}; census {meta.get('observer_census')}; "
           f"never observed {meta.get('never_observed_modules')}")
     check("every_row_has_wall_clock",
-          bool(c["rows"]) and all(isinstance(r.get("wall_clock"), float) and r["wall_clock"] > 1.7e9 for r in c["rows"]),
+          bool(c["rows"]) and all(isinstance(r.get("wall_clock"), float) and r["wall_clock"] > 1.7e9
+                                  for r in c["rows"]),
           f"{len(c['rows'])} rows")
     check("telemetry_strict_json", c["strict"] and bool(c["rows"]))
     check("no_unfused_bn", meta.get("unfused_batchnorm") == 0
@@ -299,7 +309,8 @@ def test_d1(device: str) -> dict:
             for i, line in enumerate((REPO / f).read_text(encoding="utf-8").splitlines(), 1) if pat.search(line)]
     check("d1_no_patience_path_grep", not hits, str(hits[:5]))
     if c["summary"]:
-        check("d1_result_line", Q.result_line(c["summary"]) == "RESULT: QAT COMPLETE (E5, seed 42, clip 0.1, 15/15 epochs)",
+        check("d1_result_line",
+              Q.result_line(c["summary"]) == "RESULT: QAT COMPLETE (E5, seed 42, clip 0.1, 15/15 epochs)",
               Q.result_line(c["summary"]))
     else:
         check("d1_result_line", False, c["error"] or "")
@@ -504,32 +515,30 @@ def test_gates() -> None:
     bad = TMP / "clip_selection_bad.json"
     bad.write_text(json.dumps({"format": "other/1", "winner": {"clip_norm": 5.0}}), encoding="utf-8")
     for name, args, kw, want in [
-        ("refuses_clip_absent", ("E5", 42, None), dict(u4_pilot=True, clip_selection=None, clip_selection_sha256=None),
-         "grad_clip_norm_invalid"),
-        ("refuses_clip_not_candidate", ("E5", 42, 2.0), dict(u4_pilot=True, clip_selection=None,
-                                                              clip_selection_sha256=None), "grad_clip_norm_not_candidate"),
-        ("refuses_u4_pilot_outside_e5_s42", ("E5", 43, 1.0), dict(u4_pilot=True, clip_selection=None,
-                                                                   clip_selection_sha256=None), "u4_pilot_not_e5_s42"),
-        ("refuses_u4_pilot_with_selection", ("E5", 42, 1.0), dict(u4_pilot=True, clip_selection=str(sel),
-                                                                   clip_selection_sha256=ssha),
-         "u4_pilot_with_clip_selection"),
-        ("refuses_e5_s42_without_u4_pilot", ("E5", 42, 1.0), dict(u4_pilot=False, clip_selection=str(sel),
-                                                                   clip_selection_sha256=ssha), "u4_pilot_required"),
-        ("refuses_missing_clip_selection", ("E5", 44, 5.0), dict(u4_pilot=False, clip_selection=None,
-                                                                  clip_selection_sha256=None), "clip_selection_required"),
-        ("refuses_clip_selection_sha_format", ("E5", 44, 5.0), dict(u4_pilot=False, clip_selection=str(sel),
-                                                                     clip_selection_sha256="abc"),
-         "clip_selection_sha256_format"),
-        ("refuses_clip_selection_file_missing", ("E5", 44, 5.0), dict(u4_pilot=False, clip_selection=str(TMP / "no.json"),
-                                                                       clip_selection_sha256=ssha), "clip_selection_missing"),
-        ("refuses_clip_selection_sha_mismatch", ("E5", 44, 5.0), dict(u4_pilot=False, clip_selection=str(sel),
-                                                                       clip_selection_sha256="f" * 64),
+        ("refuses_clip_absent", ("E5", 42, None),
+         dict(u4_pilot=True, clip_selection=None, clip_selection_sha256=None), "grad_clip_norm_invalid"),
+        ("refuses_clip_not_candidate", ("E5", 42, 2.0),
+         dict(u4_pilot=True, clip_selection=None, clip_selection_sha256=None), "grad_clip_norm_not_candidate"),
+        ("refuses_u4_pilot_outside_e5_s42", ("E5", 43, 1.0),
+         dict(u4_pilot=True, clip_selection=None, clip_selection_sha256=None), "u4_pilot_not_e5_s42"),
+        ("refuses_u4_pilot_with_selection", ("E5", 42, 1.0),
+         dict(u4_pilot=True, clip_selection=str(sel), clip_selection_sha256=ssha), "u4_pilot_with_clip_selection"),
+        ("refuses_e5_s42_without_u4_pilot", ("E5", 42, 1.0),
+         dict(u4_pilot=False, clip_selection=str(sel), clip_selection_sha256=ssha), "u4_pilot_required"),
+        ("refuses_missing_clip_selection", ("E5", 44, 5.0),
+         dict(u4_pilot=False, clip_selection=None, clip_selection_sha256=None), "clip_selection_required"),
+        ("refuses_clip_selection_sha_format", ("E5", 44, 5.0),
+         dict(u4_pilot=False, clip_selection=str(sel), clip_selection_sha256="abc"), "clip_selection_sha256_format"),
+        ("refuses_clip_selection_file_missing", ("E5", 44, 5.0),
+         dict(u4_pilot=False, clip_selection=str(TMP / "no.json"), clip_selection_sha256=ssha),
+         "clip_selection_missing"),
+        ("refuses_clip_selection_sha_mismatch", ("E5", 44, 5.0),
+         dict(u4_pilot=False, clip_selection=str(sel), clip_selection_sha256="f" * 64),
          "clip_selection_sha256_mismatch"),
-        ("refuses_clip_selection_format", ("E5", 44, 5.0), dict(u4_pilot=False, clip_selection=str(bad),
-                                                                 clip_selection_sha256=sha_file(bad)),
-         "clip_selection_format"),
-        ("refuses_clip_not_the_winner", ("E5", 44, 1.0), dict(u4_pilot=False, clip_selection=str(sel),
-                                                               clip_selection_sha256=ssha), "clip_selection_winner_mismatch"),
+        ("refuses_clip_selection_format", ("E5", 44, 5.0),
+         dict(u4_pilot=False, clip_selection=str(bad), clip_selection_sha256=sha_file(bad)), "clip_selection_format"),
+        ("refuses_clip_not_the_winner", ("E5", 44, 1.0),
+         dict(u4_pilot=False, clip_selection=str(sel), clip_selection_sha256=ssha), "clip_selection_winner_mismatch"),
     ]:
         got = code_of(cb, *args, **kw)
         check(name, got == want, f"[{got}]")
@@ -555,8 +564,10 @@ def test_gates() -> None:
     check("selections_accepted_when_tracked_and_unchanged", lam["winner"]["lambda"] == 1.0
           and alpha["winner"]["run_id"] == "e3_s42_a50")
     for name, args, want in [
-        ("refuses_lambda_selection_missing", (None, lsha, "lambda_selection/1", "lambda", repo), "lambda_selection_missing"),
-        ("refuses_alpha_selection_missing", (None, asha, "alpha_selection/1", "alpha", repo), "alpha_selection_missing"),
+        ("refuses_lambda_selection_missing", (None, lsha, "lambda_selection/1", "lambda", repo),
+         "lambda_selection_missing"),
+        ("refuses_alpha_selection_missing", (None, asha, "alpha_selection/1", "alpha", repo),
+         "alpha_selection_missing"),
         ("refuses_selection_sha_format", ("sel/lambda.json", "abc", "lambda_selection/1", "lambda", repo),
          "selection_sha256_format"),
         ("refuses_selection_absolute_path", (str(repo / "sel" / "lambda.json"), lsha, "lambda_selection/1", "lambda",
@@ -567,8 +578,9 @@ def test_gates() -> None:
          "selection_missing_file"),
         ("refuses_selection_untracked", ("sel/untracked.json", lsha, "lambda_selection/1", "lambda", repo),
          "selection_not_tracked"),
-        ("refuses_selection_changed_since_head", ("sel/changed.json", sha_file(repo / "sel" / "changed.json"),
-                                                  "lambda_selection/1", "lambda", repo), "selection_changed_since_head"),
+        ("refuses_selection_changed_since_head",
+         ("sel/changed.json", sha_file(repo / "sel" / "changed.json"), "lambda_selection/1", "lambda", repo),
+         "selection_changed_since_head"),
         ("refuses_selection_sha_mismatch", ("sel/lambda.json", "f" * 64, "lambda_selection/1", "lambda", repo),
          "selection_sha256_mismatch"),
         ("refuses_selection_format", ("sel/wrongfmt.json", sha_file(repo / "sel" / "wrongfmt.json"),
@@ -625,7 +637,8 @@ def test_gates() -> None:
         ("gate_refuses_num_workers_0", [a if a != "12" else "0" for a in base], {}, "num_workers"),
         ("gate_refuses_out_dir_in_repo", [a if a != out_ok else str(REPO / "qat_out") for a in base], {}, "out_dir"),
         ("gate_refuses_out_dir_not_empty", [a if a != out_ok else str(nonempty) for a in base], {}, "out_dir"),
-        ("gate_refuses_out_dir_test_path", [a if a != out_ok else str(TMP / "latest_out") for a in base], {}, "out_dir"),
+        ("gate_refuses_out_dir_test_path", [a if a != out_ok else str(TMP / "latest_out") for a in base], {},
+         "out_dir"),
         ("gate_refuses_cpu", base + ["--device", "cpu"], cuda, "cuda_required"),
         ("gate_refuses_cuda_initialised", base, {**cuda, (torch.cuda, "is_initialized"): (lambda: True)},
          "cuda_initialized_before_seed"),
@@ -654,7 +667,8 @@ def test_gates() -> None:
     allp = {**cuda, fake_iso: ok_iso, ident: clean_at}
     check("gates_pass_e6_with_bound_selections", gate(e6_base, e6, patches=allp) is None)
     check("gate_refuses_e6_without_alpha",
-          gate(without(e6_base, "--alpha-selection", "--alpha-selection-sha256"), e6, patches=allp) == "alpha_selection_missing")
+          gate(without(e6_base, "--alpha-selection", "--alpha-selection-sha256"), e6, patches=allp)
+          == "alpha_selection_missing")
     d = TMP / "e3_l05"
     s6 = write_e3_parent(d, lam=0.5)
     argv6 = [a if a not in (str(e3), s3) else (str(d) if a == str(e3) else s6) for a in e6_base]
@@ -690,7 +704,6 @@ def test_gates() -> None:
     model, meta = Q.load_source(e6, p3)
     check("load_source_e6_projection_free", meta["sha256"] == s3 and not any("cwd" in k for k in model.state_dict()))
     # ---- main(): a refused launch prints one RESULT line and writes nothing
-    import io
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         rc = Q.main(base, "e5")
@@ -713,6 +726,164 @@ def test_isolation() -> None:
     check("no_lane_k2_module_after_runs", not in_proc, str(in_proc))
 
 
+# ---------------------------------------------------------------- check-run-meta: the QAT launch profile
+def set_dotted(d: dict, key: str, value) -> None:
+    """Set an existing dotted key (a missing one raises: a renamed trainer key fails the profile smoke)."""
+    parts = key.split(".")
+    for part in parts[:-1]:
+        d = d[part]
+    if parts[-1] not in d:
+        raise KeyError(key)
+    d[parts[-1]] = value
+
+
+def launched_row(stage: str, *, extra: dict, over: dict) -> dict:
+    """A real launch's run_meta row: the row the trainer writes in a 2-step smoke run, with the keys
+    scripts/run_e5.py adds and the launch values of record set over it."""
+    out = TMP / f"profile_src_{stage}_{len(list(TMP.glob('profile_src_*')))}"
+    Q.run_qat(stage=stage, mode="smoke", model=student(), source_meta=SOURCE, out_dir=out, seed=42, clip_norm=1.0,
+              clip_source="smoke", device="cpu", num_workers=0, loaders=make_loaders(42), extra_meta=extra,
+              max_steps=2, max_val_batches=1, log=lambda *a: None)
+    row = json.loads((out / Q.TELEMETRY_NAME).read_text(encoding="utf-8").splitlines()[0])
+    for k, v in over.items():
+        set_dotted(row, k, v)
+    return row
+
+
+def test_profile() -> None:
+    import scripts.qat_epoch_eval as QEE
+    head, src = "a" * 40, "c" * 64
+    launch = {"mode": "real", "seed": 42, "clip_norm": 1.0, "clip_source": "u4_pilot", "git_head": head,
+              "code_clean_at_head": True, "source_checkpoint_sha256": src, "image_digest": Q.IMAGE_DIGEST_OF_RECORD,
+              "num_workers": 12, "persistent_workers": True, "steps_per_epoch": 335, "total_steps": 5025,
+              "scheduler.T_max": 5025, "bn_freeze_after_step": 3350, "obs_freeze_after_step": 4020,
+              "val_batches_cap": None, "torch": "2.1.0+cu121", "cuda_initialized_at_seed": False,
+              "parent": {"checkpoint_sha256": src, "seed": 42, "mode": "real", "stage": None}}
+    e5_extra = {"clip_selection": None, "u4_pilot": True, "e6_selections": None}
+    row = launched_row("e5", extra=e5_extra, over=launch)
+    e5_args = ["--stage", "E5", "--seed", "42", "--grad-clip-norm", "1.0", "--u4-pilot", "--expect-head", head,
+               "--expect-source-sha256", src]
+
+    def cli(name: str, r: dict, argv: list[str]) -> tuple[int, str, str]:
+        d = TMP / f"profile_{name}"
+        d.mkdir()
+        (d / Q.TELEMETRY_NAME).write_text(json.dumps(r) + "\n", encoding="utf-8")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = QEE.main(["check-run-meta", "--run-dir", str(d), *argv])
+        out = buf.getvalue()
+        lines = [ln for ln in out.splitlines() if ln.startswith("RESULT:")]
+        return rc, (lines[-1] if lines else out[-300:]), out
+
+    rc, res, _ = cli("e5_ok", row, e5_args)
+    check("profile_e5_s42_pilot_passes", rc == 0 and res == "RESULT: CHECK-RUN-META PASS", res)
+    census = dict(QEE.EXPECTED_CENSUS)
+    census["MovingAverageMinMaxObserver"] = 109
+    for name, key, value in [
+        ("num_workers", "num_workers", 8), ("steps_per_epoch", "steps_per_epoch", 336),
+        ("t_max", "scheduler.T_max", 335), ("eta_min", "scheduler.eta_min", 1e-6),
+        ("scheduler_class", "scheduler.class", "OneCycleLR"),
+        ("bn_freeze_step", "bn_freeze_after_step", 3685), ("observer_freeze_step", "obs_freeze_after_step", 4355),
+        ("lr", "lr", 1e-3), ("momentum", "momentum", 0.0), ("weight_decay", "weight_decay", 0.0),
+        ("nesterov", "nesterov", True), ("batch_size", "batch_size", 8), ("drop_last", "drop_last", False),
+        ("engine", "engine", "fbgemm"), ("observer_census", "observer_census", census),
+        ("fake_quant_count", "fake_quant_modules", 183), ("unfused_batchnorm", "unfused_batchnorm", 1),
+        ("tf32", "tf32", {**Q.TF32_DEFAULTS, "cuda_matmul_allow_tf32": True}), ("torch", "torch", "2.2.0+cu121"),
+        ("image_digest", "image_digest", "sha256:" + "0" * 64), ("head", "git_head", "b" * 40),
+        ("code_not_clean", "code_clean_at_head", False), ("source_sha", "source_checkpoint_sha256", "d" * 64),
+        ("parent_sha", "parent", {**launch["parent"], "checkpoint_sha256": "d" * 64}),
+        ("parent_seed", "parent", {**launch["parent"], "seed": 43}), ("mode", "mode", "smoke"),
+        ("seed", "seed", 43), ("clip", "clip_norm", 5.0), ("dampening_as_int", "dampening", 0),
+        ("cuda_initialised_at_seed", "cuda_initialized_at_seed", True), ("val_cap", "val_batches_cap", 4),
+    ]:
+        r = json.loads(json.dumps(row))
+        set_dotted(r, key, value)
+        rc, res, out = cli(f"e5_{name}", r, e5_args)
+        shown = key.split(".")[0] if key in ("parent",) else key
+        check(f"profile_stops_on_{name}", rc == 1 and "[run_meta_profile]" in res and shown in out, res[:160])
+    rc, res, out = cli("e5_no_u4_flag", row, [a for a in e5_args if a != "--u4-pilot"])
+    check("profile_pilot_checked_without_u4_pilot_stops", rc == 1 and "clip_source" in out, res[:160])
+    # a non-pilot launch is bound to clip_selection.json (P10)
+    clip_p = TMP / "profile_clip_selection.json"
+    clip_p.write_text(json.dumps({"format": Q.CLIP_SELECTION_FORMAT, "winner": {"clip_norm": 5.0}}), encoding="utf-8")
+    csha = sha_file(clip_p)
+    bound = {"clip_selection": {"path": str(clip_p), "sha256": csha, "winner": 5.0}, "u4_pilot": False,
+             "e6_selections": None}
+    r43 = launched_row("e5", extra=bound, over={**launch, "seed": 43, "clip_norm": 5.0, "clip_source": "clip_selection",
+                                                 "parent": {**launch["parent"], "seed": 43}})
+    a43 = ["--stage", "E5", "--seed", "43", "--grad-clip-norm", "5.0", "--clip-selection", str(clip_p),
+           "--clip-selection-sha256", csha, "--expect-head", head, "--expect-source-sha256", src]
+    rc, res, _ = cli("e5_s43_ok", r43, a43)
+    check("profile_e5_s43_bound_to_clip_selection_passes", rc == 0 and res == "RESULT: CHECK-RUN-META PASS", res)
+    rc, res, out = cli("e5_s43_other_sha", r43, [a if a != csha else "e" * 64 for a in a43])
+    check("profile_stops_on_other_clip_selection", rc == 1 and "clip_selection" in out, res[:160])
+    rc, res, out = cli("e5_s43_u4", r43, a43 + ["--u4-pilot"])
+    check("profile_stops_on_u4_pilot_for_s43", rc == 1 and "clip_source" in out, res[:160])
+    r43u = json.loads(json.dumps(r43))
+    r43u.update({"u4_pilot": True, "clip_source": "u4_pilot", "clip_selection": None})
+    rc, res, out = cli("e5_s43_launched_as_pilot", r43u, a43)
+    check("profile_stops_on_s43_launched_as_pilot", rc == 1 and "clip_source" in out, res[:160])
+    rc, res, out = cli("e5_alpha_flag", row, e5_args + ["--alpha-selection", "sel/alpha.json"])
+    check("profile_stops_on_e6_selections_for_e5", rc == 1 and "e6_selections" in out, res[:160])
+
+    # E6 (O2): the λ and α selections, tracked and unchanged at HEAD, and the parent they name
+    repo = TMP / "profile_selrepo"
+    (repo / "sel").mkdir(parents=True)
+    lam_doc = {"format": "lambda_selection/1", "winner": {"lambda": 1.0, "run_id": "e3_s42_l1"}}
+    alp_doc = {"format": "alpha_selection/1", "winner": {"alpha": 50.0, "run_id": "e3_s42_a50"}}
+    (repo / "sel" / "lambda.json").write_text(json.dumps(lam_doc), encoding="utf-8")
+    (repo / "sel" / "alpha.json").write_text(json.dumps(alp_doc), encoding="utf-8")
+    git(repo, "init", "-q")
+    git(repo, "add", "sel/lambda.json", "sel/alpha.json")
+    git(repo, "commit", "-q", "-m", "selections")
+    lsha, asha = sha_file(repo / "sel" / "lambda.json"), sha_file(repo / "sel" / "alpha.json")
+    p3 = {"checkpoint_sha256": src, "seed": 42, "mode": "real", "stage": "E3", "lambda_logit": 1.0,
+          "alpha_cwd": 50.0, "run_id": "e3_s42_a50"}
+    e6_bound = {"clip_selection": {"path": str(clip_p), "sha256": csha, "winner": 5.0}, "u4_pilot": False,
+                "e6_selections": {"lambda_selection": {"path": "sel/lambda.json", "sha256": lsha},
+                                  "alpha_selection": {"path": "sel/alpha.json", "sha256": asha}}}
+    r6 = launched_row("e6", extra=e6_bound, over={**launch, "clip_norm": 5.0, "clip_source": "clip_selection",
+                                                   "parent": p3})
+    a6 = QEE.build_parser().parse_args(
+        ["check-run-meta", "--run-dir", str(TMP), "--stage", "E6", "--seed", "42", "--grad-clip-norm", "5.0",
+         "--clip-selection", str(clip_p), "--clip-selection-sha256", csha, "--expect-head", head,
+         "--expect-source-sha256", src, "--lambda-selection", "sel/lambda.json", "--lambda-selection-sha256", lsha,
+         "--alpha-selection", "sel/alpha.json", "--alpha-selection-sha256", asha])
+    bad = QEE.profile_mismatches(r6, a6, repo_root=repo)
+    check("profile_e6_bound_to_its_selections_passes", bad == {} and r6.get("cwd_projection_loaded") is False,
+          str(sorted(bad)))
+    for name, edit, key in [
+        ("e6_parent_lambda", {"parent": {**p3, "lambda_logit": 0.5}}, "e6_binding"),
+        ("e6_parent_alpha", {"parent": {**p3, "alpha_cwd": 25.0}}, "e6_binding"),
+        ("e6_s42_parent_not_alpha_winner", {"parent": {**p3, "run_id": "e3_s42_a25"}}, "e6_binding"),
+        ("e6_lambda_selection_sha", {"e6_selections": {**e6_bound["e6_selections"],
+                                                       "lambda_selection": {"sha256": "0" * 64}}},
+         "e6_selections.lambda_selection"),
+        ("e6_projection_loaded", {"cwd_projection_loaded": True}, "cwd_projection_loaded"),
+    ]:
+        r = {**json.loads(json.dumps(r6)), **edit}
+        bad = QEE.profile_mismatches(r, a6, repo_root=repo)
+        check(f"profile_stops_on_{name}", key in bad, str(sorted(bad)))
+    # the record itself: no telemetry yet (exit 3), a first line that is not strict JSON, or not the run_meta row
+    none = TMP / "profile_no_telemetry"
+    none.mkdir()
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = QEE.main(["check-run-meta", "--run-dir", str(none), *e5_args])
+    res = ([ln for ln in buf.getvalue().splitlines() if ln.startswith("RESULT:")] or [""])[-1]
+    check("profile_run_without_telemetry_exit_3", rc == 3 and "[telemetry_missing]" in res, res)
+    for name, first in (("profile_first_row_not_json", '{"event": "run_meta", "lr": NaN}'),
+                        ("profile_first_row_not_run_meta", json.dumps({"event": "train", "step": 1}))):
+        d = TMP / f"profile_{name}"
+        d.mkdir()
+        (d / Q.TELEMETRY_NAME).write_text(first + "\n", encoding="utf-8")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = QEE.main(["check-run-meta", "--run-dir", str(d), *e5_args])
+        res = ([ln for ln in buf.getvalue().splitlines() if ln.startswith("RESULT:")] or [""])[-1]
+        check(name, rc == 2 and "[run_meta_rows]" in res, res)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--device", default="cpu")
@@ -722,6 +893,9 @@ def main() -> int:
     unknown = [s for s in want if s not in SECTIONS]
     if unknown:
         print(f"RESULT: ERROR unknown sections {unknown}")
+        return 4
+    if str(args.device).startswith("cuda") and not torch.cuda.is_available():
+        print(f"RESULT: ERROR --device {args.device} but this host has no CUDA device (the CPU run omits --device)")
         return 4
     print("=" * 78)
     print("QAT RUNNER SMOKE (d1) — synthetic; the real student through src/quant/qat.py, no dataset")
@@ -742,6 +916,9 @@ def main() -> int:
     if "isolation" in want:
         print("\n--- import isolation ---")
         test_isolation()
+    if "profile" in want:
+        print("\n--- check-run-meta: the QAT launch profile ---")
+        test_profile()
     print("\n[CHECKS]")
     for name, ok, detail in results:
         print(f"  {name:52}: {'PASS' if ok else 'FAIL'}{('  ' + detail) if detail else ''}")

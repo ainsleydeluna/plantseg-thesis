@@ -148,7 +148,8 @@ def main() -> int:
     det = {"deterministic_algorithms": True, "deterministic_algorithms_warn_only": True,
            "cudnn_deterministic": True, "cudnn_benchmark": False, "CUBLAS_WORKSPACE_CONFIG": ":4096:8"}
     check("d2_set_seed_applied",
-          ok and all(d["run_meta"]["determinism"] == det and d["pythonhashseed"] == str(d["seed"]) for d in docs.values()),
+          ok and all(d["run_meta"]["determinism"] == det and d["pythonhashseed"] == str(d["seed"])
+                     for d in docs.values()),
           str((A.get("run_meta") or {}).get("determinism")))
     rm = A.get("run_meta") or {}
     check("d2_trainer_builds_the_loaders_of_record",
@@ -165,7 +166,8 @@ def main() -> int:
           ok and len(A["losses"]) == 4 and A["losses"] == B["losses"],
           f"{A.get('losses')} vs {B.get('losses')}")
     check("d2_seed43_different_order",
-          ok and all(a != c for a, c in zip(A["batch_sha256"], C["batch_sha256"])), "every one of the 4 batches differs")
+          ok and all(a != c for a, c in zip(A["batch_sha256"], C["batch_sha256"])),
+          "every one of the 4 batches differs")
     check("d2_workers2_identical_order_and_losses",
           ok and len(D["batch_sha256"]) == 4 and D["batch_sha256"] == E["batch_sha256"] and D["losses"] == E["losses"],
           "num_workers 2, persistent TRAIN workers")

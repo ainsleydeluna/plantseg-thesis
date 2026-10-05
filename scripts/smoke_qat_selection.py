@@ -24,6 +24,7 @@ import io
 import json
 import os
 import shutil
+import subprocess
 import sys
 import time
 import zipfile
@@ -41,14 +42,16 @@ os.environ["PLANTSEG_IMAGE_DIGEST"] = "sha256:" + "5" * 64       # the runs reco
 import numpy as np  # noqa: E402
 
 import scripts.select_clip as SC  # noqa: E402
+import scripts.qat_epoch_eval as QEE  # noqa: E402
 import scripts.select_qat_epoch as SE  # noqa: E402
 from src.eval.artifacts import ARTIFACT_FILES, MANIFEST_NAME  # noqa: E402
 from src.quant import qat as Q  # noqa: E402
 from src.quant import qat_artifacts as A  # noqa: E402
 from src.quant import qat_select as S  # noqa: E402
+from src.quant.qconfig import X86_BACKENDS  # noqa: E402
 
 results: list[tuple[str, bool, str]] = []
-SECTIONS = ("d3", "oq1", "refusals", "d5")
+SECTIONS = ("d3", "oq1", "refusals", "d5", "finalize")
 GT_SUM = 159_279_104
 
 
@@ -200,7 +203,8 @@ def fabricate(run: Path, ev: Path, values: dict, *, excluded=(), tamper: dict | 
                      "summary": {"path": f"{A.SCORES_DIR}/e{e:02d}/summary.json",
                                  "sha256": Q.sha256_file(scores / f"e{e:02d}" / "summary.json")},
                      "all_class_miou": values[e],
-                     "evaluator_command": tamper.get("command", ["-B", "scripts/evaluate_model.py", "--stage", meta["stage"]]),
+                     "evaluator_command": tamper.get("command", ["-B", "scripts/evaluate_model.py", "--stage",
+                                                                 meta["stage"]]),
                      "torch_num_threads": 4, "affinity_cpus": 4})
     head = {"run_dir": rec["run_dir"], "run_id": rec["run_id"], "stage": meta["stage"],
             "telemetry_sha256": rec["telemetry_sha256"], "purpose": tamper.get("purpose", "record"),
@@ -457,7 +461,8 @@ _N5 = A.epoch_names(5)
 for _n, _ed, _rc, _c, _needle in [
         ("d3_sha_mismatch_refused", lambda ev: (ev / "scores" / "e03" / "per_image.jsonl").write_text("{}\n"), 2,
          "score_artifact_invalid", ""),
-        ("d3_stop_file_refused", lambda ev: (ev / "converted" / "e05_STOP.json").write_text("{}"), 2, "stop_present", ""),
+        ("d3_stop_file_refused", lambda ev: (ev / "converted" / "e05_STOP.json").write_text("{}"), 2, "stop_present",
+         ""),
         ("d3_extra_scores_entry_refused", lambda ev: (ev / "scores" / "tmp_e07").mkdir(), 2, "scores_dir_contents", ""),
         ("d3_unreadable_record_refused", lambda ev: (ev / "qat_epoch_eval.json").write_text("{"), 2,
          "record_unreadable", ""),
@@ -593,7 +598,8 @@ def d3_winner_changed_during_selection_refused():
 @case("d5")
 def d5_candidates_are_1_and_5():
     rules = FX["rules"]
-    check("d5_candidates_are_1_and_5", rules["qat_clip"]["candidates"] == [1.0, 5.0] and rules["qat_clip"]["tie"] == 5.0)
+    check("d5_candidates_are_1_and_5",
+          rules["qat_clip"]["candidates"] == [1.0, 5.0] and rules["qat_clip"]["tie"] == 5.0)
 
 
 def _pair_case(name: str, v1: float, v5: float, expect: float, tie: bool):
@@ -668,7 +674,8 @@ register("d5", "d5_both_rejected_no_winner_exit_2_b", _both_rejected_case("b", T
 
 @case("d5")
 def d5_missing_run_refused():
-    rc, res = clip_cli([(FX["base"][1.0], ev_clip1()), (FX["base"][5.0], TMP / "ev_missing")], TMP / "clip_missing.json")
+    rc, res = clip_cli([(FX["base"][1.0], ev_clip1()), (FX["base"][5.0], TMP / "ev_missing")],
+                       TMP / "clip_missing.json")
     check("d5_missing_run_refused", rc == 3 and "[epoch_selection_missing]" in res, res)
 
 
@@ -704,7 +711,8 @@ for _n, _c, _needle, _kw in [
         ("d5_recipe_mismatch_refused", "recipe_mismatch", "num_workers", {"meta": {"num_workers": 1}}),
         ("d5_batch_order_mismatch_refused", "batch_order_differs", "",
          {"fingerprints": lambda step, h: ("0" * 64) if step == 13 else h}),
-        ("d5_non_pilot_run_refused", "not_a_pilot_run", "", {"meta": {"u4_pilot": False, "clip_source": "clip_selection"}}),
+        ("d5_non_pilot_run_refused", "not_a_pilot_run", "",
+         {"meta": {"u4_pilot": False, "clip_source": "clip_selection"}}),
         ("d5_pilot_summary_commits_differ_refused", "pilot_evals_differ", "", {"tamper": {"commit_all": "9" * 40}}),
         ("d5_pilot_host_labels_differ_refused", "pilot_evals_differ", "", {"tamper": {"host_label": "other-host"}}),
         ("d5_cpu_model_difference_refused", "recipe_mismatch", "host", {"host": {"cpu_model": "Other CPU"}}),
@@ -754,6 +762,238 @@ def d5_null_git_head_refused():
         nulls[c] = (rn, selected_eval(rn, sh, f"ev_nullhead_{c}", vals(e07=0.31)))
     rc, res = clip_cli([nulls[1.0], nulls[5.0]], TMP / "clip_nullhead.json")
     check("d5_null_git_head_refused", rc == 2 and "[recipe_identity_null]" in res, res)
+
+
+# ---- P28: finalize, in a fresh process each time (scripts/qat_epoch_eval.py finalize)
+def finalize_cli(run: Path, ev: Path, *extra: str) -> tuple[int, str]:
+    p = subprocess.run([sys.executable, "-B", str(REPO / "scripts" / "qat_epoch_eval.py"), "finalize",
+                        "--run-dir", str(run), "--eval-dir", str(ev), *extra],
+                       cwd=str(REPO), capture_output=True, text=True, timeout=1800)
+    lines = [ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")]
+    return p.returncode, (lines[-1] if lines else p.stderr.strip()[-300:])
+
+
+@functools.cache
+def final_fixture() -> dict:
+    """Both pilot runs selected (e07: 0.40 and 0.4005, a tie, so clip 5.0 wins) and their clip_selection.json."""
+    base, sha = FX["base"], FX["sha"]
+    evs = {c: selected_eval(base[c], sha[c], f"ev_final_{c}", vals(e07=v)) for c, v in ((1.0, 0.40), (5.0, 0.4005))}
+    clip_p = TMP / "final_clip_selection.json"
+    rc, res = clip_cli([(base[1.0], evs[1.0]), (base[5.0], evs[5.0])], clip_p)
+    return {"evs": evs, "clip": clip_p, "rc": rc, "res": res}
+
+
+@functools.cache
+def s43_run() -> tuple[Path, str]:
+    """A non-pilot run: E5 seed 43, bound to the clip at launch (clip_source clip_selection)."""
+    r43 = clone_run(FX["base"][5.0], TMP / "run_s43_final")
+    return r43, relabel(r43, meta={"seed": 43, "u4_pilot": False, "clip_source": "clip_selection"})
+
+
+def s43_eval(name: str) -> Path:
+    r43, sha43 = s43_run()
+    return selected_eval(r43, sha43, f"ev_{name}", vals(e07=0.4))
+
+
+def append_byte(p: Path) -> None:
+    with open(p, "ab") as fh:
+        fh.write(b"x")
+
+
+def edit_json(p: Path, fn) -> None:
+    doc = json.loads(p.read_text(encoding="utf-8"))
+    fn(doc)
+    p.write_text(json.dumps(doc), encoding="utf-8")
+
+
+@case("finalize")
+def finalize_fixture_clip_5_wins_on_a_tie():
+    fx = final_fixture()
+    check("finalize_fixture_clip_5_wins_on_a_tie",
+          fx["rc"] == 0 and json.loads(fx["clip"].read_text())["winner"]["clip_norm"] == 5.0, fx["res"])
+
+
+@case("finalize")
+def finalize_refuses_the_retained_loser():
+    fx = final_fixture()
+    rc, res = finalize_cli(FX["base"][1.0], fx["evs"][1.0], "--clip-selection", str(fx["clip"]))
+    check("finalize_refuses_the_retained_loser", rc == 2 and "[not_the_clip_winner]" in res, res)
+
+
+@case("finalize")
+def finalize_pilot_requires_clip_selection():
+    fx = final_fixture()
+    rc, res = finalize_cli(FX["base"][5.0], fx["evs"][5.0])
+    check("finalize_pilot_requires_clip_selection", rc == 2 and "[clip_selection_required]" in res, res)
+
+
+@case("finalize")
+def finalize_checks_a_pinned_clip_selection_sha():
+    fx = final_fixture()
+    rc, res = finalize_cli(FX["base"][5.0], fx["evs"][5.0], "--clip-selection", str(fx["clip"]),
+                           "--clip-selection-sha256", "0" * 64)
+    check("finalize_checks_a_pinned_clip_selection_sha", rc == 2 and "[clip_selection_sha256_mismatch]" in res, res)
+
+
+@case("finalize")
+def finalize_clip_selection_file_missing():
+    fx = final_fixture()
+    rc, res = finalize_cli(FX["base"][5.0], fx["evs"][5.0], "--clip-selection", str(TMP / "no_clip_selection.json"))
+    check("finalize_clip_selection_file_missing", rc == 3 and "[clip_selection_missing]" in res, res)
+
+
+@case("finalize")
+def finalize_clip_selection_test_path_refused():
+    fx = final_fixture()
+    latest = TMP / "latest_clip_selection.json"
+    rc, res = finalize_cli(FX["base"][5.0], fx["evs"][5.0], "--clip-selection", str(latest))
+    check("finalize_clip_selection_test_path_refused", rc == 2 and "[clip_selection_test_path]" in res
+          and not latest.exists(), res)
+
+
+@case("finalize")
+def finalize_clip_selection_of_another_format():
+    fx = final_fixture()
+    other = TMP / "clip_selection_other_format.json"
+    other.write_text(json.dumps({**json.loads(fx["clip"].read_text()), "format": "other/1"}), encoding="utf-8")
+    rc, res = finalize_cli(FX["base"][5.0], fx["evs"][5.0], "--clip-selection", str(other))
+    check("finalize_clip_selection_of_another_format", rc == 2 and "[clip_selection_format]" in res, res)
+
+
+@case("finalize")
+def finalize_serves_the_winner():
+    fx = final_fixture()
+    win_ev, r5 = fx["evs"][5.0], FX["base"][5.0]
+    sel_doc = json.loads((win_ev / "qat_selection.json").read_text(encoding="utf-8"))
+    ts_p = win_ev / sel_doc["winner"]["artifact_of_record"]["path"]
+    ts_before = Q.sha256_file(ts_p)
+    rc, res = finalize_cli(r5, win_ev, "--clip-selection", str(fx["clip"]))
+    doc = json.loads((win_ev / "qat_finalize.json").read_text(encoding="utf-8")) if rc == 0 else {}
+    check("finalize_serves_the_winner", rc == 0 and res == "RESULT: FINALIZED (E5, seed 42, epoch 07)", res)
+    aor = doc.get("artifact_of_record", {})
+    check("finalize_names_the_scored_artifact_never_retraced",
+          Q.sha256_file(ts_p) == ts_before == aor.get("torchscript", {}).get("sha256")
+          == sel_doc["winner"]["artifact_of_record"]["sha256"]
+          and aor.get("checkpoint", {}).get("sha256") == Q.sha256_file(r5 / Q.EPOCH_DIR / "e07.pt")
+          and (doc.get("clip_selection") or {}).get("sha256") == Q.sha256_file(fx["clip"]),
+          "the fabricated TorchScript zip loads as no model: finalize only re-hashed it")
+    x86 = doc.get("x86_latency_copy", {})
+    tr = (x86.get("provenance") or {}).get("translation") or {}
+    check("finalize_x86_copy_from_the_checkpoint_zero_steps",
+          rc == 0 and bool(x86.get("checks")) and all(x86["checks"].values())
+          and tr.get("optimizer_steps_for_translation") == 0 and tr.get("retrained") is False
+          and x86.get("engine") in X86_BACKENDS and x86.get("usable_for_accuracy") is False
+          and (x86.get("provenance") or {}).get("source_checkpoint_sha256") == aor.get("checkpoint", {}).get("sha256")
+          and Q.sha256_file(win_ev / x86.get("path", "missing")) == x86.get("sha256"),
+          f"{x86.get('engine')}, checks {x86.get('checks')}")
+    rc2, res2 = finalize_cli(r5, win_ev, "--clip-selection", str(fx["clip"]))
+    check("finalize_runs_once", rc2 == 2 and "[output_exists]" in res2, res2)
+
+
+@case("finalize")
+def finalize_refuses_a_stale_clip_selection():
+    fx = final_fixture()
+    stale = selected_eval(FX["base"][5.0], FX["sha"][5.0], "ev_final_stale", vals(e07=0.4005))
+    rc, res = finalize_cli(FX["base"][5.0], stale, "--clip-selection", str(fx["clip"]))
+    check("finalize_refuses_a_stale_clip_selection", rc == 2 and "[clip_selection_stale]" in res, res)
+
+
+@case("finalize")
+def finalize_non_pilot_takes_no_clip_selection():
+    fx = final_fixture()
+    r43, _ = s43_run()
+    rc, res = finalize_cli(r43, s43_eval("final_s43"), "--clip-selection", str(fx["clip"]))
+    check("finalize_non_pilot_takes_no_clip_selection", rc == 2 and "[clip_selection_not_applicable]" in res, res)
+
+
+def _s43_case(name: str, edit, code: str, rc_want: int = 2):
+    """finalize on a fresh seed-43 eval directory after `edit(ev)`."""
+    def run():
+        ev = s43_eval(name)
+        edit(ev)
+        rc, res = finalize_cli(s43_run()[0], ev)
+        check(name, rc == rc_want and f"[{code}]" in res and not (ev / "qat_finalize.json").exists(), res)
+    return run
+
+
+_SEL = "qat_selection.json"
+for _n, _ed, _c, _rc in [
+        ("finalize_selection_not_json", lambda ev: (ev / _SEL).write_text("{", encoding="utf-8"),
+         "epoch_selection_format", 2),
+        ("finalize_selection_not_an_object", lambda ev: (ev / _SEL).write_text("[1, 2]", encoding="utf-8"),
+         "epoch_selection_format", 2),
+        ("finalize_without_epoch_selection_exit_3", lambda ev: (ev / _SEL).unlink(), "epoch_selection_missing", 3),
+        ("finalize_selection_of_other_rules_refused", lambda ev: edit_json(ev / _SEL, lambda d: d.update(
+            rules_sha256="0" * 64)), "epoch_selection_format", 2),
+        ("finalize_selection_of_another_run_refused", lambda ev: shutil.copyfile(ev_clip1() / _SEL, ev / _SEL),
+         "epoch_selection_mismatch", 2),
+        ("finalize_smoke_input_selection_refused", lambda ev: edit_json(ev / _SEL, lambda d: d.update(
+            smoke_inputs=True)), "smoke_inputs", 2),
+        ("finalize_winner_checkpoint_changed_refused", lambda ev: edit_json(ev / _SEL, lambda d: d["winner"].update(
+            checkpoint_sha256="0" * 64)), "winner_checkpoint_changed", 2),
+        ("finalize_winner_artifact_changed_refused",
+         lambda ev: append_byte(ev / A.CONVERTED_DIR / A.epoch_names(7)["torchscript"]),
+         "winner_files_changed", 2),
+        ("finalize_state_dict_companion_changed_refused",
+         lambda ev: append_byte(ev / A.CONVERTED_DIR / A.epoch_names(7)["state_dict"]),
+         "winner_files_changed", 2)]:
+    register("finalize", _n, _s43_case(_n, _ed, _c, _rc))
+
+
+@case("finalize")
+def finalize_smoke_run_refused():
+    run = clone_run(FX["base"][5.0], TMP / "run_s43_smoke_final")
+    sha = relabel(run, meta={"seed": 43, "u4_pilot": False, "clip_source": "clip_selection"})
+    ev = selected_eval(run, sha, "ev_final_smoke", vals(e07=0.4))
+    relabel(run, meta={"seed": 43, "u4_pilot": False, "clip_source": "clip_selection", "mode": "smoke"})
+    rc, res = finalize_cli(run, ev)
+    check("finalize_smoke_run_refused", rc == 2 and "[run_not_real]" in res, res)
+
+
+# in this process, last: the next case traces here, and the guard needs a traced process
+@case("finalize")
+def finalize_refuses_a_non_x86_engine():
+    import src.quant.qconfig as qconfig
+    ev = s43_eval("final_engine")
+    real = qconfig.select_x86_backend
+    qconfig.select_x86_backend = lambda: "qnnpack"
+    try:
+        rc, res = run_cli(QEE.main, ["finalize", "--run-dir", str(s43_run()[0]), "--eval-dir", str(ev)])
+    finally:
+        qconfig.select_x86_backend = real
+    check("finalize_refuses_a_non_x86_engine", rc == 2 and "[x86_backend_unavailable]" in res
+          and not (ev / "final" / "e07_int8_x86_latency.torchscript.pt").exists(), res)
+
+
+@case("finalize")
+def finalize_stops_on_a_failed_x86_check():
+    import src.quant.ptq as ptq
+    ev = s43_eval("final_parity")
+    real = ptq.output_parity
+    ptq.output_parity = lambda models, inputs, pairs: {**real(models, inputs, pairs), "all_equal": False}
+    try:
+        rc, res = run_cli(QEE.main, ["finalize", "--run-dir", str(s43_run()[0]), "--eval-dir", str(ev)])
+    finally:
+        ptq.output_parity = real
+    stop = ev / "finalize_STOP.json"
+    check("finalize_stops_on_a_failed_x86_check", rc == 1 and "[x86_copy_checks]" in res and stop.is_file()
+          and not (ev / "qat_finalize.json").exists()
+          and json.loads(stop.read_text()).get("x86_latency_copy", {}).get("checks", {}).get("parity_x86_copy")
+          is False, res)
+
+
+@case("finalize")
+def finalize_fresh_process_guard():
+    from src.quant.prepare import convert_model
+    from src.quant.ptq import student_traced_in_process, torchscript_bytes
+    from src.quant.qconfig import select_qnnpack_backend
+    if not student_traced_in_process():
+        select_qnnpack_backend()
+        torchscript_bytes(convert_model(A.prepared_skeleton().eval()), {"schema": "smoke"})
+    ev = s43_eval("final_guard")
+    rc, res = run_cli(QEE.main, ["finalize", "--run-dir", str(s43_run()[0]), "--eval-dir", str(ev)])
+    check("finalize_fresh_process_guard", rc == 2 and "[fresh_process_required]" in res
+          and not (ev / "final").exists(), res)
 
 
 def main() -> int:

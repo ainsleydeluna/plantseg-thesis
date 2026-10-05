@@ -135,7 +135,8 @@ def epoch_selection(run_dir, eval_dir, *, expect_telemetry_sha256: str | None, r
     E = Path(eval_dir)
     stops = sorted(p.name for p in (E / A.CONVERTED_DIR).glob("e*_STOP.json")) if (E / A.CONVERTED_DIR).is_dir() else []
     if (E / "convert_STOP.json").exists() or stops:
-        raise QATRefused("stop_present", f"{E} holds a STOP file {stops or ['convert_STOP.json']}; it is never selected")
+        raise QATRefused("stop_present", f"{E} holds a STOP file {stops or ['convert_STOP.json']}; it is never "
+                                         "selected")
     conv_p, ev_p = E / "qat_convert.json", E / "qat_epoch_eval.json"
     for p in (conv_p, ev_p):
         if not p.is_file():
@@ -176,8 +177,9 @@ def epoch_selection(run_dir, eval_dir, *, expect_telemetry_sha256: str | None, r
         if row.get("status") == "excluded":
             ncd = _json(nc) if nc.is_file() else {}
             if finite or ncd.get("qat_checkpoint_sha256") != ck_sha or row.get("rule") != A.NOT_CONVERTIBLE_RULE:
-                raise QATRefused("exclusion_inconsistent", f"e{e:02d} is excluded but its state is "
-                                                           f"{'finite' if finite else 'non-finite'} or its record differs")
+                state_word = "finite" if finite else "non-finite"
+                raise QATRefused("exclusion_inconsistent", f"e{e:02d} is excluded but its state is {state_word} or "
+                                                           "its record differs")
             excluded.append(e)
             trace.append(f"e{e:02d} {A.NOT_CONVERTIBLE_RULE}; not scanned")
             continue
@@ -240,13 +242,15 @@ def epoch_selection(run_dir, eval_dir, *, expect_telemetry_sha256: str | None, r
             raise QATRefused("score_invalid", f"e{e:02d}: all_class_miou {v!r} is not a float in [0, 1]")
         summaries[e] = s
         scored[e] = {"value": v, "checkpoint_sha256": ck_sha, "provenance": row["provenance"],
-                     "converted_artifact": {"path": f"{A.CONVERTED_DIR}/{prov['converted_artifact']}", "sha256": ts_sha},
+                     "converted_artifact": {"path": f"{A.CONVERTED_DIR}/{prov['converted_artifact']}",
+                                            "sha256": ts_sha},
                      "summary": row["summary"], "run_id": want_id}
     # P25: scores/ holds exactly the scored epochs
     sc = E / A.SCORES_DIR
     present = sorted(p.name for p in sc.iterdir()) if sc.is_dir() else []
-    if present != [f"e{e:02d}" for e in sorted(scored)]:
-        raise QATRefused("scores_dir_contents", f"{sc} holds {present}; expected exactly {[f'e{e:02d}' for e in sorted(scored)]}")
+    expected = [f"e{e:02d}" for e in sorted(scored)]
+    if present != expected:
+        raise QATRefused("scores_dir_contents", f"{sc} holds {present}; expected exactly {expected}")
     if not scored:
         raise QATRefused("no_convertible_epoch", f"every epoch of {rec['run_id']} is excluded (non-finite state)")
     # fields equal across the summaries; non-null ones
@@ -269,18 +273,21 @@ def epoch_selection(run_dir, eval_dir, *, expect_telemetry_sha256: str | None, r
     ties = []
     for e in sorted(scored):
         v = scored[e]["value"]
-        tag = f"(artifact {scored[e]['converted_artifact']['sha256'][:12]}, summary {scored[e]['summary']['sha256'][:12]})"
+        tag = (f"(artifact {scored[e]['converted_artifact']['sha256'][:12]}, "
+               f"summary {scored[e]['summary']['sha256'][:12]})")
         if best is None:
             best = e
             ties = [e]
             trace.append(f"e{e:02d} converted {v!r} {tag} -> best e{e:02d}")
         elif v > scored[best]["value"]:
-            trace.append(f"e{e:02d} converted {v!r} > best {scored[best]['value']!r} (e{best:02d}) {tag} -> best e{e:02d}")
+            trace.append(f"e{e:02d} converted {v!r} > best {scored[best]['value']!r} (e{best:02d}) {tag} "
+                         f"-> best e{e:02d}")
             best = e
             ties = [e]
         elif v == scored[best]["value"]:
             ties.append(e)
-            trace.append(f"e{e:02d} converted {v!r} == best (e{best:02d}) {tag} -> tie; the earlier epoch e{best:02d} is kept")
+            trace.append(f"e{e:02d} converted {v!r} == best (e{best:02d}) {tag} -> tie; the earlier epoch "
+                         f"e{best:02d} is kept")
         else:
             trace.append(f"e{e:02d} converted {v!r} < best {scored[best]['value']!r} (e{best:02d}) {tag}")
     fq = {e: r.get("fake_quant_val_all_class_miou") for e, r in rec["ends"].items()
@@ -323,7 +330,8 @@ def _recipe(meta: dict) -> dict:
 
 def run_rejected(rec: dict) -> bool:
     ends = rec["ends"].values()
-    return any(r.get("nonfinite_since_step") is not None for r in ends) or any(r.get("state_finite") is False for r in ends)
+    return (any(r.get("nonfinite_since_step") is not None for r in ends)
+            or any(r.get("state_finite") is False for r in ends))
 
 
 def step_fingerprints(rec: dict) -> list[str]:
@@ -353,8 +361,8 @@ def clip_selection(candidates: list[tuple[str, str]], *, rules: dict, rules_sha2
         if not (meta.get("stage") == cr["stage"] and meta.get("seed") == cr["seed"] and meta.get("u4_pilot") is True
                 and meta.get("clip_source") == "u4_pilot" and (meta.get("mode") == "real" or smoke)):
             raise QATRefused("not_a_pilot_run", f"{rec['run_id']}: stage {meta.get('stage')}, seed {meta.get('seed')}, "
-                                                f"u4_pilot {meta.get('u4_pilot')}, clip_source {meta.get('clip_source')}, "
-                                                f"mode {meta.get('mode')}")
+                                                f"u4_pilot {meta.get('u4_pilot')}, "
+                                                f"clip_source {meta.get('clip_source')}, mode {meta.get('mode')}")
         rejected = run_rejected(rec)                         # AM-21 item 3: decided by the run's own record
         sel_p = Path(eval_dir) / "qat_selection.json"
         stored, selection, sel_sha = None, None, None
@@ -369,7 +377,8 @@ def clip_selection(candidates: list[tuple[str, str]], *, rules: dict, rules_sha2
                                         rules=rules, rules_sha256=rules_sha256, allow_smoke_inputs=smoke)
             keep = ("winner", "values", "tied_epochs", "excluded_epochs", "telemetry_sha256", "run_id",
                     "summary_fields", "eval_identity")
-            diff = [k for k in keep if json.dumps(selection.get(k), sort_keys=True) != json.dumps(stored.get(k), sort_keys=True)]
+            diff = [k for k in keep
+                    if json.dumps(selection.get(k), sort_keys=True) != json.dumps(stored.get(k), sort_keys=True)]
             if diff:
                 raise QATRefused("selection_differs", f"{sel_p}: recomputing gives different {diff}")
             sel_sha = Q.sha256_file(sel_p)
@@ -377,7 +386,8 @@ def clip_selection(candidates: list[tuple[str, str]], *, rules: dict, rules_sha2
                      "rejected": rejected, "selection": selection})
     clips = sorted(r["meta"].get("clip_norm") for r in runs)
     if clips != sorted(cr["candidates"]):
-        raise QATRefused("clip_values", f"the candidates ran clip {clips}; the pilot compares exactly {cr['candidates']}")
+        raise QATRefused("clip_values", f"the candidates ran clip {clips}; the pilot compares exactly "
+                                        f"{cr['candidates']}")
     a, b = runs
     ra, rb = _recipe(a["meta"]), _recipe(b["meta"])
     diff = sorted(k for k in set(ra) | set(rb)
@@ -390,8 +400,9 @@ def clip_selection(candidates: list[tuple[str, str]], *, rules: dict, rules_sha2
     fa, fb = step_fingerprints(a["rec"]), step_fingerprints(b["rec"])
     if fa != fb or len(fa) != a["meta"]["total_steps"]:
         first = next((i + 1 for i, (x, y) in enumerate(zip(fa, fb)) if x != y), None)
+        total = a["meta"]["total_steps"]
         raise QATRefused("batch_order_differs", f"the batch fingerprints differ (first at step {first}) or are "
-                                                f"incomplete ({len(fa)} vs {len(fb)} of {a['meta']['total_steps']} steps)")
+                                                f"incomplete ({len(fa)} vs {len(fb)} of {total} steps)")
     live_runs = [r for r in runs if not r["rejected"]]
     if len(live_runs) == 2:
         sa, sb = (r["selection"] for r in live_runs)
@@ -409,7 +420,8 @@ def clip_selection(candidates: list[tuple[str, str]], *, rules: dict, rules_sha2
         if r["rejected"]:
             trace.append(f"clip {c}: {REJECTED_NONFINITE}")
         else:
-            trace.append(f"clip {c}: e{r['selection']['winner']['epoch']:02d} value {r['selection']['winner']['value']!r}")
+            rw = r["selection"]["winner"]
+            trace.append(f"clip {c}: e{rw['epoch']:02d} value {rw['value']!r}")
     live = [c for c in (lo, hi) if not by_clip[c]["rejected"]]
     if not live:
         raise QATRefused("no_winner", NO_WINNER)
@@ -438,11 +450,13 @@ def clip_selection(candidates: list[tuple[str, str]], *, rules: dict, rules_sha2
                 "value": None if r["rejected"] else sel["winner"]["value"], **clip_stats(r["rec"])}
     return {"format": CLIP_SELECTION_FORMAT, "rules_sha256": rules_sha256, "stage": cr["stage"], "seed": cr["seed"],
             "winner": summary(win), "loser": {**summary(loser), "retained": True},
-            "tie": tie, "difference": None if d is None else {"fraction": f"{d.numerator}/{d.denominator}", "float": float(d)},
+            "tie": tie,
+            "difference": None if d is None else {"fraction": f"{d.numerator}/{d.denominator}", "float": float(d)},
             "band": f"{band(rules).numerator}/{band(rules).denominator}",
             "host_differences": {k: [_get(a["meta"], k), _get(b["meta"], k)] for k in CLIP_EXEMPT_KEYS},
             "smoke_inputs": smoke, "rule_trace": trace}
 
 
-__all__ = ["CLIP_EXEMPT_KEYS", "EPOCH_SELECTION_FORMAT", "EVAL_IDENTITY_KEYS", "NO_WINNER", "REJECTED_NONFINITE", "RULES_PATH", "band",
+__all__ = ["CLIP_EXEMPT_KEYS", "EPOCH_SELECTION_FORMAT", "EVAL_IDENTITY_KEYS", "NO_WINNER", "REJECTED_NONFINITE",
+           "RULES_PATH", "band",
            "clip_selection", "epoch_selection", "exact_tie", "load_rules", "run_rejected", "step_fingerprints"]

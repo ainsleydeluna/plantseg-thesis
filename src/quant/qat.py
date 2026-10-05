@@ -546,6 +546,8 @@ def read_clip_selection(path, expect_sha256: str | None) -> dict:
     if not expect_sha256 or not _HEX64.match(expect_sha256):
         _refuse("clip_selection_sha256_format", "--clip-selection-sha256 must be 64 lowercase hex characters")
     p = Path(path)
+    if "test" in str(p.resolve()).lower():
+        _refuse("clip_selection_test_path", f"--clip-selection {p} contains 'test'")
     if not p.is_file():
         _refuse("clip_selection_missing", f"{p} is not a file")
     raw = p.read_bytes()
@@ -966,7 +968,8 @@ def run_qat(*, stage: str, mode: str, model: nn.Module, source_meta: dict, out_d
                 clipped = bool(math.isfinite(gn) and gn > clip_norm)
                 ep["clipped"] += int(clipped)
                 if math.isfinite(gn):
-                    ep["max_pre_clip_norm"] = gn if ep["max_pre_clip_norm"] is None else max(ep["max_pre_clip_norm"], gn)
+                    prev = ep["max_pre_clip_norm"]
+                    ep["max_pre_clip_norm"] = gn if prev is None else max(prev, gn)
                 if nonfinite_since is None and (not math.isfinite(loss_v) or not math.isfinite(gn)):
                     ok, fails = state_predicate(prepared.state_dict(), kinds, never)
                     if not ok:
