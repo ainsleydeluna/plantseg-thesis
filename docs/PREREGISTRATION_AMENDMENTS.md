@@ -34,6 +34,7 @@ leaves the original readable beside it.
 | AM-17b | — (extends AM-17 items 7, 9 and 1(f)) | Channel-wise decomposition arms and teacher–student gap robustness (DRAFT) |
 | AM-8a | — (extends AM-8) | Repeat rule for failed runs |
 | AM-4a | — (extends AM-4 and AM-1) | QAT recipe pins, converted-model selection and the U4 clipping pilot (DRAFT) |
+| AM-7a | — (extends AM-7; applies to AM-2, AM-16 items 2–3, AM-17 item 9, AM-8a) | Divergence handling for sweep candidates; pre-committed clipping value (DRAFT) |
 
 Code that implements an amendment is named by lane (L-AM…). Until that lane lands, the committed runtime
 keeps its pre-amendment behaviour and its launch gates.
@@ -84,6 +85,8 @@ and 44 enter only AM-8 and the per-seed table.
 Code: lane L-AM3.
 
 [Extended by DL-39: E6-KD uses E3's one-epoch ramp per term and retains the supervised CE + Dice loss.]
+
+[Extended by DL-51: E6-KD's projection starts from E3's trained projection.pt weights paired with the E3 checkpoint; FP32, never fake-quantized.]
 
 ## AM-4 — QAT (resolves M9)
 
@@ -138,7 +141,8 @@ A NaN or divergence in any E2/E3 run stops the stage. One clipping rule is then 
 the FP32 stages are rerun.
 
 **Divergence** means either of:
-- (a) any non-finite loss or gradient norm;
+- (a) any non-finite loss or gradient norm; [K8-1 (R8-1, DL-04): at iteration 1 a non-finite total loss or gradient
+  norm is a step-1 check failure (STOP; AM-7a item 4), not (a); (a) applies from iteration 2.]
 - (b) after the distillation ramp, the 100-iteration mean total loss exceeding 5× its running minimum.
 
 Both are read from per-iteration telemetry. (b) becomes an in-trainer abort in lane L-AM7.
@@ -151,6 +155,10 @@ is null (run directory verified 2026-09-23 against its `SHA256SUMS.txt`). E1, E2
 **Withdrawn.** The 8,000-iteration E2/E3 clip pilot (`DISTILLATION_GRAD_CLIP_NORM`).
 
 Code: lane L-AM7. The E2/E3 real-run launcher still requires `--grad-clip-norm` until that lane lands.
+
+[Interpretation recorded 2026-09-30 (DL-04): the (b) window and its running minimum are both computed over post-ramp iterations only; (a)'s gradient norm is the pre-clip norm over all trainable parameters; scope for arms A/F/G and E6-KD as in DL-04. Code: lane L-KD-HARDEN, which folds L-AM7.]
+
+[Extended by AM-7a: a non-default sweep candidate's divergence stops that run only; the clipping value, if ever adopted, is pre-committed (AM-7a item 5).]
 
 ## AM-8 — Seed stability (descriptive; reported at the single TEST evaluation)
 
@@ -266,7 +274,8 @@ item is descriptive and changes no primary analysis.
    run; E3 at 80,000 against E2 at 160,000 (the Chapter 3 sanity check); and E2 and E3 at 80,000
    against E1 at 160,000 (a longer-trained-baseline control; the runs are not compute-matched, since a
    KD iteration also runs the teacher forward pass and E1 at 160,000 stays cheaper than E2 or E3 at
-   80,000; the measured GPU-hours make the gap visible).
+   80,000; the measured GPU-hours make the gap visible). [DL-44: GPU-hours = the run's wall-clock from
+   run_meta to run_end, validations included, from the run's own telemetry.]
 4. Every student is also scored under the upstream PlantSeg protocol at the single TEST evaluation
    (descriptive), as the teacher is under AM-13. E1 is also scored this way on VAL, on the existing
    seed-42 best checkpoint, before the first KD run.
@@ -463,7 +472,10 @@ teacher's score existed; items 1(f) and 11 were proposed after it and are descri
         superseded); image padding with the 8-bit ImageNet mean (124, 116, 104), mask padding 255.
     (c) CWD feature term at 32×32 (student C5, 160→320 projection, against MSCAN-B Stage 3, 320
         channels), CWD logit-map and Logit-KD terms at the native 64×64 (stride-8) logit grid, validity
-        mask downsampled by nearest neighbour to each grid.
+        mask downsampled by nearest neighbour to each grid. [Corrected 2026-09-30 (DL-48): the validity
+        mask is downsampled by an all-valid min-pool (a cell is valid only if every pixel it covers is
+        valid), the rule the code has implemented since B32 and the contract records; "nearest neighbour"
+        was a misdescription. No rule or output changes.]
     (d) Per-image mIoU-C for the E1 vs E6 robustness test (STATISTICAL_ANALYSIS_CONTRACT :106-114;
         src/stats/robustness.py): per-image disease-only mIoU in each of the 15 cells (five
         corruptions × severities 1–3), averaged over severities within each corruption and then with
@@ -495,19 +507,35 @@ teacher's score existed; items 1(f) and 11 were proposed after it and are descri
 11. SegNeXt-L descriptive arm (recorded after the teacher of record's R3 score and before any
     SegNeXt-L, KD or TEST result; motivated by the measured 2.26 pp VAL gap; descriptive only).
     (a) Fine-tune: SegNeXt-L (MSCAN-L), configuration identical to the MSCAN-B configuration of record
-        in every field (initialisation policy, scheduler, pipeline, 116 classes, seed 42, 40,000
-        iterations, batch 16, evaluator, readiness rules R1–R4 and checkpoint selection as in item
-        1(a)) except the architecture fields of the upstream L configuration: depths [3, 5, 27, 3],
-        embed_dims [64, 128, 320, 512], drop_path_rate 0.3, LightHamHead channels = ham_channels =
-        1,024, and the matching L initialisation checkpoint (segnext_mscan-l_1x16_512x512_adamw_160k_ade20k_20230209_172055-19b14b63.pth (ADE20K full model, matching the B configuration's full-model initialisation), sha256 [sha256 recorded before L launch]). Any other
-        difference is recorded before launch. Hardware: A40 at batch 16 after a memory preflight (the
-        ADE20K L fine-tune is recorded at 43.3 GB); if the preflight fails at batch 16, the arm is not
-        run at a smaller batch — an 80 GB card may be used for this fine-tune only, recorded; DL-17
-        (student runs on A40) is unaffected. Launch: after this amendment is committed; may run in
-        parallel with B66; never on the critical path.
-    (b) Go/no-go for the KD arm (VAL only, descriptive): E2-L, E3-L and E7-L run only if L's best VAL
-        all-class mIoU exceeds 0.38576993346214294 (the teacher of record). Otherwise L is reported as
-        a teacher-strength note and no L-teacher KD is run.
+        (configs/teacher/segnext_mscan-b_1xb16-adamw-40k_plantseg116-512x512.py) in every field —
+        initialisation policy (ADE20K full-model checkpoint via load_from, classifier-only
+        re-initialisation to 116 classes), M2/M3 transforms, optimizer, warm-up and horizon-corrected
+        schedule, seed 42, 40,000 iterations, batch 16, M4 NMF policy, M11 isolation, M12 best-VAL
+        checkpoint selection, readiness rules R1–R4 — except the architecture fields inherited from the
+        upstream MSCAN-L ADE20K base configuration: depths [3, 5, 27, 3], drop_path_rate 0.3,
+        LightHamHead channels = ham_channels = 1,024 (embed_dims [64, 128, 320, 512] are identical to
+        B's), and the matching initialisation checkpoint
+        segnext_mscan-l_1x16_512x512_adamw_160k_ade20k_20230209_172055-19b14b63.pth (ADE20K full model,
+        50.99 mIoU; sha256 recorded on first download, as for B). The configuration diff against the B
+        file is measured and recorded before launch; any other difference is recorded before launch.
+        Hardware: the fine-tune's peak memory at batch 16 is projected at 49.6 GiB from a measurement
+        that reproduces the B fine-tune's measured A40 peak within 0.26%, so it does not fit an A40; it
+        runs at batch 16 on an NVIDIA A100 PCIe 80GB (Secure Cloud), and the first-iteration peak is
+        recorded as the measurement. The batch size is never reduced. DL-17 (student runs on A40) is
+        unaffected; teacher hardware is not an inferential invariant. Launch: only after adviser
+        approval of AM-17 and the audited lane plan (DL-32), on its own pod; never on the critical
+        path; cut first (item 9).
+    (b) Go/no-go for the KD arm (VAL only, descriptive). L's readiness score is computed by the same
+        path that produced the teacher of record's R3 value: scripts/teacher_readiness_r3.py with the L
+        configuration, the thesis evaluator at the L-lane pin, CPU, batch 1, M4-V stream seeded 42, VAL
+        manifest 35f6788e…. Before L's score is read, the teacher of record is re-scored by that path on
+        the same host and must lie within 1e-4 of 0.38576993346214294 (the difference is recorded);
+        otherwise the evaluator is diagnosed first. E2-L, E3-L and E7-L run only if L's score exceeds
+        0.38576993346214294; if L's score lies within 1e-4 of that constant, the comparison against the
+        same-host re-score of the teacher of record decides and the case is disclosed. L's in-training
+        best VAL (the M12 selection record) is recorded, not used. This rule is recorded in the decision
+        log before any L score exists. Otherwise L is reported as a teacher-strength note and no
+        L-teacher KD is run.
     (c) Arm: E2-L and E3-L at seed 42, 80,000 iterations, E1's recipe, λ and α inherited from the
         seed-42 sweeps of record (tuned for the B teacher; disclosed, may understate L); the same
         160→320 projection (MSCAN-L Stage 3 is 320 channels), 64×64 logit grid, ramp, hardware rule
@@ -614,6 +642,8 @@ and its repeat is ever made: the repeat replaces the failed run. A run that fini
 fault is never repeated. The same rule governs a repeat of the DL-17 evaluator pair or its comparator.
 Non-finite losses in E2/E3 follow AM-7/DL-04, not this rule.
 
+[K8-1 (R8-1, DL-04): a non-finite total loss or gradient norm at iteration 1 is a step-1 check failure, not AM-7 (a): the run stops for investigation and this rule governs any repeat (AM-7a item 4).]
+
 ## AM-4a — QAT recipe pins, converted-model selection and the U4 clipping pilot (extends AM-4 and AM-1)
 
 Dated 2026-09-28. Status: DRAFT (group-recorded; adviser approval pending). State at amendment: no E4–E7 run or result exists. Source: the 28 Sep 2026 lane-spec audit (docs/lane_specs/part2.md, lane 6). No test is added to the Holm family.
@@ -626,13 +656,99 @@ Dated 2026-09-28. Status: DRAFT (group-recorded; adviser approval pending). Stat
 
 Code: L-AM4, L-AM1q.
 
+## AM-7a — Divergence handling for sweep candidates and the pre-committed clipping value (extends AM-7; applies to AM-2, AM-16 items 2 and 3, AM-17 item 9 and AM-8a)
+
+Dated 2026-09-30. Status: DRAFT (group-recorded; adviser approval requested). In force for every
+abort that occurs after this amendment is committed; the adviser's later approval or rejection does
+not reclassify an abort that has already occurred (a rejection restores AM-7's full consequence for
+later aborts only). State at amendment: E1 seeds 42, 43 and 44 (VAL only) and the SegNeXt-B teacher
+of record exist. No E2, E3, A, F, G or other KD run has started, no KD result exists, and TEST has
+not been evaluated. No test is added to the Holm family; no test, threshold, family member, grid,
+tie rule, seed or teacher changes.
+
+1. Definitions. A divergence is AM-7 (a) or (b) under the reading of record (DL-04), determined
+   solely by the trainer's own abort, which writes a `run_abort` record naming the rule, the
+   iteration and its diagnostics (input finiteness, teacher-output finiteness, parameter finiteness,
+   the offending values). A run that finished (has a `run_end` record) is never reclassified as
+   diverged, and a `run_abort` record is never reinterpreted after the fact. An abort whose
+   diagnostics show non-finite input tensors or non-finite teacher outputs is a fault, not a
+   divergence: the run stops, is investigated, and any repeat follows AM-8a. A run stopped by any
+   other means (operator, pod, host) has no divergence status: it is an unfinished run under AM-17
+   item 9, and the reason for the stop is recorded. Default candidates: λ = 1 (AM-17 items 6 and 9)
+   and α = 50 (Chapter 3 p. 98; Shu et al., 2021). Non-default candidates: λ ∈ {0.25, 0.5, 2, 4}
+   (AM-2) and α ∈ {25, 100} (AM-16 item 2).
+
+2. Non-default candidate. A divergence in a non-default candidate stops that run only. The run is
+   recorded as diverged; its `run_abort` record, telemetry and partial checkpoints are kept and
+   hashed as durable evidence. It is excluded from its selection; the other candidates continue; no
+   clipping rule is adopted and nothing is rerun. The diverged value is never relaunched — not with
+   clipping, not with the same seed, not at another seed (AM-8a: a divergence is not an
+   infrastructure fault) — and the grid is not extended. The selection runs as soon as every
+   non-diverged candidate has finished, among the finished candidates, under the unchanged AM-2 or
+   AM-16 item 2 rule (value, band, tie-break). The diverged run's directory is a required input of
+   the selection: the selection refuses to run without it, verifies the abort record, and writes the
+   exclusion into the selection file. Boundary: a winner at a registered grid end is flagged as
+   before; a winner that is the smallest or largest finished value with a diverged neighbour is
+   flagged "edge of the finished set (AM-7a)". The candidate table (AM-17 item 6) lists the
+   diverged value as "diverged (AM-7a)" with the rule, the iteration, its partial VAL scores up to
+   the abort and its GPU-hours; partial scores never enter a selection.
+
+3. Default candidates and other runs. AM-7's full consequence — the stage stops, one clipping rule
+   is adopted for E1, E2 and E3, the FP32 stages are rerun — applies unchanged to a divergence in a
+   default candidate (λ = 1; α = 50 at the selected λ) and in E2 or E3 at seeds 43 and 44 (the
+   recipe of record at another seed). When it fires, the fate of the other candidates is
+   immaterial: every E2/E3 run is rerun under the adopted rule. Arms A, F and G and the
+   160,000-iteration controls (AM-16 item 3) follow DL-04's arm rule: the run stops, is recorded as
+   diverged, is not rerun and triggers no clipping rule; the 160,000-iteration schedule is a
+   descriptive control whose divergence is evidence about the longer schedule, not about the
+   80,000-iteration recipe of record.
+
+4. Edge cases. If only λ = 1 finished, λ = 1 is selected as the sole finished candidate
+   (n_finished = 1) and the whole sweep is reported; if only α = 50 finished, α = 50 is selected the
+   same way. Each is a completed sweep, not AM-16 item 2's cut (a cut means the runs did not happen
+   and no selection file exists). A diverged default candidate follows item 3. A run that stops for
+   any other reason — an iteration-1 check failure, a non-finite VAL score, a fault — is refused by
+   the selection as a STOP for investigation: it is never excluded and never a shortfall, and AM-8a
+   governs any repeat.
+
+5. Pre-committed clipping value. If AM-7's full consequence fires, no clipping value is chosen at
+   that time. max_norm = the smallest value in the 1-2-5 series that is ≥ 1.5 × the maximum
+   pre-clipping gradient norm logged over all iterations of E1 seeds 43 and 44 (DL-03 telemetry;
+   seed 42 logged none, so AM-7's "otherwise" branch stands), computed by scripts/am7_clip_value.py
+   from the archived telemetry and recorded here before the first non-default candidate launches:
+   maximum logged norm 37.523643493652344 (seed 44, iteration 28110); 1.5× = 56.2854652404785160;
+   max_norm = 100 (reports/derived/am7_clip_value.json, sha256
+   38267e82f562c6ed640b76e5bf7c770403923fde35e32947477661af7bb4e7ed). Applied identically to the full
+   trainable set of every rerun FP32 stage, the arms and the controls.
+
+6. Relation to AM-17 item 9. Item 9's shortfall selection (fewer than five λ candidates finished at
+   the TEST freeze) is unchanged and distinct: it concerns runs not finished at the freeze and is
+   executed at the freeze; this item concerns diverged runs and is executed when the non-diverged
+   candidates finish. Both can apply to one sweep; each excluded candidate is disclosed under the
+   item that excluded it.
+
+7. Rationale. A divergence at a non-default weight under the shared unclipped recipe is evidence
+   against that weight; the default candidates, launched first (AM-17 item 9), remain the alarm for
+   the recipe itself. Without this item one diverged non-default candidate would force E1 (three
+   seeds), E2 and E3 to be retrained with clipping, and the clipping value would be chosen after
+   the divergence.
+
+8. Disclosure. Chapter 4 lists every diverged run (value, rule, iteration, diagnostics), states
+   that each affected selection ran among the finished candidates, and states the pre-committed
+   clipping value and whether it was applied.
+
+Code: lane L-KD-HARDEN — Phase A: `run_abort` diagnostics (`cause`, `input_finite`,
+`teacher_finite`, `params_finite`); Phase B: src/training/sweep_select.py, scripts/select_lambda.py,
+scripts/select_alpha.py, configs/sweep_rules.json, configs/distill.py, scripts/smoke_select_sweeps.py.
+Local: scripts/am7_clip_value.py (reads the E1 seed-43/44 telemetry; no pod).
+
 ## Status of PREREGISTRATION §10 items after these amendments
 
 | Item | Status |
 |---|---|
 | U1 | mechanism completed by AM-2; the value is still selected by the sweep |
 | U2 | AM-3 |
-| U3 | withdrawn by AM-7 |
+| U3 | withdrawn by AM-7 (AM-7a pre-commits the fallback value) |
 | U4 | unchanged (AM-4 fixes only its future scoring) [Superseded by AM-4a item 3: the pilot is two full E5 seed-42 runs, clipped at 1.0 and 5.0, scored on converted-model VAL mIoU.] |
 | U5 | AM-1 |
 | U6 | unchanged |

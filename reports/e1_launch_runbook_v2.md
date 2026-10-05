@@ -436,3 +436,20 @@ real run refuses. `check-run-meta` then requires `max_iters` == `poly_horizon` =
 forgot `--iterations` (a valid-looking duplicate 80k run) is caught. Budget: about 47 h at the seed-42 rate
 (1.0567 s/iter), 40 validations, 80 `last.pt` writes. No resume (AGENTS.md): an interruption forfeits the
 attempt, up to about 47 h; relaunch from 9.5 into a fresh `<D>`.
+
+**9.11 Pod operations: B66 lessons [added 2026-10-05, CP-007e].** For every pod session:
+- Deploy: in "Set overrides", confirm Volume Disk 20 GB and mount path `/workspace` before deploying; the first step on the pod
+  is a `df`-based mount check (`/proc/mounts` escapes `#` as `\043`).
+- Before any upload, check the pod row for a host Alert. `/workspace` is an MFS network mount, so scheduled network
+  maintenance can stall I/O mid-run: redeploy instead.
+- `runpodctl`: one file at a time (three parallel sends all crashed on relay resets); an 860 MB payload took about
+  22–27 min at about 0.5 MB/s.
+- A launch GO whose hold is ticking goes before another pod's uploads.
+- Type the balance as a number (a placeholder slipped through three times).
+- Host tooling: `MSYS_NO_PATHCONV=1` when building stdin in Git Bash; `PYTHONIOENCODING=utf-8` for the extractor.
+- A "Deploy when available" subscription can auto-deploy an extra pod later; cancel any subscription made by mistake.
+- Compute hold deadlines from the logged chain end, not the planned estimate, and keep usage headroom (no other
+  sessions) near the chain end.
+
+**9.12 Pod retention (CK-4) [added 2026-10-05, CP-007e].** Before any pod is terminated, the session lists every
+artifact on its volume with sha256, and the orchestrator confirms the keep list.

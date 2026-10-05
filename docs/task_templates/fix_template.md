@@ -13,11 +13,12 @@ plus automatic workflow orchestration) for read-only sessions such as Phase A au
 write, commit, push or run pods, with a read-only verification workflow requested before each commit; ~~high
 for routine, localized or mechanical sessions; max is not used~~ routine, localized or mechanical sessions
 also use xhigh, which is the floor; max for sessions that write or refactor experiment-critical code (KD
-losses and term switches L-AM17B-FG, the QAT/PTQ recipe L-AM4/L-AM1q, metrics and statistics, splits,
+losses and term switches L-AM17B-FG, the QAT/PTQ recipe L-AM4/L-AM1q/L-AM10 **[UPDATED 2026-10-05 — CP-007e]**, metrics and statistics, splits,
 preprocessing and labels, seeds, checkpoints and provenance); medium and low are never used
 **[UPDATED 2026-09-28 — CP-007d]**. Ultracode is never on in a session that
 writes, commits, pushes or runs pods (no mid-run input, no plan approval in Auto mode, concurrent agents); a
-read-only session switches to xhigh before its first approved write. The ultracode keyword trigger is off,
+read-only session switches to xhigh before its first approved write, or to max when that write is
+experiment-critical code **[UPDATED 2026-10-05 — CP-007e]**. The ultracode keyword trigger is off,
 so the keyword in a prompt never starts a workflow; a plain-language request ("run a read-only verification
 workflow") is the opt-in for a single workflow. Claude Code does not enforce read-only on workflow agents;
 the session's permission prompts do, and they stay on in write sessions. The "Switch models when a message

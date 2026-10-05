@@ -2,6 +2,7 @@ __pycache__/
 *.pyc
 .venv/
 .env
+.claude/settings.local.json
 /data/
 # model checkpoints — teacher init .pth (~100MB+, ADE20K SegNeXt-B) and trained ckpts; never commit
 weights/

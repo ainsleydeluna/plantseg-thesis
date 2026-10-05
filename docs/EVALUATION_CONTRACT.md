@@ -579,6 +579,13 @@ tracked, so it is no longer dirty or untracked and has been removed from the all
 remains an observation of repository state, never methodology: any future non-governed dirty path must
 be enumerated verbatim in `dirty_allowlisted[]` to permit `official`.
 
+**[UPDATED 2026-10-05 — CP-007e]** The data session's six evaluator artifacts (2026-10-03, afd2d33: the four upstream-protocol runs
+and the two AM-17b item 2(c) re-scores) recorded two `dirty_allowlisted` paths: `docs/reference/reference.pdf`
+(DL-26; the sanctioned exception, modified and unstaged by standing policy) and the untracked
+`.claude/settings.local.json` (Claude Code's local settings file). From this commit `.gitignore` lists
+`.claude/settings.local.json`, so later artifacts no longer list it; the six keep their recorded
+paths.
+
 **Rejected — requiring a pristine clone or detached worktree.** Cleanest in principle, but it conflicts
 with the standing `reference.pdf` policy and adds RunPod friction for no methodological gain; the scoped
 rule above already guarantees that no code, config, or governing contract differs from `repo_commit`.
@@ -676,7 +683,7 @@ are proven to use the exact same evaluation implementation.
 (AM-3) score VAL on the **converted INT8** (QNNPACK) model on CPU, not on the fake-quant model.
 Code: lanes L-AM4 and L-AM3.
 
-### 7.4 Exploratory arms A, F, G; declared checkpoint stage; teacher checkpoint identity [added 2026-10-02, lane L-CKPT-GUARD]
+### 7.4 Exploratory arms A, F, G; declared checkpoint stage; teacher checkpoint identity [added 2026-10-02, lane L-CKPT-GUARD; DL-52, DL-59]
 
 **Arms.** The evaluator scores the exploratory arms A (both channel-wise terms; AM-17 item 7), F (feature-map term only; AM-17b item 1(a)) and G (logit-map term only; AM-17b item 1(b)) as stages of their own: `scripts/evaluate_model.py --stage A|F|G` with `--model-role student --precision fp32 --checkpoint <the arm's best checkpoint>`. In `src/eval/stage_artifacts.py` they are `fp32_checkpoint` stages and, with the teacher, members of `DESCRIPTIVE_ONLY_STAGES`. An arm's checkpoint passes the same projection-free check as E3 (`assert_clean_student_state`: no training-only CWD projection key in `model_state_dict`). §5.3's `run.stage` admits A, F and G; `schema_version` (`plantseg-eval/1.0.0`) and `artifact_schema_version` (`plantseg-eval-artifact/1.2.0`) are unchanged: the field gains values and no field changes.
 
@@ -791,6 +798,10 @@ arithmetic is unchanged. A run is refused, before anything is written, on `model
 `per_image.jsonl` is byte-equal, the NPZ key sets are equal and every array has the same dtype, shape and
 raw bytes, and `summary.json` is equal as canonical JSON (sorted keys, compact separators, no non-finite
 values) after removing only `run.run_id` and `run.timestamp_utc`. NPZ container bytes need not match.
+
+**[UPDATED 2026-10-05 — CP-007e]** `summary.json` also carries `worktree_state_sha256` and `dirty_allowlisted` (§7.1), so the two
+runs of a re-scoring pair run on one unchanged checkout: any checkout change between them fails (d). In the
+data session (2026-10-03) the worktree probe gave one state in all eight runs (`4bbc54ef…`).
 
 **(e) DL-17.** `scripts/compare_eval_artifacts.py` is the DL-17 identity and PASS implementation (exit 0
 PASS, 1 FAIL, 2 validity violation; 3 is never a verdict: a usage error or `--help`, the same directory
