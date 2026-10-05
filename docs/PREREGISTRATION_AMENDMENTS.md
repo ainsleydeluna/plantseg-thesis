@@ -36,6 +36,7 @@ leaves the original readable beside it.
 | AM-4a | — (extends AM-4 and AM-1) | QAT recipe pins, converted-model selection and the U4 clipping pilot (DRAFT) |
 | AM-7a | — (extends AM-7; applies to AM-2, AM-16 items 2–3, AM-17 item 9, AM-8a) | Divergence handling for sweep candidates; pre-committed clipping value (DRAFT) |
 | AM-18 | — (extends AM-1, AM-7a item 3, AM-8a, AM-13, AM-17 items 1, 9 and 11, AM-17b items 2–4; for KD targets only, conditionally supersedes contract M4's non-adoption of multi-draw averaging) | Teacher diagnostics R0, descriptive arm teachers (R1, R2; B-avg not executable) and KD arms (E3-X, W, conditional K8), go rule, pre-set defect rules (D1, D4), dataset duplicates (DRAFT) |
+| AM-19 | — (amends AM-7, AM-7a items 1–4 and 6, AM-8a and AM-17 item 9; extends AM-1, AM-2, AM-7a item 5, AM-8, AM-16 items 1–3 and its cut rule, AM-17 items 4 and 6, AM-17b item 3 and AM-18 items 1, 2(c), 3, 6 and 7) | Schedule T/R, sweep decision dates, stops, repeats and cut records, card and launch order, runs with a cut or diverged parent, seed-43/44 divergence, seed stability with a missing run, AM-7's consequence under a schedule (DRAFT) |
 
 Code that implements an amendment is named by lane (L-AM…). Until that lane lands, the committed runtime
 keeps its pre-amendment behaviour and its launch gates.
@@ -66,6 +67,8 @@ and 44 enter only AM-8 and the per-seed table.
 
 [Extended by AM-18: the teacher of record is still trained once. Arm teachers R1 and R2 are separate descriptive fine-tunes; B-avg, an average of the record run's checkpoints, is not executable (only iteration 24,000 was retained).]
 
+[AM-19 item 4: E4–E7 are made at a seed only when their parent is complete. Item 6(f): seeds 43 and 44 still enter no test.]
+
 ## AM-2 — λ_logit sweep (resolves M6; extends PREREGISTRATION §7 and U1)
 
 - **Grid and budget.** {0.25, 0.5, 1, 2, 4} at seed 42, with the **full 80,000 iterations per candidate**.
@@ -75,6 +78,8 @@ and 44 enter only AM-8 and the per-seed table.
   **smallest λ**.
 - **Boundary.** A boundary winner is reported as such; the grid is not extended.
 - **Reuse.** The winning run **is E2 seed 42**, and λ is reused unchanged in E3.
+
+[Extended by AM-19 item 2: a λ decision date; a non-default candidate that is neither finished nor diverged by its end is cut, and λ is selected among the finished candidates.]
 
 ## AM-3 — E6-KD trigger and weights (resolves M7; supersedes PREREGISTRATION §6 and U2)
 
@@ -163,6 +168,8 @@ Code: lane L-AM7. The E2/E3 real-run launcher still requires `--grad-clip-norm` 
 
 [Extended by AM-7a: a non-default sweep candidate's divergence stops that run only; the clipping value, if ever adopted, is pre-committed (AM-7a item 5).]
 
+[Amended by AM-19 item 5: a divergence of E2 or E3 at seed 43 or 44 follows the arm rule. Item 7: when the full consequence fires, the schedule's dates do not move and a rerun sweep keeps its decision date.]
+
 ## AM-8 — Seed stability (descriptive; reported at the single TEST evaluation)
 
 Stable iff all three hold:
@@ -178,6 +185,8 @@ The eight-test Holm family and the E3-vs-E6 non-inferiority check use the seed-4
 [Extended by AM-16: the table includes E2 vs E3 at all three seeds.]
 
 [Extended by AM-17 item 4 and AM-8a.]
+
+[Extended by AM-19 item 6: each condition holds, fails or is not evaluable; conditions 1 and 3 fail at any existing seed that violates them; the verdict keeps two values and "not stable" carries its reason; an E3 divergence at seed 43 or 44 makes it not stable.]
 
 ## AM-9 — Withdrawn before recording
 
@@ -256,7 +265,7 @@ E3's α_CWD on VAL before any E3 result, and E6 and E7 inherit it through the E3
 item is descriptive and changes no primary analysis.
 
 1. E2 seeds 43 and 44 are planned runs, with λ fixed from the seed-42 sweep. The per-seed effect table
-   (AM-8) includes E2 vs E3 at all three seeds.
+   (AM-8) includes E2 vs E3 at all three seeds. [AM-19 item 6(e): missing cells of the per-seed table; an E2 divergence at seed 43 or 44 is reported with the verdict.]
 2. α_CWD sweep: after λ is fixed, E3 runs at seed 42 with α_CWD in {25, 50, 100} (β and T unchanged),
    80,000 iterations each. The highest best-checkpoint VAL all-class mIoU wins. The tie band is the
    larger of 0.5 pp and √2·s, where s is the sample standard deviation (n = 3) of E1's best-checkpoint
@@ -271,7 +280,7 @@ item is descriptive and changes no primary analysis.
    Chapter 3 p. 98, which fixes α_CWD = 50 and treats the sweep as a stability check: selection on VAL is
    pre-registered here before any E3 run, otherwise mirrors the λ_logit protocol (pp. 104–105) and never
    consults TEST. The winning run is E3 seed 42, and its α is used for E3 seeds 43 and 44. All three
-   runs are reported as the Chapter 3 neighborhood-stability check.
+   runs are reported as the Chapter 3 neighborhood-stability check. [Extended by AM-19 item 2: an α decision date, with selection among the finished candidates. The α = 50 fallback applies when no non-default candidate was launched by then.]
 3. Longer-schedule controls: E1, E2 and E3 at seed 42 with 160,000 iterations each (poly schedule over
    the 160,000-iteration horizon; VAL every 4,000 iterations; best-checkpoint selection as in the
    80,000-iteration runs; E2/E3 use the selected λ and α). Descriptive, on clean TEST mIoU, with each
@@ -280,7 +289,7 @@ item is descriptive and changes no primary analysis.
    against E1 at 160,000 (a longer-trained-baseline control; the runs are not compute-matched, since a
    KD iteration also runs the teacher forward pass and E1 at 160,000 stays cheaper than E2 or E3 at
    80,000; the measured GPU-hours make the gap visible). [DL-44: GPU-hours = the run's wall-clock from
-   run_meta to run_end, validations included, from the run's own telemetry.]
+   run_meta to run_end, validations included, from the run's own telemetry.] [AM-19 item 7(d): a control run under a superseded recipe is reported as superseded.]
 4. Every student is also scored under the upstream PlantSeg protocol at the single TEST evaluation
    (descriptive), as the teacher is under AM-13. E1 is also scored this way on VAL, on the existing
    seed-42 best checkpoint, before the first KD run.
@@ -314,6 +323,8 @@ cut. If item 2 is cut, E3 runs at α_CWD = 50 (the Chapter 3 default) and no swe
 is recorded here before the affected run.
 
 [Schedule extended by AM-17 item 9 and AM-17b item 3: overall cut order, launch order, λ shortfall rule and freeze dates.]
+
+[AM-19 item 3: cuts are made only by the listed rules and are recorded in the decision log on the day they are made. Item 2(g): the α sweep is settled at its decision date, the one exception to this order.]
 
 ## AM-17 — Teacher record, effect-size rules, CWD-only arm, strata, TEST schedule and a descriptive SegNeXt-L arm (extends AM-1, AM-8, AM-13, AM-14 and AM-16)
 
@@ -406,7 +417,7 @@ teacher's score existed; items 1(f) and 11 were proposed after it and are descri
 4. Seeds (restates AM-8). Seed 42 is the only inferential seed. Seeds 43 and 44 are reported per seed
    as descriptive tables of the eight contrasts, pairing same-seed runs; E4 and E7 are recomputed per
    seed, E5 and E6 fine-tuned per seed (Chapter 3 p. 122). Images are never pooled across seeds into
-   one test.
+   one test. [Extended by AM-19 item 6.]
 
 5. Readings of the AM-16 item 3 controls (fixed before those runs exist; descriptive; dataset-level
    all-class mIoU on TEST as AM-16 specifies, and on VAL where available; none changes which
@@ -425,7 +436,7 @@ teacher's score existed; items 1(f) and 11 were proposed after it and are descri
    the selected E2 for E1 vs E2, and E3 with α = 50 (the pre-registered default) in place of the
    selected E3 for E2 vs E3; where a default is the selected run the two coincide. The selected runs
    remain the runs of record whatever these comparisons show. No other candidate is evaluated on
-   TEST.
+   TEST. [AM-19 item 2(e): a candidate cut at a decision date is tabulated with its reason and partial scores. Under this item it is never scored on TEST.]
 
 7. CWD-only arm (descriptive; identifies the pixel-wise Logit-KD term). One run, seed 42, 80,000
    iterations: E1's recipe plus both channel-wise terms (feature map at 32×32 through the bias-free
@@ -465,7 +476,7 @@ teacher's score existed; items 1(f) and 11 were proposed after it and are descri
    evaluated once and is never split or repeated; the analysis does not change. Before the first KD
    run, the full metrics → Holm → BCa pipeline is dress-rehearsed on the E1 seed-42/43/44 VAL outputs.
    The TEST-day manifest (checkpoint hashes, evaluator commit, corrupted-TEST cache checksums,
-   calibration index) is drafted by 2026-11-30 and frozen at the freeze date. [Extended by AM-18 item 7(b): every AM-18 arm is cut before the arms listed here.]
+   calibration index) is drafted by 2026-11-30 and frozen at the freeze date. [Extended by AM-18 item 7(b): every AM-18 arm is cut before the arms listed here.] [Amended by AM-19: the dates of item 1 (Schedule T or R, whichever is in force), with the E6 and manifest-draft dates as planning dates; a late never-cut run moves the freeze day by day (item 1(d)); card and launch order (item 1(e)); the shortfall at the decision dates (item 2); stops and cut records (item 3); "complete and hashed" (Definitions); E4 and E7 with their parent (item 4); the manifest's TEST-derived entries (item 1(c)); rerun E1 at seeds 43/44 at the end of the cut order (item 7(b)).]
 
 10. Record corrections (no rule change).
     (a) Counted splits 5,367 / 846 / 1,561 (TRAIN and VAL counted in the CP-007 fact-check; TEST from
@@ -628,7 +639,7 @@ threshold, family member, teacher of record or run of record changes.
 3. Placement in AM-17 item 9. Cut order for runs not complete and hashed at the freeze, first to
    last: the SegNeXt-L arm (AM-17 item 11); G; F; A (AM-17 item 7); then AM-16's order; then E5 and
    E6 seeds 43/44; then E3 seeds 43/44. Item 2 of this amendment has no run to cut. Never-cut items
-   are unchanged. [Extended by AM-18 item 7(b).]
+   are unchanged. [Extended by AM-18 item 7(b).] [AM-19 item 1(c): "the freeze" in this cut rule is the original freeze date of the schedule in force. Item 7(b) adds the rerun E1 runs at seeds 43/44 at the end.]
 
 4. Arm freeze. AM-17 and AM-17b close the set of exploratory arms. Any later arm requires its own
    amendment before its launch and is cut before every arm listed here. [AM-18 registers arms under this rule (B-avg, R1, R2, W, conditional K8); they are cut first.]
@@ -650,6 +661,8 @@ Non-finite losses in E2/E3 follow AM-7/DL-04, not this rule.
 [K8-1 (R8-1, DL-04): a non-finite total loss or gradient norm at iteration 1 is a step-1 check failure, not AM-7 (a): the run stops for investigation and this rule governs any repeat (AM-7a item 4).]
 
 [Extended by AM-18's execution rules to the item 1 statistic scripts: a repeat also follows a script defect shown by a diff.]
+
+[Amended by AM-19 item 3(a): a run stopped by the operator, the pod or the host is repeated under this rule, and a non-divergence abort is repeated once.]
 
 ## AM-4a — QAT recipe pins, converted-model selection and the U4 clipping pilot (extends AM-4 and AM-1)
 
@@ -683,7 +696,7 @@ tie rule, seed or teacher changes.
    other means (operator, pod, host) has no divergence status: it is an unfinished run under AM-17
    item 9, and the reason for the stop is recorded. Default candidates: λ = 1 (AM-17 items 6 and 9)
    and α = 50 (Chapter 3 p. 98; Shu et al., 2021). Non-default candidates: λ ∈ {0.25, 0.5, 2, 4}
-   (AM-2) and α ∈ {25, 100} (AM-16 item 2).
+   (AM-2) and α ∈ {25, 100} (AM-16 item 2). [AM-19 items 2(c) and 3(a): a run stopped by any other means is repeated under AM-8a; a non-default candidate with no finished run at the end of its decision date is cut there.]
 
 2. Non-default candidate. A divergence in a non-default candidate stops that run only. The run is
    recorded as diverged; its `run_abort` record, telemetry and partial checkpoints are kept and
@@ -698,7 +711,7 @@ tie rule, seed or teacher changes.
    before; a winner that is the smallest or largest finished value with a diverged neighbour is
    flagged "edge of the finished set (AM-7a)". The candidate table (AM-17 item 6) lists the
    diverged value as "diverged (AM-7a)" with the rule, the iteration, its partial VAL scores up to
-   the abort and its GPU-hours; partial scores never enter a selection.
+   the abort and its GPU-hours; partial scores never enter a selection. [AM-19 item 2: with a cut candidate, the selection runs after the end of the decision date.]
 
 3. Default candidates and other runs. AM-7's full consequence — the stage stops, one clipping rule
    is adopted for E1, E2 and E3, the FP32 stages are rerun — applies unchanged to a divergence in a
@@ -708,7 +721,7 @@ tie rule, seed or teacher changes.
    160,000-iteration controls (AM-16 item 3) follow DL-04's arm rule: the run stops, is recorded as
    diverged, is not rerun and triggers no clipping rule; the 160,000-iteration schedule is a
    descriptive control whose divergence is evidence about the longer schedule, not about the
-   80,000-iteration recipe of record. [AM-18 item 3(e): the AM-18 KD arms and the SegNeXt-L arm's KD runs follow this arm rule.]
+   80,000-iteration recipe of record. [AM-18 item 3(e): the AM-18 KD arms and the SegNeXt-L arm's KD runs follow this arm rule.] [Amended by AM-19 item 5: E2 and E3 at seeds 43 and 44 follow the arm rule. Item 7 fixes what the full consequence reruns under a schedule; "not rerun" applies within one recipe.]
 
 4. Edge cases. If only λ = 1 finished, λ = 1 is selected as the sole finished candidate
    (n_finished = 1) and the whole sweep is reported; if only α = 50 finished, α = 50 is selected the
@@ -716,7 +729,7 @@ tie rule, seed or teacher changes.
    and no selection file exists). A diverged default candidate follows item 3. A run that stops for
    any other reason — an iteration-1 check failure, a non-finite VAL score, a fault — is refused by
    the selection as a STOP for investigation: it is never excluded and never a shortfall, and AM-8a
-   governs any repeat.
+   governs any repeat. [Amended by AM-19 items 2(b)–(c) and 3(a): after the end of a decision date, a non-default candidate that is neither finished nor diverged is cut, whatever stopped it; a non-divergence abort is repeated once. The default candidate keeps this STOP.]
 
 5. Pre-committed clipping value. If AM-7's full consequence fires, no clipping value is chosen at
    that time. max_norm = the smallest value in the 1-2-5 series that is ≥ 1.5 × the maximum
@@ -726,13 +739,13 @@ tie rule, seed or teacher changes.
    maximum logged norm 37.523643493652344 (seed 44, iteration 28110); 1.5× = 56.2854652404785160;
    max_norm = 100 (reports/derived/am7_clip_value.json, sha256
    38267e82f562c6ed640b76e5bf7c770403923fde35e32947477661af7bb4e7ed). Applied identically to the full
-   trainable set of every rerun FP32 stage, the arms and the controls.
+   trainable set of every rerun FP32 stage, the arms and the controls. [AM-19 item 7(e): the rerun selections use this value as the recipe's clipping value.]
 
 6. Relation to AM-17 item 9. Item 9's shortfall selection (fewer than five λ candidates finished at
    the TEST freeze) is unchanged and distinct: it concerns runs not finished at the freeze and is
    executed at the freeze; this item concerns diverged runs and is executed when the non-diverged
    candidates finish. Both can apply to one sweep; each excluded candidate is disclosed under the
-   item that excluded it.
+   item that excluded it. [Amended by AM-19 item 2(g): "is unchanged" reads "is replaced by AM-19 item 2, for λ and α", and the references to the freeze read as the sweep's decision date.]
 
 7. Rationale. A divergence at a non-default weight under the shared unclipped recipe is evidence
    against that weight; the default candidates, launched first (AM-17 item 9), remain the alarm for
@@ -856,7 +869,7 @@ Execution rules for every statistic and gate below:
   the item 1(d) output, with the item 6 branches they select, are entered before the first KD run
   (the first real-mode training run of any distillation stage; smokes and the invariance harness
   are not runs). The first KD run does not launch before those entries exist. If F or
-  margin_dedup cannot be produced, no KD run launches and the adviser is informed.
+  margin_dedup cannot be produced, no KD run launches and the adviser is informed. [AM-19 item 2(h): the first KD run also waits for the sweep selection code of K2.]
 - Comparison. F is compared in integers: with N the pooled flip count and D = 28 · Σ_i |V_i|
   (item 1(a)), F < 0.03 means 100·N < 3·D, and F ≥ 0.10 means 10·N ≥ D. Every other threshold is
   compared on the float64 values written to the outputs, without rounding. margin_dedup is also
@@ -1020,7 +1033,7 @@ Execution rules for every statistic and gate below:
        R1 and R2 at their M12-selected checkpoint: VAL_X, with the item 1(b) VAL ECE (ECE_X), the
        item 1(b) TRAIN-crop profile and the item 1(a) TRAIN statistics (descriptive; item 6(a)
        uses the teacher of record's F only). An arm teacher that is complete and hashed at the
-       freeze is scored once at the TEST evaluation: clean, canvas protocol, descriptive.
+       freeze is scored once at the TEST evaluation: clean, canvas protocol, descriptive. [AM-19 item 1(c): the freeze is that of the schedule in force; "complete and hashed" reads as AM-19's "Complete" (Definitions).]
 
 3. KD arms. Descriptive; seed 42; launched after E3 seed 42's λ and α are selected. λ and α are
    inherited and disclosed, as in AM-17 item 11(c). Every KD arm of this item and of AM-17 item 11
@@ -1064,7 +1077,7 @@ Execution rules for every statistic and gate below:
        No test; not in the Holm family; never a parent of a run of record. E6 and E7 of record are
        built only from E3 (AM-15; AM-17 item 11(e)).
    (e) Divergence: the KD runs of this item and of AM-17 item 11 follow AM-7a item 3's arm rule
-       (DL-04: stop, record, no rerun, no clipping rule).
+       (DL-04: stop, record, no rerun, no clipping rule). [AM-19 item 2(g): where the α sweep is cut, its committed decision record stands in for the α selection. Item 7(d): "no rerun" in item 3(e) applies within one recipe; an arm run of a superseded recipe is reported as superseded, and its rerun is a cuttable run in its place in the cut order.]
 
 4. SegNeXt-L (AM-17 item 11) keeps its configuration, go rule 11(b), arm 11(c), reporting and the
    DL-32 gate exactly as item 11 stands when this amendment is committed. Any later change to
@@ -1124,7 +1137,7 @@ Execution rules for every statistic and gate below:
          It is adopted here, for KD targets only, in the W and K8 arms and under this correction,
          because M4 was locked on measurements of the ADE20K checkpoint, before the fine-tuned
          teacher existed. M4-T, M4-V and every evaluation score are unchanged.
-       - F is measured on the teacher of record only; B-avg, R1, R2 and L inherit the branch.
+       - F is measured on the teacher of record only; B-avg, R1, R2 and L inherit the branch. [AM-19 item 2(a): the decision dates do not move for the window or the correction; item 2 handles the shortfall. Item 7(c): if AM-7's full consequence fires, the item 1 and item 6 entries stand, labelled as computed on the superseded recipe, and are not recomputed.]
    (b) D4 rule on margin_dedup (item 1(d)):
        - margin_dedup > 0: recorded, no change.
        - margin_dedup ≤ 0: the R3 floor is not met on duplicate-free VAL. No KD run launches and
@@ -1150,7 +1163,7 @@ Execution rules for every statistic and gate below:
        An arm whose gates are met launches when a card is free that no run of record is waiting
        for; it is not stopped for one later. A launched arm run ends only by completion, divergence
        (item 2 or item 3(e)), a documented fault (AM-8a) or the freeze. An arm that is not launched
-       is recorded as cut, with the reason and the arm results known at that time.
+       is recorded as cut, with the reason and the arm results known at that time. [AM-19 item 1(e) extends this card rule to every cuttable run and sets the order in which waiting runs, R1, R2 and L included, take a free card; item 3(a) governs a stop that no rule names and a trainer abort that is not a divergence; item 3(b)'s arithmetic cut is an arm's "not launched" record.]
    (b) Cut order for runs not complete and hashed at the freeze (2026-12-18), first to last:
        1. R2 (teacher, E3-R2, E7-R2);
        2. W;
@@ -1162,7 +1175,7 @@ Execution rules for every statistic and gate below:
        An arm is cut from its first incomplete run onward; a finished arm teacher is still reported
        as a teacher-only result. Item 1 is never cut. Per AM-17b item 4, every arm of this
        amendment is cut before every arm listed there. Each cut is recorded in the decision log
-       before TEST (AM-17 item 9).
+       before TEST (AM-17 item 9). [AM-19 item 1(c): "the freeze (2026-12-18)" means the original freeze date of the schedule in force, and "complete and hashed" reads as AM-19's "Complete" (Definitions). Item 2(g): a non-default α candidate cut at its decision date is the one exception to this order. Item 3(c): each cut is entered in the decision log on the day it is made. Item 7(b): rerun E1 runs at seeds 43/44, if any, follow E3 seeds 43/44.]
    (c) Cost (INFERRED; each run's measured GPU-hours are reported):
        - item 1 runs locally on CPU, roughly 12 to 18 hours in all, from the lane specification's
          estimate of about one hour for a teacher VAL pass;
@@ -1279,6 +1292,482 @@ Code:
   arm's KD runs; arm stage registration and launch profiles);
 - the TEST-manifest lane (item 8(c); arm scoring and reporting at TEST);
 - L-AM17-L for SegNeXt-L.
+
+## AM-19 — Schedule, sweep decision dates, stops and cut records, runs with a cut or diverged parent, divergence at seeds 43/44, seed stability with a missing run, and AM-7's full consequence under a schedule (amends AM-7, AM-7a items 1–4 and 6, AM-8a and AM-17 item 9; extends AM-1, AM-2, AM-7a item 5, AM-8, AM-16 items 1–3 and its cut rule, AM-17 items 4 and 6, AM-17b item 3 and AM-18 items 1, 2(c), 3, 6 and 7)
+
+Dated 2026-10-02. Status: DRAFT (group-recorded; adviser approval requested).
+- Fixed text. From its commit this text is changed only by a new amendment, which lists the results
+  known when it is written. A reading this text leaves open is settled the same way. A dated
+  bracket note only points to a later record or records an outcome, such as an adviser's reply.
+- In force from the commit, for every event after it. Approval gates nothing here: no item waits
+  for it.
+- Approval means an explicit written reply from the adviser that approves this amendment, either
+  naming AM-19 or answering a request whose subject names AM-19 and which was sent after this
+  amendment's commit, recorded verbatim with its date in the decision log.
+  An acknowledgement ("noted") is not approval. A reply that approves without excepting an item
+  approves every item. An item that a reply excepts stays in force unless the reply says in words
+  that it rejects that item. A requested change needs a new amendment.
+- A rejection changes a rule only if it is recorded verbatim before the first KD run launches. The
+  fallbacks are then:
+  - item 1: Schedule R, with its two decision dates;
+  - item 2: AM-17 item 9's shortfall rule and AM-7a as written; their conflict with the never-cut
+    E3, E6 and E7 at seed 42 (item 2(a)) is settled by a new amendment before the first
+    non-default candidate launches;
+  - item 3: AM-16's place of record and AM-8a as written;
+  - item 4: AM-17 item 9's never-cut wording; its conflict with the cut order is settled by a new
+    amendment before the freeze;
+  - item 5: AM-7a item 3 for seeds 43 and 44 (AM-7's full consequence);
+  - item 6: AM-8 as written: "stable" only if all three conditions hold;
+  - item 7: nothing is pre-set, and a new amendment is written before any rerun launches.
+  A rejection recorded later is entered verbatim and reported. It changes a rule only through a new
+  amendment, which lists the results known when it is written, and it never reopens what was
+  already decided: a selection made, a run stopped or cut, a divergence recorded, a verdict
+  reported.
+- Naming. "Schedule T" and "Schedule R" are the two schedules of item 1. They are unrelated to the
+  arm teachers R1 and R2 and to readiness rule R3 (AM-18's naming).
+
+State at amendment:
+- Committed before this amendment: AM-7a with its records (the DL-04 scope line and the DL-53
+  entry among them), the 2026-09-30 correction of AM-17 item 10(c), the 2026-09-28 replacement of
+  AM-17 items 11(a) and 11(b), and AM-18.
+- This amendment is committed before the first KD run. As AM-18 defines it, the first KD run is the
+  first real-mode training run of any distillation stage; smokes and the invariance harness are
+  not runs.
+- E1 seeds 42, 43 and 44 (VAL only) and the SegNeXt-B teacher of record exist.
+- No E2, E3, A, F, G, SegNeXt-L, arm-teacher or other KD run has started. No E6, E7, KD or TEST
+  result exists, and TEST has not been evaluated.
+- Already known: everything AM-18's State block lists (the teacher's VAL curve and per-class IoU,
+  its margin over E1 seed 42, E1's three VAL scores and their seed SD of 1.10 pp, B61's
+  measurements, issue #11's counts). Also known when this amendment is committed: E4 or E5 VAL
+  results: none; AM-18 item 1 outputs: none; the local data session's outputs outside AM-7a's
+  record, each with its decision-log entry: the upstream-protocol VAL scores of the teacher of
+  record (0.36319661140441895) and of E1 seed 42 (0.35182613134384155)
+  (DL-08, DL-27); the strata file
+  reports/strata/train_strata_v1.json (DL-63); the AM-17b item 2 re-scores and gap
+  records, reports/derived/gap_val_20261003T014324Z.json (DL-64); and the AM-17 item
+  1(f) table, reports/derived/perclass_gap_val_20261003T014403Z.json and .csv
+  (DL-64). No
+  item uses any of them.
+- On 2026-10-02 the adviser was asked whether the manuscript due 2026-11-17 must contain final TEST
+  results. Item 1(b) fixes how her answer selects the schedule. Her answer at the commit: none yet.
+- The dates of item 1 were set from run-time estimates on record and from AM-18 item 6(a)'s window,
+  not from any score: about 29–33 h for 80,000 KD iterations (AM-17b item 1(f)), and about 5,040
+  steps plus 15 converted-model VAL passes for a QAT run (docs/lane_specs/part2.md, lane 6 and the
+  order table).
+No test is added to the Holm family. No test, threshold, family member, grid, tie rule, seed, recipe
+or teacher of record changes. Items 1–4 and 6 fix how registered rules are carried out and reported.
+Items 5 and 7 each change a consequence of AM-7. Item 8 names the five gates or conditions that this
+amendment narrows.
+
+Definitions used below:
+- Dates. A date ends at 24:00 Asia/Manila of that day (16:00:00 UTC). A timestamp meets a date when
+  it is earlier than that instant. A run's timestamps are those its trainer writes, in Unix time
+  (wall_clock in the run_meta, train, VAL and run_abort rows; wall_clock_end in the run_end
+  record). A record's timestamp is the time its commit reaches the remote.
+- Launched. A run is launched when its run_meta row with mode "real" exists; that row's wall_clock
+  is its launch time. A launch log (a committed file) receives one entry per launch of a sweep
+  candidate, with the stage, value, seed and run directory, pushed before the launch.
+- Complete. A run is complete at a date when its trainer's end-of-run record meets that date: the
+  run_end record with its checks passed for a distillation run; for an E1 run, whose trainer
+  writes no run_end record, the VAL row of its final iteration, with its log's RESULT line reading
+  PASS; the last epoch's record for a QAT run; the selection record (M12) for a teacher fine-tune;
+  the output with its agreement check for the ARM latency measurement. Listing a run's sha256
+  values in its durable evidence folder is a duty, done within 24 hours of its end. A late or
+  missing listing is a deviation and never changes whether a run is complete, cut or in TEST.
+  Where AM-17 item 9, AM-17b item 3 or AM-18 say "complete and hashed", this definition applies.
+- Derived artifacts. The PTQ of a complete parent, and the conversions and the AM-4a item 2
+  selection of a complete QAT run, are not runs. They are made from inputs the manifest lists,
+  before the TEST unlock (item 4(c)). Those of E6 seed 42 are made before the freeze, because the
+  AM-3 trigger needs them.
+- Ready. A run is ready when every gate that an amendment, a decision-log entry or a lane
+  specification in force places before its launch is met, its code is merged and pinned, and its
+  inputs are on the pod. A run that has been cut is not ready and is never launched.
+- Card. One GPU that meets the run's registered hardware rule.
+- Default and non-default candidates: as AM-7a items 1 and 3 (λ = 1; α = 50 at the selected λ).
+- K2: the K-lane that holds the sweep selection code and the launch profiles.
+
+1. Schedule (amends AM-17 item 9: its dates, the force of its E6 and manifest-draft dates, its rule
+   for a late never-cut run and its manifest clause).
+   (a) Two schedules are fixed here.
+       Schedule T:
+       - λ decision date (item 2): 2026-10-19;
+       - α decision date (item 2): 2026-10-22, or later under item 2(a);
+       - E6 seed 42 converted-model VAL score (AM-3): 2026-10-26;
+       - TEST-day manifest drafted: 2026-10-30;
+       - TEST manifest freeze: 2026-11-03;
+       - single TEST evaluation, no later than: 2026-11-08.
+       Schedule R:
+       - TEST-day manifest drafted: 2026-11-30;
+       - λ decision date: 2026-12-07;
+       - α decision date: 2026-12-10, or later under item 2(a);
+       - E6 seed 42 converted-model VAL score: 2026-12-14;
+       - TEST manifest freeze: 2026-12-18;
+       - single TEST evaluation, no later than: 2026-12-21.
+       Schedule R keeps AM-17 item 9's dates and adds the two decision dates. Schedule T moves the
+       dates so that the manuscript due 2026-11-17 can contain final TEST results. The E6 date and
+       the manifest-draft date are planning dates: missing one changes nothing by itself.
+   (b) Schedule T is in force from this amendment's commit. Schedule R replaces it only if, before
+       the first KD run launches, one of two entries is committed to the decision log:
+       - a written reply from the adviser, dated 2026-10-02 or later and recorded verbatim, that
+         says in words that the manuscript due 2026-11-17 does not need final TEST results; a
+         reply that accepts a complete draft with VAL results in their place is such a reply; or
+       - a rejection of item 1 (header).
+       Schedule R is then in force from the day of that entry. An acknowledgement, or a reply that
+       is conditional or does not answer the question, changes nothing. A reply received before the
+       first KD run launches is entered before that launch, and the launch checklist records that
+       none is waiting. Schedule R is never replaced by Schedule T. Once the first KD run has
+       launched, the schedule in force changes only by a new amendment, which lists the results
+       known when it is written; no such amendment changes the decision date of a sweep whose first
+       candidate has launched.
+   (c) The dated deadlines in AM-17 item 9 (2026-11-30, 2026-12-14, 2026-12-18, 2026-12-21), in
+       AM-17b item 3 and in AM-18 items 2(c) and 7 mean the dates of the schedule in force. In
+       every cut rule "the freeze" is the original freeze date. In "no run is added to TEST after
+       the freeze" and "frozen at the freeze date" it is the freeze as moved under (d). The
+       following are unchanged under both schedules:
+       - the cut order (item 2(g) states its one exception);
+       - the never-cut list, as item 4 reads it;
+       - the launch order (λ = 1 and α = 50 first);
+       - the dress rehearsal before the first KD run;
+       - no run is added to TEST after the freeze;
+       - a single TEST evaluation, never split or repeated;
+       - the MVA 2027 clause and its date (2026-12-28).
+       Amended, to apply M11 to the manifest: TEST is not enumerated, counted or inspected before
+       the TEST unlock, so a manifest entry that can only be computed from TEST files (the
+       corrupted-TEST cache checksums, unless they are already on record) is drafted and frozen as
+       its generator's pin (script, commit, library versions, parameters). Its values are computed
+       in the TEST session, before any model is scored, and are recorded then.
+   (d) A never-cut run that is not complete at the freeze date moves the freeze: the freeze is then
+       the first later date at whose end every never-cut run is complete, and the TEST date moves by
+       the same number of days. Nobody estimates the move. The delay and the runs that cause it are
+       entered in the decision log on the original freeze date, the adviser is informed the same
+       day, and the new freeze is entered on the day it occurs. The cut list is fixed at the
+       original freeze date: a cuttable run that is not complete on that date is cut, whether or
+       not the freeze moves. The analysis does not change. Under Schedule T, if the TEST date moves
+       past 2026-11-17, the manuscript is submitted without final TEST results and says so.
+   (e) Cards and launch order.
+       - Waiting runs take a free card in this order: (1) a sweep's default candidate, or its
+         repeat; (2) the other candidates of that sweep in the launch order below, a repeat taking
+         its value's place; (3) the other never-cut runs, seed 42 first, in stage order; (4)
+         cuttable runs in the reverse of the cut order, subject to their dependencies, and within
+         one place of that order seed 43 before seed 44.
+       - Launch order within a sweep: λ = 1, 0.5, 2, 0.25, 4, and α = 50, 25, 100 (the default
+         first, as AM-17 item 9 requires; then the nearest values, the smaller one first). A
+         non-default candidate has no gate beyond its sweep's own (for λ, the AM-7a item 5 value on
+         record; for α, the AM-16 item 2 band entry): once its sweep's default has launched, it is
+         ready.
+       - The candidates of a sweep launch together: each non-default candidate launches on its own
+         card within 6 hours of its sweep's default. One that does not is entered in the decision
+         log that day, with the provider's dated evidence that no card was available and the VAL
+         rows of the sweep written by then. A card held by a cuttable run is not a reason: that
+         case is reported as a deviation.
+       - A ready run is launched on the first card these rules give it. A launched run is never
+         stopped to give its card to another run.
+       This extends AM-18 item 7(a)'s card rule to every cuttable run.
+
+2. Sweep decision dates (amends AM-17 item 9's shortfall rule and AM-7a items 1, 2, 4 and 6;
+   extends AM-2 and AM-16 item 2).
+   (a) Reason and dates. E3 seed 42 is trained at the selected λ, and E6 and E7 seed 42 are built
+       from it. All three are never cut, and all must be complete at the freeze. AM-17 item 9's
+       shortfall rule selects λ at the freeze, which leaves no time to train them and contradicts
+       the same item's date for E6 seed 42's VAL score. The same holds for α: AM-16's α = 50
+       fallback, applied at the freeze, leaves no time for E6 and E7, and AM-16 item 2 has no rule
+       for a sweep that is only partly finished. Each sweep therefore has a decision date (item
+       1(a)). The λ decision date is a calendar date. The α decision date is the later of its
+       calendar date and the third day after the day the λ selection file is committed, so a late
+       λ selection does not by itself cut the α sweep. Neither date moves for any other reason: not
+       when a sweep starts late, not when AM-18 item 6(a)'s window or correction delays or slows
+       the runs, and not when a default candidate is waited for.
+   (b) Status at the decision date. Each candidate's status is read from its own telemetry, from
+       the rows whose timestamps meet the decision date. Later rows are kept, and for a non-default
+       candidate they change nothing. A non-default candidate is:
+       - finished, if its run_end record with its checks passed meets the date and the run passes
+         every format, recipe and consistency check of the selection code. A finished status is
+         final: no later fault report, repeat or missing file changes it, its score of record is
+         the best VAL score in its run_end record, and it is never repeated to change a selection.
+         If the selected run's checkpoint is lost, an AM-8a repeat restores the checkpoint and the
+         selection is not rerun;
+       - diverged, if a valid AM-7a run_abort record for a student divergence meets the date;
+       - otherwise cut at the decision date, with its reason: still running; never launched;
+         stopped with no finished repeat; another abort (a step-1 failure, a non-finite VAL score, a
+         non-finite input or teacher output); a failed check, or a refusal by the selection's
+         checks (the refusal code is the reason); or finished or aborted after the end of the
+         date. A valid divergence record written after the end of the date does not change the
+         status and is still listed under AM-7a item 8.
+       One exception keeps a stop from removing a candidate. A non-default candidate is "on course"
+       if its last row's timestamp, plus its remaining iterations times its median iter_seconds,
+       plus its remaining validations times its largest val_seconds, meets the date. If a stop that
+       is not the trainer's own record ends a candidate that was on course, it is not cut: its
+       repeat (item 3(a)) is waited for as a default candidate is, once. If that repeat is stopped
+       too, the candidate is cut. The repeat's VAL rows are reported beside the stopped run's.
+       A candidate still running at the end of the date is stopped. Because the status comes from
+       the timestamps, stopping it late, or letting it finish, changes nothing.
+   (c) Before the decision date, a candidate ends only by finishing, by its own abort (AM-7a item
+       1), or by a stop that item 3(a) governs. For a grid value with no finished directory, the
+       status of record is that of its latest repeat, and every earlier directory is kept and
+       listed. For a non-default candidate, the cut of (b) replaces AM-7a item 4's STOP once the
+       decision date has ended; the stop is still investigated and reported. In AM-7a item 1, a run
+       "stopped by any other means" is handled by this item and item 3(a), not by AM-17 item 9. In
+       AM-7a item 2, the selection runs "as soon as every non-diverged candidate has finished" or,
+       with a cut candidate, after the end of the decision date.
+   (d) The default candidate is never stopped, and no time limit applies to it. If it has not
+       finished at the decision date, the selection waits for it, the statuses of (b) stay as they
+       were at the decision date, and item 1(d) governs any delay. Its divergence follows AM-7a
+       item 3 and item 7 below. Its other stops follow item 3(a) and keep AM-7a item 4's STOP.
+   (e) The selection then runs among the finished candidates:
+       - by the unchanged AM-2 rule for λ, or the AM-16 item 2 rule for α, with AM-7a's exclusions;
+       - if only the default finished, it is selected as the sole finished candidate (AM-7a item 4);
+       - a winner that is the smallest finished value while a cut or diverged value is smaller, or
+         the largest finished value while a cut or diverged value is larger, is flagged "edge of
+         the finished set", naming for each such value the rule (AM-7a or AM-19) that removed it;
+       - the candidate table (AM-17 item 6) lists each cut candidate as "cut at the decision date
+         (AM-19)", with its reason, its last iteration, its VAL score at every validation completed
+         before the end of the date, its GPU-hours, and the selected candidate's VAL scores at the
+         same validations;
+       - partial scores never enter a selection (AM-7a item 2);
+       - the shortfall is disclosed with the selection.
+       A selection with a cut candidate never runs before the end of the decision date.
+   (f) A sweep whose candidates have all finished or diverged before its decision date is selected
+       as before (AM-7a item 2), at any time; the decision date does not affect it.
+   (g) Relation to the registered rules.
+       - This item replaces AM-17 item 9's shortfall selection at the freeze for λ, and gives α the
+         same rule. In AM-7a item 6, "is unchanged" reads "is replaced by AM-19 item 2, for λ and
+         α", and the references to the freeze ("at the TEST freeze", "not finished at the freeze",
+         "executed at the freeze") read as the sweep's decision date.
+       - The cut order ranks runs at the freeze. A decision-date cut is outside it, and it is the
+         one exception to that order: a non-default α candidate can be cut at its decision date
+         while runs that the order cuts earlier are still running. In AM-16's order, "the α sweep"
+         is therefore settled at its decision date and not at the freeze. This is disclosed.
+       - AM-16's α = 50 fallback keeps its meaning (AM-7a item 4): if no non-default α candidate
+         was launched before the end of the α decision date, the sweep is cut, E3 seed 42 is the
+         α = 50 run, and no selection file is written. The decision record of (h) states the cut.
+         Where AM-17 item 7, AM-17b item 1(f), AM-18 items 3 and 7(a) or a launcher refer to the α
+         selection or the α winner, that committed record stands in for it, and run_meta records
+         its sha256. If at least one non-default α candidate was launched, (e) applies and a
+         selection file is written.
+   (h) Decision record. A selection with a cut candidate, and an α sweep cut under (g), needs a
+       decision record. It is committed and pushed within 24 hours of the later of the end of the
+       decision date and the default's run_end, and its sha256 is entered in the decision log. The
+       record gives:
+       - the sweep, the schedule in force with its decision-log entry, and the decision date;
+       - for each grid value, its status (finished, diverged, cut) and, for a cut, the reason; the
+         default's entry may read "running (item 2(d))";
+       - for each grid value, every run directory in launch order, with its launch time, its last
+         iteration before the end of the date, the sha256 of its run_meta and telemetry, for a
+         finished run also of its best.json and best checkpoint, and the sha256 of the AM-8a report
+         that precedes each repeat;
+       - "never launched" for a value with no run directory.
+       The selection does not trust the record. It derives every status again from the run
+       directories under (b), the default's when it runs, and it refuses:
+       - if a derived status differs from the record's, or a hash differs;
+       - if the record is not committed, its sha256 is not in the decision log, or the decision
+         date has not ended;
+       - if a launch-log entry has no directory in the record, or a directory has no launch-log
+         entry;
+       - if a directory that is not the first of its value has no preceding report, or an earlier
+         directory of a value ended in a run_end record or a valid divergence record.
+       Without a record it refuses a shortfall as now (exit 3). It writes the cut candidates and
+       the record's sha256 into the selection file. A cut non-default candidate whose last row is
+       more than 20 minutes before the end of the date (or twice its largest val_seconds, if that
+       is longer), with no report and no repeat, is marked "stopped early, unexplained", and
+       Chapter 4 reports it as a deviation. These checks make the record reproducible from the run
+       directories; they do not detect a fabricated telemetry file or pod clock, so the launch
+       checklist records each pod's clock offset. This replaces DL-53's rule that the AM-17 item 9
+       shortfall selection is implemented only in the TEST-manifest lane against a committed
+       freeze record. The code is merged and pinned before the first KD run, which does not launch
+       without it.
+
+3. Stops, repeats, cut records and the TEST unlock (amends AM-8a; extends AM-16's cut rule, AM-17
+   item 9 and AM-18 item 7).
+   (a) Stops and repeats.
+       - The operator stops a launched run only under a written rule: a sweep candidate at the end
+         of its decision date (item 2(b)), a run cut at the freeze, AM-7's stage stop (AM-7a item
+         3; item 7), or a rule of AM-18 item 7(a).
+       - A run that stops in any other way (operator, pod, host) is repeated under AM-8a from the
+         first iteration, in a new run directory, on the first card item 1(e) gives it. The report
+         that AM-8a requires before the repeat states who or what stopped the run, and the VAL rows
+         written by then by the run and by the other runs of its sweep, or by its comparator. A
+         stop made by the operator outside those rules is reported as a deviation.
+       - A run that ends in a trainer abort that is not a student divergence (a step-1 failure, a
+         non-finite VAL score, a non-finite input or teacher output), or with a failed check, is
+         repeated once in the same way, whatever the investigation finds. If the repeat ends the
+         same way, the run is recorded as "aborted (rule, cause)" and is not repeated again: a
+         non-default candidate is cut, a default candidate is a STOP that a new amendment settles,
+         and a seed-43/44 run's table cell reads "aborted (rule, cause)".
+       - A run whose trainer has no divergence rule (a QAT run, an E1 run, the SegNeXt-L fine-tune)
+         and whose logged loss or score becomes non-finite is recorded and reported, and is
+         repeated only after a documented infrastructure fault (AM-8a). AM-18 item 2 keeps its own
+         rule for R1 and R2.
+       This amends AM-8a in two ways: its faults include every stop of the second point, and one
+       repeat follows the aborts of the third point without a documented infrastructure fault.
+   (b) Cuts. A run is cut only:
+       - at the original freeze date, if it is cuttable and not complete (AM-17 item 9; item 1(d)).
+         A cuttable run that was never launched is cut there, and its record states why it was not
+         launched (a gate not met, code not merged, no card) and since when;
+       - at a decision date (item 2);
+       - by a rule of AM-17 item 11, AM-17b or AM-18 that names its own cut, no-go or cancellation,
+         whose wording stands; or
+       - before its launch, by arithmetic. When a card first becomes available to a cuttable run,
+         its iterations times the median seconds per iteration of the most recently finished run
+         of its stage (the first KD pod's smoke if there is none) are compared with the time left
+         to the original freeze date. If they exceed it, the run is cut then and is not launched;
+         the operator has no choice, and the entry gives the arithmetic. A stage with no
+         measurement is not cut before its launch. For an AM-18 arm this entry is its "not
+         launched" record under AM-18 item 7(a).
+       No other cut exists. AM-16's "if the schedule slips" is carried out by these rules only.
+   (c) Records. Each cut is entered in the decision log on the day it is made, and always before
+       TEST, with the runs, the rule, the date, the reason and the results of record known at that
+       time. A cut run that had written VAL rows is reported, where its registered reading would
+       appear, with its VAL curve and its comparator's VAL scores at the same iterations. In AM-16,
+       "recorded here before the affected run" reads "recorded in the decision log on the day the
+       cut is made, and before TEST".
+   (d) TEST unlock and manifest. The unlock gate is unchanged for every lane that serves a run or a
+       quantity in TEST. A lane that serves only cut runs and cut quantities is entered in the
+       decision log as not required, with the cut entries it relies on, before the unlock. Every
+       run that is complete at the original freeze date is in the TEST manifest, and the manifest
+       validator refuses a manifest that omits one.
+
+4. Runs whose parent is cut or diverged (extends AM-1 and AM-17 item 9).
+   (a) At each seed, E4 and E5 are built from E1, and E6 and E7 from E3 (AM-1; AM-4a item 5; AM-15;
+       IMPLEMENTATION_CONTRACT (b) and the two "Source ckpt" rows of B4). When a parent is cut or
+       diverged, its descendants at that seed are not run. They are recorded as "not run: parent
+       cut" or "not run: parent diverged", and that entry is their record under item 3(c). This is
+       not a breach of the never-cut list.
+   (b) AM-17 item 9's never-cut "E4 and E7 for all seeds (calibration passes only)" reads "E4 at
+       every seed whose E1 run of record is complete, and E7 at every seed whose E3 run is
+       complete".
+   (c) E7 at seed 43 or 44 is made as soon as its E3 parent is complete. An E3 run at seed 43 or 44
+       is never cut because its E7 is missing. When that E3 run is complete at the freeze, E7 at
+       that seed is in TEST: the manifest lists it by its inputs (the E3 checkpoint's sha256, the
+       AM-10 list's sha256, the PTQ script's commit, the image digest and the qconfig). If its
+       artifact does not exist at the freeze, it is made after the freeze and before the TEST
+       unlock, in the pinned image on a TRAIN/VAL-only staged root, and its sha256 is appended to
+       the manifest before the unlock. The same holds for every derived artifact (Definitions).
+       These are the only entries added to the manifest after the freeze. A derived artifact
+       therefore never moves the freeze or the TEST date, and cannot be withheld.
+
+5. Divergence of E2 or E3 at seed 43 or 44 (amends AM-7a item 3 and, through it, AM-7).
+   (a) A divergence (AM-7a item 1) of E2 or E3 at seed 43 or 44 follows AM-7a item 3's arm rule
+       (DL-04):
+       - the run stops and is recorded as diverged, and its run_abort record, telemetry and partial
+         checkpoints are kept and hashed;
+       - it is never relaunched: not with clipping, not with the same seed, not at another seed
+         (AM-8a);
+       - it triggers no clipping rule and no rerun of any other run.
+       Its descendants follow item 4, and it is reported under item 6.
+   (b) A divergence of a default candidate at seed 42 (λ = 1; α = 50 at the selected λ) still has
+       AM-7's full consequence (AM-7a item 3; item 7 below). Nothing else in AM-7a item 3 changes.
+   (c) Reason. This item holds under either schedule.
+       - Seeds 43 and 44 enter only AM-8 and the per-seed tables (AM-1); no test uses them.
+       - They launch after the selections, when the seed-42 FP32 runs of record are complete under
+         one unclipped rule, or are being completed under it.
+       - AM-7's consequence would retrain E1 at three seeds, and E2 and E3, with clipping because of
+         a descriptive seed.
+       Item 6 reports the divergence instead: an E3 divergence makes the verdict "not stable", and
+       an E2 divergence is stated with the verdict.
+   (d) Chapters 4 and 5 state such a divergence as a limitation of the seed-42 results: the recipe
+       of record diverged at that seed, and no clipped rerun was made.
+
+6. Seed stability with a missing run (extends AM-8, AM-16 item 1 and AM-17 item 4).
+   (a) AM-8's criterion, its metric and its thresholds are unchanged. Conditions 1 and 2 use E1 and
+       E3; condition 3 uses E3 and E6. A run exists when it is complete at the original freeze
+       date; every such run is in TEST (item 3(d)).
+   (b) Each condition is reported as "holds", "fails" or "not evaluable":
+       - condition 1 fails if the E1 → E3 gain is zero or negative at any seed where both runs
+         exist; it holds if both runs exist at all three seeds and the gain is positive at each;
+         otherwise it is not evaluable;
+       - condition 2 is evaluated only if E1 and E3 exist at all three seeds; otherwise it is not
+         evaluable. No mean or standard deviation is taken over two seeds;
+       - condition 3 fails if the E3 → E6 drop is 2.0 pp or more at any seed where both runs exist;
+         it holds if both runs exist at all three seeds and the drop is below 2.0 pp at each;
+         otherwise it is not evaluable.
+   (c) A divergence of E3 at seed 43 or 44 is a seed-stability failure, whatever (b) gives.
+   (d) Verdict. It keeps AM-8's two values: "stable" only if all three conditions hold, and "not
+       stable" otherwise. A verdict of "not stable" is reported with its reason: "condition n fails
+       at seed k", "E3 diverged at seed k", or "not evaluable: runs missing", naming the runs and
+       why they are missing. A missing run never gives "stable", and it never softens the verdict.
+       Each condition is reported with its status and with its values at every seed where they
+       exist.
+   (e) The per-seed table lists every planned cell. A missing cell reads "cut (date, rule)",
+       "diverged (iteration, rule)", "aborted (rule, cause)", "not run: parent cut" or "not run:
+       parent diverged". A divergence of E2 at seed 43 or 44 is shown in the table and is stated in
+       the same sentence as the verdict wherever the verdict is reported. It does not change the
+       verdict, because AM-8's conditions do not use E2.
+   (f) Seeds 43 and 44 still enter no test (AM-1).
+
+7. AM-7's full consequence under a schedule (amends AM-7 and AM-7a item 3; extends AM-7a item 5 and
+   the cut order). If AM-7's full consequence fires (a default candidate at seed 42, or a run to
+   which a rejection restores it):
+   (a) The dates of the schedule in force do not move. Item 2 applies to a rerun sweep with its
+       decision date: a rerun non-default candidate launches only if its launch meets that date,
+       and after it only the sweep's default candidate is rerun.
+   (b) Never cut, as before: the seed-42 runs E1–E7 of the clipped recipe (item 1(d) governs a
+       delay). The U4 pilot is rerun on the clipped E1 seed 42, because it is E5 seed 42. The rerun
+       E1 runs at seeds 43 and 44 are cuttable; they are added at the end of the cut order, after
+       E3 seeds 43/44, and item 4 applies to their E4 and E5.
+   (c) Entries already recorded from the unclipped E1 runs stand, and are labelled as computed on
+       the superseded recipe: the AM-16 item 2 band and its s, the AM-16 item 4 score, AM-17 items
+       1(f) and 3 and the dress rehearsal of item 9, AM-17b item 2, R3, and AM-18 items 1 and 6
+       with their branches. None is recomputed; the rerun E1 values are reported beside them.
+   (d) Runs of the superseded unclipped recipe (finished, cut or diverged), their selection files,
+       and any arm or control run under that recipe are kept, are reported as superseded and enter
+       nothing. A rerun of such an arm or control is a cuttable run in its existing place in the
+       cut order. "Never relaunched" (item 5), "not rerun" (AM-7a item 3) and "no rerun" (AM-18
+       item 3(e)) apply within one recipe.
+   (e) The rerun sweeps are selected by the same rules, with the AM-7a item 5 value as the recipe's
+       clipping value, in new selection files. The code for it (the trainers' real-run gates, the
+       selection code's recipe check, the new selection-file paths and the launchers that read
+       them) is merged and pinned before the first rerun candidate launches.
+
+8. Rationale. Each item settles, before any run it governs exists, a case that the registered rules
+   leave open or cannot carry out:
+   - a λ shortfall selected at the freeze cannot be followed, and neither can an α fallback applied
+     there (item 2);
+   - a stop or a cut that an operator may choose after seeing partial scores is a selection, so
+     stops, repeats and cuts are tied to timestamps and written rules (items 2 and 3);
+   - the never-cut "E7 for all seeds" conflicts with E3 seeds 43/44 being cut last (item 4);
+   - AM-8 does not say what a missing seed means (item 6);
+   - AM-7 and AM-7a do not say what a rerun does to the dates, the band or the earlier runs
+     (item 7).
+   The manuscript due 2026-11-17 is the occasion for Schedule T, and only scope flexes to meet it:
+   no test, threshold or recipe is relaxed. Item 5's ground is 5(c), not the deadline. Five gates or
+   conditions are narrowed, and each is named here:
+   - AM-7a item 4's STOP becomes a cut for a non-default candidate once its decision date has
+     ended (item 2(b));
+   - the selection's refusal of a failed check becomes a cut in the same case (item 2(b));
+   - AM-8a's "only after a documented infrastructure fault" yields to one repeat after a
+     non-divergence abort (item 3(a));
+   - "complete and hashed" at the freeze becomes "complete", with the hashing a duty (Definitions);
+   - the TEST unlock no longer needs a lane that serves only cut runs (item 3(d)).
+   The decision dates and the launch order within a sweep were set before any KD run, from run-time
+   estimates and AM-18 item 6(a)'s window only.
+
+9. Disclosure. Chapter 4 states:
+   - the schedule in force, and why;
+   - each decision date's effect: the candidates cut, with their reasons and partial scores, and
+     the shortfall;
+   - every cut, with its rule, date and reason, and every run that was never launched;
+   - every stop that was not the trainer's own, every repeat and every deviation;
+   - the runs not run because a parent was cut or diverged;
+   - every divergence at seeds 43 and 44;
+   - the AM-8 verdict, with its reason and each condition's status and values;
+   - any move of the freeze, and whether item 7 applied.
+
+Code:
+- K2, in src/training/sweep_select.py, scripts/select_lambda.py, scripts/select_alpha.py and
+  configs/sweep_rules.json: the decision dates of both schedules and the launch order; the launch
+  log; the status at the decision date and the on-course test (item 2(b)); the decision record and
+  its checks (item 2(h)); repeats listed per grid value; the cut entries of the selection file; the
+  α-sweep cut of item 2(g), which the launchers that read α accept from the committed decision
+  record. Merged and pinned before the first KD run.
+- L-AM8: item 6's condition statuses, verdict, reason and table cells.
+- The TEST-manifest lane: the cut records, the parent rule, item 4(c)'s derived-artifact entries,
+  item 3(d)'s completeness check and the generator pins of item 1(c), in the manifest and its
+  validator.
+- Item 7(e), only if it fires.
+- Items 1(b), 1(d), 3(a)–(c), 5, 6(f) and 7(a)–(d) need no code. Item 5 uses the trainer's existing
+  abort. The pod runbook's launch checklist checks the decision log for a recorded divergence of
+  the same stage and seed, the launch order and launch log of item 1(e), a waiting adviser reply
+  (item 1(b)) and the pod's clock offset.
 
 ## Status of PREREGISTRATION §10 items after these amendments
 

@@ -453,3 +453,9 @@ attempt, up to about 47 h; relaunch from 9.5 into a fresh `<D>`.
 
 **9.12 Pod retention (CK-4) [added 2026-10-05, CP-007e].** Before any pod is terminated, the session lists every
 artifact on its volume with sha256, and the orchestrator confirms the keep list.
+
+**9.13 KD sweep launches and stops (AM-19) [added 2026-10-05, AM-19].**
+- Launch checklist: no adviser reply is waiting to be entered (item 1(b)); the launch-log entry is pushed; the pod's clock offset is recorded (more than 60 seconds is a STOP); the candidate's decision date and its place in the launch order are in the launch note.
+- Before launching E2 or E3 at seed 43/44: check the decision log for a recorded divergence of the same stage and seed.
+- After the end of a decision date: stop the sweep's unfinished non-default candidates, write the decision record, commit and push it within 24 hours. The record follows the telemetry, not the time of the stop.
+- A run that stops without a run_end or run_abort record, outside a written rule: write the AM-8a report, then relaunch it on the first card item 1(e) gives it.
