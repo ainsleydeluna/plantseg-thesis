@@ -338,8 +338,10 @@ def test_alpha_cli(tmp: Path) -> None:
         rc, log = run_cli(sa, ["--runs", *map(str, bad), *common, "--out", str(o)])
         check(f"alpha_cli_refuses_{label}", rc == code and not o.exists() and "Traceback" not in log,
               f"rc={rc} {log.strip()[-160:]}")
-    test_dir = tmp / "x" / "test"
-    trap = [make_run(test_dir, "E3", a, 0.4) for a in (25, 50, 100)]
+    # PL-4 (SL-1): three run paths under a directory named 'test' that are never created. The
+    # selection refuses them by path (refuse_test_path) before its is_dir() check, so nothing is
+    # created or written.
+    trap = [tmp / "x" / "test" / f"e3_s42_alpha{a}" for a in (25, 50, 100)]
     rc, log = run_cli(sa, ["--runs", *map(str, trap), *common, "--out", str(tmp / "a_t.json")])
     check("alpha_cli_refuses_test_path", rc == 2 and "test_path" in log)
 

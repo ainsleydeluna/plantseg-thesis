@@ -142,15 +142,13 @@ def call_main(argv: list[str]) -> tuple[int, str]:
 TMP = Path(tempfile.mkdtemp(prefix="kdh_gates_"))
 
 
-def staged_root(name: str = "staged", *, with_test: bool = False) -> Path:
+def staged_root(name: str = "staged") -> Path:
     root = TMP / name
     for split in ("train", "val"):
         for kind, ext in (("images", ".jpg"), ("annotations", ".png")):
             (root / kind / split).mkdir(parents=True, exist_ok=True)
             for i in range(2):
                 (root / kind / split / f"s{i}{ext}").touch()
-    if with_test:                                 # a synthetic TEST surface, for M11's refusal
-        (root / "images" / "test").mkdir(parents=True, exist_ok=True)
     return root
 
 
@@ -654,11 +652,21 @@ def test_gate_order() -> None:
     check("order_device_refusal_before_lambda_semantics", rc == 2 and "on CPU" in err
           and "[lambda_semantics]" not in err and COUNT["teacher"] == 0, err.strip()[-160:])
     saved_root = td.DATA["root"]
-    td.DATA["root"] = str(staged_root("staged_with_test", with_test=True))
+    m11_root = staged_root("staged_m11")
+    td.DATA["root"] = str(m11_root)
+    # PL-4 (SL-1): no TEST folder is created. os.path.lexists answers True for this root's first TEST
+    # surface only (isolation.TEST_SURFACES[0]) and asks the real function about every other path.
+    surface = os.path.join(str(m11_root), *isolation.TEST_SURFACES[0].split("/"))
+    real_lexists = os.path.lexists
+
+    def lexists(path, _real=real_lexists):
+        return True if os.fspath(path) == surface else _real(path)
+    os.path.lexists = lexists
     try:
         refused("order_m11_before_schedule", legal("g", max_iters=100), "test_split_present")
         refused("order_m11_before_clip", legal("g", grad_clip_norm=1.0), "test_split_present")
     finally:
+        os.path.lexists = real_lexists
         td.DATA["root"] = saved_root
 
 
