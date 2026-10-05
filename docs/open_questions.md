@@ -864,7 +864,8 @@ not a house style — which is why the fix is a narrowing rather than a rewrite.
 
 ---
 
-### D33 — `smoke_stats_bootstrap` pins the `STATISTICAL_ANALYSIS_CONTRACT.md` digest from `9267ffe` `[project; B64]`
+### D33 — ✅ RESOLVED (CP-007f, 2026-10-05; L-STATS-OFFICIAL 0c69abf, merged 6067e66) — `smoke_stats_bootstrap` pins the `STATISTICAL_ANALYSIS_CONTRACT.md` digest from `9267ffe` `[project; B64]`
+**[RESOLVED 2026-10-05 — CP-007f]** Re-pinned in 0c69abf (L-STATS-OFFICIAL, merged 6067e66) to `4d9585fa…`, the sha256 of the committed contract; smoke_stats_bootstrap passes 155/155, and KF-1 is closed. Every later contract change follows the re-pin rule in DL-25.
 D33 — smoke_stats_bootstrap pins the STATISTICAL_ANALYSIS_CONTRACT.md digest from 9267ffe. It has
 been stale since B59 (5ae4ec7), so its contract-digest check fails: a known failure (KF-1), not a
 regression. Resolution: re-pin once, in the lane that brings src/stats in line with the amended
@@ -875,6 +876,11 @@ every Phase B treats that single check as KF-1, and all other checks must pass.
   "repository-baseline contract digest matches the checkpoint") is `d53c87dc…`, the `9267ffe` contract.
   The contract at `5ae4ec7` hashes to `d8a7f121…`; run against that committed contract the smoke gives
   the same single `[FAIL]` and passes every other check. After B64 C3 it is 152/153.
+
+---
+
+### D34 — the frozen zero-variance test and the P3 test miss constant non-dyadic vectors `[project; L-STATS-OFFICIAL]`
+The frozen zero-variance test and the P3 test miss constant non-dyadic vectors (`tests.py:135-137`; `bootstrap.py:296-299`). This affects crafted fixtures only; the lane's boundary cases use literals or `nextafter` atoms (P35). Source: the L-STATS-OFFICIAL final report §9 (lane/stats-official 0c69abf, merged 6067e66).
 
 ---
 

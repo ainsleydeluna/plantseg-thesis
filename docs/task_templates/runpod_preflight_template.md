@@ -7,7 +7,7 @@ Legend: **[RO]** read-only / temp-only (no repo writes) · **[W]** writes a `rep
 throwaway pod — do NOT commit it).
 
 1. **[RO]** Clone + checkout: ~~`git clone <repo> && cd plantseg-thesis && git checkout master`~~ `git clone <repo> && cd plantseg-thesis && git checkout claude/keen-curie-u4a8ig` (the canonical branch; AGENTS.md:10) **[UPDATED 2026-09-23 — B64 C6]**
-2. **[RO]** Verify baseline: `git rev-parse HEAD` → **≥ `885523a`** (must include the B29 `PLANTSEG_DATA_ROOT` commit, i.e. ≥ `1576d7c`); ~~`git status -sb` clean~~ `git status -sb -- . ':(exclude)docs/reference/reference.pdf'` clean **[UPDATED 2026-09-23 — L-PROT P1]**.
+2. **[RO]** Verify baseline: `git rev-parse HEAD` → **≥ `885523a`** (must include the B29 `PLANTSEG_DATA_ROOT` commit, i.e. ≥ `1576d7c`); ~~`git status -sb` clean~~ ~~`git status -sb -- . ':(exclude)docs/reference/reference.pdf'` clean~~ **[UPDATED 2026-09-23 — L-PROT P1]** `git status -sb -- . ':(exclude)docs/reference/reference.pdf' ':(exclude,icase)*test*'` clean **[UPDATED 2026-10-05 — CP-007f]**.
 3. **[RO]** Env: `conda create -y -n plantseg python=3.11 && conda activate plantseg`
 4. **[RO]** Install E1 stack only: `pip install -r requirements-e1.txt`  (NOT `requirements.lock`; no mmcv/mmseg/teacher)
 5. **[RO]** Torch/CUDA: `python -c "import torch; print(torch.__version__, torch.cuda.is_available())"` → `2.1.0+cu121 True`

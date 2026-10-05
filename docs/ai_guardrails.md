@@ -10,7 +10,7 @@ protect `reference.pdf`, no wildcard staging, and no training or push without ap
 [AGENTS.md](../AGENTS.md) § "What counts as approval".
 
 ## 1. Git safety
-- Inspect first: ~~`git status -sb`~~ `git status -sb -- . ':(exclude)docs/reference/reference.pdf'` **[UPDATED 2026-09-23 — L-PROT P1]** and `git log --oneline -5` before any work.
+- Inspect first: ~~`git status -sb`~~ ~~`git status -sb -- . ':(exclude)docs/reference/reference.pdf'`~~ **[UPDATED 2026-09-23 — L-PROT P1]** `git status -sb -- . ':(exclude)docs/reference/reference.pdf' ':(exclude,icase)*test*'` **[UPDATED 2026-10-05 — CP-007f]** and `git log --oneline -5` before any work.
 - Expected state: this repository is **never globally clean** — `docs/reference/reference.pdf` stays modified by standing policy. Read the actual `git status` and work from it; never require a globally clean tree, and never clean, restore, or normalize unrelated pre-existing dirty paths. Do not assume local `master` matches the remote — verify only when the task depends on it. The gate that matters is **governed-path** cleanliness ([EVALUATION_CONTRACT.md](EVALUATION_CONTRACT.md) §7.1), never a whole-worktree requirement.
 - **Explicit-path staging only.** Never `git add -A`, `git add .`, or globs — stage exactly the files the task approved.
 - No commits or pushes until you have shown `git diff` + `git status` and confirmed only the approved paths changed.

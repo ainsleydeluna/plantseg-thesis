@@ -13,6 +13,7 @@ _Generated: 2026-06-30 · Branch: `master` · HEAD: `67f8737` · Dataset root: `
 - **Acquisition:** **Manual, user-provided.** Nothing was downloaded by any task (no automated fetch,
   no URL/SHA capture exists). This is recorded as the provenance of record unless a future step adds a
   verified download log. (Consistent with `reports/dataset_location_log.md`.)
+  **[UPDATED 2026-10-05 — CP-007f]** Closed for the archive: the local archive C:\Users\admin\plantseg_runs\b66_harness\inputs\zenodo_17719108\plantseg.zip has MD5 9358A66DFF88CDD15C4FE009763C40A3, equal to the MD5 Zenodo publishes for record 17719108 (v7), and SHA256 cbdfb273eb26fea93fda52bbfe4766cc31881feb3a1202b13e4d85e8a4c0bcfa, the archive's digest of record (measured by Ice on 2026-10-05; DL-80). The extracted folder stays linked to v7 by its counts (INFERRED); a member-level comparison is off-limits.
 - **Dataset identity / provenance (from `configs/data.py`):** DOI **`10.5281/zenodo.17719108`**,
   license **CC BY-NC 4.0**, source PlantSeg (Wei et al., 2026).
 
@@ -75,7 +76,7 @@ image/mask decode, no recount, no re-audit. The dataset is external and untracke
 - `configs/data.py` — root, `num_classes`, ignore index, background index, DOI/license.
 
 ## 9. Known / unresolved (non-blocking)
-- **Download provenance is manual** (no URL/SHA/date captured); accepted as-is.
+- **Download provenance is manual** (no URL/SHA/date captured); accepted as-is. **[UPDATED 2026-10-05 — CP-007f]** The archive's MD5 and SHA256 are now recorded (§1; DL-80).
 - **Absent-class support:** class 41 has no **test** mask support; class 68 has no **val** support (both in
   train) → eval must NaN/skip per-class IoU for those.
 - **12 cosmetic `Metadata.csv` `Index`** errors (0.15%); masks/COCO authoritative — no pipeline impact.

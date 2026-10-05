@@ -835,7 +835,7 @@ inferential comparator; it is the score compared with the published 42.05% (AM-1
 is partial (open): `src/stats/align.py` refuses to pair a canvas and an upstream artifact, but the
 frozen OFFICIAL and REHEARSAL ingest (`src/stats/ingest.py`) does not check the protocol, so the guard
 `dataset.preprocess_protocol == "core_preprocess/1.0.0"` belongs in the statistics entry points that
-consume TEST or VAL artifacts.
+consume TEST or VAL artifacts. **[UPDATED 2026-10-05 — CP-007f]** Done in the statistics driver (DL-71; STATS §10 note, 0c69abf).
 
 **(b) Geometry** (source-proven from the upstream configs; lane spec (a)):
 1. Rescale as mmcv `Resize(scale=(2048, 512), keep_ratio=True)`: s = min(2048 / long side, 512 / short
