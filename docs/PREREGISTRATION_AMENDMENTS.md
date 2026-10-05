@@ -35,6 +35,7 @@ leaves the original readable beside it.
 | AM-8a | — (extends AM-8) | Repeat rule for failed runs |
 | AM-4a | — (extends AM-4 and AM-1) | QAT recipe pins, converted-model selection and the U4 clipping pilot (DRAFT) |
 | AM-7a | — (extends AM-7; applies to AM-2, AM-16 items 2–3, AM-17 item 9, AM-8a) | Divergence handling for sweep candidates; pre-committed clipping value (DRAFT) |
+| AM-18 | — (extends AM-1, AM-7a item 3, AM-8a, AM-13, AM-17 items 1, 9 and 11, AM-17b items 2–4; for KD targets only, conditionally supersedes contract M4's non-adoption of multi-draw averaging) | Teacher diagnostics R0, descriptive arm teachers (R1, R2; B-avg not executable) and KD arms (E3-X, W, conditional K8), go rule, pre-set defect rules (D1, D4), dataset duplicates (DRAFT) |
 
 Code that implements an amendment is named by lane (L-AM…). Until that lane lands, the committed runtime
 keeps its pre-amendment behaviour and its launch gates.
@@ -62,6 +63,8 @@ and 44 enter only AM-8 and the per-seed table.
 [Extended by AM-17 item 4.]
 
 [Extended by AM-4a items 3 and 4: E5 seed 42 runs twice for the U4 clipping pilot, and the winner is the run of record; the QAT loader follows the run seed.]
+
+[Extended by AM-18: the teacher of record is still trained once. Arm teachers R1 and R2 are separate descriptive fine-tunes; B-avg, an average of the record run's checkpoints, is not executable (only iteration 24,000 was retained).]
 
 ## AM-2 — λ_logit sweep (resolves M6; extends PREREGISTRATION §7 and U1)
 
@@ -220,6 +223,8 @@ Code: lane L-AM13.
 
 [Extended by AM-17 item 1.]
 
+[Extended by AM-18 items 1(d) and 6(b): the R3 comparison is also computed on duplicate-free VAL; if the teacher's margin over E1 seed 42 there is ≤ 0, no KD run launches and R3 is restated by its own amendment.]
+
 ## AM-14 — The inferential family (resolves the family ambiguity, conflicts #9)
 
 The inferential family is the eight tests listed at ch3 f.139. The primary test is a one-tailed Wilcoxon with
@@ -352,7 +357,7 @@ teacher's score existed; items 1(f) and 11 were proposed after it and are descri
        DL-30). The descriptive SegNeXt-L arm of item 11 never becomes the teacher of record.
        ConvNeXt-L and teacher-assistant chains remain future work (Chapter 5).
    (d) The teacher VAL curve (4k–40k) is reported descriptively: VAL mIoU peaks at 24k (71.5 epochs
-       over 5,367 TRAIN images) and does not improve through 40k.
+       over 5,367 TRAIN images) and does not improve through 40k. [AM-18 item 9(d) records the ten interval VAL scores.]
    (e) Descriptive diagnostic: alongside AM-16 item 4's VAL score for E1, the teacher of record is
        scored on VAL under the upstream protocol (AM-13). The pair reports the protocol effect
        (upstream minus 512-canvas) on VAL. The 42.05% comparison stays at TEST (AM-13).
@@ -460,7 +465,7 @@ teacher's score existed; items 1(f) and 11 were proposed after it and are descri
    evaluated once and is never split or repeated; the analysis does not change. Before the first KD
    run, the full metrics → Holm → BCa pipeline is dress-rehearsed on the E1 seed-42/43/44 VAL outputs.
    The TEST-day manifest (checkpoint hashes, evaluator commit, corrupted-TEST cache checksums,
-   calibration index) is drafted by 2026-11-30 and frozen at the freeze date.
+   calibration index) is drafted by 2026-11-30 and frozen at the freeze date. [Extended by AM-18 item 7(b): every AM-18 arm is cut before the arms listed here.]
 
 10. Record corrections (no rule change).
     (a) Counted splits 5,367 / 846 / 1,561 (TRAIN and VAL counted in the CP-007 fact-check; TEST from
@@ -484,7 +489,7 @@ teacher's score existed; items 1(f) and 11 were proposed after it and are descri
         L-AM5); n equals the clean-test n.
     (e) Chapter 3 p. 91's summary sentence superseded by p. 139 and AM-14; 42.05% is the single-run
         SegNeXt-B result on the 7,774-image release (Wei et al., 2026); the 2024 preprint's 53.89%
-        refers to the older release and is not a comparator.
+        refers to the older release and is not a comparator. [Source recorded by AM-18 item 9(a): arXiv 2409.04038v1, "Evaluation on PlantSeg" (text: 53.89%; its Table 3: 44.52% for MSCAN-L).]
     (f) Upstream recipe (tqwei05/PlantSeg at 1a3dd4d, 2025-03-25): the repository ships MSCAN-T and
         MSCAN-L PlantSeg configurations only (no MSCAN-B); both use AdamW 6e-5, betas (0.9, 0.999),
         weight decay 0.01, head lr_mult 10, batch 16, LinearLR warm-up 1,500 iterations then PolyLR
@@ -558,7 +563,7 @@ teacher's score existed; items 1(f) and 11 were proposed after it and are descri
         all-class mIoU, the discussion attributes the null to teacher strength as one candidate
         explanation, alongside the item 3(f) power caveat; if the L arm shows no such gain, teacher
         strength is reported as not supported. Neither reading changes any test, threshold or run of
-        record.
+        record. [AM-18 item 7 places the L arm in the run and cut orders; items 3 and 3(e) apply the target construction of record and the arm divergence rule to its KD runs; item 11 is otherwise unchanged.]
 
 Code: L-AM17-MDE (item 3, simulation + analytic), L-AM17-STRATA (item 8), L-AM17-CWDONLY (item 7),
 L-AM17-DEFAULTS (item 6 TEST inference of the two default candidates; part of the TEST manifest),
@@ -618,15 +623,15 @@ threshold, family member, teacher of record or run of record changes.
        after B66 (lane L-AM17B-GAP) and the two artifacts are recorded; the teacher is never re-scored on a
        B66 pod. The pairing used is stated with the result.
    (d) Uses: interpretation of the KD results and of AM-17 item 1(f); the CI does not gate, select
-       or replace anything.
+       or replace anything. [AM-18 item 6(b) uses the item 2(c) artifacts for a pre-set gate on duplicate-free VAL. The CI itself still gates nothing.]
 
 3. Placement in AM-17 item 9. Cut order for runs not complete and hashed at the freeze, first to
    last: the SegNeXt-L arm (AM-17 item 11); G; F; A (AM-17 item 7); then AM-16's order; then E5 and
    E6 seeds 43/44; then E3 seeds 43/44. Item 2 of this amendment has no run to cut. Never-cut items
-   are unchanged.
+   are unchanged. [Extended by AM-18 item 7(b).]
 
 4. Arm freeze. AM-17 and AM-17b close the set of exploratory arms. Any later arm requires its own
-   amendment before its launch and is cut before every arm listed here.
+   amendment before its launch and is cut before every arm listed here. [AM-18 registers arms under this rule (B-avg, R1, R2, W, conditional K8); they are cut first.]
 
 Code: L-AM17B-FG (per-term instantiation switches in the KD lane; F/G launchers), L-AM17B-GAP
 (paired image-level BCa on VAL from per-image confusion contributions; per-image difference summary;
@@ -643,6 +648,8 @@ fault is never repeated. The same rule governs a repeat of the DL-17 evaluator p
 Non-finite losses in E2/E3 follow AM-7/DL-04, not this rule.
 
 [K8-1 (R8-1, DL-04): a non-finite total loss or gradient norm at iteration 1 is a step-1 check failure, not AM-7 (a): the run stops for investigation and this rule governs any repeat (AM-7a item 4).]
+
+[Extended by AM-18's execution rules to the item 1 statistic scripts: a repeat also follows a script defect shown by a diff.]
 
 ## AM-4a — QAT recipe pins, converted-model selection and the U4 clipping pilot (extends AM-4 and AM-1)
 
@@ -701,7 +708,7 @@ tie rule, seed or teacher changes.
    160,000-iteration controls (AM-16 item 3) follow DL-04's arm rule: the run stops, is recorded as
    diverged, is not rerun and triggers no clipping rule; the 160,000-iteration schedule is a
    descriptive control whose divergence is evidence about the longer schedule, not about the
-   80,000-iteration recipe of record.
+   80,000-iteration recipe of record. [AM-18 item 3(e): the AM-18 KD arms and the SegNeXt-L arm's KD runs follow this arm rule.]
 
 4. Edge cases. If only λ = 1 finished, λ = 1 is selected as the sole finished candidate
    (n_finished = 1) and the whole sweep is reported; if only α = 50 finished, α = 50 is selected the
@@ -741,6 +748,537 @@ Code: lane L-KD-HARDEN — Phase A: `run_abort` diagnostics (`cause`, `input_fin
 `teacher_finite`, `params_finite`); Phase B: src/training/sweep_select.py, scripts/select_lambda.py,
 scripts/select_alpha.py, configs/sweep_rules.json, configs/distill.py, scripts/smoke_select_sweeps.py.
 Local: scripts/am7_clip_value.py (reads the E1 seed-43/44 telemetry; no pod).
+
+## AM-18 — Teacher diagnostics, descriptive teacher arms, pre-set defect rules and dataset duplicates (extends AM-1, AM-7a item 3, AM-8a, AM-13, AM-17 items 1, 9 and 11, and AM-17b items 2–4; for KD targets only, conditionally supersedes contract M4's non-adoption of multi-draw averaging)
+
+Dated 2026-10-01. Status: DRAFT (group-decided 2026-10-01, ballot 1C 2A 3B 4A 5A 6A; adviser
+approval requested).
+- Fixed text. From its commit the text is changed only by a new amendment, which lists the item 1
+  outputs known when it is written. A reading this text leaves open is settled the same way (for
+  a statistic, by the first output of record). A dated bracket note only points to a later record
+  or records an outcome, such as the adviser's reply.
+- In force from the commit: the execution rules and items 1, 5, 6, 7, 8 and 9, which launch no
+  training run. No arm of items 2 and 3 launches before the adviser approves this amendment.
+- Approval means an explicit written reply from the adviser that approves this amendment, either
+  naming AM-18 or answering the request email, whose subject names AM-18; it is recorded verbatim
+  with its date in the decision log before the action it gates. An acknowledgement ("noted") is not
+  approval. The request is sent when this amendment is committed, names item 6(a)'s correction
+  separately, and is entered in the decision log with its date; each reply is entered on the day
+  it is received. A reply that approves AM-18 without excepting an item approves every item; one
+  that excepts an item approves the rest. A requested change, or an exception to an item already
+  in force other than declining item 6(a)'s correction, needs a new amendment.
+- A rejection cancels the arms not yet launched (R1, R2, E3-avg, W, K8), item 4's additions and,
+  if it is in the decision log before item 6(a)'s state is entered, the correction (the
+  registered single-draw targets then stand). After that entry the state is final. The SegNeXt-L
+  arm stays as AM-17 item 11 registers it. The execution rules and items 1, 6(b), 7(a), 8 and 9
+  stay in force; no statistic of item 1 is withdrawn and no existing run is reclassified.
+- Naming. Arm teachers are B-avg, R1 and R2; SegNeXt-L is "L" and is always named separately.
+  "R3" means the contract's readiness rule 3 (AM-13); the readiness rules are written "readiness
+  rule 1" to "4". The R3 evaluation procedure is that of AM-17 item 1(b): the repository evaluator
+  on CPU in the pinned teacher image, batch 1, canvas protocol, the VAL manifest of record, NMF
+  stream M4-V seeded 42. A session is one sequence of processes on one host at one commit.
+
+State at amendment (as of the commit):
+- AM-7a, the 2026-09-30 correction of AM-17 item 10(c), the 2026-09-28 replacement of AM-17
+  items 11(a) and 11(b) and the decision-log row with the adviser's approval of AM-17 are committed
+  before or with this amendment.
+- E1 seeds 42, 43 and 44 (VAL only) and the SegNeXt-B teacher of record (AM-17 item 1(a)) exist.
+- Of the record run's interval checkpoints, only iteration 24,000 was retained (local copies and
+  SHA256SUMS of run teacher_official_20260925T122252Z; the pod was terminated on 2026-09-26).
+  Item 1(e) is therefore not executable and is reported as such; B-avg, E3-avg and E7-avg do not
+  exist.
+- On 1–2 October 2026, during a read-only file inventory, automated agents read the saved issue #11
+  list (plantseg_exact_duplicates.csv, sha256 1354add9…) and printed its header, one row naming a
+  TEST image, three TRAIN/VAL rows and line counts. They also listed the member names of the dataset
+  archive in memory, filtering TEST names before printing, and scanned its raw bytes. No TEST image
+  or mask was decoded, no model was evaluated, and nothing in this amendment or in any run was chosen
+  from these reads (decision-log deviation row DL-58).
+- No E2, E3, A, F, G, SegNeXt-L, extra-teacher or other KD run has started. No KD result exists.
+- No statistic of item 1 has been computed. The per-class VAL table of AM-17 item 1(f) and the
+  AM-17b item 2 re-scores are registered separately and may already exist. TEST has not been
+  evaluated.
+- Already known, so nothing below is blind to it:
+  - the teacher of record's ten interval VAL scores (item 9(d)), its per-class VAL IoU (the R3
+    summary) and its full-VAL margin over E1 seed 42 (2.26 pp; about 1.95 pp GT-present);
+  - E1's three VAL scores and their seed SD (s = 1.10 pp);
+  - B61's measurements on the ADE20K checkpoint: between NMF draws the predicted class changed on
+    26.0% of valid pixels on one VAL image (30.1% on the 64×64 grid; 23.9% over all 190 draw
+    pairs), and on 26.9%, 0.003%, 7.8% and 3.2% on four rule-selected VAL images; an 8-draw
+    average still differed from a 64-draw reference on 6.1% of pixels (14.1% for one draw);
+  - issue #11's counts (item 8(a));
+  - the outputs of the local data session, each with its decision-log entry: the upstream-protocol
+    VAL scores of the teacher of record (AM-17 item 1(e); 0.36319661140441895) and of E1 seed 42
+    (AM-16 item 4; 0.35182613134384155) (DL-08, DL-27);
+    the AM-17 item 8 strata files reports/strata/train_strata_v1.json and .csv (sha256 ab0df4e3… and
+    c793c11f…; DL-63); the AM-17b item 2(c) CPU re-scores (teacher of record
+    0.38576993346214294; E1 seed 42 0.36307525634765625), with the item 2(a) gap estimates
+    (union-present 0.022694691891384178; GT-present 0.0195375159424252) and their BCa 95% CIs and
+    the item 2(b) per-image summary, in reports/derived/gap_val_20261003T014324Z.json (sha256
+    3597a82f…; DL-64); and the AM-17 item 1(f) per-class table,
+    reports/derived/perclass_gap_val_20261003T014403Z.json and .csv (sha256 4a8fa2b4… and
+    0ba3aa7d…; DL-64); and the AM-10 list of record and the AM-16 item 5 lists,
+    configs/calibration/ptq_calibration_seed{42,43,44,45}.json (DL-10).
+  Every arm and the item 1(e) window were chosen with the teacher's VAL curve known, so every arm
+  is descriptive.
+- The only rules that can change a run of record are item 6's two pre-set rules. Item 6(a) fixes
+  its statistic, thresholds and consequence here. Item 6(b) fixes its statistic, threshold and a
+  halt; what follows the halt is not pre-registered.
+No test is added to the Holm family. No test, threshold, family member, grid, seed or teacher of
+record changes.
+
+Execution rules for every statistic and gate below:
+- Development. The scripts are developed on synthetic inputs, or on real TRAIN and VAL images
+  with the stub teacher only. A script's execution of record, for each teacher or input set, is
+  its first execution that loads those real teacher weights or, for a script that loads no model,
+  the real split files or score artifacts. The script's commit is entered in the decision log
+  before its first execution of record and is recorded in every output; later executions of
+  record use the same commit, or the repeat's commit after case (ii) below. Executions use the
+  pinned teacher image on CPU.
+- One output. The first complete output of an execution of record is the output of record. No
+  statistic is recomputed with another sample, seed, K or definition. A control re-score (item 5;
+  the seed-42 stream of item 1(a)'s VAL part) is a reproduction check, not a second output.
+- Repeats (this extends AM-8a to these scripts). An execution is repeated only:
+  (i) after a documented infrastructure fault (AM-8a), or after any other documented stop that
+      left no complete output, with identical inputs and the same script commit; or
+  (ii) after a script defect: a departure of the script from a definition written in this
+      amendment, shown by a diff. A wording with two readings is not a defect. The defect report
+      lists every execution made with the defective script, and all of them are repeated. The
+      report, the diff and the new commit are entered in the decision log before the repeats.
+      Each repeat is then the output of record, and both outputs are reported.
+  Where an output and its case (ii) repeat select different outcomes, the outcome is fixed here
+  and not chosen: item 6(a) takes the branch of the larger F, item 6(b) takes the halt, and item 5
+  takes the no-go. A repeat changes an outcome only before it is acted on: once the first KD run
+  has launched, the entered item 6 branches stand, and once E3-X has launched, its item 5 outcome
+  stands; the repeat is still made and both outputs are reported. A STOP below is handled as case
+  (i), or as case (ii) if a script defect caused it; if it recurs, the statistic is reported as
+  not produced.
+- Gate. Outputs are hashed and entered in the decision log. The item 1(a) output that holds F and
+  the item 1(d) output, with the item 6 branches they select, are entered before the first KD run
+  (the first real-mode training run of any distillation stage; smokes and the invariance harness
+  are not runs). The first KD run does not launch before those entries exist. If F or
+  margin_dedup cannot be produced, no KD run launches and the adviser is informed.
+- Comparison. F is compared in integers: with N the pooled flip count and D = 28 · Σ_i |V_i|
+  (item 1(a)), F < 0.03 means 100·N < 3·D, and F ≥ 0.10 means 10·N ≥ D. Every other threshold is
+  compared on the float64 values written to the outputs, without rounding. margin_dedup is also
+  computed as an exact rational and in the evaluator's float32 arithmetic; if any of the three
+  values is ≤ 0, item 6(b)'s halt applies.
+
+1. Teacher diagnostics R0. Descriptive and training-free. F and margin_dedup enter item 6; the ECE
+   method of item 1(b) and B-avg (item 1(e)) enter item 5; nothing else enters a rule.
+   (a) D1 — NMF-draw sensitivity of the distillation targets. Item 6(a) fixes when it may run.
+       - Sample: random.Random(1801).sample(sorted TRAIN ids, 256), with the TRAIN ids derived as
+         for the AM-10 lists (split-list sha256 equal to that of the AM-17 item 8 strata file,
+         which exists first).
+       - Crop i (i = 0 to 255, in sample order): one pass through the KD training pipeline (M2/M3)
+         with np.random.RandomState(1801 + i), then the trainer's normalisation.
+       - Forwards: the teacher of record through the KD teacher adapter, batch 1. The backbone
+         runs once per crop and the decode head K = 8 times on that backbone output. One private
+         NMF stream seeded 42 (the M4-KD construction) advances once per head forward, crops in
+         sample order (2,048 draws).
+       - Statistics, on the 64×64 logit grid over the cells of the trainer's all-valid min-pooled
+         mask (contract B3; losses.downsample_validity; the rule AM-17 item 10(c) records after
+         its 2026-09-30 correction). V_i is that set for crop i; a crop with no valid cell adds
+         nothing.
+         - F (the only statistic item 6(a) uses): the pairwise argmax flip rate over the 28 draw
+           pairs, pooled over cells and crops. F = N / D, with
+           N = Σ_i Σ_{a<b} |{p ∈ V_i : argmax z_a(p) ≠ argmax z_b(p)}| and D = 28 · Σ_i |V_i|.
+           An image-level percentile bootstrap 95% CI (B = 10,000; numpy default_rng(1801)) is
+           reported with it; the point estimate alone selects the branch.
+         - F_lesion (secondary): F restricted to the cells whose mean probability (T = 1, eight
+           draws) peaks at a disease class; reported as undefined if there is no such cell.
+         - F_halves (secondary): the argmax flip rate between the mean-probability predictions
+           (T = 1) of draws 1–4 and of draws 5–8, which shows how far averaging removes the flips.
+         - KL_logit: the mean over draws and valid cells, pooled over crops, of KL(p_k ‖ p̄) in
+           nats, with no T² factor, where p_k = softmax(z_k/4) and p̄ is the mean of the eight p_k
+           (the K8 target, not the softmax of the mean logits).
+         - KL_cwd: the same for the channel-wise spatial distributions of the logit map (per
+           channel, softmax over the valid cells at T = 4, as the CWD logit-map term computes
+           them), averaged over draws and channels.
+       - Output: reports/derived/teacher_d1_<UTC>.json, with the sample list's sha256, the
+         checkpoint and configuration sha256, the script commit and every statistic.
+       - VAL part (descriptive; a separate output that gates nothing): VAL in the R3 manifest
+         order, batch 1, the backbone once per image and the head once on each of eight streams
+         seeded 42 to 49 (each stream advances one draw per image, as M4-V). Reported per stream:
+         the dataset-level all-class mIoU and the item 1(b) ECE, with their mean, sample SD and
+         range; and the mIoU of the mean-probability prediction (softmax at T = 1 on the canvas,
+         averaged over the eight draws). The seed-42 mIoU must reproduce the R3 value of record
+         within 1e-5 (the L-AM17B-GAP tolerance); otherwise the VAL part stops and is reported as
+         not reproduced, which blocks no other item. Whatever the spread shows, the seed-42
+         single-draw scores remain the scores of record for every rule.
+   (b) D2 — confidence and calibration of the teacher of record.
+       - On the 256 D1 crops (first draw; 64×64 grid; valid cells): mean max-probability and mean
+         entropy (nats) at T = 1 and T = 4, and the share of valid cells with max-probability
+         > 0.99 at T = 1.
+       - On VAL (846 images; the R3 evaluation procedure): the same three quantities over valid
+         canvas pixels, and the ECE. This pass must reproduce the R3 value of record within 1e-5;
+         otherwise it stops and is run on another host.
+       - VAL ECE: pixel-level, top-1, T = 1, on the 512×512 canvas. A pixel's confidence is the
+         largest softmax probability of the bilinearly resized logits whose argmax is the scored
+         prediction. All n valid (non-255) VAL pixels are pooled into M = 15 equal-width bins
+         ((m−1)/15, m/15] (Guo et al., 2017); ECE = Σ_m (n_m / n)·|acc_m − conf_m|. The ECE over
+         pixels with disease ground truth is reported alongside; item 5 uses the all-pixel ECE.
+       - Teacher TRAIN mIoU: all 5,367 TRAIN images under the R3 evaluation procedure, with the
+         sorted TRAIN list in place of the VAL manifest, through a diagnostic entry point
+         (all-class, union-present; per class for item 1(c)). The evaluator's split gate is
+         unchanged.
+   (c) D3 — per-class TRAIN and VAL IoU of the teacher of record by the AM-17 item 8 strata (the VAL
+       part is AM-17 item 1(f)).
+   (d) D4 — duplicate-free VAL.
+       - SHA-256 (and SHA-1, the issue's hash) of the file bytes of all 5,367 TRAIN and 846 VAL
+         images. The script refuses any path containing "test". Both hash lists are kept in the
+         run's evidence folder and their sha256 is recorded.
+       - A VAL image is a duplicate when its SHA-256 equals that of any TRAIN image. Recorded: the
+         duplicate VAL images and groups, and for each group whether the decoded annotation masks
+         are identical. Issue #11 reports 32 "train ↔ val" groups and 15 groups it labels "3-way
+         and more"; a different count is reported, not a STOP. Only byte-identical files are
+         detected; re-encoded or resized copies are not, which is disclosed.
+       - From the per-image per-class confusion contributions of the AM-17b item 2(c) CPU
+         re-scores (both models on CPU; on the full VAL this pairing gives about 2.27 pp):
+         dataset-level VAL all-class mIoU (union-present, the R3 rule) and GT-present mIoU of the
+         teacher of record and of E1 seed 42 on VAL without the duplicate images, with class
+         eligibility recomputed on that subset.
+       - margin_dedup = teacher − E1 seed 42 (union-present, all-class) on that subset.
+       - Recorded with the duplicate list's sha256.
+   (e) D5 — B-avg, a post-hoc averaged teacher from existing checkpoints.
+       - Weights: every floating-point entry of state_dict is the uniform average, computed in
+         float64, of that entry in the checkpoints at iterations 16,000, 20,000, 24,000, 28,000,
+         32,000, 36,000 and 40,000 of run teacher_official_20260925T122252Z; other entries come
+         from the 24,000 checkpoint. Each checkpoint is verified against the run's SHA256SUMS
+         first.
+       - BatchNorm: the backbone's running statistics are reset and re-estimated as
+         torch.optim.swa_utils.update_bn does (cumulative average; training mode, so stochastic
+         depth is active as in training), running only the backbone, over one pass of all 5,367
+         TRAIN images in sorted order: batch 16 (336 batches), image i through the training
+         pipeline (M2/M3) with np.random.RandomState(1801 + i) and the teacher's input
+         normalisation, torch seed 1801, no labels, no gradients, CPU.
+       - The result is saved as a checkpoint with its sha256 and scored on VAL by the R3
+         evaluation procedure, with the item 1(b) VAL ECE, in a session that follows item 5.
+       - If any of the seven checkpoints is missing or fails its hash, D5 is not run and is
+         reported as not executable.
+       - The window is fixed here and never changes. It was chosen with the ten interval scores
+         known.
+
+2. Fine-tuned arm teachers R1 and R2. Descriptive. One fine-tune each, on one A40 at batch 16
+   (never reduced); launched only after the adviser approves this amendment and the arm's code is
+   merged and pinned; never on the critical path.
+   - Each arm has a new configuration file. Its sha256 and its differences from the configuration
+     of record are entered in the decision log before launch.
+   - Each arm launches through an arm launcher that applies the frozen launcher's gates to that
+     registered difference (the frozen launcher refuses a fourth hook and any other train pipeline).
+     None of the nine frozen teacher-runtime files changes.
+   - Readiness rules 1 (integrity, no resume), 2 (TRAIN/VAL only) and 4 apply as for the teacher of
+     record. Item 5 takes the place of readiness rule 3.
+   - A fine-tune whose logged training loss or VAL score becomes non-finite is recorded as
+     diverged, reported and not rerun. An infrastructure fault follows AM-8a.
+   (a) R1 — "B-EMA". The configuration of record (contract B1; M2, M3, M4, M5 40,000 iterations,
+       M11, M12, M13; ADE20K initialisation sha256 647a0cda…; seed 42; deterministic) with exactly
+       two changes:
+       - MSCAN-B drop_path_rate 0.2: the SegNeXt author's recommendation for B (MMSeg PR #2247);
+         the record inherits 0.1.
+       - mmengine 0.10.7 EMAHook: ExponentialMovingAverage, momentum 0.0002 (average ← 0.9998 ×
+         average + 0.0002 × current weights; a 5,000-iteration window), update_buffers True,
+         interval 1, begin_iter 0, strict_load False.
+       The first update copies the model and there is no bias correction: at iteration t the
+       average still holds 0.9998^(t−1) of the first-iteration weights (0.449 at 4,000; 0.041 at
+       16,000; 0.008 at 24,000). Every interval VAL scores the EMA weights and BatchNorm statistics,
+       and M12 selects among those ten scores. Each saved checkpoint's state_dict holds the EMA
+       weights; KD and every evaluation load state_dict. The raw weights saved under ema_state_dict
+       are never used.
+   (b) R2 — "B-EMA + rare classes". R1 plus two changes to the teacher's TRAIN data, fixed here. A
+       rare class has n_c < 20, where n_c is the strata file's TRAIN image count of disease class c
+       (AM-17 item 8). Every PlantSeg image holds one disease class (EVALUATION_CONTRACT §0).
+       (i) Repeat-factor sampling (Gupta et al., 2019) with t = 20/5,367. An image of class c
+           appears m_c times per pass: m_c = ⌈√(20 / n_c)⌉ for a rare class and 1 otherwise, that
+           is 5, 4, 3, 3 for n_c = 1, 2, 3, 4 and 2 for n_c = 5 to 19. Background is not a class
+           here, and an image whose mask holds no disease pixel appears once. This is mmengine
+           ClassBalancedDataset with oversample_thr = t; the launcher asserts that its repeat
+           counts equal this table. Each pass is a random permutation of the repeated list. The
+           40,000-iteration budget is unchanged.
+       (ii) Rare-class copy-paste between images of the same class, applied to the EXIF-corrected
+           raw image and mask before M2/M3. It keeps one disease class per image.
+           - When the target T's disease class c is rare: with probability 0.5, one source S other
+             than T is drawn uniformly from the TRAIN images of class c. If class c has no other
+             TRAIN image, nothing is pasted.
+           - Patch: every pixel of S labelled c, with its image content. It is resized by the ratio
+             of T's to S's long side times u ~ U[0.75, 1.25] (bilinear image, nearest mask; sizes
+             rounded to the nearest pixel, at least 1). If its bounding box then exceeds T in
+             either dimension, it is scaled down, aspect ratio kept, by the largest factor at
+             which it fits.
+           - Placement: the bounding box is placed uniformly at random inside T and accepted when
+             at most 5% of the patch's pixels fall on disease pixels of T. Up to 10 placements are
+             tried; otherwise nothing is pasted.
+           - Pasted pixels overwrite image and label; there is no blending. All draws come from the
+             sample's own RandomState, before the M2/M3 draws, in this order: the paste decision,
+             the source, u, the placements.
+           The table of n_c and m_c and the per-class source lists are written by the arm's
+           builder from the strata file and the TRAIN masks, and their sha256 is entered in the
+           decision log before R2 launches. A count that disagrees with the strata file is a STOP;
+           R2 does not launch while it stands.
+       The student's pipeline, every KD-time input, VAL and TEST are unchanged. If R1's fine-tune
+       is recorded as diverged, R2, which shares its recipe, is not launched.
+   (c) Scoring. Each arm teacher (B-avg, R1, R2) is scored on VAL by the R3 evaluation procedure,
+       R1 and R2 at their M12-selected checkpoint: VAL_X, with the item 1(b) VAL ECE (ECE_X), the
+       item 1(b) TRAIN-crop profile and the item 1(a) TRAIN statistics (descriptive; item 6(a)
+       uses the teacher of record's F only). An arm teacher that is complete and hashed at the
+       freeze is scored once at the TEST evaluation: clean, canvas protocol, descriptive.
+
+3. KD arms. Descriptive; seed 42; launched after E3 seed 42's λ and α are selected. λ and α are
+   inherited and disclosed, as in AM-17 item 11(c). Every KD arm of this item and of AM-17 item 11
+   builds its targets as the runs of record do (one NMF draw per step, or the K = 8 average under
+   item 6(a)'s correction), so an arm differs from E3 only in what its definition names. Each KD
+   run's run_meta records its target construction (K and the number of views).
+   (a) For each arm teacher X ∈ {B-avg, R1, R2} that passes the item 5 go rule:
+       - E3-X = E3's recipe of record (Logit-KD + both channel-wise terms, 80,000 iterations,
+         seed 42; the same projection against Stage 3 at 320 channels; the same grids, ramp,
+         validity handling, loader policy, hardware rule and best-VAL selection) with X in place of
+         the teacher of record. X is the checkpoint item 2(c) scored.
+       - E7-X = PTQ of E3-X with the AM-10 calibration list of record (calibration pass only).
+       - No E2-X, no E4/E5/E6-X, no seeds 43/44, no robustness or efficiency scoring. The runs are
+         written E3-avg, E3-R1 and E3-R2 (E7-avg, E7-R1, E7-R2).
+   (b) W — flip-averaged targets on the teacher of record. E3-flip = E3's recipe of record in which,
+       at every step:
+       - the teacher runs on the crop and then on its horizontal flip, and the second set of logits
+         is flipped back (for this arm only, a departure from contract B2's single teacher input);
+       - the Logit-KD and CWD logit-map targets are the mean of the two views' distributions:
+         probabilities are averaged, each term in its own softmax at T = 4, never logits;
+       - the CWD feature-map term uses the unflipped view's Stage 3;
+       - the M4-KD stream advances once per head forward;
+       - the student sees only the original crop.
+       E7-flip = PTQ of E3-flip, as in (a). The flipped view carries a second NMF draw, so
+       E3-flip − E3 reads as flip plus a second draw; where K8 runs, it is also read against E3-K8.
+       Under item 6(a)'s correction each view's distribution is its own K = 8 average, the
+       unflipped view's eight draws first.
+   (c) K8 — K-draw averaged targets on the teacher of record. It is an arm under item 6(a)'s middle
+       branch, and under its upper branch when the correction is unavailable. E3-K8 = E3's recipe
+       of record with the decode head run K = 8 times per step on the one backbone output (M4-KD
+       stream advancing once per head forward). The Logit-KD and CWD logit-map targets are the mean
+       of the eight distributions (probabilities, as in (b)); the feature-map term is unchanged.
+       E7-K8 as in (a).
+   (d) Reporting, as in AM-17 item 11(d) and AM-17b item 1(e), for X ∈ {avg, R1, R2, flip, K8}:
+       - VAL and TEST clean dataset-level mIoU (all-class, GT-present, disease-only);
+       - the dataset-level all-class differences E3-X − E3 and E7-X − E7, each read next to the
+         AM-16 item 2 seed-noise scale (√2·s for a two-run contrast); a difference inside that
+         scale is reported as not distinguishable from seed noise;
+       - per-image mean ΔmIoU with BCa 95% CIs for the same contrasts;
+       - each arm teacher's VAL_X and ECE_X alongside.
+       No test; not in the Holm family; never a parent of a run of record. E6 and E7 of record are
+       built only from E3 (AM-15; AM-17 item 11(e)).
+   (e) Divergence: the KD runs of this item and of AM-17 item 11 follow AM-7a item 3's arm rule
+       (DL-04: stop, record, no rerun, no clipping rule).
+
+4. SegNeXt-L (AM-17 item 11) keeps its configuration, go rule 11(b), arm 11(c), reporting and the
+   DL-32 gate exactly as item 11 stands when this amendment is committed. Any later change to
+   item 11 is a new amendment that lists the item 1 outputs then known. This amendment places L in
+   the run and cut orders (item 7) and applies items 3 (target construction) and 3(e)
+   (divergence) to its KD arm.
+
+5. Go rule for the arm teachers (B-avg, R1, R2; L keeps 11(b)). E3-X and E7-X run if either:
+   - VAL_X > 0.38576993346214294; or
+   - VAL_X ≥ 0.37576993346214294 and ECE_X < ECE_B.
+   Otherwise X is reported as a teacher-only result and no KD runs with it.
+   - The session that scores X runs on the host that produced item 1(b)'s VAL output (another host
+     only after a documented fault of that host). The teacher of record is re-scored first, at the
+     same commit. It must reproduce 0.38576993346214294 within 1e-5; otherwise the session is void
+     (a STOP under the execution rules), and if that recurs X is reported as not evaluable and no
+     KD runs with it. ECE_B is the teacher of record's VAL ECE in that session; item 1(b)'s value
+     is reported beside it.
+   - Each outcome is entered in the decision log, with the values and the artifacts' sha256, before
+     E3-X launches.
+   - The second condition admits a teacher that is a better source without being a better model
+     (Kim et al., 2025; Wang et al., 2022), which a strict accuracy gate would never admit. The
+     1 pp allowance is a convention at the scale of E1's measured seed SD (s = 1.10 pp, n = 3); no
+     teacher seed SD exists (AM-1).
+
+6. Pre-set defect rules: one correction and one halt. Fixed before the statistics exist. Under
+   item 6(a), DL-30 stands and the teacher of record's weights never change.
+   (a) D1 rule, on F only (item 1(a)):
+       - F < 0.03: no change, and no K8 arm.
+       - 0.03 ≤ F < 0.10: no run of record changes; K8 runs as a descriptive arm (item 3(c)).
+       - F ≥ 0.10: recorded as a defect of the single-draw targets. If the correction is available
+         (next point), then in every KD run — the λ and α sweep candidates, E2 and E3 at every
+         seed, the 160,000-iteration E2 and E3 controls, arms A, F and G, E6-KD if triggered, the
+         SegNeXt-L arm and the item 3 arms — the Logit-KD and CWD logit-map targets are the K = 8
+         draw average of item 3(c), computed on that run's own teacher. The feature-map term is
+         unchanged. The head runs eight times per step and per view in every stage (F included),
+         so the NMF stream advances identically across stages. E5 and E6 have no KD targets; E6
+         and E7 inherit the correction only through E3. In the corrected state K8 is not a
+         separate arm.
+       - Availability is settled before F exists. The correction is available if and only if a
+         reply that approves it, dated no later than the seventh day after the request was sent
+         (Asia/Manila), is in the decision log when the state is entered; a reply that approves
+         AM-18 without excepting item 6(a) approves it. Until a reply that approves or declines
+         the correction is in the decision log, or that seventh day has ended, nothing is
+         executed that draws more than one NMF sample per input on real teacher weights: no part
+         of item 1(a) on any teacher, and no smoke of the K8 or flip targets. The state
+         (available, declined or no approval) is entered in the decision log before any such
+         execution and is final. A later reply can still approve the arms.
+       - If the correction is unavailable and F ≥ 0.10, the registered single-draw targets stand
+         for every run and F is disclosed as a limitation. K8 is then an arm as in the middle
+         branch; like every arm, it launches only if this amendment is approved.
+       - If the correction is available and F ≥ 0.10, it applies from the first KD run and is not
+         withdrawn, for cost or for any other reason. Before the first KD run it needs the
+         target-averaging code merged, pinned and smoke-tested, with its measured slowdown
+         recorded, and the decision-log entry with the contract notes (B1 M4, B2, B3); the first
+         KD run waits for both. An overrun is handled by item 7(b) and AM-17 item 9.
+       - This is the multi-draw averaging that contract M4 and B61 §5 did not adopt for KD targets.
+         It is adopted here, for KD targets only, in the W and K8 arms and under this correction,
+         because M4 was locked on measurements of the ADE20K checkpoint, before the fine-tuned
+         teacher existed. M4-T, M4-V and every evaluation score are unchanged.
+       - F is measured on the teacher of record only; B-avg, R1, R2 and L inherit the branch.
+   (b) D4 rule on margin_dedup (item 1(d)):
+       - margin_dedup > 0: recorded, no change.
+       - margin_dedup ≤ 0: the R3 floor is not met on duplicate-free VAL. No KD run launches and
+         the adviser is informed, as contract B1's R3-failure rule requires (STOP and escalate; no
+         retraining, search, band relaxation or TEST). R3 (AM-13; AM-17 item 1(a)) is then restated
+         on duplicate-free VAL by its own amendment, approved by the adviser before any KD run.
+         Only this halt is pre-registered: what that amendment decides is not fixed here. It would
+         be written with margin_dedup known, it says so, and it uses no KD or TEST result.
+   (c) Neither rule is evaluated on any KD result. Item 6(a) never replaces the teacher of record
+       (DL-30). No other statistic of item 1 triggers or vetoes a branch.
+
+7. Order, launch and cut order.
+   (a) Run order:
+       - item 1 first (F and margin_dedup before the first KD run);
+       - R1 and L in parallel on separate cards, once their gates are met;
+       - R2 once R1's fine-tune has completed its 40,000 iterations without divergence, whatever
+         R1's scores;
+       - the item 3 KD runs after E3 seed 42's selections and, when cards are scarce, in the
+         reverse of the cut order of (b).
+       R1 launches only when R2's code, configuration and table are pinned too. The code of all
+       item 3 arms is pinned in one commit before E3 seed 42's α selection exists; if it is not,
+       all of them are recorded as cut at that point, with the reason and the results known.
+       An arm whose gates are met launches when a card is free that no run of record is waiting
+       for; it is not stopped for one later. A launched arm run ends only by completion, divergence
+       (item 2 or item 3(e)), a documented fault (AM-8a) or the freeze. An arm that is not launched
+       is recorded as cut, with the reason and the arm results known at that time.
+   (b) Cut order for runs not complete and hashed at the freeze (2026-12-18), first to last:
+       1. R2 (teacher, E3-R2, E7-R2);
+       2. W;
+       3. K8;
+       4. R1 (teacher, E3-R1, E7-R1);
+       5. E3-avg and E7-avg;
+       6. then AM-17b item 3's order (SegNeXt-L arm, G, F, A, AM-16's order, E5/E6 seeds 43/44,
+          E3 seeds 43/44).
+       An arm is cut from its first incomplete run onward; a finished arm teacher is still reported
+       as a teacher-only result. Item 1 is never cut. Per AM-17b item 4, every arm of this
+       amendment is cut before every arm listed there. Each cut is recorded in the decision log
+       before TEST (AM-17 item 9).
+   (c) Cost (INFERRED; each run's measured GPU-hours are reported):
+       - item 1 runs locally on CPU, roughly 12 to 18 hours in all, from the lane specification's
+         estimate of about one hour for a teacher VAL pass;
+       - two 40,000-iteration teacher fine-tunes, each at the record run's cost;
+       - up to four 80,000-iteration KD arms (E3-R1, E3-R2, E3-flip, E3-K8; E3-avg does not exist)
+         at 29–33 h each (AM-17b item 1(f)), before the extra teacher forwards of W and K8, which
+         are measured at their smoke.
+
+8. Dataset duplicates: record and disclosure.
+   (a) Record: issue tqwei05/PlantSeg #11 reports, by SHA-1 over the image files of the Zenodo
+       10.5281/zenodo.17719108 release used here (5,367/846/1,561), "265 duplicate groups (277
+       redundant files)", about 3.6% of 7,774, in these rows (the labels are the issue's):
+       - train ↔ train 124;
+       - test ↔ train 70;
+       - train ↔ val 32;
+       - test ↔ test 13;
+       - test ↔ val 11;
+       - 3-way and more 15.
+       Its attached list (plantseg_exact_duplicates.csv) is saved with its retrieval date and
+       sha256 and is not opened again before the TEST evaluation session (State at amendment);
+       nothing on TRAIN or VAL is chosen from it. The repository's dataset report checks file-stem
+       duplicates only (none found). R0 reads no TEST file: until the TEST evaluation the TEST side
+       is known only from the issue's counts and the reads recorded under State at amendment.
+   (b) VAL: items 1(d) and 6(b). Wherever a VAL score is reported from an evaluator artifact with
+       per-image contributions, its duplicate-free VAL value is reported next to it. Apart from
+       item 6(b), no selection, trigger or go rule is evaluated on duplicate-free VAL: every
+       registered selection rule is written for the full 846 images, and E1's three seeds were
+       already selected on them.
+   (c) TEST:
+       - The official TEST evaluation, every test of the Holm family and the non-inferiority check
+         stay on the full 1,561-image split.
+       - No step of this amendment reads TEST before the single TEST evaluation session. In that
+         session, before any model is scored, the TEST image files are hashed (SHA-256 of the file
+         bytes; no annotation is read) by the script frozen in the TEST manifest.
+       - Duplicate-free TEST = TEST without every image whose SHA-256 equals a TRAIN or VAL
+         image's, keeping only the first image (by sorted id) of any group of identical TEST
+         images. The list follows from file bytes alone and from no model output.
+       - Reported next to the official results, from the per-image outputs of the single TEST
+         evaluation (no model is run on TEST twice), descriptively: the dataset-level mIoU
+         (all-class, GT-present, disease-only; class eligibility recomputed on the subset) of every
+         model of record and every arm; and, as a sensitivity analysis, the eight family contrasts
+         and the E3-vs-E6 check recomputed on the subset (same procedures, unadjusted). They
+         replace no official result and decide nothing: if one disagrees with an official result,
+         the official result stands and Chapter 4 reports both.
+       - The numbers of images removed for each reason are reported next to the issue's counts.
+   (d) Chapter 4 states the duplicates, this procedure and its results, and Chapter 5 lists them as
+       a dataset limitation. Chapters 1–3 are not rewritten (DL-20).
+
+9. Record corrections. No rule changes; recorded in the docs session that commits this amendment.
+   (a) AM-17 item 10(e) stands, and its source is recorded: arXiv 2409.04038v1, "Evaluation on
+       PlantSeg", gives SegNeXt "the MIoU of 53.89% and the mAcc of 65.91%" on the 11,400-image
+       release. The same preprint's Table 3 lists SegNeXt MSCAN-L at 44.52% mIoU, as do the pinned
+       upstream README and Sci. Data Table 3. 53.89% is not a comparator; 44.52% stays the
+       descriptive reference of AM-17 item 11(d).
+   (b) The teacher runbook's §3 drop_path_rate 0.1 is an inherited default that was never examined.
+       The SegNeXt author recommends 0.2 for B (MMSeg PR #2247). The teacher of record keeps 0.1;
+       R1 tests 0.2.
+   (c) SegNeXt-L memory: the 43.3 GB in AM-17 item 11(a) as first registered is the MMSeg figure for training SegNeXt-L on
+       ADE20K (43.32 GB; 160,000 iterations on one A100). The measured peak of this pipeline is
+       entered in the decision log when it is first measured (item 11(a)'s preflight, or the launch
+       if item 11(a) has none), before any L score is read. No other figure is of record.
+   (d) The teacher of record's ten interval VAL scores (4,000 to 40,000) are entered in the
+       decision log at full precision from the run's teacher_selection_records.jsonl, with that
+       file's sha256.
+
+10. Rationale. The adviser asked for all possible teacher configurations to be checked. A 200-query
+    audit (2026-10-01) assessed 49 candidates, and the group adopted the evidence-led subset:
+    - weight averaging and stochastic depth (the best-supported teacher change and the architecture
+      author's advice);
+    - a rare-class data arm (the long tail is the dataset's main difficulty);
+    - the registered size arm (L);
+    - a target-level wrapper that needs no new teacher.
+    The other candidates were dropped or deferred by the group; the lists are in this amendment's
+    decision-log row. The vote's condition for a second wave (only if this wave shows that the
+    student responds to teacher changes) is not registered as a rule: a later wave needs its own
+    amendment before any of its runs (AM-17b item 4), and the choice to write one would be made
+    with this amendment's results known, which is disclosed.
+    AM-17 item 1(c) fixes the teacher of record. Choosing it by a student result would select on
+    the quantity the Holm family tests, and choosing it by a teacher score is the switch DL-30
+    rejected, so every teacher here stays an arm.
+    Two diagnostics can expose a defect rather than a weak score: NMF-draw noise in the targets, and
+    duplicates inflating the VAL margin. Their triggers are fixed now, with item 6(a)'s consequence
+    and item 6(b)'s halt, so applying them is pre-registered and not a post-hoc switch. The 3% and
+    10% thresholds and K = 8 were set by the group before any measurement on the teacher of record;
+    no external source prescribes them. F is computed on the 64×64 grid over all valid cells
+    because that is where the KD targets live; F_lesion shows what the background share hides.
+    Limits of the arms, stated in advance:
+    - R1 changes two things at once, so their effects are not separated.
+    - R2 repeats TRAIN images that may have byte-identical VAL copies; its duplicate-free VAL score
+      is shown beside its go-rule score (item 8(b)).
+    - The paste stays inside a class because every PlantSeg image holds one disease class and the
+      classes are host-specific. No paste rate is published for PlantSeg. On a three-class wheat
+      set, Wei et al. (2025) report one pasted patch per image as best, a loss below baseline from
+      three patches on, and little gain from plain copy-paste without their random-projection
+      filter.
+
+11. Disclosure.
+    - Chapter 4 lists every arm with its teacher's VAL score (and ECE for the arm teachers), its
+      go/no-go outcome, its KD results next to the seed-noise scale, and every cut; it also gives
+      R0's statistics, which item 6 branch applied (a correction that applied is listed in the
+      deviation table) and the item 8 results.
+    - Chapter 5 states the teacher-recipe findings as recommendations for future work.
+
+Code:
+- L-TEACHER-DIAG (item 1: the D1–D5 scripts, the ECE reducer, a TRAIN scoring entry point,
+  TRAIN/VAL hashing, the duplicate-free reducer and the B-avg builder; the arm role of item 2(c)
+  and the control re-score mode of item 5; local CPU executions);
+- L-TEACHER-ARMS (item 2: the R1 and R2 configurations, the arm launcher, R2's dataset wrapper,
+  paste transform and table builder; the provenance record of teacher-stage evaluation artifacts
+  for a teacher built from another configuration, which L-AM17-L carries instead if it is
+  implemented first);
+- L-KD-WRAP (items 3(b) and 3(c) and item 6(a)'s correction: per-switch target averaging in the KD
+  trainer, default off, and under the correction also in the E6-KD step (L-AM3) and the SegNeXt-L
+  arm's KD runs; arm stage registration and launch profiles);
+- the TEST-manifest lane (item 8(c); arm scoring and reporting at TEST);
+- L-AM17-L for SegNeXt-L.
 
 ## Status of PREREGISTRATION §10 items after these amendments
 

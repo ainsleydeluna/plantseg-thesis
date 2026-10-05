@@ -89,7 +89,7 @@
 | Classes | dataset `reduce_zero_label` | **False** (masks already 0–115, bg=0 kept) | `[data.py:23; empirical]` |
 | Norm | `norm_cfg` | **`dict(type='BN', requires_grad=True)`** — **override the stock SyncBN** (see §6) | `[ch3 §D; verified]` |
 | Backbone | `backbone.init_cfg` | **`None`** — do **not** re-pull the IN-1K backbone; the full ADE20K weights arrive via `load_from` (§5) | verified fact |
-| Backbone (inherited, for verification) | `embed_dims / depths / drop_path_rate` | `[64,128,320,512] / [3,3,12,3] / 0.1` | verified `[zoo]` |
+| Backbone (inherited, for verification) | `embed_dims / depths / drop_path_rate` | `[64,128,320,512] / [3,3,12,3] / 0.1` **[AM-18 item 9(b), 2026-10-01]** The teacher runbook's §3 drop_path_rate 0.1 is an inherited default that was never examined. The SegNeXt author recommends 0.2 for B (MMSeg PR #2247). The teacher of record keeps 0.1; R1 tests 0.2. | verified `[zoo]` |
 | Head (inherited, for verification) | LightHamHead `channels / ham_channels` | `512 / 512` (MSCAN-B) | verified `[zoo]` |
 | Head — determinism (LOCKED, M4) | NMF / Hamburger randomness | ~~`NEED_TO_CONFIRM` — METHODOLOGY DECISION OPEN.~~ **LOCKED (B61):** keep the inherited **`ham_kwargs.rand_init=True`** (`NMF2D._build_bases` draws `torch.rand` from the CPU default generator on every forward; mmseg 1.2.2 `ham_head.py:89-90,123`). **M4-T** training: upstream. **M4-V** every evaluation pass: dedicated NMF stream from seed 42, frozen order, batch 1, caller RNG restored. **M4-KD**: private stream seeded once, caller RNG untouched. **Implemented (B62)**; see §6 | `[pinned source; MEASURED B61 §2; B61 §4]` |
 | Optim | optimizer | **AdamW**, `lr=6e-5`, `weight_decay=0.01`, `betas=(0.9,0.999)` | `[ch3; teacher_finetune.py:13-16]` |

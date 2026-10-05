@@ -20,7 +20,7 @@ Every number below is `[empirical]`, established by the committed B16 audit set 
 
 | Fact | Value | Source |
 |---|---|---|
-| Split counts | train **5,367** · val **846** · test **1,561** (total 7,774) | `dataset_report.md` §"Split mechanism" (folder == JSON == CSV, pairwise overlap 0); `dataset_audit_summary.md` §1 |
+| Split counts | train **5,367** · val **846** · test **1,561** (total 7,774) **[AM-18 item 8, 2026-10-01]** "Zero overlap" is over image identifiers. Issue tqwei05/PlantSeg #11 reports byte-identical images across splits (70 test ↔ train, 32 train ↔ val and 11 test ↔ val groups); AM-18 items 1(d) and 8 measure and disclose them. | `dataset_report.md` §"Split mechanism" (folder == JSON == CSV, pairwise overlap 0); `dataset_audit_summary.md` §1 |
 | `num_classes` | **116** (background 0 + diseases 1–115) | `dataset_report.md` §"num_classes critical conflict"; `configs/data.py` `num_classes` |
 | Background index | **0** | `dataset_report.md` §"Background / disease determination" |
 | Ignore index | **255** — pad/rotation-fill only; **absent from all released masks** | `dataset_report.md` §"Mask label analysis"; `test_mask_value_audit.md` §2; `trainval_mask_value_audit.md` §1/§2 |
@@ -30,7 +30,7 @@ Every number below is `[empirical]`, established by the committed B16 audit set 
 | Class absent from **val** GT | class 68 → **mask value 69** | `trainval_mask_value_audit.md` §2/§3 |
 | Class absent from **test** GT | class 41 → **mask value 42** | `test_mask_value_audit.md` §1; `trainval_mask_value_audit.md` §3 |
 | FLAG-F image | `apple_black_rot_google_0001` has 0 COCO polygons but a **valid mask `{0, 1}`** | `test_mask_value_audit.md` §4 |
-| Stem uniqueness | duplicate stems **0/0**; zero cross-split overlap | `dataset_report.md` §"Counts & identifiers" |
+| Stem uniqueness | duplicate stems **0/0**; zero cross-split overlap **[AM-18 item 8, 2026-10-01]** "Zero overlap" is over image identifiers. Issue tqwei05/PlantSeg #11 reports byte-identical images across splits (70 test ↔ train, 32 train ↔ val and 11 test ↔ val groups); AM-18 items 1(d) and 8 measure and disclose them. | `dataset_report.md` §"Counts & identifiers" |
 
 > **Evidence scope `[B59 A12, 2026-09-21]`.** The "one disease class per image" and "background
 > present" rows above are **raw-mask** audits at native resolution. The per-image metrics in §3.2
