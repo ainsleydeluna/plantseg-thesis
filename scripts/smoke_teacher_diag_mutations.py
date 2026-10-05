@@ -108,7 +108,7 @@ def build_env() -> Env:
     fx.set_data_root(e.root)
     e.strata = fx.write_strata(e.tmp / "train_strata_v1.json", e.stems["train"])
     e.planted = s4.plant_copies(e.root, e.stems)
-    e.ref = fx.reference_artifact(e.tmp / "ref_artifact", e.ckpt, n=3)
+    e.ref = fx.reference_artifact(e.tmp / "ref_artifact", e.ckpt, e.sha, n=3)
     e.cfg = str(e.td.REPO / e.td.TEACHER_CONFIG_REL)
     e.teacher = dict(teacher_ckpt=str(e.ckpt), teacher_ckpt_sha256=e.sha, teacher_config=e.cfg)
     fx.call_run(d2, out_dir=e.tmp / "d2_item1", artifact_dir=e.tmp / "d2_item1_art", teacher_role="record",
@@ -393,9 +393,21 @@ def killers(e) -> dict:
             if not pre:
                 sys.modules.pop("mmseg", None)
     k["P2 stub refuses a build that leaves mmseg imported"] = mmseg_build
-    k["P2 stub refuses a model over 1e6 parameters"] = lambda: raises(
-        lambda: s1.gated_load(td, e.args(), factory=fx.big_factory), td.Refused)
-    k["P8 the field count on stand-ins: 11 fields refused, 12 not (holds before and after K-part)"] = lambda: s1.case_p8_count(td)
+    k["P2 stub refuses a model over 1e6 parameters (own big_factory checkpoint; the message names the count)"] = (
+        lambda: s1.case_big_model(td, fx, e.tmp, e.args)[0])
+    k["h1 the stub checkpoint holds exactly the factory's state_dict; the loaded stub equals the factory's state"] = (
+        lambda: s1.case_stub_ckpt_exact(td, fx, e.tmp, s1.gated_load(td, e.args(), factory=fx.stub_factory)[1]))
+    k["h3 the reference builder passes --teacher-ckpt-sha256 (built and recorded; a wrong sha refused)"] = (
+        lambda: s1.case_reference_sha(fx, e.tmp, e.ckpt, e.sha)[0])
+    k["a both load lines pass the verified sha (expected_sha256 recorded in the kd and evaluator form)"] = (
+        lambda: s1.case_expected_sha(s1.gated_load(td, e.args(), factory=fx.stub_factory)[1],
+                                     s1.gated_load(td, e.args(), mode="evaluator", factory=fx.stub_factory)[1], e.sha))
+    k["h4 a checkpoint changed after validation is refused with exit 2 (TeacherChecksumMismatch)"] = (
+        lambda: s1.case_h4_checksum(td, fx, e.tmp, e.args)[0])
+    k["h4 a checkpoint the strict load refuses is refused with exit 2 (TeacherStateDictMismatch)"] = (
+        lambda: s1.case_h4_state_dict(td, fx, e.tmp, e.args)[0])
+    k["P8 names and order on stand-ins: 11 fields, the 12 reordered or one renamed refused; the merged 12 pass"] = (
+        lambda: s1.case_p8_names(td))
 
     def binding(head=HEAD, tree_status=None):
         with fx.fake_git(head=head, tree_status=tree_status):
@@ -557,13 +569,19 @@ def killers(e) -> dict:
     k["b7 D1's share > 0.99 is strict"] = s1.case_strict_099
     k["P16 the ECE share > 0.99 is strict"] = sc.case_strict_099
     k["d6 the disease subset follows the ground truth, not the prediction"] = sc.case_disease_by_ground_truth
+    k["d the real branch's reference is R3 itself, not the --val-reference artifact (finding 27)"] = lambda: sc.case_gate_real_reference(td)
+    k["d R3_VAL_MIOU is the literal 0.38576993346214294 and PAIRING's value; tolerance 1e-5"] = lambda: sc.case_gate_constants(td)
+    k["d real mode: 9e-6 from R3 passes and 1.1e-5 is refused, on both sides"] = lambda: sc.case_gate_tolerance(td)
+    k["d None and NaN are refused"] = lambda: sc.case_gate_none_nan(td)
 
     def fresh_load():
         return s1.gated_load(td, e.args(), factory=fx.stub_factory)
-    k["P8 a real run refuses None or empty provenance fields, naming them"] = lambda: (
+    k['P8 a real run refuses None, "", {} or [] and a missing field after the load, naming them'] = lambda: (
         lambda il: s1.case_p8_nonempty(td, il[1], il[0]))(fresh_load())
-    k["P8 the written record must hold every field"] = lambda: (
+    k["P8 the written record's keys and dataclasses.fields must be the K-part fields in order"] = lambda: (
         lambda il: s1.case_p8_record(td, il[1], il[0], il[2]))(fresh_load())
+    k["P8 an empty container is refused in real mode after the load and in the record (DG-5 ruling 1)"] = lambda: (
+        lambda il: s1.case_p8_empty_container(td, il[1], il[0], il[2]))(fresh_load())
     k["P7 a frozen blob id other than the table's is refused"] = lambda: s1.case_frozen_blob(td)
     k["P7 a segmentor in training mode stops"] = lambda: s1.case_training_mode(td, fx, e.args)
     k["P9 a second isolated NMF module stops the after-load check"] = lambda: s1.case_extra_isolated(td, fx, e.args)
@@ -698,7 +716,7 @@ def killers(e) -> dict:
 def mutations(e) -> list:
     from src.eval import calibration as cal
     from src.eval import nmf_sensitivity as ns
-    td, d1, d2, d3, d4, hs = e.td, e.d1, e.d2, e.d3, e.d4, e.hs
+    td, d1, d2, d3, d4, hs, fx = e.td, e.d1, e.d2, e.d3, e.d4, e.hs, e.fx
     F = "if False:"
     return [
         # P33
@@ -785,10 +803,10 @@ def mutations(e) -> list:
         ("P2 mmseg guard removed", td, "after_load_checks", [('if "mmseg" in sys.modules:', F)],
          "P2 stub refuses a build that leaves mmseg imported"),
         ("P2 parameter guard removed", td, "after_load_checks", [("if n_params > STUB_MAX_PARAMETERS:", F)],
-         "P2 stub refuses a model over 1e6 parameters"),
-        ("P8 provenance field count removed", td, "require_provenance_field_count",
-         [("if real and len(names) != EXPECTED_PROVENANCE_FIELDS:", F)],
-         "P8 the field count on stand-ins: 11 fields refused, 12 not (holds before and after K-part)"),
+         "P2 stub refuses a model over 1e6 parameters (own big_factory checkpoint; the message names the count)"),
+        ("P8 provenance names check removed (before any file is read)", td, "require_provenance_field_count",
+         [("if real:", F)],
+         "P8 names and order on stand-ins: 11 fields, the 12 reordered or one renamed refused; the merged 12 pass"),
         ("P26 HEAD == --script-commit removed", td, "require_commit_binding", [("if head != script_commit:", F)],
          "P26 a HEAD other than --script-commit is refused"),
         ("P26 clean-tree check removed", td, "require_commit_binding", [("if tree is None or tree.strip():", F)],
@@ -808,7 +826,7 @@ def mutations(e) -> list:
          [("p = torch.softmax(logits.to(torch.float64), dim=1)", "p = logits.to(torch.float64)")],
          "c3 the mean-probability prediction averages probabilities, not logits"),
         ("P18 the reproduction gate removed", d2, "_run",
-         [("passed = delta is not None and delta <= td.R3_TOLERANCE", "passed = True")],
+         [('passed = gate["passed"]', "passed = True")],
          "P18 a failed gate: exit 1, no evaluator artifact"),
         ("D3 median replaced by the mean", d3, "_stats",
          [("float(np.median(np.asarray(values, dtype=np.float64)))", "float(np.mean(np.asarray(values, dtype=np.float64)))")],
@@ -869,11 +887,11 @@ def mutations(e) -> list:
            "pvn = pv.numpy(); dmask = (pvn >= self.disease_lo) & (pvn <= self.disease_hi)")],
          "d6 the disease subset follows the ground truth, not the prediction"),
         ("P8 empty-field check removed", td, "after_load_checks",
-         [('empty = [f.name for f in fields if getattr(prov, f.name) in (None, "")]', "empty = []")],
-         "P8 a real run refuses None or empty provenance fields, naming them"),
-        ("P8 record check removed", td, "teacher_record",
-         [('bad = [n for n in provenance_fields() if provenance.get(n) in (None, "")]', "bad = []")],
-         "P8 the written record must hold every field"),
+         [("empty = [n for n in fields if provenance_value_empty(getattr(prov, n))]", "empty = []")],
+         'P8 a real run refuses None, "", {} or [] and a missing field after the load, naming them'),
+        ("P8 record blank check removed", td, "teacher_record",
+         [("bad = [n for n in TEACHER_PROVENANCE_FIELDS if provenance_value_empty(provenance.get(n))]", "bad = []")],
+         "P8 an empty container is refused in real mode after the load and in the record (DG-5 ruling 1)"),
         ("P7 frozen blob comparison removed", td, "frozen_blob_record", [("if got != blob:", F)],
          "P7 a frozen blob id other than the table's is refused"),
         ("P7 training-mode check removed", td, "after_load_checks", [("if loaded.segmentor.training is not False:", F)],
@@ -946,6 +964,59 @@ def mutations(e) -> list:
         ("hasher accepts an image without its mask", hs, "_run",
          [('missing = [s for s in stems if s + MASK_SUFFIX not in lst[split]["masks"]]', "missing = []")],
          "P21 a VAL image without its mask is refused"),
+        # P41 follow-up (GO-2 of 2026-10-04): appended, so M01-M89 keep their numbers
+        ("h1 the stub checkpoint written as zeros (not the factory's state)", fx, "write_stub_ckpt",
+         [("state = {k: v.detach().clone() for k, v in (factory or stub_factory)().state_dict().items()}",
+           "state = {k: torch.zeros_like(v) for k, v in (factory or stub_factory)().state_dict().items()}")],
+         "h1 the stub checkpoint holds exactly the factory's state_dict; the loaded stub equals the factory's state"),
+        ("h3 the reference builder omits --teacher-ckpt-sha256", fx, "reference_artifact",
+         [('"--teacher-ckpt-sha256", sha256,', "")],
+         "h3 the reference builder passes --teacher-ckpt-sha256 (built and recorded; a wrong sha refused)"),
+        ("a the kd load line drops expected_sha256", td, "load_teacher",
+         [("load_frozen_teacher(str(inputs.ckpt), config_path=str(inputs.config), expected_sha256=sha, **kw)",
+           "load_frozen_teacher(str(inputs.ckpt), config_path=str(inputs.config), **kw)")],
+         "a both load lines pass the verified sha (expected_sha256 recorded in the kd and evaluator form)"),
+        ("a the evaluator load line drops expected_sha256", td, "load_teacher",
+         [("load_teacher_model(resolved, config_path=str(inputs.config), expected_sha256=sha, **kw)",
+           "load_teacher_model(resolved, config_path=str(inputs.config), **kw)")],
+         "a both load lines pass the verified sha (expected_sha256 recorded in the kd and evaluator form)"),
+        ("h4 TeacherChecksumMismatch dropped from the refusal classes", td, "exit_code_for",
+         [("_loaded_classes(_REFUSAL_CLASSES)", "_loaded_classes(_REFUSAL_CLASSES[:4] + _REFUSAL_CLASSES[5:])")],
+         "h4 a checkpoint changed after validation is refused with exit 2 (TeacherChecksumMismatch)"),
+        ("h4 TeacherStateDictMismatch dropped from the refusal classes", td, "exit_code_for",
+         [("_loaded_classes(_REFUSAL_CLASSES)", "_loaded_classes(_REFUSAL_CLASSES[:5])")],
+         "h4 a checkpoint the strict load refuses is refused with exit 2 (TeacherStateDictMismatch)"),
+        ("P8 the order check weakened to a set comparison", td, "require_provenance_names",
+         [("if names != list(TEACHER_PROVENANCE_FIELDS):", "if sorted(names) != sorted(TEACHER_PROVENANCE_FIELDS):")],
+         "P8 names and order on stand-ins: 11 fields, the 12 reordered or one renamed refused; the merged 12 pass"),
+        ("P8 an empty container no longer counts as empty", td, "provenance_value_empty",
+         [("return isinstance(value, (dict, list)) and len(value) == 0", "return False")],
+         "P8 an empty container is refused in real mode after the load and in the record (DG-5 ruling 1)"),
+        ("P8 the after-load names check removed", td, "after_load_checks",
+         [("require_provenance_names(fields, \"the loaded teacher's provenance fields\")", "pass")],
+         'P8 a real run refuses None, "", {} or [] and a missing field after the load, naming them'),
+        ("P8 the record's keys check removed", td, "teacher_record",
+         [("require_provenance_names(provenance.keys(), \"the provenance record's keys\")", "pass")],
+         "P8 the written record's keys and dataclasses.fields must be the K-part fields in order"),
+        ("P8 the record site's dataclass check removed", td, "teacher_record",
+         [("require_provenance_names(provenance_fields(), \"dataclasses.fields(TeacherProvenance)\")", "pass")],
+         "P8 the written record's keys and dataclasses.fields must be the K-part fields in order"),
+        ("d the real branch inverted (the artifact in real mode, R3 in stub mode)", td, "reproduction_gate",
+         [("reference = ref_miou if stub else R3_VAL_MIOU", "reference = R3_VAL_MIOU if stub else ref_miou")],
+         "d the real branch's reference is R3 itself, not the --val-reference artifact (finding 27)"),
+        ("d a changed digit of R3 in the gate", td, "reproduction_gate",
+         [("reference = ref_miou if stub else R3_VAL_MIOU", "reference = ref_miou if stub else 0.38576993346215294")],
+         "d R3_VAL_MIOU is the literal 0.38576993346214294 and PAIRING's value; tolerance 1e-5"),
+        ("d a changed tolerance (2e-5)", td, "reproduction_gate",
+         [("passed = delta is not None and delta <= R3_TOLERANCE", "passed = delta is not None and delta <= 2e-5")],
+         "d real mode: 9e-6 from R3 passes and 1.1e-5 is refused, on both sides"),
+        ("d a None value passes", td, "reproduction_gate",
+         [("passed = delta is not None and delta <= R3_TOLERANCE", "passed = delta is None or delta <= R3_TOLERANCE")],
+         "d None and NaN are refused"),
+        ("d a NaN value passes (a negated comparison)", td, "reproduction_gate",
+         [("passed = delta is not None and delta <= R3_TOLERANCE",
+           "passed = delta is not None and not delta > R3_TOLERANCE")],
+         "d None and NaN are refused"),
     ]
 
 

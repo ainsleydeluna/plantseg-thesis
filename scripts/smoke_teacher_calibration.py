@@ -11,7 +11,9 @@ The D2 VAL pass (scripts/teacher_d2_calibration.py) on the stub teacher and a sy
 its evaluator artifact equals scripts/evaluate_model.py run()'s under EVALUATION_CONTRACT 10(d); the
 gate runs before the write (P18: "not reproduced", no artifact, exit 1); control and arm (P3, P4);
 --val-reference read summary-first, its manifest identity and verification; refusals before any load;
-real mode (the CLI) refused until K-part (P8); the RNG watch of P9.
+real mode (the CLI) refused unless pinned to HEAD (P26); the RNG watch of P9. The record role's
+reproduction gate (src/eval/teacher_diag.reproduction_gate, shared by D2 and D1's VAL part): in real mode
+the produced value itself must be within 1e-5 of R3 = 0.38576993346214294 (AM-PC-1 finding 27).
 Synthetic inputs only; no PlantSeg data, no checkpoint of record, no GPU.
 
     python -B scripts/smoke_teacher_calibration.py
@@ -230,13 +232,15 @@ def hook_cases() -> None:
 # ---------------------------------------------------------------------------------------------------
 # the D2 VAL pass (scripts/teacher_d2_calibration.py) on the stub teacher and a synthetic data root
 # ---------------------------------------------------------------------------------------------------
-def _reference(fx, td, tmp, ckpt, n=3):
-    """The R3-equivalent reference: scripts/evaluate_model.py run() on the same stub teacher."""
+def _reference(fx, td, tmp, ckpt, sha, n=3):
+    """The R3-equivalent reference: scripts/evaluate_model.py run() on the same stub teacher, with the sha256
+    write_stub_ckpt returned (the evaluator's teacher stage requires it, R6)."""
     from scripts import evaluate_model as em
     from src.distill.segnext_teacher import segnext_builder
     out = tmp / "ref_artifact"
     args = em.build_parser().parse_args([
         "--stage", "teacher", "--model-role", "teacher", "--split", "val", "--checkpoint", str(ckpt),
+        "--teacher-ckpt-sha256", sha,
         "--teacher-config", str(td.REPO / td.TEACHER_CONFIG_REL), "--artifact-status", "smoke",
         "--max-samples", str(n), "--batch-size", "1", "--out-dir", str(out), "--run-id", "ref_run"])
     return em.run(args, teacher_builder=segnext_builder(model_factory=fx.stub_factory))
@@ -258,6 +262,59 @@ def case_pinned_constants() -> bool:
     """The real-mode pins equal the GO's literals (imported from PAIRING and FROZEN, never retyped)."""
     from src.eval import teacher_diag as td
     return all(getattr(td, k) == v for k, v in PINNED.items())
+
+
+# ---------------------------------------------------------------------------------------------------
+# the record role's reproduction gate (src/eval/teacher_diag.reproduction_gate; SCOPE d, AM-PC-1 finding 27)
+# ---------------------------------------------------------------------------------------------------
+LITERAL_R3 = 0.38576993346214294
+GATE_KEYS = ["rule", "reference", "reference_source", "tolerance", "value", "delta", "passed"]
+
+
+def case_gate_real_reference(td) -> bool:
+    """Real mode: the reference is R3_VAL_MIOU itself, whatever the --val-reference artifact holds. A value equal
+    to R3 passes against an artifact 2e-5 away; a value equal to that artifact is refused. Stub mode compares
+    with the artifact. The block's keys are the outputs' gate fields, in order."""
+    off = LITERAL_R3 + 2e-5
+    a = td.reproduction_gate(LITERAL_R3, off, stub=False, rule="r")
+    b = td.reproduction_gate(off, off, stub=False, rule="r")
+    c = td.reproduction_gate(off, off, stub=True, rule="r")
+    return (list(a) == GATE_KEYS and a["reference"] == LITERAL_R3 and a["reference_source"] == "R3" and a["passed"]
+            and not b["passed"] and c["reference"] == off and c["reference_source"] == "--val-reference (stub mode)"
+            and c["passed"])
+
+
+def case_gate_constants(td) -> bool:
+    """R3_VAL_MIOU is the literal 0.38576993346214294 and PAIRING's value; the tolerance is 1e-5 (PAIRING's)."""
+    from scripts.gap_bootstrap_val import PAIRING
+    return (td.R3_VAL_MIOU == LITERAL_R3 == PAIRING["teacher"]["reference"]
+            and td.R3_TOLERANCE == 1e-5 == PAIRING["teacher"]["tolerance"]
+            and td.reproduction_gate(LITERAL_R3, None, stub=False, rule="r")["reference"] == LITERAL_R3
+            and td.reproduction_gate(LITERAL_R3, None, stub=False, rule="r")["tolerance"] == 1e-5)
+
+
+def case_gate_tolerance(td) -> bool:
+    """Real mode: a produced value 9e-6 from R3 passes and one 1.1e-5 away is refused, on both sides."""
+    near = [td.reproduction_gate(LITERAL_R3 + s * 9e-6, None, stub=False, rule="r")["passed"] for s in (1, -1)]
+    far = [td.reproduction_gate(LITERAL_R3 + s * 1.1e-5, None, stub=False, rule="r")["passed"] for s in (1, -1)]
+    return near == [True, True] and far == [False, False]
+
+
+def case_gate_none_nan(td) -> bool:
+    """None and NaN are refused, in both modes."""
+    return not any(td.reproduction_gate(v, LITERAL_R3, stub=s, rule="r")["passed"]
+                   for v in (None, float("nan")) for s in (False, True))
+
+
+def gate_cases() -> None:
+    from src.eval import teacher_diag as td
+    check("d the real branch's reference is R3 itself, not the --val-reference artifact: R3 passes against an "
+          "artifact 2e-5 away, the artifact's own value is refused; stub mode uses the artifact; the gate fields",
+          case_gate_real_reference(td))
+    check("d R3_VAL_MIOU is the literal 0.38576993346214294 and PAIRING's value; the tolerance is 1e-5",
+          case_gate_constants(td))
+    check("d real mode: 9e-6 from R3 passes and 1.1e-5 is refused, on both sides", case_gate_tolerance(td))
+    check("d None and NaN are refused", case_gate_none_nan(td))
 
 
 def reference_variant(ref: Path, dst: Path, **edits) -> Path:
@@ -311,7 +368,7 @@ def d2_cases() -> None:
         root, _ = fx.make_data_root("diag_d2_data_")
         fx.set_data_root(root)
         ckpt, sha = fx.write_stub_ckpt(tmp / "stub_teacher.pth")
-        ref = _reference(fx, td, tmp, ckpt)
+        ref = _reference(fx, td, tmp, ckpt, sha)
         cfg = str(td.REPO / td.TEACHER_CONFIG_REL)
         utc = "2026-10-02T00:00:00Z"
 
@@ -485,7 +542,8 @@ def d2_cases() -> None:
                                      teacher_ckpt_sha256=sha, teacher_config=cfg, teacher_role="record",
                                      purpose="item1", val_reference=str(ref), script_commit="c" * 40,
                                      script_commit_dl_id="DL-61"))
-        check("P29 the CLI: a usage error exits 2; the CLI is real mode and refuses until K-part (exit 2)",
+        check("P29 the CLI: a usage error exits 2; the CLI is real mode and refuses a --script-commit that is not HEAD "
+              "(exit 2)",
               m_usage == 2 and m_real == 2)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -495,7 +553,7 @@ def d2_cases() -> None:
 
 
 def main() -> int:
-    for fn in (unit_cases, hook_cases, d2_cases):
+    for fn in (unit_cases, hook_cases, gate_cases, d2_cases):
         try:
             fn()
         except Exception as e:  # noqa: BLE001 -- a crash is a failed case, never a pass

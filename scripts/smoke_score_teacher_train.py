@@ -6,7 +6,7 @@ the evaluator's metric functions (metrics.confusion_matrix, miou_from_confusion)
 the TRAIN canvas wrapper is the VAL branch bit for bit and never augments; order_equals_sorted_stems is
 recorded; a data root containing "test" is refused by its string before any realpath of it; the strict
 VAL readers (load_val_artifact, ingest.load_run, the --val-reference check) refuse the TRAIN artifact;
-the arm role, real mode (until K-part) and the other gates refuse before any load.
+the arm role, a real run not pinned to HEAD and the other gates refuse before any load.
 scripts/evaluate_model.py is not edited; the report shows `git diff <base> -- scripts/evaluate_model.py`.
 Synthetic inputs only; no PlantSeg data, no checkpoint of record, no GPU.
 
@@ -166,14 +166,15 @@ def cases(tmp: Path, root: Path, stems: dict) -> None:
              fx.call_run(st, factory=None, out_dir=tmp / "o5", artifact_dir=tmp / "a5", **real)[0],
              fx.call_run(st, factory=None, out_dir=tmp / "o6", artifact_dir=tmp / "a6", **dict(real, max_samples=4))[0]]
     check("P3/P27/P8 refused before any load: the arm role, another strata split list, an in-repo artifact "
-          "dir, an existing output name, a real run (until K-part), --max-samples in a real run",
+          "dir, an existing output name, a real run not pinned to HEAD, --max-samples in a real run",
           r == [2] * 6 and sum(calls.values()) == 0 and not (td.REPO / "train_art_in_repo").exists(), str(r))
     import contextlib
     import io
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         m_usage = st.main([])
         m_real = st.main(fx.argv(out_dir=tmp / "o7", artifact_dir=tmp / "a7", **dict(real)))
-    check("P29 the CLI: a usage error exits 2; real mode refuses until K-part (exit 2)", m_usage == 2 and m_real == 2)
+    check("P29 the CLI: a usage error exits 2; real mode refuses a --script-commit that is not HEAD (exit 2)",
+          m_usage == 2 and m_real == 2)
     code, err = fx.call_run(st, factory=None, out_dir=tmp / "o8", artifact_dir=tmp / "a8", **dict(real, max_samples=4))
     check("P2 --max-samples in a real run is refused by its own gate", code == 2 and "--max-samples is a stub-mode flag" in err,
           err)

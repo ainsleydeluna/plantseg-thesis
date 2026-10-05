@@ -362,66 +362,137 @@ def _seam_env():
     return fx, td, tmp, ckpt, sha, args
 
 
-_PROV_NAMES = ("builder", "ckpt_path", "ckpt_sha256", "ckpt_bytes", "config_sha256", "teacher_components_sha256",
-               "reused_module_hashes", "architecture_signature", "model_cfg_sha256", "field_10", "field_11", "field_12")
+#: K-part's TeacherProvenance fields, in order, typed here independently of src/eval/teacher_diag.py (P8).
+_PROV_NAMES = ("builder", "ckpt_path", "ckpt_sha256", "ckpt_bytes", "expected_sha256", "config_path", "config_sha256",
+               "ham_kwargs", "architecture_signature", "teacher_components_sha256", "reused_module_hashes",
+               "model_cfg_sha256")
 
 
-def prov_class(n: int, *, drop_from_record: str | None = None):
-    """A stand-in TeacherProvenance with n fields (P8 cases independent of the merged dataclass)."""
+def prov_class(names=_PROV_NAMES, *, drop_from_record: str | None = None, record_order=None):
+    """A stand-in TeacherProvenance with these fields (P8 cases independent of the merged dataclass). Its record
+    (as_dict) may drop one key, or list its keys in another order."""
     def as_dict(self):
         d = dataclasses.asdict(self)
         d.pop(drop_from_record, None)
-        return d
-    return dataclasses.make_dataclass(f"Prov{n}", [(f, object) for f in _PROV_NAMES[:n]], namespace={"as_dict": as_dict})
+        return {k: d[k] for k in record_order} if record_order else d
+    return dataclasses.make_dataclass(f"Prov{len(names)}", [(f, object) for f in names], namespace={"as_dict": as_dict})
 
 
-def case_p8_count(td) -> bool:
+def prov_values(sha: str, **over) -> dict:
+    """Non-empty values of the real path's types (both containers non-empty), with overrides."""
+    vals = {"builder": "segnext_mscan_b_builder", "ckpt_path": "/ckpt/teacher.pth", "ckpt_sha256": sha,
+            "ckpt_bytes": 1, "expected_sha256": sha, "config_path": "/cfg/teacher.py", "config_sha256": "c" * 64,
+            "ham_kwargs": {"MD_S": 1}, "architecture_signature": "d" * 64, "teacher_components_sha256": "e" * 64,
+            "reused_module_hashes": {"teacher_components": "f" * 64}, "model_cfg_sha256": "0" * 64}
+    vals.update(over)
+    return vals
+
+
+def _swapped(names, i=4, j=5) -> tuple:
+    out = list(names)
+    out[i], out[j] = out[j], out[i]
+    return tuple(out)
+
+
+def refusal_text(fn) -> str | None:
+    """The Refused message of fn(), or None when fn() does not refuse (any other exception counts as None)."""
+    try:
+        fn()
+    except Exception as e:  # noqa: BLE001
+        return str(e) if type(e).__name__ == "Refused" else None
+    return None
+
+
+def case_p8_constant(td) -> bool:
+    """The 12-name constant equals this smoke's literal list and the merged dataclass's fields, by name, in order."""
+    from src.distill.teacher import TeacherProvenance
+    merged = [f.name for f in dataclasses.fields(TeacherProvenance)]
+    return list(td.TEACHER_PROVENANCE_FIELDS) == list(_PROV_NAMES) == merged and td.EXPECTED_PROVENANCE_FIELDS == 12
+
+
+def case_p8_names(td) -> bool:
+    """Real mode, before any file is read: 11 fields, the 12 in another order, or 12 with one renamed are refused,
+    each naming the difference; the merged 12 pass; stub mode never checks."""
     import src.distill.teacher as dt
     from scripts import teacher_diag_fixtures as fx
-    with fx.patched(dt, TeacherProvenance=prov_class(11)):
-        eleven = raises(lambda: td.require_provenance_field_count(True), td.Refused)
-        stub_ok = not raises(lambda: td.require_provenance_field_count(False), Exception)
-    with fx.patched(dt, TeacherProvenance=prov_class(12)):
-        twelve = not raises(lambda: td.require_provenance_field_count(True), Exception)
-    return eleven and stub_ok and twelve
+
+    def text(names, real=True):
+        with fx.patched(dt, TeacherProvenance=prov_class(tuple(names))):
+            return refusal_text(lambda: td.require_provenance_field_count(real))
+    eleven, swapped = text(_PROV_NAMES[:11]), text(_swapped(_PROV_NAMES))
+    renamed = text(_PROV_NAMES[:11] + ("field_12",))
+    return bool(eleven and "missing ['model_cfg_sha256']" in eleven
+                and swapped and "(missing [], extra [])" in swapped
+                and renamed and "extra ['field_12']" in renamed
+                and text(_PROV_NAMES) is None and text(_PROV_NAMES[:11], real=False) is None)
+
+
+def _with_provenance(loaded, prov, fn):
+    old = loaded.frozen.provenance
+    loaded.frozen.provenance = prov
+    try:
+        return fn()
+    finally:
+        loaded.frozen.provenance = old
 
 
 def case_p8_nonempty(td, loaded, inputs) -> bool:
-    cls = prov_class(12)
-    vals = {f: "v" for f in _PROV_NAMES}
-    vals.update(ckpt_sha256=inputs.sha256, field_11=None, field_12="")
-    old = loaded.frozen.provenance
-    loaded.frozen.provenance = cls(**vals)
-    try:
-        td.after_load_checks(loaded, inputs, stub=False)
-        return False
-    except td.Refused as e:
-        return "field_11" in str(e) and "field_12" in str(e)
-    except Exception:  # noqa: BLE001
-        return False
-    finally:
-        loaded.frozen.provenance = old
+    """After the load, real mode: None, "", {} and [] are each refused and named; an 11-field provenance object is
+    refused by name; a complete one passes."""
+    cls = prov_class()
+    blank = prov_values(inputs.sha256, expected_sha256=None, config_path="", ham_kwargs={}, reused_module_hashes=[])
+    t_blank = _with_provenance(loaded, cls(**blank), lambda: refusal_text(
+        lambda: td.after_load_checks(loaded, inputs, stub=False)))
+    short = {k: v for k, v in prov_values(inputs.sha256).items() if k != "model_cfg_sha256"}
+    t_short = _with_provenance(loaded, prov_class(_PROV_NAMES[:11])(**short), lambda: refusal_text(
+        lambda: td.after_load_checks(loaded, inputs, stub=False)))
+    complete = _with_provenance(loaded, cls(**prov_values(inputs.sha256)), lambda: not raises(
+        lambda: td.after_load_checks(loaded, inputs, stub=False), Exception))
+    return bool(t_blank and all(f"'{n}'" in t_blank for n in ("expected_sha256", "config_path", "ham_kwargs",
+                                                               "reused_module_hashes"))
+                and t_short and "missing ['model_cfg_sha256']" in t_short and complete)
+
+
+def case_p8_empty_container(td, loaded, inputs, checks) -> bool:
+    """DG-5 ruling 1: in real mode an empty container ({} or []) is refused like None, after the load and in the
+    written record, and named; stub mode never checks it."""
+    import src.distill.teacher as dt
+    from scripts import teacher_diag_fixtures as fx
+    cls = prov_class()
+    out = []
+    with fx.patched(dt, TeacherProvenance=cls):
+        for field, empty in (("reused_module_hashes", {}), ("ham_kwargs", []), ("ham_kwargs", {})):
+            prov = cls(**prov_values(inputs.sha256, **{field: empty}))
+            t_after = _with_provenance(loaded, prov, lambda: refusal_text(
+                lambda: td.after_load_checks(loaded, inputs, stub=False)))
+            t_record = _with_provenance(loaded, prov, lambda: refusal_text(
+                lambda: td.teacher_record(loaded, inputs, checks, stub=False)))
+            stub_ok = _with_provenance(loaded, prov, lambda: not raises(
+                lambda: td.teacher_record(loaded, inputs, checks, stub=True), Exception))
+            out.append(bool(t_after and f"'{field}'" in t_after and t_record and f"'{field}'" in t_record
+                            and "blanks" in t_record and stub_ok))
+    return all(out)
 
 
 def case_p8_record(td, loaded, inputs, checks) -> bool:
+    """The written record: its keys must be the K-part fields in order (a record lacking one, or listing them in
+    another order, is refused by the keys check), and dataclasses.fields(TeacherProvenance) must be too."""
     import src.distill.teacher as dt
     from scripts import teacher_diag_fixtures as fx
-    vals = {f: "v" for f in _PROV_NAMES}
-    vals["ckpt_sha256"] = inputs.sha256
-    old = loaded.frozen.provenance
-    try:
-        with fx.patched(dt, TeacherProvenance=prov_class(12)):
-            loaded.frozen.provenance = prov_class(12, drop_from_record="field_12")(**vals)
-            try:
-                td.teacher_record(loaded, inputs, checks, stub=False)
-                lacking = False
-            except td.Refused as e:
-                lacking = "field_12" in str(e)
-            loaded.frozen.provenance = prov_class(12)(**vals)
-            complete = not raises(lambda: td.teacher_record(loaded, inputs, checks, stub=False), Exception)
-    finally:
-        loaded.frozen.provenance = old
-    return lacking and complete
+    vals = prov_values(inputs.sha256)
+
+    def text(prov, dataclass=prov_class()):
+        with fx.patched(dt, TeacherProvenance=dataclass):
+            return _with_provenance(loaded, prov, lambda: refusal_text(
+                lambda: td.teacher_record(loaded, inputs, checks, stub=False)))
+    lacking = text(prov_class(drop_from_record="model_cfg_sha256")(**vals))
+    reordered = text(prov_class(record_order=_swapped(_PROV_NAMES))(**vals))
+    dataclass_order = text(prov_class()(**vals), dataclass=prov_class(_swapped(_PROV_NAMES)))
+    complete = text(prov_class()(**vals))
+    return bool(lacking and "the provenance record's keys" in lacking and "missing ['model_cfg_sha256']" in lacking
+                and reordered and "the provenance record's keys" in reordered
+                and dataclass_order and "dataclasses.fields(TeacherProvenance)" in dataclass_order
+                and complete is None)
 
 
 def case_frozen_blob(td) -> bool:
@@ -431,6 +502,108 @@ def case_frozen_blob(td) -> bool:
     table[first] = ("0" * 40, table[first][1])
     with fx.patched(td, FROZEN=table):
         return raises(td.frozen_blob_record, td.Refused)
+
+
+def case_stub_ckpt_exact(td, fx, tmp, loaded) -> bool:
+    """h1: write_stub_ckpt holds exactly the factory's state_dict (keys, dtypes, shapes, values), for the default
+    and the big factory, and the strictly loaded stub's state equals the factory's own seeded state."""
+    import torch
+    ok = True
+    for factory, tag in ((None, "h1_default"), (fx.big_factory, "h1_big")):
+        p, _ = fx.write_stub_ckpt(Path(tmp) / f"{tag}.pth", tag=tag, factory=factory)
+        saved = torch.load(p, map_location="cpu")["state_dict"]
+        ref = (factory or fx.stub_factory)().state_dict()
+        ok &= sorted(saved) == sorted(ref) and all(
+            saved[k].dtype == ref[k].dtype and saved[k].shape == ref[k].shape and torch.equal(saved[k], ref[k])
+            for k in ref)
+        p.unlink()
+    ok &= td.loaded_state_sha256(loaded.segmentor) == td.loaded_state_sha256(fx.stub_factory())
+    return bool(ok)
+
+
+def case_reference_sha(fx, tmp, ckpt, sha) -> tuple[bool, str]:
+    """h3: fx.reference_artifact passes --teacher-ckpt-sha256 (the sha write_stub_ckpt returned): with it the
+    evaluator builds the reference and records that sha; a well-formed wrong sha is refused by its hash check."""
+    import json
+    import tempfile
+
+    from src.eval.stage_artifacts import StageArtifactError
+    tmp = Path(tempfile.mkdtemp(prefix="ref_h3_", dir=tmp))      # a fresh folder per call (the harness repeats it)
+    try:
+        d = fx.reference_artifact(Path(tmp) / "ref_h3", ckpt, sha, n=1, run_id="ref_h3")
+        got = json.loads((Path(d) / "summary.json").read_text(encoding="utf-8"))["run"]["checkpoint_sha256"]
+        built, detail = got == sha, f"recorded {got}"
+    except Exception as exc:  # noqa: BLE001
+        built, detail = False, f"{type(exc).__name__}: {exc}"[:300]
+    try:
+        fx.reference_artifact(Path(tmp) / "ref_h3_wrong", ckpt, "0" * 64, n=1, run_id="ref_h3_wrong")
+        wrong = False
+    except StageArtifactError as exc:
+        wrong = exc.code == "teacher_hash_mismatch"
+    except Exception:  # noqa: BLE001
+        wrong = False
+    return built and wrong, detail
+
+
+def case_expected_sha(kd, ev, sha) -> bool:
+    """SCOPE a: both load lines pass the verified sha, so the record holds expected_sha256 (KP-1 ruling 2)."""
+    return all(x.frozen.provenance.expected_sha256 == sha and x.frozen.provenance.as_dict()["expected_sha256"] == sha
+               for x in (kd, ev))
+
+
+def _exit_and_stderr(td, fn) -> tuple:
+    err = io.StringIO()
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+        code = td.run_with_exit_codes(fn)
+    return code, err.getvalue()
+
+
+def case_h4_checksum(td, fx, tmp, args) -> tuple[bool, str]:
+    """h4: a checkpoint whose bytes change after validate_teacher_artifact passed is refused by the load line's
+    second hash (TeacherChecksumMismatch, before anything parses it) with exit 2, as the KD trainer refuses it."""
+    import tempfile
+
+    import src.eval.stage_artifacts as sa
+    d = Path(tempfile.mkdtemp(prefix="h4_sum_", dir=tmp))
+    ckpt, sha = fx.write_stub_ckpt(d / "stub.pth", tag="h4_sum")
+    real_validate = sa.validate_teacher_artifact
+
+    def validate_then_swap(*a, **k):
+        out = real_validate(*a, **k)
+        fx.write_stub_ckpt(ckpt, tag="h4_swapped")           # the same state in new bytes: a new sha256
+        return out
+    with fx.patched(sa, validate_teacher_artifact=validate_then_swap):
+        code, err = _exit_and_stderr(td, lambda: gated_load(td, args(teacher_ckpt=str(ckpt), teacher_ckpt_sha256=sha),
+                                                           factory=fx.stub_factory))
+    return code == td.EXIT_REFUSED and "TeacherChecksumMismatch" in err, f"exit {code}: {err[-200:]}"
+
+
+def case_h4_state_dict(td, fx, tmp, args) -> tuple[bool, str]:
+    """h4: a checkpoint the strict load refuses (big_factory's state into the default stub: shape mismatches) is
+    refused with exit 2 (TeacherStateDictMismatch), as the KD trainer refuses it."""
+    import tempfile
+    d = Path(tempfile.mkdtemp(prefix="h4_state_", dir=tmp))
+    ckpt, sha = fx.write_stub_ckpt(d / "big_state.pth", tag="h4_state", factory=fx.big_factory)
+    code, err = _exit_and_stderr(td, lambda: gated_load(td, args(teacher_ckpt=str(ckpt), teacher_ckpt_sha256=sha),
+                                                       factory=fx.stub_factory))
+    return code == td.EXIT_REFUSED and "TeacherStateDictMismatch" in err, f"exit {code}: {err[-200:]}"
+
+
+def case_big_model(td, fx, tmp, args) -> tuple[bool, str]:
+    """h2: the oversized stub loads strictly from a checkpoint written from big_factory (about 8 MB, under the
+    16 MiB stat guard), so the parameter guard is what refuses; its message must name the parameter count."""
+    ckpt, sha = fx.write_stub_ckpt(Path(tmp) / "big_model_stub.pth", tag="big_model", factory=fx.big_factory)
+    n = sum(p.numel() for p in fx.big_factory().parameters())
+    try:
+        gated_load(td, args(teacher_ckpt=str(ckpt), teacher_ckpt_sha256=sha), factory=fx.big_factory)
+        msg = "no refusal"
+    except td.Refused as e:
+        msg = str(e)
+    except Exception as e:  # noqa: BLE001
+        msg = f"{type(e).__name__}: {e}"
+    ok = (n > td.STUB_MAX_PARAMETERS and ckpt.stat().st_size <= td.STUB_MAX_CKPT_BYTES
+          and f"a model with {n} parameters" in msg)
+    return ok, f"n={n} bytes={ckpt.stat().st_size} msg={msg[:200]}"
 
 
 def _fresh(td, fx, args, factory=None):
@@ -539,7 +712,11 @@ def _seam_body(fx, td, tmp, ckpt, sha, args) -> None:
     check("seam kd load: the stream is the adapter's live object, M4-KD seed 42, description == describe()",
           kd.stream is kd.adapter.nmf_stream and kd.stream.policy == "M4-KD" and kd.stream.seed == 42
           and kd.stream_description == kd.stream.describe() and kd.stream_description["draws"] == 0)
+    check("h1 the stub checkpoint holds exactly the factory's state_dict (default and big factory); the strictly "
+          "loaded stub's state equals the factory's own seeded state", case_stub_ckpt_exact(td, fx, tmp, kd))
     _, ev, checks_ev = gated_load(td, args(), mode="evaluator", factory=fx.stub_factory)
+    check("a both load lines pass the verified sha: the record's expected_sha256 equals it in the kd and the "
+          "evaluator form (KP-1 ruling 2)", case_expected_sha(kd, ev, sha))
     check("seam evaluator load: M4-V stream, nmf_policy is the description, same loaded state as kd",
           ev.stream is ev.adapter.nmf_stream and ev.stream.policy == "M4-V"
           and ev.eval_model.nmf_policy == ev.stream_description
@@ -658,8 +835,17 @@ def _seam_body(fx, td, tmp, ckpt, sha, args) -> None:
         if not pre:
             sys.modules.pop("mmseg", None)
     check("P2 stub refuses a build that leaves mmseg imported", r and not pre, f"mmseg imported before: {pre}")
-    check("P2 stub refuses a model over 1e6 parameters",
-          raises(lambda: gated_load(td, args(), factory=fx.big_factory), td.Refused))
+    h4_ok, h4_msg = case_h4_checksum(td, fx, tmp, args)
+    check("h4 a checkpoint changed after validation is refused by the load line's second hash with exit 2 "
+          "(TeacherChecksumMismatch)", h4_ok, h4_msg)
+    h4_ok, h4_msg = case_h4_state_dict(td, fx, tmp, args)
+    check("h4 a checkpoint the strict load refuses is refused with exit 2 (TeacherStateDictMismatch)", h4_ok, h4_msg)
+    from src.distill.teacher import TeacherChecksumFormatError
+    check("h4 TeacherChecksumFormatError stays unexpected (exit 4): P5 refuses a malformed sha before any load",
+          td.exit_code_for(TeacherChecksumFormatError("x")) is None)
+    big_ok, big_msg = case_big_model(td, fx, tmp, args)
+    check("P2 stub refuses a model over 1e6 parameters: its own checkpoint (big_factory, <= 16 MiB) loads strictly, "
+          "and the refusal names the parameter count (h2)", big_ok, big_msg)
     check("P5 the format check alone (no file read) refuses an empty, uppercase or 63-character sha256",
           all(raises(lambda b=b: td.check_teacher_flags(args(teacher_ckpt_sha256=b)), td.Refused)
               for b in ("", sha.upper(), sha[:63])))
@@ -701,10 +887,16 @@ def _seam_body(fx, td, tmp, ckpt, sha, args) -> None:
     check("P5 after the load, a provenance sha256 other than the verified one is refused",
           raises(lambda: td.after_load_checks(kd, dataclasses.replace(inputs, sha256="0" * 64), stub=True),
                  td.Refused))
-    check("P8 the field count: an 11-field TeacherProvenance refuses a real run, a 12-field one does not; stub "
-          "runs never count (stand-in dataclasses, so the case holds before and after K-part)", case_p8_count(td))
-    check("P8 a real run refuses a provenance whose fields are None or empty, naming them", case_p8_nonempty(td, kd, inputs))
-    check("P8 the written record (as_dict) must hold every field: a record lacking one is refused",
+    check("P8 the 12-name constant equals the merged dataclasses.fields(TeacherProvenance), by name and in order",
+          case_p8_constant(td))
+    check("P8 names and order before any file is read: 11 fields, the 12 reordered, or one renamed refuse a real run, "
+          "each named; the merged 12 do not; stub runs never check (stand-in dataclasses)", case_p8_names(td))
+    check("P8 a real run refuses a provenance whose fields are None, \"\", {} or [] (each named) or that lacks a "
+          "field; a complete one passes", case_p8_nonempty(td, kd, inputs))
+    check("P8 an empty container ({} or []) is refused in real mode, after the load and in the written record, and "
+          "named; stub mode does not check it (DG-5 ruling 1)", case_p8_empty_container(td, kd, inputs, checks))
+    check("P8 the written record's keys must be the K-part fields in order (lacking one or reordered: refused), and "
+          "so must dataclasses.fields(TeacherProvenance); a complete record passes",
           case_p8_record(td, kd, inputs, checks))
     check("P7 a frozen blob id other than the table's is refused", case_frozen_blob(td))
     check("P7 a segmentor in training mode stops", case_training_mode(td, fx, args))
@@ -845,7 +1037,7 @@ def _d1_env():
     fx.set_data_root(root)
     ckpt, sha = fx.write_stub_ckpt(tmp / "stub_teacher.pth")
     strata = fx.write_strata(tmp / "train_strata_v1.json", stems["train"])
-    ref = fx.reference_artifact(tmp / "ref_artifact", ckpt, n=3)
+    ref = fx.reference_artifact(tmp / "ref_artifact", ckpt, sha, n=3)
     cfg = str(td.REPO / td.TEACHER_CONFIG_REL)
     teacher = dict(teacher_ckpt=str(ckpt), teacher_ckpt_sha256=sha, teacher_config=cfg)
     fx.call_run(d2, out_dir=tmp / "d2", artifact_dir=tmp / "d2_art", teacher_role="record", purpose="item1",
@@ -1066,12 +1258,21 @@ def _crops_cases(e) -> None:
                  "--teacher-ckpt-sha256 must match": dict(real, teacher_ckpt_sha256=None)}
         got = {why: fx.call_run(d1, factory=None, out_dir=e.tmp / f"r9_{k}", **kw) for k, (why, kw) in enumerate(cases.items())}
         r_p8 = fx.call_run(d1, factory=None, out_dir=e.tmp / "r11", **real)
+        import src.distill.teacher as dt
+        with fx.patched(dt, TeacherProvenance=prov_class(_PROV_NAMES[:11])):
+            r_p8_11 = fx.call_run(d1, factory=None, out_dir=e.tmp / "r12", **real)
     check("a6/P28 real weights are refused, each by its own gate (the message names it), before any load: no "
           "correction flags, a malformed state, --n-crops, no --teacher-ckpt-sha256",
           all(c == 2 and why in err for why, (c, err) in got.items()) and sum(calls.values()) == 0,
           str({why: err[-120:] for why, (c, err) in got.items() if why not in err}))
-    check("P8 until K-part a well-formed real run is refused by the provenance field count",
-          r_p8[0] == 2 and "TeacherProvenance" in r_p8[1], r_p8[1])
+    check("P8 at K-part a well-formed real run passes the provenance names gate and is refused by the next one, the "
+          "commit binding; an 11-field TeacherProvenance is refused by P8 first; no load either way",
+          r_p8[0] == 2 and "--script-commit" in r_p8[1] and "TeacherProvenance" not in r_p8[1]
+          and r_p8_11[0] == 2 and "missing ['model_cfg_sha256']" in r_p8_11[1] and sum(calls.values()) == 0,
+          r_p8[1][-200:] + " | " + r_p8_11[1][-200:])
+    h3_ok, h3_detail = case_reference_sha(fx, e.tmp, e.ckpt, e.sha)
+    check("h3 the reference builder passes --teacher-ckpt-sha256: the evaluator builds it and records that sha; a "
+          "wrong sha is refused (teacher_hash_mismatch)", h3_ok, h3_detail)
 
 
 def _val_cases(e) -> None:
@@ -1168,7 +1369,7 @@ def _val_cases(e) -> None:
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         m_real = d1.main(fx.argv(out_dir=e.tmp / "v6", **dict(base, max_samples=None, generated_utc=None,
                                                                 script_commit="c" * 40, script_commit_dl_id="DL-61")))
-    check("P29 the CLI is real mode and refuses until K-part (exit 2)", m_real == 2)
+    check("P29 the CLI is real mode: a real run whose --script-commit is not HEAD is refused (exit 2)", m_real == 2)
 
 
 def d1_cases() -> None:

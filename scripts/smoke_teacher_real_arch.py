@@ -11,7 +11,9 @@ config_path=cfg) and load_teacher_model(resolved, config_path=cfg), no builder).
   - K = 1: the split forward (backbone once, head once) equals the adapter's forward bit for bit;
   - eight head calls on one backbone output leave the feature hash and the caller's CPU RNG unchanged,
     advance the M4-KD stream by exactly 8, give finite [1, 116, 64, 64] logits that differ across draws;
-  - evaluator form: stream 42's resized map equals TeacherEvalModel's output bit for bit.
+  - evaluator form: stream 42's resized map equals TeacherEvalModel's output bit for bit;
+  - P8 on the real path: both forms pass the real-mode after-load and record checks, and the record holds
+    K-part's 12 fields in order, none None, "", {} or [], expected_sha256 the verified sha.
 
 Needs the MMSeg stack (mmengine 0.10.7, mmcv 2.1.0, mmseg 1.2.2); without it the smoke FAILS, never
 passes silently. Part of local command 0 (P36).
@@ -109,6 +111,14 @@ def cases(tmp: Path) -> None:
     check("P35 evaluator form: stream 42's resized map equals TeacherEvalModel's output bit for bit; stream 43 "
           "differs", ev.stream.policy == "M4-V" and torch.equal(z42, z_eval)
           and not torch.equal(F.interpolate(z43, size=(512, 512), mode="bilinear", align_corners=False), z42))
+
+    recs = {mode: td.teacher_record(x, inputs, td.after_load_checks(x, inputs, stub=False), stub=False)["provenance"]
+            for mode, x in (("kd", kd), ("evaluator", ev))}
+    empty = {m: [n for n, v in r.items() if td.provenance_value_empty(v)] for m, r in recs.items()}
+    check("P8 real path: both forms pass the real-mode checks and record the 12 K-part fields in order, none None, "
+          "\"\", {} or [], with expected_sha256 == the verified sha (SCOPE a, b)",
+          all(list(r) == list(td.TEACHER_PROVENANCE_FIELDS) and r["expected_sha256"] == inputs.sha256
+              for r in recs.values()) and not any(empty.values()), str(empty))
 
 
 def main() -> int:

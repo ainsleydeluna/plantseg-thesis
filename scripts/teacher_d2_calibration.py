@@ -7,7 +7,10 @@ difference: the evaluator core gets `batch_forward=CalibratingBatchForward(Model
 instead of `forward=ModelDeviceForward(cpu)`, because the ECE needs the targets. The hook calls the same
 forward, accumulates from the tensor the core argmaxes and hands that tensor back unchanged
 (src/eval/calibration.py). Canvas protocol, CPU, batch size 1, the VAL manifest of record, the M4-V NMF
-stream seeded 42 begun by load_teacher_model.
+stream seeded 42 begun by load_teacher_model. The mirror is pinned to run() at 60c1417 (P34), K-part's R6
+included: the checkpoint's sha256 is required and format-checked before any file is read (check_teacher_flags,
+as validate_cli_args), and validate_teacher_artifact and load_teacher_model both receive it as
+expected_sha256 (src/eval/teacher_diag.load_teacher).
 
 Roles and purposes (P3, P4):
   --teacher-role record --purpose item1     the item 1(b) pass        teacher_d2_<UTC>.json
@@ -21,7 +24,7 @@ and exits 1 (P18). The evaluator artifact goes to --artifact-dir/<run id> (outsi
 four file hashes are recorded, with per_image_equal and npz_equal against --val-reference as information.
 
 Exit codes: 0 written, 1 STOP, 2 refusal or usage, 4 unexpected exception. Real mode (the CLI) needs
---script-commit and --script-commit-dl-id and refuses every run until K-part (P8). The stub teacher is
+--script-commit and --script-commit-dl-id (P26) and K-part's TeacherProvenance (P8). The stub teacher is
 reachable only from scripts/smoke_teacher_calibration.py, which calls run(args, model_factory=...).
 """
 from __future__ import annotations
@@ -207,12 +210,10 @@ def _run(args, *, model_factory=None) -> int:
 
     miou = result.dataset_level["all_class_miou"]
     if args.teacher_role == "record":
-        reference = ref["all_class_miou"] if stub else td.R3_VAL_MIOU
-        delta = None if miou is None else abs(miou - reference)
-        passed = delta is not None and delta <= td.R3_TOLERANCE
-        gate = {"rule": "|all_class_miou - reference| <= tolerance, before the artifact is written (P18)",
-                "reference": reference, "reference_source": "--val-reference (stub mode)" if stub else "R3",
-                "tolerance": td.R3_TOLERANCE, "value": miou, "delta": delta, "passed": passed}
+        gate = td.reproduction_gate(
+            miou, ref["all_class_miou"], stub=stub,
+            rule="|all_class_miou - reference| <= tolerance, before the artifact is written (P18)")
+        passed = gate["passed"]
     else:
         gate, passed = "nothing", True
 

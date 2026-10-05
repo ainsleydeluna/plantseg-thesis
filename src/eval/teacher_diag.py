@@ -7,15 +7,21 @@ file is edited: the KD adapter, the NMF stream and the evaluator are reached thr
 paths and attributes.
 
 The teacher load (`load_teacher`) has exactly two call lines, one per mode:
-  kd         load_frozen_teacher(ckpt, config_path=cfg)       the KD trainer's form (train_distill.py)
-  evaluator  load_teacher_model(resolved, config_path=cfg)    the evaluator's form (evaluate_model.py run)
-A stub passes `builder=segnext_builder(model_factory=...)` to the same two calls. The NMF stream the
-checks use is the adapter's live object (`frozen.teacher.nmf_stream`), read right after the begin call;
-the dict that call returns is kept as the description and must equal `stream.describe()` at that moment.
+  kd         load_frozen_teacher(ckpt, config_path=cfg, expected_sha256=sha)     the KD trainer's form
+                                                                                  (train_distill.py)
+  evaluator  load_teacher_model(resolved, config_path=cfg, expected_sha256=sha)  the evaluator's form
+                                                                                  (evaluate_model.py run)
+`sha` is the verified --teacher-ckpt-sha256, so K-part's loader hashes the file again before it parses it
+and the record holds expected_sha256 (R6; KP-1 ruling 2). A checksum or strict-load mismatch is refused
+(exit 2), as the KD trainer refuses it. A stub passes `builder=segnext_builder(model_factory=...)` to the
+same two calls. The NMF stream the checks use is the adapter's live object (`frozen.teacher.nmf_stream`),
+read right after the begin call; the dict that call returns is kept as the description and must equal
+`stream.describe()` at that moment.
 
 Gates, in the order the scripts apply them:
   flags (no file read)        sha256 format, role and arm flags, correction flags, commit and repeat flags,
-                              --generated-utc refused in real mode; TeacherProvenance field count (real)
+                              --generated-utc refused in real mode; TeacherProvenance's field names, in
+                              order (real)
   commit binding (real)       HEAD == --script-commit; CODE_FILES present and clean at HEAD;
                               `git status --porcelain=v1 -- src configs scripts` empty (count only)
   single output (real)        one non-smoke output per script, role, arm and purpose unless --repeat-of
@@ -23,8 +29,8 @@ Gates, in the order the scripts apply them:
                               own sha256 == flag; role pin (record: 8c0e649a... and the repo config at blob
                               3c6a7b28...; arm: config sha256 == its flag, checkpoint not a record sha)
   load and after-load         validate_teacher_artifact; the load; provenance sha == verified sha;
-                              stub: no mmseg imported, <= 1e6 parameters; real: every TeacherProvenance
-                              field present and non-empty; one isolated NMF module holding the stream;
+                              stub: no mmseg imported, <= 1e6 parameters; real: the K-part fields in order,
+                              none None, "", {} or []; one isolated NMF module holding the stream;
                               segmentor in eval mode; loaded_state_sha256; the nine frozen blob ids.
 
 Refusals raise `Refused` (exit 2); a check the script decides raises `Stop` (exit 1).
@@ -60,7 +66,13 @@ R3_VAL_MIOU = PAIRING["teacher"]["reference"]
 R3_TOLERANCE = PAIRING["teacher"]["tolerance"]
 TEACHER_CONFIG_REL = "configs/teacher/segnext_mscan-b_1xb16-adamw-40k_plantseg116-512x512.py"
 RECORD_CONFIG_BLOB = FROZEN[TEACHER_CONFIG_REL][0]
-EXPECTED_PROVENANCE_FIELDS = 12          # the K-part ruling on TeacherProvenance (DL-50, DL-53)
+#: P8: TeacherProvenance's fields as merged by K-part (DL-50, DL-53), in order. Real runs check this against
+#: dataclasses.fields(TeacherProvenance) and against the written record's keys, by name, so a later change to the
+#: dataclass fails by name, not only by count.
+TEACHER_PROVENANCE_FIELDS = ("builder", "ckpt_path", "ckpt_sha256", "ckpt_bytes", "expected_sha256", "config_path",
+                             "config_sha256", "ham_kwargs", "architecture_signature", "teacher_components_sha256",
+                             "reused_module_hashes", "model_cfg_sha256")
+EXPECTED_PROVENANCE_FIELDS = len(TEACHER_PROVENANCE_FIELDS)          # 12, the K-part ruling
 STUB_MAX_CKPT_BYTES = 16 * 2 ** 20
 STUB_MAX_PARAMETERS = 10 ** 6
 VAL_ROWS, TRAIN_ROWS = 846, 5367
@@ -324,12 +336,29 @@ def provenance_fields() -> list[str]:
     return [f.name for f in dataclasses.fields(TeacherProvenance)]
 
 
+def require_provenance_names(names, what: str) -> None:
+    """P8: `names` must equal TEACHER_PROVENANCE_FIELDS, the same names in the same order."""
+    names = list(names)
+    if names != list(TEACHER_PROVENANCE_FIELDS):
+        missing = [n for n in TEACHER_PROVENANCE_FIELDS if n not in names]
+        extra = [n for n in names if n not in TEACHER_PROVENANCE_FIELDS]
+        raise Refused(f"{what} {names} are not the {EXPECTED_PROVENANCE_FIELDS} K-part TeacherProvenance fields "
+                      f"{list(TEACHER_PROVENANCE_FIELDS)} in order (missing {missing}, extra {extra}) (P8)")
+
+
+def provenance_value_empty(value) -> bool:
+    """P8, real mode: None, "" and an empty container ({} or []) are empty (DG-5 ruling 1)."""
+    if value is None or (isinstance(value, str) and value == ""):
+        return True
+    return isinstance(value, (dict, list)) and len(value) == 0
+
+
 def require_provenance_field_count(real: bool) -> None:
-    """P8, before any file is read: the merged TeacherProvenance must have the ruled field count."""
+    """P8, before any file is read: a real run needs the merged TeacherProvenance's fields, by name and in
+    order (read with dataclasses.fields)."""
     names = provenance_fields()
-    if real and len(names) != EXPECTED_PROVENANCE_FIELDS:
-        raise Refused(f"TeacherProvenance has {len(names)} fields {names}, the K-part ruling expects "
-                      f"{EXPECTED_PROVENANCE_FIELDS}: real runs wait for K-part (P8)")
+    if real:
+        require_provenance_names(names, "dataclasses.fields(TeacherProvenance)")
 
 
 # --------------------------------------------------------------------------------------------------
@@ -435,17 +464,18 @@ def load_teacher(mode: str, inputs: TeacherInputs, *, model_factory=None) -> Loa
     if mode not in ("kd", "evaluator"):
         raise ValueError(f"unknown load mode {mode!r}")
     kw = {} if model_factory is None else {"builder": segnext_builder(model_factory=model_factory)}
+    sha = inputs.sha256                      # the verified --teacher-ckpt-sha256 (P5), passed to both load lines
     try:
         resolved = validate_teacher_artifact(inputs.ckpt, expected_sha256=inputs.sha256)
     except StageArtifactError as e:
         raise Refused(f"validate_teacher_artifact: {e}") from e
     try:
         if mode == "kd":
-            frozen = load_frozen_teacher(str(inputs.ckpt), config_path=str(inputs.config), **kw)
+            frozen = load_frozen_teacher(str(inputs.ckpt), config_path=str(inputs.config), expected_sha256=sha, **kw)
             eval_model = None
             description = frozen.begin_nmf_stream("M4-KD", M4_NMF_SEED)
         else:
-            eval_model, _ = load_teacher_model(resolved, config_path=str(inputs.config), **kw)
+            eval_model, _ = load_teacher_model(resolved, config_path=str(inputs.config), expected_sha256=sha, **kw)
             frozen = eval_model.teacher
             description = eval_model.nmf_policy
     except TeacherStackMissing as e:
@@ -505,12 +535,11 @@ def after_load_checks(loaded: LoadedTeacher, inputs: TeacherInputs, *, stub: boo
         if n_params > STUB_MAX_PARAMETERS:
             raise Refused(f"stub mode refuses a model with {n_params} parameters (> {STUB_MAX_PARAMETERS})")
     else:
-        fields = dataclasses.fields(type(prov))
-        if len(fields) != EXPECTED_PROVENANCE_FIELDS:
-            raise Refused(f"TeacherProvenance has {len(fields)} fields, expected {EXPECTED_PROVENANCE_FIELDS}")
-        empty = [f.name for f in fields if getattr(prov, f.name) in (None, "")]
+        fields = [f.name for f in dataclasses.fields(type(prov))]
+        require_provenance_names(fields, "the loaded teacher's provenance fields")
+        empty = [n for n in fields if provenance_value_empty(getattr(prov, n))]
         if empty:
-            raise Refused(f"teacher provenance fields empty: {empty}")
+            raise Refused(f"teacher provenance fields empty (None, \"\", {{}} or []): {empty}")
     mods = isolated_nmf_modules(loaded.segmentor)
     if len(mods) != 1 or mods[0].nmf_stream is not loaded.stream:
         raise Stop("expected exactly one isolated NMF module holding the begun stream")
@@ -522,12 +551,16 @@ def after_load_checks(loaded: LoadedTeacher, inputs: TeacherInputs, *, stub: boo
 
 def teacher_record(loaded: LoadedTeacher, inputs: TeacherInputs, checks: dict, *, stub: bool) -> dict:
     """Every teacher output's identity block; the one provenance call site (P7, P8). A real run refuses
-    unless the written record holds every TeacherProvenance field, none of them None or ""."""
+    unless dataclasses.fields(TeacherProvenance) and the written record's keys are the K-part fields in order,
+    none of them None, "", {} or []."""
     provenance = loaded.frozen.provenance.as_dict()
     if not stub:
-        bad = [n for n in provenance_fields() if provenance.get(n) in (None, "")]
+        require_provenance_names(provenance_fields(), "dataclasses.fields(TeacherProvenance)")
+        require_provenance_names(provenance.keys(), "the provenance record's keys")
+        bad = [n for n in TEACHER_PROVENANCE_FIELDS if provenance_value_empty(provenance.get(n))]
         if bad:
-            raise Refused(f"the provenance record lacks or blanks TeacherProvenance field(s) {bad} (P8)")
+            raise Refused(f"the provenance record blanks TeacherProvenance field(s) {bad} (None, \"\", {{}} or []) "
+                          "(P8)")
     return {
         "role": inputs.role, "arm_id": inputs.arm_id, "arm_dl_id": inputs.arm_dl_id,
         "checkpoint": {"path": str(inputs.ckpt), "sha256_verified": inputs.sha256, "bytes": inputs.ckpt_bytes},
@@ -741,6 +774,22 @@ def check_val_reference(path, *, stub: bool, expected_rows: int) -> dict:
             "files_sha256": files}
 
 
+def reproduction_gate(value, ref_miou, *, stub: bool, rule: str) -> dict:
+    """The record role's reproduction gate (P18; D2 VAL and D1's VAL part), decided before anything is written.
+
+    Real mode compares the produced all-class mIoU itself with R3_VAL_MIOU (0.38576993346214294, from
+    PAIRING), not with the --val-reference artifact's value (AM-PC-1 finding 27); check_val_reference
+    separately requires that artifact within the same tolerance of R3. Stub mode compares with the
+    --val-reference artifact. `passed` needs |value - reference| <= R3_TOLERANCE (1e-5); None or NaN fails.
+    Returns the gate block the outputs record, `rule` the caller's wording."""
+    reference = ref_miou if stub else R3_VAL_MIOU
+    delta = None if value is None else abs(value - reference)
+    passed = delta is not None and delta <= R3_TOLERANCE
+    return {"rule": rule, "reference": reference,
+            "reference_source": "--val-reference (stub mode)" if stub else "R3", "tolerance": R3_TOLERANCE,
+            "value": value, "delta": delta, "passed": passed}
+
+
 def check_strata(path, stems, *, stub: bool) -> dict:
     """The AM-17 item 8 strata file, read directly (P1): its schema and lane, the registered build in a
     real run, and its split-list sha256 equal to the TRAIN split list's."""
@@ -888,7 +937,11 @@ def add_correction_flags(p) -> None:
 _REFUSAL_CLASSES = (("src.eval.artifacts", "ArtifactRequestError"),
                     ("src.eval.stage_artifacts", "StageArtifactError"),
                     ("scripts.build_train_strata", "StrataError"),
-                    ("src.quant.calibration", "CalibrationIndexError"))
+                    ("src.quant.calibration", "CalibrationIndexError"),
+                    # the load lines' R6 refusals, exit 2 as at src/training/train_distill.py:1303 (GO-2 h4);
+                    # TeacherChecksumFormatError stays unexpected: P5 refuses a malformed sha before any load
+                    ("src.distill.teacher", "TeacherChecksumMismatch"),
+                    ("src.distill.segnext_teacher", "TeacherStateDictMismatch"))
 _STOP_CLASSES = (("src.eval.calibration", "CalibrationStop"), ("src.eval.evaluate", "EvaluationIntegrityError"),
                  ("src.eval.eval_runtime", "EvalRuntimeError"), ("src.eval.artifacts", "ArtifactWriteError"),
                  ("src.distill.nmf_stream", "NMFStreamError"))
@@ -945,15 +998,18 @@ def finish_output(path: Path, doc: dict, start_utc: str, t0: float) -> str:
 
 __all__ = [
     "REPO", "LANE", "RECORD_SHA256", "REGISTERED_TEACHER_SHA256", "R3_VAL_MIOU", "R3_TOLERANCE",
-    "TEACHER_CONFIG_REL", "RECORD_CONFIG_BLOB", "EXPECTED_PROVENANCE_FIELDS", "CODE_FILES", "ROLES",
+    "TEACHER_CONFIG_REL", "RECORD_CONFIG_BLOB", "TEACHER_PROVENANCE_FIELDS", "EXPECTED_PROVENANCE_FIELDS",
+    "CODE_FILES", "ROLES",
     "ARM_IDS", "PURPOSES", "CORRECTION_STATES", "EXIT_OK", "EXIT_STOP", "EXIT_REFUSED", "EXIT_ERROR",
     "Refused", "Stop", "utc_now", "utc_stamp", "file_sha256", "name_digests", "refuse_test_path",
     "refuse_test_names", "require_outside_repo", "read_json_strict", "json_bytes", "write_json_exclusive",
     "git_head", "git_status", "code_provenance", "require_commit_binding", "check_common_flags",
-    "check_teacher_flags", "check_correction_flags", "provenance_fields", "require_provenance_field_count",
+    "check_teacher_flags", "check_correction_flags", "provenance_fields", "require_provenance_names",
+    "provenance_value_empty", "require_provenance_field_count",
     "require_single_output", "TeacherInputs", "verify_teacher_inputs", "LoadedTeacher", "load_teacher",
     "loaded_state_sha256", "frozen_blob_record", "after_load_checks", "teacher_record", "same_teacher",
     "feature_sha256", "rng_state_sha256", "RngWatchForward", "SplitTeacher", "train_canvas_dataset", "check_val_reference",
+    "reproduction_gate",
     "check_strata", "check_m11",
     "environment_block", "base_document", "output_stamp", "read_diag_output", "write_files_exclusive",
     "add_common_flags",

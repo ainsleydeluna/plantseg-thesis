@@ -9,7 +9,8 @@ temporary directory whose path names neither TEST nor VAL (scripts/synthetic_ptq
                     forked RNG, so building a stub never moves the caller's CPU RNG. Variants: no
                     stream, an in-place-mutating head, a NaN head, a global-RNG draw, an oversized
                     head, an mmseg import.
-  checkpoints       small SegNeXt-shaped stub checkpoints (validate_teacher_artifact accepts them).
+  checkpoints       small stub checkpoints holding exactly a stub factory's state_dict, so
+                    validate_teacher_artifact and K-part's strict load (R6) accept them.
   data root         images/{train,val} + annotations/{train,val} at the locked counts 5,367 / 846
                     (scripts/synthetic_ptq_fixtures.make_tree), plus a matching strata file.
   patchers          fake_git(): HEAD and `git status` answers for the commit-binding gates;
@@ -175,13 +176,14 @@ def head_of(loaded_or_frozen):
 
 
 # ---------------------------------------------------------------- checkpoints
-def write_stub_ckpt(path, tag: str = "stub", pad_bytes: int = 0) -> tuple[Path, str]:
-    """A SegNeXt-shaped stub checkpoint; pad_bytes adds a zero tensor to exceed size limits."""
+def write_stub_ckpt(path, tag: str = "stub", pad_bytes: int = 0, factory=None) -> tuple[Path, str]:
+    """A stub checkpoint holding exactly `factory()`'s state_dict (default stub_factory), so K-part's strict
+    load (segnext_teacher.strict_load_teacher_state) accepts it and the loaded weights are the factory's own
+    seeded weights. pad_bytes adds a zero tensor to exceed size limits; that checkpoint is refused by stat
+    before any load."""
     import hashlib
     p = Path(path)
-    state = {"backbone.projs.0.weight": torch.zeros(4, 3, 1, 1),
-             "decode_head.conv_seg.weight": torch.zeros(NC, 8, 1, 1),
-             "decode_head.conv_seg.bias": torch.zeros(NC)}
+    state = {k: v.detach().clone() for k, v in (factory or stub_factory)().state_dict().items()}
     if pad_bytes:
         state["backbone.pad"] = torch.zeros(pad_bytes // 4 + 1)
     torch.save({"meta": {"stub": tag}, "state_dict": state}, p)
@@ -289,13 +291,15 @@ def argv(**kw) -> list[str]:
     return out
 
 
-def reference_artifact(out_dir, ckpt, *, n: int = 3, factory=None, run_id: str = "ref_run") -> Path:
-    """scripts/evaluate_model.py run() on the stub teacher: a smoke's R3-equivalent --val-reference."""
+def reference_artifact(out_dir, ckpt, sha256: str, *, n: int = 3, factory=None, run_id: str = "ref_run") -> Path:
+    """scripts/evaluate_model.py run() on the stub teacher: a smoke's R3-equivalent --val-reference. `sha256` is
+    the one write_stub_ckpt returned; the evaluator's teacher stage requires it (R6)."""
     from scripts import evaluate_model as em
     from src.distill.segnext_teacher import segnext_builder
     from src.eval.teacher_diag import REPO, TEACHER_CONFIG_REL
     args = em.build_parser().parse_args([
         "--stage", "teacher", "--model-role", "teacher", "--split", "val", "--checkpoint", str(ckpt),
+        "--teacher-ckpt-sha256", sha256,
         "--teacher-config", str(REPO / TEACHER_CONFIG_REL), "--artifact-status", "smoke",
         "--max-samples", str(n), "--batch-size", "1", "--out-dir", str(out_dir), "--run-id", run_id])
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
