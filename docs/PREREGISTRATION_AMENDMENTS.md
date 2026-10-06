@@ -31,12 +31,15 @@ leaves the original readable beside it.
 | AM-15 | DL-14 (completes AM-11) | Contingencies not invoked |
 | AM-16 | — (amends AM-1, AM-8, AM-10, AM-11 and AM-13; notes AM-9) | Run additions |
 | AM-17 | — (extends AM-1, AM-8, AM-13, AM-14 and AM-16) | Teacher record, effect-size rules, CWD-only arm, strata, TEST schedule and a descriptive SegNeXt-L arm (~~DRAFT~~ approved by the adviser, DL-65) |
-| AM-17b | — (extends AM-17 items 7, 9 and 1(f)) | Channel-wise decomposition arms and teacher–student gap robustness (DRAFT) |
+| AM-17b | — (extends AM-17 items 7, 9 and 1(f)) | Channel-wise decomposition arms and teacher–student gap robustness (~~DRAFT~~ reported as approved by the adviser in person, DL-83) |
 | AM-8a | — (extends AM-8) | Repeat rule for failed runs |
-| AM-4a | — (extends AM-4 and AM-1) | QAT recipe pins, converted-model selection and the U4 clipping pilot (DRAFT) |
-| AM-7a | — (extends AM-7; applies to AM-2, AM-16 items 2–3, AM-17 item 9, AM-8a) | Divergence handling for sweep candidates; pre-committed clipping value (DRAFT) |
+| AM-4a | — (extends AM-4 and AM-1) | QAT recipe pins, converted-model selection and the U4 clipping pilot (~~DRAFT~~ reported as approved by the adviser in person, DL-83; amended by AM-21) |
+| AM-7a | — (extends AM-7; applies to AM-2, AM-16 items 2–3, AM-17 item 9, AM-8a) | Divergence handling for sweep candidates; pre-committed clipping value (~~DRAFT~~ reported as approved by the adviser in person, DL-83) |
 | AM-18 | — (extends AM-1, AM-7a item 3, AM-8a, AM-13, AM-17 items 1, 9 and 11, AM-17b items 2–4; for KD targets only, conditionally supersedes contract M4's non-adoption of multi-draw averaging) | Teacher diagnostics R0, descriptive arm teachers (R1, R2; B-avg not executable) and KD arms (E3-X, W, conditional K8), go rule, pre-set defect rules (D1, D4), dataset duplicates (DRAFT) |
 | AM-19 | — (amends AM-7, AM-7a items 1–4 and 6, AM-8a and AM-17 item 9; extends AM-1, AM-2, AM-7a item 5, AM-8, AM-16 items 1–3 and its cut rule, AM-17 items 4 and 6, AM-17b item 3 and AM-18 items 1, 2(c), 3, 6 and 7) | Schedule T/R, sweep decision dates, stops, repeats and cut records, card and launch order, runs with a cut or diverged parent, seed-43/44 divergence, seed stability with a missing run, AM-7's consequence under a schedule (DRAFT) |
+| AM-20 | — (amends AM-18's header request rule and item 6(a)'s availability rule; settles a reading of AM-18 item 6(b)) | The unsent approval request; AM-18 item 6(a) state "no approval"; the 2026-10-05 in-person approval, as reported (DRAFT) |
+| AM-21 | — (amends AM-4a items 2–3; extends AM-19 item 3(a) for E5 and E6 runs) | Non-finite states in QAT runs (DRAFT) |
+| AM-19a | — (settles readings of AM-19's Definitions and items 2 and 3) | Readings of AM-19 for the KD sweeps (DRAFT) |
 
 Code that implements an amendment is named by lane (L-AM…). Until that lane lands, the committed runtime
 keeps its pre-amendment behaviour and its launch gates.
@@ -117,7 +120,7 @@ candidates on converted-model VAL mIoU (AM-4's scoring).
 
 Code: lane L-AM4.
 
-[Extended by AM-4a.]
+[Extended by AM-4a.] [Amended through AM-4a by AM-21, 2026-10-07: non-finite states in QAT runs.]
 
 ## AM-5 — Zero-disease TEST images (resolves M10)
 
@@ -584,7 +587,7 @@ L-AM13.
 
 ## AM-17b — Channel-wise decomposition arms and teacher–student gap robustness (extends AM-17 items 7, 9 and 1(f))
 
-Dated 2026-09-28. Status: DRAFT (group-recorded; adviser approval pending). State at amendment: as
+Dated 2026-09-28. Status: DRAFT (group-recorded; adviser approval pending). [Reported as approved by the adviser in person: decision log DL-83, recorded 2026-10-07.] State at amendment: as
 AM-17 — E1 seed 42 and the SegNeXt-B teacher of record exist; no E1 seed-43/44, E2–E7, KD, SegNeXt-L
 or TEST result exists. Both items are descriptive: no test is added to the Holm family and no test,
 threshold, family member, teacher of record or run of record changes.
@@ -666,11 +669,11 @@ Non-finite losses in E2/E3 follow AM-7/DL-04, not this rule.
 
 ## AM-4a — QAT recipe pins, converted-model selection and the U4 clipping pilot (extends AM-4 and AM-1)
 
-Dated 2026-09-28. Status: DRAFT (group-recorded; adviser approval pending). State at amendment: no E4–E7 run or result exists. Source: the 28 Sep 2026 lane-spec audit (docs/lane_specs/part2.md, lane 6). No test is added to the Holm family.
+Dated 2026-09-28. Status: DRAFT (group-recorded; adviser approval pending). [Reported as approved by the adviser in person: decision log DL-83, recorded 2026-10-07.] [In force for every QAT run, whatever its approval status: AM-21 item 4.] State at amendment: no E4–E7 run or result exists. Source: the 28 Sep 2026 lane-spec audit (docs/lane_specs/part2.md, lane 6). No test is added to the Holm family.
 
 1. Recipe pins (the values of record; AM-4 already states the epochs, both freeze points and batch 16, and this item adds the rest): SGD with momentum 0.9, learning rate 3e-4, cosine schedule with T_max = 15 × steps per epoch, weight decay 1e-4, batch 16, no EMA; 15 fixed epochs with no early stopping; observers on from the first step (moving average); BN statistics frozen from the first step of epoch 11 and observers from the first step of epoch 13 (epoch boundaries replace step fractions); the quantization configuration of record in configs/quant.py, with its weight and activation observers recorded in run_meta.
-2. Checkpoint selection: each epoch's checkpoint is converted (QNNPACK) and scored on VAL on CPU with scripts/evaluate_model.py (canvas protocol); the highest dataset-level VAL all-class mIoU wins, and ties go to the earlier epoch. Fake-quant VAL is recorded and never selects.
-3. U4 clipping pilot (a VAL selection, disclosed): E5 seed 42 is run twice in full, with global-norm clipping at 1.0 and at 5.0. The winner under item 2's score is E5 seed 42 of record; a tie within 0.1 pp goes to 5.0. The losing run is retained and reported. The winning value is used for E5 seeds 43/44, E6 (all seeds) and E6-KD. Chapter 4 discloses that QAT receives 2 × 15 VAL evaluations (clip value, epoch) while PTQ receives one calibration configuration (Chapter 3 p. 127), the E4-vs-E5 analogue of AM-17 item 6.
+2. Checkpoint selection: each epoch's checkpoint is converted (QNNPACK) and scored on VAL on CPU with scripts/evaluate_model.py (canvas protocol); the highest dataset-level VAL all-class mIoU wins, and ties go to the earlier epoch. Fake-quant VAL is recorded and never selects. [Amended 2026-10-07 — AM-21 item 2: an epoch whose checkpoint state is not finite is excluded.]
+3. U4 clipping pilot (a VAL selection, disclosed): E5 seed 42 is run twice in full, with global-norm clipping at 1.0 and at 5.0. The winner under item 2's score is E5 seed 42 of record; a tie within 0.1 pp goes to 5.0. The losing run is retained and reported. The winning value is used for E5 seeds 43/44, E6 (all seeds) and E6-KD. Chapter 4 discloses that QAT receives 2 × 15 VAL evaluations (clip value, epoch) while PTQ receives one calibration configuration (Chapter 3 p. 127), the E4-vs-E5 analogue of AM-17 item 6. [Amended 2026-10-07 — AM-21 item 3: a pilot run that becomes non-finite (state, logged loss or pre-clip gradient norm) is rejected.]
 4. Seeding (AM-1): the QAT data loader is built with the run seed; torch, numpy and Python are seeded from --seed; determinism settings as in train_e1.
 5. Sources: E5 starts from E1's best.json checkpoint of the same seed; E6 from E3's, which carries no projection keys (asserted on load).
 
@@ -678,7 +681,7 @@ Code: L-AM4, L-AM1q.
 
 ## AM-7a — Divergence handling for sweep candidates and the pre-committed clipping value (extends AM-7; applies to AM-2, AM-16 items 2 and 3, AM-17 item 9 and AM-8a)
 
-Dated 2026-09-30. Status: DRAFT (group-recorded; adviser approval requested). In force for every
+Dated 2026-09-30. Status: DRAFT (group-recorded; adviser approval requested). [Reported as approved by the adviser in person: decision log DL-83, recorded 2026-10-07.] In force for every
 abort that occurs after this amendment is committed; the adviser's later approval or rejection does
 not reclassify an abort that has already occurred (a rejection restores AM-7's full consequence for
 later aborts only). State at amendment: E1 seeds 42, 43 and 44 (VAL only) and the SegNeXt-B teacher
@@ -766,12 +769,13 @@ Local: scripts/am7_clip_value.py (reads the E1 seed-43/44 telemetry; no pod).
 
 Dated 2026-10-01. Status: DRAFT (group-decided 2026-10-01, ballot 1C 2A 3B 4A 5A 6A; adviser
 approval requested).
+[Erratum E-52, 2026-10-07: the approval request was not sent (AM-20, DL-82). The adviser's in-person approval of 2026-10-05 is recorded as information only (DL-83).]
 - Fixed text. From its commit the text is changed only by a new amendment, which lists the item 1
   outputs known when it is written. A reading this text leaves open is settled the same way (for
   a statistic, by the first output of record). A dated bracket note only points to a later record
   or records an outcome, such as the adviser's reply.
 - In force from the commit: the execution rules and items 1, 5, 6, 7, 8 and 9, which launch no
-  training run. No arm of items 2 and 3 launches before the adviser approves this amendment.
+  training run. No arm of items 2 and 3 launches before the adviser approves this amendment. [AM-20 items 3 and 4, 2026-10-07: only a written reply as this header defines it opens an arm; the in-person approval of 2026-10-05 (DL-83) opens none.]
 - Approval means an explicit written reply from the adviser that approves this amendment, either
   naming AM-18 or answering the request email, whose subject names AM-18; it is recorded verbatim
   with its date in the decision log before the action it gates. An acknowledgement ("noted") is not
@@ -779,7 +783,7 @@ approval requested).
   separately, and is entered in the decision log with its date; each reply is entered on the day
   it is received. A reply that approves AM-18 without excepting an item approves every item; one
   that excepts an item approves the rest. A requested change, or an exception to an item already
-  in force other than declining item 6(a)'s correction, needs a new amendment.
+  in force other than declining item 6(a)'s correction, needs a new amendment. [Note 2026-10-07 — AM-20 item 1: the request was not sent (DL-82, erratum E-52).]
 - A rejection cancels the arms not yet launched (R1, R2, E3-avg, W, K8), item 4's additions and,
   if it is in the decision log before item 6(a)'s state is entered, the correction (the
   registered single-draw targets then stand). After that entry the state is final. The SegNeXt-L
@@ -1124,7 +1128,7 @@ Execution rules for every statistic and gate below:
          executed that draws more than one NMF sample per input on real teacher weights: no part
          of item 1(a) on any teacher, and no smoke of the K8 or flip targets. The state
          (available, declined or no approval) is entered in the decision log before any such
-         execution and is final. A later reply can still approve the arms.
+         execution and is final. A later reply can still approve the arms. [Amended 2026-10-07 — AM-20 item 2: no request was sent, so no window exists; the state is "no approval", entered by AM-20's commit (DL-84); the correction is unavailable for every run.]
        - If the correction is unavailable and F ≥ 0.10, the registered single-draw targets stand
          for every run and F is disclosed as a limitation. K8 is then an arm as in the middle
          branch; like every arm, it launches only if this amendment is approved.
@@ -1143,7 +1147,7 @@ Execution rules for every statistic and gate below:
        - margin_dedup ≤ 0: the R3 floor is not met on duplicate-free VAL. No KD run launches and
          the adviser is informed, as contract B1's R3-failure rule requires (STOP and escalate; no
          retraining, search, band relaxation or TEST). R3 (AM-13; AM-17 item 1(a)) is then restated
-         on duplicate-free VAL by its own amendment, approved by the adviser before any KD run.
+         on duplicate-free VAL by its own amendment, approved by the adviser before any KD run. [Reading settled 2026-10-07 — AM-20 item 4: that approval is a written reply that names the amendment.]
          Only this halt is pre-registered: what that amendment decides is not fixed here. It would
          be written with margin_dedup known, it says so, and it uses no KD or TEST result.
    (c) Neither rule is evaluated on any KD result. Item 6(a) never replaces the teacher of record
@@ -1295,7 +1299,7 @@ Code:
 
 ## AM-19 — Schedule, sweep decision dates, stops and cut records, runs with a cut or diverged parent, divergence at seeds 43/44, seed stability with a missing run, and AM-7's full consequence under a schedule (amends AM-7, AM-7a items 1–4 and 6, AM-8a and AM-17 item 9; extends AM-1, AM-2, AM-7a item 5, AM-8, AM-16 items 1–3 and its cut rule, AM-17 items 4 and 6, AM-17b item 3 and AM-18 items 1, 2(c), 3, 6 and 7)
 
-Dated 2026-10-02. Status: DRAFT (group-recorded; adviser approval requested).
+Dated 2026-10-02. Status: DRAFT (group-recorded; adviser approval requested). [Erratum E-52, 2026-10-07: no approval request was sent (AM-20, DL-82). The adviser's in-person approval of 2026-10-05 is recorded as information only (DL-83).]
 - Fixed text. From its commit this text is changed only by a new amendment, which lists the results
   known when it is written. A reading this text leaves open is settled the same way. A dated
   bracket note only points to a later record or records an outcome, such as an adviser's reply.
@@ -1363,10 +1367,10 @@ Definitions used below:
 - Dates. A date ends at 24:00 Asia/Manila of that day (16:00:00 UTC). A timestamp meets a date when
   it is earlier than that instant. A run's timestamps are those its trainer writes, in Unix time
   (wall_clock in the run_meta, train, VAL and run_abort rows; wall_clock_end in the run_end
-  record). A record's timestamp is the time its commit reaches the remote.
+  record). A record's timestamp is the time its commit reaches the remote. [Readings settled 2026-10-07 — AM-19a readings 4, 10 and 21.]
 - Launched. A run is launched when its run_meta row with mode "real" exists; that row's wall_clock
   is its launch time. A launch log (a committed file) receives one entry per launch of a sweep
-  candidate, with the stage, value, seed and run directory, pushed before the launch.
+  candidate, with the stage, value, seed and run directory, pushed before the launch. [Reading settled 2026-10-07 — AM-19a reading 6.]
 - Complete. A run is complete at a date when its trainer's end-of-run record meets that date: the
   run_end record with its checks passed for a distillation run; for an E1 run, whose trainer
   writes no run_end record, the VAL row of its final iteration, with its log's RESULT line reading
@@ -1374,7 +1378,7 @@ Definitions used below:
   the output with its agreement check for the ARM latency measurement. Listing a run's sha256
   values in its durable evidence folder is a duty, done within 24 hours of its end. A late or
   missing listing is a deviation and never changes whether a run is complete, cut or in TEST.
-  Where AM-17 item 9, AM-17b item 3 or AM-18 say "complete and hashed", this definition applies.
+  Where AM-17 item 9, AM-17b item 3 or AM-18 say "complete and hashed", this definition applies. [Extended 2026-10-07 — AM-21 item 1: an E5 or E6 run that reaches a non-finite state still writes its last epoch's record.]
 - Derived artifacts. The PTQ of a complete parent, and the conversions and the AM-4a item 2
   selection of a complete QAT run, are not runs. They are made from inputs the manifest lists,
   before the TEST unlock (item 4(c)). Those of E6 seed 42 are made before the freeze, because the
@@ -1476,7 +1480,7 @@ Definitions used below:
        calendar date and the third day after the day the λ selection file is committed, so a late
        λ selection does not by itself cut the α sweep. Neither date moves for any other reason: not
        when a sweep starts late, not when AM-18 item 6(a)'s window or correction delays or slows
-       the runs, and not when a default candidate is waited for.
+       the runs, and not when a default candidate is waited for. [Note 2026-10-07 — AM-20: no request was sent, so AM-18 item 6(a) has no window and its correction is unavailable; the dates stand.] [Reading settled 2026-10-07 — AM-19a reading 10.]
    (b) Status at the decision date. Each candidate's status is read from its own telemetry, from
        the rows whose timestamps meet the decision date. Later rows are kept, and for a non-default
        candidate they change nothing. A non-default candidate is:
@@ -1500,7 +1504,7 @@ Definitions used below:
        repeat (item 3(a)) is waited for as a default candidate is, once. If that repeat is stopped
        too, the candidate is cut. The repeat's VAL rows are reported beside the stopped run's.
        A candidate still running at the end of the date is stopped. Because the status comes from
-       the timestamps, stopping it late, or letting it finish, changes nothing.
+       the timestamps, stopping it late, or letting it finish, changes nothing. [Readings settled 2026-10-07 — AM-19a readings 2, 3, 4, 5, 7, 13, 14, 17 and 20.]
    (c) Before the decision date, a candidate ends only by finishing, by its own abort (AM-7a item
        1), or by a stop that item 3(a) governs. For a grid value with no finished directory, the
        status of record is that of its latest repeat, and every earlier directory is kept and
@@ -1508,11 +1512,11 @@ Definitions used below:
        decision date has ended; the stop is still investigated and reported. In AM-7a item 1, a run
        "stopped by any other means" is handled by this item and item 3(a), not by AM-17 item 9. In
        AM-7a item 2, the selection runs "as soon as every non-diverged candidate has finished" or,
-       with a cut candidate, after the end of the decision date.
+       with a cut candidate, after the end of the decision date. [Readings settled 2026-10-07 — AM-19a readings 16 and 18.]
    (d) The default candidate is never stopped, and no time limit applies to it. If it has not
        finished at the decision date, the selection waits for it, the statuses of (b) stay as they
        were at the decision date, and item 1(d) governs any delay. Its divergence follows AM-7a
-       item 3 and item 7 below. Its other stops follow item 3(a) and keep AM-7a item 4's STOP.
+       item 3 and item 7 below. Its other stops follow item 3(a) and keep AM-7a item 4's STOP. [Readings settled 2026-10-07 — AM-19a readings 11 and 16.]
    (e) The selection then runs among the finished candidates:
        - by the unchanged AM-2 rule for λ, or the AM-16 item 2 rule for α, with AM-7a's exclusions;
        - if only the default finished, it is selected as the sole finished candidate (AM-7a item 4);
@@ -1525,7 +1529,7 @@ Definitions used below:
          same validations;
        - partial scores never enter a selection (AM-7a item 2);
        - the shortfall is disclosed with the selection.
-       A selection with a cut candidate never runs before the end of the decision date.
+       A selection with a cut candidate never runs before the end of the decision date. [Readings settled 2026-10-07 — AM-19a readings 8, 11 and 21.]
    (f) A sweep whose candidates have all finished or diverged before its decision date is selected
        as before (AM-7a item 2), at any time; the decision date does not affect it.
    (g) Relation to the registered rules.
@@ -1539,14 +1543,14 @@ Definitions used below:
          is therefore settled at its decision date and not at the freeze. This is disclosed.
        - AM-16's α = 50 fallback keeps its meaning (AM-7a item 4): if no non-default α candidate
          was launched before the end of the α decision date, the sweep is cut, E3 seed 42 is the
-         α = 50 run, and no selection file is written. The decision record of (h) states the cut.
+         α = 50 run, and no selection file is written. The decision record of (h) states the cut. [Readings settled 2026-10-07 — AM-19a readings 16 and 19.]
          Where AM-17 item 7, AM-17b item 1(f), AM-18 items 3 and 7(a) or a launcher refer to the α
          selection or the α winner, that committed record stands in for it, and run_meta records
          its sha256. If at least one non-default α candidate was launched, (e) applies and a
          selection file is written.
    (h) Decision record. A selection with a cut candidate, and an α sweep cut under (g), needs a
        decision record. It is committed and pushed within 24 hours of the later of the end of the
-       decision date and the default's run_end, and its sha256 is entered in the decision log. The
+       decision date and the default's run_end, and its sha256 is entered in the decision log. [Readings settled 2026-10-07 — AM-19a readings 1, 7, 15, 18, 19, 20 and 21.] The
        record gives:
        - the sweep, the schedule in force with its decision-log entry, and the decision date;
        - for each grid value, its status (finished, diverged, cut) and, for a cut, the reason; the
@@ -1596,9 +1600,9 @@ Definitions used below:
        - A run whose trainer has no divergence rule (a QAT run, an E1 run, the SegNeXt-L fine-tune)
          and whose logged loss or score becomes non-finite is recorded and reported, and is
          repeated only after a documented infrastructure fault (AM-8a). AM-18 item 2 keeps its own
-         rule for R1 and R2.
+         rule for R1 and R2. [Extended 2026-10-07 — AM-21 item 1: an E5 or E6 run that reaches a non-finite state completes its 15 epochs.]
        This amends AM-8a in two ways: its faults include every stop of the second point, and one
-       repeat follows the aborts of the third point without a documented infrastructure fault.
+       repeat follows the aborts of the third point without a documented infrastructure fault. [Readings settled 2026-10-07 — AM-19a readings 1, 9, 12, 13, 16 and 17.]
    (b) Cuts. A run is cut only:
        - at the original freeze date, if it is cuttable and not complete (AM-17 item 9; item 1(d)).
          A cuttable run that was never launched is cut there, and its record states why it was not
@@ -1613,7 +1617,7 @@ Definitions used below:
          the operator has no choice, and the entry gives the arithmetic. A stage with no
          measurement is not cut before its launch. For an AM-18 arm this entry is its "not
          launched" record under AM-18 item 7(a).
-       No other cut exists. AM-16's "if the schedule slips" is carried out by these rules only.
+       No other cut exists. AM-16's "if the schedule slips" is carried out by these rules only. [Reading settled 2026-10-07 — AM-19a reading 17.]
    (c) Records. Each cut is entered in the decision log on the day it is made, and always before
        TEST, with the runs, the rule, the date, the reason and the results of record known at that
        time. A cut run that had written VAL rows is reported, where its registered reading would
@@ -1769,6 +1773,380 @@ Code:
   the same stage and seed, the launch order and launch log of item 1(e), a waiting adviser reply
   (item 1(b)) and the pod's clock offset.
 
+## AM-20 — The unsent approval request: AM-18 item 6(a) settled without a window, and the 2026-10-05 in-person approval recorded as reported (amends AM-18's header request rule and item 6(a)'s availability rule; settles a reading of AM-18 item 6(b))
+
+Dated 2026-10-06. Status: DRAFT (group-recorded; no approval request has been sent for it).
+- Fixed text. From its commit this text is changed only by a new amendment, which lists the results
+  and the AM-18 item 1 outputs known when it is written. A dated bracket note only points to a later
+  record or records an outcome.
+- In force from the time its commit reaches the remote (AM-19 Definitions: a record's timestamp).
+  Approval gates nothing here.
+- What changes: the request that AM-18's header requires is not sent (item 1), and item 6(a)'s hold
+  ends through item 2, not through a reply or a window. Item 4 settles how item 6(b)'s "approved by
+  the adviser" is read. Nothing else in AM-18 or AM-19 changes. Their "Approval means" bullets
+  stand. No test, threshold, family member, grid, tie rule, seed, recipe, schedule, date, arm rule
+  or rejection rule changes, and no teacher of record. Every other gate stands.
+- A rejection of this amendment is entered verbatim in the decision log on the day it arrives, and
+  is reported. It never reopens item 2's entry. It changes a rule only through a new amendment,
+  which lists the results and the AM-18 item 1 outputs known when it is written.
+
+State at amendment (as of the commit):
+- No execution of AM-18 item 1 has started and none of its outputs exists, so F and margin_dedup do
+  not exist. The AM-17 item 1(f) table, which is the VAL part of item 1(c), is registered separately
+  and exists (DL-64).
+- Nothing that item 6(a) holds back has run: no part of item 1(a) on any teacher, and no smoke of
+  the K8 or flip targets on real teacher weights.
+- No KD or QAT run has launched, and no E2–E7 or TEST result exists. The results known are those
+  that AM-19's State block lists. Nothing that bears on F has been measured since AM-18's commit.
+- The request that AM-18's header requires was not sent when AM-18 was committed (7a06ef7,
+  2026-10-05), and no request was sent for AM-19. On 2026-10-06 Ice De Luna reported that neither
+  will be sent.
+- Five committed texts therefore record what did not happen (erratum E-52):
+  - DL-69: a request sent on 2026-10-05, and a window ending on 2026-10-12;
+  - the Status cells of DL-66 ("adviser approval requested") and DL-70 ("adviser approval requested
+    2026-10-05");
+  - the Status lines of AM-18 and AM-19 ("adviser approval requested").
+- On 2026-10-05 at 13:44 (Asia/Manila) Ice De Luna reported in writing: "we alr talked to adviser
+  now in person about the changes and she approved all too". That report is the only record of the
+  approval:
+  - no second member has confirmed it, and what the adviser was shown is not recorded;
+  - no written reply from the adviser exists for AM-4a, AM-7a, AM-17b, AM-18 or AM-19 (her replies
+    of 2026-09-29, DL-57, answer an email about AM-17 item 11), and none has arrived before this
+    commit;
+  - AM-7a, AM-18 and AM-19 were committed after the report (4f7d1b0, 7a06ef7 and 376d77f; commit
+    times 15:56 to 15:58 that day), so for them it can only be an approval of the changes as
+    presented.
+
+1. The request.
+   - The request was not sent at AM-18's commit and is not sent (State). This is a recorded
+     deviation from AM-18's header (DL-82, E-52).
+   - Approval of AM-18 or of AM-19 still means exactly what its header says. A reply that meets that
+     definition counts whenever it arrives, and it is entered verbatim in the decision log on the
+     day it is received. With no request sent, that is a reply that names the amendment.
+   - A written message that confirms the 2026-10-05 approval without naming an amendment is
+     information only.
+   - If the group later asks the adviser in writing to approve AM-18's arms, the request states that
+     item 6(a)'s correction is unavailable (item 2).
+2. AM-18 item 6(a).
+   - With no request sent, item 6(a)'s seven-day window does not exist, and its hold could end only
+     through a reply.
+   - Item 6(a)'s state is "no approval": no written reply that approves or declines the correction
+     is in the decision log, and the in-person approval of item 4 is not such a reply. This commit
+     enters the state in the decision log (DL-84).
+   - Nothing that item 6(a) holds back starts before this commit has reached the remote: no part of
+     item 1(a) on any teacher, and no smoke of the K8 or flip targets on real teacher weights. From
+     then on the hold has ended, and item 1(a) runs under AM-18's execution rules.
+   - The item 1(a) output names DL-84 as its state entry. The decision-log entry that records F
+     gives the time this commit reached the remote, from GitHub's activity record, and the time
+     item 1(a) started.
+   - The entry is final (AM-18 item 6(a)), and the correction is unavailable for every run. If
+     F ≥ 0.10, the registered single-draw targets stand, F is disclosed as a limitation, and K8 is
+     an arm as in the middle branch.
+   - No later reply, rejection or erratum makes the correction available, and neither does an
+     amendment written with F known: with F known, K = 8 targets enter only as the descriptive arm
+     K8. The entry stands even if another item of this amendment is later corrected.
+3. What still waits for a written approval of AM-18.
+   - No arm of AM-18 items 2 and 3 launches before a written reply that approves AM-18, as its
+     header defines it, is in the decision log (AM-18's header, unchanged). The same holds for
+     everything else that AM-18's header does not put in force from the commit.
+   - Such a reply opens the arms whenever it arrives, and never the correction (item 2). The arms it
+     opens follow AM-18 item 7 and AM-19's dates and cut rules. An arm that is already cut stays
+     cut.
+4. The 2026-10-05 in-person approval. It is recorded verbatim, with its date and its evidence
+   (DL-83).
+   - "All" means AM-4a, AM-7a, AM-17b, AM-18 and AM-19 as the group presented them that day (DL-83).
+     It covers no later change to those texts, and no text written after the meeting: not AM-20,
+     AM-21 or AM-19a.
+   - AM-4a, AM-7a and AM-17b define no form of approval, and no run, arm or selection waits for
+     their approval. For them it is recorded as a reported approval: approved by the adviser in
+     person, as reported by one member, with no written record from her. This follows DL-65 with
+     less evidence: DL-65 has two reports and a written acknowledgement.
+   - For AM-18 and AM-19 it is information only. It is not the written reply their headers define.
+     It opens no arm, puts nothing in AM-18 in force, makes no correction available and selects no
+     schedule (AM-19 item 1(b) needs a written reply). It is not a rejection and excepts no item.
+   - From this commit on, a reported in-person approval meets no gate. Where a text makes an action
+     wait for the adviser's approval and defines no form of it, approval means an explicit written
+     reply from the adviser that names that text, recorded verbatim before the action. This settles
+     AM-18 item 6(b)'s "approved by the adviser", before margin_dedup exists. DL-65 stands as
+     recorded.
+   - Whatever the adviser later writes about the report is entered verbatim on the day it is
+     received. If it contradicts the report for an amendment, that amendment's markers are corrected
+     by an erratum, and no run is reclassified.
+5. Disclosure. Chapter 4 states:
+   - that the approval requests that the headers of AM-18 and AM-19 required were not sent, and that
+     five entries which said otherwise were corrected (E-52);
+   - that the adviser approved AM-4a, AM-7a, AM-17b, AM-18 and AM-19 in person on 2026-10-05, as
+     reported by one group member, with no written record from her, and before AM-7a, AM-18 and
+     AM-19 were committed;
+   - that item 6(a)'s correction was unavailable because AM-18 requires a written approval and none
+     was requested, although she had approved AM-18 in person; with F's value, the branch it
+     selects, and the times of the state entry and of item 1(a)'s start;
+   - which AM-18 arms did not run for want of a written approval.
+
+## AM-21 — Non-finite states in QAT runs (amends AM-4a items 2 and 3; extends AM-19 item 3(a) for E5 and E6 runs)
+
+Dated 2026-10-06. Status: DRAFT (group-recorded; no approval request has been sent for it).
+- Fixed text. From its commit this text is changed only by a new amendment, which lists the results
+  known when it is written. A dated bracket note only points to a later record or records an outcome.
+- In force from the time its commit reaches the remote, for every E5 and E6 run launched after it.
+  No QAT run launches before then. Approval gates nothing here.
+- E6-KD keeps its generic abort on a non-finite loss or gradient norm (DL-04, DL-51) and follows
+  AM-19 item 3(a). Items 2, 4 and 5 below apply to it.
+- A rejection is entered verbatim in the decision log on the day it arrives. It changes a rule only
+  if it is recorded before the first QAT run launches; the rejected item is then settled by a new
+  amendment before that launch. A rejection recorded later is reported. It changes a rule only
+  through a new amendment, which lists the results known when it is written, and it never reopens a
+  selection already made or a run already launched.
+
+State at amendment (as of the commit):
+- No E4, E5, E6 or E7 run has launched, no QAT or PTQ result exists, and the U4 pilot has not run.
+- The results known are those that AM-19's State block lists, and no output of AM-18 item 1 exists.
+- Also known, and no QAT result: the Q2 plan audit's measurements on synthetic tensors with the
+  student of record. A healthy prepared student holds five never-observed fake-quants; a non-finite
+  gradient makes every parameter non-finite at that step; while observers are on, the next forward
+  then raises.
+- The QAT code exists on a lane branch (lane/q2-qat) and has run on synthetic data only. It is
+  changed to match this text before it is merged and pinned.
+No test is added to the Holm family. No test, threshold, family member, grid, tie rule, seed, recipe
+value, freeze point, schedule or teacher of record changes.
+
+1. An E5 or E6 run that reaches a non-finite state completes.
+   (a) The state of a QAT model is finite when all of these hold: every parameter and every
+       BatchNorm buffer is finite; every fake-quant scale is finite; and every moving-average
+       observer holds finite minimum and maximum values with minimum ≤ maximum in every element, or
+       holds exactly (+∞, −∞) and is a never-observed module. The never-observed modules are the
+       fake-quants that no forward of the prepared student calls. A forward-hook census finds them
+       before training. They are listed in run_meta, are the same in every QAT run, and are compared
+       with the list of record at launch (DL-85).
+   (b) The trainer evaluates (a) after every step whose loss or pre-clip gradient norm is
+       non-finite, whenever a step or a VAL pass raises, and at the end of every epoch, on the state
+       that its checkpoint holds.
+   (c) Once the state is not finite, the trainer records the step at which it found this. It then
+       keeps drawing batches and stepping the schedule through all 15 epochs. An exception that a
+       step or a VAL pass raises in that state is recorded and does not end the run. Each epoch
+       still writes its checkpoint, its VAL row and its end-of-epoch record, each carrying the state
+       flag.
+   (d) The trainer never skips an update while the state is finite and never repairs a state.
+   (e) The run is complete (AM-19 Definitions) when its fifteenth epoch's record exists. An
+       exception raised while the state is finite still ends the run as an abort, and a process that
+       dies is a stop (AM-19 item 3(a)).
+   (f) A run whose state became non-finite, or whose logged loss or pre-clip gradient norm was
+       non-finite, is repeated only under AM-8a, and only if its fault report is committed before
+       any record conversion of its checkpoints exists (for a pilot run: of either pilot run's
+       checkpoints).
+   (g) A seed-42 run that AM-19 item 3(a) records as "aborted (rule, cause)" is a STOP that a new
+       amendment settles, as a default candidate is.
+2. Epoch selection (AM-4a item 2).
+   (a) An epoch whose checkpoint state is not finite is excluded from the selection and reported,
+       and the selection continues over the remaining epochs. The checkpoint decides: item 1(a) is
+       applied to it again at conversion and at selection.
+   (b) If no epoch is convertible, no epoch is selected for the run. The run stays complete, so it
+       does not move the freeze (AM-19 item 1(d)). It is entered in the decision log that day as
+       "non-finite: no model". Nothing that needs its model is computed or launched until a new
+       amendment settles it (for E6 seed 42: the AM-3 trigger and E6-KD). Only this halt is
+       pre-registered. That amendment is written with the run's records known, says so, and uses no
+       TEST result. If none is committed before the TEST manifest freeze, the run is in the manifest
+       as "non-finite: no model", and every quantity that needs its model is reported as not
+       evaluable.
+   (c) Every other failure of conversion or scoring refuses the selection. The selection is re-made
+       only after a written fault report (AM-8a), in a new evaluation directory, and two versions
+       are never chosen between.
+3. U4 pilot (AM-4a item 3).
+   (a) A pilot run whose state became non-finite at any step is rejected. So is a pilot run with a
+       step whose logged loss or pre-clip gradient norm is non-finite, whatever its state. The
+       rejection is read from the run's own records: its telemetry (the file whose sha256 was taken
+       on the pod), or an epoch checkpoint that fails item 1(a). A checkpoint that fails with no
+       state flag in the telemetry rejects the run too, and is reported as a deviation of the
+       trainer.
+   (b) If one run is rejected, the other is the winner, provided it is complete and has a selected
+       epoch.
+   (c) If both are rejected, there is no winner, and no later QAT run launches until a new amendment
+       decides the clip value. Only this halt is pre-registered. That amendment is written with both
+       runs' records known, says so, and uses no TEST result.
+   (d) A rejected run is still converted and scored as item 2(a) reads, and its records are kept.
+       Its scores are reported and select nothing. Item 2(b) does not apply to it. If its conversion
+       or scoring fails, item 2(c) applies to it alone, and the other run's win does not wait.
+   (e) A rejection is lifted in one case only: a repeat under item 1(f), which then stands in the
+       rejected run's place. If the repeat is rejected under (a) too, that clip value is rejected
+       for good.
+   (f) Nothing else rejects a pilot run. The registered pilot rule (configs/quant.py at 569cfbb, to
+       which PREREGISTRATION U4 points; IMPLEMENTATION_CONTRACT restates it under "Remaining
+       real-run values") rejects "a candidate whose training becomes non-finite or numerically
+       unstable". Its first ground is (a). Its second ground has no registered definition and is
+       not applied.
+   (g) Otherwise AM-4a item 3 applies as written.
+4. AM-4a in force. AM-4a (committed at 826d851; item 1 reworded at 73fd4d7 the same day), as this
+   amendment amends it, governs every QAT run. No run is reclassified by the adviser's approval of
+   AM-4a (DL-83), by its absence or by a later rejection. A rejection of AM-4a follows this
+   amendment's own rejection rule (header).
+5. Disclosure. Chapter 4 reports every excluded epoch, every rejected pilot run, every run with no
+   convertible epoch, and the step at which each non-finite state was first recorded.
+
+## AM-19a — Readings of AM-19 for the KD sweeps (settles readings that AM-19's Definitions and items 2 and 3 leave open)
+
+Dated 2026-10-06. Status: DRAFT (group-recorded; no approval request has been sent for it).
+- Fixed text. From its commit this text is changed only by a new amendment, which lists the results
+  known when it is written. A dated bracket note only points to a later record or records an outcome.
+- In force from the time its commit reaches the remote. No KD run launches before then. Approval
+  gates nothing here.
+- What it does. AM-19's header requires a new amendment for a reading that its text leaves open, and
+  this is that amendment. No reading adds a cut, a selection or a way for a candidate to win, and
+  none moves a date. Where two clauses of AM-19 conflict, or AM-19 names no rule for a case, the
+  stricter reading is taken. Five readings say in words that they go beyond the text: readings 2, 5
+  and 13 narrow a clause of item 2(b), reading 6 widens a record, and reading 19 adds how a void
+  decision record is replaced.
+- A refusal that no later input can lift is a STOP that a new amendment settles, with the results
+  known then.
+- A rejection is entered verbatim in the decision log on the day it arrives. It changes a reading
+  only if it is recorded before the first KD run launches. The rejected reading is then settled by a
+  new amendment before that launch.
+
+State at amendment (as of the commit): no KD run has launched; no λ or α candidate, KD result, E4–E7
+result or TEST result exists. The results known are those that AM-19's State block lists, and no
+output of AM-18 item 1 exists. The selection code exists on a lane branch (lane/k2-kd-launch,
+11afa15) and has run on synthetic run directories only. It implements these readings except readings
+9, 10, 17, 18, 19 and 21, where this text differs from it or adds a step. The code and the runbook
+are changed to match before the code is merged and pinned.
+
+Terms. C is the instant at which a decision date ends (AM-19 Definitions). An attempt is one launch
+line of a grid value in the launch log, with its run directory once it is launched. A value's
+attempts are taken in the order of their launch lines; reading 12 makes that the order of their
+launches.
+
+1. Ended (item 2(h)). "Ended in a run_end record" means a run_end record with its checks passed. A
+   run_end with a failed check is item 3(a)'s failed check, and item 3(a) governs its repeat.
+2. What can cut (item 2(b)). Item 2(b) cuts a non-default candidate for "a refusal by the
+   selection's checks", and it also makes a finished status final against a later fault or a missing
+   file. A file that can change after C cannot serve both clauses, so this reading narrows the
+   first.
+   - Only checks on a run's run_meta and telemetry can make a candidate cut at its decision date.
+   - A fault in its best.json file or its checkpoint (a file that is present and is unreadable, or
+     disagrees with the run_end record) refuses the selection at any time and is never a cut.
+   - A missing best.json or checkpoint changes nothing (item 2(b)). A file that is removed after it
+     refused a selection is reported as a deviation.
+3. On course (item 2(b)). The on-course test uses only the stopped attempt's own rows.
+   - The remaining validations are the validation points (every multiple of the VAL interval, and
+     the last iteration) that have no VAL row.
+   - An attempt is not on course when an input of the formula is missing or is not a finite number:
+     it has no train row or no VAL row; a row has no finite timestamp; an iter_seconds or
+     val_seconds value is not finite; or an iteration is not an integer.
+4. Timestamps (Definitions; item 2(b)). In a non-default attempt, a timestamp that steps backward is
+   a fault only when it crosses C: a row earlier than C that follows, in file order, a row at or
+   after C. That is a fault of the attempt's telemetry (reading 2). Every other backstep is counted
+   and recorded. For an α run the test is made once the α decision date is derived (reading 10).
+5. Identical recipe (item 2(b)). The candidates of a sweep share four values: num_workers, and the
+   sha256 of the teacher's checkpoint, configuration and model configuration (DL-53). A difference
+   among the finished and diverged candidates refuses the selection at any time. It is never
+   attributed to one candidate and is never a cut. Item 2(b) does not say whose fault a difference
+   is, so this reading narrows its "refusal by the selection's checks" for this check.
+6. Launch log (Definitions).
+   - The launch log covers every KD launch, not only a sweep candidate's. This widens the record;
+     the schedule check needs it.
+   - It holds launch lines (pushed before the launch), launched lines, not_launched lines and
+     stopped lines.
+   - A start is "not launched" when it wrote no run_meta row with mode real, whatever its return
+     code. It is not a run: the attempt after it is not a repeat and needs no AM-8a report.
+7. On-course repeat (items 2(b) and 2(h)).
+   - The on-course exception is used once per value, by its first on-course stop. The repeat is
+     read as a default candidate is, with no time limit: the value is finished if the repeat
+     finishes and diverged if it diverges. A later stop, abort or failed check of the repeat is a
+     cut.
+   - While the repeat runs, the decision record lists it as "running (on-course repeat, item 2(b))"
+     and is still written within item 2(h)'s 24 hours.
+   - The record is not written before the repeat has launched and the stop has its stopped line. If
+     that makes the record late, the delay is reported as a deviation from item 2(h).
+   - The entry stays valid whatever status the repeat later reaches. The selection derives that
+     status from the repeat's own rows.
+8. The candidate table (item 2(e)). A cut candidate's GPU-hours run from its launch to its last row
+   and are reported both up to C and in total. For a value with more than one attempt the table
+   lists each attempt, and "its last iteration" is the largest over them.
+9. Ends the same way (item 3(a)). An attempt ends the same way when an earlier attempt of the same
+   value ended with the same (rule, cause), or when it and an earlier attempt both ended with a
+   failed check. Attempts between the two change nothing, a stopped attempt included. An ending that
+   differs from every earlier ending of the value gets its own single repeat.
+10. The λ selection's commit day (item 2(a); Definitions, a record's timestamp).
+    - D is the Asia/Manila day on which the commit that added the λ selection file reached the
+      remote, on any ref. The α decision date is the later of its calendar date and D + 3 days.
+    - Two records bound that instant: the latest telemetry timestamp the λ selection read, less 60
+      seconds, and the launch time in the α default's first launched line, plus 60 seconds. If the
+      upper bound's day + 3 days is no later than the calendar date, the calendar date stands and D
+      is not needed. If both bounds fall on one day, that day is D.
+    - Otherwise (the bounds fall on different days, or the α default has no launched line, so there
+      is no upper bound) D comes from GitHub's activity record for the repository, saved verbatim
+      and committed. D is the day of the earliest push, on any ref, of a commit that is or descends
+      from the commit that added the file. The record must reach back past the lower bound, and that
+      push must lie inside the bounds; otherwise the selection refuses.
+    - A branch deletion pushes no commit and is not counted.
+    - Whether each push after the lower bound carries the file is settled once, when the record is
+      saved, and that list is committed with it. The launch gate and the selection use the list, and
+      check it wherever the clone holds the pushed commit. A pushed commit that the remote no longer
+      serves when the record is saved counts as carrying the file. The remote's answer is saved with
+      the list, and the entry is named in the selection file and in Chapter 4.
+    - No local clock is the record.
+11. The default in the finished set (items 2(d) and 2(e)). The selection runs only on a finished set
+    that contains the sweep's default candidate, and refuses a set without it. A diverged default is
+    item 7's case.
+12. Order of attempts (item 3(a)). A repeat launches after the attempt before it has ended. An
+    attempt whose launch time is not later than the largest timestamp of the previous launched
+    attempt refuses the selection; it is never a cut.
+13. A non-finite row with no abort record (items 2(b) and 3(a)). The trainer flags a train row that
+    holds a non-finite value, and a VAL row whose all-class mIoU is non-finite, just before it
+    aborts. An attempt with such a row and no run_abort record after it ends with (rule, cause) =
+    (non-finite row, abort record missing), whatever follows the row.
+    - It is not a divergence: no valid abort record exists (AM-7a).
+    - It is not treated as a stop either, because its own rows show why it ended. The on-course
+      exception does not apply. This narrows item 2(b)'s "a stop that is not the trainer's own
+      record".
+    - It is repeated once under item 3(a).
+14. A failed check at or after C (item 2(b)). A run_end with a failed check written at or after C
+    gives the cut reason "aborted after the end of the date".
+15. Stopped early with no row (item 2(h)). For "stopped early, unexplained", an attempt with no row
+    is measured from its launch time.
+16. The default's abort (items 2(c), 2(d), 2(g) and 3(a)). While the latest attempt of a default
+    candidate is one that ended in an abort or a failed check, the selection refuses, on item 2(g)'s
+    α-cut path too. The default is repeated under item 3(a). From the repeat's launch, its status is
+    the default's (item 2(c)).
+17. Ending the same way before C (items 2(b), 3(a) and 3(b)).
+    - When a non-default value's latest attempt ends the same way (reading 9), the value is not
+      repeated again.
+    - Item 3(a) says that it "is cut", and item 3(b) allows a cut only at a decision date. So before
+      C the selection waits for C (exit 3).
+    - At C the value is cut, with the reason "aborted (rule, cause)".
+18. Refusal before waiting (items 2(c) and 2(h)).
+    - Before C, the selection gives every refusal that the complete launch log would also give
+      before it waits for a missing record.
+    - It waits instead of refusing only while an earlier attempt of a value is incomplete and could
+      still make that value's latest ending its second same ending (readings 9 and 17).
+19. A decision record and later launch lines (items 2(g) and 2(h)).
+    - Item 2(h) sets a deadline for the record, and it lets the default's entry read "running (item
+      2(d))", so the record may be written while the default runs. Both stand. The 24 hours count
+      from the later of the end of the decision date and the default's last ending: its run_end with
+      its checks passed, or its valid divergence record.
+    - The record states the launch log it was written from (its line count and sha256), and item
+      2(h)'s directory checks compare the record with those lines. A launch line of the default
+      that is added later does not void the record: the selection derives the default's status and
+      directories when it runs (item 2(h)), and it checks them against the launch log.
+    - A launch line of a non-default value of the same sweep that is added after the record refuses
+      the selection.
+    - The record's decision date and instant must equal the derived ones. The way the α date was
+      derived (reading 10) may differ once the α default has launched, as long as the date is the
+      same.
+    - AM-19 has no rule for a record that the selection's checks refuse for another reason. Such a
+      record is void. It is kept and never edited. A corrected record is written once, to a new
+      file, after a written fault report in AM-8a's form, and both sha256 values are entered in the
+      decision log. This adds a step to item 2(h).
+20. A launched attempt without its run directory (items 2(b) and 2(h)). A launched attempt whose run
+    directory is not supplied is never "never launched" and never a cut. Before C the selection
+    waits; from C it refuses. The same holds for a launch line that has neither a launched nor a
+    not_launched line.
+21. The end of a decision date (Definitions; items 2(e) and 2(h)). The selection and the record
+    writer take the present time from the machine that runs them. Before a selection with a cut, and
+    before a record is written, that machine's offset from a network time source is recorded; an
+    offset above 60 seconds is a STOP. A decision record, or a selection file with a cut, whose
+    commit reached the remote before C is void.
+22. Disclosure. Chapter 4 lists these readings with AM-19 and names the five that go beyond its
+    text.
+
 ## Status of PREREGISTRATION §10 items after these amendments
 
 | Item | Status |
@@ -1776,7 +2154,7 @@ Code:
 | U1 | mechanism completed by AM-2; the value is still selected by the sweep |
 | U2 | AM-3 |
 | U3 | withdrawn by AM-7 (AM-7a pre-commits the fallback value) |
-| U4 | unchanged (AM-4 fixes only its future scoring) [Superseded by AM-4a item 3: the pilot is two full E5 seed-42 runs, clipped at 1.0 and 5.0, scored on converted-model VAL mIoU.] |
+| U4 | unchanged (AM-4 fixes only its future scoring) [Superseded by AM-4a item 3: the pilot is two full E5 seed-42 runs, clipped at 1.0 and 5.0, scored on converted-model VAL mIoU.] [AM-21 item 3, 2026-10-07: a pilot run that becomes non-finite (state, logged loss or pre-clip gradient norm) is rejected; the registered rule's "numerically unstable" is not applied.] |
 | U5 | AM-1 |
 | U6 | unchanged |
 | U7 | unchanged (D22 deferred) |
