@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """(h) The mutation smoke (lane 6, L-AM4 + L-AM1q): M1-M24 and P36's refusal table, each killed by a named check.
 
-The X mutations undo the DL-24 verification fixes, each killed by the check added with its fix.
+The X mutations undo the DL-24 verification fixes, each killed by the check added with its fix. M25 onward kill the
+checks of the Q2 follow-up: M25-M26 write into configs/calibration while a PTQ smoke runs (F2); M27-M30 move or
+drop a G1 name check (F3); M31-M36 break the record conversion or a selection of a run made non-finite (F1).
 
 The explicit paths of SHADOW_PATHS are copied into a temporary shadow of the repository and committed there
 (one fixed commit, so the trainer records a git_head as in the checkout); the repository itself is never
@@ -46,27 +48,37 @@ results: list[tuple[str, bool, str]] = []
 # every process they start); a file missing here fails the baseline, never a mutation.
 SHADOW_PATHS: tuple[str, ...] = (
     "configs/augment.py",
+    "configs/calibration/ptq_calibration_seed42.json",
     "configs/data.py",
     "configs/e1_student.py",
     "configs/model.py",
+    "configs/plantseg_class_map.json",
     "configs/qat_selection_rules.json",
     "configs/quant.py",
     "reports/e1_class_weights.json",
+    "scripts/build_calibration_lists.py",
+    "scripts/evaluate_model.py",
+    "scripts/ptq_val_checks.py",
     "scripts/qat_epoch_eval.py",
+    "scripts/run_e4.py",
     "scripts/run_e5.py",
     "scripts/run_e6.py",
+    "scripts/run_ptq.py",
     "scripts/select_clip.py",
     "scripts/select_qat_epoch.py",
+    "scripts/smoke_calibration_lists.py",
     "scripts/smoke_qat_artifacts.py",
     "scripts/smoke_qat_runner.py",
     "scripts/smoke_qat_seeding.py",
     "scripts/smoke_qat_selection.py",
+    "scripts/smoke_run_ptq.py",
     "scripts/synthetic_ptq_fixtures.py",
     "scripts/synthetic_qat_fixtures.py",
     "src/__init__.py",
     "src/data/__init__.py",
     "src/data/dataset.py",
     "src/data/isolation.py",
+    "src/data/original_resolution.py",
     "src/data/transforms.py",
     "src/distill/__init__.py",
     "src/distill/cwd_projection.py",
@@ -76,7 +88,10 @@ SHADOW_PATHS: tuple[str, ...] = (
     "src/distill/segnext_teacher.py",
     "src/distill/teacher.py",
     "src/eval/__init__.py",
+    "src/eval/adapters.py",
     "src/eval/artifacts.py",
+    "src/eval/efficiency.py",
+    "src/eval/eval_runtime.py",
     "src/eval/evaluate.py",
     "src/eval/metrics.py",
     "src/eval/model_loading.py",
@@ -104,9 +119,10 @@ SHADOW_PATHS: tuple[str, ...] = (
 
 QAT, PREP, SEL, ART, QEE = ("src/quant/qat.py", "src/quant/prepare.py", "src/quant/qat_select.py",
                             "src/quant/qat_artifacts.py", "scripts/qat_epoch_eval.py")
-SQE, SCL = "scripts/select_qat_epoch.py", "scripts/select_clip.py"
+SQE, SCL, BCL = "scripts/select_qat_epoch.py", "scripts/select_clip.py", "scripts/build_calibration_lists.py"
 RUNNER, SEEDING, SELECTION, ARTIFACTS = ("smoke_qat_runner", "smoke_qat_seeding", "smoke_qat_selection",
                                          "smoke_qat_artifacts")
+RUN_PTQ, CAL_LISTS = "smoke_run_ptq", "smoke_calibration_lists"
 
 
 def runner(section: str) -> tuple:
@@ -121,8 +137,47 @@ def records() -> tuple:
     return (ARTIFACTS, ("--sections", "records", "--cache-dir", "{cache}/artifacts"))
 
 
+def nonfinite(*names: str) -> tuple:
+    return (ARTIFACTS, ("--only", ",".join(names), "--cache-dir", "{cache}/artifacts_nf"))
+
+
 SEEDING_ALL = (SEEDING, ())
 UNITS = (ARTIFACTS, ("--sections", "units"))
+# F1: the nonfinite cases in three runs, each well inside TIMEOUT on a cold cache: the record conversions (their
+# baseline keeps the conversions the clip selection reads), the epoch selections, and the clip selections
+NF_STEPS = (10, 22, 27)
+NF_CONVERT = nonfinite(*(f"nf_step{k}_record_convert_exit_0" for k in NF_STEPS))
+NF_EPOCH = nonfinite(*(f"nf_step{k}_select_qat_epoch_excludes_nonfinite" for k in NF_STEPS),
+                     "nf_no_convertible_epoch_exit_2_nothing_written")
+NF_CLIP = nonfinite(*(f"nf_step{k}_select_clip_rejects_nonfinite" for k in NF_STEPS),
+                    *(f"nf_step{k}_both_nonfinite_no_winner_exit_2" for k in NF_STEPS))
+
+# F2: the calibration-list build's write of its four lists, and two edits that also write into the repository's
+# configs/calibration during the run: a new file (named by the time, so each run writes another), or one more
+# line appended to the committed seed-42 list
+_LISTS_OUT = "    out.mkdir(parents=True, exist_ok=True)\n    return write_exclusive(files)\n"
+_NEW_LIST_FILE = ("    out.mkdir(parents=True, exist_ok=True)\n"
+                  '    (REPO / "configs" / "calibration" / f"mutant_{datetime.now(timezone.utc):%H%M%S%f}.json")'
+                  '.write_text("{}\\n")\n'
+                  "    return write_exclusive(files)\n")
+_SEED42_APPENDED = ("    out.mkdir(parents=True, exist_ok=True)\n"
+                    '    with open(REPO / "configs" / "calibration" / FILENAME.format(seed=42), "a") as fh:\n'
+                    '        fh.write("\\n")\n'
+                    "    return write_exclusive(files)\n")
+# F3: G1's name checks in src/quant/qat.py and the probe or listing each must precede
+_PARENT_NAME = ("    if d is not None and names_test(d):\n"
+                "        _refuse(\"parent_dir_test_path\", f\"--source-run-dir {d} contains 'test'\")\n")
+_PARENT_DIR = ("    if d is None or not d.is_dir():\n"
+               "        _refuse(\"parent_dir_missing\", f\"--source-run-dir {run_dir!r} is not a directory\")\n")
+_CLIP_NAME = ("    if names_test(p):\n"
+              "        _refuse(\"clip_selection_test_path\", f\"--clip-selection {p} contains 'test'\")\n")
+_CLIP_FILE = "    if not p.is_file():\n        _refuse(\"clip_selection_missing\", f\"{p} is not a file\")\n"
+_OUT_NAME = ("    if value and names_test(value):                      # before the directory is looked at\n"
+             "        return f\"--out-dir {value} contains 'test'\"\n")
+_OUT_LOOK = ("    try:\n        out = check_output_dir(value, create=False)\n    except QuantRunError as e:\n"
+             "        return str(e)\n    if out.exists() and (not out.is_dir() or any(out.iterdir())):\n"
+             "        return f\"--out-dir {out} exists and is not an empty directory; "
+             "a run starts in a fresh directory\"\n")
 
 
 def M(mid: str, what: str, file: str, old: str, new: str, run: tuple, *kills: str) -> dict:
@@ -301,6 +356,54 @@ MUTATIONS = [
       '    keys = {"winner", "values", "tied_epochs", "excluded_epochs", "telemetry_sha256", "run_id",\n'
       '            "summary_fields", "eval_identity"}\n',
       case("d5_edited_selection_trace_refused"), "d5_edited_selection_trace_refused"),
+    # Q2-F, F2: a PTQ smoke judges "untouched" by the repository's git status before and after its run, so files
+    # tracked at HEAD do not count as a write; each write below is caught by both smokes
+    M("M25a", "a calibration-list build writes a new file into configs/calibration", BCL, _LISTS_OUT, _NEW_LIST_FILE,
+      (RUN_PTQ, ()), "repository_untouched"),
+    M("M25b", "a calibration-list build writes a new file into configs/calibration", BCL, _LISTS_OUT, _NEW_LIST_FILE,
+      (CAL_LISTS, ()), "nothing_written_in_the_repository"),
+    M("M26a", "a calibration-list build appends to the committed seed-42 list in configs/calibration", BCL,
+      _LISTS_OUT, _SEED42_APPENDED, (RUN_PTQ, ()), "repository_untouched"),
+    M("M26b", "a calibration-list build appends to the committed seed-42 list in configs/calibration", BCL,
+      _LISTS_OUT, _SEED42_APPENDED, (CAL_LISTS, ()), "nothing_written_in_the_repository"),
+    # Q2-F, F3: G1, each half of names_test and each name check's place (the launch gates; nothing named "test"
+    # is created)
+    M("M27", "resolve_parent probes --source-run-dir (is_dir) before its name check", QAT,
+      _PARENT_NAME + _PARENT_DIR, _PARENT_DIR + _PARENT_NAME, runner("gates"),
+      "g1_given_name_refused_before_any_probe"),
+    M("M28", "names_test reads the given path only (G1's resolved half dropped)", QAT,
+      '    return "test" in str(p).lower() or "test" in str(p.resolve()).lower()\n',
+      '    return "test" in str(p).lower()\n', runner("gates"), "g1_resolved_name_refused_before_is_dir"),
+    M("M29", "read_clip_selection probes --clip-selection (is_file) before its name check", QAT,
+      _CLIP_NAME + _CLIP_FILE, _CLIP_FILE + _CLIP_NAME, runner("gates"), "g1_clip_selection_name_refused_before_probe"),
+    M("M30", "--out-dir checked and listed before its name check (G1's --out-dir order)", QAT,
+      _OUT_NAME + _OUT_LOOK, _OUT_LOOK + _OUT_NAME, runner("gates"), "g1_out_dir_name_refused_before_listing"),
+    # Q2-F, F1: real 15-epoch runs made non-finite at steps 10, 22 and 27 (before, between and after the two
+    # freezes): their record conversion, their epoch selection and the U4 clip selection (AM-21)
+    M("M31", "a run that recorded a non-finite state reads as incomplete, so its records are never converted", ART,
+      '    if torn:\n        reasons.append("the telemetry\'s last line is torn")\n',
+      '    if torn:\n        reasons.append("the telemetry\'s last line is torn")\n'
+      '    if any(r.get("state_nonfinite") for r in rows):\n'
+      '        reasons.append("the run recorded a non-finite state")\n',
+      NF_CONVERT, *(f"nf_step{k}_record_convert_exit_0" for k in NF_STEPS)),
+    MM("M32", "P16's freeze cross-check compares floats (torch.equal; NaN != NaN), not the raw bytes", ART,
+       [("[k for k in bn_keys if not bytes_equal(states[e][k], states[bn_from][k])]",
+         "[k for k in bn_keys if not torch.equal(states[e][k], states[bn_from][k])]"),
+        ("[k for k in obs_keys if not bytes_equal(states[e][k], states[obs_from][k])]",
+         "[k for k in obs_keys if not torch.equal(states[e][k], states[obs_from][k])]")],
+       NF_CONVERT, "nf_step10_record_convert_exit_0", "nf_step22_record_convert_exit_0"),
+    M("M33", "select_clip does not reject a non-finite pilot run (AM-21 item 3)", SEL,
+      "        rejected = run_rejected(rec)", "        rejected = False",
+      NF_CLIP, *(f"nf_step{k}_select_clip_rejects_nonfinite" for k in NF_STEPS)),
+    M("M34", "select_clip goes on when both pilot runs are rejected", SEL,
+      '        raise QATRefused("no_winner", NO_WINNER)\n', "        pass\n",
+      NF_CLIP, *(f"nf_step{k}_both_nonfinite_no_winner_exit_2" for k in NF_STEPS)),
+    M("M35", "select_qat_epoch takes an excluded (non-finite) epoch for a scored one", SEL,
+      '        if row.get("status") == "excluded":\n', "        if False:\n",
+      NF_EPOCH, *(f"nf_step{k}_select_qat_epoch_excludes_nonfinite" for k in NF_STEPS)),
+    M("M36", "select_qat_epoch goes on with no convertible epoch", SEL,
+      "        raise QATRefused(\"no_convertible_epoch\", f\"every epoch of {rec['run_id']} is excluded "
+      "(non-finite state)\")\n", "        pass\n", NF_EPOCH, "nf_no_convertible_epoch_exit_2_nothing_written"),
 ]
 
 # ------------------------------------------------------------------ the refusal table (P36)
