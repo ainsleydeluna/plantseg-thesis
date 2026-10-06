@@ -6,8 +6,9 @@ drop_last: 2 steps per epoch, T_max 30, BN statistics frozen after step 20 and e
 step 24) and 8 VAL images. Three trainings go through the trainer's own step, VAL bracket and
 checkpoint code: a clean one at max_norm 0.1 (below the fixture's gradient norm, so every step clips),
 and two with a real NaN injected into the loss, once at step 10 (observers on) and once at step 27
-(observers off). The launch gates are exercised one refusal at a time. No dataset, no checkpoint, no
-download; every file goes to a temp directory outside the repository.
+(observers off). The launch gates are exercised one refusal at a time, G1's name checks by half and by
+place, with nothing named "test" created. No dataset, no checkpoint, no download; every file goes to a
+temp directory outside the repository.
 
     python -B scripts/smoke_qat_runner.py
     python -B scripts/smoke_qat_runner.py --device cuda
@@ -410,6 +411,52 @@ def code_of(fn, *a, **kw) -> str | None:
     except Exception as e:                                      # noqa: BLE001 -- reported in the check's detail
         return f"raised:{type(e).__name__}"
     return None
+
+
+def refusal_of(fn, *a, **kw) -> tuple[str | None, str]:
+    """fn's refusal code and message; (None, "") when it returns; ("raised:<type>", message) for any other
+    exception."""
+    try:
+        fn(*a, **kw)
+    except Q.QATRefused as e:
+        return e.code, str(e)
+    except Exception as e:                                      # noqa: BLE001 -- reported in the check's detail
+        return f"raised:{type(e).__name__}", str(e)
+    return None, ""
+
+
+@contextlib.contextmanager
+def listing_recorder(path: Path):
+    """os.listdir, os.scandir and Path.iterdir record every call on `path` (or below it) while the block runs,
+    and are restored after it (G1: a path whose name holds "test" is refused before it is listed)."""
+    root = os.path.abspath(path)
+    seen: list[str] = []
+    real = (os.listdir, os.scandir, Path.iterdir)
+
+    def hit(p) -> None:
+        try:
+            a = os.path.abspath(os.fsdecode(p))
+        except TypeError:                                       # a file descriptor
+            return
+        if a == root or a.startswith(root + os.sep):
+            seen.append(a)
+
+    def listdir(p=".", *a, **kw):
+        hit(p)
+        return real[0](p, *a, **kw)
+
+    def scandir(p=".", *a, **kw):
+        hit(p)
+        return real[1](p, *a, **kw)
+
+    def iterdir(self):
+        hit(self)
+        return real[2](self)
+    os.listdir, os.scandir, Path.iterdir = listdir, scandir, iterdir
+    try:
+        yield seen
+    finally:
+        os.listdir, os.scandir, Path.iterdir = real
 
 
 def write_e1_parent(d: Path, *, seed: int = 42, mode: str = "real", val_at_max: bool = True,
@@ -871,6 +918,41 @@ def test_gates() -> None:
     check("refuses_parent_checkpoint_test_name", got == "parent_checkpoint_test_path", f"[{got}]")
     got = code_of(Q.read_clip_selection, None, ssha)
     check("refuses_clip_selection_path_absent", got == "clip_selection_missing", f"[{got}]")
+
+    # ---- G1 (F3): each half of names_test and each name check's place; nothing named "test" is created
+    # (a) the given name: a never-created --source-run-dir named latest is refused by its name before any probe
+    #     (resolve_parent's is_dir() first would report parent_dir_missing)
+    g1_latest = TMP / "latest"
+    got = gate([a if a != str(good) else str(g1_latest) for a in base], patches=allp)
+    check("g1_given_name_refused_before_any_probe", got == "parent_dir_test_path" and not os.path.lexists(g1_latest),
+          f"[{got}]")
+    # (b) the resolved name: a real symlink named current_run whose target is a never-created path under a directory
+    #     named test is refused once resolved, before is_dir() (the link dangles: parent_dir_missing otherwise)
+    g1_link, g1_target = TMP / "current_run", TMP / "g1_absent" / "test" / "e1_s42"
+    os.symlink(g1_target, g1_link)
+    got = gate([a if a != str(good) else str(g1_link) for a in base], patches=allp)
+    check("g1_resolved_name_refused_before_is_dir",
+          got == "parent_dir_test_path" and "test" not in str(g1_link).lower() and os.path.islink(g1_link)
+          and "test" in os.path.realpath(g1_link).lower() and not os.path.lexists(TMP / "g1_absent"), f"[{got}]")
+    # a never-created --clip-selection named latest_selection.json is refused by its name before is_file()
+    # (clip_selection_missing otherwise), and nothing lists it
+    g1_sel = TMP / "latest_selection.json"
+    argv43 = ["--real-run", "--confirm-real-run", "--expect-head", head, "--seed", "43", "--num-workers", "12",
+              "--grad-clip-norm", "5.0", "--clip-selection", str(g1_sel), "--clip-selection-sha256", ssha,
+              "--source-run-dir", str(good), "--expect-source-sha256", sha, "--out-dir", out_ok]
+    with listing_recorder(g1_sel) as listed:
+        got = gate(argv43, patches=allp)
+    check("g1_clip_selection_name_refused_before_probe",
+          got == "clip_selection_test_path" and not listed and not os.path.lexists(g1_sel), f"[{got}]")
+    # the --out-dir order (report §11): a never-created --out-dir inside the repository named latest_qat_out is
+    # refused by its name, before check_output_dir (which refuses any path in the repository) and before a listing
+    g1_out = REPO / "latest_qat_out"
+    with listing_recorder(g1_out) as listed:
+        code, msg = refusal_of(Q.real_run_gates, Q.build_parser(e5).parse_args(
+            [a if a != out_ok else str(g1_out) for a in base]), e5, repo_root=repo)
+    check("g1_out_dir_name_refused_before_listing",
+          code == "out_dir" and "contains 'test'" in msg and not listed and not os.path.lexists(g1_out),
+          f"[{code}] {msg[:120]}")
 
     # ---- main(): a refused launch prints one RESULT line and writes nothing
     buf = io.StringIO()
