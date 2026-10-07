@@ -1180,3 +1180,582 @@ Decision-log rows for the orchestrator items:
 
 
 Lane pushed to lane/q2-qat.
+
+
+## 15. Blocks A and B as revised by AM-21
+
+AM-21 as committed (CP-007g, `2951dd4460faab03004fe203aa4e92fbd35b94e7`; DL-85) revises §12's blocks. §12 stays as
+history; this section restates both blocks in full and replaces §12 for every run. The changes against §12, each with
+its rule:
+
+- **A non-finite completion is a REPORT, not a STOP** (Q2-4 ruling 1). Block A's P37 line for a run that completed with
+  a non-finite state is pasted and recorded, and the run goes on to block B. Every other block A failure stays a STOP.
+- **Record conversions wait for both runs and for the fault report** (CHECK ITEM 16; AM-21 items 1(f) and 3(e)). No
+  record conversion of a pilot run starts before both pilot runs have ended. After a non-finite completion line, or a
+  rejection that block B's rejection check prints, an AM-8a fault report (if there is a fault) is committed before any
+  record conversion of either pilot run starts. The rejection check is added because item 1(f) also names a run whose
+  logged loss or pre-clip gradient norm was non-finite, and such a run can complete with a finite state.
+- **A rejected pilot run is converted and scored, never selected** (item 3(d)). It is still converted and scored as
+  item 2(a) reads, and its records are kept. Its scores are reported and select nothing, and it gets no epoch selection.
+  If its conversion or scoring fails, item 2(c) applies to it alone, and the other run's win does not wait.
+- **select_clip checks each candidate's telemetry against the pod** (CHECK ITEM 12). It takes one
+  `--expect-telemetry-sha256` per candidate, from the sha256 entries recorded on the pod, and prints one REPORT line per
+  rejected run.
+- **No convertible epoch is entered as "non-finite: no model"** (item 2(b)). For a run of record, the entry is written
+  in the decision log that day.
+- **Repeats** (items 2(c) and 3(e)). A re-made record conversion or scoring needs a written fault report, as a
+  repeated run does, and two versions are never chosen between. Item 3(e) lifts a rejection once: a clip value whose
+  repeat is rejected too is rejected for good.
+- **Runs of record** (items 1(f) and 2(a)). Item 1(f)'s hold applies to them too: no record conversion before the
+  AM-8a ruling. A selection with excluded epochs is a REPORT.
+- **Block A's GPU smoke count** `<n>` is 209: the final count of scripts/smoke_qat_runner.py, at §16's last commit.
+  `--device cuda` runs every section, as the CPU run does, and no check depends on the device
+  (REPOSITORY-PROVEN: scripts/smoke_qat_runner.py `main`). The CUDA count is therefore the CPU count, 209 (MEASURED on
+  CPU; the CUDA run is deferred).
+
+§12's notes on the blocks still hold:
+- check-run-meta reads the run_meta row before the first step.
+- epoch_ckpts/ holds exactly e01.pt … e15.pt.
+- finalize writes only into the eval directory.
+
+check-run-meta now also compares the run's never-observed fake-quants with DL-85's five modules of record (CHECK
+ITEM 10).
+
+Rules for both blocks:
+- Run one command at a time. Go on only when the expected lines appear.
+- Replace every `<…>` first. `<PIN>` is the merged pin recorded in DL-37.
+- **A REPORT outcome** is an expected output named as one below; no other output is one.
+  - Paste it into the launch record, and enter it verbatim in the decision log that day.
+  - It is not a STOP. The block goes on as its line says.
+  - Where the line says so, a REPORT exits non-zero; its STOP-fields line then shows that exit code.
+- **A warning is not an output.** torch 2.1 prints a UserWarning on stderr ("TypedStorage is deprecated") whenever a
+  command loads a checkpoint, the rejection check's included, often between the expected lines (MEASURED with the
+  pinned torch 2.1.0 on CPU; INFERRED for the image's CUDA build of the same version). It is neither a REPORT nor a
+  STOP.
+- **Anything else is a STOP**: any other output, or a non-zero exit outside a REPORT. Never run the command again, and
+  delete nothing, containers included. A STOP never ends a running process; the ruling says what happens to it. A
+  repeat follows a ruling and AM-8a's written fault report, for a run and for a failed record conversion or scoring
+  alike (AM-21 item 2(c)). It uses a new directory, and two versions are never chosen between.
+- The RESULT strings are those of P37 and AM-21 item 5; the lane's report confirms them (§16).
+- **Estimates** (INFERRED, not measured):
+  - on the pod, 2.2–3.1 h per pilot run (the plan's figure);
+  - on the laptop, about 10–25 min of conversions and 1–3.6 h of scoring per run.
+
+  One data point (MEASURED): the converted student takes 0.21–0.29 s per 512×512 image on a 2-core cloud CPU.
+
+**Block A: pod (bash).** Needs:
+- G1, G2, G3, G5 and G6;
+- AM-19's launch checklist done: no recorded divergence of E1 or E5 at seed 42 in the decision log, item 1(e)'s launch
+  order, and no waiting adviser reply that changes the schedule;
+- the merged pin matching AM-21 (its header: no QAT run launches before then);
+- a pod started from the pinned image by digest, with /dev/shm for 12 workers (runbook §9.1);
+- the DL-19 clone at `<PIN>` (§9.2);
+- the TRAIN/VAL-only root (§9.3).
+
+`<EVID>` exists and lies outside the clone, the data root and /workspace/qat_runs. A new shell repeats the first block.
+
+```bash
+set -o noclobber
+export PLANTSEG_IMAGE_DIGEST=sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf
+unset PLANTSEG_GIT_COMMIT
+export PYTHONPATH=<CLONE>
+export PLANTSEG_DATA_ROOT=<TRAINVAL_ROOT>
+cd <CLONE>
+git rev-parse HEAD
+```
+Expected:
+```
+<PIN>
+```
+The pod's clock (AM-19's launch checklist). Write the laptop's UTC time at that moment beside it in the launch record;
+the difference is the pod's clock offset.
+```bash
+date -u +"%Y-%m-%dT%H:%M:%SZ" > <EVID>/pod_clock_e5_s42.txt
+cat <EVID>/pod_clock_e5_s42.txt
+```
+Expected: one UTC time.
+```bash
+sha256sum <E1DIR>/e1_student_best_iter80000.pt
+```
+Expected first field:
+```
+cf0879f7007dfacbd0d510085ff28a4b47ee845ddb8fd599611d74109e1d6a03
+```
+GPU smoke (P38), on synthetic data only:
+```bash
+python -B scripts/smoke_qat_runner.py --device cuda > <EVID>/smoke_qat_runner_cuda.log 2>&1
+tail -n 1 <EVID>/smoke_qat_runner_cuda.log
+```
+Expected:
+```
+RESULT: PASS (209/209)
+```
+Run 1 (clip 1.0):
+```bash
+nohup bash -c 'python -B scripts/run_e5.py --real-run --confirm-real-run --source-run-dir <E1DIR> --expect-source-sha256 cf0879f7007dfacbd0d510085ff28a4b47ee845ddb8fd599611d74109e1d6a03 --expect-head <PIN> --seed 42 --grad-clip-norm 1.0 --u4-pilot --num-workers 12 --out-dir /workspace/qat_runs/e5_s42_clip1.0; echo "EXIT=$?"' > <EVID>/e5_s42_clip1.0.log 2>&1 &
+echo $! > <EVID>/e5_s42_clip1.0.pid
+```
+Within 5 minutes:
+```bash
+python -B scripts/qat_epoch_eval.py check-run-meta --run-dir /workspace/qat_runs/e5_s42_clip1.0 --stage E5 --seed 42 --grad-clip-norm 1.0 --u4-pilot --expect-head <PIN> --expect-source-sha256 cf0879f7007dfacbd0d510085ff28a4b47ee845ddb8fd599611d74109e1d6a03
+```
+Expected last line:
+```
+RESULT: CHECK-RUN-META PASS
+```
+Status, as often as wanted (it changes nothing):
+```bash
+kill -0 "$(cat <EVID>/e5_s42_clip1.0.pid)" 2>/dev/null && echo RUNNING || echo ENDED
+```
+Once it prints ENDED:
+```bash
+tail -n 2 <EVID>/e5_s42_clip1.0.log
+```
+Expected, one of two pairs. The first is a run whose state stayed finite:
+```
+RESULT: QAT COMPLETE (E5, seed 42, clip 1.0, 15/15 epochs)
+EXIT=0
+```
+The second is a REPORT. The run completed with a non-finite state, and `<N>` is the step at which the trainer first
+found it (AM-21 items 1(c) and 5):
+```
+RESULT: QAT COMPLETE, STATE NON-FINITE first found at step <N> (E5, seed 42, clip 1.0, 15/15 epochs)
+EXIT=0
+```
+The run is rejected (item 3(a)). It still goes on: the sha256 capture below, then run 2, then block B. Block B's gate
+holds its record conversion.
+```bash
+(cd /workspace/qat_runs/e5_s42_clip1.0 && sha256sum qat_telemetry.jsonl epoch_ckpts/e*.pt) > <EVID>/e5_s42_clip1.0.sha256
+wc -l < <EVID>/e5_s42_clip1.0.sha256
+```
+Expected:
+```
+16
+```
+Run 2 (clip 5.0). Start it only after run 1's two lines, either pair, and the capture:
+```bash
+nohup bash -c 'python -B scripts/run_e5.py --real-run --confirm-real-run --source-run-dir <E1DIR> --expect-source-sha256 cf0879f7007dfacbd0d510085ff28a4b47ee845ddb8fd599611d74109e1d6a03 --expect-head <PIN> --seed 42 --grad-clip-norm 5.0 --u4-pilot --num-workers 12 --out-dir /workspace/qat_runs/e5_s42_clip5.0; echo "EXIT=$?"' > <EVID>/e5_s42_clip5.0.log 2>&1 &
+echo $! > <EVID>/e5_s42_clip5.0.pid
+```
+Within 5 minutes:
+```bash
+python -B scripts/qat_epoch_eval.py check-run-meta --run-dir /workspace/qat_runs/e5_s42_clip5.0 --stage E5 --seed 42 --grad-clip-norm 5.0 --u4-pilot --expect-head <PIN> --expect-source-sha256 cf0879f7007dfacbd0d510085ff28a4b47ee845ddb8fd599611d74109e1d6a03
+```
+Expected last line:
+```
+RESULT: CHECK-RUN-META PASS
+```
+Status:
+```bash
+kill -0 "$(cat <EVID>/e5_s42_clip5.0.pid)" 2>/dev/null && echo RUNNING || echo ENDED
+```
+Once it prints ENDED:
+```bash
+tail -n 2 <EVID>/e5_s42_clip5.0.log
+```
+Expected, as for run 1. The first pair:
+```
+RESULT: QAT COMPLETE (E5, seed 42, clip 5.0, 15/15 epochs)
+EXIT=0
+```
+Or the REPORT pair, after which the run goes on as run 1's does:
+```
+RESULT: QAT COMPLETE, STATE NON-FINITE first found at step <N> (E5, seed 42, clip 5.0, 15/15 epochs)
+EXIT=0
+```
+```bash
+(cd /workspace/qat_runs/e5_s42_clip5.0 && sha256sum qat_telemetry.jsonl epoch_ckpts/e*.pt) > <EVID>/e5_s42_clip5.0.sha256
+wc -l < <EVID>/e5_s42_clip5.0.sha256
+```
+Expected:
+```
+16
+```
+Pod CPU timing (d6), only after both runs' two lines.
+- What it does: it converts one epoch and scores 64 VAL images as a smoke artifact. It produces no VAL score, and it is
+  not a record conversion.
+- `<TC>` is the clip of a run whose completion line is the first pair: 1.0 if run 1's is, else 5.0. A non-finite run's
+  e15 is not convertible, so it cannot be timed.
+- If both runs printed the REPORT pair, skip both timing commands. Record the REPORT line "d6 pod timing not run: both
+  pilot runs completed non-finite".
+- bash prints three `time` lines after each RESULT line. The `real` line of the second command is d6's pod figure for 64
+  images.
+```bash
+time python -B scripts/qat_epoch_eval.py convert --run-dir /workspace/qat_runs/e5_s42_clip<TC> --eval-dir /workspace/qat_timing/clip<TC> --epochs 15 --purpose timing --host-label pod
+```
+Expected, before the `time` lines:
+```
+RESULT: CONVERTED 1/1 (timing)
+```
+```bash
+time python -B scripts/qat_epoch_eval.py score --run-dir /workspace/qat_runs/e5_s42_clip<TC> --eval-dir /workspace/qat_timing/clip<TC> --epochs 15 --purpose timing --host-label pod
+```
+Expected, before the `time` lines:
+```
+RESULT: SCORED 1/1 (timing, 64 samples)
+```
+A pod STOP report carries the two log lines, the run_abort row if there is one, and the first and last wall_clock of
+the telemetry.
+
+**Block B: laptop (PowerShell).** Needs:
+- block A's outputs, downloaded;
+- both pilot runs ended, with each log's two lines recorded (either pair);
+- the live checkout at `<PIN>`, mounted whole and read-only (DL-62).
+
+The values:
+- `<RUNS>` holds e5_s42_clip1.0 and e5_s42_clip5.0 as downloaded. `<EVALS>` lies outside the checkout.
+- `<TEL10>` and `<TEL50>` are the telemetry sha256 values recorded on the pod: the first field of the
+  `qat_telemetry.jsonl` line in `<EVID>/e5_s42_clip1.0.sha256` and in `<EVID>/e5_s42_clip5.0.sha256`.
+- `<TC>` is block A's timing clip. With both runs non-finite it is 5.0 by block A's rule, and unused: the timing
+  lines are skipped.
+
+Nothing in the checkout is edited while the block runs. Long passes run with the laptop on its charger and sleep set to
+Never.
+
+```powershell
+Set-Location "<CHECKOUT>"
+git status -sb -- . ':(exclude)docs/reference/reference.pdf' ':(exclude)docs/reference' ':(exclude,icase)*test*'
+```
+Expected first line (a tracking suffix may follow the name):
+```
+## claude/keen-curie-u4a8ig
+```
+```powershell
+git rev-parse HEAD
+```
+Expected:
+```
+<PIN>
+```
+Setup:
+```powershell
+$IMG  = "ghcr.io/ainsleydeluna/plantseg-thesis@sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf"
+$PIN  = "<PIN>"
+$REPO = "<CHECKOUT>"
+$DS   = "<TRAINVAL_DS>"
+$RUNS = "<RUNS>"
+$EV   = "<EVALS>"
+$ATT  = "a1"
+$TC   = "<TC>"
+function RO([string]$src, [string]$dst) { @("--mount", "type=bind,source=$src,target=$dst,readonly") }
+function RW([string]$src, [string]$dst) {
+    New-Item -ItemType Directory -Force -Path $src | Out-Null
+    @("--mount", "type=bind,source=$src,target=$dst")
+}
+$ENVV = @("--network","none",
+          "-e","PLANTSEG_IMAGE_DIGEST=sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf",
+          "-e","PLANTSEG_DATA_ROOT=/data","-e","PYTHONPATH=/work/repo","-e","PYTHONDONTWRITEBYTECODE=1",
+          "-e","GIT_OPTIONAL_LOCKS=0","-e","GIT_CONFIG_COUNT=1","-e","GIT_CONFIG_KEY_0=safe.directory",
+          "-e","GIT_CONFIG_VALUE_0=/work/repo","-e","EXPECT_P=$PIN","-w","/work/repo") + (RO $REPO "/work/repo")
+$DATA = (RO "$DS\images\train" "/data/images/train") + (RO "$DS\images\val" "/data/images/val") +
+        (RO "$DS\annotations\train" "/data/annotations/train") + (RO "$DS\annotations\val" "/data/annotations/val")
+$R10  = RO "$RUNS\e5_s42_clip1.0" "/runs/e5_s42_clip1.0"
+$R50  = RO "$RUNS\e5_s42_clip5.0" "/runs/e5_s42_clip5.0"
+$E10  = RW "$EV\$ATT\e5_s42_clip1.0" "/evals/e5_s42_clip1.0"
+$E50  = RW "$EV\$ATT\e5_s42_clip5.0" "/evals/e5_s42_clip5.0"
+$RT   = RO "$RUNS\e5_s42_clip$TC" "/runs/e5_s42_clip$TC"
+$TT   = RW "$EV\$ATT\timing_e5_s42_clip$TC" "/timing/e5_s42_clip$TC"
+$SEL  = RW "$EV\$ATT\clip_selection" "/sel"
+$STATE = "ExitCode={{.State.ExitCode}} OOMKilled={{.State.OOMKilled}} StartedAt={{.State.StartedAt}} FinishedAt={{.State.FinishedAt}}"
+$CHECK = "import os,subprocess,sys;a=sys.argv[1:];g=lambda *x:subprocess.run(['git','-C','/work/repo']+list(x),capture_output=True,text=True);h=g('rev-parse','HEAD').stdout.strip();q=g('status','--porcelain=v1','--untracked-files=all','--','src','configs','scripts','requirements*','docs/EVALUATION_CONTRACT.md','docs/IMPLEMENTATION_CONTRACT.md');d=len(q.stdout.splitlines()) if q.returncode==0 else 'git failed';r=[('HEAD',h,os.environ.get('EXPECT_P')),('GOVERNED_DIRTY',d,0)];c=lambda p:sum(1 for e in os.scandir(p) if e.is_file()) if os.path.isdir(p) else 'missing';s=[x.rsplit('=',1) if '=' in x else [x,''] for x in a];r+=[(p,c(p),int(n)) if n else (p,os.path.exists(p),True) for p,n in s];[print(k,v,'OK' if v==w else 'STOP') for k,v,w in r];sys.exit(0 if all(v==w for k,v,w in r) else 1)"
+$REJ  = "import sys;from src.quant import qat_artifacts as A, qat_select as S;r=A.read_run_record(sys.argv[1]);A.require_complete(r);ok=r['telemetry_sha256']==sys.argv[2];print('TELEMETRY','OK' if ok else 'STOP');j=S.run_rejected(r) if ok else None;print(('REJECTED -- '+'; '.join(j['grounds']+['deviation: '+d for d in j['deviations']])) if j['rejected'] else 'NOT REJECTED') if j else None;sys.exit(0 if ok else 1)"
+```
+How the lines below work:
+- Each line names its container, runs it, then prints its STOP fields. After the command's own output the last line
+  must read `ExitCode=0 OOMKilled=false StartedAt=<time> FinishedAt=<time>`. The exception is a REPORT that names
+  another exit code.
+- A check line runs in the same mounts as the command after it. It prints the HEAD, the count of dirty governed paths
+  (the evaluator's own list), and one count or True per path, never a name. Every line must end in OK.
+- `$REJ` reads one run's own records with the lane's `run_rejected` (AM-21 item 3(a); src/quant/qat_select.py): its
+  telemetry, checked against the pod's sha256, and every epoch checkpoint, checked against the sha256 that the
+  telemetry records. It prints `TELEMETRY OK`, then `NOT REJECTED` or `REJECTED -- <grounds>`. The grounds name the
+  step at which the telemetry first found the state non-finite, and the first step that logged a non-finite loss or
+  pre-clip gradient norm. A `; deviation: …` clause names a checkpoint that fails item 1(a) with no state flag in
+  the telemetry. It writes nothing.
+- docker refuses a container name that exists, so no line can run twice. If the window closes, the container keeps
+  running: read it with `docker logs -f <name>`, then print its STOP fields.
+
+Command 0. An empty HEAD or `GOVERNED_DIRTY git failed STOP` means git refused the mount: STOP and use the data
+session's recipe (DL-62).
+```powershell
+$NM = "q2_${ATT}_cmd0_git"; docker run --name $NM @ENVV $IMG git --version; docker inspect -f $STATE $NM
+$NM = "q2_${ATT}_cmd0_check"; docker run --name $NM @ENVV $IMG python -B -c $CHECK; docker inspect -f $STATE $NM
+```
+Expected: one git version line; then
+```
+HEAD <PIN> OK
+GOVERNED_DIRTY 0 OK
+```
+**Rejection check** (AM-21 item 3(a)), read-only, both runs, before any conversion:
+```powershell
+$NM = "q2_${ATT}_rej10"; docker run --name $NM @ENVV @R10 $IMG python -B -c $REJ /runs/e5_s42_clip1.0 <TEL10>; docker inspect -f $STATE $NM
+$NM = "q2_${ATT}_rej50"; docker run --name $NM @ENVV @R50 $IMG python -B -c $REJ /runs/e5_s42_clip5.0 <TEL50>; docker inspect -f $STATE $NM
+```
+Expected, for each run:
+```
+TELEMETRY OK
+NOT REJECTED
+```
+The second line can instead be a REPORT:
+```
+REJECTED -- <grounds>
+```
+A deviation clause in it goes into the record as a deviation of the trainer. A run whose completion line was the
+non-finite pair must print REJECTED; NOT REJECTED after that pair is a STOP.
+
+**The gate before any record conversion** (CHECK ITEM 16). It applies if either completion line was the non-finite pair,
+or either check printed REJECTED. In that case, stop here: no record conversion of either pilot run starts until the
+orchestrator's AM-8a ruling is recorded. The ruling is one of two:
+- "no fault": record it, and go on;
+- the commit of the fault report: record it. The repeat follows that ruling, in a new directory, and stands in the
+  rejected run's place (item 3(e)). This block then waits for the repeat's block A.
+
+Item 3(e) lifts a rejection once. If the repeat is rejected under item 3(a) too, that clip value is rejected for good.
+No further repeat follows: the gate's ruling is recorded, and the block goes on with the repeat as a rejected run.
+
+Laptop timing (d6), on clip `<TC>`. It converts one epoch and scores 64 VAL images as a smoke artifact, produces no VAL
+score, and is not a record conversion. If block A skipped its timing (both runs non-finite), skip these four lines too
+and record the REPORT line "d6 laptop timing not run: both pilot runs completed non-finite".
+```powershell
+$NM = "q2_${ATT}_t_check1"; docker run --name $NM @ENVV @RT @TT $IMG python -B -c $CHECK "/runs/e5_s42_clip$TC/epoch_ckpts=15" "/runs/e5_s42_clip$TC/qat_telemetry.jsonl" "/timing/e5_s42_clip$TC"; docker inspect -f $STATE $NM
+```
+Expected (with `<TC>` in the paths):
+```
+HEAD <PIN> OK
+GOVERNED_DIRTY 0 OK
+/runs/e5_s42_clip<TC>/epoch_ckpts 15 OK
+/runs/e5_s42_clip<TC>/qat_telemetry.jsonl True OK
+/timing/e5_s42_clip<TC> True OK
+```
+```powershell
+$NM = "q2_${ATT}_t_convert"; docker run --name $NM @ENVV @RT @TT $IMG python -B scripts/qat_epoch_eval.py convert --run-dir "/runs/e5_s42_clip$TC" --eval-dir "/timing/e5_s42_clip$TC" --epochs 15 --purpose timing --host-label laptop; docker inspect -f $STATE $NM
+```
+Expected:
+```
+RESULT: CONVERTED 1/1 (timing)
+```
+```powershell
+$NM = "q2_${ATT}_t_check2"; docker run --name $NM @ENVV @DATA @RT @TT $IMG python -B -c $CHECK /data/images/train=5367 /data/images/val=846 /data/annotations/train /data/annotations/val "/runs/e5_s42_clip$TC/epoch_ckpts=15" "/timing/e5_s42_clip$TC"; docker inspect -f $STATE $NM
+```
+Expected:
+```
+HEAD <PIN> OK
+GOVERNED_DIRTY 0 OK
+/data/images/train 5367 OK
+/data/images/val 846 OK
+/data/annotations/train True OK
+/data/annotations/val True OK
+/runs/e5_s42_clip<TC>/epoch_ckpts 15 OK
+/timing/e5_s42_clip<TC> True OK
+```
+```powershell
+$NM = "q2_${ATT}_t_score"; docker run --name $NM @ENVV @DATA @RT @TT $IMG python -B scripts/qat_epoch_eval.py score --run-dir "/runs/e5_s42_clip$TC" --eval-dir "/timing/e5_s42_clip$TC" --epochs 15 --purpose timing --host-label laptop; docker inspect -f $STATE $NM
+```
+Expected:
+```
+RESULT: SCORED 1/1 (timing, 64 samples)
+```
+FinishedAt minus StartedAt of that container is d6's laptop figure for 64 images.
+
+Clip 1.0, the record pass. Both runs get it; a rejected run's pass ends after its score line (item 3(d)).
+- **A rejected run** printed REJECTED in the rejection check. Any non-zero exit of its convert or score line is a REPORT
+  (item 2(c), for that run alone). Examples are a STOP, INCOMPLETE or ERROR line.
+  - Paste it. That run's pass ends, and its eval directory is spent and kept.
+  - A re-made conversion or scoring of that run follows only a written fault report (AM-8a), in a new evaluation
+    directory (item 2(c)).
+  - The block goes on with the other run and select_clip, which reports these records as stopped, failed or missing.
+- **A run that is not rejected:** every failure stays a STOP.
+
+Check, then convert:
+```powershell
+$NM = "q2_${ATT}_c10_check1"; docker run --name $NM @ENVV @R10 @E10 $IMG python -B -c $CHECK /runs/e5_s42_clip1.0/epoch_ckpts=15 /runs/e5_s42_clip1.0/qat_telemetry.jsonl /evals/e5_s42_clip1.0; docker inspect -f $STATE $NM
+```
+Expected:
+```
+HEAD <PIN> OK
+GOVERNED_DIRTY 0 OK
+/runs/e5_s42_clip1.0/epoch_ckpts 15 OK
+/runs/e5_s42_clip1.0/qat_telemetry.jsonl True OK
+/evals/e5_s42_clip1.0 True OK
+```
+```powershell
+$NM = "q2_${ATT}_c10_convert"; docker run --name $NM @ENVV @R10 @E10 $IMG python -B scripts/qat_epoch_eval.py convert --run-dir /runs/e5_s42_clip1.0 --eval-dir /evals/e5_s42_clip1.0 --purpose record --host-label laptop --expect-telemetry-sha256 <TEL10>; docker inspect -f $STATE $NM
+```
+Expected, for a run whose state stayed finite:
+```
+RESULT: CONVERTED 15/15 (record)
+```
+For a run with a checkpoint that fails item 1(a), a REPORT instead: one that completed non-finite, or one whose
+rejection check printed a deviation clause. `<k>` epochs converted, and the epochs whose checkpoints fail are
+excluded (item 2(a); `<k>` can be 0):
+```
+RESULT: CONVERTED <k>/15 (record; not convertible: <eNN … e15>)
+```
+Check, then score:
+```powershell
+$NM = "q2_${ATT}_c10_check2"; docker run --name $NM @ENVV @DATA @R10 @E10 $IMG python -B -c $CHECK /data/images/train=5367 /data/images/val=846 /data/annotations/train /data/annotations/val /runs/e5_s42_clip1.0/epoch_ckpts=15 /evals/e5_s42_clip1.0; docker inspect -f $STATE $NM
+```
+Expected:
+```
+HEAD <PIN> OK
+GOVERNED_DIRTY 0 OK
+/data/images/train 5367 OK
+/data/images/val 846 OK
+/data/annotations/train True OK
+/data/annotations/val True OK
+/runs/e5_s42_clip1.0/epoch_ckpts 15 OK
+/evals/e5_s42_clip1.0 True OK
+```
+```powershell
+$NM = "q2_${ATT}_c10_score"; docker run --name $NM @ENVV @DATA @R10 @E10 $IMG python -B scripts/qat_epoch_eval.py score --run-dir /runs/e5_s42_clip1.0 --eval-dir /evals/e5_s42_clip1.0 --purpose record --host-label laptop; docker inspect -f $STATE $NM
+```
+Expected:
+```
+RESULT: SCORED 15/15 (record)
+```
+For such a run, a REPORT instead, with the same `<k>` and epochs as its convert line. A rejected pilot run's scores
+are reported and select nothing (item 3(d)):
+```
+RESULT: SCORED <k>/15 (record; excluded: <eNN … e15>)
+```
+Check, then select the epoch. This applies only to a run that is not rejected. A rejected run needs no selection
+(item 3(d)): skip both lines for it. Run anyway, select_qat_epoch writes nothing. It refuses the run with
+`[rejected_pilot_run]`, or earlier with `[stop_present]` or INCOMPLETE `[eval_record_missing]` when that run's
+convert or score failed (item 2(c)).
+```powershell
+$NM = "q2_${ATT}_c10_check3"; docker run --name $NM @ENVV @R10 @E10 $IMG python -B -c $CHECK /runs/e5_s42_clip1.0/epoch_ckpts=15 /runs/e5_s42_clip1.0/qat_telemetry.jsonl /evals/e5_s42_clip1.0; docker inspect -f $STATE $NM
+$NM = "q2_${ATT}_c10_select"; docker run --name $NM @ENVV @R10 @E10 $IMG python -B scripts/select_qat_epoch.py --run-dir /runs/e5_s42_clip1.0 --eval-dir /evals/e5_s42_clip1.0 --expect-telemetry-sha256 <TEL10>; docker inspect -f $STATE $NM
+```
+Expected: the five OK lines of the first check; then, with the epoch the rule selects,
+```
+RESULT: SELECTED epoch <NN> (E5, seed 42, clip 1.0)
+```
+Clip 5.0: the same lines, one at a time, under the same rules for a rejected run:
+```powershell
+$NM = "q2_${ATT}_c50_check1"; docker run --name $NM @ENVV @R50 @E50 $IMG python -B -c $CHECK /runs/e5_s42_clip5.0/epoch_ckpts=15 /runs/e5_s42_clip5.0/qat_telemetry.jsonl /evals/e5_s42_clip5.0; docker inspect -f $STATE $NM
+$NM = "q2_${ATT}_c50_convert"; docker run --name $NM @ENVV @R50 @E50 $IMG python -B scripts/qat_epoch_eval.py convert --run-dir /runs/e5_s42_clip5.0 --eval-dir /evals/e5_s42_clip5.0 --purpose record --host-label laptop --expect-telemetry-sha256 <TEL50>; docker inspect -f $STATE $NM
+$NM = "q2_${ATT}_c50_check2"; docker run --name $NM @ENVV @DATA @R50 @E50 $IMG python -B -c $CHECK /data/images/train=5367 /data/images/val=846 /data/annotations/train /data/annotations/val /runs/e5_s42_clip5.0/epoch_ckpts=15 /evals/e5_s42_clip5.0; docker inspect -f $STATE $NM
+$NM = "q2_${ATT}_c50_score"; docker run --name $NM @ENVV @DATA @R50 @E50 $IMG python -B scripts/qat_epoch_eval.py score --run-dir /runs/e5_s42_clip5.0 --eval-dir /evals/e5_s42_clip5.0 --purpose record --host-label laptop; docker inspect -f $STATE $NM
+$NM = "q2_${ATT}_c50_check3"; docker run --name $NM @ENVV @R50 @E50 $IMG python -B -c $CHECK /runs/e5_s42_clip5.0/epoch_ckpts=15 /runs/e5_s42_clip5.0/qat_telemetry.jsonl /evals/e5_s42_clip5.0; docker inspect -f $STATE $NM
+$NM = "q2_${ATT}_c50_select"; docker run --name $NM @ENVV @R50 @E50 $IMG python -B scripts/select_qat_epoch.py --run-dir /runs/e5_s42_clip5.0 --eval-dir /evals/e5_s42_clip5.0 --expect-telemetry-sha256 <TEL50>; docker inspect -f $STATE $NM
+```
+Expected: the same OK lines as for clip 1.0, with the clip 5.0 paths (five, eight and five). After the second, fourth
+and sixth lines:
+```
+RESULT: CONVERTED 15/15 (record)
+RESULT: SCORED 15/15 (record)
+RESULT: SELECTED epoch <NN> (E5, seed 42, clip 5.0)
+```
+A rejected run has no select line. One with a checkpoint that fails item 1(a) prints the REPORT forms of the first
+two.
+
+Clip selection. `$SELS` lists the qat_selection.json of each run that printed SELECTED. Drop the path of a run that did
+not; with neither, `$SELS = @()`.
+```powershell
+$SELS = @("/evals/e5_s42_clip1.0/qat_selection.json", "/evals/e5_s42_clip5.0/qat_selection.json")
+$NM = "q2_${ATT}_sc_check"; docker run --name $NM @ENVV @R10 @R50 @E10 @E50 @SEL $IMG python -B -c $CHECK /runs/e5_s42_clip1.0/qat_telemetry.jsonl /runs/e5_s42_clip5.0/qat_telemetry.jsonl @SELS /sel; docker inspect -f $STATE $NM
+```
+Expected, with one `True OK` line for each path in `$SELS`:
+```
+HEAD <PIN> OK
+GOVERNED_DIRTY 0 OK
+/runs/e5_s42_clip1.0/qat_telemetry.jsonl True OK
+/runs/e5_s42_clip5.0/qat_telemetry.jsonl True OK
+</evals/e5_s42_clip<c>/qat_selection.json True OK>
+/sel True OK
+```
+select_clip, each candidate with its telemetry sha256 as recorded on the pod (CHECK ITEM 12):
+```powershell
+$NM = "q2_${ATT}_select_clip"; docker run --name $NM @ENVV @R10 @R50 @E10 @E50 @SEL $IMG python -B scripts/select_clip.py --candidate /runs/e5_s42_clip1.0 /evals/e5_s42_clip1.0 --expect-telemetry-sha256 <TEL10> --candidate /runs/e5_s42_clip5.0 /evals/e5_s42_clip5.0 --expect-telemetry-sha256 <TEL50> --out /sel/clip_selection.json; docker inspect -f $STATE $NM
+```
+Expected, one of three outcomes.
+
+- **Neither run rejected:** the winner the rule gives.
+  ```
+  RESULT: CLIP SELECTED <1.0 or 5.0> (tie <true or false>)
+  ```
+- **One run rejected:** a REPORT line for it, then the other run's win, which does not wait (items 3(b) and 3(d)).
+  `<R>` is the rejected clip and `<W>` the other.
+  ```
+  REPORT: clip <R> rejected: non-finite state (AM-21 item 3) -- item 3(a): <grounds>; its records (item 3(d), reported, select nothing): conversion <state> (<detail>); scoring <state> (<detail>)
+  RESULT: CLIP SELECTED <W> (tie false; clip <R> rejected: non-finite state (AM-21 item 3))
+  ```
+  The REPORT line enters the decision log verbatim.
+  - The grounds name the step at which the state was first found non-finite (AM-21 item 5).
+  - Each `<state>` is present, missing, stopped or failed.
+  - A present scoring lists the scores, which select nothing.
+  - A deviation clause (`; deviation: …`) is reported as a deviation of the trainer (item 3(a)).
+- **Both runs rejected:** a REPORT line for each, then
+  ```
+  RESULT: REFUSED [no_winner] -- no winner (AM-21 item 3): a new amendment decides the clip value. Nothing was written.
+  ```
+  This is item 3(c)'s halt, a REPORT with ExitCode=2. Record it that day. The block ends here, with no finalize, and no
+  later QAT run launches until a new amendment decides the clip value.
+
+Finalize, for the winner only. `<W>` is the value the RESULT line printed, 1.0 or 5.0.
+```powershell
+$W    = "<W>"
+$RWIN = RO "$RUNS\e5_s42_clip$W" "/runs/e5_s42_clip$W"
+$EWIN = RW "$EV\$ATT\e5_s42_clip$W" "/evals/e5_s42_clip$W"
+$NM = "q2_${ATT}_fz_check"; docker run --name $NM @ENVV @RWIN @EWIN @SEL $IMG python -B -c $CHECK "/runs/e5_s42_clip$W/epoch_ckpts=15" "/evals/e5_s42_clip$W/qat_selection.json" /sel/clip_selection.json; docker inspect -f $STATE $NM
+```
+Expected, with the winner's paths:
+```
+HEAD <PIN> OK
+GOVERNED_DIRTY 0 OK
+/runs/e5_s42_clip<W>/epoch_ckpts 15 OK
+/evals/e5_s42_clip<W>/qat_selection.json True OK
+/sel/clip_selection.json True OK
+```
+```powershell
+$NM = "q2_${ATT}_finalize"; docker run --name $NM @ENVV @RWIN @EWIN @SEL $IMG python -B scripts/qat_epoch_eval.py finalize --run-dir "/runs/e5_s42_clip$W" --eval-dir "/evals/e5_s42_clip$W" --clip-selection /sel/clip_selection.json; docker inspect -f $STATE $NM
+```
+Expected:
+```
+RESULT: FINALIZED (E5, seed 42, epoch <NN>)
+```
+The value for the decision-log row and for every later launch (P10):
+```powershell
+(Get-FileHash "$EV\$ATT\clip_selection\clip_selection.json" -Algorithm SHA256).Hash.ToLower()
+```
+Expected: 64 hex characters.
+
+**Runs of record.** E5 seeds 43 and 44, and E6, reuse block B's rejection check, convert, score and select lines with
+their own paths.
+- **The hold (item 1(f)).** After a non-finite completion line, or a rejection check that prints any ground, no record
+  conversion of that run starts until the orchestrator's AM-8a ruling is recorded. A repeat under AM-8a needs its
+  fault report before any record conversion (DL-85). For a run of record the check's REJECTED line rejects nothing,
+  since item 3 governs the pilot runs; it marks the hold.
+- **The select line** has two more REPORT outcomes. The first is a selection over the epochs that remain (item 2(a)),
+  with the excluded epochs reported:
+  ```
+  RESULT: SELECTED epoch <NN> (<stage>, seed <s>, clip <c>; excluded: <eNN … e15>)
+  ```
+  The second is item 2(b)'s entry, below.
+
+Item 2(b)'s outcome:
+```
+RESULT: REFUSED [no_convertible_epoch] -- non-finite: no model: every epoch of <run_id> is excluded (non-finite state, AM-21 item 2(a)); no epoch is selected and the run stays complete (item 2(b)): enter it in the decision log today as "non-finite: no model". Nothing was written.
+```
+That line exits 2.
+- Enter the run in the decision log that day as "non-finite: no model".
+- The run stays complete and does not move the freeze (AM-19 item 1(d)).
+- Nothing that needs its model is computed or launched until a new amendment settles it (for E6 seed 42: the AM-3
+  trigger and E6-KD).
+
+For the two pilot runs neither outcome can occur. A pilot run that is not rejected has only finite checkpoints, and a
+rejected one is refused first with `[rejected_pilot_run]`; item 2(b) does not apply to it (item 3(d)).
+
+**The decision log that day** (Q2-4 ruling 1 and this section's REPORT rule; AM-21 item 2(b)) takes, verbatim:
+- every REPORT line above;
+- the non-finite completion lines, with the step at which each state was first found;
+- the rejection checks' REJECTED lines;
+- a rejected run's convert, score and select_clip REPORT lines;
+- the AM-8a rulings of the gate and of a run of record's hold;
+- a run of record's SELECTED line with excluded epochs;
+- the no-winner halt;
+- for a run of record, "non-finite: no model".
+
+Chapter 4's disclosure (AM-21 item 5) draws on these entries.
+
+A local STOP report carries the container's name, its STOP-fields line and the last 20 lines of `docker logs` for it.
