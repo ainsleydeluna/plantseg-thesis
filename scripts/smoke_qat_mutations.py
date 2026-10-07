@@ -6,7 +6,11 @@ checks of the Q2 follow-up: M25-M26 write into configs/calibration while a PTQ s
 drop a G1 name check (F3); M31-M36 break the record conversion or a selection of a run made non-finite (F1).
 PART 2 (AM-21 as committed, CP-007g): M37-M46 undo the trainer's reading of the predicate at every raise and at
 the epoch end, and the completion line's first-found step (CHECK ITEMS 9 and 15); M47 drops check-run-meta's
-comparison of the never-observed modules with DL-85's list of record, and M47b changes that list (CHECK ITEM 10).
+comparison of the never-observed modules with DL-85's list of record, and M47b changes that list (CHECK ITEM 10);
+M35b and M48-M68 undo the epoch selection's reading of the checkpoint (item 2(a), its citation, the not-convertible
+record field by field, item 2(b)'s entry, the rejected pilot run and its deviation), the rejection's grounds in the
+telemetry and the checkpoints (item 3(a)), and P16's (both halves) and P15's (both flags) reading of checkpoints
+that hold NaN (CHECK ITEMS 11, 13, 14 and 15; ruling 3).
 
 The explicit paths of SHADOW_PATHS are copied into a temporary shadow of the repository and committed there
 (one fixed commit, so the trainer records a git_head as in the checkout); the repository itself is never
@@ -154,6 +158,9 @@ NF_EPOCH = nonfinite(*(f"nf_step{k}_select_qat_epoch_excludes_nonfinite" for k i
                      "nf_no_convertible_epoch_exit_2_nothing_written")
 NF_CLIP = nonfinite(*(f"nf_step{k}_select_clip_rejects_nonfinite" for k in NF_STEPS),
                     *(f"nf_step{k}_both_nonfinite_no_winner_exit_2" for k in NF_STEPS))
+# Q2-F PART 2 (AM-21 item 2(a)): the epoch selection's test of each epoch's checkpoint
+_CHECKPOINT_DECIDES = ("        if not finite:                                   "
+                       "# AM-21 item 2(a): the checkpoint decides\n")
 
 # F2: the calibration-list build's write of its four lists, and two edits that also write into the repository's
 # configs/calibration during the run: a new file (named by the time, so each run writes another), or one more
@@ -295,8 +302,9 @@ MUTATIONS = [
       '        if kind in ("parameter", "bn_buffer", "fq_scale") and not bool(torch.isfinite(t).all()):\n',
       '        if kind == "parameter" and not bool(torch.isfinite(t).all()):\n',
       UNITS, "d4_predicate_flags_nonfinite_bn_with_finite_params"),
-    M("M23", "the AM-21 rejection removed", SEL,
-      "        rejected = run_rejected(rec)", "        rejected = False",
+    M("M23", "the AM-21 rejection removed (the rejected pilot run, holding no selection under item 3(d), is then read "
+      "as a live run without one)", SEL,
+      '        rejected = run_rejected(rec)["rejected"]', "        rejected = False",
       case("d5_nonfinite_candidate_rejected_a"), "d5_nonfinite_candidate_rejected_a"),
     M("M24a", "E6's λ/α binding removed at launch", QAT,
       "        binding = e6_parent_binding(parent, args.seed, *sel)\n", "        binding = None\n",
@@ -327,8 +335,8 @@ MUTATIONS = [
       '"nonfinite_since_step": nonfinite_since, "state_nonfinite": nonfinite_since is not None,',
       '"nonfinite_since_step": nonfinite_since,', runner("nan"), "d1_nonfinite_rows_marked_step10"),
     M("X8", "a non-finite run rejected on its epoch_end rows only (AM-21 item 3)", SEL,
-      '    return (any(r.get("nonfinite_since_step") is not None for r in rec["rows"])\n',
-      '    return (any(r.get("nonfinite_since_step") is not None for r in rec["ends"].values())\n',
+      '    flagged = (any(r.get("nonfinite_since_step") is not None for r in rows)\n',
+      '    flagged = (any(r.get("nonfinite_since_step") is not None for r in ends.values())\n',
       case("d5_nonfinite_row_only_rejected"), "d5_nonfinite_row_only_rejected"),
     M("X9", "a failed convert worker leaves its eval directory unspent (P26)", QEE,
       "            if not (E / CONVERT_STOP).exists():\n", "            if False:\n",
@@ -395,18 +403,22 @@ MUTATIONS = [
         ("[k for k in obs_keys if not bytes_equal(states[e][k], states[obs_from][k])]",
          "[k for k in obs_keys if not torch.equal(states[e][k], states[obs_from][k])]")],
        NF_CONVERT, "nf_step10_record_convert_exit_0", "nf_step22_record_convert_exit_0"),
-    M("M33", "select_clip does not reject a non-finite pilot run (AM-21 item 3)", SEL,
-      "        rejected = run_rejected(rec)", "        rejected = False",
+    M("M33", "select_clip does not reject a non-finite pilot run (AM-21 item 3; it is then read as a live run "
+      "without a selection)", SEL,
+      '        rejected = run_rejected(rec)["rejected"]', "        rejected = False",
       NF_CLIP, *(f"nf_step{k}_select_clip_rejects_nonfinite" for k in NF_STEPS)),
     M("M34", "select_clip goes on when both pilot runs are rejected", SEL,
       '        raise QATRefused("no_winner", NO_WINNER)\n', "        pass\n",
       NF_CLIP, *(f"nf_step{k}_both_nonfinite_no_winner_exit_2" for k in NF_STEPS)),
     M("M35", "select_qat_epoch takes an excluded (non-finite) epoch for a scored one", SEL,
-      '        if row.get("status") == "excluded":\n', "        if False:\n",
+      _CHECKPOINT_DECIDES, "        if False:\n",
       NF_EPOCH, *(f"nf_step{k}_select_qat_epoch_excludes_nonfinite" for k in NF_STEPS)),
+    M("M35b", "select_qat_epoch reads the record, not the checkpoint: a non-finite epoch scored highest wins (R3)",
+      SEL, _CHECKPOINT_DECIDES, "        if False:\n",
+      case("d3_nonfinite_epoch_with_highest_score_still_excluded"),
+      "d3_nonfinite_epoch_with_highest_score_still_excluded"),
     M("M36", "select_qat_epoch goes on with no convertible epoch", SEL,
-      "        raise QATRefused(\"no_convertible_epoch\", f\"every epoch of {rec['run_id']} is excluded "
-      "(non-finite state)\")\n", "        pass\n", NF_EPOCH, "nf_no_convertible_epoch_exit_2_nothing_written"),
+      "    if not scored:\n", "    if False:\n", NF_EPOCH, "nf_no_convertible_epoch_exit_2_nothing_written"),
     # Q2-F PART 2, CHECK ITEM 9 (AM-21 items 1(b), 1(e)): the predicate at every raise, abort only when finite
     M("M37", "a step that raises after an earlier non-finite flag never aborts (the predicate is not read)", QAT,
       "                    if step_ok:\n", "                    if step_ok and nonfinite_since is None:\n",
@@ -448,6 +460,114 @@ MUTATIONS = [
     M("M47b", "the list of record names the skip_add of features 14 for that of features 13 (DL-85)", QEE,
       "for i in (2, 4, 7, 11, 13))", "for i in (2, 4, 7, 11, 14))",
       runner("profile"), "profile_e5_s42_pilot_passes"),
+    # CHECK ITEMS 11, 13, 14 and 15, ruling 3 (AM-21 items 2(a), 2(b), 3(a), 3(d)): the epoch selection reads the
+    # checkpoint, the rejection reads the telemetry and the checkpoints, P16 and P15 read checkpoints that hold NaN
+    M("M48", "the not-convertible rule cites AM-19 item 3(a) again, not AM-21 item 2(a) (CHECK ITEM 15)", ART,
+      'NOT_CONVERTIBLE_RULE = "excluded: non-finite state (AM-21 item 2(a))"\n',
+      'NOT_CONVERTIBLE_RULE = "excluded: non-finite state (AM-19 item 3(a))"\n',
+      case("d3_nonfinite_epochs_excluded"), "d3_nonfinite_epochs_excluded"),
+    M("M49", "a rejected U4 pilot run gets an epoch selection (AM-21 item 3(d))", SEL,
+      '    if meta.get("u4_pilot") is True:\n', "    if False:\n",
+      case("d3_rejected_pilot_run_needs_no_selection", "d3_rejected_pilot_without_convertible_epoch_is_not_no_model"),
+      "d3_rejected_pilot_run_needs_no_selection", "d3_rejected_pilot_without_convertible_epoch_is_not_no_model"),
+    MM("M50", "the no-convertible-epoch refusal drops item 2(b)'s entry, non-finite: no model (CHECK ITEM 13)", SEL,
+       [('f"{NO_MODEL_ENTRY}: every epoch of {rec[\'run_id\']} is excluded "',
+         'f"every epoch of {rec[\'run_id\']} is excluded "'),
+        ('f"today as \\"{NO_MODEL_ENTRY}\\"")', '"today")')],
+       case("d3_no_convertible_epoch_refused_exit_2"), "d3_no_convertible_epoch_refused_exit_2"),
+    M("M51", "a train row that logs a non-finite loss or pre-clip gradient norm does not reject the run (item 3(a))",
+      SEL, '                    and {"loss", "grad_norm"} & set(r.get("nonfinite") or {}))\n',
+      '                    and {"loss", "grad_norm"} & set(r.get("nonfinite") or {}) and False)\n',
+      case("d5_rejection_reads_a_nonfinite_loss_row", "d5_rejection_reads_a_nonfinite_grad_norm_row",
+           "d5_logged_nonfinite_loss_candidate_loses", "d3_rejected_pilot_run_by_a_logged_nonfinite_loss"),
+      "d5_rejection_reads_a_nonfinite_loss_row", "d5_rejection_reads_a_nonfinite_grad_norm_row",
+      "d5_logged_nonfinite_loss_candidate_loses", "d3_rejected_pilot_run_by_a_logged_nonfinite_loss"),
+    M("M52", "a checkpoint that fails item 1(a) does not reject the run (item 3(a))", SEL,
+      "    failing = sorted(e for e, (finite, *_rest) in checks.items() if not finite)\n", "    failing = []\n",
+      case("d5_rejection_reads_a_failing_checkpoint_and_reports_the_missing_flag",
+           "d5_unflagged_failing_checkpoint_candidate_loses"),
+      "d5_rejection_reads_a_failing_checkpoint_and_reports_the_missing_flag",
+      "d5_unflagged_failing_checkpoint_candidate_loses"),
+    M("M52b", "epoch_selection passes run_rejected no checkpoint states: a failing checkpoint does not reject a pilot",
+      SEL, "        rej = run_rejected(rec, checks=checks)\n", "        rej = run_rejected(rec, checks={})\n",
+      case("d3_rejected_pilot_run_reports_the_missing_flag"), "d3_rejected_pilot_run_reports_the_missing_flag"),
+    M("M52c", "clip_selection passes run_rejected no checkpoint states: a failing checkpoint does not reject a pilot",
+      SEL, 'run_rejected(rec)["rejected"]', 'run_rejected(rec, checks={})["rejected"]',
+      case("d5_unflagged_failing_checkpoint_candidate_loses"), "d5_unflagged_failing_checkpoint_candidate_loses"),
+    M("M53", "a failing checkpoint with no state flag is not reported as a deviation (item 3(a))", SEL,
+      '    unflagged = [e for e in failing if (ends.get(e) or {}).get("state_finite") is not False]\n',
+      "    unflagged = []\n",
+      case("d5_rejection_reads_a_failing_checkpoint_and_reports_the_missing_flag",
+           "d3_rejected_pilot_run_reports_the_missing_flag"),
+      "d5_rejection_reads_a_failing_checkpoint_and_reports_the_missing_flag",
+      "d3_rejected_pilot_run_reports_the_missing_flag"),
+    M("M54", "P16's observer half compares floats (torch.equal; NaN != NaN): NaN observer buffers fail it (CHECK "
+      "ITEM 14)", ART,
+      "[k for k in obs_keys if not bytes_equal(states[e][k], states[obs_from][k])]",
+      "[k for k in obs_keys if not torch.equal(states[e][k], states[obs_from][k])]",
+      case("d3_freeze_cross_check_passes_on_nan_checkpoints"), "d3_freeze_cross_check_passes_on_nan_checkpoints"),
+    M("M55", "P16 compares floats with NaN replaced: a frozen buffer whose NaN changed passes (CHECK ITEM 14)", ART,
+      "    return torch.equal(a.detach().reshape(-1).contiguous().view(torch.uint8),\n"
+      "                       b.detach().reshape(-1).contiguous().view(torch.uint8))\n",
+      "    return torch.equal(torch.nan_to_num(a.detach()), torch.nan_to_num(b.detach()))\n",
+      case("d3_freeze_cross_check_catches_a_changed_nan_buffer"), "d3_freeze_cross_check_catches_a_changed_nan_buffer"),
+    M("M56", "P15 wants the observers off from e12, not from e13 (CHECK ITEM 14)", ART,
+      "    want = [1] if epoch <= Q.OBS_FREEZE_EPOCH else [0]\n",
+      "    want = [1] if epoch < Q.OBS_FREEZE_EPOCH else [0]\n",
+      case("d3_stored_flags_read_on_nan_checkpoints"), "d3_stored_flags_read_on_nan_checkpoints"),
+    M("M57", "P25 expects score directories only for the epochs selected from: an epoch excluded despite its record "
+      "refuses the selection (ruling 3)", SEL,
+      '    expected = [f"e{e:02d}" for e in sorted(rows) if rows[e].get("status") == "scored"]\n',
+      '    expected = [f"e{e:02d}" for e in sorted(scored)]\n',
+      case("d3_nonfinite_epoch_with_highest_score_still_excluded"),
+      "d3_nonfinite_epoch_with_highest_score_still_excluded"),
+    # DL-24 wf_b44aeaa6-a03 (C7-1, C7-2, F14-1, F14-2): the deviation reported, the not-convertible record field by
+    # field, P16's BN half on NaN, P15's fake-quant flag
+    M("M58", "the rejected pilot run's refusal drops the trainer's deviation (item 3(a))", SEL,
+      "f\"{'; '.join(rej['grounds'] + rej['deviations'])}): it needs no \"",
+      "f\"{'; '.join(rej['grounds'])}): it needs no \"",
+      case("d3_rejected_pilot_run_reports_the_missing_flag"), "d3_rejected_pilot_run_reports_the_missing_flag"),
+    M("M59", "the not-convertible record's own rule is not read", SEL,
+      '                    ("rule of the record", ncd.get("rule") == A.NOT_CONVERTIBLE_RULE),\n',
+      '                    ("rule of the record", True),\n',
+      case("d3_excluded_epoch_record_of_am19_refused"), "d3_excluded_epoch_record_of_am19_refused"),
+    M("M60", "the excluded row's rule is not read", SEL,
+      '                    ("rule of the row", row.get("rule") == A.NOT_CONVERTIBLE_RULE),\n',
+      '                    ("rule of the row", True),\n',
+      case("d3_excluded_epoch_row_of_am19_refused"), "d3_excluded_epoch_row_of_am19_refused"),
+    M("M61", "the not-convertible record's status is not read", SEL,
+      '                    ("status", ncd.get("status") == "not convertible"),\n',
+      '                    ("status", True),\n',
+      case("d3_excluded_epoch_record_status_refused"), "d3_excluded_epoch_record_status_refused"),
+    M("M62", "the not-convertible record's checkpoint is not compared", SEL,
+      '                    ("checkpoint", ncd.get("qat_checkpoint_sha256") == ck_sha),\n',
+      '                    ("checkpoint", True),\n',
+      case("d3_excluded_epoch_record_differs_refused"), "d3_excluded_epoch_record_differs_refused"),
+    M("M63", "the not-convertible record's epoch is not compared", SEL,
+      '                    ("epoch", ncd.get("epoch") == e),\n', '                    ("epoch", True),\n',
+      case("d3_excluded_epoch_record_of_another_epoch_refused"), "d3_excluded_epoch_record_of_another_epoch_refused"),
+    M("M64", "the not-convertible record's run is not compared", SEL,
+      '                    ("run", (ncd.get("run_id"), ncd.get("telemetry_sha256")) == run_ident),\n',
+      '                    ("run", True),\n',
+      case("d3_excluded_epoch_record_of_another_run_refused"), "d3_excluded_epoch_record_of_another_run_refused"),
+    M("M65", "the not-convertible record's commit, host, CPU and purpose are not compared", SEL,
+      "                    *((k, ncd.get(k) == eval_identity[k]) for k in EVAL_IDENTITY_KEYS)) if not same]\n",
+      "                    ) if not same]\n",
+      case("d3_excluded_epoch_record_of_another_commit_refused"),
+      "d3_excluded_epoch_record_of_another_commit_refused"),
+    M("M66", "P16's BN half compares floats (torch.equal; NaN != NaN): a frozen NaN statistic fails it", ART,
+      "[k for k in bn_keys if not bytes_equal(states[e][k], states[bn_from][k])]",
+      "[k for k in bn_keys if not torch.equal(states[e][k], states[bn_from][k])]",
+      case("d3_freeze_cross_check_passes_on_bn_nan"), "d3_freeze_cross_check_passes_on_bn_nan"),
+    M("M67", "P16's BN half compares floats with NaN replaced: a changed NaN statistic passes", ART,
+      "[k for k in bn_keys if not bytes_equal(states[e][k], states[bn_from][k])]",
+      "[k for k in bn_keys if not torch.equal(torch.nan_to_num(states[e][k]), "
+      "torch.nan_to_num(states[bn_from][k]))]",
+      case("d3_freeze_cross_check_catches_a_changed_bn_nan"), "d3_freeze_cross_check_catches_a_changed_bn_nan"),
+    M("M68", "P15 does not read the stored fake-quant flags", ART,
+      '    if flags["observer_enabled"] != want or flags["fake_quant_enabled"] != [1]:\n',
+      '    if flags["observer_enabled"] != want:\n',
+      case("d3_stored_flags_read_on_nan_checkpoints"), "d3_stored_flags_read_on_nan_checkpoints"),
 ]
 
 # ------------------------------------------------------------------ the refusal table (P36)
@@ -584,13 +704,15 @@ KILLS = dict([
     K(SEL, "epoch_selection", "smoke_inputs", case("d3_smoke_input_records_refused"), "d3_smoke_input_records_refused"),
     K(SEL, "epoch_selection", "eval_dir_mixed", case("d3_two_commits_refused"), "d3_two_commits_refused"),
     K(SEL, "epoch_selection", "eval_incomplete", case("d3_partial_eval_incomplete"), "d3_partial_eval_incomplete"),
+    K(SEL, "epoch_selection", "rejected_pilot_run", case("d3_rejected_pilot_run_needs_no_selection"),
+      "d3_rejected_pilot_run_needs_no_selection"),
     K(SEL, "epoch_selection", "chain_checkpoint", case("d3_row_checkpoint_mismatch_refused"),
       "d3_row_checkpoint_mismatch_refused"),
     K(SEL, "epoch_selection", "exclusion_inconsistent", case("d3_excluding_a_finite_epoch_refused"),
       "d3_excluding_a_finite_epoch_refused"),
+    K(SEL, "epoch_selection", "exclusion_inconsistent", case("d3_excluded_epoch_record_differs_refused"),
+      "d3_excluded_epoch_record_differs_refused", k=1),
     K(SEL, "epoch_selection", "score_missing", case("d3_unscored_epoch_exit_3"), "d3_unscored_epoch_exit_3"),
-    K(SEL, "epoch_selection", "scored_nonfinite_state", case("d3_scored_nonfinite_epoch_refused"),
-      "d3_scored_nonfinite_epoch_refused"),
     K(SEL, "epoch_selection", "conversion_missing", case("d3_missing_provenance_exit_3"),
       "d3_missing_provenance_exit_3"),
     K(SEL, "epoch_selection", "chain_provenance", case("d3_provenance_not_scored_one_refused"),

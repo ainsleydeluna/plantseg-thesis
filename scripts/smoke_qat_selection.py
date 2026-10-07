@@ -40,6 +40,7 @@ TMP = safe_tmpdir("smoke_qat_selection_")
 os.environ["PLANTSEG_IMAGE_DIGEST"] = "sha256:" + "5" * 64       # the runs record a non-null digest
 
 import numpy as np  # noqa: E402
+import torch  # noqa: E402
 
 import scripts.select_clip as SC  # noqa: E402
 import scripts.qat_epoch_eval as QEE  # noqa: E402
@@ -168,7 +169,9 @@ def fabricate(run: Path, ev: Path, values: dict, *, excluded=(), tamper: dict | 
         if e in excluded:
             (conv / names["not_convertible"]).write_text(json.dumps(
                 {"status": "not convertible", "rule": A.NOT_CONVERTIBLE_RULE, "qat_checkpoint_sha256": ck_sha,
-                 "failing": ["fabricated"]}), encoding="utf-8")
+                 "failing": ["fabricated"], "epoch": e, "run_id": rec["run_id"],
+                 "telemetry_sha256": rec["telemetry_sha256"], "purpose": tamper.get("purpose", "record"),
+                 "host_label": host_label, "cpu_model": "fab-cpu", "git_head": commit}), encoding="utf-8")
             outcomes.append({"epoch": e, "status": "not convertible"})
             rows.append({"epoch": e, "checkpoint_sha256": ck_sha, "status": "excluded", "rule": A.NOT_CONVERTIBLE_RULE,
                          "not_convertible": f"{A.CONVERTED_DIR}/{names['not_convertible']}"})
@@ -237,13 +240,15 @@ def flat(v: float) -> dict:
 
 
 def prepare_runs(cache: Path | None) -> dict:
-    """The four raw smoke-mode runs, trained once (or cloned from --cache-dir, where they are kept raw)."""
-    names = ("run_clip1.0", "run_clip5.0", "run_nan10", "run_nan1")
+    """The six raw smoke-mode runs, trained once (or cloned from --cache-dir, where they are kept raw): two clean
+    pilot runs and runs made non-finite at steps 1, 10, 22 and 27 (before, between and after the two freezes)."""
+    names = ("run_clip1.0", "run_clip5.0", "run_nan10", "run_nan1", "run_nan22", "run_nan27")
     if cache is not None and (cache / "READY").is_file():
         return {n: clone_run(cache / n, TMP / n) for n in names}
     src = confident_student(seed=0, steps=30)            # any trained source: the scores are fabricated
     plan = {"run_clip1.0": dict(clip=1.0), "run_clip5.0": dict(clip=5.0),
-            "run_nan10": dict(clip=1.0, nan_at=(10,)), "run_nan1": dict(clip=1.0, nan_at=(1,))}
+            "run_nan10": dict(clip=1.0, nan_at=(10,)), "run_nan1": dict(clip=1.0, nan_at=(1,)),
+            "run_nan22": dict(clip=1.0, nan_at=(22,)), "run_nan27": dict(clip=1.0, nan_at=(27,))}
     out = {}
     for n, kw in plan.items():
         make_qat_run(TMP / n, model=src, stage="e5", **kw)
@@ -305,8 +310,9 @@ def ev_clip5() -> Path:
 
 def marked_run(clip: float, name: str, *, finite_flag: bool = True, since: bool = True) -> Path:
     """A clone of a pilot run whose record turns non-finite from epoch 14 (AM-21 item 3 rejects it):
-    state_finite false and/or nonfinite_since_step 27 on those epoch_end rows. Its checkpoints stay finite,
-    so the run still has a valid selection: a rejection that is skipped lets it win."""
+    state_finite false and/or nonfinite_since_step 27 on those epoch_end rows. Its checkpoints stay finite, so
+    every epoch converts and scores; as a rejected pilot run it holds no selection (item 3(d)), so a rejection that
+    select_clip skips reads it as a live run without one."""
     run = clone_run(FX["base"][clip], TMP / name)
     tel = run / Q.TELEMETRY_NAME
     rows = [json.loads(line) for line in tel.read_text(encoding="utf-8").splitlines()]
@@ -325,14 +331,18 @@ def nan5_run() -> Path:
     return marked_run(5.0, "run_clip5_nan")
 
 
-def better_selected(run: Path, name: str) -> Path:
-    """A selected eval directory (with its conversion record) whose winner, e02 at 0.9, beats every live run."""
-    return selected_eval(run, Q.sha256_file(run / Q.TELEMETRY_NAME), name, vals(e02=0.9))
+def better_scored(run: Path, name: str) -> Path:
+    """A rejected pilot run's eval directory: its conversion and score records (AM-21 item 3(d)), e02 at 0.9 above
+    every live run's selected value, and no epoch selection (a rejected pilot run needs none, and select_qat_epoch
+    refuses it)."""
+    ev = TMP / name
+    fabricate(run, ev, vals(e02=0.9))
+    return ev
 
 
 @functools.cache
 def ev_nan5_better() -> Path:
-    return better_selected(nan5_run(), "ev_nan5_better")
+    return better_scored(nan5_run(), "ev_nan5_better")
 
 
 def conversion_record(run: Path, ev: Path, **over) -> Path:
@@ -399,39 +409,257 @@ def d3_refuses_existing_output():
     check("d3_refuses_existing_output", rc == 2 and "[output_exists]" in res, res)
 
 
-# ---- d3 / OQ1: non-finite epochs
+# ---- d3 / OQ1: non-finite epochs (AM-21 item 2) and the rejected pilot run (item 3(d))
+def non_pilot(key: str, name: str) -> tuple[Path, str]:
+    """A clone of FX[key] re-labelled a run of record (E5 seed 43, bound to the clip selection): AM-21 item 2's
+    exclusion and item 2(b) apply to it, item 3 does not. Returns the run and its telemetry sha256."""
+    run = clone_run(FX[key], TMP / name)
+    return run, relabel(run, meta={"u4_pilot": False, "clip_source": "clip_selection", "seed": 43})
+
+
 @case("oq1")
 def d3_nonfinite_epochs_excluded():
+    run, sha = non_pilot("nan10", "run_nan10_s43")
     ev = TMP / "ev_nan10"
-    fabricate(FX["nan10"], ev, vals(e02=0.33), excluded=range(5, 16))
-    rc, res, sel = select(FX["nan10"], ev, FX["sha_n10"])
+    fabricate(run, ev, vals(e02=0.33), excluded=range(5, 16))
+    rc, res, sel = select(run, ev, sha)
     check("d3_nonfinite_epochs_excluded", rc == 0 and sel["winner"]["epoch"] == 2
-          and sel["excluded_epochs"] == list(range(5, 16))
-          and any("excluded: non-finite state (AM-19 item 3(a))" in t for t in sel["rule_trace"]), res)
+          and sel["excluded_epochs"] == list(range(5, 16)) and sel["excluded_despite_record"] == []
+          and any("excluded: non-finite state (AM-21 item 2(a))" in t for t in sel["rule_trace"])
+          and not any("AM-19" in t for t in sel["rule_trace"]), res)
 
 
 @case("oq1")
-def d3_scored_nonfinite_epoch_refused():
+def d3_nonfinite_epoch_with_highest_score_still_excluded():
+    """Ruling Q2-F/3 (AM-21 item 2(a): the checkpoint decides): the record scores e05, whose checkpoint holds NaN,
+    above every other epoch (0.99); it is excluded all the same, with e06-e15, and the best finite epoch wins. It
+    replaces PART 1's d3_scored_nonfinite_epoch_refused (scored_nonfinite_state, exit 2)."""
+    run, sha = non_pilot("nan10", "run_nan10_s43_scored")
     ev = TMP / "ev_nan10_scored"
-    fabricate(FX["nan10"], ev, vals(e02=0.33))
-    rc, res, _ = select(FX["nan10"], ev, FX["sha_n10"])
-    check("d3_scored_nonfinite_epoch_refused", rc == 2 and "[scored_nonfinite_state]" in res, res)
+    fabricate(run, ev, vals(e02=0.33, e05=0.99))
+    rc, res, sel = select(run, ev, sha)
+    check("d3_nonfinite_epoch_with_highest_score_still_excluded", rc == 0 and sel["winner"]["epoch"] == 2
+          and sel["excluded_epochs"] == list(range(5, 16)) and sel["excluded_despite_record"] == list(range(5, 16))
+          and any(t.startswith("e05 ") and "the checkpoint decides" in t and "0.99" in t for t in sel["rule_trace"]),
+          res)
 
 
 @case("oq1")
 def d3_excluding_a_finite_epoch_refused():
+    run, sha = non_pilot("nan10", "run_nan10_s43_finite_excluded")
     ev = TMP / "ev_nan10_finite_excluded"
-    fabricate(FX["nan10"], ev, vals(), excluded=(2,) + tuple(range(5, 16)))
-    rc, res, _ = select(FX["nan10"], ev, FX["sha_n10"])
-    check("d3_excluding_a_finite_epoch_refused", rc == 2 and "[exclusion_inconsistent]" in res, res)
+    fabricate(run, ev, vals(), excluded=(2,) + tuple(range(5, 16)))
+    rc, res, _ = select(run, ev, sha)
+    check("d3_excluding_a_finite_epoch_refused", rc == 2 and "[exclusion_inconsistent]" in res
+          and "checkpoint state is finite" in res, res)
+
+
+def _nc_tamper_case(name: str, field: str, value, needle: str, *, row: bool = False):
+    """An excluded non-finite epoch (e07) whose not-convertible record, or with `row` its qat_epoch_eval.json row,
+    disagrees in one field: the selection is refused (exclusion_inconsistent), naming that field."""
+    def run():
+        r, sha = non_pilot("nan10", f"run_{name}")
+        ev = TMP / f"ev_{name}"
+        fabricate(r, ev, vals(e02=0.33), excluded=range(5, 16))
+        p = ev / ("qat_epoch_eval.json" if row else f"{A.CONVERTED_DIR}/{A.epoch_names(7)['not_convertible']}")
+        doc = json.loads(p.read_text(encoding="utf-8"))
+        target = next(x for x in doc["epochs"] if x["epoch"] == 7) if row else doc
+        target[field] = value
+        p.write_text(json.dumps(doc), encoding="utf-8")
+        rc, res, _ = select(r, ev, sha)
+        check(name, rc == 2 and "[exclusion_inconsistent]" in res and needle in res, res)
+    return run
+
+
+_AM19_RULE = "excluded: non-finite state (AM-19 item 3(a))"
+for _n, _f, _v, _needle, _row in [
+        ("d3_excluded_epoch_record_differs_refused", "qat_checkpoint_sha256", "0" * 64, "'checkpoint'", False),
+        ("d3_excluded_epoch_record_of_am19_refused", "rule", _AM19_RULE, "'rule of the record'", False),
+        ("d3_excluded_epoch_row_of_am19_refused", "rule", _AM19_RULE, "'rule of the row'", True),
+        ("d3_excluded_epoch_record_status_refused", "status", "converted", "'status'", False),
+        ("d3_excluded_epoch_record_of_another_epoch_refused", "epoch", 8, "'epoch'", False),
+        ("d3_excluded_epoch_record_of_another_run_refused", "run_id", "another_run", "'run'", False),
+        ("d3_excluded_epoch_record_of_another_commit_refused", "git_head", "b" * 40, "'git_head'", False)]:
+    register("oq1", _n, _nc_tamper_case(_n, _f, _v, _needle, row=_row))
 
 
 @case("oq1")
 def d3_no_convertible_epoch_refused_exit_2():
+    run, sha = non_pilot("nan1", "run_nan1_s43")
     ev = TMP / "ev_nan1"
+    fabricate(run, ev, vals(), excluded=range(1, 16))
+    rc, res, _ = select(run, ev, sha)
+    check("d3_no_convertible_epoch_refused_exit_2", rc == 2 and "[no_convertible_epoch]" in res
+          and S.NO_MODEL_ENTRY in res and "item 2(b)" in res and not (ev / "qat_selection.json").exists(), res)
+
+
+@case("oq1")
+def d3_rejected_pilot_run_needs_no_selection():
+    """AM-21 item 3(d): a rejected U4 pilot run (non-finite from e05) is refused; nothing is written."""
+    ev = TMP / "ev_nan10_pilot"
+    fabricate(FX["nan10"], ev, vals(e02=0.33), excluded=range(5, 16))
+    rc, res, _ = select(FX["nan10"], ev, FX["sha_n10"])
+    check("d3_rejected_pilot_run_needs_no_selection", rc == 2 and "[rejected_pilot_run]" in res
+          and "item 3(d)" in res and S.NO_MODEL_ENTRY not in res and not (ev / "qat_selection.json").exists(), res)
+
+
+@case("oq1")
+def d3_rejected_pilot_without_convertible_epoch_is_not_no_model():
+    """Item 2(b) does not apply to a rejected pilot run: no convertible epoch, and no 'non-finite: no model'."""
+    ev = TMP / "ev_nan1_pilot"
     fabricate(FX["nan1"], ev, vals(), excluded=range(1, 16))
     rc, res, _ = select(FX["nan1"], ev, FX["sha_n1"])
-    check("d3_no_convertible_epoch_refused_exit_2", rc == 2 and "[no_convertible_epoch]" in res, res)
+    check("d3_rejected_pilot_without_convertible_epoch_is_not_no_model", rc == 2 and "[rejected_pilot_run]" in res
+          and S.NO_MODEL_ENTRY not in res, res)
+
+
+@case("oq1")
+def d3_rejected_pilot_run_reports_the_missing_flag():
+    """AM-21 item 3(a), CHECK ITEM 11: a pilot run rejected only by a checkpoint that fails item 1(a) with no state
+    flag in its telemetry; select_qat_epoch's refusal names the deviation of the trainer."""
+    run = clone_run(FX["base"][1.0], TMP / "run_clip1_ck_fails_unflagged_pilot")
+    _nan_into_checkpoint(run, 8)
+    ev = TMP / "ev_clip1_ck_fails_unflagged_pilot"
+    fabricate(run, ev, vals())
+    rc, res, _ = select(run, ev, Q.sha256_file(run / Q.TELEMETRY_NAME))
+    check("d3_rejected_pilot_run_reports_the_missing_flag", rc == 2 and "[rejected_pilot_run]" in res
+          and "e08 fail item 1(a)" in res and "deviation of the trainer" in res
+          and not (ev / "qat_selection.json").exists(), res)
+
+
+@case("oq1")
+def d3_rejected_pilot_run_by_a_logged_nonfinite_loss():
+    """AM-21 item 3(a), CHECK ITEM 11: a pilot run whose train row at step 7 logs a non-finite loss, every
+    checkpoint finite and no state flag set, is rejected all the same: select_qat_epoch refuses it."""
+    run = _train_row_logged_nonfinite("run_clip1_logged_loss_pilot", 7, "loss")
+    ev = TMP / "ev_clip1_logged_loss_pilot"
+    fabricate(run, ev, vals())
+    rc, res, _ = select(run, ev, Q.sha256_file(run / Q.TELEMETRY_NAME))
+    check("d3_rejected_pilot_run_by_a_logged_nonfinite_loss", rc == 2 and "[rejected_pilot_run]" in res
+          and "at step 7" in res and not (ev / "qat_selection.json").exists(), res)
+
+
+# ---- CHECK ITEM 14: P16's freeze cross-check and P15's stored-flag check on checkpoints that hold NaN
+NAN_RUNS = (("nan10", 5), ("nan22", 11), ("nan27", 14))         # (run, first epoch whose checkpoint holds NaN)
+
+
+def _states(rec: dict, e: int) -> dict:
+    return torch.load(A.checkpoint_path(rec, e), map_location="cpu", weights_only=True)["model_state_dict"]
+
+
+def _holds_nan(state: dict, keys=None) -> bool:
+    return any(v.is_floating_point() and bool(torch.isnan(v).any())
+               for k, v in state.items() if keys is None or k in keys)
+
+
+@case("oq1")
+def d3_freeze_cross_check_passes_on_nan_checkpoints():
+    """NaN from step 10 (before the BN freeze), 22 (between the freezes) or 27 (after the observer freeze): the
+    freezes took, and P16 says so, comparing bytes: an observer buffer that holds NaN equals its frozen copy. No BN
+    statistic holds NaN in these runs (MEASURED here; the cause, INFERRED: the forward after the NaN step raises at a
+    fake-quant before any BN sees the NaN), so the BN half on NaN is d3_freeze_cross_check_passes_on_bn_nan's."""
+    bn_keys, obs_keys = A.freeze_key_sets(A.prepared_skeleton())
+    ok, out = True, []
+    for key, first in NAN_RUNS:
+        rec = A.read_run_record(FX[key])
+        cross = A.freeze_cross_check(rec)
+        obs_nan = _holds_nan(_states(rec, 12), set(obs_keys))    # e12: the observers' reference
+        bn_nan = any(_holds_nan(_states(rec, e), set(bn_keys)) for e in range(first, Q.EPOCHS + 1))
+        ok = (ok and cross["ok"] is True and obs_nan == (key != "nan27") and not bn_nan
+              and _holds_nan(_states(rec, first)))
+        out.append(f"{key}: P16 ok {cross['ok']}, an observer buffer holds NaN at e12 {obs_nan}, a BN statistic "
+                   f"holds NaN {bn_nan}")
+    check("d3_freeze_cross_check_passes_on_nan_checkpoints", ok, "; ".join(out))
+
+
+@case("oq1")
+def d3_freeze_cross_check_catches_a_changed_nan_buffer():
+    """A frozen observer buffer that holds NaN, rewritten at e14 to another NaN bit pattern: the bytes differ, so
+    P16 reports it (a float comparison cannot tell one NaN from another)."""
+    run = clone_run(FX["nan22"], TMP / "run_nan22_nan_changed")
+    rec = A.read_run_record(run)
+    _bn_keys, obs_keys = A.freeze_key_sets(A.prepared_skeleton())
+    p = A.checkpoint_path(rec, 14)
+    payload = torch.load(p, map_location="cpu", weights_only=True)
+    sd = payload["model_state_dict"]
+    k = next(k for k in obs_keys if sd[k].is_floating_point() and bool(torch.isnan(sd[k]).any()))
+    t = sd[k].clone().reshape(-1)
+    i = int(torch.isnan(t).nonzero()[0])
+    t[i:i + 1].view(torch.int32).bitwise_xor_(1)                   # another NaN payload, still NaN
+    sd[k] = t.reshape(sd[k].shape)
+    p.unlink()                                                     # a hard link into the cache: unlinked, rewritten
+    torch.save(payload, p)
+    _end_edit(14, checkpoint_sha256=Q.sha256_file(p))(run)
+    cross = A.freeze_cross_check(A.read_run_record(run))
+    check("d3_freeze_cross_check_catches_a_changed_nan_buffer",
+          cross["ok"] is False and bool(torch.isnan(t[i])) and any(k in v for v in cross["first_differences"].values()),
+          f"{k}: {cross['first_differences']}")
+
+
+def _bn_nan_run(name: str, xor_epoch: int | None = None) -> Path:
+    """A clone of the clean clip-1.0 pilot run whose first BN running_mean holds one NaN, the same bits from e10 on
+    (a statistic that turned NaN before the BN freeze and stayed frozen), or, at `xor_epoch`, another NaN payload."""
+    run = clone_run(FX["base"][1.0], TMP / name)
+    bn_keys, _obs_keys = A.freeze_key_sets(A.prepared_skeleton())
+    key = next(k for k in bn_keys if k.endswith(".running_mean"))
+    for e in range(Q.BN_FREEZE_EPOCH, Q.EPOCHS + 1):
+        p = A.checkpoint_path(A.read_run_record(run), e)
+        payload = torch.load(p, map_location="cpu", weights_only=True)
+        t = payload["model_state_dict"][key].clone()
+        t.view(-1)[0] = float("nan")
+        if e == xor_epoch:
+            t.view(-1)[0:1].view(torch.int32).bitwise_xor_(1)            # another NaN payload, still NaN
+        payload["model_state_dict"][key] = t
+        p.unlink()                                                 # a hard link into the cache: unlinked, rewritten
+        torch.save(payload, p)
+        _end_edit(e, checkpoint_sha256=Q.sha256_file(p))(run)
+    return run
+
+
+@case("oq1")
+def d3_freeze_cross_check_passes_on_bn_nan():
+    """CHECK ITEM 14, P16's BN half: a frozen BN statistic that holds NaN, the same bits as at e10, equals it."""
+    cross = A.freeze_cross_check(A.read_run_record(_bn_nan_run("run_clip1_bn_nan")))
+    check("d3_freeze_cross_check_passes_on_bn_nan", cross["ok"] is True and all(cross["bn_equal_to_e10"].values()),
+          str(cross["first_differences"]))
+
+
+@case("oq1")
+def d3_freeze_cross_check_catches_a_changed_bn_nan():
+    """The same BN statistic with another NaN payload at e11: the bytes differ, and P16 reports it at e11 only."""
+    cross = A.freeze_cross_check(A.read_run_record(_bn_nan_run("run_clip1_bn_nan_changed", xor_epoch=11)))
+    check("d3_freeze_cross_check_catches_a_changed_bn_nan", cross["ok"] is False
+          and list(cross["first_differences"]) == ["bn e11"], str(cross["first_differences"]))
+
+
+@case("oq1")
+def d3_stored_flags_read_on_nan_checkpoints():
+    """P15 reads every NaN-holding checkpoint's flags as stored (observers on through e12, off from e13, fake
+    quantization on), and catches a wrong observer flag on one."""
+    ok, out = True, []
+    for key, first in NAN_RUNS:
+        rec = A.read_run_record(FX[key])
+        nan_eps, errs = [], []
+        for e in range(1, 16):
+            sd = _states(rec, e)
+            if _holds_nan(sd):
+                nan_eps.append(e)
+            err = A.stored_flags_error(sd, e)
+            if err:
+                errs.append(err)
+        ok = ok and not errs and nan_eps == list(range(first, 16))
+        out.append(f"{key}: NaN in e{first:02d}-e15 {nan_eps == list(range(first, 16))}, flags {errs[:1] or 'OK'}")
+    sd = _states(A.read_run_record(FX["nan27"]), 14)
+    k = next(k for k in sd if k.endswith("observer_enabled"))
+    sd[k] = torch.ones_like(sd[k])
+    wrong = A.stored_flags_error(sd, 14)
+    sd = _states(A.read_run_record(FX["nan10"]), 8)                 # fake quantization off on one module
+    k = next(k for k in sd if k.endswith(".fake_quant_enabled"))
+    sd[k] = torch.zeros_like(sd[k])
+    wrong_fq = A.stored_flags_error(sd, 8)
+    check("d3_stored_flags_read_on_nan_checkpoints", ok and wrong is not None and "observer_enabled [0, 1]" in wrong
+          and wrong_fq is not None and "fake_quant_enabled [0, 1]" in wrong_fq,
+          "; ".join(out) + f"; a wrong observer flag: {wrong}; a wrong fake-quant flag: {wrong_fq}")
 
 
 # ---- d3: refusals of the chain (P23-P26), one link at a time
@@ -760,7 +988,8 @@ for _n, _v1, _v5, _e, _tie in [("d5_boundary_pair_ties_to_5", 0.4009999999999999
 
 
 def _rejected_case(name: str, dead_fn, live_clip: float, dead_first: bool):
-    """The rejected candidate holds the better selection (0.9 against 0.30 or 0.31): it loses all the same."""
+    """The rejected candidate holds the better scores (e02 at 0.9 against a selected 0.30 or 0.31) and no selection
+    (AM-21 item 3(d)): it loses all the same."""
     def run():
         live = (FX["base"][live_clip], ev_clip1() if live_clip == 1.0 else ev_clip5())
         dead = dead_fn()
@@ -776,19 +1005,19 @@ def _rejected_case(name: str, dead_fn, live_clip: float, dead_first: bool):
 @functools.cache
 def _dead_1_0():
     r = marked_run(1.0, "run_clip1_marked")
-    return r, better_selected(r, "ev_clip1_marked_better")
+    return r, better_scored(r, "ev_clip1_marked_better")
 
 
 @functools.cache
 def _dead_flag_only():
     r = marked_run(5.0, "run_clip5_flag_only", since=False)
-    return r, better_selected(r, "ev_clip5_flag_only_better")
+    return r, better_scored(r, "ev_clip5_flag_only_better")
 
 
 @functools.cache
 def _dead_since_only():
     r = marked_run(5.0, "run_clip5_since_only", finite_flag=False)
-    return r, better_selected(r, "ev_clip5_since_only_better")
+    return r, better_scored(r, "ev_clip5_since_only_better")
 
 
 for _n, _dead, _live, _first in [
@@ -871,10 +1100,91 @@ def d5_nonfinite_row_only_rejected():
                                 "nonfinite_since_step": 5, "failing": ["fabricated"]}))
     _set_tel_lines(r5, lines)
     out = TMP / "clip_row_nonfinite.json"
-    rc, res = clip_cli([(FX["base"][1.0], ev_clip1()), (r5, better_selected(r5, "ev_row_nonfinite_better"))], out)
+    rc, res = clip_cli([(FX["base"][1.0], ev_clip1()), (r5, better_scored(r5, "ev_row_nonfinite_better"))], out)
     d = json.loads(out.read_text()) if rc == 0 else {}
     check("d5_nonfinite_row_only_rejected", rc == 0 and d["winner"]["clip_norm"] == 1.0
           and d["loser"]["rejected"] is True and "rejected: non-finite state (AM-21 item 3)" in res, res)
+
+
+# ---- AM-21 item 3(a) read from the run's own records (CHECK ITEM 11): a logged non-finite loss or pre-clip
+# gradient norm, whatever the state; a checkpoint that fails item 1(a), reported as a deviation when unflagged
+def _train_row_logged_nonfinite(name: str, step: int, field: str) -> Path:
+    """A clone of the clean clip-1.0 pilot run whose train row at `step` logs `field` non-finite as the trainer
+    writes it (null, named in `nonfinite`): no state flag, every checkpoint finite."""
+    run = clone_run(FX["base"][1.0], TMP / name)
+    rows = [json.loads(ln) for ln in _tel_lines(run)]
+    for r in rows:
+        if r.get("event") == "train" and r.get("step") == step:
+            r[field] = None
+            r["nonfinite"] = {field: "nan"}
+    _set_tel_lines(run, [json.dumps(r) for r in rows])
+    return run
+
+
+def _rejection_case(name: str, field: str, step: int):
+    def run():
+        r = _train_row_logged_nonfinite(f"run_{name}", step, field)
+        rej = S.run_rejected(A.read_run_record(r))
+        check(name, rej["rejected"] and rej["logged_nonfinite_steps"] == [step] and rej["failing_checkpoints"] == []
+              and rej["deviations"] == [] and any(f"at step {step}" in g for g in rej["grounds"]), str(rej["grounds"]))
+    return run
+
+
+for _n, _f, _s in [("d5_rejection_reads_a_nonfinite_loss_row", "loss", 7),
+                   ("d5_rejection_reads_a_nonfinite_grad_norm_row", "grad_norm", 12)]:
+    register("d5", _n, _rejection_case(_n, _f, _s))
+
+
+def _nan_into_checkpoint(run: Path, e: int) -> None:
+    """A NaN written into eNN.pt's first float weight, and the epoch_end row's checkpoint sha256 set to the new
+    file's; no state flag is written."""
+    p = A.checkpoint_path(A.read_run_record(run), e)
+    payload = torch.load(p, map_location="cpu", weights_only=True)
+    sd = payload["model_state_dict"]
+    k = next(k for k, v in sd.items() if k.endswith(".weight") and v.is_floating_point() and v.numel() > 0)
+    sd[k] = sd[k].clone()
+    sd[k].view(-1)[0] = float("nan")
+    p.unlink()                                                     # a hard link into the cache: unlinked, rewritten
+    torch.save(payload, p)
+    _end_edit(e, checkpoint_sha256=Q.sha256_file(p))(run)
+
+
+@case("d5")
+def d5_rejection_reads_a_failing_checkpoint_and_reports_the_missing_flag():
+    """A checkpoint that fails item 1(a) with no state flag in the telemetry rejects the run, and the missing flag is
+    reported as a deviation of the trainer (AM-21 item 3(a))."""
+    run = clone_run(FX["base"][1.0], TMP / "run_ck_fails_unflagged")
+    _nan_into_checkpoint(run, 8)
+    rej = S.run_rejected(A.read_run_record(run))
+    check("d5_rejection_reads_a_failing_checkpoint_and_reports_the_missing_flag",
+          rej["rejected"] and rej["failing_checkpoints"] == [8] and rej["logged_nonfinite_steps"] == []
+          and len(rej["deviations"]) == 1 and rej["deviations"][0].startswith("e08:")
+          and "deviation of the trainer" in rej["deviations"][0], f"{rej['grounds']} | {rej['deviations']}")
+
+
+def _clip_ground_case(name: str, make_run):
+    """CHECK ITEM 11 through select_clip: a clip-1.0 pilot rejected only by a logged non-finite value, or only by an
+    unflagged failing checkpoint, loses to the clean clip-5.0 run (AM-21 item 3(b))."""
+    def run():
+        r = make_run()
+        out = TMP / f"clip_{name}.json"
+        rc, res = clip_cli([(r, conversion_record(r, TMP / f"ev_{name}")), (FX["base"][5.0], ev_clip5())], out)
+        d = json.loads(out.read_text()) if rc == 0 else {}
+        check(name, rc == 0 and d["winner"]["clip_norm"] == 5.0 and d["loser"]["rejected"] is True
+              and "rejected: non-finite state (AM-21 item 3)" in res, res)
+    return run
+
+
+def _clip1_ck_fails_unflagged() -> Path:
+    run = clone_run(FX["base"][1.0], TMP / "run_clip1_ck_fails_unflagged_clip")
+    _nan_into_checkpoint(run, 8)
+    return run
+
+
+for _n, _mk in [("d5_logged_nonfinite_loss_candidate_loses",
+                 lambda: _train_row_logged_nonfinite("run_clip1_logged_loss_clip", 7, "loss")),
+                ("d5_unflagged_failing_checkpoint_candidate_loses", _clip1_ck_fails_unflagged)]:
+    register("d5", _n, _clip_ground_case(_n, _mk))
 
 
 def _variant_case(name: str, code: str, needle: str = "", *, meta=None, host=None, fingerprints=None, tamper=None,
@@ -1233,8 +1543,9 @@ def main() -> int:
     fq = {e: 0.1 + 0.01 * e for e in range(1, 16)}
     fq[9] = 0.9                                            # the fake-quant VAL argmax: e09
     FX.update(base=base, sha={c: relabel(base[c], fq=fq) for c in base}, nan10=runs["run_nan10"],
-              nan1=runs["run_nan1"])
-    FX.update(sha_n10=relabel(FX["nan10"], fq=fq), sha_n1=relabel(FX["nan1"], fq=fq))
+              nan1=runs["run_nan1"], nan22=runs["run_nan22"], nan27=runs["run_nan27"])
+    FX.update(sha_n10=relabel(FX["nan10"], fq=fq), sha_n1=relabel(FX["nan1"], fq=fq),
+              sha_n22=relabel(FX["nan22"], fq=fq), sha_n27=relabel(FX["nan27"], fq=fq))
     FX["rules"], FX["rules_sha"] = S.load_rules()
     for name, _section, fn in todo:
         before = len(results)

@@ -4,9 +4,13 @@
     python -B scripts/select_qat_epoch.py --run-dir R --eval-dir E --expect-telemetry-sha256 H [--out PATH]
 
 The highest converted QNNPACK VAL all-class mIoU, strict >, a tie keeps the earlier epoch; an epoch whose
-state is non-finite is excluded (AM-19 item 3(a)); the fake-quant VAL score never selects. The rules are
-configs/qat_selection_rules.json (src/quant/qat_select.py). The output defaults to E/qat_selection.json and
-is written once, on exit 0 only. Exit codes: 0 selected, 1 STOP, 2 refused, 3 incomplete, 4 error.
+checkpoint state is not finite is excluded, whatever score its record holds (AM-21 item 2(a)), and an excluded
+epoch whose not-convertible record disagrees refuses the selection; the fake-quant VAL score never selects. A
+run of record with no convertible epoch selects nothing and is refused (exit 2) with the decision-log entry
+"non-finite: no model" (item 2(b)); a rejected U4 pilot run needs no selection and is refused (exit 2, item
+3(d)), naming its grounds and any deviation of the trainer (item 3(a)). The rules are
+configs/qat_selection_rules.json (src/quant/qat_select.py). The output defaults to E/qat_selection.json and is
+written once, on exit 0 only. Exit codes: 0 selected, 1 STOP, 2 refused, 3 incomplete, 4 error.
 """
 from __future__ import annotations
 

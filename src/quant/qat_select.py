@@ -1,11 +1,15 @@
 """Lane 6 (L-AM4 + L-AM1q): the QAT epoch and clip selections of record.
 
     epoch_selection   one run's epoch (AM-4a item 2): the highest converted QNNPACK VAL all-class mIoU,
-                      strict >, a tie keeps the earlier epoch; an epoch whose state is non-finite is
-                      excluded (AM-19 item 3(a)); the fake-quant VAL score never selects
-    clip_selection    the U4 clip (AM-4a item 3): a candidate whose state became non-finite is rejected
-                      (AM-21 item 3); otherwise the higher selected value wins, and a tie within 0.1 pp,
-                      exact (|Fraction(a) - Fraction(b)| <= 1/1000), goes to 5.0
+                      strict >, a tie keeps the earlier epoch; an epoch whose checkpoint state is not finite
+                      is excluded whatever score its record holds (AM-21 item 2(a): the checkpoint decides),
+                      and an excluded epoch whose not-convertible record disagrees refuses the selection; a
+                      run of record with no convertible epoch selects nothing, "non-finite: no model" (item
+                      2(b)); a rejected U4 pilot run needs no selection (item 3(d)), and its refusal reports
+                      any deviation of the trainer; the fake-quant VAL score never selects
+    clip_selection    the U4 clip (AM-4a item 3): a candidate rejected under AM-21 item 3(a), read from its
+                      telemetry and its checkpoints, loses; otherwise the higher selected value wins, and a tie
+                      within 0.1 pp, exact (|Fraction(a) - Fraction(b)| <= 1/1000), goes to 5.0
 
 The rules are configs/qat_selection_rules.json, checked against configs/quant.py. Every input is
 re-verified from disk: the run's record (AM-19), every checkpoint's sha256 and state, the conversion and
@@ -35,6 +39,7 @@ QATIncomplete = A.QATIncomplete
 EVALUATOR_SCRIPT = "scripts/evaluate_model.py"
 REJECTED_NONFINITE = "rejected: non-finite state (AM-21 item 3)"
 NO_WINNER = "no winner (AM-21 item 3): a new amendment decides the clip value"
+NO_MODEL_ENTRY = "non-finite: no model"                # AM-21 item 2(b): the decision-log entry, that day
 # run_meta keys the two pilot runs may differ in (reported, never compared): P27
 CLIP_EXEMPT_KEYS = ("clip_norm", "wall_clock", "out_dir", "run_id", "host.hostname", "host.pod_id")
 # what one selection's evaluations share, and both pilot runs' evaluations share too (P23, P26)
@@ -88,6 +93,56 @@ def selection_differences(stored: dict, recomputed: dict) -> list[str]:
     keys = (set(stored) | set(recomputed)) - set(SELECTION_PATH_KEYS)
     return sorted(k for k in keys
                   if json.dumps(stored.get(k), sort_keys=True) != json.dumps(recomputed.get(k), sort_keys=True))
+
+
+# ------------------------------------------------------------------ the run's own records (AM-21 items 2(a), 3(a))
+def checkpoint_states(rec: dict, *, kinds: dict | None = None, never=None) -> dict:
+    """Item 1(a) applied to every epoch checkpoint of the run: {epoch: (finite, failing, path, sha256)}."""
+    if kinds is None:
+        kinds = Q.state_kinds(A.prepared_skeleton())
+    if never is None:
+        never = rec["run_meta"].get("never_observed_modules") or []
+    out = {}
+    for e in range(1, Q.EPOCHS + 1):
+        ck, ck_sha = A.verified_checkpoint(rec, e)
+        state = torch.load(ck, map_location="cpu", weights_only=True)["model_state_dict"]
+        finite, fails = Q.state_predicate(state, kinds, never)
+        del state
+        out[e] = (finite, fails, ck, ck_sha)
+    return out
+
+
+def _epoch_list_text(eps) -> str:
+    return " ".join(f"e{e:02d}" for e in eps)
+
+
+def run_rejected(rec: dict, *, checks: dict | None = None) -> dict:
+    """AM-21 item 3(a) (CHECK ITEM 11), read from the run's own records: its telemetry (the file whose sha256 was
+    taken on the pod) and every epoch checkpoint. Grounds: a row records nonfinite_since_step, or an epoch_end row
+    has state_finite false; a train row logs a non-finite loss or pre-clip gradient norm, whatever the state; an
+    epoch checkpoint fails item 1(a). A failing checkpoint whose epoch_end row carries no state flag rejects the run
+    too, and is reported as a deviation of the trainer. Returns the verdict, its grounds and the deviations."""
+    rows, ends = rec["rows"], rec["ends"]
+    flagged = (any(r.get("nonfinite_since_step") is not None for r in rows)
+               or any(r.get("state_finite") is False for r in ends.values()))
+    logged = sorted(r.get("step") for r in rows if r.get("event") == "train"
+                    and {"loss", "grad_norm"} & set(r.get("nonfinite") or {}))
+    if checks is None:
+        checks = checkpoint_states(rec)
+    failing = sorted(e for e, (finite, *_rest) in checks.items() if not finite)
+    unflagged = [e for e in failing if (ends.get(e) or {}).get("state_finite") is not False]
+    grounds = []
+    if flagged:
+        grounds.append("its telemetry records a non-finite state")
+    if logged:
+        grounds.append(f"its telemetry logs a non-finite loss or pre-clip gradient norm at step {logged[0]}"
+                       + (f" and {len(logged) - 1} later step(s)" if len(logged) > 1 else ""))
+    if failing:
+        grounds.append(f"checkpoint(s) {_epoch_list_text(failing)} fail item 1(a)")
+    deviations = [f"{_epoch_list_text(unflagged)}: checkpoint(s) failing item 1(a) with no state flag in the "
+                  "telemetry (a deviation of the trainer)"] if unflagged else []
+    return {"rejected": bool(grounds), "grounds": grounds, "deviations": deviations,
+            "logged_nonfinite_steps": logged, "failing_checkpoints": failing}
 
 
 # ------------------------------------------------------------------ one run's epoch
@@ -172,32 +227,52 @@ def epoch_selection(run_dir, eval_dir, *, expect_telemetry_sha256: str | None, r
     skeleton = A.prepared_skeleton()
     kinds = Q.state_kinds(skeleton)
     never = meta.get("never_observed_modules") or []
+    checks = checkpoint_states(rec, kinds=kinds, never=never)    # item 1(a) on every checkpoint: it decides
+    if meta.get("u4_pilot") is True:
+        rej = run_rejected(rec, checks=checks)
+        if rej["rejected"]:
+            raise QATRefused("rejected_pilot_run", f"{rec['run_id']} is a rejected U4 pilot run (AM-21 item 3(a): "
+                                                   f"{'; '.join(rej['grounds'] + rej['deviations'])}): it needs no "
+                                                   "selection, its scores are reported and select nothing (item "
+                                                   "3(d)), and item 2(b) does not apply to it")
     scored, excluded, trace = {}, [], []
+    excluded_despite_record = []
     summaries = {}
     for e in range(1, Q.EPOCHS + 1):
         row = rows[e]
-        ck, ck_sha = A.verified_checkpoint(rec, e)
+        finite, _fails, _ck, ck_sha = checks[e]
         if row.get("checkpoint_sha256") != ck_sha:
             raise QATRefused("chain_checkpoint", f"e{e:02d}: qat_epoch_eval.json names checkpoint "
                                                  f"{row.get('checkpoint_sha256')}, the file has {ck_sha}")
-        state = torch.load(ck, map_location="cpu", weights_only=True)["model_state_dict"]
-        finite, fails = Q.state_predicate(state, kinds, never)
-        del state
         names = A.epoch_names(e)
-        nc = E / A.CONVERTED_DIR / names["not_convertible"]
-        if row.get("status") == "excluded":
-            ncd = _json(nc) if nc.is_file() else {}
-            if finite or ncd.get("qat_checkpoint_sha256") != ck_sha or row.get("rule") != A.NOT_CONVERTIBLE_RULE:
-                state_word = "finite" if finite else "non-finite"
-                raise QATRefused("exclusion_inconsistent", f"e{e:02d} is excluded but its state is {state_word} or "
-                                                           "its record differs")
+        if finite and row.get("status") == "excluded":
+            raise QATRefused("exclusion_inconsistent", f"e{e:02d} is excluded but its checkpoint state is finite")
+        if not finite:                                   # AM-21 item 2(a): the checkpoint decides
+            if row.get("status") == "excluded":
+                nc = E / A.CONVERTED_DIR / names["not_convertible"]
+                ncd = _json(nc) if nc.is_file() else {}
+                run_ident = (rec["run_id"], rec["telemetry_sha256"])
+                differs = [k for k, same in (
+                    ("rule of the record", ncd.get("rule") == A.NOT_CONVERTIBLE_RULE),
+                    ("rule of the row", row.get("rule") == A.NOT_CONVERTIBLE_RULE),
+                    ("status", ncd.get("status") == "not convertible"),
+                    ("checkpoint", ncd.get("qat_checkpoint_sha256") == ck_sha),
+                    ("epoch", ncd.get("epoch") == e),
+                    ("run", (ncd.get("run_id"), ncd.get("telemetry_sha256")) == run_ident),
+                    *((k, ncd.get(k) == eval_identity[k]) for k in EVAL_IDENTITY_KEYS)) if not same]
+                if differs:
+                    raise QATRefused("exclusion_inconsistent", f"e{e:02d} is excluded but its not-convertible record "
+                                                               f"disagrees: {differs}")
+                trace.append(f"e{e:02d} {A.NOT_CONVERTIBLE_RULE}; not scanned")
+            else:
+                excluded_despite_record.append(e)
+                trace.append(f"e{e:02d} {A.NOT_CONVERTIBLE_RULE}: its checkpoint fails item 1(a) though its record "
+                             f"says {row.get('status')!r} (value {row.get('all_class_miou')!r}); the checkpoint "
+                             "decides; not scanned")
             excluded.append(e)
-            trace.append(f"e{e:02d} {A.NOT_CONVERTIBLE_RULE}; not scanned")
             continue
         if row.get("status") != "scored":
             raise QATIncomplete("score_missing", f"e{e:02d} has status {row.get('status')!r}")
-        if not finite:
-            raise QATRefused("scored_nonfinite_state", f"e{e:02d} was scored but its state is non-finite: {fails[:3]}")
         prov_p = E / row["provenance"]["path"]
         if not prov_p.is_file():
             raise QATIncomplete("conversion_missing", f"e{e:02d}: {prov_p} is missing")
@@ -256,14 +331,17 @@ def epoch_selection(run_dir, eval_dir, *, expect_telemetry_sha256: str | None, r
                      "converted_artifact": {"path": f"{A.CONVERTED_DIR}/{prov['converted_artifact']}",
                                             "sha256": ts_sha},
                      "summary": row["summary"], "run_id": want_id}
-    # P25: scores/ holds exactly the scored epochs
+    # P25: scores/ holds exactly the epochs the record scored
     sc = E / A.SCORES_DIR
     present = sorted(p.name for p in sc.iterdir()) if sc.is_dir() else []
-    expected = [f"e{e:02d}" for e in sorted(scored)]
+    expected = [f"e{e:02d}" for e in sorted(rows) if rows[e].get("status") == "scored"]
     if present != expected:
         raise QATRefused("scores_dir_contents", f"{sc} holds {present}; expected exactly {expected}")
     if not scored:
-        raise QATRefused("no_convertible_epoch", f"every epoch of {rec['run_id']} is excluded (non-finite state)")
+        raise QATRefused("no_convertible_epoch", f"{NO_MODEL_ENTRY}: every epoch of {rec['run_id']} is excluded "
+                                                 "(non-finite state, AM-21 item 2(a)); no epoch is selected and the "
+                                                 "run stays complete (item 2(b)): enter it in the decision log "
+                                                 f"today as \"{NO_MODEL_ENTRY}\"")
     # fields equal across the summaries; non-null ones
     eq = {}
     for k in rules["qat_epoch"]["equal_across_summaries"]:
@@ -279,7 +357,8 @@ def epoch_selection(run_dir, eval_dir, *, expect_telemetry_sha256: str | None, r
     summary_fields = {k: _get(first, k) for k in rules["qat_epoch"]["equal_across_summaries"]}
     # the rule
     trace.insert(0, f"rule configs/qat_selection_rules.json qat_epoch (sha256 {rules_sha256}): highest converted "
-                    "QNNPACK VAL all-class mIoU, strict >, tie -> the earlier epoch; fake-quant VAL never selects")
+                    "QNNPACK VAL all-class mIoU, strict >, tie -> the earlier epoch; fake-quant VAL never selects; "
+                    "an epoch whose checkpoint fails item 1(a) is excluded (AM-21 item 2(a))")
     best = None
     ties = []
     for e in sorted(scored):
@@ -319,7 +398,7 @@ def epoch_selection(run_dir, eval_dir, *, expect_telemetry_sha256: str | None, r
             "winner": {"epoch": best, "value": w["value"], "checkpoint": f"{Q.EPOCH_DIR}/e{best:02d}.pt",
                        "checkpoint_sha256": w["checkpoint_sha256"], "artifact_of_record": w["converted_artifact"],
                        "provenance": w["provenance"], "summary": w["summary"], "run_id": w["run_id"]},
-            "tied_epochs": ties, "excluded_epochs": excluded,
+            "tied_epochs": ties, "excluded_epochs": excluded, "excluded_despite_record": excluded_despite_record,
             "values": {f"e{e:02d}": scored[e]["value"] for e in sorted(scored)},
             "fake_quant_val_argmax_epoch": fq_argmax, "fake_quant_val_used": False,
             "summary_fields": summary_fields, "eval_identity": eval_identity,
@@ -337,12 +416,6 @@ def _recipe(meta: dict) -> dict:
         if isinstance(node, dict):
             node.pop(parts[-1], None)
     return out
-
-
-def run_rejected(rec: dict) -> bool:
-    """AM-21 item 3: any telemetry row records nonfinite_since_step, or an epoch_end row has state_finite false."""
-    return (any(r.get("nonfinite_since_step") is not None for r in rec["rows"])
-            or any(r.get("state_finite") is False for r in rec["ends"].values()))
 
 
 def step_fingerprints(rec: dict) -> list[str]:
@@ -374,7 +447,7 @@ def clip_selection(candidates: list[tuple[str, str]], *, rules: dict, rules_sha2
             raise QATRefused("not_a_pilot_run", f"{rec['run_id']}: stage {meta.get('stage')}, seed {meta.get('seed')}, "
                                                 f"u4_pilot {meta.get('u4_pilot')}, "
                                                 f"clip_source {meta.get('clip_source')}, mode {meta.get('mode')}")
-        rejected = run_rejected(rec)                         # AM-21 item 3: decided by the run's own record
+        rejected = run_rejected(rec)["rejected"]             # AM-21 item 3(a): decided by the run's own records
         sel_p = Path(eval_dir) / "qat_selection.json"
         stored, selection, sel_sha = None, None, None
         if rejected:
@@ -478,6 +551,7 @@ def clip_selection(candidates: list[tuple[str, str]], *, rules: dict, rules_sha2
             "smoke_inputs": smoke, "rule_trace": trace}
 
 
-__all__ = ["CLIP_EXEMPT_KEYS", "EPOCH_SELECTION_FORMAT", "EVAL_IDENTITY_KEYS", "NO_WINNER", "REJECTED_NONFINITE",
-           "RULES_PATH", "SELECTION_PATH_KEYS", "band", "clip_selection", "epoch_selection", "exact_tie", "load_rules",
-           "run_rejected", "selection_differences", "step_fingerprints"]
+__all__ = ["CLIP_EXEMPT_KEYS", "EPOCH_SELECTION_FORMAT", "EVAL_IDENTITY_KEYS", "NO_MODEL_ENTRY", "NO_WINNER",
+           "REJECTED_NONFINITE", "RULES_PATH", "SELECTION_PATH_KEYS", "band", "checkpoint_states", "clip_selection",
+           "epoch_selection", "exact_tie", "load_rules", "run_rejected", "selection_differences",
+           "step_fingerprints"]

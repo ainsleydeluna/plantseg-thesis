@@ -695,7 +695,8 @@ def nf_no_convertible_epoch() -> None:
         check(name, False, how)
         return
     rc, res = nf_select_epoch(info, ev)
-    check(name, rc == 2 and "[no_convertible_epoch]" in res and not (ev / QEE.SELECTION_RECORD).exists()
+    check(name, rc == 2 and "[no_convertible_epoch]" in res and S.NO_MODEL_ENTRY in res
+          and not (ev / QEE.SELECTION_RECORD).exists()
           and info["nonfinite_epochs"] == list(range(1, Q.EPOCHS + 1)), f"exit {rc}: {res} ({how})")
 
 

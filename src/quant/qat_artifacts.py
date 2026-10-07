@@ -43,7 +43,7 @@ RUN_META_SCHEMA = "plantseg-qat-epoch-run-meta/1.0.0"
 CONVERTED_DIR = "converted"
 SCORES_DIR = "scores"
 PURPOSES = ("record", "timing")
-NOT_CONVERTIBLE_RULE = "excluded: non-finite state (AM-19 item 3(a))"
+NOT_CONVERTIBLE_RULE = "excluded: non-finite state (AM-21 item 2(a))"
 CONVERT_CODE_PATHS = (
     "src/quant/qat_artifacts.py", "src/quant/qat.py", "src/quant/ptq.py", "src/quant/prepare.py",
     "src/quant/qconfig.py", "src/quant/x86_latency.py", "src/quant/runner.py", "src/quant/stages.py",
@@ -248,6 +248,17 @@ def freeze_cross_check(rec: dict) -> dict:
             "ok": not any(bn_diff.values()) and not any(obs_diff.values())}
 
 
+def stored_flags_error(state: dict, epoch: int) -> str | None:
+    """P15: the flags the epoch's checkpoint must store, read from the state as stored whatever its values (a state
+    that holds NaN included): every observer on through epoch 12 and off from epoch 13, fake quantization on."""
+    flags = Q.flag_summary(state)
+    want = [1] if epoch <= Q.OBS_FREEZE_EPOCH else [0]
+    if flags["observer_enabled"] != want or flags["fake_quant_enabled"] != [1]:
+        return (f"e{epoch:02d} stores observer_enabled {flags['observer_enabled']} and fake_quant_enabled "
+                f"{flags['fake_quant_enabled']}; expected {want} and [1]")
+    return None
+
+
 # ------------------------------------------------------------------ the TorchScript identity, read without loading
 def read_ts_identity(path) -> dict:
     """plantseg_int8.json from a TorchScript zip, read with zipfile (no model is loaded)."""
@@ -383,10 +394,9 @@ def _convert_checked(rec, st, epoch, ck_sha, state, skeleton, paths, names, comm
     conv = paths["torchscript"].parent
     # 5. the flags its epoch must carry
     flags = Q.flag_summary(state)
-    want = [1] if epoch <= Q.OBS_FREEZE_EPOCH else [0]
-    if flags["observer_enabled"] != want or flags["fake_quant_enabled"] != [1]:
-        raise QATStop("stored_flags", f"e{epoch:02d} stores observer_enabled {flags['observer_enabled']} and "
-                                      f"fake_quant_enabled {flags['fake_quant_enabled']}; expected {want} and [1]")
+    bad_flags = stored_flags_error(state, epoch)
+    if bad_flags:
+        raise QATStop("stored_flags", bad_flags)
     # 6. the prepared student, rebuilt and copied by name
     copy_report = load_state_by_name(skeleton, state)
     lsb = head_lsb(skeleton)
@@ -497,4 +507,4 @@ __all__ = ["CONVERTED_DIR", "IDENTITY_KEYS", "NOT_CONVERTIBLE_RULE", "PURPOSES",
            "alias_keys", "argmax_agreement", "bytes_equal", "convert_epoch", "epoch_names", "fake_quant_model",
            "freeze_cross_check", "freeze_key_sets", "head_lsb", "json_bytes", "load_state_by_name",
            "prepared_skeleton", "read_run_record", "read_ts_identity", "refuse_test_path", "require_complete",
-           "verified_checkpoint"]
+           "stored_flags_error", "verified_checkpoint"]
