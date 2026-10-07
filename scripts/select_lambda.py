@@ -6,7 +6,9 @@ L-AM16-ALPHA, L-KD-HARDEN and K2).
                                     [--out reports/derived/lambda_selection.json]
                                     [--rules configs/sweep_rules.json]
                                     [--decision-record reports/derived/lambda_decision_record.json]
-                                    [--write-decision-record <path>]
+                                    [--write-decision-record <path> [--corrects <void record>
+                                                                     --fault-report <AM-8a report>]]
+          (a corrected record: --decision-record reports/derived/lambda_decision_record_corrected.json)
 
 Rule (configs/sweep_rules.json 'lambda_logit', checked against configs/distill.py and the rule pins of
 src/training/sweep_select.py): each candidate's value is the best VAL all-class mIoU of its run_end record
@@ -27,8 +29,19 @@ AM-19 item 2: the lambda decision date is 2026-10-19 under Schedule T (2026-12-0
 and then runs as before (item 2(f)). After its end a non-default candidate that has neither is cut, with
 its reason (one repeat of a stop that was on course is waited for); the default is never cut and is
 waited for (item 2(d)). A selection with a cut candidate needs the committed decision record that
---write-decision-record derives (reviewed, committed and pushed, its sha256 entered in the decision log);
-the selection derives every status again and refuses a record that differs. The rule then runs among the
+--write-decision-record derives (reviewed, committed as reports/derived/lambda_decision_record.json and
+pushed, its sha256 entered in the decision log); the selection derives every status again and refuses a
+record that differs. The record may be written while the default runs; a launch line of the default added
+later does not void it, a launch line of a non-default value added later refuses the selection (AM-19a
+reading 19). A record the selection's checks refuse for another reason is void, kept and never edited: one
+corrected record replaces it, written once (--write-decision-record <a path outside the clone> --corrects
+reports/derived/lambda_decision_record.json --fault-report <report>, then committed as
+reports/derived/lambda_decision_record_corrected.json) after the AM-8a fault report is committed and the
+sha256 values of the void record and of the report are entered in the decision log; its own sha256 is
+entered there too, and the selection reads it with --decision-record <that path>. The writer refuses a
+record while its path has a history, and a record committed at any other path is refused
+(decision_record_correction_invalid); a committed record changed in any way later, a deletion included, is
+decision_record_rewritten, which no correction lifts (AM-19a reading 19). The rule then runs among the
 finished candidates; a winner at an edge of the finished set next to a diverged or cut value is a boundary
 result, and edge_removed names each such value with its rule.
 
@@ -39,10 +52,10 @@ abort_record_invalid, or item 10b's recipe_mismatch; default_aborted_twice; befo
 date a single run_end with failed checks or other abort, unless it waits as below, after it for the
 default). Exit 3: shortfall_am19_item2: a grid value with neither a finished nor a diverged run while the
 selection waits (before the end of the decision date; the default candidate; an on-course repeat), a
-non-default value whose last two attempts ended the same way, before the end of the date (it is cut at the
-date; K2 interpretation 13), a non-default value whose single failed check or other abort follows an
-attempt that is incomplete and could still end the same way (before the end of the date; K2
-interpretation 15), a value with an attempt whose launched directory is not supplied or whose launch line
+non-default value whose latest attempt ended the same way as an earlier one, before the end of the date (it
+is cut at the date; AM-19a readings 9 and 17), a non-default value whose single failed check or other abort
+follows an earlier attempt that is incomplete and could still end the same way (before the end of the date;
+AM-19a reading 18), a value with an attempt whose launched directory is not supplied or whose launch line
 has no outcome yet (before the end of the date, once no refusal applies; PL-14), or a cut without a
 committed decision record. Exit 4: an unexpected error. Only exit 0 writes a file.
 """
@@ -65,10 +78,10 @@ from src.training.sweep_select import (LAMBDA_SELECTION_REL, SHORTFALL_CODES,  #
 KEY = "lambda_logit"
 
 
-def select(runs, out: Path, rules_path=None, decision_record=None, write_record=None) -> dict:
+def select(runs, out: Path, rules_path=None, decision_record=None, write_record=None, corrects=None) -> dict:
     state = derive_sweep(KEY, runs, script_path=Path(__file__), rules=rules_path, decision_record=decision_record)
     if write_record is not None:
-        sha, rec = write_decision_record(state, Path(write_record))
+        sha, rec = write_decision_record(state, Path(write_record), corrects)
         return {"decision_record_written": str(write_record), "sha256": sha, "record": rec}
     settled = settle(state, decision_record)
     sweep = state["sweep"]
@@ -104,14 +117,25 @@ def main(argv=None) -> int:
     ap.add_argument("--rules", default=None, help="a committed rule file (default configs/sweep_rules.json)")
     ap.add_argument("--decision-record", default=None,
                     help="a committed decision record (default reports/derived/lambda_decision_record.json, "
-                         "read when present)")
+                         "read when present; the corrected record: "
+                         "reports/derived/lambda_decision_record_corrected.json)")
     ap.add_argument("--write-decision-record", default=None, metavar="PATH",
                     help="derive the decision record after the end of the decision date and write it to PATH "
                          "(no selection)")
+    ap.add_argument("--corrects", default=None, metavar="VOID_RECORD",
+                    help="with --write-decision-record and --fault-report: write a corrected record that replaces "
+                         "this committed void record (AM-19a reading 19)")
+    ap.add_argument("--fault-report", default=None, metavar="REPORT",
+                    help="with --corrects: the committed AM-8a fault report written before the correction")
     a = ap.parse_args(argv)
     out = Path(a.out) if a.out else ss.GIT_ROOT / LAMBDA_SELECTION_REL
+    corrects = None if a.corrects is None else (a.corrects, a.fault_report)
     try:
-        doc = select(a.runs, out, a.rules, a.decision_record, a.write_decision_record)
+        if (a.corrects is None) != (a.fault_report is None) \
+                or (corrects is not None and a.write_decision_record is None):
+            raise SelectionRefused("decision_record_correction_invalid", "--corrects and --fault-report go together, "
+                                                                         "and only with --write-decision-record")
+        doc = select(a.runs, out, a.rules, a.decision_record, a.write_decision_record, corrects)
     except SelectionRefused as e:
         print(f"REFUSED [{e.code}]: {e}", file=sys.stderr)
         print(f"RESULT: REFUSED ({e.code})")
@@ -122,9 +146,15 @@ def main(argv=None) -> int:
         return UNEXPECTED_ERROR_EXIT
     if "decision_record_written" in doc:
         cut = [f"{v['value']:g}" for v in doc["record"]["values"] if v["status"] == "cut"]
+        cor = doc["record"]["corrects"]
+        rel = ss.DECISION_RECORD_REL["lambda_logit"] if cor is None else ss.DECISION_RECORD_CORRECTED_REL["lambda_logit"]
+        todo = (f"review it, commit it as {rel} and push it within 24 hours, and enter its sha256 in the decision "
+                "log: AM-19 item 2(h)" if cor is None else
+                f"it corrects the void record {cor['void_record']['path']} ({cor['void_code']}): review it, commit it "
+                f"as {rel} and push it, enter its sha256 in the decision log beside the void record's and the fault "
+                f"report's, and pass --decision-record {rel}: AM-19a reading 19")
         print(f"RESULT: DECISION RECORD written {doc['decision_record_written']} sha256 {doc['sha256']} (cut "
-              f"[{', '.join(cut)}]; review it, commit and push it within 24 hours and enter its sha256 in the "
-              "decision log: AM-19 item 2(h))")
+              f"[{', '.join(cut)}]; {todo})")
         return 0
     for line in doc["rule_trace"]:
         print(f"  {line}")

@@ -21,6 +21,27 @@ row exists), `not_launched` (a start that wrote no run_meta) and `stopped` (a la
 without a trainer record). A grid value's attempts are its launch lines in log order (PL-9). Each supplied
 run directory has exactly one launch line and one launched line and agrees with them (PL-14).
 
+Push evidence (AM-19a reading 10; PL-17(c)): reports/derived/lambda_selection_push.json, GitHub's activity
+response saved verbatim on the day the lambda selection file was pushed, and reports/derived/
+lambda_selection_push_list.json, committed with it: for each push after T_lo, whether its commit carries the
+file, settled then by fetching it, with the remote's answer. Both are settled once: one commit adds them, once,
+and neither changes afterwards. Branch deletions are not counted as pushes; a push the list marks as not
+served counts as carrying the file and is named in the alpha basis; a push after T_lo the list lacks refuses;
+wherever the clone holds a pushed commit, served or not, the list is checked against it.
+
+Decision record (AM-19 item 2(h); AM-19a reading 19): committed at reports/derived/<sweep>_decision_record.json,
+written from a launch-log prefix (its lines and sha256) and checked against those lines: a later launch line of
+the default does not void it, a later launch line of a non-default value refuses. Its decision date and cutoff
+must equal the derived ones (the alpha basis is not compared). A record the checks refuse for another reason is
+void, kept and never edited; one corrected record replaces it, written once to
+reports/derived/<sweep>_decision_record_corrected.json after the AM-8a fault report, naming both, with the
+sha256 of the void record, of the fault report and of the corrected record in the decision log. A record at any
+other path and a void record whose later non-default launch lines refuse are decision_record_correction_invalid;
+the writer refuses a second record at either path (decision_record_correction_invalid). Written once means one
+commit adds the file and no other commit changes or deletes it: any later change of a committed record, a
+deletion or an identical restore included, makes it decision_record_rewritten (a second correction written over
+the first too), and no correction lifts that refusal (the void record must be written once as well).
+
 A candidate directory: only these files are opened:
   <stage>_run_meta.jsonl     exactly one row: mode real, the sweep's seed, stage and terms, max_iters
                              equal to the sweep's iterations, the swept value, the current Logit-KD
@@ -36,8 +57,8 @@ A candidate directory: only these files are opened:
 Any input path with a component named `test` is refused. A file that cannot be parsed is refused by
 name (never a traceback), except a torn last telemetry line, which marks a run that did not finish.
 
-Status of a grid value (AM-19 item 2, with the readings R1-R10 of the K2 audit; DL-53 as amended). C is
-the end of the sweep's decision date (24:00 Asia/Manila); a timestamp meets the date when it is earlier.
+Status of a grid value (AM-19 item 2, with the readings of AM-19a, DL-86; DL-53 as amended). C is the end
+of the sweep's decision date (24:00 Asia/Manila); a timestamp meets the date when it is earlier.
   finished   a run_end record with its checks passed (the last train row at max_iters; iter =
              max_iters; best_val_miou_all_class finite in [0, 1]), the run passing every check of the
              selection; for a non-default candidate after C, its wall_clock_end meets the date. Finished
@@ -65,18 +86,19 @@ Refusal codes (exit 2 in the select scripts), besides the format, consistency an
                               recipe_mismatch_across_candidates first) and, for alpha, once every supplied
                               run shares the selection's lambda (K8-2(a)): a diverged default run at another
                               lambda reads as lambda_mismatch.
-  default_aborted_twice       the default candidate ended the same way twice (AM-19 item 3(a)): a STOP that
-                              a new amendment settles.
+  default_aborted_twice       the default candidate's latest attempt ended the same way as an earlier one
+                              (AM-19 item 3(a); AM-19a reading 9): a STOP that a new amendment settles.
   run_aborted_other           a run_abort that is not a student divergence (another rule, a non-finite
                               input or teacher output), or a train row flagged `nonfinite` (or a val row
                               whose all-class mIoU is) with no run_abort after it (the abort record is
                               missing or torn). Before C, and for the default: STOP: investigate; AM-8a
                               governs a repeat; never excluded, never a shortfall. After C a non-default
-                              candidate in that state is cut. A non-default value whose last two attempts
-                              ended the same way (R9) is not repeated again: it waits before C (exit 3; K2
-                              interpretation 13) and is cut after it. Before C it also waits, not refused,
-                              while the attempt before its latest is incomplete and could still end the
-                              same way (interpretation 15; _twice_undecided).
+                              candidate in that state is cut. A non-default value whose latest attempt ended
+                              the same way as any earlier attempt of the value (AM-19a reading 9: the attempts
+                              between them, a stopped one included, change nothing) is not repeated again:
+                              it waits before C (exit 3; AM-19a reading 17) and is cut after it. Before C it
+                              also waits, not refused, while an earlier attempt of the value is incomplete and
+                              could still end the same way (AM-19a reading 18; _twice_undecided).
   abort_record_invalid        a run_abort record that is malformed, is not the last telemetry row, is
                               accompanied by a run_end, is not at the last train iteration, or is an
                               AM-7 record the trainer cannot have written:
@@ -94,7 +116,8 @@ Refusal codes (exit 2 in the select scripts), besides the format, consistency an
                                 the train row at the abort iteration.
   recipe_mismatch             a run_meta that violates RECIPE_EXPECT or lacks a RECIPE_IDENTICAL value
                               (candidate-level); recipe_mismatch_across_candidates: candidates whose
-                              RECIPE_IDENTICAL values differ (sweep-level, before and after C; R5).
+                              RECIPE_IDENTICAL values differ (sweep-level, before and after C; AM-19a
+                              reading 5).
 
 Tie arithmetic. "Within the band of the best" is inclusive (best - value <= band) and is evaluated in
 decimal on the recorded values (Decimal(repr(x))), so an exact 0.5 pp gap between two recorded values
@@ -130,8 +153,12 @@ BAND_REL = "reports/derived/dl27_band.json"
 LAMBDA_SELECTION_REL = "reports/derived/lambda_selection.json"
 ALPHA_SELECTION_REL = "reports/derived/alpha_selection.json"
 PUSH_EVIDENCE_REL = "reports/derived/lambda_selection_push.json"
+PUSH_LIST_REL = "reports/derived/lambda_selection_push_list.json"      # AM-19a reading 10: committed with it
 DECISION_RECORD_REL = {"lambda_logit": "reports/derived/lambda_decision_record.json",
                        "alpha_cwd": "reports/derived/alpha_decision_record.json"}
+# AM-19a reading 19: the one corrected record of a sweep, written once to its own new file
+DECISION_RECORD_CORRECTED_REL = {"lambda_logit": "reports/derived/lambda_decision_record_corrected.json",
+                                 "alpha_cwd": "reports/derived/alpha_decision_record_corrected.json"}
 SWEEP_SELECT_REL = "src/training/sweep_select.py"
 DISTILL_REL = "configs/distill.py"
 SELECT_SCRIPT_REL = {"lambda_logit": "scripts/select_lambda.py", "alpha_cwd": "scripts/select_alpha.py"}
@@ -164,7 +191,8 @@ SWEEP_LEVEL_CODES = (
     "decision_record_missing", "decision_record_uncommitted", "decision_record_format",
     "decision_record_not_in_decision_log", "decision_record_schedule_mismatch",
     "decision_record_status_mismatch", "decision_record_hash_mismatch", "decision_record_launch_log_mismatch",
-    "decision_record_runs_unended", "decision_date_not_ended",
+    "decision_record_runs_unended", "decision_record_correction_invalid", "decision_record_rewritten",
+    "decision_date_not_ended",
     "repeat_report_missing", "repeat_report_mismatch", "repeat_after_end", "repeat_after_aborted_twice",
     "repeat_overlap",
     "clock_inconsistent", "lambda_push_evidence_missing", "lambda_push_evidence_mismatch",
@@ -214,6 +242,12 @@ RULE_PINS = {
 LAUNCH_LOG_FORMAT = "kd_launch_log/1"
 SCHEDULE_FORMAT = "kd_schedule/1"
 RECORD_FORMAT = "sweep_decision_record/1"
+# AM-19a reading 10: the push list committed with the activity response (scripts/preflight_distill.py writes it)
+PUSH_LIST_FORMAT = "lambda_push_list/1"
+PUSH_LIST_KEYS = ("format", "response", "lambda_selection", "adding_commit", "t_lo_utc", "remote", "pushes")
+PUSH_ENTRY_KEYS = ("id", "ref", "before", "after", "timestamp", "activity_type", "served", "carries_file",
+                   "remote_answer")
+BRANCH_DELETION = "branch_deletion"      # GitHub's activity_type for a deleted branch: it pushes no commit
 LAUNCH_KEYS = ("format", "event", "run_id", "stage", "seed", "horizon", "sweep", "value", "lambda_logit",
                "alpha_cwd", "attempt", "schedule", "code_pin", "ckpt_dir", "am8a_report")
 EVENT_KEYS = {"launched": ("event", "run_id", "run_meta_sha256", "launch_time_utc", "git_head",
@@ -1346,8 +1380,8 @@ def _interpret_ending(run: Run, sweep: dict) -> None:
 
 
 def straddle_fault(run: Run, cutoff):
-    """PL-10, R4: for a non-default attempt, a timestamp earlier than C that follows, in file order, one at
-    or after C. Other backsteps are only counted (clock_backsteps, max_backstep_seconds)."""
+    """PL-10, AM-19a reading 4: for a non-default attempt, a timestamp earlier than C that follows, in file
+    order, one at or after C. Other backsteps are only counted (clock_backsteps, max_backstep_seconds)."""
     if cutoff is None:
         return None
     seen = False
@@ -1479,12 +1513,13 @@ def missing_grid_values(cands: list[dict], sweep: dict) -> list[float]:
 
 # ------------------------------------------------------------------------- AM-19 item 2 statuses
 def on_course(run: Run, cutoff, max_iters: int) -> tuple[bool, dict]:
-    """PL-7, R3: a stopped attempt was on course iff t_last + remaining iterations x median(iter_seconds) +
-    remaining validations x max(val_seconds) < C, in Decimal(repr()), from its own rows only (all earlier
-    than C, no run_end, no run_abort). t_last is its last row's timestamp; the remaining iterations are
-    max_iters minus its last train iteration; the remaining validations are the validation points (every
-    multiple of the VAL interval and max_iters, each once) with no VAL row. No train row or no VAL row: not
-    on course; nor is a run whose last row has no finite timestamp or a VAL row whose iter is no integer."""
+    """PL-7, AM-19a reading 3: a stopped attempt was on course iff t_last + remaining iterations x
+    median(iter_seconds) + remaining validations x max(val_seconds) < C, in Decimal(repr()), from its own
+    rows only (all earlier than C, no run_end, no run_abort). t_last is its last row's timestamp; the
+    remaining iterations are max_iters minus its last train iteration; the remaining validations are the
+    validation points (every multiple of the VAL interval and max_iters, each once) with no VAL row. No train
+    row or no VAL row: not on course; nor is a run whose last row has no finite timestamp or a VAL row whose
+    iter is no integer."""
     trains = [r for r in run.rows if r.get("event") == "train"]
     vals = [r for r in run.rows if r.get("event") == "val"]
     if not trains or not vals:
@@ -1531,7 +1566,8 @@ def stopped_early(att: Attempt, cutoff, later: list) -> tuple[bool, dict]:
 
 
 def _same_ending(p: Run | None, q: Run | None) -> bool:
-    """R9: the same (rule, cause) of an abort that is no student divergence, or a failed check twice."""
+    """AM-19a reading 9: the same (rule, cause) of an abort that is no student divergence, or a failed check
+    twice."""
     if p is None or q is None or p.ending is None or q.ending is None:
         return False
     a, b = p.ending, q.ending
@@ -1541,33 +1577,38 @@ def _same_ending(p: Run | None, q: Run | None) -> bool:
 
 
 def _aborted_twice(atts: list, a: Attempt) -> bool:
-    """PL-9(b): `a` ends the same way as the launched attempt before it."""
+    """PL-9(b) with AM-19a reading 9: `a` ends the same way as any earlier launched attempt of its value; the
+    attempts between them, a stopped one included, change nothing."""
     launched = [x for x in atts if x.launched is not None]
     i = launched.index(a)
-    return i > 0 and _same_ending(launched[i - 1].run, a.run)
+    return any(_same_ending(p.run, a.run) for p in launched[:i])
 
 
 def _twice_undecided(atts: list, a: Attempt) -> Attempt | None:
-    """K2 interpretation 15 with PL-9(b): the attempt p before `a` (the last earlier one without a not_launched
-    line) when it is incomplete (no launched line yet, its run directory not supplied, or no telemetry yet)
-    and some completion of it could make `a`'s ending its second same one without another refusal; None
-    otherwise. None, too, when `a`'s launch line names no AM-8a report (p launched would be
-    repeat_report_missing); when p is supplied with a stopped line (a stopped run writes no further row, so its
-    telemetry is final); when p has a stopped line and `a` ended in a trainer record (a stopped run has none);
-    and when the attempt before p is complete and ended as `a` did (p ending so too would be
-    repeat_after_aborted_twice; with p pending, `a` already follows that attempt in _aborted_twice)."""
-    prior = [x for x in atts[:atts.index(a)] if x.not_launched is None]
-    if not prior or a.line["am8a_report"] is None:
+    """AM-19a reading 18 with readings 9 and 17: `a`, a non-default value's latest attempt, ended in an abort or
+    a failed check that no complete earlier attempt shares; before C the value waits, not refused, while an
+    earlier attempt p (one without a not_launched line) is incomplete (no launched line yet, its run directory
+    not supplied, or no telemetry yet) and some completion of it could make `a`'s ending its second same one.
+    Returns the first such p in launch order, None otherwise. None when `a`'s launch line names no AM-8a report
+    (p launched would be repeat_report_missing; p not launched changes nothing). A p with no launched line is
+    passed over when an attempt after it, up to and including `a`, names no AM-8a report: p launched would make
+    that attempt repeat_report_missing, so no completion of p waits (AM-19a reading 18). A p supplied with a
+    stopped line is complete (a stopped run writes no further row); a p with a stopped line cannot end as `a`
+    did when `a` ended in a trainer record (a stopped run has none)."""
+    if a.line["am8a_report"] is None:
         return None
-    p = prior[-1]
-    if p.run is not None and (p.run.missing is None or p.stopped is not None):
-        return None
-    if p.stopped is not None and a.run.raw_end:
-        return None
-    q = prior[-2] if len(prior) > 1 else None
-    if q is not None and q.run is not None and _same_ending(q.run, a.run):
-        return None
-    return p
+    i = atts.index(a)
+    for k, p in enumerate(atts[:i]):
+        if p.not_launched is not None:
+            continue
+        if p.run is not None and (p.run.missing is None or p.stopped is not None):
+            continue
+        if p.stopped is not None and a.run.raw_end:
+            continue
+        if p.launched is None and any(x.line["am8a_report"] is None for x in atts[k + 1:i + 1]):
+            continue
+        return p
+    return None
 
 
 def _twice_label(run: Run) -> str:
@@ -1586,7 +1627,7 @@ def _status(status: str, *, value: float, attempt: Attempt | None = None, reason
             running: Attempt | None = None, repeat_of: Attempt | None = None) -> dict:
     """A grid value's status. on_course: every on-course evaluation made for the value after C (PL-7,
     recorded with its inputs; None before C and for the default); running: the on-course repeat that is
-    still running (write_decision_record excepts it, R7); repeat_of: the on-course stop s whose repeat
+    still running (write_decision_record excepts it, AM-19a reading 7); repeat_of: the on-course stop s whose repeat
     decided the status (AM-19 item 2(b): the repeat's VAL rows are reported beside the stopped run's)."""
     return {"status": status, "value": value, "attempt": attempt, "reason": reason, "code": code,
             "refusal": refusal, "on_course": on_course_inputs, "running": running, "repeat_of": repeat_of}
@@ -1624,28 +1665,29 @@ def resolve_latest(value: float, atts: list, *, default: bool, cutoff) -> dict:
         if default:
             return _status("aborted_twice", value=value, attempt=a, reason=label, refusal=SelectionRefused(
                 "default_aborted_twice", f"the default candidate = {value:g} ({a.run_id}) ended the same way as "
-                                         f"its repeat ({label}): a STOP that a new amendment settles (AM-19 item "
-                                         "3(a)); no selection is made"))
-        # K2 interpretation 13: not a refusal before C (a refusal invites a repeat PL-9(b) refuses); it waits
+                                         f"an earlier attempt ({label}): a STOP that a new amendment settles "
+                                         "(AM-19 item 3(a); AM-19a reading 9); no selection is made"))
+        # AM-19a reading 17: not a refusal before C (a refusal invites a repeat PL-9(b) refuses); it waits
         return _status("waiting", value=value, attempt=a, reason=f"{a.run_id}: {label}: not repeated again; cut "
-                                                                 "once the decision date has ended (AM-19 item 3(a))")
+                                                                 "once the decision date has ended (AM-19 item 3(a); "
+                                                                 "AM-19a readings 9 and 17)")
     p = None if default else _twice_undecided(atts, a)
     if p is not None:
-        # K2 interpretations 13 and 15: a refusal only when the complete log would refuse too; with the attempt
-        # before it incomplete, this ending may yet be its second same one, which waits
+        # AM-19a readings 17 and 18: a refusal only when the complete log would refuse too; with an earlier
+        # attempt incomplete, this ending may yet be its second same one, which waits
         why = "has no launched line yet" if p.launched is None else ("is not supplied" if p.run is None
                                                                       else "has no telemetry yet")
         return _status("waiting", value=value, attempt=a, code="candidate_missing" if p.run is None else p.run.missing,
-                       reason=f"{a.run_id}: {_ending_reason(run)}; the attempt before it ({p.run_id}) {why}, so "
-                              "whether it ended the same way is not known yet (K2 interpretation 15; PL-9(b))")
+                       reason=f"{a.run_id}: {_ending_reason(run)}; an earlier attempt ({p.run_id}) {why}, so "
+                              "whether it ended the same way is not known yet (AM-19a readings 9, 17 and 18)")
     return _status("refused", value=value, attempt=a, refusal=run.end_refusal)
 
 
 def _on_course_stops(atts: list, cutoff, max_iters: int) -> tuple[list, Attempt | None]:
-    """PL-7, R7: (the on-course evaluations of a value's stops in launch order, up to the first one on course;
-    that stop s, or None). A stop is an attempt launched before C whose run is supplied, has no candidate-level
-    fault, is written, and has no trainer record (no run_end, no run_abort, no row an abort writes) and no row
-    at or after C."""
+    """PL-7, AM-19a reading 7: (the on-course evaluations of a value's stops in launch order, up to the first
+    one on course; that stop s, or None). A stop is an attempt launched before C whose run is supplied, has no
+    candidate-level fault, is written, and has no trainer record (no run_end, no run_abort, no row an abort
+    writes) and no row at or after C."""
     evaluated: list = []
     for s in atts:
         rs = s.run
@@ -1662,12 +1704,14 @@ def _on_course_stops(atts: list, cutoff, max_iters: int) -> tuple[list, Attempt 
 def resolve_after_cutoff(value: float, atts: list, cutoff, max_iters: int) -> dict:
     """PL-9(e): a non-default value's status of record once the decision date has ended. (1) finished, if
     an attempt launched before C is finished at C; (2) diverged, if the latest attempt launched before C
-    has a valid divergence record that meets C; (3) the on-course exception, once per value (R7): s is the
-    first attempt launched before C that ended before C with no trainer record (no run_end, no run_abort,
-    no row an abort writes, no row at or after C) while on course; its repeat r, read without a cutoff,
-    decides (finished, diverged, cut for a stop, a later attempt or its own ending, else waiting while it
-    has no ending, its telemetry not yet written included); (4) otherwise cut, with the reason of the
-    latest attempt launched before C. Every on-course evaluation is kept with its inputs (PL-7)."""
+    has a valid divergence record that meets C; (3) the on-course exception, once per value (AM-19a reading
+    7): s is the first attempt launched before C that ended before C with no trainer record (no run_end, no
+    run_abort, no row an abort writes, no row at or after C) while on course; its repeat r, read without a
+    cutoff, decides (finished, diverged, cut for a stop, a later attempt or its own ending, else waiting while
+    it has no ending, its telemetry not yet written included), and when the value's latest attempt, after r, ended
+    before C the same way as an earlier attempt (AM-19a readings 9 and 17), each cut of (3) takes that ending twice
+    as its reason; (4) otherwise cut, with the reason of the latest attempt launched before C. Every on-course
+    evaluation is kept with its inputs (PL-7)."""
     evaluated: list = []
     before = [a for a in atts if a.launched is not None and a.launch_ts < cutoff]
     if not before:
@@ -1691,17 +1735,22 @@ def resolve_after_cutoff(value: float, atts: list, cutoff, max_iters: int) -> di
                                                                      "is waited for once (AM-19 item 2(b))",
                            on_course_inputs=evaluated)
         rr = rep.run
+        # AM-19a reading 17: when the value's latest attempt, after r, ended before C the same way as an earlier one,
+        # every cut of (3) takes that ending twice as its reason (r is read without a cutoff, reading 7; the attempts
+        # after it are not)
+        twice = _latest_twice(atts, rep, cutoff)
         fault = run_fault(rr, None)
         if fault is not None:
-            return _status("cut", value=value, attempt=rep, reason=fault.code, on_course_inputs=evaluated,
+            return _status("cut", value=value, attempt=rep, reason=twice or fault.code, on_course_inputs=evaluated,
                            repeat_of=s)
         if rr.missing is None and rr.ending is not None and rr.ending["kind"] in ("finished", "diverged"):
             return _status(rr.ending["kind"], value=value, attempt=rep, on_course_inputs=evaluated, repeat_of=s)
-        if rr.missing is None and rr.ending is not None:
-            return _status("cut", value=value, attempt=rep, reason=_ending_reason(rr), on_course_inputs=evaluated,
+        if rr.missing is None and rr.ending is not None:      # AM-19a reading 9: against every earlier attempt
+            reason = _twice_label(rr) if _aborted_twice(atts, rep) else _ending_reason(rr)
+            return _status("cut", value=value, attempt=rep, reason=twice or reason, on_course_inputs=evaluated,
                            repeat_of=s)
         if rep.stopped is not None or later.index(rep) < len(later) - 1:
-            return _status("cut", value=value, attempt=rep, reason="on_course_repeat_stopped",
+            return _status("cut", value=value, attempt=rep, reason=twice or "on_course_repeat_stopped",
                            on_course_inputs=evaluated, repeat_of=s)
         return _status("waiting", value=value, attempt=rep, reason=f"{rep.run_id}: the on-course repeat of "
                                                                    f"{s.run_id} is still running (AM-19 item "
@@ -1709,6 +1758,20 @@ def resolve_after_cutoff(value: float, atts: list, cutoff, max_iters: int) -> di
                        running=rep, repeat_of=s)
     return _status("cut", value=value, attempt=last, reason=_cut_reason(atts, last, cutoff),
                    on_course_inputs=evaluated)
+
+
+def _latest_twice(atts: list, rep: Attempt, cutoff) -> str | None:
+    """AM-19a reading 17 in the on-course path (3): the value's latest launched attempt, when it is not the
+    on-course repeat `rep` and it ended before C (a trainer record that meets C, with no fault under the cutoff, so
+    it also launched before C) the same way as an earlier attempt (reading 9): that ending twice. None otherwise:
+    an ending at or after C changes nothing (AM-19 item 2(b); reading 14)."""
+    lastl = [x for x in atts if x.launched is not None][-1]
+    lr = lastl.run
+    if lastl is rep or lr is None or run_fault(lr, cutoff) is not None or lr.missing is not None \
+            or lr.ending is None or lr.ending["kind"] in ("finished", "diverged") \
+            or not meets(lr.ending["ts"], cutoff) or not _aborted_twice(atts, lastl):
+        return None
+    return _twice_label(lr)
 
 
 def _cut_reason(atts: list, last: Attempt, cutoff) -> str:
@@ -1773,9 +1836,11 @@ def check_run_against_log(src: HeadSource, a: Attempt, key: str, log_at: dict) -
 def check_repeats(atts: dict, key: str) -> None:
     """PL-9, sweep-level at any time (never a cut): two final attempts (finished or validly diverged) of one
     value (duplicate_candidate); an attempt after a final one (repeat_after_end: a run_end with its checks
-    passed, or a valid divergence; R1); an attempt after a launched attempt without its AM-8a report
-    (repeat_report_missing); an attempt launched not later than the previous launched attempt's last row
-    (repeat_overlap); an attempt after one that ended the same way as its repeat (repeat_after_aborted_twice)."""
+    passed, or a valid divergence; AM-19a reading 1); an attempt after a launched attempt without its AM-8a
+    report (repeat_report_missing); an attempt launched not later than the previous launched attempt's largest
+    timestamp (repeat_overlap; AM-19a reading 12); an attempt after one that ended the same way as any earlier launched
+    attempt of its value (repeat_after_aborted_twice; AM-19a reading 9: the attempts between them change
+    nothing)."""
     def final(a):
         return a.run is not None and a.run.ending is not None and a.run.ending["kind"] in ("finished", "diverged")
 
@@ -1792,7 +1857,7 @@ def check_repeats(atts: dict, key: str) -> None:
                 raise SelectionRefused("repeat_after_end", f"{a.run_id} ({key} = {v:g}) ended in {what}, and a later "
                                                            f"attempt {lst[i + 1].run_id} has a launch line: a "
                                                            "finished or diverged candidate is final and is never "
-                                                           "repeated (AM-19 items 2(b) and 2(h); R1)")
+                                                           "repeated (AM-19 items 2(b) and 2(h); AM-19a reading 1)")
     for v, lst in atts.items():
         prior = False
         for a in lst:
@@ -1804,34 +1869,40 @@ def check_repeats(atts: dict, key: str) -> None:
     for v, lst in atts.items():
         launched = [a for a in lst if a.launched is not None]
         for p, q in zip(launched, launched[1:]):
-            if p.run is None:
-                continue
-            last = max(p.run.timestamps(), default=p.launch_ts)
+            # AM-19a reading 12: the largest timestamp of p. A withheld p: its launched line gives its launch time, one
+            # of its timestamps, so its largest timestamp is no earlier (reading 18: every completion refuses when q
+            # launched no later)
+            last = p.launch_ts if p.run is None else max(p.run.timestamps(), default=p.launch_ts)
             if q.launch_ts <= last:
+                what = ("the largest timestamp" if p.run is not None
+                        else "the launch time (its directory is not supplied)")
                 raise SelectionRefused("repeat_overlap", f"{q.run_id} launched at {iso_utc(q.launch_ts)}, not after "
-                                                         f"the last row of {p.run_id} ({iso_utc(last)}): a repeat "
-                                                         "starts after the attempt it repeats has stopped (PL-9(d))")
+                                                         f"{what} of {p.run_id} ({iso_utc(last)}): a repeat starts "
+                                                         "after the attempt it repeats has stopped (AM-19a reading "
+                                                         "12; PL-9(d))")
     for v, lst in atts.items():
         launched = [a for a in lst if a.launched is not None]
-        for p, q in zip(launched, launched[1:]):
+        for j, q in enumerate(launched):
+            p = next((x for x in launched[:j] if _same_ending(x.run, q.run)), None)
             i = lst.index(q)
-            if _same_ending(p.run, q.run) and i < len(lst) - 1:
+            if p is not None and i < len(lst) - 1:
                 raise SelectionRefused("repeat_after_aborted_twice", f"{lst[i + 1].run_id} follows {q.run_id}, which "
                                                                      f"ended the same way as {p.run_id} "
                                                                      f"({_twice_label(q.run)}): such a run is not "
-                                                                     "repeated again (AM-19 item 3(a); PL-9(b))")
+                                                                     "repeated again (AM-19 item 3(a); PL-9(b); "
+                                                                     "AM-19a reading 9)")
 
 
 def check_recipe_across(cands: list[dict]) -> None:
     """Q3 and PL-11: the finished and diverged candidates' RECIPE_IDENTICAL values agree, before a
-    divergence is read; a difference is never attributed to one candidate (R5)."""
+    divergence is read; a difference is never attributed to one candidate (AM-19a reading 5)."""
     for field in ("num_workers", "teacher_ckpt_sha256", "teacher_config_sha256", "teacher_model_cfg_sha256"):
         seen = {repr(c[field]) for c in cands}
         if len(seen) > 1:
             raise SelectionRefused("recipe_mismatch_across_candidates",
                                    f"the candidates differ in {field}: {sorted(seen)} (a sweep's runs share one "
                                    "value; the difference refuses the sweep and is never attributed to one "
-                                   "candidate, R5)")
+                                   "candidate, AM-19a reading 5)")
 
 
 def check_shared_lambda(atts: dict, lam: float) -> None:
@@ -1910,76 +1981,216 @@ def alpha_inputs(src: HeadSource, sweep: dict, atts: dict, *, band=None, lambda_
 
 def adding_commit(src: HeadSource, rel: str) -> str | None:
     """The commit that added `rel` with its blob at the source's records_ref (HEAD; the records commit at
-    the gate): present there with that blob and absent in each parent."""
-    ref = src.records_ref
-    head_blob = src.blob_at(ref, rel)
+    the gate): present there with that blob and absent in each parent, a merge commit included
+    (_adding_commits); the newest such commit."""
+    head_blob = src.blob_at(src.records_ref, rel)
     if head_blob is None:
         return None
-    out = src._out("log", "--full-history", "--no-renames", "--diff-filter=A", "--format=%H", ref, "--", rel)
-    for c in (out or "").split():
-        if src.blob_at(c, rel) != head_blob:
-            continue
-        parents = (src._out("rev-list", "--parents", "-n", "1", c) or "").split()[1:]
-        if all(src.blob_at(p, rel) is None for p in parents):
-            return c
-    return None
+    return next((c for c in _adding_commits(src, rel) if src.blob_at(c, rel) == head_blob), None)
+
+
+def _path_history(src: HeadSource, rel: str) -> list:
+    """[(commit, [parents])] of every commit `git log --full-history` lists for `rel` in the history of the source's
+    records_ref, newest first: each one not TREESAME to some parent, merges included (no parent rewriting, so the
+    parents are the commit's own)."""
+    out = src._out("log", "--full-history", "--no-renames", "--format=%H %P", src.records_ref, "--", rel)
+    return [(c, parents) for c, *parents in (ln.split() for ln in (out or "").splitlines() if ln.strip())]
+
+
+def _adding_commits(src: HeadSource, rel: str) -> list:
+    """Every commit in the history of the source's records_ref that added `rel`: present in the commit and absent
+    in each parent (a merge that brings the file from a parent adds nothing; a merge that holds it while no parent
+    does adds it). Newest first."""
+    return [c for c, parents in _path_history(src, rel)
+            if src.blob_at(c, rel) is not None and all(src.blob_at(p, rel) is None for p in parents)]
+
+
+def _activity_times(entries: list, *, what: str) -> list:
+    """[(entry, timestamp)] of an activity response, every entry."""
+    try:
+        return [(e, parse_activity_time(e.get("timestamp"))) for e in entries]
+    except ValueError as err:
+        raise SelectionRefused("lambda_push_evidence_mismatch", f"{what}: an entry's timestamp ({err})") from err
+
+
+def _activity_pushes(timed: list) -> list:
+    """The entries that push a commit: every entry but a branch deletion (AM-19a reading 10: a deletion pushes
+    no commit and is not counted)."""
+    return [(e, t) for e, t in timed if e.get("activity_type") != BRANCH_DELETION]
+
+
+def activity_entries(data: bytes, what: str) -> list:
+    """A raw activity response: a non-empty JSON list of objects (lambda_push_evidence_mismatch otherwise)."""
+    entries = parse_json_bytes(data, what, code="lambda_push_evidence_mismatch")
+    if not isinstance(entries, list) or not entries or not all(isinstance(e, dict) for e in entries):
+        raise SelectionRefused("lambda_push_evidence_mismatch", f"{what} is not a raw activity response (a JSON list "
+                                                                "of entries)")
+    return entries
+
+
+def pushes_after(entries: list, t_lo: float, *, what: str) -> list:
+    """The entries the push list answers (AM-19a reading 10): every push (not a branch deletion) at or after
+    T_lo, in the response's order."""
+    return [e for e, t in _activity_pushes(_activity_times(entries, what=what)) if t >= t_lo]
+
+
+def push_list_doc(response: bytes, lambda_selection: bytes, commit: str, t_lo: float, remote: str,
+                  answers: dict) -> dict:
+    """AM-19a reading 10: the list committed with the activity response (scripts/preflight_distill.py
+    push-evidence writes it on the push day). One entry per push after T_lo (pushes_after), in the response's
+    order: answers[id] = {"served": bool, "carries_file": bool, "remote_answer": str}, settled by fetching the
+    pushed commit from the remote; a commit the remote does not serve counts as carrying the file. Checked here,
+    so that the push day refuses what push_evidence would refuse in the response and the list alone (the pair
+    is settled once and cannot be replaced): the arguments' types (T_lo a finite number, never a bool; the
+    commit is push_evidence's to check); the response's form; that it reaches back before T_lo; each push after
+    T_lo once (its id); an answer of the right form for each; every entry's form (lambda_push_evidence_mismatch).
+    The checks that need the clone (the commits that added the files, the lambda selection's adding commit, a held
+    commit against its answer, the earliest carrying push and its bounds) are push_evidence's."""
+    code = "lambda_push_evidence_mismatch"
+    if not (isinstance(response, bytes) and isinstance(lambda_selection, bytes) and isinstance(remote, str)
+            and isinstance(answers, dict) and _finite_number(t_lo)):
+        raise SelectionRefused(code, "the push list takes the response and the lambda selection as bytes, T_lo as a "
+                                     "finite number, the remote as a string and the answers as a mapping")
+    entries = activity_entries(response, "the activity response")
+    if not any(t < t_lo for _, t in _activity_times(entries, what="the activity response")):
+        raise SelectionRefused(code, f"the activity response: no entry is older than T_lo {iso_utc(t_lo)}: it does not "
+                                     "reach back far enough; fetch more of the activity before the list is made "
+                                     "(AM-19a reading 10)")
+    ids = [json.dumps(e.get("id")) for e in pushes_after(entries, t_lo, what="the activity response")]
+    if len(set(ids)) != len(ids):
+        raise SelectionRefused(code, "the activity response names a push after T_lo twice (its id): each push is "
+                                     "listed once")
+    pushes = []
+    for e in pushes_after(entries, t_lo, what="the activity response"):
+        ans = answers.get(e.get("id")) if _is_int(e.get("id")) else None
+        if not (isinstance(ans, dict) and isinstance(ans.get("served"), bool)
+                and isinstance(ans.get("carries_file"), bool) and isinstance(ans.get("remote_answer"), str)):
+            raise SelectionRefused(code, f"push {e.get('id')!r}: no answer {{served: bool, carries_file: bool, "
+                                         f"remote_answer: str}} ({ans!r})")
+        x = {**{k: e.get(k) for k in ("id", "ref", "before", "after", "timestamp", "activity_type")},
+             "served": ans["served"], "carries_file": True if not ans["served"] else ans["carries_file"],
+             "remote_answer": ans["remote_answer"]}
+        if not _push_entry_ok(x):
+            raise SelectionRefused(code, f"push {e.get('id')!r}: the entry {x} is not a list entry push_evidence "
+                                         "accepts (an int id, strings, a commit id after)")
+        pushes.append(x)
+    return {"format": PUSH_LIST_FORMAT, "response": {"path": PUSH_EVIDENCE_REL, "sha256": sha256_bytes(response)},
+            "lambda_selection": {"path": LAMBDA_SELECTION_REL, "sha256": sha256_bytes(lambda_selection)},
+            "adding_commit": commit, "t_lo_utc": t_lo, "remote": remote, "pushes": pushes}
+
+
+def _push_entry_ok(x) -> bool:
+    return (isinstance(x, dict) and sorted(x) == sorted(PUSH_ENTRY_KEYS) and _is_int(x["id"])
+            and all(isinstance(x[k], str) for k in ("ref", "before", "timestamp", "activity_type", "remote_answer"))
+            and isinstance(x["after"], str) and _COMMIT_ID.fullmatch(x["after"]) is not None
+            and isinstance(x["served"], bool) and isinstance(x["carries_file"], bool)
+            and (x["served"] or x["carries_file"]))
 
 
 def push_evidence(src: HeadSource, t_lo: float, t_hi) -> dict:
-    """PL-17(c): reports/derived/lambda_selection_push.json, the raw GitHub activity response committed on the
-    push day (PL-32). The commit that added the lambda selection file is pushed at the earliest timestamp
-    over all entries, of every ref, whose `after` has that commit as an ancestor; the response reaches
-    back before T_lo; an entry inside [T_lo, T_hi] whose `after` cannot be resolved refuses; pushed_at lies
-    in [T_lo, T_hi]. No committer time is compared."""
+    """PL-17(c) with AM-19a reading 10: reports/derived/lambda_selection_push.json, GitHub's activity response
+    saved verbatim on the push day (PL-32), and the list committed with it (PUSH_LIST_REL, push_list_doc). The
+    commit that added the lambda selection file reached the remote at the earliest timestamp over every
+    push, of any ref, that carries it (its commit is or descends from that commit). Branch deletions are not
+    counted as pushes (they still show how far back the response reaches). The response reaches back before
+    T_lo. The response and the list were settled once: one commit added both, each was added only once, and
+    neither has changed since. Each push after T_lo takes its status from the list, which must hold every such
+    push and nothing else: a push the remote did not serve when the list was made counts as carrying the file
+    and is named in the result (`unserved`, written to alpha_cutoff_basis). Wherever the clone holds a pushed
+    commit, served or not, the list's status is checked against it (the stricter reading: an unserved push
+    whose commit the clone holds and finds without the file refuses). A push before T_lo counts when the
+    clone holds it and it carries the file. pushed_at lies in [T_lo, T_hi]. No committer time and no local
+    clock is compared."""
+    code = "lambda_push_evidence_mismatch"
     rel, data = require_committed(PUSH_EVIDENCE_REL, src=src, missing="lambda_push_evidence_missing",
-                         uncommitted="lambda_push_evidence_mismatch")
-    entries = parse_json_bytes(data, rel, code="lambda_push_evidence_mismatch")
-    if not isinstance(entries, list) or not entries or not all(isinstance(e, dict) for e in entries):
-        raise SelectionRefused("lambda_push_evidence_mismatch", f"{rel} is not a raw activity response (a JSON list "
-                                                                "of entries)")
+                                  uncommitted=code)
+    entries = activity_entries(data, rel)
+    lrel, ldata = require_committed(PUSH_LIST_REL, src=src, missing="lambda_push_evidence_missing",
+                                    uncommitted=code)
+    lst = parse_json_bytes(ldata, lrel, code=code)
+    adds = {r: _adding_commits(src, r) for r in (PUSH_EVIDENCE_REL, PUSH_LIST_REL)}
+    if len(adds[PUSH_EVIDENCE_REL]) != 1 or adds[PUSH_LIST_REL] != adds[PUSH_EVIDENCE_REL] \
+            or any(src.blob_at(adds[r][0], r) != src.blob_at(src.records_ref, r) for r in adds):
+        raise SelectionRefused(code, f"{rel} and {lrel} were not added together in one commit, once, and left "
+                                     f"unchanged since (commits that added them: {adds}): the push evidence is "
+                                     "settled once, when the response is saved, and the list is committed with "
+                                     "it (AM-19a reading 10)")
     commit = adding_commit(src, LAMBDA_SELECTION_REL)
     if commit is None:
-        raise SelectionRefused("lambda_push_evidence_mismatch", f"no commit adds {LAMBDA_SELECTION_REL} with its "
-                                                                "HEAD blob (it changed after it was added)")
-    try:
-        times = [parse_activity_time(e.get("timestamp")) for e in entries]
-    except ValueError as e:
-        raise SelectionRefused("lambda_push_evidence_mismatch", f"{rel}: an entry's timestamp ({e})") from e
-    if not any(t < t_lo for t in times):
+        raise SelectionRefused(code, f"no commit adds {LAMBDA_SELECTION_REL} with its HEAD blob (it changed after "
+                                     "it was added)")
+    _, lsel = require_committed(LAMBDA_SELECTION_REL, src=src, missing="lambda_selection_missing",
+                                uncommitted="lambda_selection_uncommitted")
+    if not (isinstance(lst, dict) and sorted(lst) == sorted(PUSH_LIST_KEYS) and lst["format"] == PUSH_LIST_FORMAT
+            and _same(lst["response"], {"path": PUSH_EVIDENCE_REL, "sha256": sha256_bytes(data)})
+            and _same(lst["lambda_selection"], {"path": LAMBDA_SELECTION_REL, "sha256": sha256_bytes(lsel)})
+            and lst["adding_commit"] == commit and _same(lst["t_lo_utc"], t_lo) and isinstance(lst["remote"], str)
+            and isinstance(lst["pushes"], list) and all(_push_entry_ok(x) for x in lst["pushes"])):
+        raise SelectionRefused("lambda_push_evidence_mismatch", f"{lrel}: not the {PUSH_LIST_FORMAT} list of this "
+                                                                f"response (its sha256), of {LAMBDA_SELECTION_REL}, "
+                                                                f"of the commit {commit[:12]} that added it and of "
+                                                                f"T_lo {iso_utc(t_lo)} (AM-19a reading 10)")
+    timed = _activity_times(entries, what=rel)
+    if not any(t < t_lo for _, t in timed):
         raise SelectionRefused("lambda_push_evidence_mismatch", f"{rel}: no entry is older than T_lo "
                                                                 f"{iso_utc(t_lo)}: the response does not reach "
                                                                 "back far enough")
-    hits = []
-    for e, t in zip(entries, times):
+    pushes = _activity_pushes(timed)
+    listed = {x["id"]: x for x in lst["pushes"]}
+    after_lo = [e for e, t in pushes if t >= t_lo]
+    for e in after_lo:
+        x = listed.get(e.get("id")) if _is_int(e.get("id")) else None
+        if x is None or any(x[k] != e.get(k) for k in ("ref", "before", "after", "timestamp", "activity_type")):
+            raise SelectionRefused("lambda_push_evidence_mismatch", f"{lrel}: the push {e.get('id')!r} at "
+                                                                    f"{e.get('timestamp')} (after T_lo) is not in the "
+                                                                    "list made when the response was saved, or "
+                                                                    "differs from it (AM-19a reading 10)")
+    if len(listed) != len(lst["pushes"]) or sorted(listed) != sorted(e["id"] for e in after_lo):
+        raise SelectionRefused("lambda_push_evidence_mismatch", f"{lrel}: the list names pushes that are not the "
+                                                                "response's pushes after T_lo, each once")
+    hits, unserved = [], []
+    for e, t in pushes:
         after = e.get("after")
-        inside = t >= t_lo and (t_hi is None or t <= t_hi)
-        if not (isinstance(after, str) and _COMMIT_ID.fullmatch(after) and src.commit_exists(after)):
-            if inside:
-                raise SelectionRefused("lambda_push_evidence_mismatch", f"{rel}: entry {e.get('id')!r} at "
-                                                                        f"{e.get('timestamp')} lies inside the bounds "
-                                                                        f"and its after {after!r} cannot be resolved")
-            continue
-        if src.is_ancestor(commit, after):
+        held = isinstance(after, str) and _COMMIT_ID.fullmatch(after) is not None and src.commit_exists(after)
+        if t < t_lo:
+            carries = held and src.is_ancestor(commit, after)
+        elif not listed[e["id"]]["served"]:
+            if held and not src.is_ancestor(commit, after):
+                raise SelectionRefused(code, f"{lrel}: push {e['id']!r} ({after[:12]}) is listed as not served, so "
+                                             "it would count as carrying the file, and the clone holds its commit, "
+                                             "which does not carry it (AM-19a reading 10: the list is checked "
+                                             "wherever the clone holds the pushed commit)")
+            carries = True
+            unserved.append({"id": e["id"], "ref": e.get("ref"), "after": after, "timestamp": e.get("timestamp"),
+                             "remote_answer": listed[e["id"]]["remote_answer"]})
+        else:
+            carries = listed[e["id"]]["carries_file"]
+            if held and src.is_ancestor(commit, after) != carries:
+                raise SelectionRefused("lambda_push_evidence_mismatch", f"{lrel}: push {e['id']!r} ({after[:12]}): the "
+                                                                        f"list says carries_file={carries}, and the "
+                                                                        "clone's commit says otherwise")
+        if carries:
             hits.append((t, e))
     if not hits:
-        raise SelectionRefused("lambda_push_evidence_mismatch", f"{rel}: no entry's after contains {commit[:12]}")
+        raise SelectionRefused("lambda_push_evidence_mismatch", f"{rel}: no push carries {commit[:12]}")
     pushed_at, entry = min(hits, key=lambda h: h[0])
     if pushed_at < t_lo or (t_hi is not None and pushed_at > t_hi):
         raise SelectionRefused("lambda_push_evidence_mismatch", f"{rel}: the push at {iso_utc(pushed_at)} lies "
                                                                 f"outside [T_lo {iso_utc(t_lo)}, T_hi {iso_utc(t_hi)}]")
-    return {"path": rel, "sha256": sha256_bytes(data), "commit": commit, "pushed_at_utc": pushed_at,
-            "entry_id": entry.get("id"), "ref": entry.get("ref")}
+    return {"path": rel, "sha256": sha256_bytes(data), "list_path": lrel, "list_sha256": sha256_bytes(ldata),
+            "commit": commit, "pushed_at_utc": pushed_at, "entry_id": entry.get("id"), "ref": entry.get("ref"),
+            "unserved": unserved}
 
 
 def alpha_cutoff(src: HeadSource, calendar: str, *, lambda_doc: dict, default_attempts: list) -> dict:
-    """PL-17 (R10): the alpha decision date is the later of its calendar date and D + 3, D the Asia/Manila day
-    on which the commit that added reports/derived/lambda_selection.json reached the remote. T_lo = the
-    lambda selection's inputs_last_timestamp_utc - 60 s; T_hi = the launch time of the alpha default's
-    first launched line + 60 s, valid only if the lambda selection's blob at its records_commit equals the
-    one at the source's records_ref, HEAD for the selection and the records commit for the gate (absent
-    while no alpha default has launched). Basis (a): day(T_hi) + 3 <= the calendar date; (b)
-    otherwise day(T_lo) = day(T_hi), which is D; (c) otherwise the committed push evidence (push_evidence).
-    The gate uses the same function."""
+    """PL-17, AM-19a reading 10: the alpha decision date is the later of its calendar date and D + 3, D the
+    Asia/Manila day on which the commit that added reports/derived/lambda_selection.json reached the remote,
+    on any ref. T_lo = the lambda selection's inputs_last_timestamp_utc - 60 s; T_hi = the launch time of the
+    alpha default's first launched line + 60 s, valid only if the lambda selection's blob at its
+    records_commit equals the one at the source's records_ref, HEAD for the selection and the records commit
+    for the gate (absent while no alpha default has launched). Basis (a): day(T_hi) + 3 <= the calendar date;
+    (b) otherwise day(T_lo) = day(T_hi), which is D; (c) otherwise the committed push evidence and its list
+    (push_evidence). The gate uses the same function."""
     cal = date.fromisoformat(calendar)
     days = ALPHA_DECISION_DATE_RULE["lambda_selection_days"]
     t_in = lambda_doc.get("inputs_last_timestamp_utc") if isinstance(lambda_doc, dict) else None
@@ -2127,8 +2338,8 @@ def derive_sweep(key: str, runs, *, script_path, rules=None, band=None, lambda_s
     if d["status"] == "aborted_twice":
         raise d["refusal"]
     # PL-14 before C: a value with an attempt that is still incomplete waits (exit 3), after every refusal
-    # above (exit 2), each of which the complete log would refuse too (K2 interpretation 15; a non-default
-    # value's single abort or failed check waits instead while the attempt before it is incomplete and could
+    # above (exit 2), each of which the complete log would refuse too (AM-19a reading 18; a non-default
+    # value's single abort or failed check waits instead while an earlier attempt is incomplete and could
     # still end the same way, _twice_undecided).
     for v, (a, why) in pending.items():
         statuses[v] = _status("waiting", value=v, attempt=a, code="candidate_missing",
@@ -2150,21 +2361,91 @@ def alpha_sweep_cut(state: dict) -> bool:
 
 # ------------------------------------------------------------------------------ decision record
 _RECORD_KEYS = ("format", "sweep", "schedule", "decision_date", "cutoff_utc", "alpha_cutoff_basis",
-                "alpha_sweep_cut", "launch_log", "values", "never_launched")
+                "alpha_sweep_cut", "launch_log", "values", "never_launched", "corrects")
 _DIR_KEYS = ("run_id", "attempt", "launched", "launch_time_utc", "last_iter_before_cutoff", "run_meta_sha256",
              "telemetry_sha256", "best_json_sha256", "best_ckpt_sha256", "am8a_report_sha256",
              "stop_report_sha256")
+# AM-19a reading 19: a corrected record names the void record it replaces and the AM-8a fault report
+_CORRECTS_KEYS = ("fault_report", "void_code", "void_record")
 
 
-def _record_dirs(state: dict, value: float) -> list[dict]:
+def corrects_ok(cor) -> bool:
+    """The form of a record's `corrects` (AM-19a reading 19): null, or {void_record, fault_report, void_code}
+    with two {path, sha256} references and a refusal code."""
+    return cor is None or (isinstance(cor, dict) and sorted(cor) == sorted(_CORRECTS_KEYS)
+                           and _is_report_ref(cor["void_record"]) and _is_report_ref(cor["fault_report"])
+                           and isinstance(cor["void_code"], str))
+
+
+def record_place_error(key: str, rel: str, cor) -> str | None:
+    """AM-19a reading 19: where a decision record of the sweep `key` is read. The sweep's record is
+    DECISION_RECORD_REL[key] and corrects nothing; its one corrected record is DECISION_RECORD_CORRECTED_REL[key]
+    and corrects that record. None when `rel` and `cor` (null or of corrects_ok's form) agree; the reason
+    otherwise (the selection and the launch gate refuse it as decision_record_correction_invalid)."""
+    first, fixed = DECISION_RECORD_REL[key], DECISION_RECORD_CORRECTED_REL[key]
+    if rel == first:
+        return None if cor is None else (f"{rel} is the sweep's decision record and corrects nothing: its corrected "
+                                         f"record is written to {fixed} (AM-19a reading 19)")
+    if rel == fixed:
+        if cor is None:
+            return f"{rel} is the sweep's corrected record: it names the void record it corrects (AM-19a reading 19)"
+        if cor["void_record"]["path"] != first:
+            return (f"{rel} corrects {cor['void_record']['path']!r}: the corrected record corrects the sweep's "
+                    f"decision record {first} (AM-19a reading 19)")
+        return None
+    return (f"{rel}: a decision record of the {key} sweep is read at {first}, or, corrected once, at {fixed} "
+            "(AM-19a reading 19)")
+
+
+def _changing_commits(src: HeadSource, rel: str) -> list:
+    """Every commit in the history of the source's records_ref whose blob at `rel` (or its absence) differs from
+    that of each parent (a root commit that holds it included): the commits that add, change or delete it. A
+    merge that takes one parent's version changes nothing."""
+    found = []
+    for c, parents in _path_history(src, rel):
+        blob = src.blob_at(c, rel)
+        if all(src.blob_at(p, rel) != blob for p in parents) and (parents or blob is not None):
+            found.append(c)
+    return found
+
+
+def written_once_error(src: HeadSource, rel: str) -> str | None:
+    """AM-19a reading 19: a void record is kept and never edited, and a corrected record is written once: in the
+    history of the source's records_ref one commit adds `rel` and no other commit changes or deletes it. None
+    when that holds; the reason otherwise."""
+    changes = _changing_commits(src, rel)
+    if len(changes) != 1 or _adding_commits(src, rel) != changes:
+        return (f"{rel}: {len(changes)} commit(s) in the history of {src.records_ref[:12]} add, change or delete it: "
+                "a void record is kept and never edited, and a corrected record is written once (AM-19a reading 19)")
+    return None
+
+
+def deleted_record_error(src: HeadSource, rel: str) -> str | None:
+    """AM-19a reading 19: a committed decision record is kept and never edited. A record path with a history in the
+    source's records_ref (_changing_commits) and no file there was deleted after its commit: the selection and the
+    launch gate refuse it (decision_record_rewritten). No later input lifts that (the writer refuses a path with a
+    history, and a correction needs the void record), so it is a STOP for a new amendment (AM-19a). None when `rel`
+    is present at the records_ref or never held a file."""
+    if src.blob_at(src.records_ref, rel) is not None or not _changing_commits(src, rel):
+        return None
+    return (f"{rel} was committed and is deleted at {src.records_ref[:12]}: a committed decision record is kept and "
+            "never edited (AM-19a reading 19); no record replaces it, a STOP for a new amendment")
+
+
+def _record_dirs(state: dict, value: float, prefix: dict | None = None) -> list[dict]:
     """AM-19 item 2(h): every attempt of a grid value in launch order: its launch time, its last iteration
     before the end of the date, and the sha256 of its run_meta and telemetry, of a finished run's best.json
-    and best checkpoint, of the AM-8a report that precedes it and of its stop report."""
+    and best checkpoint, of the AM-8a report that precedes it and of its stop report. With `prefix` (a
+    record's own launch-log lines, AM-19a reading 19: {"launch": run_ids, "launched": run_ids}), only the
+    attempts whose launch line is in it, launched as those lines say."""
     out = []
     for a in state["atts"][value]:
+        if prefix is not None and a.run_id not in prefix["launch"]:
+            continue
         r = a.run
         art = (r.artifacts or {}) if r is not None else {}
-        out.append({"run_id": a.run_id, "attempt": a.attempt, "launched": a.launched is not None,
+        launched = a.launched is not None if prefix is None else a.run_id in prefix["launched"]
+        out.append({"run_id": a.run_id, "attempt": a.attempt, "launched": launched,
                     "launch_time_utc": a.launch_ts,
                     "last_iter_before_cutoff": None if r is None else r.last_train_iter(state["cutoff_utc"]),
                     "run_meta_sha256": None if r is None else r.run_meta_sha256,
@@ -2188,8 +2469,9 @@ def _schedule_fields(state: dict) -> dict:
             "file_sha256": sch["file_sha256"]}
 
 
-def decision_record_doc(state: dict) -> dict:
-    """The decision record --write-decision-record derives (AM-19 item 2(h); PL-15)."""
+def decision_record_doc(state: dict, corrects: dict | None = None) -> dict:
+    """The decision record --write-decision-record derives (AM-19 item 2(h); PL-15); `corrects` names the void
+    record a corrected one replaces (AM-19a reading 19; correction_refs)."""
     st, grid = state["statuses"], [float(v) for v in state["sweep"]["grid"]]
     return {"format": RECORD_FORMAT, "sweep": state["key"], "schedule": _schedule_fields(state),
             "decision_date": state["decision_date"], "cutoff_utc": state["cutoff_utc"],
@@ -2198,11 +2480,12 @@ def decision_record_doc(state: dict) -> dict:
             "values": [{"value": v, "status": _record_status(state, v),
                         "reason": st[v]["reason"] if st[v]["status"] == "cut" else None,
                         "directories": _record_dirs(state, v), "on_course": st[v]["on_course"]} for v in grid],
-            "never_launched": sorted(v for v in grid if st[v]["status"] == "cut" and st[v]["reason"] == "never_launched")}
+            "never_launched": sorted(v for v in grid if st[v]["status"] == "cut" and st[v]["reason"] == "never_launched"),
+            "corrects": corrects}
 
 
 def _check_on_course_record(state: dict, v: float, e: dict, rel: str, stopped_then: set) -> None:
-    """R7 with interpretation 14: a value recorded "running (on-course repeat, item 2(b))" waited on the
+    """AM-19a reading 7: a value recorded "running (on-course repeat, item 2(b))" waited on the
     launched repeat r of its on-course stop s: s and r are its last two launched directories, and its recorded
     evaluations are those of its stops up to s, derived again from their rows (PL-7). Neither depends on r's
     rows, so this holds whichever later status the value reaches (PL-15), r's own ending under PL-9(e)(1) or
@@ -2226,27 +2509,29 @@ def _check_on_course_record(state: dict, v: float, e: dict, rel: str, stopped_th
                                f"up to that one, derived again (recorded {e['on_course']!r}; derived "
                                f"{evaluated!r}), and the repeat as its last directory, without a stopped line in "
                                "the record's launch log and without an ending or fault in a telemetry file "
-                               "unchanged since (R7; PL-7; PL-9(e)(3))")
+                               "unchanged since (AM-19a reading 7; PL-7; PL-9(e)(3))")
 
 
 def verify_record(state: dict, doc, rel: str, sha: str) -> None:
-    """AM-19 item 2(h) and PL-15: the selection does not trust the record. It derives every status again and
-    refuses a record that is malformed (decision_record_format), whose sha256 is not in the committed
-    decision log (decision_record_not_in_decision_log), before the end of the decision date
-    (decision_date_not_ended), whose schedule, decision date, cutoff or alpha basis differ
-    (decision_record_schedule_mismatch), whose launch log is not a prefix of HEAD's or whose directories
-    differ from the log's launch lines (decision_record_launch_log_mismatch), whose statuses or on-course
-    evaluations differ (decision_record_status_mismatch; a running status, which has no reason, accepts any
-    later one, the default's only on the default and an on-course repeat's only with that repeat's shape) or whose
-    hashes differ (decision_record_hash_mismatch). A running value's last directory is still being written:
-    its telemetry and best files are not compared, its last iteration before the date may only grow (the
+    """AM-19 item 2(h), PL-15 and AM-19a reading 19: the selection does not trust the record. It derives every
+    status again and refuses a record that is malformed (decision_record_format), whose sha256 is not in the
+    committed decision log (decision_record_not_in_decision_log), before the end of the decision date
+    (decision_date_not_ended), whose schedule, decision date or cutoff differ (decision_record_schedule_mismatch;
+    the alpha basis is not compared, CHECK ITEM 4), whose launch log is not a prefix of HEAD's, whose directories
+    differ from the attempts of the record's own launch-log lines, or to which a launch line of a non-default
+    value was added later (decision_record_launch_log_mismatch; a later launch line of the default is derived
+    and checked against the launch log, reading 19), whose statuses or on-course evaluations differ
+    (decision_record_status_mismatch; a running status, which has no reason, accepts any later one, the
+    default's only on the default and an on-course repeat's only with that repeat's shape) or whose hashes
+    differ (decision_record_hash_mismatch). A running value's last directory is still being written: its
+    telemetry and best files are not compared, its last iteration before the date may only grow (the
     telemetry is append-only), and a stop report may appear."""
     st, grid = state["statuses"], [float(v) for v in state["sweep"]["grid"]]
     if not isinstance(doc, dict) or sorted(doc) != sorted(_RECORD_KEYS) or doc["format"] != RECORD_FORMAT \
             or doc["sweep"] != state["key"]:
         raise SelectionRefused("decision_record_format", f"{rel}: not a {RECORD_FORMAT} record of the "
                                                          f"{state['key']} sweep with the keys {list(_RECORD_KEYS)}")
-    ll, vals, nl = doc["launch_log"], doc["values"], doc["never_launched"]
+    ll, vals, nl, cor = doc["launch_log"], doc["values"], doc["never_launched"], doc["corrects"]
     ok = (isinstance(ll, dict) and sorted(ll) == ["lines", "sha256"] and _is_int(ll["lines"]) and ll["lines"] >= 0
           and isinstance(ll["sha256"], str) and isinstance(doc["alpha_sweep_cut"], bool)
           and isinstance(nl, list) and all(_finite_number(x) for x in nl) and isinstance(vals, list)
@@ -2254,27 +2539,33 @@ def verify_record(state: dict, doc, rel: str, sha: str) -> None:
                   and _finite_number(e["value"]) and isinstance(e["directories"], list)
                   and all(isinstance(x, dict) and sorted(x) == sorted(_DIR_KEYS) for x in e["directories"])
                   for e in vals)
-          and sorted(float(e["value"]) for e in vals) == sorted(grid))
+          and sorted(float(e["value"]) for e in vals) == sorted(grid) and corrects_ok(cor))
     if not ok:
         raise SelectionRefused("decision_record_format", f"{rel}: a field has the wrong form (launch_log "
                                                          "{sha256, lines}; one values entry per grid value with "
-                                                         "value, status, reason, directories and on_course)")
+                                                         "value, status, reason, directories and on_course; corrects "
+                                                         "null or {void_record, fault_report, void_code})")
     if sha not in state["schedule"]["decision_log"]:
         raise SelectionRefused("decision_record_not_in_decision_log", f"{rel}: its sha256 {sha} is not in the "
                                                                       f"committed {DECISION_LOG_REL}")
     if state["cutoff_utc"] is None or state["now"] < state["cutoff_utc"]:
         raise SelectionRefused("decision_date_not_ended", f"{rel}: the {state['key']} decision date has not ended")
+    # AM-19a reading 19 and CHECK ITEM 4: the decision date and its instant must equal the derived ones; the way
+    # the alpha date was derived (its basis) is not compared
     derived = {"schedule": _schedule_fields(state), "decision_date": state["decision_date"],
-               "cutoff_utc": state["cutoff_utc"], "alpha_cutoff_basis": state["basis"]}
+               "cutoff_utc": state["cutoff_utc"]}
     if not _same({k: doc[k] for k in derived}, derived):
-        raise SelectionRefused("decision_record_schedule_mismatch", f"{rel}: schedule, decision date, cutoff or "
-                                                                    f"alpha basis {[doc[k] for k in derived]} != "
-                                                                    f"derived {list(derived.values())}")
+        raise SelectionRefused("decision_record_schedule_mismatch", f"{rel}: schedule, decision date or cutoff "
+                                                                    f"{[doc[k] for k in derived]} != derived "
+                                                                    f"{list(derived.values())}")
     lines = state["log"].data.split(b"\n")[:-1] if state["log"].data else []
     if ll["lines"] > len(lines) or sha256_bytes(b"".join(x + b"\n" for x in lines[:ll["lines"]])) != ll["sha256"]:
         raise SelectionRefused("decision_record_launch_log_mismatch", f"{rel}: its launch log ({ll['lines']} lines, "
                                                                       f"{ll['sha256'][:12]}) is not a prefix of HEAD's")
-    stopped_then = {ln["run_id"] for ln, _ in state["log"].entries[:ll["lines"]] if ln.get("event") == "stopped"}
+    head = state["log"].entries[:ll["lines"]]
+    stopped_then = {ln["run_id"] for ln, _ in head if ln.get("event") == "stopped"}
+    prefix = {"launch": {ln["run_id"] for ln, _ in head if ln.get("event") == "launch"},
+              "launched": {ln["run_id"] for ln, _ in head if ln.get("event") == "launched"}}
     for e in vals:
         v = float(e["value"])
         running = e["status"] in (RUNNING_DEFAULT, RUNNING_ON_COURSE)
@@ -2297,13 +2588,21 @@ def verify_record(state: dict, doc, rel: str, sha: str) -> None:
             raise SelectionRefused("decision_record_status_mismatch", f"{rel}: {v:g}: recorded on-course "
                                                                       f"evaluations {e['on_course']!r} != derived "
                                                                       f"{st[v]['on_course']!r} (PL-7)")
-        want = _record_dirs(state, v)
+        later = [a.run_id for a in state["atts"][v] if a.run_id not in prefix["launch"]]
+        if later and v != state["default"]:
+            raise SelectionRefused("decision_record_launch_log_mismatch", f"{rel}: {v:g}: launch line(s) {later} "
+                                                                          "were added after the record's "
+                                                                          f"{ll['lines']} launch-log lines: a later "
+                                                                          "launch line of a non-default value of the "
+                                                                          "sweep refuses the selection (AM-19a "
+                                                                          "reading 19)")
+        want = _record_dirs(state, v, prefix)
         if [(x["run_id"], x["attempt"], x["launched"]) for x in e["directories"]] \
                 != [(x["run_id"], x["attempt"], x["launched"]) for x in want]:
             raise SelectionRefused("decision_record_launch_log_mismatch", f"{rel}: {v:g}: directories "
                                                                           f"{[x['run_id'] for x in e['directories']]}"
-                                                                          " != the launch log's "
-                                                                          f"{[x['run_id'] for x in want]}")
+                                                                          " != the attempts of the record's launch-log "
+                                                                          f"lines {[x['run_id'] for x in want]}")
         last = max((i for i, x in enumerate(want) if x["launched"]), default=None)
         for i, (got, exp) in enumerate(zip(e["directories"], want)):
             if not _same(got["launch_time_utc"], exp["launch_time_utc"]):
@@ -2329,18 +2628,124 @@ def verify_record(state: dict, doc, rel: str, sha: str) -> None:
                                                                   f"{alpha_sweep_cut(state)}")
 
 
+def correction_refs(src: HeadSource, dl_text: str, cor: dict, rel: str | None) -> bytes:
+    """AM-19a reading 19: the references a corrected record carries, checked without run directories (the
+    launch gate checks them too): the void record it replaces is committed with that sha256, and the AM-8a
+    fault report is committed with its sha256; both sha256 values are in the committed decision log (the
+    corrected record's own is checked with the record). That the report was written before the correction is
+    checked by the writer, which reads it as committed. Returns the void record's bytes.
+    decision_record_correction_invalid otherwise."""
+    code = "decision_record_correction_invalid"
+    void, report = cor["void_record"], cor["fault_report"]
+    p = PurePosixPath(void["path"])
+    if p.is_absolute() or ".." in p.parts:
+        raise SelectionRefused(code, f"{rel}: the void record's path {void['path']!r} is not repository-relative")
+    vrel, vdata = require_committed(void["path"], src=src, missing=code, uncommitted=code, record=True)
+    if sha256_bytes(vdata) != void["sha256"]:
+        raise SelectionRefused(code, f"{vrel}: sha256 {sha256_bytes(vdata)} != {void['sha256']}, the void record's "
+                                     f"sha256 in {rel}")
+    _check_report(src, report, missing=code, mismatch=code)
+    absent = [f"{what} {x['sha256']}" for what, x in (("the void record's", void), ("the fault report's", report))
+              if x["sha256"] not in dl_text]
+    if absent:
+        raise SelectionRefused(code, f"{rel}: {' and '.join(absent)} sha256 not in the committed {DECISION_LOG_REL}: "
+                                     "they are entered there before the corrected record is written (AM-19a "
+                                     "reading 19)")
+    return vdata
+
+
+def _later_launches(state: dict, void_rel: str, vdata: bytes) -> list:
+    """AM-19a reading 19: the run_ids of the non-default values' launch lines added after the void record: those
+    beyond the launch log at the first commit that added it (a byte prefix of HEAD's log), or beyond the record's
+    own launch-log lines when they are fewer and a prefix of HEAD's log. The record's own statement is never
+    trusted beyond the log its commit saw. decision_record_correction_invalid when that log is no prefix of
+    HEAD's."""
+    src, log = state["src"], state["log"]
+    adds = _adding_commits(src, void_rel)
+    at_add = (src.show(adds[-1], LAUNCH_LOG_REL) or b"") if adds else None
+    if at_add is None or not log.data.startswith(at_add):
+        raise SelectionRefused("decision_record_correction_invalid",
+                               f"{void_rel}: the launch log at the commit that added it is not a byte prefix of "
+                               "HEAD's: the launch lines added after the void record cannot be told (AM-19a "
+                               "reading 19)")
+    n = at_add.count(b"\n")
+    try:
+        ll = json.loads(vdata.decode("utf-8")).get("launch_log")
+    except (json.JSONDecodeError, UnicodeDecodeError, AttributeError):
+        ll = None
+    lines = log.data.split(b"\n")[:-1] if log.data else []
+    if isinstance(ll, dict) and _is_int(ll.get("lines")) and 0 <= ll["lines"] < n \
+            and sha256_bytes(b"".join(x + b"\n" for x in lines[:ll["lines"]])) == ll.get("sha256"):
+        n = ll["lines"]
+    seen = {ln["run_id"] for ln, _ in log.entries[:n] if ln.get("event") == "launch"}
+    return [a.run_id for v, lst in state["atts"].items() if v != state["default"] for a in lst if a.run_id not in seen]
+
+
+def void_code(state: dict, cor: dict, rel: str | None) -> str:
+    """AM-19a reading 19: the record `cor` replaces is void: its references hold (correction_refs), it was kept
+    and never edited (written_once_error), and the selection's checks refuse it (check_record), for a reason
+    other than a launch line of a non-default value added after it (that refusal stands: the selection
+    refuses, and no corrected record lifts it). Returns the refusal's code."""
+    code = "decision_record_correction_invalid"
+    void = cor["void_record"]
+    vdata = correction_refs(state["src"], state["schedule"]["decision_log"], cor, rel)
+    err = written_once_error(state["src"], void["path"])
+    if err is not None:
+        raise SelectionRefused(code, err)
+    later = _later_launches(state, void["path"], vdata)
+    if later:
+        raise SelectionRefused(code, f"{void['path']}: the non-default launch lines {later} were added after it: a "
+                                     "later launch line of a non-default value refuses the selection, and no "
+                                     "corrected record replaces such a record (AM-19a reading 19)")
+    try:
+        check_record(state, void["path"], vdata)
+    except SelectionRefused as e:
+        return e.code
+    raise SelectionRefused(code, f"{void['path']} passes the selection's checks: it is not void, and no corrected "
+                                 "record replaces it (AM-19a reading 19)")
+
+
+def check_record(state: dict, rel: str, data: bytes) -> dict:
+    """The selection's checks of the committed decision record at `rel` (AM-19 item 2(h); AM-19a reading 19): its
+    place (record_place_error), verify_record, written once (decision_record_rewritten: a record replaced in place,
+    after a later launch line or otherwise, is an edit, never a new record), and for the corrected record the
+    record it corrects void (void_code), with the void record's code as derived again. Returns {path, sha256,
+    corrects}."""
+    sha = sha256_bytes(data)
+    doc = parse_json_bytes(data, rel, code="decision_record_format")
+    cor = doc.get("corrects") if isinstance(doc, dict) else None
+    if corrects_ok(cor):
+        err = record_place_error(state["key"], rel, cor)
+        if err is not None:
+            raise SelectionRefused("decision_record_correction_invalid", err)
+    verify_record(state, doc, rel, sha)
+    err = written_once_error(state["src"], rel)
+    if err is not None:
+        raise SelectionRefused("decision_record_rewritten", err)
+    if cor is not None:
+        derived = void_code(state, cor, rel)
+        if derived != cor["void_code"]:
+            raise SelectionRefused("decision_record_correction_invalid",
+                                   f"{rel}: the void record's code {cor['void_code']!r} != {derived!r}, derived again "
+                                   "(AM-19 item 2(h): the selection does not trust the record)")
+    return {"path": rel, "sha256": sha, "corrects": cor}
+
+
 def load_record(state: dict, path=None) -> dict | None:
-    """The committed decision record (--decision-record, default reports/derived/<sweep>_decision_record.json),
-    verified; None when the default path holds no file."""
+    """The committed decision record (--decision-record; default reports/derived/<sweep>_decision_record.json),
+    checked (check_record). None when the default path holds no file: for the selection (HeadSource), neither in
+    the working tree nor at HEAD; for the gate (RecordsSource, whose has() reads a record at the records commit,
+    never in the folder), not at the records commit. A committed record missing from the working tree is
+    decision_record_missing, a file absent at HEAD decision_record_uncommitted, and settle() has already refused
+    one deleted after its commit. A corrected record (AM-19a reading 19) is read only at
+    reports/derived/<sweep>_decision_record_corrected.json, through --decision-record."""
     src, key = state["src"], state["key"]
     target = DECISION_RECORD_REL[key] if path is None else path
-    if path is None and not src.has(target):
+    if path is None and not src.has(target) and src.blob_at(src.records_ref, target) is None:
         return None
     rel, data = require_committed(target, src=src, missing="decision_record_missing",
                                   uncommitted="decision_record_uncommitted")
-    sha = sha256_bytes(data)
-    verify_record(state, parse_json_bytes(data, rel, code="decision_record_format"), rel, sha)
-    return {"path": rel, "sha256": sha}
+    return check_record(state, rel, data)
 
 
 def write_json_once(path: Path, doc: dict) -> str:
@@ -2357,13 +2762,32 @@ def write_json_once(path: Path, doc: dict) -> str:
     return sha256_bytes(data)
 
 
-def write_decision_record(state: dict, path: Path) -> tuple[str, dict]:
+def ordinary_record_error(src: HeadSource, key: str, out_rel: str | None) -> str | None:
+    """AM-19a reading 19, the writer of the sweep's record (no --corrects): it is written once and read at
+    DECISION_RECORD_REL, so it is refused while that path has any history (a committed record, a void one
+    included, is kept and never edited: it is replaced only by the corrected record, --corrects and
+    --fault-report), and refused into the repository at any other path (record_place_error). `out_rel` is the
+    output's repository-relative path, None outside the repository. None when it may be written."""
+    first = DECISION_RECORD_REL[key]
+    if _changing_commits(src, first):
+        return (f"{first} is committed, or was: the sweep's decision record is written once and a committed record is "
+                "kept and never edited; a void record is replaced only by the corrected record (--corrects "
+                f"{first} --fault-report <the committed AM-8a fault report>; AM-19a reading 19)")
+    return None if out_rel is None else record_place_error(key, out_rel, None)
+
+
+def write_decision_record(state: dict, path: Path, corrects=None) -> tuple[str, dict]:
     """--write-decision-record (PL-15, PL-32): only after the end of the decision date, and only once every
     non-default launched run has ended (a trainer record) or was stopped (a stopped line), the on-course
-    repeat that is still running excepted: it is recorded as "running (on-course repeat, item 2(b))" (R7,
-    OQ8), being waited for as a default candidate is (AM-19 item 2(b)). That exception is the K2 reading of
-    PL-32's "every non-default run", for AM-19a to confirm. A value whose on-course stop has no repeat yet
-    refuses: a record written before the repeat launches would lack its directory (item 2(h))."""
+    repeat that is still running excepted: it is recorded as "running (on-course repeat, item 2(b))" (AM-19a
+    reading 7; OQ8), being waited for as a default candidate is (AM-19 item 2(b)). The record may be written
+    while the default runs (AM-19a reading 19). A value whose on-course stop has no repeat yet refuses: a
+    record written before the repeat launches would lack its directory (item 2(h)). Without `corrects`, the
+    sweep's record (ordinary_record_error: never while DECISION_RECORD_REL has a history). With `corrects` (void
+    record path, fault report path), the sweep's corrected record (AM-19a reading 19): written once (never while
+    DECISION_RECORD_CORRECTED_REL has a history), to that path (checked when `path`, resolved against the working
+    directory, is in the repository), after the committed AM-8a fault report, naming it and the sweep's void
+    record at DECISION_RECORD_REL, which must be void now (void_code)."""
     if state["cutoff_utc"] is None or state["now"] < state["cutoff_utc"]:
         raise SelectionRefused("decision_date_not_ended", f"the {state['key']} decision date has not ended: no "
                                                           "decision record is written before it (AM-19 item 2(h))")
@@ -2384,7 +2808,28 @@ def write_decision_record(state: dict, path: Path) -> tuple[str, dict]:
                                                                "ended nor a stopped line: stop them, commit their "
                                                                "stopped lines and reports, then write the record "
                                                                "(PL-32)")
-    doc = decision_record_doc(state)
+    code = "decision_record_correction_invalid"
+    cor, src = None, state["src"]
+    out_rel = src.rel(Path(path).absolute())            # the path as written: relative to the working directory
+    if corrects is None:
+        err = ordinary_record_error(src, state["key"], out_rel)
+        if err is not None:
+            raise SelectionRefused(code, err)
+    else:
+        void_path, report_path = corrects
+        fixed = DECISION_RECORD_CORRECTED_REL[state["key"]]
+        if _changing_commits(src, fixed):
+            raise SelectionRefused(code, f"{fixed} is committed, or was: the sweep's corrected record is written once "
+                                         "(AM-19a reading 19)")
+        vrel, vdata = require_committed(void_path, src=src, missing=code, uncommitted=code, record=True)
+        rrel, rdata = require_committed(report_path, src=src, missing=code, uncommitted=code, record=True)
+        cor = {"void_record": {"path": vrel, "sha256": sha256_bytes(vdata)},
+               "fault_report": {"path": rrel, "sha256": sha256_bytes(rdata)}, "void_code": ""}
+        err = record_place_error(state["key"], fixed if out_rel is None else out_rel, cor)
+        if err is not None:
+            raise SelectionRefused(code, err)
+        cor["void_code"] = void_code(state, cor, out_rel)
+    doc = decision_record_doc(state, cor)
     return write_json_once(path, doc), doc
 
 
@@ -2431,10 +2876,15 @@ def shortfall_message(state: dict, *, alpha_cut: bool = False) -> str:
 
 
 def settle(state: dict, decision_record=None) -> dict:
-    """After derive_sweep: (k) alpha's AM-16 cut (exit 5 with a verified record; exit 3 without), (j) the
-    shortfall (exit 3), then the decision record (verified when present; required with a cut), and the
-    candidates of the rule (AM-19 items 2(e)-(h); PL-20(b))."""
+    """After derive_sweep: a sweep record deleted after its commit refuses first (decision_record_rewritten, a STOP
+    that no wait lifts; AM-19a readings 18 and 19); then (k) alpha's AM-16 cut (exit 5 with a verified record;
+    exit 3 without), (j) the shortfall (exit 3), then the decision record (verified when present; required with a
+    cut), and the candidates of the rule (AM-19 items 2(e)-(h); PL-20(b))."""
     st, key = state["statuses"], state["key"]
+    for rel in (DECISION_RECORD_REL[key], DECISION_RECORD_CORRECTED_REL[key]):
+        err = deleted_record_error(state["src"], rel)
+        if err is not None:
+            raise SelectionRefused("decision_record_rewritten", err)
     if alpha_sweep_cut(state):
         record = load_record(state, decision_record)
         if record is None:
@@ -2616,7 +3066,7 @@ def selection_fields(state: dict, settled: dict, res: dict) -> dict:
     """PL-19's fields of a selection file (the format strings stay; every field is additive), with each
     value's on-course evaluations (PL-7) and, where an on-course repeat decided a status, both runs' VAL
     rows (AM-19 item 2(b))."""
-    src, log, sch, atts = state["src"], state["log"], state["schedule"], state["atts"]
+    src, log, sch, atts, rec = state["src"], state["log"], state["schedule"], state["atts"], settled["record"]
     winner = next(a.run for lst in atts.values() for a in lst if a.run_id == res["winner"]["run_id"])
     cut = [_cut_entry(state, c, winner) for c in settled["cut"]]
     grid = [float(v) for v in state["sweep"]["grid"]]
@@ -2631,7 +3081,8 @@ def selection_fields(state: dict, settled: dict, res: dict) -> dict:
                          "decision_date": state["decision_date"], "cutoff_utc": state["cutoff_utc"],
                          "alpha_cutoff_basis": state["basis"]},
             "launch_log": {"path": LAUNCH_LOG_REL, "sha256": log.sha256, "lines": log.n_lines},
-            "decision_record": settled["record"], "n_cut": len(cut), "cut_am19": cut,
+            "decision_record": None if rec is None else {"path": rec["path"], "sha256": rec["sha256"]},
+            "decision_record_corrects": None if rec is None else rec["corrects"], "n_cut": len(cut), "cut_am19": cut,
             "stopped_early_unexplained": [c["value"] for c in cut if c["stopped_early_unexplained"]],
             "edge_removed": res["edge_removed"],
             "directories": {f"{v:g}": [a.run_id for a in atts[v] if a.launched is not None] for v in grid},

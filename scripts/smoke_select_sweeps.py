@@ -49,7 +49,7 @@ Checks (docs/lane_specs/part2.md lane 2 (d) d2, and the cross-lane selection con
   10b    the recipe of record: grad_clip_norm 1.0, batch 8, VAL every 2000 or capped, no ImageNet init,
          a float horizon or no teacher provenance -> recipe_mismatch naming the field; num_workers or
          teacher checkpoint, config or model-config hashes differing across the candidates ->
-         recipe_mismatch_across_candidates (K2: PL-11, R5).
+         recipe_mismatch_across_candidates (K2: PL-11, AM-19a reading 5).
   cg     L-CKPT-GUARD: a teacher config_sha256 or model_cfg_sha256 absent, None, empty or not a string
          -> recipe_mismatch; select_alpha's five K8-2(a) cases (no run loaded or three unfinished:
          shortfall, exit 3; one wrong-lambda run beside two missing: lambda_mismatch; the default
@@ -67,6 +67,24 @@ Checks (docs/lane_specs/part2.md lane 2 (d) d2, and the cross-lane selection con
          in the checkout. Pre-K2 cases run in such a repository too, launched before both dates, so their
          expectations hold. Every scratch directory the smoke creates is removed at the end.
          --section <name> (repeatable) runs only the named sections (mutation runs).
+  AM-19a lane K2 Session 2 (CHECK ITEMS 1, 2, 4, 5 and 7): an ending compared with every earlier attempt
+         (abort, stop, abort and cause A, cause B, cause A are aborted twice; an attempt after them is
+         repeat_after_aborted_twice; an earlier incomplete attempt that could still end the same way makes a
+         single abort wait before C); the
+         push list (a deletion is ignored; a push the remote did not serve counts and is disclosed; a served
+         push the clone lacks takes the list's status; a push after T_lo the list lacks, a list the clone
+         contradicts either way, a list of another response or bound to anything else, a list not settled
+         once with its response, and a carrying push before T_lo refuse); the
+         record (its directories against its own launch-log lines: a running default repeated afterwards
+         still verifies, a later non-default launch line refuses; the alpha basis is not compared); a
+         corrected record (accepted through --decision-record at the sweep's corrected path, also for a
+         void record that is no JSON; refused with a fault report that differs or whose sha256, or the void
+         record's, is not in the decision log, with another void code, as a second correction or a
+         correction of a correction, naming a record that is not void, another record than the sweep's, a
+         void record edited after its commit, or one refused for a later non-default launch line, counted
+         from the log its commit saw; an ordinary record at the corrected path or at any other, and a record
+         at the sweep's path that corrects, are refused, and a record replaced in place is
+         decision_record_rewritten; the flags out of their pairing are refused).
 """
 from __future__ import annotations
 
@@ -138,6 +156,18 @@ def refused(fn, *args, **kwargs) -> str | None:
     except SelectionRefused as e:
         return e.code
     return None
+
+
+@contextlib.contextmanager
+def writer_guard_off():
+    """A decision record the writer refuses (ordinary_record_error, AM-19a reading 19), made as if by hand: the
+    guard is bypassed for the writer calls inside; the selection's checks are untouched (C1b round 2 record2-1)."""
+    saved = ss.ordinary_record_error
+    ss.ordinary_record_error = lambda *args, **kwargs: None
+    try:
+        yield
+    finally:
+        ss.ordinary_record_error = saved
 
 
 # ------------------------------------------------------------------------------ rule units
@@ -822,7 +852,7 @@ def test_am7a_lambda_cli(tmp: Path) -> None:
                  "teacher_ckpt_differs": "differ in teacher_ckpt_sha256",
                  "teacher_config_differs": "differ in teacher_config_sha256",
                  "teacher_model_cfg_differs": "differ in teacher_model_cfg_sha256"}.get(label, "")
-        # K2 (PL-11, R5): a difference across the candidates refuses with its own sweep-level code
+        # K2 (PL-11, AM-19a reading 5): a difference across the candidates refuses with its own sweep-level code
         want = "recipe_mismatch_across_candidates" if named else "recipe_mismatch"
         check(f"item10b_recipe_{label}_refused", rc == 2 and doc is None and code_of(log) == want
               and named in log and "Traceback" not in log, f"rc={rc} {log.strip()[-200:]}")
@@ -972,7 +1002,7 @@ def test_am7_records(tmp: Path) -> None:
              "teacher_model_cfg_sha256")):
         rc, log, doc, out, _ = lambda_case(tmp, f"q3_default_diverged_{label}",
                                            {1: DIVERGED, 2: dict(recipe=recipe)})
-        # K2 (PL-11, R5): the across-candidates code, recipe_mismatch_across_candidates
+        # K2 (PL-11, AM-19a reading 5): the across-candidates code, recipe_mismatch_across_candidates
         check(f"q3_diverged_default_with_{label}_mismatch_is_recipe_mismatch", rc == 2 and doc is None
               and code_of(log) == "recipe_mismatch_across_candidates" and f"differ in {field}" in log
               and "default_candidate_diverged" not in log
@@ -1238,7 +1268,9 @@ class Sweep:
                                                          "best_val_miou_all_class": best}), encoding="utf-8")
 
     def runs(self) -> list:
-        return [self.dir(a["run_id"]) for a in self.atts if a["state"] == "launched"]
+        """The launched run directories; with none, one path that does not exist (an absent --runs path is not
+        supplied, AM-19a reading 20), so the CLI still gets its required --runs value."""
+        return [self.dir(a["run_id"]) for a in self.atts if a["state"] == "launched"] or [self.root / "no_launched_run"]
 
     def select(self, now, *, runs=None, extra=()) -> tuple:
         out = self.root / f"selection_{next(self._n)}.json"
@@ -1266,6 +1298,59 @@ class Sweep:
                     + f"| DL-91 | RECORDED | {self.key} decision record, sha256 {sha} (synthetic) | - | no |\n"
             self.commit("decision record", files)
         return rc, log, sha
+
+    def record_at(self, now, rel: str, *, corrects=None, edit=None, dl=True, dl_id="DL-92", hand=False) -> tuple:
+        """--write-decision-record to `rel` (with --corrects VOID --fault-report REPORT when `corrects` is the pair
+        of repository paths: AM-19a reading 19); then the record and a decision-log row naming its sha256 are
+        committed. `edit` changes the document first; `hand` makes a record the writer refuses, as if by hand
+        (writer_guard_off)."""
+        path = self.repo / rel
+        argv = ["--runs", *map(str, self.runs()), "--write-decision-record", str(path)]
+        if corrects is not None:
+            argv += ["--corrects", corrects[0], "--fault-report", corrects[1]]
+        with writer_guard_off() if hand else contextlib.nullcontext():
+            rc, log = run_cli(self.module, argv, now=now, repo=self.repo)
+        if rc != 0:
+            return rc, log, None
+        if edit is not None:
+            doc = json.loads(path.read_text(encoding="utf-8"))
+            edit(doc)
+            path.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+        sha = sha256_file(path)
+        files = {rel: path.read_bytes()}
+        if dl:
+            files[ss.DECISION_LOG_REL] = (self.repo / ss.DECISION_LOG_REL).read_text(encoding="utf-8") \
+                + f"| {dl_id} | RECORDED | {self.key} decision record {rel}, sha256 {sha} (synthetic) | - | no |\n"
+        self.commit(f"decision record {rel}", files)
+        return rc, log, sha
+
+    def late(self, value, rows=None, *, state="launched", report=True) -> str:
+        """An attempt added after build() (and after a record): its launch line, with an AM-8a report when
+        `report`, appended in a records commit, then its run directory and its launched (or not_launched) line
+        appended at a new HEAD, so the log stays append-only."""
+        value, lam = float(value), self.lam
+        n = 1 + sum(1 for a in self.atts if a["value"] == value and a["lam"] == lam)
+        rid = f"{self.stage.lower()}_s42_{'lambda' if self.key == 'lambda_logit' else 'alpha'}{value:g}_a{n}"
+        launch = rows[0]["wall_clock"] - rows[0].get("iter_seconds", ITER_S) if rows else None
+        a = {"value": value, "lam": lam, "attempt": n, "run_id": rid, "rows": rows or [], "launch": launch,
+             "state": state, "stopped": False, "report": report, "meta": {}, "best_json": True, "ckpt": True,
+             "code_pin": self.pin, "launched_over": {}}
+        self.atts.append(a)
+        ref = self.report(f"reports/am8a/{rid}.md", f"AM-8a report before {rid} (synthetic)\n") if report else None
+        self.events.append(launch_line(rid, self.stage, value, value if self.key == "lambda_logit" else lam,
+                                       None if self.key == "lambda_logit" else value, n, self.pin, report=ref,
+                                       schedule=self.schedule))
+        records = self.commit("a later launch line")
+        if state == "launched":
+            saved, self.records = self.records, records
+            self._write_run(a)
+            self.records = saved
+            self.events.append(launched_line(self.dir(rid), self.stage, self.key, value, self.pin, records))
+        else:
+            self.events.append({"event": "not_launched", "run_id": rid, "reason": "the start was refused (synthetic)",
+                                "evidence": self.report(f"reports/not_launched/{rid}.txt", f"{rid}: start refused\n")})
+        self.head = self.commit("a later launched line")
+        return rid
 
 
 def lam_sweep(label: str, *, best=(0.42, 0.41, 0.40, 0.39), over: dict | None = None) -> Sweep:
@@ -1689,7 +1774,7 @@ def test_am19_status(tmp: Path) -> None:
     rc, log, _ = sw.build().select(NOW_L)
     check("pl39_15_timestamp_later_than_now_after_the_date_is_clock_inconsistent",
           rc == 2 and code_of(log) == "clock_inconsistent", result_line(log))
-    # the non-default 0.5 has the best score: a refusal must not turn into a cut (PL-6, R2)
+    # the non-default 0.5 has the best score: a refusal must not turn into a cut (PL-6, AM-19a reading 2)
     sw = lam_sweep("st_16a", best=(0.40, 0.45, 0.39, 0.38), over={0.5: dict(ckpt="corrupt")})
     sw.add(4, fin(BASE_L + 2400, 0.37))
     rc, log, _ = sw.build().select(NOW_L)
@@ -1770,7 +1855,7 @@ def test_am19_status(tmp: Path) -> None:
           and ev[0]["on_course"] is False and "projection" in ev[0] and doc["on_course"]["4"] == ev
           and next(e for e in rec["values"] if e["value"] == 4.0)["on_course"] == ev,
           f"{result_line(log0)} {result_line(log)} {ev}")
-    # runs-5: a non-finite row with no abort record is that run's ending (interpretation 5), so it is no
+    # runs-5: a non-finite row with no abort record is that run's ending (AM-19a reading 13), so it is no
     # on-course stop: its finished-after-the-date repeat does not make the value finished
     sw = lam_sweep("st_nonfinite_stop")
     a1 = oc_stop_rows()
@@ -2006,14 +2091,14 @@ def test_am19_repeats(tmp: Path) -> None:
     rc, log, _ = sw.build().select(NOW_L)
     check("rp_on_course_repeat_followed_by_a_later_attempt_is_cut_on_course_repeat_stopped",
           rc == 3 and "on_course_repeat_stopped" in log, result_line(log))
-    # runs-6 (interpretation 13): before the date, a non-default value that ended the same way twice waits
+    # runs-6 (AM-19a reading 17): before the date, a non-default value that ended the same way twice waits
     # for the date, where it is cut; it is not repeated again
     _, rc, log, _, _, _ = case("c5_before", [(failed, {}), (fin(l4 + 90000, 0.38, checks=False), {})], NOW_MID_L)
     check("rp_failed_check_twice_before_the_date_waits", rc == 3 and "aborted_twice:run_end/checks_failed" in log,
           result_line(log))
 
-    # r2-1 (interpretations 13 and 15): before the date a non-default value's single abort or failed check
-    # waits, not refused, while the attempt before it is incomplete and some completion of it could make this
+    # r2-1 (AM-19a readings 17 and 18): before the date a non-default value's single abort or failed check
+    # waits, not refused, while an earlier attempt is incomplete and some completion of it could make this
     # the second same ending, which waits (exit 3)
     def before_c(label, attempts, *, withhold=(), unlink=()):
         sw = lam_sweep(f"rp_{label}")
@@ -2044,8 +2129,9 @@ def test_am19_repeats(tmp: Path) -> None:
           rc == 2 and code_of(log) == "run_aborted_other", result_line(log))
     # r3-1: no wait where every completion of the log refuses: a stopped attempt before it (supplied without
     # telemetry, which is then final, or withheld while the latest ended in a trainer record), a latest that
-    # names no AM-8a report, or an attempt before the withheld one that ended the same way. r3-3: only the last
-    # earlier attempt without a not_launched line counts
+    # names no AM-8a report, or an attempt without a launched line followed, up to the latest, by one that names
+    # no AM-8a report (C1b repeats-2). r3-3: every earlier attempt without a not_launched line counts (AM-19a
+    # reading 18)
     rc, log, _ = before_c("abort_after_stopped_no_telemetry", [([], dict(launch=l4, stopped=True)), (ab2, {})],
                           unlink=(a1,))
     check("rp_abort_after_a_stopped_attempt_without_telemetry_is_run_aborted_other_before_the_date",
@@ -2070,26 +2156,36 @@ def test_am19_repeats(tmp: Path) -> None:
     check("rp_abort_naming_no_report_after_a_launch_line_without_an_outcome_is_run_aborted_other_before_the_date",
           rc == 2 and code_of(log) == "run_aborted_other", result_line(log))
     a2 = "e2_s42_lambda4_a2"
+    # AM-19a reading 9 (CHECK ITEM 1): the latest ends as the first attempt did, whatever lies between, so it is
+    # the second same ending and waits (before C1b: run_aborted_other under the previous-attempt rule)
     rc, log, _ = before_c("same_before_withheld", [(ab1, {}), (course(l4 + 9000, 1000, val_at=()), {}), (late_ab, {})],
                           withhold=(a2,))
-    check("rp_abort_after_a_withheld_attempt_whose_predecessor_ended_the_same_way_is_run_aborted_other_before_the_date",
-          rc == 2 and code_of(log) == "run_aborted_other", result_line(log))
+    check("rp_abort_after_a_withheld_attempt_whose_predecessor_ended_the_same_way_waits_before_the_date",
+          rc == 3 and "shortfall_am19_item2" in log, result_line(log))
 
     def step1(L):
         return [T(1, L + 1), ABORT_ROW(1, L + 1.5, rule="step1_checks", cause="checks_failed")]
     rc, log, _ = before_c("other_then_withheld", [(step1(l4), {}), (ab2, {}), (late_ab, {})], withhold=(a2,))
     check("rp_abort_after_a_withheld_attempt_whose_predecessor_ended_otherwise_waits_before_the_date",
           rc == 3 and "candidate_missing" in log and a2 in log, result_line(log))
-    rc, log, _ = before_c("withheld_then_other", [(ab1, {}), (step1(l4 + 9000), {}), (late_ab, {})], withhold=(a1,))
-    check("rp_abort_after_a_complete_attempt_with_a_withheld_one_before_it_is_run_aborted_other_before_the_date",
+    # AM-19a reading 18 (Session 1's WF3-twice-n, re-targeted): a complete earlier attempt that ended otherwise is
+    # never waited for; the latest single abort refuses before C
+    rc, log, _ = before_c("abort_after_a_complete_other", [(step1(l4), {}), (late_ab, {})])
+    check("rp_abort_after_a_complete_attempt_that_ended_otherwise_is_run_aborted_other_before_the_date",
           rc == 2 and code_of(log) == "run_aborted_other", result_line(log))
+    # AM-19a reading 18 (CHECK ITEM 1): every earlier attempt counts, so the withheld first one could still make
+    # the latest ending its second (before C1b: run_aborted_other, only the attempt before the latest counted)
+    rc, log, _ = before_c("withheld_then_other", [(ab1, {}), (step1(l4 + 9000), {}), (late_ab, {})], withhold=(a1,))
+    check("rp_abort_after_a_complete_attempt_with_a_withheld_one_before_it_waits_before_the_date",
+          rc == 3 and "candidate_missing" in log and a1 in log, result_line(log))
     rc, log, _ = before_c("not_launched_between", [(stop, dict(stopped=True)),
                                                    ([], dict(state="not_launched", launch=l4 + 15000)), (late_ab, {})])
     check("rp_abort_after_a_not_launched_start_is_run_aborted_other_before_the_date",
           rc == 2 and code_of(log) == "run_aborted_other", result_line(log))
 
-    # r2-5 and the default (interpretation 15): the default's refusals come before the PL-14 wait; its last
-    # two attempts ending the same way refuse with an earlier one withheld, and so does a single abort
+    # r2-5 and the default (AM-19a reading 18): the default's refusals come before the PL-14 wait; its latest
+    # attempt ending the same way as an earlier one refuses with an earlier one withheld, and so does a single
+    # abort
     def default_case(label, attempts, withhold):
         sw = Sweep(f"rp_{label}")
         for rows, kw in attempts:
@@ -2109,6 +2205,109 @@ def test_am19_repeats(tmp: Path) -> None:
     rc, log, _ = default_case("default_abort_previous_withheld", [d_run, d_ab[0]], ("e2_s42_lambda1_a1",))
     check("rp_default_single_abort_with_the_attempt_before_it_withheld_is_run_aborted_other",
           rc == 2 and code_of(log) == "run_aborted_other", result_line(log))
+
+    # AM-19a readings 9, 17 and 18 (CHECK ITEMS 1 and 7): an ending is compared with every earlier launched
+    # attempt of the value; the attempts between them, a stopped one included, change nothing
+    stop_mid = (course(l4 + 9000, 10000, val_at=()), dict(stopped=True))
+    late3 = course(l4 + 30000, 5000, val_at=(4000,)) + [ABORT_ROW(5000, l4 + 35100.5, rule="val_nonfinite",
+                                                                  cause="val_nonfinite")]
+    _, rc, log, doc, rc0, log0 = case("am19a_abort_stop_abort", [(ab1, {}), stop_mid, (late3, {})], NOW_L, record=True)
+    check("am19a_r9_abort_stop_abort_is_cut_aborted_twice",
+          rc0 == 0 and rc == 0 and [(c["value"], c["reason"]) for c in doc["cut_am19"]]
+          == [(4.0, "aborted_twice:val_nonfinite/val_nonfinite")], f"{result_line(log0 or '')} {result_line(log)}")
+    _, rc, log, _, _, _ = case("am19a_abort_stop_abort_before", [(ab1, {}), stop_mid, (late3, {})], NOW_MID_L)
+    check("am19a_r17_abort_stop_abort_waits_before_the_date",
+          rc == 3 and "aborted_twice:val_nonfinite/val_nonfinite" in log, result_line(log))
+    _, rc, log, doc, rc0, log0 = case("am19a_a_b_a", [(ab1, {}), (step1(l4 + 9000), {}), (late3, {})], NOW_L,
+                                      record=True)
+    check("am19a_r9_cause_a_cause_b_cause_a_is_cut_aborted_twice",
+          rc0 == 0 and rc == 0 and [(c["value"], c["reason"]) for c in doc["cut_am19"]]
+          == [(4.0, "aborted_twice:val_nonfinite/val_nonfinite")], f"{result_line(log0 or '')} {result_line(log)}")
+    _, rc, log, _, _, _ = case("am19a_a_stop_a_then", [(ab1, {}), stop_mid, (late3, {}),
+                                                       (course(l4 + 40000, 1000, val_at=()), {})], NOW_MID_L)
+    check("am19a_r9_attempt_after_abort_stop_abort_is_repeat_after_aborted_twice",
+          rc == 2 and code_of(log) == "repeat_after_aborted_twice", result_line(log))
+    late_ab2 = course(l4 + 20000, 5000, val_at=(4000,)) + [ABORT_ROW(5000, l4 + 25100.5, rule="val_nonfinite",
+                                                                     cause="val_nonfinite")]
+    rc, log, _ = before_c("am19a_withheld_stop_abort", [(ab1, {}), stop_mid, (late_ab2, {})], withhold=(a1,))
+    check("am19a_r18_abort_after_a_stop_with_an_earlier_attempt_withheld_waits_before_the_date",
+          rc == 3 and "candidate_missing" in log and a1 in log, result_line(log))
+    # C1b workflow repeats-1 (AM-19a readings 9 and 17): the on-course repeat's ending is compared with every
+    # earlier attempt too: abort, on-course stop, the same abort by the repeat is cut aborted twice
+    rep = course(LAMBDA_C - 5000, 4000, val_at=(4000,), iter_s=0.25, val_s=50.0) + [
+        ABORT_ROW(4000, LAMBDA_C - 3949.5, rule="val_nonfinite", cause="val_nonfinite")]
+    _, rc, log, doc, rc0, log0 = case("am19a_abort_oc_abort", [(ab1, {}), (oc_stop_rows(), dict(stopped=True)),
+                                                               (rep, {})], NOW_L, record=True)
+    check("am19a_r9_abort_on_course_stop_abort_is_cut_aborted_twice",
+          rc0 == 0 and rc == 0 and [(c["value"], c["reason"]) for c in doc["cut_am19"]]
+          == [(4.0, "aborted_twice:val_nonfinite/val_nonfinite")], f"{result_line(log0 or '')} {result_line(log)}")
+    # C1b round-2 rest2-1 (AM-19a readings 9 and 17): on-course stop s, its repeat r ends with a new ending, r's
+    # own repeat ends the same way: the value's latest attempt ended the same way, so the reason is aborted twice
+    _, rc, log, doc, rc0, log0 = case("am19a_oc_r_r2", [(oc_stop_rows(), dict(stopped=True)),
+                                                        (step1(LAMBDA_C - 20000), {}), (step1(LAMBDA_C - 10000), {})],
+                                      NOW_L, record=True)
+    check("am19a_r17_on_course_repeat_and_its_repeat_ending_the_same_way_is_cut_aborted_twice",
+          rc0 == 0 and rc == 0 and [(c["value"], c["reason"]) for c in doc["cut_am19"]]
+          == [(4.0, "aborted_twice:step1_checks/checks_failed")], f"{result_line(log0 or '')} {result_line(log)}")
+    # C1b round 3 c1b3-1 (AM-19a reading 17): the on-course repeat r stopped, and the value's latest attempt ended
+    # before C the same way as an earlier one: the reason is that ending twice, not on_course_repeat_stopped
+    _, rc, log, doc, rc0, log0 = case("am19a_oc_rstop_ab_ab", [(oc_stop_rows(), dict(stopped=True)),
+                                                               (course(LAMBDA_C - 25000, 2000, val_at=()),
+                                                                dict(stopped=True)),
+                                                               (step1(LAMBDA_C - 20000), {}),
+                                                               (step1(LAMBDA_C - 10000), {})], NOW_L, record=True)
+    check("am19a_r17_on_course_repeat_stopped_and_the_latest_attempt_ending_the_same_way_is_cut_aborted_twice",
+          rc0 == 0 and rc == 0 and [(c["value"], c["reason"]) for c in doc["cut_am19"]]
+          == [(4.0, "aborted_twice:step1_checks/checks_failed")], f"{result_line(log0 or '')} {result_line(log)}")
+    # c1b3-1, the fault return: r's telemetry has a fault (a row without a timestamp), and the latest attempt ended
+    # before C the same way as an earlier one: the reason is that ending twice, not r's fault code
+    r_fault = course(LAMBDA_C - 25000, 2000, val_at=())
+    r_fault[1] = {k: v for k, v in r_fault[1].items() if k != "wall_clock"}
+    _, rc, log, doc, rc0, log0 = case("am19a_oc_rfault_ab_ab", [(oc_stop_rows(), dict(stopped=True)),
+                                                                (r_fault, dict(stopped=True)),
+                                                                (step1(LAMBDA_C - 20000), {}),
+                                                                (step1(LAMBDA_C - 10000), {})], NOW_L, record=True)
+    check("am19a_r17_on_course_repeat_with_a_fault_and_the_latest_attempt_ending_the_same_way_is_cut_aborted_twice",
+          rc0 == 0 and rc == 0 and [(c["value"], c["reason"]) for c in doc["cut_am19"]]
+          == [(4.0, "aborted_twice:step1_checks/checks_failed")], f"{result_line(log0 or '')} {result_line(log)}")
+    # C1b round 3 c1b3-2 (AM-19 item 2(b); AM-19a reading 17 is "before C"): the latest attempt, launched before C,
+    # ends the same way only after C: that changes nothing, and the reason is r's own ending
+    late_same = [T(1, LAMBDA_C + 10), ABORT_ROW(1, LAMBDA_C + 10.5, rule="step1_checks", cause="checks_failed")]
+    _, rc, log, doc, rc0, log0 = case("am19a_oc_r_ab_after_c", [(oc_stop_rows(), dict(stopped=True)),
+                                                                (step1(LAMBDA_C - 20000), {}),
+                                                                (late_same, dict(launch=LAMBDA_C - 100))],
+                                      NOW_L, record=True)
+    check("am19a_r17_latest_attempt_ending_the_same_way_after_the_date_changes_nothing",
+          rc0 == 0 and rc == 0 and [(c["value"], c["reason"]) for c in doc["cut_am19"]]
+          == [(4.0, "run_aborted_other:step1_checks/checks_failed")], f"{result_line(log0 or '')} {result_line(log)}")
+    # C1b round 4 c1b4-1 (AM-19a readings 4 and 17): the latest attempt's telemetry straddles C (a row after C, then
+    # its ending before C): a fault of that attempt (straddle_fault), so its ending is no ending before C, and the
+    # reason is r's own
+    straddle = [T(1, LAMBDA_C + 5), ABORT_ROW(1, LAMBDA_C - 5, rule="step1_checks", cause="checks_failed")]
+    _, rc, log, doc, rc0, log0 = case("am19a_oc_r_ab_straddle", [(oc_stop_rows(), dict(stopped=True)),
+                                                                 (step1(LAMBDA_C - 20000), {}),
+                                                                 (straddle, dict(launch=LAMBDA_C - 100))],
+                                      NOW_L, record=True)
+    check("am19a_r17_latest_attempt_whose_telemetry_straddles_the_date_changes_nothing",
+          rc0 == 0 and rc == 0 and [(c["value"], c["reason"]) for c in doc["cut_am19"]]
+          == [(4.0, "run_aborted_other:step1_checks/checks_failed")], f"{result_line(log0 or '')} {result_line(log)}")
+    # C1b workflow repeats-2 (AM-19a reading 18): an attempt without an outcome before one that names no AM-8a
+    # report cannot make the latest ending its second (launched, it makes that one repeat_report_missing): no wait
+    rc, log, _ = before_c("pending_then_unreported_abort", [([], dict(state="pending", launch=l4)),
+                                                           (step1(l4 + 9000), {}), (late_ab, {})])
+    check("am19a_r18_abort_after_a_pending_attempt_and_an_unreported_one_is_run_aborted_other_before_the_date",
+          rc == 2 and code_of(log) == "run_aborted_other", result_line(log))
+    # C1b workflow repeats-3 (AM-19a readings 12 and 18): a withheld launched attempt's launch time is known; a
+    # later attempt launched no later refuses now (every completion refuses)
+    rc, log, _ = before_c("overlap_withheld", [(course(l4 + 9000, 1000, val_at=()), {}),
+                                               (course(l4 + 9000, 500, val_at=()), {})], withhold=(a1,))
+    check("am19a_r12_attempt_launched_not_after_a_withheld_launched_one_is_repeat_overlap",
+          rc == 2 and code_of(log) == "repeat_overlap", result_line(log))
+    # C1b workflow repeats-5 (AM-19a readings 9 and 16): the default's abort, stop, abort is default_aborted_twice
+    rc, log, _ = default_case("default_abort_stop_abort", [d_ab[0], (course(BASE_L + 26000, 1000, val_at=()),
+                                                                     dict(stopped=True)), d_ab[1]], ())
+    check("rp_default_abort_stop_abort_is_default_aborted_twice",
+          rc == 2 and code_of(log) == "default_aborted_twice", result_line(log))
 
 
 def test_am19_record(tmp: Path) -> None:
@@ -2204,7 +2403,7 @@ def test_am19_record(tmp: Path) -> None:
     check("dr_running_default_last_iteration_above_the_derived_is_status_mismatch",
           rc0 == 0 and rc == 2 and code_of(log) == "decision_record_status_mismatch",
           f"{result_line(log0)} {result_line(log)}")
-    # R7 (interpretation 14): the on-course repeat still running is waited for as the default is; the record
+    # AM-19a reading 7: the on-course repeat still running is waited for as the default is; the record
     # reads "running (on-course repeat, item 2(b))" and accepts the repeat's later finish
     r_full = fin(LAMBDA_C - 5000.0, 0.60, iter_s=0.25, val_s=50.0)
 
@@ -2396,6 +2595,442 @@ def test_am19_record(tmp: Path) -> None:
     rc, log, _ = oc_sweep("oc_s_unstopped", s_stopped=False).record(NOW_L)
     check("dr_on_course_repeat_running_with_s_lacking_its_stopped_line_refuses_the_record",
           rc == 2 and code_of(log) == "decision_record_runs_unended" and "e2_s42_lambda4_a1" in log, result_line(log))
+    test_am19a_record(tmp)
+
+
+def test_am19a_record(tmp: Path) -> None:
+    """AM-19a reading 19 (CHECK ITEMS 4, 5 and 7): the record and later launch lines, and a corrected record."""
+    def value(d, v):
+        return next(e for e in d["values"] if e["value"] == v)
+
+    l1 = LAMBDA_C - 40000.0
+    # the default runs when the record is written; then it ends with a failed check and is repeated: the record
+    # still verifies (its directories are compared with its own launch-log lines; the default's later launch
+    # line is derived and checked against the log)
+    sw = lam_sweep("am19a_default_repeated", over={1: dict(rows=course(l1, 60000, val_at=(40000,), miou=0.45))}).build()
+    rc0, log0, _ = sw.record(NOW_L)
+    with open(sw.dir("e2_s42_lambda1_a1") / "e2_telemetry.jsonl", "a", encoding="utf-8") as fh:
+        for row in (T(80000, l1 + 80100), V(80000, l1 + 80200, 0.45), END(l1 + 80201, 0.45, checks=False, start=l1)):
+            fh.write(json.dumps(row) + "\n")
+    sw.late(1, fin(l1 + 90000, 0.45))
+    rc, log, doc = sw.select(LAMBDA_C + 3 * DAY)
+    check("am19a_r19_record_with_a_running_default_verifies_after_the_default_is_repeated",
+          rc0 == 0 and rc == 0 and doc["winner"]["run_id"] == "e2_s42_lambda1_a2" and doc["n_cut"] == 1
+          and doc["directories"]["1"] == ["e2_s42_lambda1_a1", "e2_s42_lambda1_a2"],
+          f"{result_line(log0)} {result_line(log)}")
+    # a launch line of a non-default value added after the record refuses the selection
+    sw = lam_sweep("am19a_later_non_default").build()
+    rc0, log0, _ = sw.record(NOW_L)
+    sw.late(4, state="not_launched", report=False)
+    rc, log, _ = sw.select(NOW_L)
+    check("am19a_r19_later_non_default_launch_line_refuses",
+          rc0 == 0 and rc == 2 and code_of(log) == "decision_record_launch_log_mismatch" and "e2_s42_lambda4_a1" in log,
+          f"{result_line(log0)} {result_line(log)}")
+
+    # a corrected record (CHECK ITEM 5): the void record at the sweep's record path is kept and never edited; one
+    # corrected record is written once to the sweep's corrected path after the AM-8a fault report, the sha256
+    # values of the void record, of the report and of the corrected record are in the decision log, and
+    # --decision-record reads it (no record at another path is read)
+    void_rel, fix_rel, fault_rel = (ss.DECISION_RECORD_REL["lambda_logit"], ss.DECISION_RECORD_CORRECTED_REL["lambda_logit"],
+                                    "reports/am8a/record_fault.md")
+    other_rel = "reports/derived/lambda_decision_record_v2.json"
+    forged = (lambda d: value(d, 1.0)["directories"][0].update(run_meta_sha256="0" * 64))  # noqa: E731
+
+    def dl_plus(sw, row: str) -> str:
+        return (sw.repo / ss.DECISION_LOG_REL).read_text(encoding="utf-8") + row
+
+    def fault(sw, rel=fault_rel, *, dl=True, n=1) -> dict:
+        """The AM-8a fault report, committed, with a decision-log row naming its sha256 when `dl`."""
+        text = f"AM-8a report {n}: the decision record was refused (synthetic)\n"
+        sha = ss.sha256_bytes(text.encode("utf-8"))
+        files = {rel: text}
+        if dl:
+            files[ss.DECISION_LOG_REL] = dl_plus(sw, f"| DL-9{3 + n} | RECORDED | AM-8a fault report {rel}, sha256 {sha} "
+                                                     "(synthetic) | - | no |\n")
+        sw.commit("fault report", files)
+        return {"path": rel, "sha256": sha}
+
+    def corrected(label, *, void_edit=forged, fix_edit=None, plain=False, report_dl=True):
+        """A void record at the sweep's record path (forged by `void_edit` unless None), the fault report, and a
+        record at fix_rel written by the writer as a correction, or (plain) as an ordinary record."""
+        sw = lam_sweep(f"am19a_corr_{label}").build()
+        rc_v, log_v, sha_v = sw.record(NOW_L, edit=void_edit)
+        fault(sw, dl=report_dl)
+        rc_c, log_c, sha_c = sw.record_at(NOW_L, fix_rel, corrects=None if plain else (void_rel, fault_rel),
+                                          edit=fix_edit)
+        return sw, (rc_v, log_v, sha_v), (rc_c, log_c, sha_c)
+
+    def by_hand(sw, rel, cor, *, dl_id="DL-93") -> tuple:
+        """A record made by hand at `rel` (the writer refuses it: writer_guard_off), given `cor` (a correction the
+        writer would refuse), committed with its decision-log row."""
+        return sw.record_at(NOW_L, rel, dl_id=dl_id, edit=lambda d: d.update(corrects=cor), hand=True)
+
+    def ref(sw, rel) -> dict:
+        return {"path": rel, "sha256": ss.sha256_bytes((sw.repo / rel).read_bytes())}
+
+    sw, (rc_v, _, sha_v), (rc_c, log_c, sha_c) = corrected("ok")
+    rc1, log1, _ = sw.select(NOW_L)
+    rc, log, doc = sw.select(NOW_L, extra=["--decision-record", fix_rel])
+    cor = (doc or {}).get("decision_record_corrects") or {}
+    check("am19a_r19_corrected_record_replaces_a_void_one",
+          rc_v == 0 and rc_c == 0 and rc1 == 2 and code_of(log1) == "decision_record_hash_mismatch" and rc == 0
+          and doc["decision_record"] == {"path": fix_rel, "sha256": sha_c} and cor.get("void_record")
+          == {"path": void_rel, "sha256": sha_v} and cor.get("void_code") == "decision_record_hash_mismatch"
+          and cor.get("fault_report", {}).get("path") == fault_rel, f"{result_line(log_c)} {result_line(log1)} "
+                                                                     f"{result_line(log)}")
+    # the writer writes the sweep's corrected record once: a second correction is refused by the writer, and one
+    # written over the first by hand is refused by the selection
+    second_fault = fault(sw, "reports/am8a/record_fault_2.md", n=2)
+    rc_w, log_w = run_cli(sl, ["--runs", *map(str, sw.runs()), "--write-decision-record", str(sw.root / "second.json"),
+                               "--corrects", void_rel, "--fault-report", second_fault["path"]], now=NOW_L, repo=sw.repo)
+    check("am19a_r19_writer_refuses_a_second_correction",
+          rc_w == 2 and code_of(log_w) == "decision_record_correction_invalid" and not (sw.root / "second.json").exists(),
+          result_line(log_w))
+    first = json.loads((sw.repo / fix_rel).read_text(encoding="utf-8"))
+    first["corrects"]["fault_report"] = second_fault
+    text = json.dumps(first, indent=2) + "\n"
+    sw.commit("a second corrected record over the first", {fix_rel: text, ss.DECISION_LOG_REL: dl_plus(
+        sw, f"| DL-96 | RECORDED | second correction, sha256 {ss.sha256_bytes(text.encode('utf-8'))} (synthetic) | - | no |\n")})
+    rc, log, _ = sw.select(NOW_L, extra=["--decision-record", fix_rel])
+    check("am19a_r19_second_corrected_record_over_the_first_is_refused",
+          rc == 2 and code_of(log) == "decision_record_rewritten", result_line(log))
+
+    sw, _, (rc_c, log_c, _) = corrected("bad_report")
+    sw.commit("the fault report rewritten after the correction", {fault_rel: "AM-8a report, rewritten (synthetic)\n"})
+    rc, log, _ = sw.select(NOW_L, extra=["--decision-record", fix_rel])
+    check("am19a_r19_corrected_record_whose_fault_report_differs_is_refused",
+          rc_c == 0 and rc == 2 and code_of(log) == "decision_record_correction_invalid",
+          f"{result_line(log_c)} {result_line(log)}")
+    sw = lam_sweep("am19a_corr_void_not_in_dl").build()
+    rc_v, _, sha_v = sw.record(NOW_L, dl=False)
+    fault(sw)
+    rc_c, log_c, _ = sw.record_at(NOW_L, fix_rel, corrects=(void_rel, fault_rel))
+    rc_p, log_p, _ = by_hand(sw, fix_rel, {"void_record": {"path": void_rel, "sha256": sha_v},
+                                           "fault_report": ref(sw, fault_rel),
+                                           "void_code": "decision_record_not_in_decision_log"})
+    rc, log, _ = sw.select(NOW_L, extra=["--decision-record", fix_rel])
+    check("am19a_r19_corrected_record_whose_void_record_is_not_in_the_decision_log_is_refused",
+          rc_v == 0 and rc_c == 2 and code_of(log_c) == "decision_record_correction_invalid" and rc_p == 0 and rc == 2
+          and code_of(log) == "decision_record_correction_invalid", f"{result_line(log_c)} {result_line(log)}")
+    # C1b workflow texts-6: the void record named with a sha256 that is in the decision log but is not the committed
+    # void record's is refused
+    sw, _, (rc_c, log_c, _) = corrected("void_sha", fix_edit=lambda d: d["corrects"]["void_record"].update(
+        sha256=ss.sha256_bytes(b"AM-8a report 1: the decision record was refused (synthetic)\n")))
+    rc, log, _ = sw.select(NOW_L, extra=["--decision-record", fix_rel])
+    check("am19a_r19_corrected_record_naming_another_sha256_of_the_void_record_is_refused",
+          rc_c == 0 and rc == 2 and code_of(log) == "decision_record_correction_invalid",
+          f"{result_line(log_c)} {result_line(log)}")
+    _, _, (rc_c, log_c, _) = corrected("report_not_in_dl", report_dl=False)
+    check("am19a_r19_correction_whose_fault_report_is_not_in_the_decision_log_is_refused",
+          rc_c == 2 and code_of(log_c) == "decision_record_correction_invalid" and "fault report" in log_c,
+          result_line(log_c))
+    sw, _, (rc_c, log_c, _) = corrected("void_code", fix_edit=lambda d: d["corrects"].update(
+        void_code="decision_record_format"))
+    rc, log, _ = sw.select(NOW_L, extra=["--decision-record", fix_rel])
+    check("am19a_r19_corrected_record_whose_void_code_differs_from_the_derived_one_is_refused",
+          rc_c == 0 and rc == 2 and code_of(log) == "decision_record_correction_invalid",
+          f"{result_line(log_c)} {result_line(log)}")
+    # a correction of the corrected record: the first correction is itself made void, and a third record names it
+    second_rel = "reports/derived/lambda_decision_record_corrected_again.json"
+    sw, _, (rc_c, log_c, sha_c) = corrected("chain", fix_edit=forged)
+    rc_p, log_p, _ = by_hand(sw, second_rel, {"void_record": {"path": fix_rel, "sha256": sha_c},
+                                              "fault_report": ref(sw, fault_rel),
+                                              "void_code": "decision_record_hash_mismatch"})
+    rc, log, _ = sw.select(NOW_L, extra=["--decision-record", second_rel])
+    check("am19a_r19_correction_of_a_corrected_record_is_refused",
+          rc_c == 0 and rc_p == 0 and rc == 2 and code_of(log) == "decision_record_correction_invalid",
+          f"{result_line(log_c)} {result_line(log_p)} {result_line(log)}")
+    # the record it names is not void: refused by the writer, and by the selection when written by hand
+    sw, (_, _, sha_v), (rc_c, log_c, _) = corrected("valid_void", void_edit=None)
+    rc_p, log_p, _ = by_hand(sw, fix_rel, {"void_record": {"path": void_rel, "sha256": sha_v},
+                                           "fault_report": ref(sw, fault_rel),
+                                           "void_code": "decision_record_status_mismatch"})
+    rc, log, _ = sw.select(NOW_L, extra=["--decision-record", fix_rel])
+    check("am19a_r19_corrected_record_naming_a_valid_record_is_refused",
+          rc_c == 2 and code_of(log_c) == "decision_record_correction_invalid" and rc_p == 0 and rc == 2
+          and code_of(log) == "decision_record_correction_invalid", f"{result_line(log_c)} {result_line(log)}")
+    # a record refused because a non-default launch line was added after it is not void: no correction lifts it
+    sw = lam_sweep("am19a_corr_later_launch").build()
+    rc_v, _, sha_v = sw.record(NOW_L)
+    sw.late(4, state="not_launched", report=False)
+    fault(sw)
+    rc_c, log_c, _ = sw.record_at(NOW_L, fix_rel, corrects=(void_rel, fault_rel))
+    rc_p, log_p, _ = by_hand(sw, fix_rel, {"void_record": {"path": void_rel, "sha256": sha_v},
+                                           "fault_report": ref(sw, fault_rel),
+                                           "void_code": "decision_record_launch_log_mismatch"})
+    rc, log, _ = sw.select(NOW_L, extra=["--decision-record", fix_rel])
+    check("am19a_r19_record_refused_for_a_later_non_default_launch_line_is_not_corrected",
+          rc_v == 0 and rc_c == 2 and code_of(log_c) == "decision_record_correction_invalid" and rc_p == 0 and rc == 2
+          and code_of(log) == "decision_record_correction_invalid", f"{result_line(log_c)} {result_line(log)}")
+    # C1b workflow record-1: an ordinary record written after the later launch line does not replace the refused
+    # one, at the corrected path or at any other; the selection without --decision-record still refuses (round 2
+    # record2-1: the writer refuses such a record, so it is made by hand here)
+    rc_a, log_a, _ = sw.record_at(NOW_L, other_rel, dl_id="DL-97", hand=True)
+    rc, log, _ = sw.select(NOW_L, extra=["--decision-record", other_rel])
+    rc0, log0, _ = sw.select(NOW_L)
+    check("am19a_r19_record_at_another_path_is_refused",
+          rc_a == 0 and rc == 2 and code_of(log) == "decision_record_correction_invalid" and rc0 == 2
+          and code_of(log0) == "decision_record_launch_log_mismatch", f"{result_line(log)} {result_line(log0)}")
+    # C1b round 2 record2-1: while the sweep's record has a history, the writer refuses another record, wherever it
+    # is written (its exit text would lead to a commit over the committed record) and points to --corrects
+    rc_w, log_w = run_cli(sl, ["--runs", *map(str, sw.runs()), "--write-decision-record", str(sw.root / "again.json")],
+                          now=NOW_L, repo=sw.repo)
+    check("am19a_r19_writer_refuses_a_record_while_the_sweeps_record_has_a_history",
+          rc_w == 2 and code_of(log_w) == "decision_record_correction_invalid" and "--corrects" in log_w
+          and not (sw.root / "again.json").exists(), result_line(log_w))
+    # C1b workflow verify:record-1: the sweep's record replaced in place after the later launch line (a new record
+    # made by hand outside the repository, copied over the first one and committed with its row) is refused
+    with writer_guard_off():
+        rc_h, log_h = run_cli(sl, ["--runs", *map(str, sw.runs()), "--write-decision-record",
+                                   str(sw.root / "again_by_hand.json")], now=NOW_L, repo=sw.repo)
+    data = (sw.root / "again_by_hand.json").read_bytes() if rc_h == 0 else b""
+    sw.commit("the decision record replaced in place", {void_rel: data, ss.DECISION_LOG_REL: dl_plus(
+        sw, f"| DL-98 | RECORDED | replaced record, sha256 {ss.sha256_bytes(data)} (synthetic) | - | no |\n")})
+    rc, log, _ = sw.select(NOW_L)
+    check("am19a_r19_record_replaced_in_place_after_a_later_launch_line_is_refused",
+          rc_h == 0 and rc == 2 and code_of(log) == "decision_record_rewritten", f"{result_line(log_h)} {result_line(log)}")
+    # the place (record2-1): the writer refuses an ordinary record into the repository at the corrected path, with
+    # no record committed yet; one made there by hand is refused by the selection
+    sw = lam_sweep("am19a_place_plain").build()
+    rc_w, log_w = run_cli(sl, ["--runs", *map(str, sw.runs()), "--write-decision-record", str(sw.repo / fix_rel)],
+                          now=NOW_L, repo=sw.repo)
+    check("am19a_r19_writer_refuses_an_ordinary_record_at_the_corrected_path",
+          rc_w == 2 and code_of(log_w) == "decision_record_correction_invalid" and not (sw.repo / fix_rel).exists(),
+          result_line(log_w))
+    sw.record(NOW_L)
+    sw.late(4, state="not_launched", report=False)
+    rc_a, log_a, _ = sw.record_at(NOW_L, fix_rel, dl_id="DL-97", hand=True)
+    rc, log, _ = sw.select(NOW_L, extra=["--decision-record", fix_rel])
+    check("am19a_r19_ordinary_record_at_the_corrected_path_is_refused",
+          rc_a == 0 and rc == 2 and code_of(log) == "decision_record_correction_invalid", result_line(log))
+    sw = lam_sweep("am19a_place_elsewhere").build()
+    sw.record(NOW_L, edit=forged)
+    fault(sw)
+    rc_w, log_w = run_cli(sl, ["--runs", *map(str, sw.runs()), "--write-decision-record", str(sw.repo / second_rel),
+                               "--corrects", void_rel, "--fault-report", fault_rel], now=NOW_L, repo=sw.repo)
+    check("am19a_r19_writer_refuses_a_correction_to_another_path_in_the_repository",
+          rc_w == 2 and code_of(log_w) == "decision_record_correction_invalid" and not (sw.repo / second_rel).exists(),
+          result_line(log_w))
+    rc_c, log_c, _ = sw.record_at(NOW_L, fix_rel, corrects=(void_rel, fault_rel))
+    data = (sw.repo / fix_rel).read_bytes() if rc_c == 0 else b""
+    sw.commit("the corrected record copied to another path", {other_rel: data, ss.DECISION_LOG_REL: dl_plus(
+        sw, f"| DL-97 | RECORDED | {other_rel}, sha256 {ss.sha256_bytes(data)} (synthetic) | - | no |\n")})
+    rc, log, _ = sw.select(NOW_L, extra=["--decision-record", other_rel])
+    check("am19a_r19_corrected_record_at_another_path_is_refused",
+          rc_c == 0 and rc == 2 and code_of(log) == "decision_record_correction_invalid", result_line(log))
+    # a correction names the sweep's record as void; a record at the sweep's record path corrects nothing. X, an
+    # ordinary record at another path, is void (it is not read there) and is named instead
+    sw = lam_sweep("am19a_place_void").build()
+    rc_x, _, sha_x = sw.record_at(NOW_L, other_rel, dl_id="DL-97", hand=True)
+    fault(sw)
+    named_x = {"void_record": {"path": other_rel, "sha256": sha_x}, "fault_report": ref(sw, fault_rel),
+               "void_code": "decision_record_correction_invalid"}
+    rc_p, _, _ = by_hand(sw, fix_rel, named_x)
+    rc, log, _ = sw.select(NOW_L, extra=["--decision-record", fix_rel])
+    check("am19a_r19_corrected_record_naming_another_void_record_is_refused",
+          rc_x == 0 and rc_p == 0 and rc == 2 and code_of(log) == "decision_record_correction_invalid", result_line(log))
+    rc_d, _, _ = sw.record(NOW_L, edit=lambda d: d.update(corrects=named_x))
+    rc, log, _ = sw.select(NOW_L)
+    check("am19a_r19_record_at_the_sweeps_path_that_corrects_is_refused",
+          rc_d == 0 and rc == 2 and code_of(log) == "decision_record_correction_invalid", result_line(log))
+    # the void record is kept and never edited
+    sw = lam_sweep("am19a_void_edited").build()
+    sw.record(NOW_L, edit=forged)
+    v = json.loads((sw.repo / void_rel).read_text(encoding="utf-8"))
+    value(v, 1.0)["directories"][0].update(telemetry_sha256="1" * 64)
+    text = json.dumps(v, indent=2) + "\n"
+    sw.commit("the void record edited", {void_rel: text, ss.DECISION_LOG_REL: dl_plus(
+        sw, f"| DL-98 | RECORDED | edited record, sha256 {ss.sha256_bytes(text.encode('utf-8'))} (synthetic) | - | no |\n")})
+    fault(sw)
+    rc_c, log_c, _ = sw.record_at(NOW_L, fix_rel, corrects=(void_rel, fault_rel))
+    check("am19a_r19_void_record_edited_after_it_was_committed_is_not_corrected",
+          rc_c == 2 and code_of(log_c) == "decision_record_correction_invalid", result_line(log_c))
+    # C1b workflow record-3: a void record that is no JSON is corrected; the launch lines added after a void record
+    # are counted from the log its commit saw, never beyond it
+    sw = lam_sweep("am19a_void_not_json").build()
+    junk = b'{"format": "sweep_decision_record/1", "sweep": "lambda_logit", "sched'
+    sw.commit("a truncated decision record", {void_rel: junk, ss.DECISION_LOG_REL: dl_plus(
+        sw, f"| DL-91 | RECORDED | truncated record, sha256 {ss.sha256_bytes(junk)} (synthetic) | - | no |\n")})
+    fault(sw)
+    rc_c, log_c, _ = sw.record_at(NOW_L, fix_rel, corrects=(void_rel, fault_rel))
+    rc, log, doc = sw.select(NOW_L, extra=["--decision-record", fix_rel])
+    check("am19a_r19_void_record_that_is_no_json_is_corrected",
+          rc_c == 0 and rc == 0 and ((doc or {}).get("decision_record_corrects") or {}).get("void_code")
+          == "decision_record_format", f"{result_line(log_c)} {result_line(log)}")
+    sw = lam_sweep("am19a_void_lines_raised").build()
+    sw.record(NOW_L, edit=lambda d: (forged(d), d["launch_log"].update(lines=999)))
+    sw.late(4, state="not_launched", report=False)
+    fault(sw)
+    rc_c, log_c, _ = sw.record_at(NOW_L, fix_rel, corrects=(void_rel, fault_rel))
+    check("am19a_r19_void_record_whose_launch_log_lines_were_raised_is_not_corrected",
+          rc_c == 2 and code_of(log_c) == "decision_record_correction_invalid" and "e2_s42_lambda4_a1" in log_c,
+          result_line(log_c))
+    sw = lam_sweep("am19a_void_written_before").build()
+    rc_w0, _, sha_w = sw.record(NOW_L, commit=False)
+    sw.late(4, state="not_launched", report=False)
+    sw.commit("the decision record, committed after the later launch line", {
+        void_rel: (sw.repo / void_rel).read_bytes(), ss.DECISION_LOG_REL: dl_plus(
+            sw, f"| DL-91 | RECORDED | decision record, sha256 {sha_w} (synthetic) | - | no |\n")})
+    fault(sw)
+    rc_c, log_c, _ = sw.record_at(NOW_L, fix_rel, corrects=(void_rel, fault_rel))
+    check("am19a_r19_record_written_before_a_later_launch_line_and_committed_after_it_is_not_corrected",
+          rc_w0 == 0 and rc_c == 2 and code_of(log_c) == "decision_record_correction_invalid"
+          and "e2_s42_lambda4_a1" in log_c, result_line(log_c))
+    # C1b workflow record-4: the flags; a record whose corrects has the wrong form
+    sw = lam_sweep("am19a_corr_flags").build()
+    sw.record(NOW_L, edit=forged)
+    fault(sw)
+    runs = ["--runs", *map(str, sw.runs())]
+    rc, log = run_cli(sl, [*runs, "--write-decision-record", str(sw.repo / fix_rel), "--corrects", void_rel],
+                      now=NOW_L, repo=sw.repo)
+    check("am19a_r19_corrects_without_a_fault_report_is_refused",
+          rc == 2 and code_of(log) == "decision_record_correction_invalid" and not (sw.repo / fix_rel).exists(),
+          result_line(log))
+    rc, log = run_cli(sl, [*runs, "--write-decision-record", str(sw.repo / fix_rel), "--fault-report", fault_rel],
+                      now=NOW_L, repo=sw.repo)
+    check("am19a_r19_fault_report_without_corrects_is_refused",
+          rc == 2 and code_of(log) == "decision_record_correction_invalid" and not (sw.repo / fix_rel).exists(),
+          result_line(log))
+    rc, log = run_cli(sl, [*runs, "--corrects", void_rel, "--fault-report", fault_rel, "--out",
+                           str(sw.root / "sel.json")], now=NOW_L, repo=sw.repo)
+    check("am19a_r19_corrects_without_write_decision_record_is_refused",
+          rc == 2 and code_of(log) == "decision_record_correction_invalid", result_line(log))
+    asw = Sweep("am19a_alpha_flags", "alpha_cwd").build()
+    a_void = ss.DECISION_RECORD_REL["alpha_cwd"]
+    rc, log = run_cli(sa, ["--runs", str(asw.root / "none"), "--corrects", a_void, "--fault-report", fault_rel,
+                           "--out", str(asw.root / "sel.json")], now=NOW_A, repo=asw.repo)
+    rc2, log2 = run_cli(sa, ["--runs", str(asw.root / "none"), "--write-decision-record", str(asw.root / "rec.json"),
+                             "--fault-report", fault_rel], now=NOW_A, repo=asw.repo)
+    check("am19a_r19_alpha_correction_flags_out_of_their_pairing_are_refused",
+          rc == 2 and code_of(log) == "decision_record_correction_invalid" and rc2 == 2
+          and code_of(log2) == "decision_record_correction_invalid", f"{result_line(log)} {result_line(log2)}")
+    sw = lam_sweep("am19a_corrects_form").build()
+    sw.record(NOW_L, edit=lambda d: d.update(corrects={"void_record": "x", "fault_report": "y", "void_code": 1}))
+    rc, log, _ = sw.select(NOW_L)
+    check("am19a_r19_record_whose_corrects_has_the_wrong_form_is_decision_record_format",
+          rc == 2 and code_of(log) == "decision_record_format", result_line(log))
+    # C1b round 2 record2-2 and record2-3 (PL-32: the clone is mounted read-only): the correction written outside the
+    # repository, by an absolute path and by a path relative to another working directory, then copied to the
+    # corrected path and committed with its row, is read through --decision-record
+    for label, absolute in (("an_absolute", True), ("a_relative", False)):
+        sw = lam_sweep(f"am19a_corr_outside_{label}").build()
+        rc_v, _, sha_v = sw.record(NOW_L, edit=forged)
+        fault(sw)
+        cwd_dir = scratch_dir("k2_writer_cwd")
+        target = cwd_dir / "fixed.json"
+        argv = ["--runs", *map(str, sw.runs()), "--write-decision-record", str(target) if absolute else "fixed.json",
+                "--corrects", void_rel, "--fault-report", fault_rel]
+        here = os.getcwd()
+        os.chdir(cwd_dir)
+        try:
+            rc_w, log_w = run_cli(sl, argv, now=NOW_L, repo=sw.repo)
+        finally:
+            os.chdir(here)
+        data = target.read_bytes() if rc_w == 0 and target.exists() else b""
+        sw.commit("the corrected record", {fix_rel: data, ss.DECISION_LOG_REL: dl_plus(
+            sw, f"| DL-95 | RECORDED | corrected record, sha256 {ss.sha256_bytes(data)} (synthetic) | - | no |\n")})
+        rc, log, doc = sw.select(NOW_L, extra=["--decision-record", fix_rel])
+        cor = (doc or {}).get("decision_record_corrects") or {}
+        check(f"am19a_r19_correction_written_outside_the_repository_by_{label}_path_is_read",
+              rc_v == 0 and rc_w == 0 and rc == 0 and cor.get("void_record") == {"path": void_rel, "sha256": sha_v},
+              f"{result_line(log_w)} {result_line(log)}")
+    # C1b round 2 record2-7: the corrected path with a history (committed, then deleted): the writer refuses another
+    # correction
+    sw, _, (rc_c, log_c, _) = corrected("deleted")
+    git(sw.repo, "rm", "-q", "--", fix_rel)
+    git(sw.repo, "commit", "-q", "-m", "the corrected record deleted")
+    third = fault(sw, "reports/am8a/record_fault_3.md", n=3)
+    rc_w, log_w = run_cli(sl, ["--runs", *map(str, sw.runs()), "--write-decision-record", str(sw.root / "third.json"),
+                               "--corrects", void_rel, "--fault-report", third["path"]], now=NOW_L, repo=sw.repo)
+    check("am19a_r19_writer_refuses_a_correction_while_the_corrected_path_has_a_history",
+          rc_c == 0 and rc_w == 2 and code_of(log_w) == "decision_record_correction_invalid"
+          and not (sw.root / "third.json").exists(), f"{result_line(log_c)} {result_line(log_w)}")
+    # C1b round 3 c1b3-3 (AM-19a reading 19): a committed record deleted later is decision_record_rewritten, a
+    # refusal (a STOP: the writer refuses a path with a history and a correction needs the void record), never a wait
+    rc_s, log_s, _ = sw.select(NOW_L)
+    check("am19a_r19_corrected_record_deleted_after_its_commit_is_decision_record_rewritten",
+          rc_s == 2 and code_of(log_s) == "decision_record_rewritten", result_line(log_s))
+    sw = lam_sweep("am19a_record_deleted").build()
+    rc0, log0, _ = sw.record(NOW_L)
+    git(sw.repo, "rm", "-q", "--", void_rel)
+    git(sw.repo, "commit", "-q", "-m", "the decision record deleted")
+    rc, log, _ = sw.select(NOW_L)
+    rc_w, log_w = run_cli(sl, ["--runs", *map(str, sw.runs()), "--write-decision-record", str(sw.root / "again.json")],
+                          now=NOW_L, repo=sw.repo)
+    check("am19a_r19_record_deleted_after_its_commit_is_decision_record_rewritten",
+          rc0 == 0 and rc == 2 and code_of(log) == "decision_record_rewritten" and rc_w == 2
+          and code_of(log_w) == "decision_record_correction_invalid" and not (sw.root / "again.json").exists(),
+          f"{result_line(log0)} {result_line(log)} {result_line(log_w)}")
+    # c1b3-3's residual (load_record): a committed record deleted in the working tree only (the deletion not
+    # committed) is decision_record_missing, a refusal; it is never read as a sweep without a record
+    sw = lam_sweep("am19a_record_deleted_uncommitted").build()
+    rc0, log0, _ = sw.record(NOW_L)
+    (sw.repo / void_rel).unlink()
+    rc, log, _ = sw.select(NOW_L)
+    check("am19a_r19_record_deleted_but_not_committed_is_decision_record_missing",
+          rc0 == 0 and rc == 2 and code_of(log) == "decision_record_missing", f"{result_line(log0)} {result_line(log)}")
+    # C1b round 4 c1b4-2: with the default still running (the sweep waits), a record deleted after its commit
+    # refuses first, not the shortfall's wait
+    sw = lam_sweep("am19a_record_deleted_waiting",
+                   over={1: dict(rows=course(l1, 60000, val_at=(40000,), miou=0.45))}).build()
+    rc0, log0, _ = sw.record(NOW_L)
+    git(sw.repo, "rm", "-q", "--", void_rel)
+    git(sw.repo, "commit", "-q", "-m", "the decision record deleted")
+    rc, log, _ = sw.select(NOW_L)
+    check("am19a_r19_record_deleted_after_its_commit_while_the_default_runs_is_decision_record_rewritten",
+          rc0 == 0 and rc == 2 and code_of(log) == "decision_record_rewritten",
+          f"{result_line(log0)} {result_line(log)}")
+    # C1b round 2 record2-5: a record that reaches HEAD through a merge is written once (the merge takes it from one
+    # parent and changes nothing); a void record merged the same way is corrected; a record first added in a merge
+    # commit, absent in both parents, is added there, once
+
+    def merged(label, *, edit=None, evil=False):
+        sw = lam_sweep(f"am19a_merge_{label}").build()
+        git(sw.repo, "checkout", "-q", "-b", "side")
+        if evil:
+            commit_files(sw.repo, {"notes/side.txt": "a side commit (synthetic)\n"}, "side")
+            git(sw.repo, "checkout", "-q", "master")
+            git(sw.repo, "merge", "-q", "--no-ff", "--no-commit", "side")
+            rc0, log0, sha = sw.record(NOW_L, edit=edit, commit=False)
+            (sw.repo / ss.DECISION_LOG_REL).write_text(dl_plus(sw, f"| DL-91 | RECORDED | decision record, sha256 {sha} "
+                                                                   "(synthetic) | - | no |\n"), encoding="utf-8")
+            git(sw.repo, "add", "--", void_rel, ss.DECISION_LOG_REL)
+            git(sw.repo, "commit", "-q", "-m", "the merge, with the decision record")
+        else:
+            rc0, log0, sha = sw.record(NOW_L, edit=edit)
+            git(sw.repo, "checkout", "-q", "master")
+            git(sw.repo, "merge", "-q", "--no-ff", "-m", "merge the decision record", "side")
+        return sw, rc0, log0, sha
+    sw, rc0, log0, sha = merged("plain")
+    rc, log, doc = sw.select(NOW_L)
+    check("am19a_r19_record_merged_from_a_side_branch_is_written_once",
+          rc0 == 0 and rc == 0 and (doc or {}).get("decision_record") == {"path": void_rel, "sha256": sha},
+          f"{result_line(log0)} {result_line(log)}")
+    sw, rc0, _, sha_v = merged("void", edit=forged)
+    fault(sw)
+    rc_c, log_c, _ = sw.record_at(NOW_L, fix_rel, corrects=(void_rel, fault_rel))
+    rc, log, doc = sw.select(NOW_L, extra=["--decision-record", fix_rel])
+    check("am19a_r19_void_record_merged_from_a_side_branch_is_corrected",
+          rc0 == 0 and rc_c == 0 and rc == 0 and ((doc or {}).get("decision_record_corrects") or {}).get("void_record")
+          == {"path": void_rel, "sha256": sha_v}, f"{result_line(log_c)} {result_line(log)}")
+    sw, rc0, log0, sha = merged("evil", evil=True)
+    rc, log, doc = sw.select(NOW_L)
+    check("am19a_r19_record_added_in_a_merge_commit_is_written_once",
+          rc0 == 0 and rc == 0 and (doc or {}).get("decision_record") == {"path": void_rel, "sha256": sha},
+          f"{result_line(log0)} {result_line(log)}")
+    # C1b round 2 record2-6: the launch log at the commit that added the void record must be a byte prefix of HEAD's:
+    # its last line re-serialized at HEAD (the same JSON, other spacing; the records commits keep their prefixes)
+    # refuses the correction
+    sw = lam_sweep("am19a_void_log_reserialized").build()
+    sw.record(NOW_L, edit=forged)
+    fault(sw)
+    reser = launch_log_text(sw.lines + sw.events[:-1]) + (json.dumps(sw.events[-1], separators=(",", ":"))
+                                                          + "\n").encode("utf-8")
+    sw.commit("the launch log's last line re-serialized", log=reser)
+    rc_c, log_c, _ = sw.record_at(NOW_L, fix_rel, corrects=(void_rel, fault_rel))
+    check("am19a_r19_void_record_whose_launch_log_is_no_prefix_of_heads_is_not_corrected",
+          rc_c == 2 and code_of(log_c) == "decision_record_correction_invalid" and "byte prefix" in log_c,
+          result_line(log_c))
 
 
 def test_am19_rule(tmp: Path) -> None:
@@ -2504,6 +3139,16 @@ def test_am19_alpha(tmp: Path) -> None:
     rc, log, _ = sw.select(NOW_A)
     check("pl39_26c_alpha_selection_beside_a_cut_record_is_alpha_cut_conflict",
           rc == 2 and code_of(log) == "alpha_cut_conflict", result_line(log))
+    # C1b round 4 c1b4-2 (AM-19a readings 18 and 19): an alpha-cut record deleted after its commit refuses
+    # (decision_record_rewritten) before the alpha cut's wait for a record, which no input could lift
+    sw = alpha("26a_deleted", [(50, running, {})]).build()
+    rc0, log0, _ = sw.record(NOW_A)
+    git(sw.repo, "rm", "-q", "--", ss.DECISION_RECORD_REL["alpha_cwd"])
+    git(sw.repo, "commit", "-q", "-m", "the alpha-cut record deleted")
+    rc, log, _ = sw.select(NOW_A)
+    check("am19a_r19_alpha_cut_record_deleted_after_its_commit_is_decision_record_rewritten",
+          rc0 == 0 and rc == 2 and code_of(log) == "decision_record_rewritten",
+          f"{result_line(log0)} {result_line(log)}")
     diverged = course(BASE_A, 12000, val_at=(4000, 8000), stage="E3") + [ABORT_ROW(12000, BASE_A + 12200.5)]
     sw = alpha("26b_no_record", [(50, diverged, {})]).build()
     rc, log, _ = sw.select(NOW_A)
@@ -2533,14 +3178,72 @@ def test_am19_alpha(tmp: Path) -> None:
     check("al_default_running_record_accepts_rows_added_before_the_date",
           rc0 == 0 and rc1 == 5 and rc == 5 and BASE_A + 55000 * 14.0 + 100 < ALPHA_C < BASE_A + 60000 * 14.0,
           f"{result_line(log0)} {result_line(log1)} {result_line(log)}")
-    # PL-15: the record's alpha basis is compared with the derived one
+    # AM-19a reading 19 (CHECK ITEM 4): the record's decision date and cutoff are compared, not its alpha basis
+    # (before C1b, PL-15 compared the basis: decision_record_schedule_mismatch)
     sw = alpha("basis_edited", [(50, part, {})]).build()
-    rc0, log0, _ = sw.record(NOW_A, edit=lambda d: d["alpha_cutoff_basis"].update(
+    rc0, log0, sha = sw.record(NOW_A, edit=lambda d: d["alpha_cutoff_basis"].update(
         T_lo_utc=d["alpha_cutoff_basis"]["T_lo_utc"] + 1))
     rc, log, _ = sw.select(NOW_A)
-    check("al_record_with_another_alpha_basis_is_decision_record_schedule_mismatch",
+    check("al_record_with_another_alpha_basis_and_the_same_date_is_accepted",
+          rc0 == 0 and rc == 5 and f"decision record {sha}" in result_line(log), f"{result_line(log0)} {result_line(log)}")
+    sw = alpha("date_edited", [(50, part, {})]).build()
+    rc0, log0, _ = sw.record(NOW_A, edit=lambda d: d.update(decision_date="2026-10-23"))
+    rc, log, _ = sw.select(NOW_A)
+    check("al_record_with_another_decision_date_is_decision_record_schedule_mismatch",
           rc0 == 0 and rc == 2 and code_of(log) == "decision_record_schedule_mismatch",
           f"{result_line(log0)} {result_line(log)}")
+    # C1b round 2 record2-4 (CHECK ITEM 5; PL-20(b)): the alpha sweep's corrected record. The void record above
+    # (another decision date) is replaced through select_alpha --corrects after the fault report; --decision-record
+    # gives exit 5 with the corrected record's sha256; without it the void record still refuses
+    a_void, a_fix = ss.DECISION_RECORD_REL["alpha_cwd"], ss.DECISION_RECORD_CORRECTED_REL["alpha_cwd"]
+    a_rep, a_text = "reports/am8a/alpha_record_fault.md", "AM-8a report: the alpha decision record was refused (synthetic)\n"
+    sw.commit("fault report", {a_rep: a_text, ss.DECISION_LOG_REL: (sw.repo / ss.DECISION_LOG_REL).read_text(
+        encoding="utf-8") + f"| DL-94 | RECORDED | AM-8a fault report {a_rep}, sha256 "
+                           f"{ss.sha256_bytes(a_text.encode('utf-8'))} (synthetic) | - | no |\n"})
+    rc_c, log_c, sha_c = sw.record_at(NOW_A, a_fix, corrects=(a_void, a_rep))
+    a_doc = json.loads((sw.repo / a_fix).read_text(encoding="utf-8")) if rc_c == 0 else {}
+    rc5, log5, _ = sw.select(NOW_A, extra=["--decision-record", a_fix])
+    rc2, log2, _ = sw.select(NOW_A)
+    check("am19a_r19_alpha_corrected_cut_record_gives_exit_5_through_decision_record",
+          rc_c == 0 and ((a_doc.get("corrects") or {}).get("void_record") or {}).get("path") == a_void
+          and (a_doc.get("corrects") or {}).get("void_code") == "decision_record_schedule_mismatch" and rc5 == 5
+          and f"decision record {sha_c}" in result_line(log5) and rc2 == 2
+          and code_of(log2) == "decision_record_schedule_mismatch",
+          f"{result_line(log_c)} {result_line(log5)} {result_line(log2)}")
+    # Session 1 open item 3 (AM-19a reading 19): an alpha-cut record written before the default's first launch
+    # (basis c, no T_hi) still verifies once the default has launched (basis c with T_hi; the same date)
+    sw = alpha("cut_before_default", []).build()
+    raw = json.dumps([{"id": 70, "node_id": "PSH_70", "before": sw.pin, "after": sw.pin, "ref": "refs/heads/master",
+                       "timestamp": "2026-10-11T00:00:00Z", "activity_type": "push", "actor": {"login": "k2-smoke"}},
+                      {"id": 71, "node_id": "PSH_71", "before": sw.pin, "after": sw.records, "ref": "refs/heads/master",
+                       "timestamp": "2026-10-12T01:00:00Z", "activity_type": "push",
+                       "actor": {"login": "k2-smoke"}}]).encode("utf-8")
+    sw.commit("push evidence", {ss.PUSH_EVIDENCE_REL: raw,
+                                ss.PUSH_LIST_REL: push_list(ss.HeadSource(sw.repo), raw, T_IN - ss.PUSH_MARGIN_SECONDS)})
+    rc0, log0, sha = sw.record(NOW_A)
+    rec = json.loads((sw.repo / ss.DECISION_RECORD_REL["alpha_cwd"]).read_text(encoding="utf-8")) if rc0 == 0 else {}
+    sw.late(50, course(ALPHA_C + 2 * DAY, 1000, val_at=(), stage="E3"), report=False)
+    rc, log, _ = sw.select(ALPHA_C + 3 * DAY)
+    check("al_cut_record_written_before_the_default_launched_verifies_after_it_launches",
+          rc0 == 0 and (rec.get("alpha_cutoff_basis") or {}).get("T_hi_utc") is None and rc == 5
+          and f"decision record {sha}" in result_line(log), f"{result_line(log0)} {result_line(log)}")
+    # C1b workflow push-3 (AM-19a reading 10): an unserved push is named in the written record's alpha basis
+    sw = alpha("unserved_named", []).build()
+    raw = json.dumps([{"id": 75, "node_id": "PSH_75", "before": sw.pin, "after": sw.pin, "ref": "refs/heads/master",
+                       "timestamp": "2026-10-11T00:00:00Z", "activity_type": "push", "actor": {"login": "k2-smoke"}},
+                      {"id": 76, "node_id": "PSH_76", "before": sw.pin, "after": "f" * 40, "ref": "refs/heads/gone",
+                       "timestamp": "2026-10-12T00:30:00Z", "activity_type": "push", "actor": {"login": "k2-smoke"}},
+                      {"id": 77, "node_id": "PSH_77", "before": sw.pin, "after": sw.records, "ref": "refs/heads/master",
+                       "timestamp": "2026-10-12T01:00:00Z", "activity_type": "push",
+                       "actor": {"login": "k2-smoke"}}]).encode("utf-8")
+    sw.commit("push evidence", {ss.PUSH_EVIDENCE_REL: raw,
+                                ss.PUSH_LIST_REL: push_list(ss.HeadSource(sw.repo), raw, T_IN - ss.PUSH_MARGIN_SECONDS)})
+    rc0, log0, sha = sw.record(NOW_A)
+    rec = json.loads((sw.repo / ss.DECISION_RECORD_REL["alpha_cwd"]).read_text(encoding="utf-8")) if rc0 == 0 else {}
+    ev = ((rec.get("alpha_cutoff_basis") or {}).get("evidence") or {})
+    check("am19a_r10_unserved_push_is_named_in_the_written_record",
+          rc0 == 0 and ev.get("entry_id") == 76 and [(u["id"], u["remote_answer"]) for u in ev.get("unserved", [])]
+          == [(76, NOT_SERVED)] and rec.get("decision_date") == "2026-10-22", f"{result_line(log0)} {ev}")
     sw = alpha("cut_mismatch", [(50, fin(BASE_A, 0.428, stage="E3"), {}),
                                 (25, course(BASE_A + 600, 3000, val_at=(), stage="E3"), dict(stopped=True))]).build()
     rc0, log0, _ = sw.record(NOW_A, edit=lambda d: d.update(alpha_sweep_cut=True))
@@ -2550,24 +3253,76 @@ def test_am19_alpha(tmp: Path) -> None:
           f"{result_line(log0)} {result_line(log)}")
 
 
+NOT_SERVED = "fatal: remote error: upload-pack: not our ref (synthetic)"
+
+
+def push_list(src, response: bytes, t_lo: float, answers: dict | None = None, *, drop=(), edit=None) -> bytes:
+    """The list committed with an activity response (AM-19a reading 10), as push_list_doc writes it: each push
+    after T_lo with the remote's answer, here the scratch repository's (served when it holds the commit; carrying
+    the file when the commit that added the lambda selection is its ancestor). `answers` overrides entries by id,
+    `drop` leaves ids out and `edit` changes the document."""
+    commit = ss.adding_commit(src, ss.LAMBDA_SELECTION_REL)
+    lsel = src.show(src.records_ref, ss.LAMBDA_SELECTION_REL) or b""
+    auto = {}
+    for e in json.loads(response):
+        after = e.get("after")
+        held = isinstance(after, str) and len(after) == 40 and src.commit_exists(after)
+        auto[e["id"]] = {"served": bool(held), "carries_file": bool(held and commit and src.is_ancestor(commit, after)),
+                         "remote_answer": "" if held else NOT_SERVED}
+    auto.update(answers or {})
+    doc = ss.push_list_doc(response, lsel, commit, t_lo, "origin (synthetic)", auto)
+    doc["pushes"] = [x for x in doc["pushes"] if x["id"] not in drop]
+    if edit is not None:
+        edit(doc)
+    return json.dumps(doc).encode("utf-8")
+
+
 def test_am19_alpha_cutoff(tmp: Path) -> None:
-    """PL-17 and PL-39 case 25: the alpha decision date (bases (a), (b), (c); R10)."""
+    """PL-17 and PL-39 case 25: the alpha decision date (bases (a), (b), (c); AM-19a reading 10, with the push
+    list committed beside the activity response)."""
     repo = new_repo()
     pin = template()[1]
     lsel = json.dumps({"format": "lambda_selection/1", "winner": {"lambda": 1.0}, "inputs_last_timestamp_utc": 0.0})
     added = commit_files(repo, {ss.LAMBDA_SELECTION_REL: lsel}, "lambda selection")
     src = ss.HeadSource(repo)
 
-    def entry(after, ts, eid):
+    def entry(after, ts, eid, kind="push"):
         return {"id": eid, "node_id": f"PSH_{eid}", "before": pin, "after": after, "ref": "refs/heads/master",
-                "timestamp": ts, "activity_type": "push", "actor": {"login": "k2-smoke", "id": 1, "type": "User"}}
+                "timestamp": ts, "activity_type": kind, "actor": {"login": "k2-smoke", "id": 1, "type": "User"}}
 
-    def cut(t_in, launch, evidence=None, *, source=src, records=added):
-        if evidence is not None:
-            commit_files(source.root, {ss.PUSH_EVIDENCE_REL: json.dumps(evidence)}, "push evidence")
-        atts = [] if launch is None else [SimpleNamespace(launched={"records_commit": records,
-                                                                    "launch_time_utc": launch}, launch_ts=launch)]
+    def fresh_source():
+        """A new repository with the lambda selection added as in `repo` (deterministic commits: the same
+        `added`): the push evidence is added once, with its list (AM-19a reading 10), so each case that commits
+        evidence has its own repository."""
+        r = new_repo()
+        assert commit_files(r, {ss.LAMBDA_SELECTION_REL: lsel}, "lambda selection") == added
+        return ss.HeadSource(r)
+
+    def cut(t_in, launch, evidence=None, *, source=None, records=added, answers=None, drop=(), edit=None,
+            with_list=True, list_from=None):
+        """alpha_cutoff on `source` after committing `evidence` with its list; `list_from` makes the list from that
+        other response and binds it to this one (as by hand: push_list_doc would refuse this response). A refusal
+        on the push day (push_list_doc) or by the function returns its code."""
+        if source is None:
+            source = src if evidence is None else fresh_source()
         try:
+            if evidence is not None:
+                raw = json.dumps(evidence).encode("utf-8")
+                files = {ss.PUSH_EVIDENCE_REL: raw}
+                if with_list:
+                    t_lo = float(t_in) - ss.PUSH_MARGIN_SECONDS
+                    if list_from is None:
+                        files[ss.PUSH_LIST_REL] = push_list(source, raw, t_lo, answers, drop=drop, edit=edit)
+                    else:
+                        def bind(d):
+                            d["response"]["sha256"] = ss.sha256_bytes(raw)
+                            if edit is not None:
+                                edit(d)
+                        files[ss.PUSH_LIST_REL] = push_list(source, json.dumps(list_from).encode("utf-8"), t_lo, answers,
+                                                            drop=drop, edit=bind)
+                commit_files(source.root, files, "push evidence")
+            atts = [] if launch is None else [SimpleNamespace(launched={"records_commit": records,
+                                                                        "launch_time_utc": launch}, launch_ts=launch)]
             return ss.alpha_cutoff(source, "2026-10-22", lambda_doc={"inputs_last_timestamp_utc": t_in},
                                    default_attempts=atts)
         except SelectionRefused as e:
@@ -2593,7 +3348,10 @@ def test_am19_alpha_cutoff(tmp: Path) -> None:
     got = cut(t_in, launch, [old, entry(added, "2026-10-20T17:00:00Z", 5), entry(added, "2026-10-20T03:00:00Z", 4)])
     check("pl39_25_the_earliest_of_two_entries_wins", isinstance(got, dict) and got["basis"]["D"] == "2026-10-20"
           and got["decision_date"] == "2026-10-23" and got["basis"]["evidence"]["entry_id"] == 4, str(got))
-    got = cut(t_in, launch, [entry(added, "2026-10-20T03:00:00Z", 6)])
+    # a committed response that does not reach back to T_lo (its list made from a longer one and bound to it, as by
+    # hand: on the push day push_list_doc refuses it, C1b round 2 rest2-4, below)
+    got = cut(t_in, launch, [entry(added, "2026-10-20T03:00:00Z", 6)],
+              list_from=[old, entry(added, "2026-10-20T03:00:00Z", 6)])
     check("pl39_25_response_not_reaching_back_to_t_lo_is_refused", got == "lambda_push_evidence_mismatch", str(got))
     got = cut(utc("2026-10-20T15:30:00Z"), utc("2026-10-20T16:30:00Z"), [old, entry(added, "2026-10-20T16:10:00Z", 7)])
     check("al_day_boundary_is_the_manila_day_not_the_utc_day", isinstance(got, dict) and got["basis"]["basis"] == "c"
@@ -2611,12 +3369,153 @@ def test_am19_alpha_cutoff(tmp: Path) -> None:
     got = cut(t_in, launch, source=src2, records=first)
     check("al_lambda_selection_changed_since_the_alpha_defaults_records_commit_is_refused",
           got == "lambda_selection_changed", str(got))
-    # PL-17(c): an entry whose `after` this repository cannot resolve refuses inside [T_lo, T_hi] only
-    got = cut(t_in, launch, [old, entry("f" * 40, "2026-10-20T02:00:00Z", 10), entry(added, "2026-10-20T03:00:00Z", 11)])
-    check("pl17_unresolvable_after_inside_the_bounds_is_refused", got == "lambda_push_evidence_mismatch", str(got))
+    # AM-19a reading 10 (CHECK ITEM 2): a push after T_lo takes its status from the list, which must hold it
+    # (PL-17(c)'s refusal of an unresolvable entry inside the bounds is now the list's: unresolvable and listed
+    # as not served, it counts; left out of the list, it refuses)
+    got = cut(t_in, launch, [old, entry("f" * 40, "2026-10-20T02:00:00Z", 10), entry(added, "2026-10-20T03:00:00Z", 11)],
+              drop=(10,))
+    check("pl17_push_after_t_lo_missing_from_the_list_is_refused", got == "lambda_push_evidence_mismatch", str(got))
     got = cut(t_in, launch, [old, entry("f" * 40, "2026-10-17T00:00:00Z", 12), entry(added, "2026-10-20T03:00:00Z", 13)])
-    check("pl17_unresolvable_after_outside_the_bounds_is_ignored", isinstance(got, dict)
+    check("pl17_unresolvable_after_before_t_lo_is_ignored", isinstance(got, dict)
           and got["basis"]["basis"] == "c" and got["basis"]["D"] == "2026-10-20", str(got))
+    # CHECK ITEM 7: an unserved commit counts and is disclosed: listed as not served, the push at 15:30Z (23:30
+    # Manila, 2026-10-19) carries the file, so D is 2026-10-19, not the served push's 2026-10-20
+    got = cut(t_in, launch, [old, entry("f" * 40, "2026-10-19T15:30:00Z", 30), entry(added, "2026-10-20T03:00:00Z", 31)])
+    ev_u = got["basis"]["evidence"] if isinstance(got, dict) else {}
+    check("am19a_r10_unserved_commit_counts_and_is_disclosed", isinstance(got, dict) and got["basis"]["basis"] == "c"
+          and got["basis"]["D"] == "2026-10-19" and got["decision_date"] == "2026-10-22" and ev_u.get("entry_id") == 30
+          and [(u["id"], u["remote_answer"]) for u in ev_u.get("unserved", [])] == [(30, NOT_SERVED)], str(got))
+    # CHECK ITEM 7: a deletion entry is ignored: it pushes no commit (one inside the bounds, absent from the list,
+    # refuses nothing), and it still shows that the response reaches back before T_lo
+    got = cut(t_in, launch, [entry("0" * 40, "2026-10-18T00:00:00Z", 40, "branch_deletion"),
+                             entry("0" * 40, "2026-10-19T15:30:00Z", 42, "branch_deletion"),
+                             entry(added, "2026-10-20T03:00:00Z", 41)], drop=(42,))
+    check("am19a_r10_branch_deletion_is_ignored", isinstance(got, dict) and got["basis"]["basis"] == "c"
+          and got["basis"]["D"] == "2026-10-20" and got["decision_date"] == "2026-10-23"
+          and got["basis"]["evidence"]["unserved"] == [], str(got))
+    # where the clone holds a served push's commit, the list's status is checked against it
+    second_ref = dict(entry(added, "2026-10-20T05:00:00Z", 51), ref="refs/heads/other")
+    got = cut(t_in, launch, [old, entry(added, "2026-10-20T03:00:00Z", 50), second_ref],
+              answers={50: {"served": True, "carries_file": False, "remote_answer": ""}})
+    check("am19a_r10_list_contradicted_by_the_clone_is_refused", got == "lambda_push_evidence_mismatch", str(got))
+    got = cut(t_in, launch, [old, entry(added, "2026-10-20T03:00:00Z", 60)],
+              edit=lambda d: d["response"].update(sha256="0" * 64))
+    check("am19a_r10_list_of_another_response_is_refused", got == "lambda_push_evidence_mismatch", str(got))
+    # C1b workflow push-1: an unserved push whose commit the clone holds and finds without the file refuses (the
+    # list is checked wherever the clone holds the pushed commit; the stricter reading of reading 10)
+    got = cut(t_in, launch, [old, entry(pin, "2026-10-19T15:30:00Z", 90), entry(added, "2026-10-20T03:00:00Z", 91)],
+              answers={90: {"served": False, "carries_file": True, "remote_answer": NOT_SERVED}})
+    check("am19a_r10_unserved_push_the_clone_finds_without_the_file_is_refused",
+          got == "lambda_push_evidence_mismatch", str(got))
+    # C1b workflow texts-5 (CHECK ITEM 2): a served push takes its status from the list where the clone lacks its
+    # commit (here the earliest carrying push: D 2026-10-19); where the clone holds it, a list that says it carries
+    # the file while the commit does not refuses
+    got = cut(t_in, launch, [old, entry("e" * 40, "2026-10-19T15:30:00Z", 96), entry(added, "2026-10-20T03:00:00Z", 97)],
+              answers={96: {"served": True, "carries_file": True, "remote_answer": ""}})
+    check("am19a_r10_served_push_the_clone_lacks_takes_its_status_from_the_list", isinstance(got, dict)
+          and got["basis"]["D"] == "2026-10-19" and got["basis"]["evidence"]["entry_id"] == 96
+          and got["basis"]["evidence"]["unserved"] == [], str(got))
+    got = cut(t_in, launch, [old, entry(pin, "2026-10-19T15:30:00Z", 98), entry(added, "2026-10-20T03:00:00Z", 99)],
+              answers={98: {"served": True, "carries_file": True, "remote_answer": ""}})
+    check("am19a_r10_list_saying_a_held_commit_without_the_file_carries_it_is_refused",
+          got == "lambda_push_evidence_mismatch", str(got))
+    # C1b workflow push-3: each binding of the list and the lower bound refuse with a case of their own
+    lst_cases = (("lambda_selection_sha256", lambda d: d["lambda_selection"].update(sha256="0" * 64)),
+                 ("adding_commit", lambda d: d.update(adding_commit=pin)),
+                 ("t_lo_utc", lambda d: d.update(t_lo_utc=d["t_lo_utc"] - 1)),
+                 ("entry_after", lambda d: d["pushes"][0].update(after=pin)),
+                 ("extra_entry", lambda d: d["pushes"].append(
+                     {"id": 1, "ref": "refs/heads/master", "before": pin, "after": pin,
+                      "timestamp": "2026-10-18T00:00:00Z", "activity_type": "push", "served": True,
+                      "carries_file": False, "remote_answer": ""})))
+    for label, fn in lst_cases:
+        got = cut(t_in, launch, [old, entry(added, "2026-10-20T03:00:00Z", 92)], edit=fn)
+        check(f"am19a_r10_list_with_another_{label}_is_refused", got == "lambda_push_evidence_mismatch", str(got))
+    got = cut(t_in, launch, [entry(added, "2026-10-18T00:00:00Z", 93), entry(added, "2026-10-20T03:00:00Z", 94)])
+    check("pl17_carrying_push_before_t_lo_is_refused", got == "lambda_push_evidence_mismatch", str(got))
+    # C1b workflow push-2: settled once: one commit adds the response and the list, once, unchanged since
+    ev_raw = json.dumps([old, entry(added, "2026-10-20T03:00:00Z", 95)]).encode("utf-8")
+
+    def settle_case(steps):
+        source = fresh_source()
+        ev_list = push_list(source, ev_raw, t_in - ss.PUSH_MARGIN_SECONDS)
+        for files in steps(ev_list):
+            commit_files(source.root, files, "push evidence step")
+        return cut(t_in, launch, source=source)
+    got = settle_case(lambda lst: [{ss.PUSH_EVIDENCE_REL: ev_raw}, {ss.PUSH_LIST_REL: lst}])
+    check("am19a_r10_list_committed_after_the_response_is_refused", got == "lambda_push_evidence_mismatch", str(got))
+    got = settle_case(lambda lst: [{ss.PUSH_EVIDENCE_REL: ev_raw, ss.PUSH_LIST_REL: lst},
+                                   {ss.PUSH_LIST_REL: lst.replace(b'"remote_answer": ""', b'"remote_answer": " "')}])
+    check("am19a_r10_list_changed_after_it_was_committed_is_refused", got == "lambda_push_evidence_mismatch", str(got))
+    got = settle_case(lambda lst: [{ss.PUSH_EVIDENCE_REL: ev_raw, ss.PUSH_LIST_REL: lst}])
+    check("am19a_r10_response_and_list_added_together_once_are_accepted", isinstance(got, dict)
+          and got["basis"]["basis"] == "c" and got["basis"]["D"] == "2026-10-20", str(got))
+    # C1b round 2 rest2-2: the pair deleted and added again in one commit is added twice: not settled once
+    source = fresh_source()
+    ev_list = push_list(source, ev_raw, t_in - ss.PUSH_MARGIN_SECONDS)
+    commit_files(source.root, {ss.PUSH_EVIDENCE_REL: ev_raw, ss.PUSH_LIST_REL: ev_list}, "push evidence")
+    git(source.root, "rm", "-q", "--", ss.PUSH_EVIDENCE_REL, ss.PUSH_LIST_REL)
+    git(source.root, "commit", "-q", "-m", "the push evidence deleted")
+    commit_files(source.root, {ss.PUSH_EVIDENCE_REL: ev_raw, ss.PUSH_LIST_REL: ev_list}, "the push evidence added again")
+    got = cut(t_in, launch, source=source)
+    check("am19a_r10_response_and_list_deleted_and_added_again_are_refused",
+          got == "lambda_push_evidence_mismatch", str(got))
+    # C1b round 2 rest2-3 and rest2-4: on the push day push_list_doc refuses what push_evidence would refuse in the
+    # response and the list alone (a committed pair cannot be replaced)
+    t_lo = t_in - ss.PUSH_MARGIN_SECONDS
+    good = [old, entry(added, "2026-10-20T03:00:00Z", 80)]
+    ans_ok = {80: {"served": True, "carries_file": True, "remote_answer": ""}}
+
+    def pld(resp=good, *, raw=None, answers=ans_ok, t=t_lo, remote="origin (synthetic)", lsel_arg=None):
+        try:
+            ss.push_list_doc(json.dumps(resp).encode("utf-8") if raw is None else raw,
+                             lsel.encode("utf-8") if lsel_arg is None else lsel_arg, added, t, remote, answers)
+        except SelectionRefused as e:
+            return e.code
+        except Exception as e:  # noqa: BLE001 - an escape other than a refusal is what the cases catch
+            return f"escaped: {type(e).__name__}: {e}"
+        return None
+    check("am19a_r10_push_list_of_a_good_response_is_written", pld() is None, str(pld()))
+    pl_cases = (("a_response_that_is_a_json_object", dict(raw=json.dumps({"id": 80}).encode("utf-8"))),
+                ("a_push_after_t_lo_without_an_answer", dict(answers={})),
+                ("served_given_as_0", dict(answers={80: {"served": 0, "carries_file": True, "remote_answer": ""}})),
+                ("an_entry_whose_after_is_no_commit_id", dict(resp=[old, entry("not a commit", "2026-10-20T03:00:00Z",
+                                                                               80)])),
+                ("a_response_not_reaching_back_to_t_lo", dict(resp=[entry(added, "2026-10-20T03:00:00Z", 80)])),
+                ("a_push_after_t_lo_named_twice", dict(resp=[*good, entry(added, "2026-10-20T04:00:00Z", 80)])),
+                ("t_lo_that_is_no_number", dict(t=None)),
+                ("answers_that_are_no_mapping", dict(answers=[ans_ok])),
+                ("a_response_given_as_text", dict(raw=json.dumps(good))),
+                ("a_remote_that_is_no_string", dict(remote=None)),
+                # C1b round 3 c1b3-7: each argument condition on its own (the bool T_lo with a response reaching back
+                # before it, so that only the type check refuses it)
+                ("a_lambda_selection_given_as_text", dict(lsel_arg=lsel)),
+                ("t_lo_given_as_a_bool", dict(t=True, resp=[entry(pin, "1970-01-01T00:00:00Z", 79), good[1]])),
+                ("t_lo_that_is_not_finite", dict(t=float("inf"))))
+    for label, kw in pl_cases:
+        got = pld(**kw)
+        check(f"am19a_r10_push_list_refuses_{label}", got == "lambda_push_evidence_mismatch", str(got))
+    repo_m = new_repo()                   # a repository whose history holds no list
+    added_m = commit_files(repo_m, {ss.LAMBDA_SELECTION_REL: lsel}, "lambda selection")
+    got = cut(t_in, launch, [old, entry(added_m, "2026-10-20T03:00:00Z", 61)], with_list=False,
+              source=ss.HeadSource(repo_m), records=added_m)
+    check("am19a_r10_response_without_its_list_is_lambda_push_evidence_missing",
+          got == "lambda_push_evidence_missing", str(got))
+    # C1b round 3 c1b3-4 (PL-17(c): the commit that added the file is absent in each parent and present): the lambda
+    # selection first added in a merge commit, absent in both parents, has that merge as its adding commit
+    repo_g = new_repo()
+    git(repo_g, "checkout", "-q", "-b", "side")
+    commit_files(repo_g, {"notes/side.txt": "a side commit (synthetic)\n"}, "side")
+    git(repo_g, "checkout", "-q", "master")
+    git(repo_g, "merge", "-q", "--no-ff", "--no-commit", "side")
+    commit_files(repo_g, {ss.LAMBDA_SELECTION_REL: lsel}, "the merge, with the lambda selection")
+    added_g = git(repo_g, "rev-parse", "HEAD")
+    got = cut(t_in, launch, [old, entry(added_g, "2026-10-20T03:00:00Z", 62)], source=ss.HeadSource(repo_g),
+              records=added_g)
+    check("am19a_r10_lambda_selection_added_in_a_merge_commit_dates_its_push",
+          isinstance(got, dict) and got["basis"]["basis"] == "c" and got["basis"]["D"] == "2026-10-20"
+          and got["basis"]["evidence"]["commit"] == added_g
+          and len(git(repo_g, "rev-list", "--parents", "-n", "1", added_g).split()) == 3, str(got))
     # alpha-3 (PL-17 "the gate uses the same function", PL-28): through the gate's RecordsSource, whose
     # checkout is the pin and whose records come from records commit H, the function gives the selection's
     # bases; nothing is read at the pin's HEAD
@@ -2624,12 +3523,15 @@ def test_am19_alpha_cutoff(tmp: Path) -> None:
     git(repo3, "checkout", "-q", "-b", "records")
     h3 = commit_files(repo3, {ss.LAMBDA_SELECTION_REL: lsel}, "lambda selection (records)")
     ev = [entry(pin, "2026-10-18T00:00:00Z", 20), entry(h3, "2026-10-20T03:00:00Z", 21)]
-    h4 = commit_files(repo3, {ss.PUSH_EVIDENCE_REL: json.dumps(ev)}, "push evidence (records)")
+    ev_raw = json.dumps(ev).encode("utf-8")
+    ev_list = push_list(ss.HeadSource(repo3), ev_raw, t_in - ss.PUSH_MARGIN_SECONDS)
+    h4 = commit_files(repo3, {ss.PUSH_EVIDENCE_REL: ev_raw, ss.PUSH_LIST_REL: ev_list}, "push evidence (records)")
     git(repo3, "checkout", "-q", "master")
     folder = scratch_dir("k2_records")
     (folder / "reports" / "derived").mkdir(parents=True)
     (folder / ss.LAMBDA_SELECTION_REL).write_text(lsel, encoding="utf-8")
-    (folder / ss.PUSH_EVIDENCE_REL).write_text(json.dumps(ev), encoding="utf-8")
+    (folder / ss.PUSH_EVIDENCE_REL).write_bytes(ev_raw)
+    (folder / ss.PUSH_LIST_REL).write_bytes(ev_list)
     rs4 = ss.RecordsSource(folder, h4, root=repo3)
     got_a = cut(utc("2026-10-12T00:00:00Z"), utc("2026-10-13T00:00:00Z"), source=rs4, records=h4)
     got_c = cut(t_in, launch, source=rs4, records=h4)
@@ -2645,8 +3547,9 @@ CODE_PARAMS = ("code", "missing", "uncommitted", "mismatch")
 
 def raised_codes() -> tuple[dict, list]:
     """Every refusal code the three selection modules can raise: SelectionRefused's literal first argument,
-    a literal passed as code=, missing=, uncommitted= or mismatch=, and those parameters' literal defaults.
-    A SelectionRefused whose first argument is neither a literal nor one of those parameters is listed."""
+    a literal passed as code=, missing=, uncommitted= or mismatch=, those parameters' literal defaults, and a
+    literal assigned to a name of theirs (a local `code = "..."`, C1b workflow texts-8). A SelectionRefused
+    whose first argument is neither a literal nor one of those names is listed."""
     found, opaque = {}, []
     for path in (Path(ss.__file__), Path(sl.__file__), Path(sa.__file__)):
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
@@ -2661,6 +3564,10 @@ def raised_codes() -> tuple[dict, list]:
                 for kw in node.keywords:
                     if kw.arg in CODE_PARAMS and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
                         found.setdefault(kw.value.value, path.name)
+            elif isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant) \
+                    and isinstance(node.value.value, str) \
+                    and any(isinstance(x, ast.Name) and x.id in CODE_PARAMS for x in node.targets):
+                found.setdefault(node.value.value, path.name)
             elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 a = node.args
                 pos = a.posonlyargs + a.args
@@ -2788,7 +3695,7 @@ def main(argv=None) -> int:
             fn = globals()[name]
             try:
                 fn() if name in UNIT_SECTIONS else fn(tmp)
-            except Exception as e:  # noqa: BLE001 - reported as a failed check
+            except (Exception, SystemExit) as e:  # noqa: BLE001 - reported as a failed check
                 import traceback
                 check(f"{name}_completed", False, f"{type(e).__name__}: {e} | {traceback.format_exc()[-600:]}")
     finally:

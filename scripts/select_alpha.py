@@ -8,7 +8,9 @@ lanes L-AM16-ALPHA, L-KD-HARDEN and K2).
                                    [--out reports/derived/alpha_selection.json]
                                    [--rules configs/sweep_rules.json]
                                    [--decision-record reports/derived/alpha_decision_record.json]
-                                   [--write-decision-record <path>]
+                                   [--write-decision-record <path> [--corrects <void record>
+                                                                    --fault-report <AM-8a report>]]
+          (a corrected record: --decision-record reports/derived/alpha_decision_record_corrected.json)
 
 Rule (configs/sweep_rules.json 'alpha_cwd', checked against configs/distill.py and the rule pins of
 src/training/sweep_select.py): each candidate's value is the best VAL all-class mIoU of its run_end record;
@@ -25,12 +27,18 @@ still a required input. A diverged default candidate (alpha 50) keeps AM-7 in fu
 
 AM-19 item 2: the alpha decision date is the later of 2026-10-22 under Schedule T (2026-12-10 under R) and
 the third day after the Asia/Manila day on which the commit that added reports/derived/lambda_selection.json
-reached the remote (PL-17: from the lambda selection's last input timestamp and the alpha default's launch,
-and from the committed GitHub activity record reports/derived/lambda_selection_push.json only when those
-two straddle a Manila midnight). The statuses, cuts and the decision record follow select_lambda. If no
-non-default alpha candidate was launched before the end of the alpha decision date, the sweep is cut:
-alpha = 50 (AM-16 item 2; AM-19 item 2(g)), no selection file, and the committed decision record states the
-cut: exit 5, printing the record's sha256 (exit 3 while no such record exists).
+reached the remote, on any ref (PL-17 and AM-19a reading 10: from the lambda selection's last input
+timestamp and the alpha default's launch, and from the committed GitHub activity record
+reports/derived/lambda_selection_push.json with the list committed with it,
+reports/derived/lambda_selection_push_list.json, when those two straddle a Manila midnight or the default
+has not launched). The statuses, cuts and the decision record follow select_lambda (AM-19a reading 19: the
+record's decision date and cutoff must equal the derived ones; its alpha basis is not compared; a corrected
+record as select_lambda, committed as reports/derived/alpha_decision_record_corrected.json and read with
+--decision-record). If no non-default alpha candidate was launched before the end of the alpha decision
+date, the sweep is cut: alpha = 50 (AM-16 item 2; AM-19 item 2(g)), no selection file, and the committed
+decision record states the cut: exit 5, printing the record's sha256. While no record was ever committed at
+that path and none is in the working tree, it waits (exit 3); any other state of the path is refused as in
+select_lambda (exit 2; a record deleted after its commit is decision_record_rewritten).
 
 Order of the refusals (K8-2(a)): the candidates' recipe (recipe_mismatch_across_candidates), then the
 shared lambda over every supplied run and every alpha launch line, finished, diverged, cut or running
@@ -67,11 +75,11 @@ KEY = "alpha_cwd"
 
 
 def select(runs, band_path=None, out: Path | None = None, rules_path=None, lambda_selection=None,
-           decision_record=None, write_record=None) -> dict:
+           decision_record=None, write_record=None, corrects=None) -> dict:
     state = derive_sweep(KEY, runs, script_path=Path(__file__), rules=rules_path, band=band_path,
                          lambda_selection=lambda_selection, decision_record=decision_record)
     if write_record is not None:
-        sha, rec = write_decision_record(state, Path(write_record))
+        sha, rec = write_decision_record(state, Path(write_record), corrects)
         return {"decision_record_written": str(write_record), "sha256": sha, "record": rec}
     settled = settle(state, decision_record)
     sweep, alpha = state["sweep"], state["alpha"]
@@ -115,14 +123,26 @@ def main(argv=None) -> int:
     ap.add_argument("--rules", default=None, help="a committed rule file (default configs/sweep_rules.json)")
     ap.add_argument("--decision-record", default=None,
                     help="a committed decision record (default reports/derived/alpha_decision_record.json, "
-                         "read when present)")
+                         "read when present; the corrected record: "
+                         "reports/derived/alpha_decision_record_corrected.json)")
     ap.add_argument("--write-decision-record", default=None, metavar="PATH",
                     help="derive the decision record after the end of the decision date and write it to PATH "
                          "(no selection)")
+    ap.add_argument("--corrects", default=None, metavar="VOID_RECORD",
+                    help="with --write-decision-record and --fault-report: write a corrected record that replaces "
+                         "this committed void record (AM-19a reading 19)")
+    ap.add_argument("--fault-report", default=None, metavar="REPORT",
+                    help="with --corrects: the committed AM-8a fault report written before the correction")
     a = ap.parse_args(argv)
     out = Path(a.out) if a.out else ss.GIT_ROOT / ALPHA_SELECTION_REL
+    corrects = None if a.corrects is None else (a.corrects, a.fault_report)
     try:
-        doc = select(a.runs, a.band, out, a.rules, a.lambda_selection, a.decision_record, a.write_decision_record)
+        if (a.corrects is None) != (a.fault_report is None) \
+                or (corrects is not None and a.write_decision_record is None):
+            raise SelectionRefused("decision_record_correction_invalid", "--corrects and --fault-report go together, "
+                                                                         "and only with --write-decision-record")
+        doc = select(a.runs, a.band, out, a.rules, a.lambda_selection, a.decision_record, a.write_decision_record,
+                     corrects)
     except SweepCut as e:
         print(f"[cut] {e}", file=sys.stderr)
         print(f"RESULT: CUT (AM-16 item 2; AM-19 item 2(g)) alpha_cwd = 50; no selection file; decision record "
@@ -138,9 +158,15 @@ def main(argv=None) -> int:
         return UNEXPECTED_ERROR_EXIT
     if "decision_record_written" in doc:
         cut = [f"{v['value']:g}" for v in doc["record"]["values"] if v["status"] == "cut"]
+        cor = doc["record"]["corrects"]
+        rel = ss.DECISION_RECORD_REL["alpha_cwd"] if cor is None else ss.DECISION_RECORD_CORRECTED_REL["alpha_cwd"]
+        todo = (f"review it, commit it as {rel} and push it within 24 hours, and enter its sha256 in the decision "
+                "log: AM-19 item 2(h)" if cor is None else
+                f"it corrects the void record {cor['void_record']['path']} ({cor['void_code']}): review it, commit it "
+                f"as {rel} and push it, enter its sha256 in the decision log beside the void record's and the fault "
+                f"report's, and pass --decision-record {rel}: AM-19a reading 19")
         print(f"RESULT: DECISION RECORD written {doc['decision_record_written']} sha256 {doc['sha256']} (cut "
-              f"[{', '.join(cut)}]; alpha_sweep_cut={doc['record']['alpha_sweep_cut']}; review it, commit and push it "
-              "within 24 hours and enter its sha256 in the decision log: AM-19 item 2(h))")
+              f"[{', '.join(cut)}]; alpha_sweep_cut={doc['record']['alpha_sweep_cut']}; {todo})")
         return 0
     for line in doc["rule_trace"]:
         print(f"  {line}")
