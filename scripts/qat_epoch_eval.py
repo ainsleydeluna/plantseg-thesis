@@ -17,7 +17,8 @@ qat_epoch_eval.json. An eval directory is used once: a STOP ends it and a re-run
 `finalize` runs after scripts/select_qat_epoch.py (and, for the E5 seed-42 pilot, scripts/select_clip.py):
 it names the selected epoch's scored artifact as the artifact of record, never tracing it again, and
 translates the sha-checked eNN.pt into the x86 latency copy with zero optimizer steps (P28).
-`check-run-meta` compares a launched run's run_meta row with the launch of record (P14, P10, O2).
+`check-run-meta` compares a launched run's run_meta row with the launch of record (P14, P10, O2), its
+never-observed fake-quants with DL-85's five modules of record (AM-21 item 1(a)) included.
 
 Every subcommand ends with one RESULT line. Exit codes: 0 done, 1 STOP, 2 refused, 3 incomplete or
 aborted, 4 error.
@@ -61,6 +62,9 @@ THREADS_NOTE = ("no --threads and no thread environment variable: torch_num_thre
 EXPECTED_CENSUS = {"FixedQParamsObserver": 9, "MovingAverageMinMaxObserver": 110,
                    "MovingAveragePerChannelMinMaxObserver": 65}
 NUM_WORKERS_OF_RECORD = 12
+# AM-21 item 1(a), DL-85: the never-observed fake-quants of record, the skip_add fake-quants of features 2, 4, 7,
+# 11 and 13, named as the trainer's forward-hook census names them (sorted, as run_meta lists them)
+NEVER_OBSERVED_OF_RECORD = sorted(f"features.{i}.skip_add.activation_post_process" for i in (2, 4, 7, 11, 13))
 
 
 def _base_parser(sub, name: str, help_: str):
@@ -521,7 +525,8 @@ def profile_mismatches(meta: dict, args, *, repo_root: Path = REPO) -> dict:
             "engine": "qnnpack", "observer_census": EXPECTED_CENSUS, "fake_quant_modules": 184,
             "unfused_batchnorm": 0, "tf32": Q.TF32_DEFAULTS, "cuda_initialized_at_seed": False,
             "parent.checkpoint_sha256": args.expect_source_sha256, "parent.seed": args.seed,
-            "parent.mode": "real", "val_batches_cap": None}
+            "parent.mode": "real", "val_batches_cap": None,
+            "never_observed_modules": NEVER_OBSERVED_OF_RECORD}
     bad = {}
     for k, v in want.items():
         got = _dotted(meta, k)

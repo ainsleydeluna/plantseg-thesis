@@ -1193,6 +1193,12 @@ def test_profile() -> None:
         ("seed", "seed", 43), ("clip", "clip_norm", 5.0), ("dampening_as_int", "dampening", 0),
         ("cuda_initialised_at_seed", "cuda_initialized_at_seed", True), ("val_cap", "val_batches_cap", 4),
         ("stage", "stage", "E6"),
+        # AM-21 item 1(a): the never-observed fake-quants against DL-85's five modules of record
+        ("never_observed_modules_four", "never_observed_modules", sorted(SKIP_ADD_NEVER_OBSERVED)[:4]),
+        ("never_observed_modules_six", "never_observed_modules",
+         sorted(SKIP_ADD_NEVER_OBSERVED + ["features.14.skip_add.activation_post_process"])),
+        ("never_observed_modules_one_swapped", "never_observed_modules",          # five names, features.7 -> 14
+         sorted(sorted(SKIP_ADD_NEVER_OBSERVED)[:4] + ["features.14.skip_add.activation_post_process"])),
     ]:
         r = json.loads(json.dumps(row))
         set_dotted(r, key, value)

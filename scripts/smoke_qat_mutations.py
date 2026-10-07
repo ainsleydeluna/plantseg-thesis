@@ -5,7 +5,8 @@ The X mutations undo the DL-24 verification fixes, each killed by the check adde
 checks of the Q2 follow-up: M25-M26 write into configs/calibration while a PTQ smoke runs (F2); M27-M30 move or
 drop a G1 name check (F3); M31-M36 break the record conversion or a selection of a run made non-finite (F1).
 PART 2 (AM-21 as committed, CP-007g): M37-M46 undo the trainer's reading of the predicate at every raise and at
-the epoch end, and the completion line's first-found step (CHECK ITEMS 9 and 15).
+the epoch end, and the completion line's first-found step (CHECK ITEMS 9 and 15); M47 drops check-run-meta's
+comparison of the never-observed modules with DL-85's list of record, and M47b changes that list (CHECK ITEM 10).
 
 The explicit paths of SHADOW_PATHS are copied into a temporary shadow of the repository and committed there
 (one fixed commit, so the trainer records a git_head as in the checkout); the repository itself is never
@@ -439,6 +440,14 @@ MUTATIONS = [
       "            finite, fails = state_predicate(state, kinds, never)\n",
       "            finite, fails = nonfinite_since is None, []\n",
       runner("nan"), "d1_epoch_end_alone_finds_a_nonfinite_state"),
+    # CHECK ITEM 10 (AM-21 item 1(a), DL-85): check-run-meta compares the never-observed list with the list of record
+    M("M47", "check-run-meta does not compare never_observed_modules with DL-85's list of record", QEE,
+      '            "never_observed_modules": NEVER_OBSERVED_OF_RECORD}\n', "            }\n",
+      runner("profile"), "profile_stops_on_never_observed_modules_four",
+      "profile_stops_on_never_observed_modules_six", "profile_stops_on_never_observed_modules_one_swapped"),
+    M("M47b", "the list of record names the skip_add of features 14 for that of features 13 (DL-85)", QEE,
+      "for i in (2, 4, 7, 11, 13))", "for i in (2, 4, 7, 11, 14))",
+      runner("profile"), "profile_e5_s42_pilot_passes"),
 ]
 
 # ------------------------------------------------------------------ the refusal table (P36)
