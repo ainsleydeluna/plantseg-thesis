@@ -366,7 +366,8 @@ def test_nonfinite(device: str, clean: dict | None) -> None:
               "same 30 lr values and batch fingerprints as the clean run")
         if c["summary"]:
             check(f"d1_result_line_nonfinite_step{k}",
-                  Q.result_line(c["summary"]).startswith(f"RESULT: QAT COMPLETE, STATE NON-FINITE since step {k} ("),
+                  Q.result_line(c["summary"]).startswith(
+                      f"RESULT: QAT COMPLETE, STATE NON-FINITE first found at step {k} ("),
                   Q.result_line(c["summary"]))
         else:
             check(f"d1_result_line_nonfinite_step{k}", False, c["error"] or "")
@@ -398,6 +399,123 @@ def test_nonfinite(device: str, clean: dict | None) -> None:
           f"{c['error'] or ''} epoch-5 VAL {v5.get('error')!r}; train mode at each VAL start "
           f"{[e for e, m in sorted(mode.items()) if not m]} off")
     shutil.rmtree(c["out"], ignore_errors=True)
+
+    # AM-21 items 1(b) and 1(e): the predicate is read at every raise, and a raise ends the run only when the state
+    # is then finite -- also after an earlier non-finite flag, which a test-only repair makes finite again
+    class Raiser(Recorder):
+        """A training forward that raises at the `raise_at`-th training step, or at the first one after
+        `repair_epoch` when `arm`; at the end of `repair_epoch`, the state saved after epoch 1 and a fresh
+        optimizer state (a repair the trainer itself never makes, AM-21 item 1(d))."""
+
+        def __init__(self, *, raise_at: int | None = None, repair_epoch: int | None = None, arm: bool = False,
+                     poison: bool = False):
+            super().__init__()
+            self.raise_at, self.repair_epoch, self.arm, self.poison = raise_at, repair_epoch, arm, poison
+            self.forwards, self.saved, self.armed = 0, None, False
+
+        def on_start(self, prepared, optimizer, scheduler, run_meta):
+            super().on_start(prepared, optimizer, scheduler, run_meta)
+
+            def pre(mod, inp):
+                if not mod.training:
+                    return
+                self.forwards += 1
+                if self.forwards == self.raise_at or self.armed:
+                    self.armed = False
+                    if self.poison:                              # the raise meets a state just made non-finite
+                        with torch.no_grad():
+                            next(mod.parameters()).fill_(float("nan"))
+                    raise RuntimeError("an injected raise in a training forward")
+            prepared.register_forward_pre_hook(pre)
+
+        def after_epoch(self, epoch, prepared, checkpoint_path, row):
+            super().after_epoch(epoch, prepared, checkpoint_path, row)
+            if epoch == 1:                                       # with its _metadata: the observers' load needs it
+                state = prepared.state_dict()
+                self.saved = type(state)((k, v.detach().clone()) for k, v in state.items())
+                self.saved._metadata = state._metadata
+            if epoch == self.repair_epoch:
+                prepared.load_state_dict(self.saved)
+                self.optimizer.state.clear()
+                self.armed = self.arm
+
+    def raise_case(name: str, hooks: Recorder, nan_at=(), val_raise_call: int | None = None) -> dict:
+        val_calls = []
+
+        def validate_raising(model, *a, **k):
+            val_calls.append(1)
+            if len(val_calls) == val_raise_call:
+                model.eval()
+                raise RuntimeError("an injected raise in a VAL pass")
+            return real_validate(model, *a, **k)
+        out = TMP / name
+        c = {"out": out, "error": None, "rows": [], "summary": None}
+        with patched(te1, "validate", validate_raising):
+            try:
+                c["summary"] = Q.run_qat(stage="e5", mode="smoke", model=student(), source_meta=SOURCE, out_dir=out,
+                                         seed=42, clip_norm=1.0, clip_source="smoke", device=device, num_workers=0,
+                                         loaders=make_loaders(42), hooks=hooks, inject_nan_at_steps=nan_at,
+                                         log=lambda *a: None)
+            except Exception as e:                               # noqa: BLE001 -- the abort under test
+                c["error"] = f"{type(e).__name__}: {e}"
+        if (out / Q.TELEMETRY_NAME).is_file():
+            c["rows"], _ = strict_rows(out / Q.TELEMETRY_NAME)
+        shutil.rmtree(out, ignore_errors=True)
+        return c
+
+    def aborted_at(c: dict, *, step: int, epoch: int, flagged_at: int | None) -> bool:
+        last = c["rows"][-1] if c["rows"] else {}
+        marks = [r.get("nonfinite_since_step") for r in c["rows"] if r.get("event") == "state_nonfinite"]
+        return (str(c["error"]).startswith("RuntimeError: an injected raise") and last.get("event") == "run_abort"
+                and last.get("exception_type") == "RuntimeError" and last.get("step") == step
+                and last.get("epoch") == epoch and marks == ([flagged_at] if flagged_at else []))
+
+    def last_row(c: dict) -> str:
+        last = c["rows"][-1] if c["rows"] else {}
+        return f"{c['error']}; last row {({k: last.get(k) for k in ('event', 'epoch', 'step', 'state_nonfinite')})}"
+    c = raise_case("d1_step_raises_finite", Raiser(raise_at=3))
+    check("d1_step_raise_while_finite_aborts", aborted_at(c, step=3, epoch=2, flagged_at=None), last_row(c))
+    c = raise_case("d1_val_raises_finite", Raiser(), val_raise_call=1)
+    check("d1_val_raise_while_finite_aborts", aborted_at(c, step=2, epoch=1, flagged_at=None)
+          and not rows_of(c, "val"), last_row(c))
+    c = raise_case("d1_step_raises_repaired", Raiser(repair_epoch=6, arm=True), nan_at=(10,))
+    check("d1_step_raise_after_repair_aborts", aborted_at(c, step=13, epoch=7, flagged_at=10), last_row(c))
+    c = raise_case("d1_val_raises_repaired", Raiser(repair_epoch=6), nan_at=(10,), val_raise_call=7)
+    check("d1_val_raise_after_repair_aborts", aborted_at(c, step=14, epoch=7, flagged_at=10)
+          and [r["epoch"] for r in rows_of(c, "epoch_end")] == list(range(1, 7)), last_row(c))
+
+    def completed_nonfinite(c: dict, *, first_found: int) -> tuple[bool, str]:
+        marks = [r.get("nonfinite_since_step") for r in c["rows"] if r.get("event") == "state_nonfinite"]
+        ends = rows_of(c, "epoch_end")
+        line = Q.result_line(c["summary"]) if c["summary"] else str(c["error"])
+        ok = (c["error"] is None and bool(c["summary"]) and c["summary"]["complete"] and marks == [first_found]
+              and not rows_of(c, "run_abort") and len(ends) == 15
+              and line.startswith(f"RESULT: QAT COMPLETE, STATE NON-FINITE first found at step {first_found} ("))
+        return ok, f"{line}; marks {marks}"
+    # a step that raises when the state has just become non-finite, before any flag: recorded, the step marked, the
+    # run goes on (AM-21 item 1(c)); the parameter written NaN inside the raising forward is test-only
+    c = raise_case("d1_step_raises_poisoned", Raiser(raise_at=3, poison=True))
+    ok, detail = completed_nonfinite(c, first_found=3)
+    at3 = next((r for r in c["rows"] if r.get("step") == 3 and r.get("event") in ("train", "step_error")), {})
+    check("d1_step_raise_in_unflagged_nonfinite_state_recorded",
+          ok and at3.get("event") == "step_error" and at3.get("state_nonfinite") is True, detail)
+
+    class NeverObservedPoisoner(Recorder):
+        """After step 9, a never-observed fake-quant's observer minimum becomes NaN (test-only): no forward reads it,
+        so the loss and the gradient stay finite and nothing raises; only the epoch-end evaluation of the
+        checkpoint's state (AM-21 item 1(b)) can find it."""
+
+        def after_step(self, step, prepared, row):
+            super().after_step(step, prepared, row)
+            if step == 9:
+                fq = dict(prepared.named_modules())[SKIP_ADD_NEVER_OBSERVED[0]]
+                fq.activation_post_process.min_val.fill_(float("nan"))
+    c = raise_case("d1_epoch_end_finds_alone", NeverObservedPoisoner())
+    ok, detail = completed_nonfinite(c, first_found=10)
+    ends = rows_of(c, "epoch_end")
+    check("d1_epoch_end_alone_finds_a_nonfinite_state",
+          ok and [r.get("state_finite") for r in ends] == [True] * 4 + [False] * 11
+          and not rows_of(c, "step_error") and not any(r.get("nonfinite") for r in rows_of(c, "train")), detail)
 
 
 # ---------------------------------------------------------------- launch gates, one refusal at a time

@@ -24,10 +24,13 @@ observer flag snapshotted, all disabled, train_e1.validate, the snapshot restore
 never moves a range; the state is asserted unchanged; the `val` row, then the `epoch_end` row. The
 epoch-15 `epoch_end` row is the AM-19 completion record.
 
-Non-finite states (AM-19 item 3(a)). There is no divergence rule. A non-finite loss or gradient norm
-is recorded. Once the state predicate (`state_predicate`) fails, the run keeps drawing batches and
-stepping the schedule, marks every later row as non-finite and still writes every checkpoint, VAL row
-and epoch record. An exception while the state is finite ends the run with a run_abort row.
+Non-finite states (AM-21 item 1). There is no divergence rule. A non-finite loss or gradient norm
+is recorded. The state predicate (`state_predicate`, item 1(a)) is evaluated after such a step,
+whenever a step or a VAL pass raises, and at every epoch end, on the state the checkpoint holds
+(item 1(b)). Once it fails, the run records nonfinite_since_step, the step at which the state was first
+found non-finite, keeps drawing batches and stepping the schedule, marks every later row as non-finite
+and still writes every checkpoint, VAL row and epoch record (item 1(c)). An exception raised while the
+state is finite ends the run with a run_abort row (item 1(e)).
 
 Selection never happens here: the conversion and converted VAL scoring of every epoch are
 scripts/qat_epoch_eval.py's, and the epoch is chosen by scripts/select_qat_epoch.py.
@@ -916,6 +919,7 @@ def run_qat(*, stage: str, mode: str, model: nn.Module, source_meta: dict, out_d
     log(f"[qat] {st['name']} seed {seed} clip {clip_norm} | {steps_per_epoch} steps/epoch, T_max {t_max} | "
         f"BN frozen after step {bn_after_step}, observers after {obs_after_step} | {run_id}")
 
+    # nonfinite_since (the telemetry's nonfinite_since_step): the step at which the state was first found non-finite
     step = 0
     nonfinite_since = None
     nan_steps = {int(s) for s in inject_nan_at_steps}
@@ -959,11 +963,12 @@ def run_qat(*, stage: str, mode: str, model: nn.Module, source_meta: dict, out_d
                                                            norm_type=2.0, error_if_nonfinite=False)
                     optimizer.step()
                 except Exception as e:                     # noqa: BLE001 -- recorded in a non-finite state
+                    # AM-21 item 1(b): evaluated at every raise, on the state a checkpoint would hold now
+                    step_ok, step_fails = state_predicate(cpu_state(prepared), kinds, never)
+                    if step_ok:
+                        raise                              # item 1(e): a raise while the state is finite aborts
                     if nonfinite_since is None:
-                        ok, fails = state_predicate(prepared.state_dict(), kinds, never)
-                        if ok:
-                            raise
-                        _mark_nonfinite(step, fails)
+                        _mark_nonfinite(step, step_fails)
                     scheduler.step()
                     ep["step_errors"] += 1
                     tel.write({"event": "step_error", "wall_clock": time.time(), "epoch": epoch,
@@ -1007,7 +1012,6 @@ def run_qat(*, stage: str, mode: str, model: nn.Module, source_meta: dict, out_d
                 state=state, state_sha256=state_sha, seed=seed, clip_norm=clip_norm, run_id=run_id,
                 source_sha256=source_meta["sha256"])
             finite, fails = state_predicate(state, kinds, never)
-            del state
             if not finite and nonfinite_since is None:
                 _mark_nonfinite(step, fails)
             # the VAL bracket: observers off for the pass, their snapshot restored after it
@@ -1021,13 +1025,17 @@ def run_qat(*, stage: str, mode: str, model: nn.Module, source_meta: dict, out_d
                 all_miou, disease_miou, cm, n_val_batches = validate(prepared, val_loader, dev, NUM_CLASSES,
                                                                      max_val_batches)
             except Exception as e:                         # noqa: BLE001 -- recorded in a non-finite state
-                if nonfinite_since is None:
+                # AM-21 item 1(b): evaluated at every raise, on the state the epoch's checkpoint holds
+                val_ok, _ = state_predicate(state, kinds, never)
+                if val_ok:
                     restore_observer_flags(prepared, flags)
-                    raise
+                    raise                                  # item 1(e): a raise while the state is finite aborts
+                # not finite: the epoch-end evaluation of this same state has already recorded it (item 1(c))
                 prepared.train()                           # validate() returns the model to train mode only on success
                 all_miou = disease_miou = None
                 cm, n_val_batches = None, 0
                 val_error = f"{type(e).__name__}: {str(e)[:300]}"
+            del state
             restore_observer_flags(prepared, flags)
             val_seconds = time.time() - t_val
             # the bracket left the state untouched
@@ -1199,8 +1207,8 @@ def result_line(summary: dict) -> str:
            f"{summary['epochs_completed']}/{EPOCHS} epochs")
     if not summary["complete"]:
         return f"RESULT: QAT INCOMPLETE ({tag})"
-    if summary["nonfinite_since_step"] is not None:
-        return f"RESULT: QAT COMPLETE, STATE NON-FINITE since step {summary['nonfinite_since_step']} ({tag})"
+    if summary["nonfinite_since_step"] is not None:            # the step the state was first found non-finite
+        return f"RESULT: QAT COMPLETE, STATE NON-FINITE first found at step {summary['nonfinite_since_step']} ({tag})"
     return f"RESULT: QAT COMPLETE ({tag})"
 
 

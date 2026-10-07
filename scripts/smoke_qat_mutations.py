@@ -4,6 +4,8 @@
 The X mutations undo the DL-24 verification fixes, each killed by the check added with its fix. M25 onward kill the
 checks of the Q2 follow-up: M25-M26 write into configs/calibration while a PTQ smoke runs (F2); M27-M30 move or
 drop a G1 name check (F3); M31-M36 break the record conversion or a selection of a run made non-finite (F1).
+PART 2 (AM-21 as committed, CP-007g): M37-M46 undo the trainer's reading of the predicate at every raise and at
+the epoch end, and the completion line's first-found step (CHECK ITEMS 9 and 15).
 
 The explicit paths of SHADOW_PATHS are copied into a temporary shadow of the repository and committed there
 (one fixed commit, so the trainer records a git_head as in the checkout); the repository itself is never
@@ -404,6 +406,39 @@ MUTATIONS = [
     M("M36", "select_qat_epoch goes on with no convertible epoch", SEL,
       "        raise QATRefused(\"no_convertible_epoch\", f\"every epoch of {rec['run_id']} is excluded "
       "(non-finite state)\")\n", "        pass\n", NF_EPOCH, "nf_no_convertible_epoch_exit_2_nothing_written"),
+    # Q2-F PART 2, CHECK ITEM 9 (AM-21 items 1(b), 1(e)): the predicate at every raise, abort only when finite
+    M("M37", "a step that raises after an earlier non-finite flag never aborts (the predicate is not read)", QAT,
+      "                    if step_ok:\n", "                    if step_ok and nonfinite_since is None:\n",
+      runner("nan"), "d1_step_raise_after_repair_aborts"),
+    M("M38", "a VAL pass that raises after an earlier non-finite flag never aborts (the predicate is not read)", QAT,
+      "                if val_ok:\n", "                if val_ok and nonfinite_since is None:\n",
+      runner("nan"), "d1_val_raise_after_repair_aborts"),
+    M("M39", "a step that raises while the state is finite does not abort", QAT,
+      "                    if step_ok:\n", "                    if False:\n",
+      runner("nan"), "d1_step_raise_while_finite_aborts"),
+    M("M40", "a VAL pass that raises while the state is finite does not abort", QAT,
+      "                if val_ok:\n", "                if False:\n", runner("nan"), "d1_val_raise_while_finite_aborts"),
+    # CHECK ITEM 15 (AM-21 item 5): the completion line names the step the state was first found non-finite
+    M("M41", "the completion line reads 'non-finite since step N'", QAT,
+      "STATE NON-FINITE first found at step ", "STATE NON-FINITE since step ",
+      runner("nan"), "d1_result_line_nonfinite_step10", "d1_result_line_nonfinite_step27"),
+    M("M42", "a step that raises before the first non-finite flag aborts, whatever the state", QAT,
+      "                    if step_ok:\n", "                    if step_ok or nonfinite_since is None:\n",
+      runner("nan"), "d1_step_raise_in_unflagged_nonfinite_state_recorded"),
+    M("M43", "a raise that first meets a non-finite state does not record its step", QAT,
+      "                        _mark_nonfinite(step, step_fails)\n", "                        pass\n",
+      runner("nan"), "d1_step_raise_in_unflagged_nonfinite_state_recorded"),
+    M("M44", "a step that raises in a non-finite state ends the run (AM-21 item 1(c))", QAT,
+      "                    if step_ok:\n", "                    if True:\n",
+      runner("nan"), "d1_step_errors_recorded_in_nonfinite_state",
+      "nonfinite_loss_recorded_run_reaches_epoch_15_step10"),
+    M("M45", "a VAL pass that raises in a non-finite state ends the run (AM-21 item 1(c))", QAT,
+      "                if val_ok:\n", "                if True:\n",
+      runner("nan"), "d1_val_error_recorded_and_train_mode_restored"),
+    M("M46", "the epoch end reads the sticky flag, not the checkpoint's state (AM-21 item 1(b))", QAT,
+      "            finite, fails = state_predicate(state, kinds, never)\n",
+      "            finite, fails = nonfinite_since is None, []\n",
+      runner("nan"), "d1_epoch_end_alone_finds_a_nonfinite_state"),
 ]
 
 # ------------------------------------------------------------------ the refusal table (P36)
