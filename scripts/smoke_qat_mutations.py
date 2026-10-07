@@ -12,7 +12,14 @@ record field by field, item 2(b)'s entry, the rejected pilot run and its deviati
 telemetry and the checkpoints (item 3(a)), and P16's (both halves) and P15's (both flags) reading of checkpoints
 that hold NaN (CHECK ITEMS 11, 13, 14 and 15; ruling 3); M69-M90 undo select_clip's
 telemetry sha256 per candidate and its report of a rejected run's records, never required, whatever state they are
-in (CHECK ITEM 12, ruling 1), and M23, M33 and M52c now target the rejection read from the run's own records.
+in (CHECK ITEM 12, ruling 1), and M23, M33 and M52c now target the rejection read from the run's own records;
+M91-M123 undo the jobs' handling (ruling 2): a job's own session, the group kill at its timeout (before the output
+is read) and at its end, the drain's bound and the output it keeps, run_smoke's route through run_job, main()'s
+install of the stop handlers (and each of the four signals alone), the reentrant lock, the kill of every live
+job's group (one still starting included), the skip of the queued baselines and edits, the gate on new jobs, the
+reading of a skipped baseline, the signalled run's FAIL and its jobs without a verdict, main()'s self-check, its
+selection and the cleanup of a refused one, its run of the jobs, the selection's two guards, and the self-check's
+jobs watching this harness and ending with the process they watch (a zombie, or reaped).
 
 The explicit paths of SHADOW_PATHS are copied into a temporary shadow of the repository and committed there
 (one fixed commit, so the trainer records a git_head as in the checkout); the repository itself is never
@@ -20,12 +27,26 @@ written. One edit is applied at a time: a mutation replaces an exact string (whi
 a refusal is removed by replacing its statement (a `_refuse(...)` call or a `raise QAT...(...)`) with `pass`.
 The smoke holding the killing check then runs in a subprocess inside the shadow (that check's section, or
 that case alone), and the named check must be reported FAIL there, having PASSED on the unmutated shadow in
-the same run (same argv); a check the smoke never reaches, or a timeout, is not a kill. The refusals are
+the same run (same argv); a check the smoke never reaches, a timeout included, is not a kill (a check it reported
+FAIL before a timeout is). The refusals are
 those of P8-P10 (the launch gates, the parent, the clip binding), O2 (E6's λ/α binding) and P23-P27 (the
 selections), with the record checks of convert, score, finalize and check-run-meta that P14, P24, P26 and
 P28 rely on.
 
-    python -B scripts/smoke_qat_mutations.py [--only ID,ID,...] [--no-refusals] [--keep-shadow]
+Each smoke runs in a new session, its own process group (ruling Q2-F/2): a timeout kills the whole group at once,
+so no child that stays in the smoke's group outlives it, and a job that ends has its group killed too. main()
+installs the stop handlers first: a SIGTERM, SIGINT, SIGHUP or SIGQUIT to the harness kills every live job's group
+(one still starting included), skips the queued jobs, starts no smoke after it, and ends the run FAIL
+(harness_ran_unsignalled; every_job_has_a_verdict names the jobs it stopped). A SIGKILL runs no handler, and the
+jobs, each in a session of its own, would outlive it: an outer timeout keeps its default TERM signal and gives the
+grace with -k, never -s KILL (timeout -k 60 12600 python -B scripts/smoke_qat_mutations.py --workers 2), and the
+harness runs detached with setsid, not nohup, since it handles SIGHUP as a stop. Every run measures all of this
+first (self_check: sleeper jobs run as smokes, and harness processes of its own, main() itself among them, on
+sleeper jobs; self_check_measured confirms it ran); --self-check measures it alone. A stop during the self-check
+lets its cases run on, each ending with this harness. An --only id that names no job, or a selection with no
+job, is a usage error (RESULT: ERROR).
+
+    python -B scripts/smoke_qat_mutations.py [--only ID,ID,...] [--no-refusals] [--keep-shadow] [--self-check]
 
 Ends with one RESULT line; exit 0 only when every baseline check passes and every edit is killed.
 """
@@ -34,11 +55,16 @@ from __future__ import annotations
 import argparse
 import ast
 import os
+import queue
 import re
+import resource
 import shutil
+import signal
 import subprocess
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 sys.dont_write_bytecode = True
@@ -47,14 +73,411 @@ sys.path.insert(0, str(REPO))
 
 from scripts.synthetic_ptq_fixtures import safe_tmpdir  # noqa: E402  (imports no repository code)
 
-TIMEOUT = 2400
+TIMEOUT = 3600                                   # per smoke: F1's clip selections take ~2000 s on a cold cache
 THREADS = {"value": str(os.cpu_count() or 1)}           # per smoke process; set from --workers in main()
 CHECK_LINE = re.compile(r"^  (\S+)\s*: (PASS|FAIL)\b")
 results: list[tuple[str, bool, str]] = []
 
+
+# ------------------------------------------------------------------ jobs (ruling Q2-F/2)
+# Each smoke runs in a new session, its own process group. A timeout kills the whole group at once, so the output so
+# far is read and no child that stays in the group outlives it; a job that ends has its group killed too
+# (stragglers). main() installs the stop handlers before anything else: a SIGTERM, SIGINT, SIGHUP or SIGQUIT to the
+# harness (an outer GNU `timeout` relays these, and signals only its own process group) kills every live job's group,
+# one still starting included; the queued jobs are skipped, no job starts after it, and the run ends FAIL (finish).
+# A SIGKILL runs no handler, so an outer timeout keeps its default TERM signal and gives the grace with -k, never
+# -s KILL; and the harness runs detached with setsid, not nohup, as it handles SIGHUP as a stop.
+STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP, signal.SIGQUIT)
+JOBS = {"groups": set(), "stopped": None, "lock": threading.RLock()}
+DRAIN = {"value": 60}                         # seconds to read a killed group's output (the self-check shortens it)
+
+
+def _kill_group(pgid: int) -> None:
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
+def _stop(signum, _frame) -> None:
+    with JOBS["lock"]:
+        JOBS["stopped"] = signum
+        for pgid in sorted(JOBS["groups"]):
+            _kill_group(pgid)
+
+
+def install_stop_handlers() -> None:
+    for s in STOP_SIGNALS:
+        signal.signal(s, _stop)
+
+
+def run_job(argv: list[str], *, cwd, env, timeout: float) -> tuple[str, bool, int | None]:
+    """One job in a new session; returns (its stdout, whether it timed out, its pid)."""
+    with JOBS["lock"]:
+        if JOBS["stopped"] is not None:
+            return f"\nRESULT: STOPPED (signal {JOBS['stopped']})", False, None
+        p = subprocess.Popen(argv, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                             start_new_session=True)
+        JOBS["groups"].add(p.pid)
+        if JOBS["stopped"] is not None:                    # a signal arrived while this job was starting
+            _kill_group(p.pid)
+    timed_out = False
+    try:
+        try:
+            out, _err = p.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            _kill_group(p.pid)
+            try:
+                out, _err = p.communicate(timeout=DRAIN["value"])
+            except subprocess.TimeoutExpired as e:         # a process outside the group still holds the pipe
+                p.kill()
+                out = _text(e.stdout)
+    finally:
+        with JOBS["lock"]:                                 # no job of this harness starts in between
+            JOBS["groups"].discard(p.pid)
+            _kill_group(p.pid)                             # stragglers of a job that ended
+    return out or "", timed_out, p.pid
+
+
+def _text(b) -> str:
+    return b.decode("utf-8", "replace") if isinstance(b, bytes) else (b or "")
+
+
+def run_pool(todo: list, slots: list, one) -> None:
+    """one(job, slot) for each job, on as many threads as there are slots, each job on a free slot; once a stop
+    signal has arrived, the queued jobs are skipped. run_jobs runs its pooled baselines and its edits through it
+    (the warm baselines run one by one before, each ending at run_job's gate after a stop)."""
+    free: "queue.Queue" = queue.Queue()
+    for s in slots:
+        free.put(s)
+
+    def work(j) -> None:
+        if JOBS["stopped"] is not None:                       # signalled: the queued jobs are skipped
+            return
+        s = free.get()
+        try:
+            one(j, s)
+        finally:
+            free.put(s)
+    with ThreadPoolExecutor(max_workers=len(slots)) as pool:
+        list(pool.map(work, todo))
+
+
+def _live(pid) -> bool:
+    """A process that exists and is neither a zombie nor dead (Linux /proc)."""
+    try:
+        with open(f"/proc/{pid}/stat", encoding="ascii", errors="replace") as f:
+            state = f.read().rsplit(")", 1)[1].split()[0]
+    except (OSError, IndexError):
+        return False
+    return state not in ("Z", "X", "x")
+
+
+def _wait_gone(pids, secs: float = 10.0) -> list[int]:
+    t0 = time.time()
+    live = [p for p in pids if _live(p)]
+    while live and time.time() - t0 < secs:
+        time.sleep(0.1)
+        live = [p for p in pids if _live(p)]
+    return live
+
+
+def _kill_pids(pids) -> None:
+    """What a failed check leaves running (pids just found live) ends at once."""
+    for pid in pids:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+
+
+# The self-check's smoke, scripts/sleeper_job.py in a directory of its own (run_smoke runs it as any smoke): it starts
+# a child, writes both pids, prints one check line and waits. Mode "exit": its child does not hold the job's pipes
+# and the job ends at once; mode "escape": its child leaves the job's group (setsid), keeping the pipe. The job and
+# its child end as soon as the process they watch is gone (a zombie, or reaped), at the latest after 120 s: the
+# self-checking harness, or in three cases a process of their own. So a self-check whose harness is SIGKILLed with
+# its group leaves nothing running.
+_WAIT = ("import sys, time\n"
+         "def gone(pid):\n"
+         "    try:\n"
+         "        with open(f'/proc/{pid}/stat') as f:\n"
+         "            return f.read().rsplit(')', 1)[1].split()[0] in ('Z', 'X', 'x')\n"
+         "    except (OSError, IndexError):\n"
+         "        return True\n"
+         "def wait(watch):\n"
+         "    t0 = time.time()\n"
+         "    while time.time() - t0 < 120 and not gone(watch):\n"
+         "        time.sleep(0.1)\n")
+_CHILD = _WAIT + "wait(sys.argv[1])\n"
+SLEEPER_SCRIPT = (_WAIT + "import os, subprocess\n"
+                  f"CHILD = {_CHILD!r}\n"
+                  "pidfile, watch, mode = sys.argv[1:4]\n"
+                  "quiet = subprocess.DEVNULL if mode == 'exit' else None\n"
+                  "escape = 'import os\\nos.setsid()\\n' if mode == 'escape' else ''\n"
+                  "c = subprocess.Popen([sys.executable, '-B', '-c', escape + CHILD, watch], stdout=quiet,\n"
+                  "                     stderr=quiet)\n"
+                  "with open(pidfile + '.part', 'w') as f:\n"
+                  "    f.write(f'{os.getpid()} {c.pid}')\n"
+                  "os.replace(pidfile + '.part', pidfile)\n"
+                  "print('[CHECKS]\\n  sleeper_started : PASS', flush=True)\n"
+                  "if mode != 'exit':\n"
+                  "    wait(watch)\n")
+SIGNALS_MEASURED = (("sigterm", signal.SIGTERM), ("sigint", signal.SIGINT), ("sighup", signal.SIGHUP),
+                    ("sigquit", signal.SIGQUIT))
+SELF_CHECKS = ("the_stop_handlers_are_installed", "timeout_kills_the_job_process_group",
+               "timeout_keeps_the_output_so_far", "a_job_whose_child_leaves_its_group_is_bounded",
+               "a_finished_job_leaves_no_straggler", "a_sleeper_ends_with_the_process_it_watches",
+               "a_sleeper_ends_when_the_process_it_watches_is_reaped",
+               "a_job_starting_when_the_signal_arrives_is_killed", "no_job_starts_after_a_signal",
+               *(f"{name}_{what}" for name, _sig in SIGNALS_MEASURED
+                 for what in ("kills_every_live_job_process_group", "skips_the_queued_jobs", "run_ends_fail")),
+               "the_jobs_watch_this_harness", "main_refuses_an_unknown_id", "main_runs_every_selected_job",
+               "an_unknown_job_id_is_refused", "an_empty_selection_is_refused")
+
+
+def _write_sleeper(d: Path) -> Path:
+    (d / "scripts").mkdir(parents=True, exist_ok=True)
+    p = d / "scripts" / "sleeper_job.py"
+    p.write_text(SLEEPER_SCRIPT, encoding="utf-8")
+    return p
+
+
+def _pids(path: Path, secs: float = 30.0) -> list[int]:
+    """The two pids a sleeper job wrote, waiting up to secs for them (read at least once)."""
+    t0 = time.time()
+    while True:
+        try:
+            parts = path.read_text().split()
+        except OSError:
+            parts = []
+        if len(parts) == 2:
+            return [int(x) for x in parts]
+        if time.time() - t0 >= secs:
+            return []
+        time.sleep(0.1)
+
+
+def _ended(proc: subprocess.Popen, secs: float) -> str:
+    """The output of a harness process the self-check started, once it has ended (killed after secs)."""
+    try:
+        out, _ = proc.communicate(timeout=secs)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        out, _ = proc.communicate()
+    return out or ""
+
+
+def _usage_refused(jobs: list, only) -> bool:
+    try:
+        select_jobs(jobs, only)
+    except SystemExit as e:
+        return str(e).startswith("RESULT: ERROR")
+    return False
+
+
+def _watch_of(pid) -> str | None:
+    """The process a live sleeper job watches: the WATCH of python -B scripts/sleeper_job.py PIDFILE WATCH MODE."""
+    try:
+        argv = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
+    except OSError:
+        return None
+    return argv[4].decode() if len(argv) > 4 else None
+
+
+def sleeper_harness(root: str, watch: str) -> tuple[Path, list[Path], list[dict]]:
+    """--self-check-main ROOT WATCH: main()'s root, shadows and jobs for the self-check's own runs of main(), in place
+    of the shadows and jobs of record: five sleeper jobs in two shadows, each edit turning the check line to FAIL. S1
+    and S5 end at once; S2-S4 wait. Their pid files lie in ROOT, outside main()'s root, which main() removes."""
+    r = Path(root) / "main_root"
+    shadows = [r / "shadow0", r / "shadow1"]
+    for sh in shadows:
+        _write_sleeper(sh)
+    jobs = [{"id": f"S{i}", "rel": "scripts/sleeper_job.py", "what": "a sleeper job", "kills": ("sleeper_started",),
+             "edit": ("replace", [("sleeper_started : PASS", "sleeper_started : FAIL")]),
+             "run": ("sleeper_job", (str(Path(root) / f"pool_{x}"), watch, "exit" if x in "we" else "hold"))}
+            for i, x in enumerate("wabce", 1)]
+    return r, shadows, jobs
+
+
+def self_check() -> None:
+    """Ruling Q2-F/2, measured in this process, with sleeper jobs that run_smoke runs as smokes, and with harness
+    processes of its own:
+    - the four stop handlers are installed here;
+    - a timed-out job leaves no live process and its output so far is read;
+    - a job whose child leaves its group returns within its timeout and the drain, with that output;
+    - a job that ends leaves no straggler;
+    - the jobs end with the process they watch, a zombie or reaped;
+    - a job starting when a stop signal arrives is killed at once, and no job starts after a signal;
+    - for each stop signal, sent to main() running four sleeper jobs on two shadows, every live job's process group
+      is killed, the queued baseline and the edits are skipped, and that run ends FAIL;
+    - the jobs watch this harness;
+    - main() refuses an --only id that names no job (removing its root), and runs every job it selects;
+    - select_jobs refuses an unknown id and a selection with no job."""
+    root = safe_tmpdir("smoke_qat_mutations_selfcheck_")
+    env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+    me = str(os.getpid())
+    this = [sys.executable, "-B", str(Path(__file__).resolve())]
+    sleeper = _write_sleeper(root)
+    try:
+        handlers = {n: getattr(signal.getsignal(s), "__name__", str(signal.getsignal(s))) for n, s in SIGNALS_MEASURED}
+        check("the_stop_handlers_are_installed", all(signal.getsignal(s) is _stop for _n, s in SIGNALS_MEASURED),
+              str(handlers))
+
+        statuses, res, secs = run_smoke(root, root, ("sleeper_job", (str(root / "timeout_pids"), me, "hold")),
+                                        timeout=8)
+        pids = _pids(root / "timeout_pids", 5)
+        live = _wait_gone(pids)
+        _kill_pids(live)
+        check("timeout_kills_the_job_process_group", res == "RESULT: TIMEOUT" and secs < 38 and len(pids) == 2
+              and not live, f"{res} after {secs:.0f}s (timeout 8s), job and child {pids}, live after the kill {live}")
+        check("timeout_keeps_the_output_so_far", statuses.get("sleeper_started") == "PASS",
+              f"the checks read from its output: {statuses}")
+
+        # the escaped child watches holder, which outlives the case: unbounded, the drain would wait for it (M122)
+        holder = subprocess.Popen([sys.executable, "-B", "-c", "import time; time.sleep(60)"], env=env)
+        saved, DRAIN["value"] = DRAIN["value"], 3
+        try:
+            statuses, res, secs = run_smoke(root, root, ("sleeper_job", (str(root / "escape_pids"), str(holder.pid),
+                                                                         "escape")), timeout=5)
+        finally:
+            DRAIN["value"] = saved
+        pids = _pids(root / "escape_pids", 5)
+        _kill_pids([p for p in pids if _live(p)])    # the escaped child, outside the group, is ended here
+        holder.kill()
+        holder.wait()
+        check("a_job_whose_child_leaves_its_group_is_bounded", res == "RESULT: TIMEOUT" and secs < 20 and len(pids) == 2
+              and statuses.get("sleeper_started") == "PASS",
+              f"{res} after {secs:.0f}s (timeout 5s, drain 3s), job and child {pids}, the checks read {statuses}")
+
+        statuses, res, secs = run_smoke(root, root, ("sleeper_job", (str(root / "straggler_pids"), me, "exit")),
+                                        timeout=60)
+        pids = _pids(root / "straggler_pids", 5)
+        live = _wait_gone(pids)
+        _kill_pids(live)
+        check("a_finished_job_leaves_no_straggler", res != "RESULT: TIMEOUT" and len(pids) == 2 and not live,
+              f"{res!r}, job and child {pids}, live after the job ended {live}")
+
+        for name, reaped in (("a_sleeper_ends_with_the_process_it_watches", False),
+                             ("a_sleeper_ends_when_the_process_it_watches_is_reaped", True)):
+            watched = subprocess.Popen([sys.executable, "-B", "-c", "import time; time.sleep(1)"], env=env)
+            if reaped:
+                watched.wait()                       # no /proc entry is left
+            pidf = root / ("reaped_pids" if reaped else "zombie_pids")
+            job = subprocess.Popen([sys.executable, "-B", str(sleeper), str(pidf), str(watched.pid), "hold"],
+                                   cwd=str(root), env=env, stdout=subprocess.DEVNULL)
+            pids = _pids(pidf)
+            live = _wait_gone(pids, 15)              # unreaped, the watched process is a zombie after 1 s
+            _kill_pids(live)
+            job.kill()
+            job.wait()
+            watched.wait()
+            check(name, len(pids) == 2 and not live,
+                  f"job and child {pids}, live 15 s after the process they watch ended {live}")
+
+        sub = root / "starting"
+        sub.mkdir()
+        rest = _ended(subprocess.Popen([*this, "--self-check-signal-job", "starting", str(sub), me], cwd=str(sub),
+                                       env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True), 30)
+        late = [p for f in ("starting_pids", "late_pids") for p in _pids(sub / f, 0 if "STARTING" in rest else 3)]
+        _kill_pids([p for p in late if _live(p)])
+        m = re.search(r"^STARTING timed_out=(\w+) secs=([\d.]+) pid=\w+ live=(\w+) late_pid=(\w+)$", rest, re.M)
+        said = f"the harness said {rest.strip()[-160:]!r}"
+        check("a_job_starting_when_the_signal_arrives_is_killed", bool(m) and m.group(1) == "False"
+              and float(m.group(2)) < 4 and m.group(3) == "False", said)
+        check("no_job_starts_after_a_signal", bool(m) and m.group(4) == "None", said)
+
+        watched_by = None
+        for name, sig in SIGNALS_MEASURED:
+            sub = root / name
+            sub.mkdir()
+            s = subprocess.Popen([*this, "--self-check-main", str(sub), me, "--only", "S1,S2,S3,S4"], cwd=str(sub),
+                                 env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            pids = _pids(sub / "pool_a") + _pids(sub / "pool_b")
+            if watched_by is None and pids:
+                watched_by = _watch_of(pids[0])
+            s.send_signal(sig)                       # sent in any case, so its handler ends whatever it started
+            live = _wait_gone(pids)
+            _kill_pids(live)
+            rest = _ended(s, 60)
+            started = [p for f in ("pool_w", "pool_a", "pool_b", "pool_c", "pool_e") for p in _pids(sub / f, 0)]
+            _kill_pids([p for p in started if _live(p)])
+            lines = [ln for ln in rest.splitlines() if ln.strip()]
+            status = {c.group(1): c.group(2) for c in map(CHECK_LINE.match, lines) if c}
+            ran_after = [ln.strip()[:70] for ln in lines if (ln.startswith("[baseline]") and "pool_c" in ln)
+                         or re.match(r"^\s+\[\d+/\d+\] S\d", ln)]
+            said = (f"run after the signal {ran_after[:2]}, [edits] reached {'[edits]' in lines}, "
+                    f"harness_ran_unsignalled {status.get('harness_ran_unsignalled')}, every_job_has_a_verdict "
+                    f"{status.get('every_job_has_a_verdict')}, last line {(lines or [''])[-1][:60]!r}")
+            check(f"{name}_kills_every_live_job_process_group", len(pids) == 4 and not live,
+                  f"two jobs and their children {pids}, live after {name.upper()} {live}")
+            check(f"{name}_skips_the_queued_jobs", "[edits]" in lines and not ran_after, said)
+            check(f"{name}_run_ends_fail", status.get("harness_ran_unsignalled") == "FAIL"
+                  and status.get("every_job_has_a_verdict") == "FAIL" and bool(lines)
+                  and lines[-1].startswith("RESULT: FAIL"), said)
+        this_pid = str(os.getpid())                  # read here, not from me: M121 mutates me
+        check("the_jobs_watch_this_harness", watched_by == this_pid,
+              f"a job watches {watched_by}; this harness is {this_pid}")
+
+        sub = root / "selection"
+        sub.mkdir()
+        p = subprocess.run([*this, "--self-check-main", str(sub), me, "--only", "S9"], cwd=str(sub), env=env,
+                           capture_output=True, text=True, timeout=120)
+        check("main_refuses_an_unknown_id", p.returncode == 1 and "RESULT: ERROR unknown job ids ['S9']" in p.stderr
+              and not (sub / "main_root").exists(),
+              f"exit {p.returncode}, {p.stderr.strip()[-80:]!r}, its root left {(sub / 'main_root').exists()}")
+        sub = root / "full"
+        sub.mkdir()
+        p = subprocess.run([*this, "--self-check-main", str(sub), me, "--only", "S1,S5"], cwd=str(sub), env=env,
+                           capture_output=True, text=True, timeout=120)
+        killed = [i for i in ("S1", "S5") if re.search(rf"^\s+\[\d/2\] {i}\s+KILLED", p.stdout, re.M)]
+        tail = (p.stdout.strip().splitlines() or [""])[-1]
+        check("main_runs_every_selected_job", p.returncode == 0 and killed == ["S1", "S5"]
+              and re.search(r"^\s+every_job_has_a_verdict\s+: PASS", p.stdout, re.M) is not None
+              and tail.startswith("RESULT: PASS"), f"exit {p.returncode}, killed {killed}, last line {tail[:60]!r}")
+
+        probe = [{"id": "J1"}, {"id": "J2"}]
+        check("an_unknown_job_id_is_refused", _usage_refused(probe, "J1,J9") and not _usage_refused(probe, "J1"),
+              "--only J1,J9 refused, --only J1 accepted")
+        check("an_empty_selection_is_refused", _usage_refused([], None)
+              and [j["id"] for j in select_jobs(probe, "J2")] == ["J2"], "no job selected is refused")
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def signal_job(mode: str, root: str, watch: str) -> int:
+    """--self-check-signal-job starting ROOT WATCH: a harness process of its own, on main()'s stop handlers (main()
+    installs them before it gets here). A stop signal is raised while run_job starts a job, before it records it;
+    then one more job is asked for."""
+    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))     # a mutation that leaves SIGQUIT unhandled dumps no core
+    if mode != "starting":
+        raise SystemExit(f"RESULT: ERROR unknown signal-job mode {mode}")
+    env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+    t_all = time.time()
+    r = Path(root)
+    sleeper = _write_sleeper(r)
+    real = subprocess.Popen
+
+    def popen_then_signal(*a, **kw):
+        p = real(*a, **kw)
+        signal.raise_signal(signal.SIGTERM)              # handled here, on this thread, before run_job records p
+        return p
+    subprocess.Popen = popen_then_signal
+    try:
+        _out, timed_out, pid = run_job([sys.executable, "-B", str(sleeper), str(r / "starting_pids"), watch, "hold"],
+                                       cwd=root, env=env, timeout=8)
+    finally:
+        subprocess.Popen = real
+    secs = time.time() - t_all
+    _out, _timed_out, late = run_job([sys.executable, "-B", str(sleeper), str(r / "late_pids"), watch, "hold"],
+                                     cwd=root, env=env, timeout=8)
+    print(f"STARTING timed_out={timed_out} secs={secs:.1f} pid={pid} live={_live(pid)} late_pid={late}", flush=True)
+    return 0
+
 # ------------------------------------------------------------------ the shadow: explicit paths, no listing
 # Every file the smokes below open under the repository (recorded once with an audit hook on `open`, in
-# every process they start); a file missing here fails the baseline, never a mutation.
+# every process they start), and this harness, whose --self-check runs in the shadow; a file missing here fails the
+# baseline, never a mutation.
 SHADOW_PATHS: tuple[str, ...] = (
     "configs/augment.py",
     "configs/calibration/ptq_calibration_seed42.json",
@@ -77,6 +500,7 @@ SHADOW_PATHS: tuple[str, ...] = (
     "scripts/select_qat_epoch.py",
     "scripts/smoke_calibration_lists.py",
     "scripts/smoke_qat_artifacts.py",
+    "scripts/smoke_qat_mutations.py",
     "scripts/smoke_qat_runner.py",
     "scripts/smoke_qat_seeding.py",
     "scripts/smoke_qat_selection.py",
@@ -129,6 +553,7 @@ SHADOW_PATHS: tuple[str, ...] = (
 QAT, PREP, SEL, ART, QEE = ("src/quant/qat.py", "src/quant/prepare.py", "src/quant/qat_select.py",
                             "src/quant/qat_artifacts.py", "scripts/qat_epoch_eval.py")
 SQE, SCL, BCL = "scripts/select_qat_epoch.py", "scripts/select_clip.py", "scripts/build_calibration_lists.py"
+SQM = "scripts/smoke_qat_mutations.py"                       # this harness: its job handling (ruling Q2-F/2)
 RUNNER, SEEDING, SELECTION, ARTIFACTS = ("smoke_qat_runner", "smoke_qat_seeding", "smoke_qat_selection",
                                          "smoke_qat_artifacts")
 RUN_PTQ, CAL_LISTS = "smoke_run_ptq", "smoke_calibration_lists"
@@ -152,6 +577,7 @@ def nonfinite(*names: str) -> tuple:
 
 SEEDING_ALL = (SEEDING, ())
 UNITS = (ARTIFACTS, ("--sections", "units"))
+SELF = ("smoke_qat_mutations", ("--self-check",))            # ruling Q2-F/2: the harness's own job handling
 # F1: the nonfinite cases in three runs, each well inside TIMEOUT on a cold cache: (a) the record conversions, (d)
 # the epoch selections, and (b)-(c) the clip selections, the rejected runs converted and scored (AM-21 item 3(d))
 NF_STEPS = (10, 22, 27)
@@ -162,6 +588,17 @@ NF_CLIP = nonfinite(*(f"nf_step{k}_select_clip_rejects_nonfinite" for k in NF_ST
                     *(f"nf_step{k}_both_nonfinite_no_winner_exit_2" for k in NF_STEPS),
                     "nf_rejected_run_without_conversion_record_other_wins")
 # Q2-F PART 2 (AM-21 item 2(a)): the epoch selection's test of each epoch's checkpoint
+# Q2-F PART 2, ruling 2 (M108): run_smoke's pre-C9 body, subprocess.run with a timeout (it kills the smoke alone)
+_SMOKE_RUN_PRE_C9 = ("    try:\n"
+                     "        out = subprocess.run(argv, cwd=str(shadow), capture_output=True, text=True,\n"
+                     "                             timeout=timeout, env=env).stdout\n"
+                     "        timed_out = False\n"
+                     "    except subprocess.TimeoutExpired as e:\n"
+                     "        out = (e.stdout or b'').decode() if isinstance(e.stdout, bytes) else (e.stdout or '')\n"
+                     "        timed_out = True\n")
+# Q2-F PART 2, ruling 2 (M116): the signal job's first line, before which the mutant installs the handlers
+_SETRLIMIT = ("    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))     # a mutation that leaves SIGQUIT "
+              "unhandled dumps no core\n")
 _CHECKPOINT_DECIDES = ("        if not finite:                                   "
                        "# AM-21 item 2(a): the checkpoint decides\n")
 
@@ -671,6 +1108,120 @@ MUTATIONS = [
     M("M90", "a surplus --expect-telemetry-sha256 is accepted", SEL,
       "    if len(expect) != len(candidates):\n", "    if len(expect) < len(candidates):\n",
       case("d5_expect_telemetry_sha256_required_three"), "d5_expect_telemetry_sha256_required_three"),
+    # ruling 2: a job's whole process group ends at its timeout and at its end, and a stop signal to the harness
+    # ends every live job's group, skips the queued jobs, starts no smoke after it and ends the run FAIL
+    M("M91", "a timed-out job is killed alone, not with its process group", SQM,
+      "        os.killpg(pgid, signal.SIGKILL)\n", "        os.kill(pgid, signal.SIGKILL)\n",
+      SELF, "timeout_kills_the_job_process_group"),
+    M("M92", "a job runs in the harness's own session, so the group kill cannot reach its children",
+      SQM, "                             start_new_session=True)\n",
+      "                             start_new_session=False)\n", SELF, "timeout_kills_the_job_process_group"),
+    M("M93", "a signal to the harness leaves the live jobs running", SQM,
+      '        for pgid in sorted(JOBS["groups"]):\n            _kill_group(pgid)\n',
+      '        for pgid in sorted(JOBS["groups"]):\n            pass\n',
+      SELF, "sigterm_kills_every_live_job_process_group"),
+    M("M94", "a job starts after a stop signal", SQM,
+      '        if JOBS["stopped"] is not None:\n            return f', '        if False:\n            return f',
+      SELF, "no_job_starts_after_a_signal"),
+    M("M95", "the queued jobs run after a stop signal", SQM,
+      '        if JOBS["stopped"] is not None:                       # signalled: the queued jobs are skipped\n',
+      '        if False:                       # signalled: the queued jobs are skipped\n',
+      SELF, "sigterm_skips_the_queued_jobs"),
+    M("M96", "a SIGHUP to the harness is not handled", SQM,
+      "STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP, signal.SIGQUIT)\n",
+      "STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGQUIT)\n", SELF,
+      "sighup_kills_every_live_job_process_group"),
+    M("M97", "a job that ends leaves its stragglers running", SQM,
+      "            _kill_group(p.pid)                             # stragglers of a job that ended\n",
+      "            pass                                           # stragglers of a job that ended\n",
+      SELF, "a_finished_job_leaves_no_straggler"),
+    M("M98", "a timed-out job's group is killed only after its output has been waited for", SQM,
+      "            timed_out = True\n            _kill_group(p.pid)\n", "            timed_out = True\n",
+      SELF, "timeout_kills_the_job_process_group"),
+    M("M99", "a stop signal kills only the first live job's group", SQM,
+      '        for pgid in sorted(JOBS["groups"]):\n', '        for pgid in sorted(JOBS["groups"])[:1]:\n',
+      SELF, "sigterm_kills_every_live_job_process_group"),
+    M("M100", "a signalled run does not end FAIL", SQM,
+      '    check("harness_ran_unsignalled", stopped is None,\n', '    check("harness_ran_unsignalled", True,\n',
+      SELF, "sigterm_run_ends_fail"),
+    M("M101", "a job starting when a stop signal arrives runs on", SQM,
+      "            _kill_group(p.pid)\n    timed_out = False\n", "            pass\n    timed_out = False\n",
+      SELF, "a_job_starting_when_the_signal_arrives_is_killed"),
+    M("M102", "a SIGQUIT to the harness is not handled", SQM,
+      "STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP, signal.SIGQUIT)\n",
+      "STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)\n", SELF,
+      "sigquit_kills_every_live_job_process_group"),
+    M("M103", "a SIGINT to the harness is not handled", SQM,
+      "STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP, signal.SIGQUIT)\n",
+      "STOP_SIGNALS = (signal.SIGTERM, signal.SIGHUP, signal.SIGQUIT)\n", SELF,
+      "sigint_kills_every_live_job_process_group"),
+    M("M104", "a SIGTERM to the harness is not handled", SQM,
+      "STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP, signal.SIGQUIT)\n",
+      "STOP_SIGNALS = (signal.SIGINT, signal.SIGHUP, signal.SIGQUIT)\n", SELF,
+      "sigterm_kills_every_live_job_process_group"),
+    M("M105", "the self-check's jobs ignore the harness they watch, so a SIGKILLed self-check leaves them running",
+      SQM, "< 120 and not gone(watch):\\n", "< 120:\\n", SELF, "a_sleeper_ends_with_the_process_it_watches"),
+    M("M106", "the self-check's jobs outlive a watched process that is already reaped (no /proc entry)", SQM,
+      '"        return True\\n"', '"        return False\\n"', SELF,
+      "a_sleeper_ends_when_the_process_it_watches_is_reaped"),
+    M("M107", "main() installs no stop handler, so a signal ends the harness and orphans its live jobs", SQM,
+      "    install_stop_handlers()                          # first: the jobs run in sessions of their own\n",
+      "    pass\n", SELF, "the_stop_handlers_are_installed", "sigterm_kills_every_live_job_process_group",
+      "a_job_starting_when_the_signal_arrives_is_killed"),
+    M("M108", "run_smoke runs the smoke without run_job (the pre-C9 subprocess.run, which kills the smoke alone)",
+      SQM, "    out, timed_out, _pid = run_job(argv, cwd=str(shadow), env=env, timeout=timeout)\n",
+      _SMOKE_RUN_PRE_C9, SELF, "timeout_kills_the_job_process_group"),
+    M("M109", "main() runs no self-check, so --self-check would pass with nothing measured", SQM,
+      "        self_check()\n", "        pass\n", SELF, "self_check_measured"),
+    M("M110", "an --only id that names no job is ignored", SQM,
+      '        if unknown:\n            raise SystemExit(f"RESULT: ERROR unknown job ids {unknown}")\n',
+      '        if False:\n            raise SystemExit(f"RESULT: ERROR unknown job ids {unknown}")\n',
+      SELF, "an_unknown_job_id_is_refused"),
+    M("M111", "a selection with no job runs nothing and passes", SQM,
+      '    if not jobs:\n        raise SystemExit("RESULT: ERROR no edit selected")\n',
+      '    if False:\n        raise SystemExit("RESULT: ERROR no edit selected")\n', SELF,
+      "an_empty_selection_is_refused"),
+    M("M112", "a baseline that a signal skipped crashes the verdicts (KeyError): the run ends with no RESULT line",
+      SQM, '        seen = base.get(j["run"], {})                                  # a skipped baseline passes none\n',
+      '        seen = base[j["run"]]\n', SELF,
+      "sigterm_run_ends_fail"),
+    M("M113", "the pooled baselines run on a plain thread pool: a signal does not skip the queued ones", SQM,
+      "    run_pool([s for s in specs if s not in warm], shadows, lambda spec, sh: baseline(sh, spec))\n",
+      "    with ThreadPoolExecutor(max_workers=len(shadows)) as pool:\n"
+      "        list(pool.map(lambda spec: baseline(shadows[0], spec), [s for s in specs if s not in warm]))\n",
+      SELF, "sigterm_skips_the_queued_jobs"),
+    M("M114", "the edits run on a plain thread pool: a signal does not skip the queued ones", SQM,
+      "    run_pool(todo, shadows, work)\n",
+      "    with ThreadPoolExecutor(max_workers=len(shadows)) as pool:\n"
+      "        list(pool.map(work, todo, [shadows[i % len(shadows)] for i in range(len(todo))]))\n",
+      SELF, "sigterm_skips_the_queued_jobs"),
+    M("M115", "the jobs lock is not reentrant: a signal while this thread starts a job deadlocks the harness", SQM,
+      '"lock": threading.RLock()}\n', '"lock": threading.Lock()}\n', SELF,
+      "a_job_starting_when_the_signal_arrives_is_killed"),
+    MM("M116", "the stop handlers are installed only in the signal job, not by main(), so the harness itself has none",
+       SQM, [("    install_stop_handlers()                          # first: the jobs run in sessions of their own\n",
+              "    pass\n"), (_SETRLIMIT, "    install_stop_handlers()\n" + _SETRLIMIT)],
+       SELF, "the_stop_handlers_are_installed"),
+    M("M117", "main() filters --only itself (the pre-C9 filter): an id that names no job runs nothing and passes", SQM,
+      "        jobs = select_jobs(all_jobs, args.only)\n",
+      "        jobs = [j for j in all_jobs if not args.only or j[\"id\"] in args.only.split(\",\")]\n", SELF,
+      "main_refuses_an_unknown_id"),
+    M("M118", "main() leaves its root behind when it refuses a selection", SQM,
+      "    except SystemExit:\n        if not args.keep_shadow:\n            shutil.rmtree(root, ignore_errors=True)\n"
+      "        raise\n", "    except SystemExit:\n        raise\n", SELF, "main_refuses_an_unknown_id"),
+    M("M119", "main() runs none of the jobs it selected", SQM,
+      "    run_jobs(jobs, shadows, root / \"cache\")\n", "    pass\n", SELF, "main_runs_every_selected_job"),
+    M("M120", "a job without a verdict (one a signal stopped) passes unnoticed", SQM,
+      '    check("every_job_has_a_verdict", not missing,\n', '    check("every_job_has_a_verdict", True,\n', SELF,
+      "sigterm_run_ends_fail"),
+    M("M121", "the self-check's jobs watch the harness that started this one, not this one", SQM,
+      "    me = str(os.getpid())\n", "    me = str(os.getppid())\n", SELF, "the_jobs_watch_this_harness"),
+    M("M122", "a timed-out job's output is waited for without a bound once its group is killed", SQM,
+      '                out, _err = p.communicate(timeout=DRAIN["value"])\n',
+      '                out, _err = p.communicate()\n', SELF, "a_job_whose_child_leaves_its_group_is_bounded"),
+    M("M123", "the output so far is dropped when a process outside the group holds the pipe", SQM,
+      "                out = _text(e.stdout)\n", "                out = \"\"\n", SELF,
+      "a_job_whose_child_leaves_its_group_is_bounded"),
 ]
 
 # ------------------------------------------------------------------ the refusal table (P36)
@@ -993,17 +1544,14 @@ def build_shadow(dst: Path) -> str:
                           text=True).stdout.strip()
 
 
-def run_smoke(shadow: Path, cache: Path, spec: tuple) -> tuple[dict, str, float]:
+def run_smoke(shadow: Path, cache: Path, spec: tuple, *, timeout: float = TIMEOUT) -> tuple[dict, str, float]:
     smoke, args = spec
     argv = [sys.executable, "-B", f"scripts/{smoke}.py", *[a.replace("{cache}", str(cache)) for a in args]]
     t0 = time.time()
-    try:
-        env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "OMP_NUM_THREADS": THREADS["value"],
-               "MKL_NUM_THREADS": THREADS["value"]}
-        p = subprocess.run(argv, cwd=str(shadow), capture_output=True, text=True, timeout=TIMEOUT, env=env)
-        out = p.stdout
-    except subprocess.TimeoutExpired as e:
-        out = (e.stdout or b"").decode() if isinstance(e.stdout, bytes) else (e.stdout or "")
+    env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "OMP_NUM_THREADS": THREADS["value"],
+           "MKL_NUM_THREADS": THREADS["value"]}
+    out, timed_out, _pid = run_job(argv, cwd=str(shadow), env=env, timeout=timeout)
+    if timed_out:
         out += "\nRESULT: TIMEOUT"
     statuses = {}
     in_checks = False
@@ -1112,32 +1660,26 @@ def edited(text: str, rel: str, edit: tuple) -> str:
     return out
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--only", default=None, help="comma-separated job ids (M1, ..., or file:function:code#k)")
-    ap.add_argument("--no-refusals", action="store_true", help="the M1-M24 mutations only")
-    ap.add_argument("--workers", type=int, default=2, help="shadows edited and run in parallel")
-    ap.add_argument("--keep-shadow", action="store_true")
-    args = ap.parse_args()
-    t_all = time.time()
-    root = safe_tmpdir("smoke_qat_mutations_")
-    cache = root / "cache"
-    shadows = [root / f"shadow{i}" for i in range(max(1, args.workers))]
-    # two torch processes spinning on the same cores slow each other many times over: share the CPUs out
-    THREADS["value"] = str(max(1, (os.cpu_count() or 1) // len(shadows)))
-    heads = {build_shadow(sh) for sh in shadows}
-    if len(heads) != 1:
-        raise SystemExit(f"RESULT: ERROR the shadows' commits differ: {sorted(heads)}")
-    jobs = jobs_of(shadows[0], refusals=not args.no_refusals)
-    if args.only:
-        only = set(args.only.split(","))
-        jobs = [j for j in jobs if j["id"] in only]
-    print("=" * 78)
-    print("QAT MUTATION SMOKE (h) -- M1-M24 and P36's refusal table, each killed by a named check")
-    print(f"{len(jobs)} edits | {len(SHADOW_PATHS)} shadow files x {len(shadows)} at commit {heads.pop()[:12]} | "
-          f"temp {root}")
-    print("=" * 78)
-    # the baselines: every killing check passes on the unmutated shadow, in the run each job makes (same argv)
+def select_jobs(jobs: list[dict], only: str | None) -> list[dict]:
+    """The jobs --only names, all of them when it is not given. An id that names no job, or no job at all, is a usage
+    error (RESULT: ERROR, exit 1): a run with no edit would otherwise pass on the self-check's checks alone."""
+    if only:
+        wanted = set(only.split(","))
+        unknown = sorted(wanted - {j["id"] for j in jobs})
+        if unknown:
+            raise SystemExit(f"RESULT: ERROR unknown job ids {unknown}")
+        jobs = [j for j in jobs if j["id"] in wanted]
+    if not jobs:
+        raise SystemExit("RESULT: ERROR no edit selected")
+    return jobs
+
+
+def run_jobs(jobs: list[dict], shadows: list[Path], cache: Path) -> None:
+    """main()'s baselines and edits; the self-check's signalled harness runs it on sleeper jobs (ruling Q2-F/2).
+
+    The baselines: every killing check passes on the unmutated shadow, in the run each job makes (same argv); one
+    run per smoke first, on one shadow (it fills that smoke's cache), then the rest on every shadow. Then one edit
+    per job, in a free shadow."""
     specs = []
     for j in jobs:
         if j["run"] not in specs:
@@ -1153,79 +1695,115 @@ def main() -> int:
     warm = list({spec[0]: spec for spec in reversed(specs)}.values())
     for spec in warm:
         baseline(shadows[0], spec)
-    from concurrent.futures import ThreadPoolExecutor
-    import queue
-    idle: "queue.Queue[Path]" = queue.Queue()
-    for sh in shadows:
-        idle.put(sh)
-
-    def baseline_on_idle(spec: tuple) -> None:
-        sh = idle.get()
-        try:
-            baseline(sh, spec)
-        finally:
-            idle.put(sh)
-    with ThreadPoolExecutor(max_workers=len(shadows)) as pool:
-        list(pool.map(baseline_on_idle, [s for s in specs if s not in warm]))
+    run_pool([s for s in specs if s not in warm], shadows, lambda spec, sh: baseline(sh, spec))
     for j in jobs:
-        spec = j["run"]
-        bad = [c for c in j["kills"] if base[spec].get(c) != "PASS"]
+        seen = base.get(j["run"], {})                                  # a skipped baseline passes none
+        bad = [c for c in j["kills"] if seen.get(c) != "PASS"]
         if j["run"][0] == SELECTION:
-            bad += [c for c in j["run"][1][1].split(",") if base[spec].get(c) != "PASS"]
+            bad += [c for c in j["run"][1][1].split(",") if seen.get(c) != "PASS"]
         j["baseline_ok"] = not bad
         if bad:
             check(f"{j['id']}_baseline", False, f"killing checks not passing unmutated: {sorted(set(bad))}")
 
     # one edit per job, in its own shadow
-    import queue
-    import threading
-    free: "queue.Queue[Path]" = queue.Queue()
-    for sh in shadows:
-        free.put(sh)
     lock = threading.Lock()
     todo = [j for j in jobs if j["baseline_ok"]]
     done = {"n": 0}
 
-    def work(j: dict) -> None:
-        sh = free.get()
+    def work(j: dict, sh: Path) -> None:
+        target = sh / j["rel"]
+        original = target.read_text(encoding="utf-8")
         try:
-            target = sh / j["rel"]
-            original = target.read_text(encoding="utf-8")
-            try:
-                target.write_text(edited(original, j["rel"], j["edit"]), encoding="utf-8")
-            except Exception as e:                       # noqa: BLE001 -- the edit is reported, never run
-                with lock:
-                    check(f"{j['id']}_killed", False, f"the edit could not be applied: {type(e).__name__}: {e}")
-                return
-            try:
-                statuses, res, secs = run_smoke(sh, cache, j["run"])
-            finally:
-                target.write_text(original, encoding="utf-8")
-            failed = [c for c in j["kills"] if statuses.get(c) == "FAIL"]
-            unreached = [c for c in j["kills"] if c not in statuses]
-            usage_error = res.startswith("RESULT: ERROR unknown")
-            killed = j["baseline_ok"] and not usage_error and bool(failed)       # a named check reported FAIL
-            how = (f"by {', '.join(failed)}" if failed else
-                   f"NOT KILLED: the smoke did not reach {', '.join(unreached)} ({res})" if unreached
-                   else "SURVIVED")
+            target.write_text(edited(original, j["rel"], j["edit"]), encoding="utf-8")
+        except Exception as e:                           # noqa: BLE001 -- the edit is reported, never run
             with lock:
-                done["n"] += 1
-                print(f"  [{done['n']}/{len(todo)}] {j['id']:58} {'KILLED' if killed else 'SURVIVED'}  {how} "
-                      f"({secs:.0f}s)", flush=True)
-                check(f"{j['id']}_killed", killed, f"{j['what']}: {how}")
+                check(f"{j['id']}_killed", False, f"the edit could not be applied: {type(e).__name__}: {e}")
+            return
+        try:
+            statuses, res, secs = run_smoke(sh, cache, j["run"])
         finally:
-            free.put(sh)
+            target.write_text(original, encoding="utf-8")
+        failed = [c for c in j["kills"] if statuses.get(c) == "FAIL"]
+        unreached = [c for c in j["kills"] if c not in statuses]
+        usage_error = res.startswith("RESULT: ERROR unknown")
+        killed = j["baseline_ok"] and not usage_error and bool(failed)       # a named check reported FAIL
+        how = (f"by {', '.join(failed)}" if failed else
+               f"NOT KILLED: the smoke did not reach {', '.join(unreached)} ({res})" if unreached
+               else "SURVIVED")
+        with lock:
+            done["n"] += 1
+            print(f"  [{done['n']}/{len(todo)}] {j['id']:58} {'KILLED' if killed else 'SURVIVED'}  {how} "
+                  f"({secs:.0f}s)", flush=True)
+            check(f"{j['id']}_killed", killed, f"{j['what']}: {how}")
 
     print("\n[edits]")
-    from concurrent.futures import ThreadPoolExecutor
-    with ThreadPoolExecutor(max_workers=len(shadows)) as pool:
-        list(pool.map(work, todo))
+    run_pool(todo, shadows, work)
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--only", default=None, help="comma-separated job ids (M1, ..., or file:function:code#k)")
+    ap.add_argument("--no-refusals", action="store_true", help="the M1-M24 mutations only")
+    ap.add_argument("--workers", type=int, default=2, help="shadows edited and run in parallel")
+    ap.add_argument("--keep-shadow", action="store_true")
+    ap.add_argument("--self-check", action="store_true",
+                    help="ruling Q2-F/2's job handling only: the self-check, with no shadow and no smoke")
+    ap.add_argument("--self-check-signal-job", nargs=3, metavar=("MODE", "ROOT", "WATCH"), help=argparse.SUPPRESS)
+    ap.add_argument("--self-check-main", nargs=2, metavar=("ROOT", "WATCH"), help=argparse.SUPPRESS)
+    args = ap.parse_args()
+    install_stop_handlers()                          # first: the jobs run in sessions of their own
+    if args.self_check_signal_job:
+        return signal_job(*args.self_check_signal_job)
+    t_all = time.time()
+    if args.self_check_main:                         # the self-check's own run of main(), on sleeper jobs
+        root, shadows, all_jobs = sleeper_harness(*args.self_check_main)
+        head = "sleeper jobs"
+    else:
+        self_check()
+        measured = {name for name, _ok, _detail in results}
+        check("self_check_measured", set(SELF_CHECKS) <= measured,
+              f"{len(SELF_CHECKS)} checks" if set(SELF_CHECKS) <= measured
+              else f"not measured: {sorted(set(SELF_CHECKS) - measured)}")
+        if args.self_check:
+            return finish(t_all)
+        root = safe_tmpdir("smoke_qat_mutations_")
+        shadows = [root / f"shadow{i}" for i in range(max(1, args.workers))]
+        # two torch processes spinning on the same cores slow each other many times over: share the CPUs out
+        THREADS["value"] = str(max(1, (os.cpu_count() or 1) // len(shadows)))
+        heads = {build_shadow(sh) for sh in shadows}
+        if len(heads) != 1:
+            raise SystemExit(f"RESULT: ERROR the shadows' commits differ: {sorted(heads)}")
+        head = f"commit {heads.pop()[:12]}"
+        all_jobs = jobs_of(shadows[0], refusals=not args.no_refusals)
+    try:
+        jobs = select_jobs(all_jobs, args.only)
+    except SystemExit:
+        if not args.keep_shadow:
+            shutil.rmtree(root, ignore_errors=True)
+        raise
+    print("=" * 78)
+    print("QAT MUTATION SMOKE (h) -- M1-M24 and P36's refusal table, each killed by a named check")
+    print(f"{len(jobs)} edits | {len(SHADOW_PATHS)} shadow files x {len(shadows)} at {head} | temp {root}")
+    print("=" * 78)
+    run_jobs(jobs, shadows, root / "cache")
+    verdicts = {name for name, _ok, _detail in results}
+    missing = [j["id"] for j in jobs if f"{j['id']}_killed" not in verdicts and f"{j['id']}_baseline" not in verdicts]
+    check("every_job_has_a_verdict", not missing,
+          f"no verdict for {missing[:5]}" if missing else f"{len(jobs)} jobs, each killed or with its baseline failing")
+    if not args.keep_shadow:
+        shutil.rmtree(root, ignore_errors=True)
+    return finish(t_all)
+
+
+def finish(t_all: float) -> int:
+    stopped = JOBS["stopped"]
+    check("harness_ran_unsignalled", stopped is None,
+          "" if stopped is None else f"signal {stopped}: every live job's process group was killed and the queued "
+          "jobs were skipped; the verdicts of the jobs it stopped are void")
     print("\n[CHECKS]")
     for name, ok, detail in results:
         print(f"  {name:64}: {'PASS' if ok else 'FAIL'}{('  ' + detail) if detail else ''}")
     passed = sum(1 for _, ok, _ in results if ok)
-    if not args.keep_shadow:
-        shutil.rmtree(root, ignore_errors=True)
     print(f"\n[time] {time.time() - t_all:.0f}s")
     print(f"RESULT: {'PASS' if passed == len(results) and results else 'FAIL'} ({passed}/{len(results)})")
     return 0 if passed == len(results) and results else 1
