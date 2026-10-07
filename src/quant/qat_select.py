@@ -7,9 +7,11 @@
                       run of record with no convertible epoch selects nothing, "non-finite: no model" (item
                       2(b)); a rejected U4 pilot run needs no selection (item 3(d)), and its refusal reports
                       any deviation of the trainer; the fake-quant VAL score never selects
-    clip_selection    the U4 clip (AM-4a item 3): a candidate rejected under AM-21 item 3(a), read from its
-                      telemetry and its checkpoints, loses; otherwise the higher selected value wins, and a tie
-                      within 0.1 pp, exact (|Fraction(a) - Fraction(b)| <= 1/1000), goes to 5.0
+    clip_selection    the U4 clip (AM-4a item 3): each candidate's telemetry is checked against the sha256
+                      recorded on the pod; a candidate rejected under AM-21 item 3(a), read from its telemetry
+                      and its checkpoints, loses, and its conversion and scoring are reported, never required
+                      (item 3(d)); otherwise the higher selected value wins, and a tie within 0.1 pp, exact
+                      (|Fraction(a) - Fraction(b)| <= 1/1000), goes to 5.0
 
 The rules are configs/qat_selection_rules.json, checked against configs/quant.py. Every input is
 re-verified from disk: the run's record (AM-19), every checkpoint's sha256 and state, the conversion and
@@ -125,6 +127,7 @@ def run_rejected(rec: dict, *, checks: dict | None = None) -> dict:
     rows, ends = rec["rows"], rec["ends"]
     flagged = (any(r.get("nonfinite_since_step") is not None for r in rows)
                or any(r.get("state_finite") is False for r in ends.values()))
+    first = min((r["nonfinite_since_step"] for r in rows if type(r.get("nonfinite_since_step")) is int), default=None)
     logged = sorted(r.get("step") for r in rows if r.get("event") == "train"
                     and {"loss", "grad_norm"} & set(r.get("nonfinite") or {}))
     if checks is None:
@@ -133,7 +136,8 @@ def run_rejected(rec: dict, *, checks: dict | None = None) -> dict:
     unflagged = [e for e in failing if (ends.get(e) or {}).get("state_finite") is not False]
     grounds = []
     if flagged:
-        grounds.append("its telemetry records a non-finite state")
+        grounds.append("its telemetry records a non-finite state"
+                       + (f", first found at step {first}" if first is not None else ""))
     if logged:
         grounds.append(f"its telemetry logs a non-finite loss or pre-clip gradient norm at step {logged[0]}"
                        + (f" and {len(logged) - 1} later step(s)" if len(logged) > 1 else ""))
@@ -141,8 +145,93 @@ def run_rejected(rec: dict, *, checks: dict | None = None) -> dict:
         grounds.append(f"checkpoint(s) {_epoch_list_text(failing)} fail item 1(a)")
     deviations = [f"{_epoch_list_text(unflagged)}: checkpoint(s) failing item 1(a) with no state flag in the "
                   "telemetry (a deviation of the trainer)"] if unflagged else []
-    return {"rejected": bool(grounds), "grounds": grounds, "deviations": deviations,
+    return {"rejected": bool(grounds), "grounds": grounds, "deviations": deviations, "first_nonfinite_step": first,
             "logged_nonfinite_steps": logged, "failing_checkpoints": failing}
+
+
+def _no_constant(c):
+    raise ValueError(f"non-strict JSON constant {c}")
+
+
+def _record_state(rec: dict, path: Path, stops: list[str], *, smoke: bool) -> tuple[str, str, dict | None]:
+    """One record of a rejected run's eval directory, as item 3(d) reports it: (state, detail, the record)."""
+    if stops:
+        return "stopped", f"STOP file(s) {' '.join(stops)}", None
+    if not path.is_file():
+        return "missing", f"{path.name} is missing", None
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"), parse_constant=_no_constant)
+    except (OSError, ValueError) as e:
+        return "failed", f"{path.name} is unreadable ({e})", None
+    if not isinstance(doc, dict):
+        return "failed", f"{path.name} is not a JSON object", None
+    if doc.get("telemetry_sha256") != rec["telemetry_sha256"] or doc.get("run_id") != rec["run_id"]:
+        return "failed", (f"{path.name} names run {doc.get('run_id')!r}, telemetry {doc.get('telemetry_sha256')}; "
+                          f"the run is {rec['run_id']!r}"), None
+    if doc.get("purpose") != "record":
+        return "failed", f"{path.name} was written for purpose {doc.get('purpose')!r}", None
+    if bool(doc.get("smoke_inputs")) and not smoke:
+        return "failed", f"{path.name} was written from smoke inputs", None
+    return "present", "", doc
+
+
+def _by_epoch(items) -> dict:
+    return {r["epoch"]: r for r in (items if isinstance(items, list) else [])
+            if isinstance(r, dict) and type(r.get("epoch")) is int}
+
+
+def rejected_records(rec: dict, eval_dir, *, smoke: bool = False) -> dict:
+    """AM-21 item 3(d): a rejected U4 pilot run is still converted and scored as item 2(a) reads, and its records
+    are kept; its scores are reported and select nothing. None of them is required: a failed conversion or scoring
+    of it (item 2(c), for that run alone) never makes the other run's win wait. Each record is reported present
+    (this run's record, of purpose "record"), missing, stopped (a STOP file) or failed (unreadable or not strict
+    JSON, not an object, another run's, not of record, from smoke inputs, not covering every epoch, or a scored epoch
+    without a finite score); the scores as qat_epoch_eval.json records them."""
+    E = Path(eval_dir)
+    cdir = E / A.CONVERTED_DIR
+    stops = [n for n in ("convert_STOP.json",) if (E / n).exists()]
+    stops += sorted(p.name for p in cdir.glob("e*_STOP.json")) if cdir.is_dir() else []
+    c_state, c_detail, conv = _record_state(rec, E / "qat_convert.json", stops, smoke=smoke)
+    if conv is not None:
+        outcomes = _by_epoch(conv.get("outcomes"))
+        if sorted(outcomes) != list(range(1, Q.EPOCHS + 1)):
+            c_state, c_detail = "failed", f"qat_convert.json covers epochs {sorted(outcomes)}"
+        else:
+            bad = [e for e in sorted(outcomes) if outcomes[e].get("status") != "converted"]
+            c_detail = (f"converted {Q.EPOCHS - len(bad)}/{Q.EPOCHS}"
+                        + (f"; not convertible: {_epoch_list_text(bad)}" if bad else ""))
+    s_stops = [n for n in ("score_STOP.json",) if (E / n).exists()]
+    s_state, s_detail, evd = _record_state(rec, E / "qat_epoch_eval.json", s_stops, smoke=smoke)
+    scores = {}
+    if evd is not None:
+        rows = _by_epoch(evd.get("epochs"))
+        if sorted(rows) != list(range(1, Q.EPOCHS + 1)):
+            s_state, s_detail = "failed", f"qat_epoch_eval.json covers epochs {sorted(rows)}"
+        else:
+            scored = [e for e in sorted(rows) if rows[e].get("status") == "scored"]
+            unfit = [e for e in scored if not (isinstance(rows[e].get("all_class_miou"), float)
+                                               and math.isfinite(rows[e]["all_class_miou"]))]
+            if unfit:
+                s_state, s_detail = "failed", f"qat_epoch_eval.json holds no finite score for {_epoch_list_text(unfit)}"
+            else:
+                scores = {f"e{e:02d}": rows[e]["all_class_miou"] for e in scored}
+                s_detail = ("scores reported, select nothing: " + " ".join(f"{k} {v!r}" for k, v in scores.items())
+                            if scores else "no epoch scored")
+    return {"conversion": {"state": c_state, "detail": c_detail},
+            "scoring": {"state": s_state, "detail": s_detail, "scores": scores}}
+
+
+def records_text(records: dict) -> str:
+    return "; ".join(f"{k} {records[k]['state']}" + (f" ({records[k]['detail']})" if records[k]["detail"] else "")
+                     for k in ("conversion", "scoring"))
+
+
+def rejected_report(clip, rej: dict, records: dict) -> str:
+    """select_clip's REPORT line for a rejected candidate: its grounds, any deviation, its records."""
+    parts = [f"clip {clip} {REJECTED_NONFINITE} -- item 3(a): {'; '.join(rej['grounds'])}"]
+    parts += [f"deviation: {d}" for d in rej["deviations"]]
+    parts.append(f"its records (item 3(d), reported, select nothing): {records_text(records)}")
+    return "; ".join(parts)
 
 
 # ------------------------------------------------------------------ one run's epoch
@@ -430,39 +519,40 @@ def clip_stats(rec: dict) -> dict:
             "max_pre_clip_norm": max(norms) if norms else None}
 
 
-def clip_selection(candidates: list[tuple[str, str]], *, rules: dict, rules_sha256: str,
-                   allow_smoke_inputs: bool = False) -> dict:
+def clip_selection(candidates: list[tuple[str, str]], *, expect_telemetry_sha256: list[str] | None, rules: dict,
+                   rules_sha256: str, allow_smoke_inputs: bool = False, report: list | None = None) -> dict:
+    """The U4 clip. `expect_telemetry_sha256` holds each candidate's telemetry sha256 as recorded on the pod, in
+    the candidates' order (CHECK ITEM 12). `report`, when given, receives one line per rejected candidate once the
+    two are compared, so that a refusal for no winner reports them too (AM-21 item 3(d))."""
     smoke = bool(allow_smoke_inputs)
     cr = rules["qat_clip"]
     if len(candidates) != 2:
         raise QATRefused("candidates", f"select_clip takes exactly two --candidate pairs, got {len(candidates)}")
+    expect = list(expect_telemetry_sha256 or [])
+    if len(expect) != len(candidates):
+        raise QATRefused("expect_telemetry_sha256_required", "select_clip takes one --expect-telemetry-sha256 per "
+                                                             "--candidate, in their order (the sha256 recorded on the "
+                                                             f"pod): got {len(expect)} for {len(candidates)}")
     runs = []
-    for run_dir, eval_dir in candidates:
+    for (run_dir, eval_dir), want_sha in zip(candidates, expect):
         A.refuse_test_path(eval_dir, "eval_dir")
         rec = A.read_run_record(run_dir)
         A.require_complete(rec)
+        if rec["telemetry_sha256"] != want_sha:
+            raise QATRefused("telemetry_sha256_mismatch", f"{rec['telemetry']} has sha256 {rec['telemetry_sha256']}, "
+                                                          f"expected {want_sha!r} (the sha256 recorded on the pod)")
         meta = rec["run_meta"]
         if not (meta.get("stage") == cr["stage"] and meta.get("seed") == cr["seed"] and meta.get("u4_pilot") is True
                 and meta.get("clip_source") == "u4_pilot" and (meta.get("mode") == "real" or smoke)):
             raise QATRefused("not_a_pilot_run", f"{rec['run_id']}: stage {meta.get('stage')}, seed {meta.get('seed')}, "
                                                 f"u4_pilot {meta.get('u4_pilot')}, "
                                                 f"clip_source {meta.get('clip_source')}, mode {meta.get('mode')}")
-        rejected = run_rejected(rec)["rejected"]             # AM-21 item 3(a): decided by the run's own records
+        rej = run_rejected(rec)                              # AM-21 item 3(a): read from the run's own records
+        rejected = rej["rejected"]
         sel_p = Path(eval_dir) / "qat_selection.json"
-        stored, selection, sel_sha = None, None, None
+        stored, selection, sel_sha, records = None, None, None, None
         if rejected:
-            # the record that rejects it is the one its conversion of record was anchored to (pod-captured sha)
-            conv_p = Path(eval_dir) / "qat_convert.json"
-            if not conv_p.is_file():
-                raise QATIncomplete("eval_record_missing", f"{conv_p} is missing: a rejected candidate is anchored by "
-                                                           "its conversion record")
-            conv = _json(conv_p)
-            if conv.get("telemetry_sha256") != rec["telemetry_sha256"] or conv.get("run_id") != rec["run_id"]:
-                raise QATRefused("eval_record_mismatch", f"{conv_p} names run {conv.get('run_id')!r}, telemetry "
-                                                         f"{conv.get('telemetry_sha256')}; the run is "
-                                                         f"{rec['run_id']!r}")
-            if conv.get("purpose") != "record" and not smoke:
-                raise QATRefused("purpose_not_record", f"{conv_p} was written for purpose {conv.get('purpose')!r}")
+            records = rejected_records(rec, eval_dir, smoke=smoke)   # item 3(d): reported, never required
         else:
             if not sel_p.is_file():
                 raise QATIncomplete("epoch_selection_missing", f"{sel_p} is missing: run select_qat_epoch first")
@@ -470,14 +560,14 @@ def clip_selection(candidates: list[tuple[str, str]], *, rules: dict, rules_sha2
             if stored.get("format") != EPOCH_SELECTION_FORMAT or stored.get("rules_sha256") != rules_sha256:
                 raise QATRefused("epoch_selection_format", f"{sel_p} is not a {EPOCH_SELECTION_FORMAT} file of the "
                                                            f"committed rules ({stored.get('rules_sha256')})")
-            selection = epoch_selection(run_dir, eval_dir, expect_telemetry_sha256=stored.get("telemetry_sha256"),
+            selection = epoch_selection(run_dir, eval_dir, expect_telemetry_sha256=want_sha,
                                         rules=rules, rules_sha256=rules_sha256, allow_smoke_inputs=smoke)
             diff = selection_differences(stored, selection)
             if diff:
                 raise QATRefused("selection_differs", f"{sel_p}: recomputing gives different {diff}")
             sel_sha = Q.sha256_file(sel_p)
         runs.append({"rec": rec, "meta": meta, "sel_path": str(sel_p) if stored else None, "sel_sha256": sel_sha,
-                     "rejected": rejected, "selection": selection})
+                     "rejected": rejected, "rejection": rej, "records": records, "selection": selection})
     clips = sorted(r["meta"].get("clip_norm") for r in runs)
     if clips != sorted(cr["candidates"]):
         raise QATRefused("clip_values", f"the candidates ran clip {clips}; the pilot compares exactly "
@@ -509,13 +599,20 @@ def clip_selection(candidates: list[tuple[str, str]], *, rules: dict, rules_sha2
     trace = [f"rule configs/qat_selection_rules.json qat_clip (sha256 {rules_sha256}): reject a non-finite run "
              "(AM-21 item 3); else the higher selected converted VAL all-class mIoU; |Fraction(a) - Fraction(b)| "
              f"<= {band(rules)} -> {cr['tie']}"]
+    lines = []
     for c in (lo, hi):
         r = by_clip[c]
         if r["rejected"]:
             trace.append(f"clip {c}: {REJECTED_NONFINITE}")
+            trace.append(f"clip {c}: item 3(a): {'; '.join(r['rejection']['grounds'])}")
+            trace += [f"clip {c}: deviation: {d}" for d in r["rejection"]["deviations"]]
+            trace.append(f"clip {c}: its records (item 3(d), reported, select nothing): {records_text(r['records'])}")
+            lines.append(rejected_report(c, r["rejection"], r["records"]))
         else:
             rw = r["selection"]["winner"]
             trace.append(f"clip {c}: e{rw['epoch']:02d} value {rw['value']!r}")
+    if report is not None:
+        report.extend(lines)
     live = [c for c in (lo, hi) if not by_clip[c]["rejected"]]
     if not live:
         raise QATRefused("no_winner", NO_WINNER)
@@ -541,17 +638,21 @@ def clip_selection(candidates: list[tuple[str, str]], *, rules: dict, rules_sha2
                 "telemetry_sha256": r["rec"]["telemetry_sha256"],
                 "qat_selection": None if r["rejected"] else {"path": r["sel_path"], "sha256": r["sel_sha256"]},
                 "rejected": r["rejected"], "epoch": None if r["rejected"] else sel["winner"]["epoch"],
-                "value": None if r["rejected"] else sel["winner"]["value"], **clip_stats(r["rec"])}
+                "value": None if r["rejected"] else sel["winner"]["value"],
+                "rejection": {k: r["rejection"][k] for k in ("grounds", "deviations", "first_nonfinite_step",
+                                                             "logged_nonfinite_steps", "failing_checkpoints")},
+                "records": r["records"],
+                **clip_stats(r["rec"])}
     return {"format": CLIP_SELECTION_FORMAT, "rules_sha256": rules_sha256, "stage": cr["stage"], "seed": cr["seed"],
             "winner": summary(win), "loser": {**summary(loser), "retained": True},
             "tie": tie,
             "difference": None if d is None else {"fraction": f"{d.numerator}/{d.denominator}", "float": float(d)},
             "band": f"{band(rules).numerator}/{band(rules).denominator}",
             "host_differences": {k: [_get(a["meta"], k), _get(b["meta"], k)] for k in CLIP_EXEMPT_KEYS},
-            "smoke_inputs": smoke, "rule_trace": trace}
+            "smoke_inputs": smoke, "report": lines, "rule_trace": trace}
 
 
 __all__ = ["CLIP_EXEMPT_KEYS", "EPOCH_SELECTION_FORMAT", "EVAL_IDENTITY_KEYS", "NO_MODEL_ENTRY", "NO_WINNER",
            "REJECTED_NONFINITE", "RULES_PATH", "SELECTION_PATH_KEYS", "band", "checkpoint_states", "clip_selection",
-           "epoch_selection", "exact_tie", "load_rules", "run_rejected", "selection_differences",
-           "step_fingerprints"]
+           "epoch_selection", "exact_tie", "load_rules", "records_text", "rejected_records", "rejected_report",
+           "run_rejected", "selection_differences", "step_fingerprints"]

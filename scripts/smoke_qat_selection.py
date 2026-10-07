@@ -60,12 +60,20 @@ def check(name: str, ok, detail: str = "") -> None:
     results.append((name, bool(ok), detail))
 
 
-def run_cli(main, argv) -> tuple[int, str]:
+def run_cli_lines(main, argv) -> tuple[int, str, list[str], bool]:
+    """A lane CLI's main() in this process: its exit code, its last RESULT line, its REPORT lines, and whether the
+    RESULT line is the last line printed."""
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         rc = main(argv)
-    lines = [ln for ln in buf.getvalue().splitlines() if ln.startswith("RESULT:")]
-    return rc, (lines[-1] if lines else buf.getvalue()[-300:])
+    out = [ln for ln in buf.getvalue().splitlines() if ln.strip()]
+    lines = [ln for ln in out if ln.startswith("RESULT:")]
+    return (rc, (lines[-1] if lines else buf.getvalue()[-300:]), [ln for ln in out if ln.startswith("REPORT:")],
+            bool(lines) and out[-1] == lines[-1])
+
+
+def run_cli(main, argv) -> tuple[int, str]:
+    return run_cli_lines(main, argv)[:2]
 
 
 # ---------------------------------------------------------------- synthetic real-mode run records
@@ -284,11 +292,30 @@ def register(section: str, name: str, fn) -> None:
     CASES.append((name, section, fn))
 
 
-def clip_cli(pairs, out: Path) -> tuple[int, str]:
+def telemetry_sha(run: Path) -> str:
+    return Q.sha256_file(Path(run) / Q.TELEMETRY_NAME)
+
+
+def clip_argv(pairs, out: Path, shas=None) -> list[str]:
+    """Each --candidate RUN EVAL followed by its --expect-telemetry-sha256: by default the file's own sha256, as the
+    pod records it; `shas` gives other values, fewer or more (a surplus value follows the last pair)."""
+    shas = [telemetry_sha(run) for run, _ev in pairs] if shas is None else list(shas)
     argv = []
-    for run, ev in pairs:
-        argv += ["--candidate", str(run), str(ev)]
-    return run_cli(SC.main, argv + ["--out", str(out)])
+    for i, (run, ev) in enumerate(pairs):
+        argv += ["--candidate", str(run), str(ev)] + (["--expect-telemetry-sha256", shas[i]] if i < len(shas) else [])
+    for sha in shas[len(pairs):]:
+        argv += ["--expect-telemetry-sha256", sha]
+    return argv + ["--out", str(out)]
+
+
+def clip_cli(pairs, out: Path, shas=None) -> tuple[int, str]:
+    return run_cli(SC.main, clip_argv(pairs, out, shas))
+
+
+def clip_cli_report(pairs, out: Path, shas=None) -> tuple[int, str, list[str]]:
+    """select_clip with its REPORT lines; the RESULT line is returned as it is only when it is the last line printed."""
+    rc, res, rep, last = run_cli_lines(SC.main, clip_argv(pairs, out, shas))
+    return rc, (res if last else f"RESULT NOT LAST: {res}"), rep
 
 
 def selected_eval(run: Path, sha: str, name: str, values: dict, **kw) -> Path:
@@ -346,11 +373,11 @@ def ev_nan5_better() -> Path:
 
 
 def conversion_record(run: Path, ev: Path, **over) -> Path:
-    """Only qat_convert.json: what anchors a rejected candidate's record (P24)."""
+    """An eval directory holding only qat_convert.json (a rejected candidate's records are reported: AM-21 3(d))."""
     rec = A.read_run_record(run)
     ev.mkdir(parents=True)
     doc = {"format": "qat_convert/1", "run_id": rec["run_id"], "telemetry_sha256": rec["telemetry_sha256"],
-           "purpose": "record", **over}
+           "purpose": "record", "outcomes": [{"epoch": e, "status": "converted"} for e in range(1, 16)], **over}
     (ev / "qat_convert.json").write_text(json.dumps(doc), encoding="utf-8")
     return ev
 
@@ -1030,24 +1057,127 @@ for _n, _dead, _live, _first in [
     register("d5", _n, _rejected_case(_n, _dead, _live, _first))
 
 
-@case("d5")
-def d5_rejected_candidate_without_conversion_record_exit_3():
-    rc, res = clip_cli([(FX["base"][1.0], ev_clip1()), (nan5_run(), TMP / "ev_absent")], TMP / "clip_absent.json")
-    check("d5_rejected_candidate_without_conversion_record_exit_3", rc == 3 and "[eval_record_missing]" in res, res)
+# ---- AM-21 item 3(d) (CHECK ITEM 12, ruling Q2-F/1): a rejected candidate's conversion and scoring are reported
+# (present, missing, stopped or failed) and never required; the other run's win does not wait. These cases replace
+# PART 1's d5_rejected_candidate_without_conversion_record_exit_3 (eval_record_missing, exit 3),
+# d5_rejected_candidate_record_mismatch_refused (eval_record_mismatch, exit 2) and
+# d5_rejected_candidate_timing_record_refused (purpose_not_record, exit 2); their refusal-table rows went with their
+# raise sites.
+def _rejected_records_case(name: str, make_ev, kind: str, state: str, needle: str):
+    def run():
+        out = TMP / f"clip_{name}.json"
+        rc, res, rep = clip_cli_report([(FX["base"][1.0], ev_clip1()), (nan5_run(), make_ev())], out)
+        d = json.loads(out.read_text()) if rc == 0 else {}
+        lo = d.get("loser") or {}
+        got = (lo.get("records") or {}).get(kind) or {}
+        check(name, rc == 0 and d["winner"]["clip_norm"] == 1.0 and lo.get("rejected") is True
+              and got.get("state") == state and needle in got.get("detail", "")
+              and res == f"RESULT: CLIP SELECTED 1.0 (tie false; clip 5.0 {S.REJECTED_NONFINITE})"
+              and len(rep) == 1 and rep[0].startswith(f"REPORT: clip 5.0 {S.REJECTED_NONFINITE}")
+              and f"{kind} {state}" in rep[0] and "first found at step 27" in rep[0], f"{res} | {rep}")
+    return run
 
 
-@case("d5")
-def d5_rejected_candidate_record_mismatch_refused():
-    ev = conversion_record(nan5_run(), TMP / "ev_nan5_other_record", telemetry_sha256="0" * 64)
-    rc, res = clip_cli([(FX["base"][1.0], ev_clip1()), (nan5_run(), ev)], TMP / "clip_other_record.json")
-    check("d5_rejected_candidate_record_mismatch_refused", rc == 2 and "[eval_record_mismatch]" in res, res)
+def _ev_stop(name: str, rel: str, *, full: bool = False) -> Path:
+    """The rejected clip-5.0 run's eval directory (qat_convert.json only, or fabricated whole) with a STOP file."""
+    ev = TMP / name
+    if full:
+        fabricate(nan5_run(), ev, vals())
+    else:
+        conversion_record(nan5_run(), ev)
+    (ev / rel).parent.mkdir(parents=True, exist_ok=True)
+    (ev / rel).write_text(json.dumps({"status": "STOP", "code": "fabricated"}), encoding="utf-8")
+    return ev
 
 
-@case("d5")
-def d5_rejected_candidate_timing_record_refused():
-    ev = conversion_record(nan5_run(), TMP / "ev_nan5_timing_record", purpose="timing")
-    rc, res = clip_cli([(FX["base"][1.0], ev_clip1()), (nan5_run(), ev)], TMP / "clip_timing_record.json")
-    check("d5_rejected_candidate_timing_record_refused", rc == 2 and "[purpose_not_record]" in res, res)
+def _ev_raw(name: str, text: str) -> Path:
+    """The rejected clip-5.0 run's eval directory whose qat_convert.json holds `text`."""
+    ev = conversion_record(nan5_run(), TMP / name)
+    (ev / "qat_convert.json").write_text(text, encoding="utf-8")
+    return ev
+
+
+def _ev_scored(name: str, edit=None, **tamper) -> Path:
+    """The rejected clip-5.0 run's eval directory, fabricated whole, its qat_epoch_eval.json edited by `edit`
+    (json.dumps writes a NaN as the bare NaN that strict JSON refuses)."""
+    ev = TMP / name
+    fabricate(nan5_run(), ev, vals(), tamper=tamper or None)
+    if edit is not None:
+        p = ev / "qat_epoch_eval.json"
+        doc = json.loads(p.read_text(encoding="utf-8"))
+        edit(doc)
+        p.write_text(json.dumps(doc), encoding="utf-8")
+    return ev
+
+
+for _n, _mk, _k, _s, _needle in [
+        ("d5_rejected_candidate_without_records_other_wins", lambda: TMP / "ev_absent", "conversion", "missing",
+         "qat_convert.json is missing"),
+        ("d5_rejected_candidate_without_scores_other_wins", lambda: TMP / "ev_absent", "scoring", "missing",
+         "qat_epoch_eval.json is missing"),
+        ("d5_rejected_candidate_record_of_another_run_reported_failed",
+         lambda: conversion_record(nan5_run(), TMP / "ev_nan5_other_record", telemetry_sha256="0" * 64),
+         "conversion", "failed", "names run"),
+        ("d5_rejected_candidate_timing_record_reported_failed",
+         lambda: conversion_record(nan5_run(), TMP / "ev_nan5_timing_record", purpose="timing"),
+         "conversion", "failed", "purpose 'timing'"),
+        ("d5_rejected_candidate_stopped_conversion_reported",
+         lambda: _ev_stop("ev_nan5_convert_stop", "convert_STOP.json"), "conversion", "stopped", "convert_STOP.json"),
+        ("d5_rejected_candidate_stopped_epoch_conversion_reported",
+         lambda: _ev_stop("ev_nan5_e05_stop", f"{A.CONVERTED_DIR}/{A.epoch_names(5)['stop']}"), "conversion",
+         "stopped", A.epoch_names(5)["stop"]),
+        ("d5_rejected_candidate_stopped_scoring_reported",
+         lambda: _ev_stop("ev_nan5_score_stop", "score_STOP.json", full=True), "scoring", "stopped",
+         "score_STOP.json"),
+        ("d5_rejected_candidate_scores_reported", lambda: ev_nan5_better(), "scoring", "present", "e02 0.9"),
+        ("d5_rejected_candidate_unreadable_record_reported_failed", lambda: _ev_raw("ev_nan5_unreadable", "{"),
+         "conversion", "failed", "is unreadable"),
+        ("d5_rejected_candidate_non_object_record_reported_failed", lambda: _ev_raw("ev_nan5_non_object", "[1]"),
+         "conversion", "failed", "not a JSON object"),
+        ("d5_rejected_candidate_smoke_record_reported_failed",
+         lambda: conversion_record(nan5_run(), TMP / "ev_nan5_smoke_record", smoke_inputs=True),
+         "conversion", "failed", "smoke inputs"),
+        ("d5_rejected_candidate_partial_conversion_reported_failed",
+         lambda: conversion_record(nan5_run(), TMP / "ev_nan5_partial_conversion",
+                                   outcomes=[{"epoch": e, "status": "converted"} for e in range(1, 15)]),
+         "conversion", "failed", "qat_convert.json covers epochs"),
+        ("d5_rejected_candidate_malformed_outcomes_reported_failed",
+         lambda: conversion_record(nan5_run(), TMP / "ev_nan5_malformed_outcomes", outcomes=15),
+         "conversion", "failed", "qat_convert.json covers epochs []"),
+        ("d5_rejected_candidate_partial_scoring_reported_failed",
+         lambda: _ev_scored("ev_nan5_partial_scoring", drop_epoch=9), "scoring", "failed",
+         "qat_epoch_eval.json covers epochs"),
+        ("d5_rejected_candidate_nan_score_reported_failed",
+         lambda: _ev_scored("ev_nan5_nan_score", lambda d: d["epochs"][1].update(all_class_miou=float("nan"))),
+         "scoring", "failed", "is unreadable"),
+        ("d5_rejected_candidate_text_score_reported_failed",
+         lambda: _ev_scored("ev_nan5_text_score", lambda d: d["epochs"][1].update(all_class_miou="0.5")),
+         "scoring", "failed", "no finite score for e02")]:
+    register("d5", _n, _rejected_records_case(_n, _mk, _k, _s, _needle))
+
+
+def _sha_case(name: str, shas_of, code: str):
+    """CHECK ITEM 12: each candidate's telemetry against the sha256 recorded on the pod, in the candidates' order,
+    the rejected candidate's too; the refusal is clip_selection's own (its text names the pod)."""
+    def run():
+        pairs = [(FX["base"][1.0], ev_clip1()), (nan5_run(), ev_nan5_better())]
+        out = TMP / f"clip_{name}.json"
+        rc, res = clip_cli(pairs, out, shas_of([telemetry_sha(r) for r, _ev in pairs]))
+        check(name, rc == 2 and f"[{code}]" in res and "the sha256 recorded on the pod" in res and not out.exists(),
+              res)
+    return run
+
+
+for _n, _of, _c in [("d5_telemetry_sha256_mismatch_refused_live", lambda g: ["0" * 64, g[1]],
+                     "telemetry_sha256_mismatch"),
+                    ("d5_telemetry_sha256_mismatch_refused_rejected", lambda g: [g[0], "0" * 64],
+                     "telemetry_sha256_mismatch"),
+                    ("d5_telemetry_sha256s_swapped_refused", lambda g: g[::-1], "telemetry_sha256_mismatch"),
+                    ("d5_expect_telemetry_sha256_required_one", lambda g: g[:1], "expect_telemetry_sha256_required"),
+                    ("d5_expect_telemetry_sha256_required_none", lambda g: [], "expect_telemetry_sha256_required"),
+                    ("d5_expect_telemetry_sha256_required_three", lambda g: g + g[:1],
+                     "expect_telemetry_sha256_required")]:
+    register("d5", _n, _sha_case(_n, _of, _c))
 
 
 def _both_rejected_case(tag: str, nan5_first: bool):
@@ -1065,6 +1195,22 @@ def _both_rejected_case(tag: str, nan5_first: bool):
 
 register("d5", "d5_both_rejected_no_winner_exit_2_a", _both_rejected_case("a", False))
 register("d5", "d5_both_rejected_no_winner_exit_2_b", _both_rejected_case("b", True))
+
+
+@case("d5")
+def d5_both_rejected_records_reported():
+    """Both candidates rejected (AM-21 item 3(c)): no winner, and each one's records are still reported (3(d))."""
+    nan1b = clone_run(FX["nan10"], TMP / "run_clip1_nan_reported")
+    ev1 = TMP / "ev_clip1_nan_reported"
+    fabricate(nan1b, ev1, vals(), excluded=range(5, 16))
+    out = TMP / "clip_none_reported.json"
+    rc, res, rep = clip_cli_report([(nan1b, ev1), (nan5_run(), ev_nan5_better())], out)
+    check("d5_both_rejected_records_reported", rc == 2 and res.startswith("RESULT: REFUSED [no_winner]")
+          and not out.exists() and len(rep) == 2
+          and rep[0].startswith(f"REPORT: clip 1.0 {S.REJECTED_NONFINITE}") and "first found at step 10" in rep[0]
+          and rep[1].startswith(f"REPORT: clip 5.0 {S.REJECTED_NONFINITE}") and "first found at step 27" in rep[1]
+          and "converted 4/15; not convertible: e05" in rep[0] and all("scoring present" in x for x in rep),
+          f"{res} | {rep}")
 
 
 @case("d5")
@@ -1160,6 +1306,21 @@ def d5_rejection_reads_a_failing_checkpoint_and_reports_the_missing_flag():
           rej["rejected"] and rej["failing_checkpoints"] == [8] and rej["logged_nonfinite_steps"] == []
           and len(rej["deviations"]) == 1 and rej["deviations"][0].startswith("e08:")
           and "deviation of the trainer" in rej["deviations"][0], f"{rej['grounds']} | {rej['deviations']}")
+
+
+@case("d5")
+def d5_rejected_candidate_deviation_reported():
+    """A candidate rejected only by a checkpoint failing item 1(a) with no state flag: its REPORT line names the
+    deviation of the trainer (AM-21 item 3(a)), and the other run wins."""
+    run = clone_run(FX["base"][5.0], TMP / "run_clip5_ck_fails_unflagged")
+    _nan_into_checkpoint(run, 8)
+    out = TMP / "clip_deviation.json"
+    rc, res, rep = clip_cli_report([(FX["base"][1.0], ev_clip1()), (run, TMP / "ev_ck5_absent")], out)
+    d = json.loads(out.read_text()) if rc == 0 else {}
+    lo = d.get("loser") or {}
+    check("d5_rejected_candidate_deviation_reported", rc == 0 and d["winner"]["clip_norm"] == 1.0
+          and lo.get("rejected") is True and len((lo.get("rejection") or {}).get("deviations") or []) == 1
+          and len(rep) == 1 and "deviation: e08:" in rep[0] and "e08 fail item 1(a)" in rep[0], f"{res} | {rep}")
 
 
 def _clip_ground_case(name: str, make_run):

@@ -10,7 +10,9 @@ comparison of the never-observed modules with DL-85's list of record, and M47b c
 M35b and M48-M68 undo the epoch selection's reading of the checkpoint (item 2(a), its citation, the not-convertible
 record field by field, item 2(b)'s entry, the rejected pilot run and its deviation), the rejection's grounds in the
 telemetry and the checkpoints (item 3(a)), and P16's (both halves) and P15's (both flags) reading of checkpoints
-that hold NaN (CHECK ITEMS 11, 13, 14 and 15; ruling 3).
+that hold NaN (CHECK ITEMS 11, 13, 14 and 15; ruling 3); M69-M90 undo select_clip's
+telemetry sha256 per candidate and its report of a rejected run's records, never required, whatever state they are
+in (CHECK ITEM 12, ruling 1), and M23, M33 and M52c now target the rejection read from the run's own records.
 
 The explicit paths of SHADOW_PATHS are copied into a temporary shadow of the repository and committed there
 (one fixed commit, so the trainer records a git_head as in the checkout); the repository itself is never
@@ -150,14 +152,15 @@ def nonfinite(*names: str) -> tuple:
 
 SEEDING_ALL = (SEEDING, ())
 UNITS = (ARTIFACTS, ("--sections", "units"))
-# F1: the nonfinite cases in three runs, each well inside TIMEOUT on a cold cache: the record conversions (their
-# baseline keeps the conversions the clip selection reads), the epoch selections, and the clip selections
+# F1: the nonfinite cases in three runs, each well inside TIMEOUT on a cold cache: (a) the record conversions, (d)
+# the epoch selections, and (b)-(c) the clip selections, the rejected runs converted and scored (AM-21 item 3(d))
 NF_STEPS = (10, 22, 27)
 NF_CONVERT = nonfinite(*(f"nf_step{k}_record_convert_exit_0" for k in NF_STEPS))
 NF_EPOCH = nonfinite(*(f"nf_step{k}_select_qat_epoch_excludes_nonfinite" for k in NF_STEPS),
                      "nf_no_convertible_epoch_exit_2_nothing_written")
 NF_CLIP = nonfinite(*(f"nf_step{k}_select_clip_rejects_nonfinite" for k in NF_STEPS),
-                    *(f"nf_step{k}_both_nonfinite_no_winner_exit_2" for k in NF_STEPS))
+                    *(f"nf_step{k}_both_nonfinite_no_winner_exit_2" for k in NF_STEPS),
+                    "nf_rejected_run_without_conversion_record_other_wins")
 # Q2-F PART 2 (AM-21 item 2(a)): the epoch selection's test of each epoch's checkpoint
 _CHECKPOINT_DECIDES = ("        if not finite:                                   "
                        "# AM-21 item 2(a): the checkpoint decides\n")
@@ -304,7 +307,7 @@ MUTATIONS = [
       UNITS, "d4_predicate_flags_nonfinite_bn_with_finite_params"),
     M("M23", "the AM-21 rejection removed (the rejected pilot run, holding no selection under item 3(d), is then read "
       "as a live run without one)", SEL,
-      '        rejected = run_rejected(rec)["rejected"]', "        rejected = False",
+      '        rejected = rej["rejected"]', "        rejected = False",
       case("d5_nonfinite_candidate_rejected_a"), "d5_nonfinite_candidate_rejected_a"),
     M("M24a", "E6's λ/α binding removed at launch", QAT,
       "        binding = e6_parent_binding(parent, args.seed, *sel)\n", "        binding = None\n",
@@ -405,7 +408,7 @@ MUTATIONS = [
        NF_CONVERT, "nf_step10_record_convert_exit_0", "nf_step22_record_convert_exit_0"),
     M("M33", "select_clip does not reject a non-finite pilot run (AM-21 item 3; it is then read as a live run "
       "without a selection)", SEL,
-      '        rejected = run_rejected(rec)["rejected"]', "        rejected = False",
+      '        rejected = rej["rejected"]', "        rejected = False",
       NF_CLIP, *(f"nf_step{k}_select_clip_rejects_nonfinite" for k in NF_STEPS)),
     M("M34", "select_clip goes on when both pilot runs are rejected", SEL,
       '        raise QATRefused("no_winner", NO_WINNER)\n', "        pass\n",
@@ -492,7 +495,7 @@ MUTATIONS = [
       SEL, "        rej = run_rejected(rec, checks=checks)\n", "        rej = run_rejected(rec, checks={})\n",
       case("d3_rejected_pilot_run_reports_the_missing_flag"), "d3_rejected_pilot_run_reports_the_missing_flag"),
     M("M52c", "clip_selection passes run_rejected no checkpoint states: a failing checkpoint does not reject a pilot",
-      SEL, 'run_rejected(rec)["rejected"]', 'run_rejected(rec, checks={})["rejected"]',
+      SEL, "rej = run_rejected(rec) ", "rej = run_rejected(rec, checks={}) ",
       case("d5_unflagged_failing_checkpoint_candidate_loses"), "d5_unflagged_failing_checkpoint_candidate_loses"),
     M("M53", "a failing checkpoint with no state flag is not reported as a deviation (item 3(a))", SEL,
       '    unflagged = [e for e in failing if (ends.get(e) or {}).get("state_finite") is not False]\n',
@@ -568,6 +571,106 @@ MUTATIONS = [
       '    if flags["observer_enabled"] != want or flags["fake_quant_enabled"] != [1]:\n',
       '    if flags["observer_enabled"] != want:\n',
       case("d3_stored_flags_read_on_nan_checkpoints"), "d3_stored_flags_read_on_nan_checkpoints"),
+    # CHECK ITEM 12 and ruling 1 (AM-21 item 3(d)): the telemetry sha256 per candidate; a rejected run's conversion
+    # and scoring reported (present, missing, stopped or failed), never required
+    M("M69", "a rejected candidate's missing record is required again (SEL-2's anchor)", SEL,
+      '    if not path.is_file():\n        return "missing", f"{path.name} is missing", None\n',
+      '    if not path.is_file():\n        raise QATIncomplete("eval_record_missing", f"{path} is missing")\n',
+      case("d5_rejected_candidate_without_records_other_wins"), "d5_rejected_candidate_without_records_other_wins"),
+    M("M69b", "a rejected candidate's missing record is required again (SEL-2's anchor), end to end", SEL,
+      '    if not path.is_file():\n        return "missing", f"{path.name} is missing", None\n',
+      '    if not path.is_file():\n        raise QATIncomplete("eval_record_missing", f"{path} is missing")\n',
+      NF_CLIP, "nf_rejected_run_without_conversion_record_other_wins"),
+    M("M70", "a STOP file of a rejected run's conversion or scoring is not reported as stopped", SEL,
+      '    if stops:\n        return "stopped"', '    if False:\n        return "stopped"',
+      case("d5_rejected_candidate_stopped_conversion_reported",
+           "d5_rejected_candidate_stopped_epoch_conversion_reported", "d5_rejected_candidate_stopped_scoring_reported"),
+      "d5_rejected_candidate_stopped_conversion_reported", "d5_rejected_candidate_stopped_epoch_conversion_reported",
+      "d5_rejected_candidate_stopped_scoring_reported"),
+    M("M71", "another run's record reads as the rejected run's own (present)", SEL,
+      '    if doc.get("telemetry_sha256") != rec["telemetry_sha256"] or doc.get("run_id") != rec["run_id"]:\n'
+      '        return "failed", (f"{path.name} names run',
+      '    if False:\n        return "failed", (f"{path.name} names run',
+      case("d5_rejected_candidate_record_of_another_run_reported_failed"),
+      "d5_rejected_candidate_record_of_another_run_reported_failed"),
+    M("M72", "a timing record reads as a record of purpose record", SEL,
+      '    if doc.get("purpose") != "record":\n        return "failed"', '    if False:\n        return "failed"',
+      case("d5_rejected_candidate_timing_record_reported_failed"),
+      "d5_rejected_candidate_timing_record_reported_failed"),
+    M("M73", "a rejected run's scores are not reported", SEL,
+      '                scores = {f"e{e:02d}": rows[e]["all_class_miou"] for e in scored}\n',
+      '                scores = {}\n',
+      case("d5_rejected_candidate_scores_reported"), "d5_rejected_candidate_scores_reported"),
+    M("M74", "select_clip prints no REPORT line", SCL,
+      '        print(f"REPORT: {line}")\n', "        pass\n",
+      case("d5_rejected_candidate_without_records_other_wins"), "d5_rejected_candidate_without_records_other_wins"),
+    M("M75", "the telemetry sha256s are paired with the candidates in reverse order", SEL,
+      "    for (run_dir, eval_dir), want_sha in zip(candidates, expect):\n",
+      "    for (run_dir, eval_dir), want_sha in zip(candidates, expect[::-1]):\n",
+      case("d5_telemetry_sha256s_swapped_refused"), "d5_telemetry_sha256s_swapped_refused"),
+    M("M76", "a rejected candidate's REPORT line drops the trainer's deviation (item 3(a))", SEL,
+      '    parts += [f"deviation: {d}" for d in rej["deviations"]]\n', "    parts += []\n",
+      case("d5_rejected_candidate_deviation_reported"), "d5_rejected_candidate_deviation_reported"),
+    M("M77", "no REPORT line reaches select_clip (and none is printed when both runs are rejected)", SEL,
+      "    if report is not None:\n        report.extend(lines)\n", "    if False:\n        report.extend(lines)\n",
+      case("d5_both_rejected_records_reported"), "d5_both_rejected_records_reported"),
+    # DL-24 wf_def5109c-338 (C8-1, C8-2, C8-3, C8-SC-1, C8-SC-3): a malformed record of the rejected run reported
+    # failed, never a crash; every failed branch; the first-found step; REPORT before RESULT; a surplus sha256
+    M("M78", "the rejected run's records are parsed loosely: a NaN score crashes select_clip (exit 4)", SEL,
+      '        doc = json.loads(path.read_text(encoding="utf-8"), parse_constant=_no_constant)\n',
+      '        doc = json.loads(path.read_text(encoding="utf-8"))\n',
+      case("d5_rejected_candidate_nan_score_reported_failed"), "d5_rejected_candidate_nan_score_reported_failed"),
+    M("M79", "a record whose outcomes are not a list crashes select_clip", SEL,
+      "(items if isinstance(items, list) else [])", "(items or [])",
+      case("d5_rejected_candidate_malformed_outcomes_reported_failed"),
+      "d5_rejected_candidate_malformed_outcomes_reported_failed"),
+    M("M80", "an unreadable record of the rejected run stops select_clip", SEL,
+      '        return "failed", f"{path.name} is unreadable ({e})", None\n', "        raise\n",
+      case("d5_rejected_candidate_unreadable_record_reported_failed"),
+      "d5_rejected_candidate_unreadable_record_reported_failed"),
+    M("M81", "a record that is not a JSON object crashes select_clip", SEL,
+      "    if not isinstance(doc, dict):\n", "    if False:\n",
+      case("d5_rejected_candidate_non_object_record_reported_failed"),
+      "d5_rejected_candidate_non_object_record_reported_failed"),
+    M("M82", "a smoke-input record of the rejected run reads as present", SEL,
+      '    if bool(doc.get("smoke_inputs")) and not smoke:\n        return "failed"',
+      '    if False:\n        return "failed"',
+      case("d5_rejected_candidate_smoke_record_reported_failed"), "d5_rejected_candidate_smoke_record_reported_failed"),
+    M("M83", "a conversion record that does not cover e01-e15 reads as present", SEL,
+      '        if sorted(outcomes) != list(range(1, Q.EPOCHS + 1)):\n            c_state, c_detail = "failed"',
+      '        if False:\n            c_state, c_detail = "failed"',
+      case("d5_rejected_candidate_partial_conversion_reported_failed"),
+      "d5_rejected_candidate_partial_conversion_reported_failed"),
+    M("M84", "a score record that does not cover e01-e15 reads as present", SEL,
+      '        if sorted(rows) != list(range(1, Q.EPOCHS + 1)):\n            s_state, s_detail = "failed"',
+      '        if False:\n            s_state, s_detail = "failed"',
+      case("d5_rejected_candidate_partial_scoring_reported_failed"),
+      "d5_rejected_candidate_partial_scoring_reported_failed"),
+    M("M85", "a scored epoch without a finite score is reported as a score", SEL,
+      '            if unfit:\n                s_state, s_detail = "failed"',
+      '            if False:\n                s_state, s_detail = "failed"',
+      case("d5_rejected_candidate_text_score_reported_failed"), "d5_rejected_candidate_text_score_reported_failed"),
+    M("M86", "the rejected run's conversion detail drops its not-convertible epochs", SEL,
+      '            bad = [e for e in sorted(outcomes) if outcomes[e].get("status") != "converted"]\n',
+      "            bad = []\n",
+      case("d5_both_rejected_records_reported"), "d5_both_rejected_records_reported"),
+    M("M87", "the rejection's ground drops the step at which the state was first found non-finite", SEL,
+      '                       + (f", first found at step {first}" if first is not None else ""))\n',
+      '                       + "")\n',
+      case("d5_rejected_candidate_without_records_other_wins"), "d5_rejected_candidate_without_records_other_wins"),
+    M("M88", "select_clip prints the REPORT lines after the RESULT line of a selection", SCL,
+      '    _print_report(report)\n    print(f"RESULT: CLIP SELECTED {w[\'clip_norm\']} (tie '
+      '{str(sel[\'tie\']).lower()}{tail})")\n',
+      '    print(f"RESULT: CLIP SELECTED {w[\'clip_norm\']} (tie {str(sel[\'tie\']).lower()}{tail})")\n'
+      '    _print_report(report)\n',
+      case("d5_rejected_candidate_without_records_other_wins"), "d5_rejected_candidate_without_records_other_wins"),
+    M("M89", "select_clip prints the REPORT lines after the RESULT line of a refusal", SCL,
+      '        _print_report(report)\n        print(f"RESULT: REFUSED [{e.code}] -- {e}. Nothing was written.")\n',
+      '        print(f"RESULT: REFUSED [{e.code}] -- {e}. Nothing was written.")\n        _print_report(report)\n',
+      case("d5_both_rejected_records_reported"), "d5_both_rejected_records_reported"),
+    M("M90", "a surplus --expect-telemetry-sha256 is accepted", SEL,
+      "    if len(expect) != len(candidates):\n", "    if len(expect) < len(candidates):\n",
+      case("d5_expect_telemetry_sha256_required_three"), "d5_expect_telemetry_sha256_required_three"),
 ]
 
 # ------------------------------------------------------------------ the refusal table (P36)
@@ -754,12 +857,14 @@ KILLS = dict([
     # P27 and O1: the U4 clip
     K(SEL, "clip_selection", "candidates", case("d5_one_candidate_refused"), "d5_one_candidate_refused"),
     K(SEL, "clip_selection", "not_a_pilot_run", case("d5_non_pilot_run_refused"), "d5_non_pilot_run_refused"),
-    K(SEL, "clip_selection", "eval_record_missing", case("d5_rejected_candidate_without_conversion_record_exit_3"),
-      "d5_rejected_candidate_without_conversion_record_exit_3"),
-    K(SEL, "clip_selection", "eval_record_mismatch", case("d5_rejected_candidate_record_mismatch_refused"),
-      "d5_rejected_candidate_record_mismatch_refused"),
-    K(SEL, "clip_selection", "purpose_not_record", case("d5_rejected_candidate_timing_record_refused"),
-      "d5_rejected_candidate_timing_record_refused"),
+    # C8 (AM-21 item 3(d), ruling Q2-F/1): clip_selection's eval_record_missing, eval_record_mismatch and
+    # purpose_not_record rows left with their raise sites (a rejected run's records are reported, never required)
+    K(SEL, "clip_selection", "expect_telemetry_sha256_required",
+      case("d5_expect_telemetry_sha256_required_one", "d5_expect_telemetry_sha256_required_none"),
+      "d5_expect_telemetry_sha256_required_one", "d5_expect_telemetry_sha256_required_none"),
+    K(SEL, "clip_selection", "telemetry_sha256_mismatch",
+      case("d5_telemetry_sha256_mismatch_refused_live", "d5_telemetry_sha256_mismatch_refused_rejected"),
+      "d5_telemetry_sha256_mismatch_refused_live", "d5_telemetry_sha256_mismatch_refused_rejected"),
     K(SEL, "clip_selection", "epoch_selection_missing", case("d5_missing_run_refused"), "d5_missing_run_refused"),
     K(SEL, "clip_selection", "epoch_selection_format", case("d5_selection_of_other_rules_refused"),
       "d5_selection_of_other_rules_refused"),

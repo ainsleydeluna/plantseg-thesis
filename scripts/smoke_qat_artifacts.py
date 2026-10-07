@@ -587,24 +587,29 @@ def nf_eval(name: str, info: dict, *, scored: bool) -> tuple[Path | None, str]:
     return ev, " | ".join(passes)
 
 
-def nf_cli(module, argv: list[str]) -> tuple[int, str]:
-    """A lane CLI's main() in this process (select_clip and select_qat_epoch neither trace nor convert)."""
+def nf_cli(module, argv: list[str]) -> tuple[int, str, list[str]]:
+    """A lane CLI's main() in this process (select_clip and select_qat_epoch neither trace nor convert): its exit
+    code, its RESULT line (prefixed "RESULT NOT LAST:" when another line follows it) and its REPORT lines."""
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         rc = module.main(argv)
-    lines = [ln for ln in buf.getvalue().splitlines() if ln.startswith("RESULT:")]
-    return rc, (lines[-1] if lines else buf.getvalue()[-300:])
+    out = [ln for ln in buf.getvalue().splitlines() if ln.strip()]
+    lines = [ln for ln in out if ln.startswith("RESULT:")]
+    res = lines[-1] if lines else buf.getvalue()[-300:]
+    return rc, (res if lines and out[-1] == lines[-1] else f"RESULT NOT LAST: {res}"), \
+        [ln for ln in out if ln.startswith("REPORT:")]
 
 
 def nf_select_epoch(info: dict, ev: Path) -> tuple[int, str]:
     return nf_cli(SE, ["--run-dir", str(info["run"]), "--eval-dir", str(ev), "--expect-telemetry-sha256",
-                       info["telemetry_sha256"], "--allow-smoke-inputs"])
+                       info["telemetry_sha256"], "--allow-smoke-inputs"])[:2]
 
 
-def nf_select_clip(pairs, out: Path) -> tuple[int, str]:
+def nf_select_clip(pairs, out: Path) -> tuple[int, str, list[str]]:
+    """select_clip on two (run, eval directory) pairs, each with its telemetry sha256 as the pod records it."""
     argv = []
     for info, ev in pairs:
-        argv += ["--candidate", str(info["run"]), str(ev)]
+        argv += ["--candidate", str(info["run"]), str(ev), "--expect-telemetry-sha256", info["telemetry_sha256"]]
     return nf_cli(SC, argv + ["--out", str(out), "--allow-smoke-inputs"])
 
 
@@ -612,11 +617,11 @@ def nf_pilot(k: int) -> dict:
     return nf_run(f"pilot_nan{k}", seed=42, clip=1.0, nan_at=(k,), meta=PILOT_META)
 
 
-def nf_pilot_record(k: int) -> tuple[dict, Path | None, str]:
-    """The step-k pilot run and its record conversion (from this process's (a) case, the cache, or made here)."""
-    info, key = nf_pilot(k), f"pilot_nan{k}"
+def nf_pilot_scored(k: int) -> tuple[dict, Path | None, str]:
+    """The step-k pilot run, rejected, still converted and scored (AM-21 item 3(d)): from the cache or made here."""
+    info, key = nf_pilot(k), f"pilot_nan{k}_scored"
     if key not in NF["evals"]:
-        NF["evals"][key] = nf_eval(key, info, scored=False)
+        NF["evals"][key] = nf_eval(key, info, scored=True)
     return (info, *NF["evals"][key])
 
 
@@ -634,10 +639,10 @@ def nf_clean_selected() -> tuple[dict, Path | None, str]:
 
 
 def nf_dead_clip5() -> tuple[dict, Path | None, str]:
-    """The other pilot clip (5.0) made non-finite at step 1, with its record conversion."""
+    """The other pilot clip (5.0) made non-finite at step 1, rejected, still converted and scored (item 3(d))."""
     if "dead5" not in NF["memo"]:
         info = nf_run("pilot_nan1_clip5", seed=42, clip=5.0, nan_at=(1,), meta=PILOT_META)
-        NF["memo"]["dead5"] = (info, *nf_eval("pilot_nan1_clip5", info, scored=False))
+        NF["memo"]["dead5"] = (info, *nf_eval("pilot_nan1_clip5_scored", info, scored=True))
     return NF["memo"]["dead5"]
 
 
@@ -655,9 +660,6 @@ def _nf_record_convert(k: int):
         want = ["not convertible" if e in bad else "converted" for e in range(1, Q.EPOCHS + 1)]
         line = (f"RESULT: CONVERTED {Q.EPOCHS - len(bad)}/{Q.EPOCHS} (record; not convertible: "
                 + " ".join(f"e{e:02d}" for e in bad) + ")")
-        if rc == 0:
-            NF["evals"][f"pilot_nan{k}"] = (ev, "this process's record conversion")
-            nf_cache_put("evals", f"pilot_nan{k}", ev)
         check(name, rc == 0 and res == line and conv.get("run_id") == info["run_id"]
               and conv.get("telemetry_sha256") == info["telemetry_sha256"] and conv.get("purpose") == "record"
               and (conv.get("freeze_cross_check") or {}).get("ok") is True
@@ -700,46 +702,88 @@ def nf_no_convertible_epoch() -> None:
           and info["nonfinite_epochs"] == list(range(1, Q.EPOCHS + 1)), f"exit {rc}: {res} ({how})")
 
 
+def _scored_epochs(info: dict) -> list[str]:
+    """The epochs a rejected pilot run's score pass scores: those before its first non-finite checkpoint."""
+    return [f"e{e:02d}" for e in range(1, info["first_bad"] or Q.EPOCHS + 1)]
+
+
 def _nf_clip_rejects(k: int):
     def run():
         name = f"nf_step{k}_select_clip_rejects_nonfinite"
-        info, ev, how = nf_pilot_record(k)
+        info, ev, how = nf_pilot_scored(k)
         clean, ev_c, how_c = nf_clean_selected()
         if ev is None or ev_c is None:
             check(name, False, f"{how} | {how_c}")
             return
         out = TMP / f"clip_nf_step{k}_vs_clean.json"
-        rc, res = nf_select_clip([(info, ev), (clean, ev_c)], out)
+        rc, res, rep = nf_select_clip([(info, ev), (clean, ev_c)], out)
         d = json.loads(out.read_text()) if rc == 0 and out.is_file() else {}
         w, lo = d.get("winner") or {}, d.get("loser") or {}
+        recs = lo.get("records") or {}
         check(name, rc == 0 and w.get("clip_norm") == 5.0 and w.get("run_id") == clean["run_id"]
               and w.get("rejected") is False and lo.get("clip_norm") == 1.0 and lo.get("run_id") == info["run_id"]
               and lo.get("rejected") is True and f"clip 1.0: {S.REJECTED_NONFINITE}" in d.get("rule_trace", [])
-              and res == f"RESULT: CLIP SELECTED 5.0 (tie false; clip 1.0 {S.REJECTED_NONFINITE})", res)
+              and res == f"RESULT: CLIP SELECTED 5.0 (tie false; clip 1.0 {S.REJECTED_NONFINITE})"
+              # AM-21 item 3(d): the rejected run converted and scored, its scores reported, selecting nothing
+              and (recs.get("conversion") or {}).get("state") == "present"
+              and (recs.get("scoring") or {}).get("state") == "present"
+              and sorted((recs.get("scoring") or {}).get("scores") or {}) == _scored_epochs(info)
+              and len(rep) == 1 and rep[0].startswith(f"REPORT: clip 1.0 {S.REJECTED_NONFINITE}")
+              and f"first found at step {k}" in rep[0]
+              and "conversion present" in rep[0] and "scoring present" in rep[0], f"{res} | {rep}")
     return run
 
 
 def _nf_both_rejected(k: int):
     def run():
         name = f"nf_step{k}_both_nonfinite_no_winner_exit_2"
-        info, ev, how = nf_pilot_record(k)
+        info, ev, how = nf_pilot_scored(k)
         dead, ev_d, how_d = nf_dead_clip5()
         if ev is None or ev_d is None:
             check(name, False, f"{how} | {how_d}")
             return
         out = TMP / f"clip_nf_step{k}_both.json"
-        rc, res = nf_select_clip([(info, ev), (dead, ev_d)], out)
-        check(name, rc == 2 and "[no_winner]" in res and S.NO_WINNER in res and not out.exists(), res)
+        rc, res, rep = nf_select_clip([(info, ev), (dead, ev_d)], out)
+        check(name, rc == 2 and res.startswith("RESULT: REFUSED [no_winner]") and S.NO_WINNER in res
+              and not out.exists()
+              # AM-21 item 3(d): both rejected runs converted and scored, each one's records reported
+              and len(rep) == 2 and rep[0].startswith("REPORT: clip 1.0 ") and rep[1].startswith("REPORT: clip 5.0 ")
+              and all("conversion present" in x and "scoring present" in x for x in rep)
+              and "no epoch scored" in rep[1], f"{res} | {rep}")
     return run
 
 
-# (a) first: in one process its record conversions anchor (b) and (c); with --cache-dir they are kept for the
-# processes that run (b) and (c) alone (scripts/smoke_qat_mutations.py runs (a), (d) and (b)-(c) as three jobs).
+def nf_rejected_without_conversion_record() -> None:
+    """Ruling Q2-F/1: the step-10 pilot run's eval directory copied without its qat_convert.json: the record is
+    reported missing, never required, and the clean run still wins."""
+    name = "nf_rejected_run_without_conversion_record_other_wins"
+    info, ev, how = nf_pilot_scored(10)
+    clean, ev_c, how_c = nf_clean_selected()
+    if ev is None or ev_c is None:
+        check(name, False, f"{how} | {how_c}")
+        return
+    ev2 = TMP / "ev_nf_pilot_nan10_without_conversion_record"
+    shutil.copytree(ev, ev2, copy_function=_link_or_copy, ignore=shutil.ignore_patterns(QEE.CONVERT_RECORD))
+    out = TMP / "clip_nf_step10_without_conversion_record.json"
+    rc, res, rep = nf_select_clip([(info, ev2), (clean, ev_c)], out)
+    d = json.loads(out.read_text()) if rc == 0 and out.is_file() else {}
+    recs = (d.get("loser") or {}).get("records") or {}
+    check(name, rc == 0 and (d.get("winner") or {}).get("clip_norm") == 5.0
+          and res == f"RESULT: CLIP SELECTED 5.0 (tie false; clip 1.0 {S.REJECTED_NONFINITE})"
+          and (recs.get("conversion") or {}).get("state") == "missing"
+          and (recs.get("scoring") or {}).get("state") == "present"
+          and len(rep) == 1 and "conversion missing" in rep[0] and "scoring present" in rep[0], f"{res} | {rep}")
+
+
+# (a) converts each pilot run, the conversion being its subject; (b) and (c) convert and score the rejected runs
+# themselves (AM-21 item 3(d)), and with --cache-dir their eval directories are kept for the processes that run
+# them alone (scripts/smoke_qat_mutations.py runs (a), (d) and (b)-(c) as three jobs).
 NF_CASES += [(f"nf_step{k}_record_convert_exit_0", _nf_record_convert(k)) for k, _ in NF_POSITIONS]
 NF_CASES += [(f"nf_step{k}_select_qat_epoch_excludes_nonfinite", _nf_epoch_excludes(k)) for k, _ in NF_POSITIONS]
 NF_CASES += [("nf_no_convertible_epoch_exit_2_nothing_written", nf_no_convertible_epoch)]
 NF_CASES += [(f"nf_step{k}_select_clip_rejects_nonfinite", _nf_clip_rejects(k)) for k, _ in NF_POSITIONS]
 NF_CASES += [(f"nf_step{k}_both_nonfinite_no_winner_exit_2", _nf_both_rejected(k)) for k, _ in NF_POSITIONS]
+NF_CASES += [("nf_rejected_run_without_conversion_record_other_wins", nf_rejected_without_conversion_record)]
 
 
 def test_nonfinite(cache: Path | None, only: list[str]) -> None:
