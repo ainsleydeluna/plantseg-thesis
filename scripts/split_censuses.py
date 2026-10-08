@@ -11,21 +11,28 @@ It lists exactly two folders, <data-root>/images/train and <data-root>/images/va
 os.scandir each (no recursion: a subdirectory is counted, never entered); the data root itself, annotations
 and TEST are never listed or named. Every path string containing "test" (case-insensitive) is refused before
 any filesystem call (teacher_diag.refuse_test_names), then again once resolved (teacher_diag.refuse_test_path);
-so is any listed name containing "test".
+so is any listed name containing "test", and any listed entry whose resolved path contains it (a symlink into a
+TEST location), before any header is read.
 
 aspect-ratio (DL-49; docs/IMPLEMENTATION_CONTRACT.md B3 "Zero-valid samples", :370): the images under the
 evaluator's and training loader's rule (suffix .jpg or .jpeg, case-insensitive: scripts/hash_split_files.py
-IMAGE_SUFFIXES; src/eval/adapters.py list_split_stems), which must number 5,367 and 846 with unique stems.
+IMAGE_SUFFIXES, whose os.path.splitext form is used here; src/eval/adapters.py list_split_stems uses
+Path.suffix, which differs only for names made of leading dots and the suffix, such as "..jpg", and any such
+difference fails loudly as a count), which must number 5,367 and 846 with unique stems.
 Each image's header is read with PIL Image.open(...).size; no pixel is decoded. AR = max(W, H) / min(W, H),
 invariant under EXIF 90-degree rotations. Counted strictly above 12.6 and 26.5, in integers (10 L > 126 S;
 10 L > 265 S). An unreadable header is a STOP (exit 1, nothing written).
 
-teacher-suffix (DL-55, A1 N3): per folder the exact-suffix histogram (case-sensitive), the teacher's rule
-name.endswith(".jpg") (the teacher config's img_suffix, configs/teacher/...:207) and the student's rule, their
-stem sets, and the subdirectory count; the run of record's teacher_selection_records.jsonl (its basename must
-be src/training/teacher_components.py RECORDS_FILE), read strictly: 10 rows at iterations 4,000 ... 40,000, val_images
-846 in every row, one val_manifest_sha256 equal to the census's own hash of the name-sorted exact-suffix VAL
-stems (hash_split_manifest over ManifestEntry(i, stem, stem): the pass order the teacher hook hashes,
+teacher-suffix (DL-55, A1 N3): per folder the exact-suffix histogram (case-sensitive), the teacher's rule and
+the student's rule, their stem sets, and the counts of subdirectories, symlinks and dot-named files. The
+teacher's rule is the listing mmseg's BaseSegDataset applies with the teacher config's img_suffix '.jpg'
+(configs/teacher/...:207): mmengine's LocalBackend.list_dir_or_file yields a file only if its name does not
+start with '.' and it ends with the suffix, case-sensitive ([U]: transcribed from mmengine, which is not in the
+repository). The run of record's teacher_selection_records.jsonl (its basename must be
+src/training/teacher_components.py RECORDS_FILE) is read strictly (non-finite numbers, duplicate keys,
+undecodable bytes and non-object lines are refused): 10 rows at iterations 4,000 ... 40,000, val_images 846 in
+every row, one val_manifest_sha256 equal to the census's own hash of the name-sorted exact-suffix VAL stems
+(hash_split_manifest over ManifestEntry(i, stem, stem): the pass order the teacher hook hashes,
 teacher_components.py:214-224; "BaseSegDataset sorts by img_path", teacher config :249). The census is written
 whatever it finds; exit 1 when the expectation is not met.
 
@@ -42,6 +49,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import platform
 import re
@@ -96,29 +104,44 @@ def build_parser() -> argparse.ArgumentParser:
 # rules (module-level so the smoke can replace one at a time)
 # --------------------------------------------------------------------------------------------------
 def student_rule(name: str) -> bool:
-    """The evaluator's and training loader's image rule (case-insensitive .jpg/.jpeg)."""
+    """The evaluator's and training loader's image rule (case-insensitive .jpg/.jpeg; the hash_split_files form)."""
     return os.path.splitext(name)[1].lower() in IMAGE_SUFFIXES
 
 
 def teacher_rule(name: str) -> bool:
-    """The teacher dataset's rule: the exact, case-sensitive img_suffix '.jpg'."""
-    return name.endswith(TEACHER_IMG_SUFFIX)
+    """The teacher dataset's listing: no leading '.' (mmengine LocalBackend skips dot-named entries) and the
+    exact, case-sensitive img_suffix '.jpg'."""
+    return not name.startswith(".") and name.endswith(TEACHER_IMG_SUFFIX)
+
+
+def teacher_stems(names: list) -> list:
+    """The teacher's stems in the order given (name-sorted files: 'BaseSegDataset sorts by img_path')."""
+    return [n[:-len(TEACHER_IMG_SUFFIX)] for n in names]
 
 
 def scan_folder(folder: str) -> dict:
-    """One os.scandir of one folder: sorted file names and the counts of directories and other entries."""
+    """One os.scandir of one folder: sorted file names and directory names, and the counts of other entries,
+    symlinks and dot-named files."""
     if not os.path.isdir(folder):
         raise td.Refused(f"missing folder under --data-root ({td.name_digests([folder])})")
-    files, dirs, other = [], [], 0
+    files, dirs, other, links = [], [], 0, 0
     with os.scandir(folder) as it:
         for e in it:
+            links += e.is_symlink()
             if e.is_file():
                 files.append(e.name)
             elif e.is_dir():
                 dirs.append(e.name)
             else:
                 other += 1
-    return {"files": sorted(files), "dirs": sorted(dirs), "n_other": other}
+    return {"files": sorted(files), "dirs": sorted(dirs), "n_other": other, "n_symlinks": links,
+            "n_dot_files": sum(1 for n in files if n.startswith("."))}
+
+
+def refuse_test_entries(folder: str, names: list, what: str) -> None:
+    """Each listed entry resolved: a symlink into a 'test' location is refused before any header is read."""
+    for name in names:
+        td.refuse_test_path(os.path.join(folder, name), what)
 
 
 def read_header(path: str) -> tuple:
@@ -253,7 +276,8 @@ def summarize(rows: list) -> dict:
 
 
 def aspect_ratio(args, listings: dict, folders: dict, expected: dict, base: dict) -> tuple[dict, int]:
-    rows, unreadable, warns, formats = [], [], Counter(), {}
+    rows, unreadable = [], []
+    warns, formats = {s: Counter() for s in SPLITS}, {s: Counter() for s in SPLITS}
     for s in SPLITS:
         imgs = [n for n in listings[s]["files"] if student_rule(n)]
         if len(imgs) != expected[s]:
@@ -261,7 +285,6 @@ def aspect_ratio(args, listings: dict, folders: dict, expected: dict, base: dict
         stems = [os.path.splitext(n)[0] for n in imgs]
         if len(set(stems)) != len(stems):
             raise td.Refused(f"images/{s}: {len(stems) - len(set(stems))} image(s) share a stem with another")
-        fmts = Counter()
         for name, stem in zip(imgs, stems):
             try:
                 w, h, fmt, caught = read_header(os.path.join(folders[s], name))
@@ -271,24 +294,31 @@ def aspect_ratio(args, listings: dict, folders: dict, expected: dict, base: dict
             if isinstance(w, bool) or not isinstance(w, int) or not isinstance(h, int) or w < 1 or h < 1:
                 unreadable.append(name)
                 continue
-            warns.update(caught)
-            fmts[str(fmt)] += 1
+            warns[s].update(caught)
+            formats[s][str(fmt)] += 1
             long, short = long_short(w, h)
             rows.append({"split": s, "stem": stem, "file": name, "w": w, "h": h, "long": long, "short": short})
-        formats[s] = dict(sorted(fmts.items()))
     if unreadable:
         raise td.Stop(f"{len(unreadable)} image header(s) could not be read ({td.name_digests(unreadable)}): the "
                       "census is incomplete; nothing is written")
     dims = "".join(f"{r['split']}\t{r['stem']}\t{r['w']}\t{r['h']}\n" for r in rows).encode("utf-8")
-    splits = {s: dict(summarize([r for r in rows if r["split"] == s]), formats=formats[s]) for s in SPLITS}
+
+    def counts(c: Counter) -> dict:
+        return dict(sorted(c.items()))
+    splits = {s: dict(summarize([r for r in rows if r["split"] == s]), formats=counts(formats[s]),
+                      header_warnings=counts(warns[s])) for s in SPLITS}
+    combined = dict(summarize(rows), formats=counts(sum(formats.values(), Counter())),
+                    header_warnings=counts(sum(warns.values(), Counter())))
     doc = dict(base, **{
         "inputs": {"folders": ["images/train", "images/val"],
                    "listing": "one os.scandir per folder; no recursion; no other folder",
                    "image_rule": "os.path.splitext(name)[1].lower() in ('.jpg', '.jpeg') (scripts/hash_split_files.py "
-                                 "IMAGE_SUFFIXES; src/eval/adapters.py list_split_stems)",
+                                 "IMAGE_SUFFIXES; src/eval/adapters.py list_split_stems, which differs only for names "
+                                 "made of leading dots and the suffix)",
                    "expected": expected,
                    "entries": {s: {"files": len(listings[s]["files"]), "dirs": len(listings[s]["dirs"]),
-                                   "other": listings[s]["n_other"]} for s in SPLITS}},
+                                   "other": listings[s]["n_other"], "symlinks": listings[s]["n_symlinks"],
+                                   "dot_files": listings[s]["n_dot_files"]} for s in SPLITS}},
         "definition": {"aspect_ratio": "max(W, H) / min(W, H) of the stored header size (PIL Image.open(...).size; "
                                        "no pixel decoded); invariant under EXIF 90-degree rotations",
                        "above": "strictly above, in integers: 10 * long > 126 * short (12.6), 10 * long > 265 * short "
@@ -296,8 +326,7 @@ def aspect_ratio(args, listings: dict, folders: dict, expected: dict, base: dict
         "thresholds": [{"value": 12.6, "source": "B3: every valid 32x32 cell is lost only above aspect ratio about "
                                                  "12.6 at the worst scale r = 0.75 (certain from about 24.8)"},
                        {"value": 26.5, "source": "B3: every valid 64x64 cell is lost only above about 26.5"}],
-        "splits": splits, "combined": summarize(rows),
-        "header_warnings": dict(sorted(warns.items())),
+        "splits": splits, "combined": combined,
         "dims_list_sha256": hashlib.sha256(dims).hexdigest(),
         "dims_list_rule": "sha256 over 'split\\tstem\\tw\\th\\n' per image, TRAIN then VAL, name-sorted",
         "status": "written"})
@@ -307,15 +336,39 @@ def aspect_ratio(args, listings: dict, folders: dict, expected: dict, base: dict
 # --------------------------------------------------------------------------------------------------
 # DL-55: the teacher suffix census
 # --------------------------------------------------------------------------------------------------
+def parse_finite_float(text: str) -> float:
+    """json's parse_float: a literal that overflows to inf (1e999) is refused like NaN and Infinity."""
+    v = float(text)
+    if not math.isfinite(v):
+        raise td.Refused(f"{RECORDS_FILE}: non-finite JSON number {text!r}")
+    return v
+
+
+def no_duplicate_keys(pairs: list) -> dict:
+    """json's object_pairs_hook: a key given twice is refused, never resolved silently."""
+    keys = [k for k, _ in pairs]
+    dup = sorted({k for k in keys if keys.count(k) > 1})
+    if dup:
+        raise td.Refused(f"{RECORDS_FILE}: duplicate key(s) {dup} in one row")
+    return dict(pairs)
+
+
 def read_records(path: Path) -> list:
     def reject(c):
         raise td.Refused(f"{RECORDS_FILE}: non-finite JSON constant {c!r}")
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, ValueError) as e:
+        raise td.Refused(f"{RECORDS_FILE} cannot be read as UTF-8 text: {type(e).__name__}: {e}") from e
     rows = []
-    for i, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+    for i, line in enumerate(lines, 1):
         try:
-            obj = json.loads(line, parse_constant=reject)
+            obj = json.loads(line, parse_constant=reject, parse_float=parse_finite_float,
+                             object_pairs_hook=no_duplicate_keys)
         except json.JSONDecodeError as e:
             raise td.Refused(f"{RECORDS_FILE}: line {i} is not JSON ({e})") from e
+        except ValueError as e:                                   # e.g. an integer beyond Python's digit limit
+            raise td.Refused(f"{RECORDS_FILE}: line {i} cannot be read: {e}") from e
         if not isinstance(obj, dict):
             raise td.Refused(f"{RECORDS_FILE}: line {i} is not a JSON object")
         for key, typ in (("iteration", int), ("val_images", int), ("val_manifest_sha256", str)):
@@ -335,11 +388,12 @@ def teacher_suffix(args, listings: dict, folders: dict, expected: dict, base: di
         files = listings[s]["files"]
         teacher = [n for n in files if teacher_rule(n)]
         student = [n for n in files if student_rule(n)]
-        t_stems = [n[:-len(TEACHER_IMG_SUFFIX)] for n in teacher]
+        t_stems = teacher_stems(teacher)
         s_stems = [os.path.splitext(n)[0] for n in student]
         only_t, only_s = sorted(set(t_stems) - set(s_stems)), sorted(set(s_stems) - set(t_stems))
         stems_t[s] = t_stems
         per[s] = {"n_files": len(files), "n_dirs": len(listings[s]["dirs"]), "n_other": listings[s]["n_other"],
+                  "n_symlinks": listings[s]["n_symlinks"], "n_dot_files": listings[s]["n_dot_files"],
                   "suffix_counts": dict(sorted(Counter(os.path.splitext(n)[1] for n in files).items())),
                   "teacher_rule_count": len(teacher), "student_rule_count": len(student),
                   "student_stems_unique": len(set(s_stems)) == len(s_stems),
@@ -351,7 +405,10 @@ def teacher_suffix(args, listings: dict, folders: dict, expected: dict, base: di
         raise td.Refused(f"--teacher-records must name {RECORDS_FILE} (src/training/teacher_components.py RECORDS_FILE)")
     if not rec_path.is_file():
         raise td.Refused(f"--teacher-records: the file does not exist ({td.name_digests([str(rec_path)])})")
-    rec_sha = td.file_sha256(rec_path)
+    try:
+        rec_sha = td.file_sha256(rec_path)
+    except OSError as e:
+        raise td.Refused(f"--teacher-records cannot be read: {type(e).__name__}: {e}") from e
     if args.expect_records_sha256 is not None and rec_sha != args.expect_records_sha256:
         raise td.Refused(f"the records file's sha256 {rec_sha} != --expect-records-sha256 {args.expect_records_sha256}")
     rows = read_records(rec_path)
@@ -373,8 +430,10 @@ def teacher_suffix(args, listings: dict, folders: dict, expected: dict, base: di
     doc = dict(base, **{
         "inputs": {"folders": ["images/train", "images/val"],
                    "listing": "one os.scandir per folder; no recursion; no other folder",
-                   "teacher_rule": "name.endswith('.jpg') (configs/teacher/segnext_mscan-b_1xb16-adamw-40k_plantseg116-"
-                                   "512x512.py:207 img_suffix; exact and case-sensitive)",
+                   "teacher_rule": "not name.startswith('.') and name.endswith('.jpg') (configs/teacher/segnext_mscan-"
+                                   "b_1xb16-adamw-40k_plantseg116-512x512.py:207 img_suffix, exact and case-sensitive; "
+                                   "mmengine LocalBackend.list_dir_or_file skips dot-named entries [U: transcribed, "
+                                   "mmengine is not in the repository])",
                    "student_rule": "os.path.splitext(name)[1].lower() in ('.jpg', '.jpeg')",
                    "expected": expected},
         "splits": per,
@@ -421,6 +480,8 @@ def _run(args) -> int:
     listings = {s: scan_folder(folders[s]) for s in SPLITS}
     for s in SPLITS:
         td.refuse_test_names(listings[s]["files"] + listings[s]["dirs"], f"images/{s} names")
+    for s in SPLITS:
+        refuse_test_entries(folders[s], listings[s]["files"] + listings[s]["dirs"], f"images/{s} entry")
     generated = args.generated_utc or start_utc
     if aspect:
         base = header(args, synthetic, generated, binding, "plantseg-aspect-ratio-census/1.0.0", "aspect-ratio",
