@@ -20,6 +20,13 @@ default mode, on this checkout (or --code-root DIR):
   run_meta: terms, projection_params, and lambda/alpha/beta/T only for instantiated terms; E1's
        provenance and recipe keys plus ramp_iters, class_weights_sha256, tf32, teacher_provenance and
        teacher_mock, with their dry-harness values (L-KD-HARDEN item 5); best.json in E1's schema.
+  L4   run_meta's launch fields last, after teacher_mock (lane 4(a), K2): arm, descriptive,
+       parent_of_e4_e7 per stage; no selection file and no records commit (the harness names none).
+  PL-24 the recorded-teacher-hash check on six synthetic runs: run_meta carries the hash (passes with
+       no checkpoint); only the checkpoint payload carries it (passes); the payload carries another
+       hash (fails); without best.json, the highest-iteration checkpoint in the run's directory carries
+       it (passes; 73fd4d7 writes no best.json); no provenance and no checkpoint (fails, no skip); a
+       payload that is no checkpoint (fails).
 
 --cross-commit OLD NEW  (or --old-root DIR --new-root DIR for trees exported beforehand):
   d4   E2 and E3 step JSONs of NEW byte-identical to OLD: telemetry (losses, ramp, lr, grad norm),
@@ -34,17 +41,23 @@ default mode, on this checkout (or --code-root DIR):
 
 N = 8 steps with the stub teacher (one full epoch of the 16-image set at batch 2, so the whole
 first-epoch ramp is exercised); the acceptance run with --teacher real uses --steps 4. Outputs go to
---work-dir (a new temp dir by default), never into the repository.
+--work-dir (by default a new directory k1_invariance_<pid>_<n> under the system temp dir, with no random
+suffix: RULING 2, SL-1), never into the repository.
 
 --teacher real (L-CKPT-GUARD) needs --teacher-ckpt and --teacher-config as absolute paths and
 --teacher-ckpt-sha256: the driver hashes the checkpoint before any worker starts, each worker hands
-the value to load_frozen_teacher when the code under test takes it, and every worker's run_meta must
-record that hash as teacher_provenance.ckpt_sha256.
+the value to load_frozen_teacher when the code under test takes it, and every worker's run must
+record that hash: run_meta's teacher_provenance.ckpt_sha256, or, when its run_meta has no
+teacher_provenance key (an older code root), the same key of the run's best checkpoint payload (the file
+best.json names, else the highest-iteration best checkpoint in the run's directory: 73fd4d7 writes no
+best.json), loaded by the driver (PL-24; no skip and no waiver).
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
 import sys
 import tempfile
 import time
@@ -79,6 +92,23 @@ def outside_repo(p: Path) -> Path:
     return p
 
 
+def new_work_dir(prefix: str = "k1_invariance") -> Path:
+    """The default --work-dir: a new directory under the system temp dir, named <prefix>_<pid>_<n> as in
+    the selection smoke (RULING 2): no random suffix can spell 'test' (SL-1)."""
+    n = 0
+    while True:
+        n += 1
+        p = Path(tempfile.gettempdir()) / f"{prefix}_{os.getpid()}_{n}"
+        if "test" in str(p).lower():
+            raise SystemExit(f"refusing to create {p}: its path contains 'test' (SL-1); set TMPDIR elsewhere")
+        outside_repo(p)
+        try:
+            p.mkdir()
+        except FileExistsError:
+            continue
+        return p
+
+
 def expected_keys(flags) -> list[str]:
     """Train-row keys in order (L-KD-HARDEN item 4): the 44c05dc keys with ce/dice after sup, the
     grad-norm split after grad_norm, and E1's wall-clock fields last."""
@@ -99,6 +129,9 @@ E1_META_KEYS = ["wall_clock", "git_head", "git_head_source", "image_digest", "to
                 "max_val_batches", "learning_rate", "momentum", "weight_decay", "lr_power", "poly_horizon",
                 "grad_clip_norm", "used_pretrained", "params", "ignore_index"]
 KD_META_KEYS = ["ramp_iters", "class_weights_sha256", "tf32", "teacher_provenance", "teacher_mock"]
+# lane 4(a) (K2): run_meta's launch fields, last, after teacher_mock
+LAUNCH_KEYS = ["arm", "descriptive", "parent_of_e4_e7", "selection_sha256", "selection_files", "records_commit"]
+ARM_NAMES = {"a": "A", "f": "F", "g": "G"}
 
 
 def host_facts() -> dict:
@@ -116,15 +149,95 @@ def host_facts() -> dict:
                      "NVIDIA_TF32_OVERRIDE": os.environ.get("NVIDIA_TF32_OVERRIDE")}}
 
 
-def check_recorded_teacher_sha256(runs: dict, a) -> None:
-    """--teacher real (L-CKPT-GUARD): every worker's run_meta records the checkpoint the driver hashed."""
+def run_best_checkpoint(r: dict) -> Path | None:
+    """The run's best checkpoint: the file its best.json names; else (an older code root writes no best.json,
+    73fd4d7 among them) the highest-iteration `<stage>_student_best_iter*.pt` the summary lists, found in the
+    run's checkpoint directory `<out_dir>/ckpt_*` (invariance_harness writes the worker log as
+    `<out_dir>.worker.log` beside the run's folder)."""
+    sm = r.get("summary") or {}
+    best = (sm.get("best_json") or {}).get("best_ckpt")
+    if best:
+        return Path(best)
+    names = [c.get("file") for c in sm.get("checkpoints") or [] if isinstance(c, dict) and c.get("file")]
+    log = Path(r.get("log") or "")
+    if not names or not log.name.endswith(".worker.log"):
+        return None
+    found = sorted(log.with_name(log.name[:-len(".worker.log")]).glob(f"ckpt_*/{names[-1]}"))
+    return found[0] if len(found) == 1 else None
+
+
+def recorded_teacher_sha256(r: dict) -> tuple:
+    """(the teacher checkpoint hash a worker's run recorded, where it was read). run_meta's
+    teacher_provenance.ckpt_sha256; when the run_meta has no teacher_provenance key (an older code root),
+    teacher_provenance.ckpt_sha256 of the run's best checkpoint payload (run_best_checkpoint: best.json's,
+    else the highest-iteration best checkpoint in its directory), loaded here (PL-24)."""
+    sm = r["summary"] or {}
+    rows = sm.get("run_meta") or [{}]
+    if "teacher_provenance" in rows[0]:
+        return (rows[0]["teacher_provenance"] or {}).get("ckpt_sha256"), "run_meta"
+    best = run_best_checkpoint(r)
+    if best is None:
+        return None, "no teacher_provenance in run_meta and no best checkpoint"
+    import torch
+    try:
+        payload = torch.load(str(best), map_location="cpu", weights_only=False)
+    except Exception as e:  # noqa: BLE001 - an unreadable payload records nothing
+        return None, f"payload {best} unreadable ({type(e).__name__}: {e})"
+    prov = payload.get("teacher_provenance") if isinstance(payload, dict) else None
+    return (prov if isinstance(prov, dict) else {}).get("ckpt_sha256"), f"payload {Path(best).name}"
+
+
+def check_recorded_teacher_sha256(runs: dict, a, sink=None) -> None:
+    """--teacher real (L-CKPT-GUARD; PL-24): every worker's run records the checkpoint the driver hashed.
+    `sink` receives the checks instead of the result list (the PL-24 cases)."""
     if a.teacher != "real":
         return
     for k, r in runs.items():
-        rows = (r["summary"] or {}).get("run_meta") or [{}]
-        prov = rows[0].get("teacher_provenance") or {}
-        check(f"teacher_sha256_recorded_{k}", prov.get("ckpt_sha256") == a.teacher_ckpt_sha256,
-              f"{prov.get('ckpt_sha256')} vs {a.teacher_ckpt_sha256}")
+        sha, where = recorded_teacher_sha256(r)
+        (sink or check)(f"teacher_sha256_recorded_{k}", sha == a.teacher_ckpt_sha256,
+                        f"{sha} ({where}) vs {a.teacher_ckpt_sha256}")
+
+
+def pl24_cases(work: Path) -> None:
+    """PL-24 (PL-39 case 43): check_recorded_teacher_sha256 under --teacher real on synthetic runs. run_meta
+    carries the hash: it passes, and no checkpoint is read (there is none). Only the checkpoint payload best.json
+    names carries it (no teacher_provenance key in run_meta): it passes. That payload carries another hash: it
+    fails. C2 workflow c2smokes-1 and c2smokes-2: no best.json (73fd4d7 writes none) and the highest-iteration
+    best checkpoint in the run's directory carries it: it passes; no provenance and no checkpoint: it fails (no
+    skip); a payload that is not a checkpoint: it fails."""
+    import torch
+    want = hashlib.sha256(b"pl24 teacher of record").hexdigest()
+    other = hashlib.sha256(b"pl24 another teacher").hexdigest()
+    folder = work / "pl24"
+    folder.mkdir(parents=True, exist_ok=True)
+    a = argparse.Namespace(teacher="real", teacher_ckpt_sha256=want)
+    for name, meta, payload, where, passes in (
+            ("run_meta_carries_the_hash", {"teacher_provenance": {"ckpt_sha256": want}}, None, None, True),
+            ("only_the_payload_carries_the_hash", {}, want, "best_json", True),
+            ("payload_carries_another_hash", {}, other, "best_json", False),
+            ("no_best_json_and_the_highest_iteration_checkpoint_carries_the_hash", {}, want, "dir", True),
+            ("no_provenance_and_no_checkpoint", {}, None, None, False),
+            ("payload_that_is_no_checkpoint", {}, b"not a checkpoint", "best_json", False)):
+        best, checkpoints = None, []
+        if where == "best_json":
+            best = {"best_ckpt": str(folder / f"{name}_best_iter8.pt"), "best_val_miou_all_class": 0.0}
+            if isinstance(payload, bytes):
+                Path(best["best_ckpt"]).write_bytes(payload)
+            else:
+                torch.save({"teacher_provenance": {"ckpt_sha256": payload}}, best["best_ckpt"])
+        elif where == "dir":
+            ck = folder / name / "ckpt_e2"
+            ck.mkdir(parents=True)
+            torch.save({"teacher_provenance": {"ckpt_sha256": other}}, ck / "e2_student_best_iter4.pt")
+            torch.save({"teacher_provenance": {"ckpt_sha256": payload}}, ck / "e2_student_best_iter8.pt")
+            checkpoints = [{"file": "e2_student_best_iter4.pt"}, {"file": "e2_student_best_iter8.pt"}]
+        got = []
+        check_recorded_teacher_sha256({name: {"returncode": 0, "log": str(folder / f"{name}.worker.log"),
+                                              "summary": {"run_meta": [meta], "best_json": best,
+                                                          "checkpoints": checkpoints}}},
+                                      a, sink=lambda n, ok, d="": got.append((n, ok, d)))
+        check(f"pl24_{name}_{'passes' if passes else 'fails'}", len(got) == 1 and got[0][1] is passes,
+              str(got))
 
 
 def load_steps(d: Path) -> list[dict]:
@@ -245,6 +358,14 @@ def single(work: Path, data_root: Path, code_root: Path, a) -> dict:
                                                             and bool(prov.get("ckpt_sha256")))
         check(f"run_meta_{s}_e1_keys_and_kd_carriers", len(rows) == 1 and not missing and not wrong
               and prov_ok, f"missing={missing} wrong={wrong} teacher_provenance={prov!r}")
+        # lane 4(a) (K2): the launch fields, last; the harness names no selection file or records commit
+        nulls = {"lambda_logit": None, "alpha_cwd": None}
+        want_launch = {"arm": ARM_NAMES.get(s), "descriptive": s in ARM_NAMES, "parent_of_e4_e7": s == "e3",
+                       "selection_sha256": nulls, "selection_files": nulls, "records_commit": None}
+        check(f"run_meta_{s}_launch_fields", len(rows) == 1 and list(rm)[-7:] == ["teacher_mock"] + LAUNCH_KEYS
+              and {k: rm[k] for k in LAUNCH_KEYS} == want_launch
+              and all(type(rm[k]) is type(v) for k, v in want_launch.items()),
+              json.dumps({k: rm.get(k, "absent") for k in LAUNCH_KEYS}))
         # L-KD-HARDEN item 4: E1-schema val rows at every validation, run_end with the GPU-hour carrier
         want_val = sorted({i for i in range(1, a.steps + 1) if i % a.val_interval == 0} | {a.steps})
         check(f"val_rows_{s}_e1_schema", sm.get("val_keys") == [VAL_KEYS]
@@ -265,6 +386,7 @@ def single(work: Path, data_root: Path, code_root: Path, a) -> dict:
               and end.get("best_ckpt") == Path(str(best.get("best_ckpt", ""))).name, json.dumps(end))
         check(f"no_test_surface_{s}", sm["data_layout"] == DATA_LAYOUT, str(sm["data_layout"]))
     check_recorded_teacher_sha256(runs, a)
+    pl24_cases(work)
     return runs
 
 
@@ -361,8 +483,7 @@ def main(argv=None) -> int:
     if bool(a.old_root) != bool(a.new_root) or (a.old_root and a.cross_commit):
         ap.error("use either --cross-commit OLD NEW or both --old-root and --new-root")
 
-    work = outside_repo(Path(a.work_dir) if a.work_dir else
-                        Path(tempfile.mkdtemp(prefix="k1_invariance_")))
+    work = outside_repo(Path(a.work_dir) if a.work_dir else new_work_dir())
     work.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
     data = make_synthetic_dataset(work / "data")

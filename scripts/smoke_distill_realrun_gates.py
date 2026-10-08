@@ -54,12 +54,27 @@ can be built even if one of them failed.
   legal  each stage's legal launch reaches run() with the recipe values (mode real, 80,000 iterations,
       batch 16, ImageNet init, VAL every 4,000 over the full set, explicit workers, no clipping)
   order  M11 and the CUDA-device refusals keep their text and fire before every item-2 gate
+  L4   lane 4(a) and PL-28 (K2), in both modes: --lambda-selection on a stage without Logit KD and
+      --alpha-selection on one without the feature-map CWD term -> [selection_term]; a path that is not an
+      existing file (never created, a directory) or an existing file that cannot be read ->
+      [selection_file_missing], before any teacher or loader; --records-commit other than 40 lowercase hex
+      -> [records_commit_format]; the legal E2/E3 seed-43 launches, the arms A and F at seed 42 with
+      --alpha-selection, and a dry run hand run() the resolved path and sha256 of each file (a relative path
+      and a path through a symlink are recorded resolved; a named SKIP where the host has neither), and no
+      flag hands it nulls; launch_fields() per stage and horizon, and its refusals for direct calls; the
+      REAL run(), stubbed up to its training loop, writes the six launch fields last in run_meta, after
+      teacher_mock
+
+Fixtures (RULING 2, SL-1): every path the smoke creates is under one scratch directory named
+kdh_gates_<pid>_<n> (no random suffix); the Q10 cases name in-repository paths that are never created, and a
+path with a "test" component is only ever named, never created.
 """
 from __future__ import annotations
 
 import contextlib
 import hashlib
 import io
+import json
 import os
 import sys
 import tempfile
@@ -139,18 +154,34 @@ def call_main(argv: list[str]) -> tuple[int, str]:
 
 
 # ------------------------------------------------------------------------------- fixtures
-TMP = Path(tempfile.mkdtemp(prefix="kdh_gates_"))
+def scratch_dir(prefix: str) -> Path:
+    """A new directory under the system temp dir, named <prefix>_<pid>_<n> as in the selection smoke (RULING
+    2): no random suffix can spell 'test' (SL-1), and it lies outside the repository."""
+    n = 0
+    while True:
+        n += 1
+        p = Path(tempfile.gettempdir()) / f"{prefix}_{os.getpid()}_{n}"
+        if "test" in str(p).lower():
+            raise SystemExit(f"refusing to create {p}: its path contains 'test' (SL-1); set TMPDIR elsewhere")
+        if REPO == p.resolve() or REPO in p.resolve().parents:
+            raise SystemExit(f"refusing to create {p} inside the repository")
+        try:
+            p.mkdir()
+        except FileExistsError:
+            continue
+        return p
 
 
-def staged_root(name: str = "staged", *, with_test: bool = False) -> Path:
+TMP = scratch_dir("kdh_gates")
+
+
+def staged_root(name: str = "staged") -> Path:
     root = TMP / name
     for split in ("train", "val"):
         for kind, ext in (("images", ".jpg"), ("annotations", ".png")):
             (root / kind / split).mkdir(parents=True, exist_ok=True)
             for i in range(2):
                 (root / kind / split / f"s{i}{ext}").touch()
-    if with_test:                                 # a synthetic TEST surface, for M11's refusal
-        (root / "images" / "test").mkdir(parents=True, exist_ok=True)
     return root
 
 
@@ -654,12 +685,229 @@ def test_gate_order() -> None:
     check("order_device_refusal_before_lambda_semantics", rc == 2 and "on CPU" in err
           and "[lambda_semantics]" not in err and COUNT["teacher"] == 0, err.strip()[-160:])
     saved_root = td.DATA["root"]
-    td.DATA["root"] = str(staged_root("staged_with_test", with_test=True))
+    m11_root = staged_root("staged_m11")
+    td.DATA["root"] = str(m11_root)
+    # PL-4 (SL-1): no TEST folder is created. os.path.lexists answers True for this root's first TEST
+    # surface only (isolation.TEST_SURFACES[0]) and asks the real function about every other path.
+    surface = os.path.join(str(m11_root), *isolation.TEST_SURFACES[0].split("/"))
+    real_lexists = os.path.lexists
+
+    def lexists(path, _real=real_lexists):
+        return True if os.fspath(path) == surface else _real(path)
+    os.path.lexists = lexists
     try:
         refused("order_m11_before_schedule", legal("g", max_iters=100), "test_split_present")
         refused("order_m11_before_clip", legal("g", grad_clip_norm=1.0), "test_split_present")
     finally:
+        os.path.lexists = real_lexists
         td.DATA["root"] = saved_root
+
+
+# ------------------------------------------------------------------ lane 4(a), PL-28 (K2)
+LAUNCH_KEYS = ["arm", "descriptive", "parent_of_e4_e7", "selection_sha256", "selection_files", "records_commit"]
+NULL_SELECTIONS = {"lambda_logit": None, "alpha_cwd": None}
+COMMIT = "0123456789abcdef0123456789abcdef01234567"
+
+
+class _StopAtLoop(Exception):
+    pass
+
+
+class _TinyStudent(torch.nn.Module):
+    used_pretrained = False
+
+    def __init__(self):
+        super().__init__()
+        self.lin = torch.nn.Linear(1, 1)
+
+
+class _Loader:
+    """Three batches over six samples: run() reads only len() and the dataset's len() before its loop."""
+    dataset = [0] * 6
+
+    def __len__(self):
+        return 3
+
+
+def run_meta_of_direct_run(stage: str, **kw):
+    """The REAL run() in dry mode up to its training loop: a tiny student, length-only loaders, a fixed
+    git_head and a no-op set_seed (no global determinism state changes), and the loop's first call
+    (cycle) stops it. Returns its one run_meta row, or the reason it has none."""
+    ckpt = Path(fresh(f"{stage}_s42_meta"))
+    saved = (td.build_student, td.build_dataloader, td.cycle, td._git_provenance, td.set_seed)
+
+    def stop(*_a, **_k):
+        raise _StopAtLoop()
+    td.build_student, td.build_dataloader = (lambda *a, **k: _TinyStudent()), (lambda *a, **k: _Loader())
+    td.cycle, td._git_provenance, td.set_seed = stop, (lambda: ("0" * 40, "smoke_stub")), (lambda s: None)
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            REAL_RUN(stage=td.resolve_stage(stage), mode="dry", device="cpu", pretrained=False,
+                     teacher=FrozenTeacher(MockTeacher(NC)),
+                     lambda_logit=1.0 if stage in ("e2", "e3") else None, batch_size=2, max_iters=2,
+                     val_interval=2, max_val_batches=1, num_workers=0, ckpt_dir_arg=str(ckpt),
+                     grad_clip_norm=None, log_every=1, seed=42, **kw)
+        return "run() did not reach its training loop"
+    except _StopAtLoop:
+        pass
+    except Exception as e:  # noqa: BLE001 - the reason is the check's detail
+        return f"{type(e).__name__}: {e}"
+    finally:
+        td.build_student, td.build_dataloader, td.cycle, td._git_provenance, td.set_seed = saved
+    lines = (ckpt / f"{stage}_run_meta.jsonl").read_text(encoding="utf-8").splitlines()
+    return json.loads(lines[0]) if len(lines) == 1 else f"{len(lines)} run_meta lines"
+
+
+def test_launch_fields() -> None:
+    """Lane 4(a), PL-28: the selection files and the records commit, in both modes, through to run_meta."""
+    sel = TMP / "records"                         # the records folder's copies (PL-28), outside the repository
+    sel.mkdir()
+    lam, alp = sel / "lambda_selection.json", sel / "alpha_selection.json"
+    lam.write_text('{"format": "lambda_selection/1"}\n', encoding="utf-8")
+    alp.write_text('{"format": "alpha_selection/1"}\n', encoding="utf-8")
+    want = {"lambda_logit": {"path": str(lam.resolve()), "sha256": hashlib.sha256(lam.read_bytes()).hexdigest()},
+            "alpha_cwd": {"path": str(alp.resolve()), "sha256": hashlib.sha256(alp.read_bytes()).hexdigest()}}
+    for stage in ("a", "f", "g"):
+        refused(f"l4_lambda_selection_on_{stage}", legal(stage, lambda_selection=lam), "selection_term")
+    for stage in ("e2", "g"):
+        refused(f"l4_alpha_selection_on_{stage}", legal(stage, alpha_selection=alp), "selection_term")
+    refused("l4_dry_lambda_selection_on_g", ["--stage", "g", "--dry-run", "--lambda-selection", str(lam)],
+            "selection_term")
+    never = sel / "never_created.json"
+    phantom = sel / "test" / "lambda_selection.json"          # SL-1: named, never created (C0's method)
+    refused("l4_missing_selection_file", legal("e2", seed=43, lambda_selection=never), "selection_file_missing")
+    refused("l4_never_created_path_with_a_test_component", legal("e2", seed=43, lambda_selection=phantom),
+            "selection_file_missing")
+    refused("l4_directory_as_selection_file", legal("e3", seed=43, alpha_selection=sel), "selection_file_missing")
+    refused("l4_dry_missing_selection_file", ["--stage", "e3", "--dry-run", "--alpha-selection", str(never)],
+            "selection_file_missing")
+    check("l4_refused_paths_were_not_created", not os.path.lexists(never) and not os.path.lexists(phantom.parent))
+    # C2 workflow c2trainer-1 / c2smokes-3: a file that exists and cannot be read is [selection_file_missing], in
+    # both modes, before any teacher or loader (root ignores chmod 000: the hash of that one file is made to fail)
+    unreadable = sel / "unreadable_selection.json"
+    unreadable.write_text('{"format": "lambda_selection/1"}\n', encoding="utf-8")
+    saved_sha = td.sha256_file
+
+    def sha_or_denied(path):
+        if Path(path).resolve() == unreadable.resolve():
+            raise PermissionError(13, "Permission denied", str(path))
+        return saved_sha(path)
+    td.sha256_file = sha_or_denied
+    try:
+        for label, argv in (("l4_unreadable_selection_file", legal("e2", seed=43, lambda_selection=unreadable)),
+                            ("l4_dry_unreadable_selection_file",
+                             ["--stage", "e2", "--dry-run", "--lambda-selection", str(unreadable)])):
+            reset()
+            try:
+                rc, err = call_main(argv)
+            except Exception as e:  # noqa: BLE001 - a raise instead of a refusal is a FAIL of this check
+                rc, err = None, f"raised {type(e).__name__}: {e}"
+            check(f"{label}_refused_selection_file_missing", rc == 2 and "[selection_file_missing]" in err
+                  and "cannot be read" in err and COUNT["teacher"] == 0 and COUNT["loader"] == 0 and COUNT["run"] == 0,
+                  f"rc={rc} teacher={COUNT['teacher']} run={COUNT['run']} err={err.strip()[-160:]}")
+    finally:
+        td.sha256_file = saved_sha
+    lam_only = {"lambda_logit": want["lambda_logit"], "alpha_cwd": None}
+    cases = [("l4_legal_e2_s43_lambda_selection_reaches_run", legal("e2", seed=43, lambda_selection=lam), lam_only),
+             ("l4_legal_e3_s43_both_selections_reach_run",
+              legal("e3", seed=43, lambda_selection=lam, alpha_selection=alp), want),
+             ("l4_dry_run_accepts_both_selections",
+              ["--stage", "e3", "--dry-run", "--lambda-selection", str(lam), "--alpha-selection", str(alp)], want),
+             ("l4_no_selection_flag_reaches_run_as_nulls", legal("e3", seed=43), NULL_SELECTIONS),
+             # C2 workflow c2trainer-4: the arms A and F take --alpha-selection
+             ("l4_legal_a_s42_alpha_selection_reaches_run", legal("a", alpha_selection=alp),
+              {"lambda_logit": None, "alpha_cwd": want["alpha_cwd"]}),
+             ("l4_legal_f_s42_alpha_selection_reaches_run", legal("f", alpha_selection=alp),
+              {"lambda_logit": None, "alpha_cwd": want["alpha_cwd"]})]
+    # c2trainer-4: a relative path and a path through a symlink are both recorded resolved (a named SKIP where the
+    # host gives no relative path or no symlink, as in Q10)
+    try:
+        rel_lam = os.path.relpath(lam)
+    except ValueError as e:                       # Windows: the working directory is on another drive
+        skip("l4_relative_selection_path_is_recorded_resolved", f"no relative path from here: {e}")
+    else:
+        cases.append(("l4_relative_selection_path_is_recorded_resolved",
+                      legal("e2", seed=43, lambda_selection=rel_lam), lam_only))
+    link = TMP / "records_link"
+    try:
+        link.symlink_to(sel, target_is_directory=True)
+    except (OSError, NotImplementedError) as e:   # Windows without the symlink privilege
+        skip("l4_selection_path_through_a_symlink_is_recorded_resolved", f"os.symlink not permitted on this host: {e}")
+    else:
+        cases.append(("l4_selection_path_through_a_symlink_is_recorded_resolved",
+                      legal("e2", seed=43, lambda_selection=link / lam.name), lam_only))
+    for label, argv, selections in cases:
+        reset()
+        rc, err = call_main(argv)
+        got = SEEN[-1] if SEEN else {}
+        check(label, rc == 0 and got.get("selections") == selections and got.get("records_commit") is None,
+              f"rc={rc} selections={got.get('selections')} {err.strip()[-120:]}")
+    reset()
+    rc, err = call_main(legal("e2", records_commit=COMMIT))
+    check("l4_records_commit_reaches_run", rc == 0 and bool(SEEN) and SEEN[-1].get("records_commit") == COMMIT,
+          f"rc={rc} {err.strip()[-120:]}")
+    for label, bad in (("39_chars", COMMIT[:39]), ("41_chars", COMMIT + "0"), ("uppercase", COMMIT.upper()),
+                       ("not_hex", "g" * 40), ("short_id", COMMIT[:7]), ("empty", "")):
+        refused(f"l4_records_commit_{label}", legal("e2", records_commit=bad), "records_commit_format")
+    refused("l4_dry_records_commit_uppercase", ["--stage", "e2", "--dry-run", "--records-commit", COMMIT.upper()],
+            "records_commit_format")
+    # launch_fields(): per stage and horizon, and its refusals for direct calls
+    for stage, horizon, arm, descriptive, parent in (
+            ("e2", 80000, None, False, False), ("e3", 80000, None, False, True), ("e2", 160000, None, True, False),
+            ("e3", 160000, None, True, False), ("a", 80000, "A", True, False), ("f", 80000, "F", True, False),
+            ("g", 80000, "G", True, False)):
+        f = td.launch_fields(td.resolve_stage(stage), horizon=horizon)
+        check(f"l4_launch_fields_{stage}_{horizon // 1000}k", list(f) == LAUNCH_KEYS
+              and (f["arm"], f["descriptive"], f["parent_of_e4_e7"]) == (arm, descriptive, parent)
+              and f["selection_sha256"] == f["selection_files"] == NULL_SELECTIONS and f["records_commit"] is None,
+              json.dumps(f))
+    for label, stage, kw, code in (
+            ("alpha_selection_on_e2", "e2", {"selections": {**NULL_SELECTIONS, "alpha_cwd": want["alpha_cwd"]}},
+             "selection_term"),
+            ("lambda_selection_on_g", "g", {"selections": {**NULL_SELECTIONS, "lambda_logit": want["lambda_logit"]}},
+             "selection_term"),
+            ("a_missing_key", "e3", {"selections": {"lambda_logit": None}}, "selection_term"),
+            ("records_commit_short_id", "e2", {"records_commit": COMMIT[:7]}, "records_commit_format")):
+        try:
+            td.launch_fields(td.resolve_stage(stage), horizon=80000, **kw)
+            outcome = "no refusal"
+        except ValueError as e:
+            outcome = str(e)
+        check(f"l4_launch_fields_refuses_{label}", outcome.startswith(f"[{code}]"), outcome[:160])
+    # the REAL run(): a direct call refuses before any student is built; a dry run records the fields
+    saved_seed = td.set_seed
+    td.set_seed = lambda s: None
+    reset()
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            REAL_RUN(stage=td.resolve_stage("e2"), mode="dry", device="cpu", pretrained=False, teacher=None,
+                     lambda_logit=1.0, batch_size=2, max_iters=2, val_interval=2, max_val_batches=1,
+                     num_workers=0, ckpt_dir_arg=fresh("e2_s42_direct"), grad_clip_norm=None, log_every=1,
+                     seed=42, selections={**NULL_SELECTIONS, "alpha_cwd": want["alpha_cwd"]})
+        outcome = "no refusal"
+    except ValueError as e:
+        outcome = f"refused: {e}"
+    except _WouldBuildStudent:
+        outcome = "student built"
+    finally:
+        td.set_seed = saved_seed
+    check("l4_run_direct_call_refuses_selection_term", outcome.startswith("refused: [selection_term]")
+          and COUNT["student"] == 0, outcome[:160])
+    meta = run_meta_of_direct_run("e3", selections=want, records_commit=COMMIT)
+    tail = dict(list(meta.items())[-6:]) if isinstance(meta, dict) else meta
+    check("l4_run_meta_e3_launch_fields_recorded_last", isinstance(meta, dict)
+          and list(meta)[-7:] == ["teacher_mock"] + LAUNCH_KEYS
+          and tail == {"arm": None, "descriptive": False, "parent_of_e4_e7": True,
+                       "selection_sha256": {k: v["sha256"] for k, v in want.items()},
+                       "selection_files": {k: v["path"] for k, v in want.items()}, "records_commit": COMMIT},
+          json.dumps(tail)[:400])
+    meta = run_meta_of_direct_run("g")
+    tail = dict(list(meta.items())[-6:]) if isinstance(meta, dict) else meta
+    check("l4_run_meta_g_launch_fields_with_no_flag", isinstance(meta, dict)
+          and list(meta)[-7:] == ["teacher_mock"] + LAUNCH_KEYS
+          and tail == {"arm": "G", "descriptive": True, "parent_of_e4_e7": False,
+                       "selection_sha256": NULL_SELECTIONS, "selection_files": NULL_SELECTIONS,
+                       "records_commit": None}, json.dumps(tail)[:400])
 
 
 REAL_RUN = td.run
@@ -681,7 +929,7 @@ def main() -> int:
         for fn in (test_legal_launches, test_lambda, test_ckpt_dir, test_ckpt_dir_in_repo_and_log_every,
                    test_abort_exit, test_schedule, test_val, test_workers, test_seed_batch_init, test_clip,
                    test_tf32, test_cuda_order, test_alpha_and_semantics, test_run_entry_repeats,
-                   test_gate_order, test_teacher_sha256):
+                   test_gate_order, test_teacher_sha256, test_launch_fields):
             fn()
     finally:
         td.DATA["root"] = saved[0]

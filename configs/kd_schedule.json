@@ -1,0 +1,6 @@
+{
+  "format": "kd_schedule/1",
+  "in_force": "T",
+  "decision_log_entry": "DL-70",
+  "basis": "AM-19 item 1(b): Schedule T is in force from AM-19's commit (DL-70). Schedule R replaces it only by a decision-log entry committed before the first KD run launches (the adviser's written reply that the 17 Nov manuscript does not need final TEST results, or a rejection of item 1); this file then reads R and names that entry, under a new code pin. Once the first KD run has launched the schedule changes only by a new amendment, and the selection refuses a schedule file whose blob differs from the one at any launch (PL-12)."
+}
