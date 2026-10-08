@@ -3,8 +3,8 @@
 scripts/split_censuses.py).
 
 SYNTHETIC ONLY. Small trees of tiny JPEGs are written with PIL under a temporary root. Its parent is TMPDIR,
-whose realpath is checked to contain no "test" before anything is created; its own name is a fixed prefix plus
-hex digits, which cannot spell "test". Records fixtures follow the teacher hook's row schema
+whose string and realpath are both checked to contain no "test" before anything is created; its own name is a
+fixed prefix plus hex digits, which cannot spell "test". Records fixtures follow the teacher hook's row schema
 (src/training/teacher_components.py:356-366). No PlantSeg image, mask or TEST path is read; nothing is written
 into the repository; the TEST-path refusals use names and resolved paths that are never created. The synthetic
 trees are run with --synthetic-inputs and --expect-train/--expect-val (smoke mode only; a real run fixes 5,367
@@ -184,6 +184,11 @@ def build_trees() -> None:
         (root / "images" / "train" / "extra").mkdir()
     CTX.tt_sub = tree("ts_sub", train_t, val_t, extra=sub)
     CTX.tt_dot = tree("ts_dot", train_t + [(".h.jpg", 8, 8)], val_t)
+
+    def link(root):                                                   # an in-folder symlink to a sibling image
+        os.symlink("t_0.jpg", root / "images" / "train" / "link_t0.jpg")
+    CTX.tt_link = tree("ts_link", train_t, val_t, extra=link)
+    CTX.ta_warn = tree("ar_warn", TRAIN_A, VAL_A[:3] + [("v_big.jpg", 50, 50)])     # 2,500 px: warns at 2,000
     CTX.val_manifest = hash_split_manifest([ManifestEntry(i, s, s) for i, s in enumerate(["u-1", "u", "v"])])
     CTX.val_manifest_stem_order = hash_split_manifest([ManifestEntry(i, s, s)
                                                        for i, s in enumerate(["u", "u-1", "v"])])
@@ -495,6 +500,24 @@ def A16():
                   "belong to --census teacher-suffix", out)
 
 
+def A15b():
+    """PIL warns (DecompressionBombWarning) above MAX_IMAGE_PIXELS and refuses above twice it: at 2,000 the 265x10,
+    266x10 and 10x300 TRAIN images and the 50x50 VAL image warn, and nothing is refused."""
+    with patched((Image, "MAX_IMAGE_PIXELS", 2000)):
+        code, doc, se, _ = ar_run(CTX.ta_warn, val=4)
+    if doc is None:
+        return False, {"exit": code, "stderr": se[-300:]}
+    n = {s: sum(doc["splits"][s]["header_warnings"].values()) for s in ("train", "val")}
+    c = sum(doc["combined"]["header_warnings"].values())
+    return code == 0 and n == {"train": 3, "val": 1} and c == 4, {"per_split": n, "combined": c}
+
+
+def A17():
+    code, doc, se, _ = ar_run(CTX.tt_link, train=6, val=3)
+    e = doc["inputs"]["entries"] if doc else {}
+    return code == 0 and e.get("train", {}).get("symlinks") == 1 and e.get("val", {}).get("symlinks") == 0, e
+
+
 def A8h():
     out = fresh_out("a8h")
     extra = ["--script-commit", "0" * 40, "--script-commit-dl-id", "DL-99", "--expect-train", "9"]
@@ -684,6 +707,14 @@ def T14():
     return ok, t
 
 
+def T23():
+    code, doc, se, _ = ts_run(CTX.tt_link, train=6)
+    t = doc["splits"]["train"] if doc else {}
+    ok = (code == 0 and t.get("n_symlinks") == 1 and doc["splits"]["val"]["n_symlinks"] == 0
+          and t.get("teacher_rule_count") == 6 == t.get("student_rule_count"))
+    return ok, t
+
+
 def records_refusal(tag: str, rec: Path, needle: str) -> tuple[bool, dict]:
     out = fresh_out(tag)
     return expect(ts_argv(CTX.tt, rec, out), 2, needle, out)
@@ -762,6 +793,7 @@ def guard_names_only(args) -> None:
 
 
 _REAL_REFUSE_NAMES = td.refuse_test_names
+_REAL_READ_HEADER = SC.read_header
 
 
 def refuse_argument_names_only(names, what) -> None:
@@ -793,6 +825,8 @@ MUTATIONS = [
      lambda: [(SC, "teacher_rule", lambda n: n.endswith(SC.TEACHER_IMG_SUFFIX))], "T14"),
     ("M49", "an overflowing number accepted", lambda: [(SC, "parse_finite_float", float)], "T15"),
     ("M50", "a duplicate key resolved silently", lambda: [(SC, "no_duplicate_keys", dict)], "T16"),
+    ("M53", "header warnings dropped", lambda: [(SC, "read_header", lambda p: _REAL_READ_HEADER(p)[:3] + ([],))],
+     "A15b"),
 ]
 
 
@@ -827,6 +861,8 @@ def checks() -> list:
         ("A14", "a listed entry resolving to a test location -> exit 2 before any header is read", A14),
         ("A15", "formats and header warnings per split and combined; no symlink, no dot-named file", A15),
         ("A16", "--expect-records-sha256 with --census aspect-ratio -> exit 2", A16),
+        ("A15b", "header warnings counted per split and combined (TRAIN 3, VAL 1) at MAX_IMAGE_PIXELS 2,000", A15b),
+        ("A17", "an in-folder symlink counted in inputs.entries (aspect-ratio)", A17),
         ("T1a", "teacher-suffix: exit 0, exact histograms, both rules 5/3, stem sets equal", T1a),
         ("T1b", "records: 10 rows, iterations 4000..40000, val_images 3, the sha256 pin and DL-68 source", T1b),
         ("T1c", "the census VAL manifest equals the records'; expectation met", T1c),
@@ -858,6 +894,7 @@ def checks() -> list:
         ("T20", "a records line that is not JSON -> exit 2", T20),
         ("T21", "a records row without val_images -> exit 2", T21),
         ("T22", "an empty records file -> exit 2", T22),
+        ("T23", "an in-folder symlink counted in splits.train.n_symlinks (teacher-suffix)", T23),
     ]
 
 
@@ -877,6 +914,8 @@ def make_root(prefix: str):
     base = os.environ.get("TMPDIR")
     if not base:
         return None, "TMPDIR is not set; run with TMPDIR=/tmp/s4scratch"
+    if "test" in base.lower():                                        # the string first, before any filesystem call
+        return None, "TMPDIR contains 'test'"
     real = os.path.realpath(base)
     if "test" in real.lower() or not os.path.isdir(real):
         return None, f"TMPDIR resolves to {real!r}, which contains 'test' or is not a directory"

@@ -27,12 +27,14 @@ teacher-suffix (DL-55, A1 N3): per folder the exact-suffix histogram (case-sensi
 the student's rule, their stem sets, and the counts of subdirectories, symlinks and dot-named files. The
 teacher's rule is the listing mmseg's BaseSegDataset applies with the teacher config's img_suffix '.jpg'
 (configs/teacher/...:207): mmengine's LocalBackend.list_dir_or_file yields a file only if its name does not
-start with '.' and it ends with the suffix, case-sensitive ([U]: transcribed from mmengine, which is not in the
+start with '.' and it ends with the suffix, case-sensitive; dot-named directories are still entered, and the
+census's no-subdirectory check fails any directory ([U]: transcribed from mmengine, which is not in the
 repository). The run of record's teacher_selection_records.jsonl (its basename must be
 src/training/teacher_components.py RECORDS_FILE) is read strictly (non-finite numbers, duplicate keys,
 undecodable bytes and non-object lines are refused): 10 rows at iterations 4,000 ... 40,000, val_images 846 in
-every row, one val_manifest_sha256 equal to the census's own hash of the name-sorted exact-suffix VAL stems
-(hash_split_manifest over ManifestEntry(i, stem, stem): the pass order the teacher hook hashes,
+every row, one val_manifest_sha256 equal to the census's own hash of the name-sorted VAL stems under the
+teacher's rule (exact '.jpg', no leading dot; hash_split_manifest over ManifestEntry(i, stem, stem): the pass
+order the teacher hook hashes,
 teacher_components.py:214-224; "BaseSegDataset sorts by img_path", teacher config :249). The census is written
 whatever it finds; exit 1 when the expectation is not met.
 
@@ -109,8 +111,9 @@ def student_rule(name: str) -> bool:
 
 
 def teacher_rule(name: str) -> bool:
-    """The teacher dataset's listing: no leading '.' (mmengine LocalBackend skips dot-named entries) and the
-    exact, case-sensitive img_suffix '.jpg'."""
+    """The teacher dataset's listing of files: no leading '.' (mmengine LocalBackend skips dot-named files; it still
+    enters dot-named directories, which the no-subdirectory check fails) and the exact, case-sensitive img_suffix
+    '.jpg'."""
     return not name.startswith(".") and name.endswith(TEACHER_IMG_SUFFIX)
 
 
@@ -432,7 +435,8 @@ def teacher_suffix(args, listings: dict, folders: dict, expected: dict, base: di
                    "listing": "one os.scandir per folder; no recursion; no other folder",
                    "teacher_rule": "not name.startswith('.') and name.endswith('.jpg') (configs/teacher/segnext_mscan-"
                                    "b_1xb16-adamw-40k_plantseg116-512x512.py:207 img_suffix, exact and case-sensitive; "
-                                   "mmengine LocalBackend.list_dir_or_file skips dot-named entries [U: transcribed, "
+                                   "mmengine LocalBackend.list_dir_or_file skips dot-named files and still enters "
+                                   "dot-named directories, which the no-subdirectory check fails [U: transcribed, "
                                    "mmengine is not in the repository])",
                    "student_rule": "os.path.splitext(name)[1].lower() in ('.jpg', '.jpeg')",
                    "expected": expected},
@@ -450,8 +454,9 @@ def teacher_suffix(args, listings: dict, folders: dict, expected: dict, base: di
                                                                  for r in rows)},
         "val_manifest": {"census": census_sha, "records": manifests[0] if len(manifests) == 1 else None,
                          "equal": expectation["records_val_manifest_equals_census"],
-                         "rule": "hash_split_manifest over ManifestEntry(i, stem, stem) for the name-sorted exact-suffix "
-                                 "VAL files: the order the teacher hook hashes (src/training/teacher_components.py:214-224; "
+                         "rule": "hash_split_manifest over ManifestEntry(i, stem, stem) for the name-sorted VAL files "
+                                 "under the teacher's rule (exact '.jpg', no leading dot): the order the teacher hook "
+                                 "hashes (src/training/teacher_components.py:214-224; "
                                  "'BaseSegDataset sorts by img_path', teacher config :249); mmseg's own listing is not "
                                  "in the repository"},
         "expectation": expectation, "expectation_met": met, "status": "written"})
