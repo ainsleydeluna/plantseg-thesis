@@ -32,11 +32,12 @@ SAFETY MODEL (mirrors train_e1.py, plus the distillation-specific gates):
     requires an explicit `--lambda-logit` from the AM-2 grid for a stage with
     Logit KD (the contract leaves lambda_logit as NEED_TO_CONFIRM, selected by validation sweep — it
     is never guessed here). It runs the registered recipe only (L-KD-HARDEN item 2): a fresh, explicit
-    `--ckpt-dir`; the whole 80,000-iteration schedule; VAL on the full set every 4,000 iterations; an
-    explicit `--num-workers` >= 1; seed 42, 43 or 44 (42 only for A, F and G); batch 16; ImageNet
-    init; the default TF32 state; and NO gradient clipping: AM-7 makes E1, E2 and E3 unclipped, so
-    `--grad-clip-norm` is refused (dry runs accept it). A stage with the feature-map CWD term takes
-    `--alpha` from {25, 50, 100} only, and its `--ckpt-dir` name must carry exactly one token
+    `--ckpt-dir`; the whole schedule, 80,000 iterations (160,000 with `--iterations 160000`, the AM-16
+    item 3 longer-schedule control, for E2 and E3 at seed 42 only: lane 3, K2); VAL on the full set
+    every 4,000 iterations; an explicit `--num-workers` >= 1; seed 42, 43 or 44 (42 only for A, F and
+    G); batch 16; ImageNet init; the default TF32 state; and NO gradient clipping: AM-7 makes E1, E2 and
+    E3 unclipped, so `--grad-clip-norm` is refused (dry runs accept it). A stage with the feature-map CWD
+    term takes `--alpha` from {25, 50, 100} only, and its `--ckpt-dir` name must carry exactly one token
     `alpha<value>`. An argument for a term the stage does not instantiate is refused, not ignored.
   * main()'s gates return before any dataloader or teacher is constructed; run() repeats the schedule
     and CUDA-order checks at its entry, after main() has loaded the teacher, and in a real run it also
@@ -119,8 +120,9 @@ from src.seeds import set_seed                                     # noqa: E402
 from src.training.losses import (CombinedCEDiceLoss, cwd_channelwise_kl,  # noqa: E402
                                  downsample_validity, logit_kd_kl)
 # Reuse the audited E1 mechanics verbatim rather than re-implementing them.
-from src.training.train_e1 import (CLASS_WEIGHTS_JSON, build_scheduler, cycle,  # noqa: E402
-                                   load_ce_weights, per_class_iou, resolve_ckpt_dir,
+from src.training.train_e1 import (CLASS_WEIGHTS_JSON, REGISTERED_POLY_HORIZONS,  # noqa: E402
+                                   build_scheduler, cycle, load_ce_weights, per_class_iou,
+                                   resolve_ckpt_dir,
                                    total_grad_norm, validate, write_best_pointer,
                                    _assert_outside_repo, _atomic_save, _git_provenance,
                                    _image_digest, _jsonl)
@@ -588,13 +590,18 @@ def tf32_gate_error(state: dict) -> str | None:
 
 
 def schedule_gate_error(mode: str, max_iters: int, *, horizon: int | None = None) -> str | None:
-    """Item 2c. None = admissible, else the refusal text, led by its bracketed code.
+    """Item 2c and lane 3 (K2). None = admissible, else the refusal text, led by its bracketed code.
 
-    The KD stages train on E1's fixed poly horizon (E1_STUDENT["iterations"]). PolynomialLR holds the
-    LR at 0.0 past it, so no mode may run longer, and a real run trains exactly the whole schedule.
-    `horizon` is keyword-only: train_e1.schedule_gate_error takes (mode, poly_horizon, max_iters).
+    The KD stages train on a registered poly horizon, train_e1's REGISTERED_POLY_HORIZONS: E1's 80,000
+    (E1_STUDENT["iterations"], the default) or 160,000, the AM-16 item 3 longer-schedule control
+    (`--iterations 160000`). PolynomialLR holds the LR at 0.0 past it, so no mode may run longer, and a
+    real run trains exactly the whole schedule. `horizon` is keyword-only: train_e1.schedule_gate_error
+    takes (mode, poly_horizon, max_iters).
     """
     horizon = E1_STUDENT["iterations"] if horizon is None else horizon
+    if horizon not in REGISTERED_POLY_HORIZONS:
+        return (f"[poly_horizon_unregistered] poly horizon {horizon} is not registered "
+                f"{REGISTERED_POLY_HORIZONS}")
     if max_iters > horizon:
         return (f"[max_iters_above_horizon] --max-iters {max_iters} exceeds the poly horizon {horizon}: "
                 f"PolynomialLR holds lr at 0.0 after it, so iterations {horizon + 1}..{max_iters} "
@@ -812,7 +819,7 @@ def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeach
         semantics_declared=None, semantics_override: bool = False,
         grad_clip_norm: float | None, log_every: int, seed: int,
         alpha: float | None = None, alpha_offgrid: bool = False,
-        selections=None, records_commit: str | None = None) -> int:
+        selections=None, records_commit: str | None = None, poly_horizon: int | None = None) -> int:
     wall_clock_start = time.time()
     # Item 2i: set_seed exports CUBLAS_WORKSPACE_CONFIG and the determinism settings, which must precede
     # the first CUDA op (contract B6), so CUDA must still be uninitialised here; main() checks the same
@@ -822,7 +829,9 @@ def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeach
               "initialised before run() seeded the run; find what touched CUDA first",
               file=sys.stderr)
         return 2
-    sched_error = schedule_gate_error(mode, max_iters)            # item 2c, repeated for direct calls
+    # Lane 3 (K2): the poly horizon, E1's 80,000 unless --iterations registered another (main()).
+    horizon = E1_STUDENT["iterations"] if poly_horizon is None else poly_horizon
+    sched_error = schedule_gate_error(mode, max_iters, horizon=horizon)   # item 2c, repeated for direct calls
     if sched_error is not None:
         raise RuntimeError(sched_error)
     if mode == "real":
@@ -847,8 +856,7 @@ def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeach
         raise ValueError(f"stage {stage['name']} has no feature-map CWD term; alpha must be None")
     if stage["cwd_feat"]:
         alpha = float(ALPHA_CWD_FEAT if alpha is None else alpha)
-    launch = launch_fields(stage, horizon=E1_STUDENT["iterations"], selections=selections,
-                           records_commit=records_commit)
+    launch = launch_fields(stage, horizon=horizon, selections=selections, records_commit=records_commit)
     print(f"[stage] {stage['name']} | objective: {stage['objective']} | terms: "
           + " ".join(f"{t}={'on' if stage[t] else 'off'}" for t in TERMS))
     print(f"[mode] {mode.upper()} | torch {torch.__version__} | device={dev} | "
@@ -910,8 +918,11 @@ def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeach
 
     # Optimizer is built EXPLICITLY from the student (+ the projection's group) — never from the teacher.
     optimizer, trainable = build_optimizer(student, projection, teacher)
-    horizon = E1_STUDENT["iterations"]
     scheduler, sched_name = build_scheduler(optimizer, horizon, E1_STUDENT["lr_power"])
+    sched_h = getattr(scheduler, "total_iters", None)     # lane 3: train_e1's guard (:403-407)
+    if sched_h != horizon:
+        raise RuntimeError(f"[poly_horizon_mismatch] scheduler total_iters={sched_h} != the poly horizon "
+                           f"{horizon}")
     print(f"[opt] SGD lr={E1_STUDENT['learning_rate']} scheduler={sched_name} "
           f"(total_iters={horizon}, power={E1_STUDENT['lr_power']}) trainable_tensors={len(trainable)} "
           f"param_groups={[g['name'] for g in optimizer.param_groups]} teacher_params_in_optimizer=0")
@@ -1307,6 +1318,10 @@ def parse_args(argv=None, stage_default: str | None = None):
     p.add_argument("--init", choices=["none", "imagenet"], default=None)
     p.add_argument("--batch-size", type=int, default=None)
     p.add_argument("--max-iters", type=int, default=None)
+    p.add_argument("--iterations", type=int, choices=REGISTERED_POLY_HORIZONS, default=None,
+                   help="schedule length = the poly-LR horizon AND the real-run length (lane 3); default "
+                        "E1_STUDENT['iterations'] (80000); 160000 = the AM-16 item 3 longer-schedule "
+                        "control, a real run of E2 or E3 at seed 42 only")
     p.add_argument("--val-interval", type=int, default=None)
     p.add_argument("--max-val-batches", type=int, default=None)
     p.add_argument("--num-workers", type=int, default=None,
@@ -1373,7 +1388,9 @@ def main(argv=None, stage_default: str | None = None) -> int:
         print(f"REFUSING to start the {mode} {stage['name']} run: [{code}] {message}", file=sys.stderr)
         return 2
 
-    max_iters = ((args.max_iters if args.max_iters is not None else E1_STUDENT["iterations"])
+    # Lane 3 (K2): --iterations sets the poly horizon and, in a real run, the default --max-iters.
+    horizon = args.iterations or E1_STUDENT["iterations"]
+    max_iters = ((args.max_iters if args.max_iters is not None else horizon)
                  if mode == "real" else (args.max_iters or 4))
 
     def both_mode_gates() -> int | None:
@@ -1382,7 +1399,7 @@ def main(argv=None, stage_default: str | None = None) -> int:
         sem_error = lambda_semantics_gate_error(args.lambda_semantics, args.allow_semantics_mismatch)
         if sem_error is not None:
             return refuse("lambda_semantics", sem_error)
-        sched_error = schedule_gate_error(mode, max_iters)
+        sched_error = schedule_gate_error(mode, max_iters, horizon=horizon)
         if sched_error is not None:
             print(f"REFUSING to start the {mode} {stage['name']} run: {sched_error}", file=sys.stderr)
             return 2
@@ -1484,6 +1501,10 @@ def main(argv=None, stage_default: str | None = None) -> int:
         if args.seed not in REAL_RUN_SEEDS[stage["key"]]:
             return refuse("seed", f"--seed {args.seed} is not a registered seed of stage "
                                   f"{stage['name']}: {REAL_RUN_SEEDS[stage['key']]}")
+        if horizon != E1_STUDENT["iterations"] and (stage["key"] not in ("e2", "e3") or args.seed != 42):
+            return refuse("iterations", f"--iterations {horizon} is the AM-16 item 3 longer-schedule "
+                                        f"control: E2 and E3 at seed 42 only, not {stage['name']} seed "
+                                        f"{args.seed}")
         if args.batch_size is not None and args.batch_size != E1_STUDENT["batch_size"]:
             return refuse("batch_size", f"--batch-size {args.batch_size} != "
                                         f"{E1_STUDENT['batch_size']}, the E1 recipe's batch")
@@ -1544,7 +1565,7 @@ def main(argv=None, stage_default: str | None = None) -> int:
                    semantics_declared=args.lambda_semantics,
                    semantics_override=bool(args.allow_semantics_mismatch),
                    alpha=alpha, alpha_offgrid=alpha_offgrid,
-                   selections=selections, records_commit=args.records_commit)
+                   selections=selections, records_commit=args.records_commit, poly_horizon=horizon)
     except RunAborted as e:                       # run() raises; the process exits cleanly with code 3
         r = e.record
         print(f"RESULT: ABORTED rule={r['rule']} iter={r['iter']} cause={r['cause']}; the run_abort record "
