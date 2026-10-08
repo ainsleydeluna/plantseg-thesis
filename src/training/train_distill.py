@@ -53,6 +53,14 @@ SAFETY MODEL (mirrors train_e1.py, plus the distillation-specific gates):
   * Checkpoints are NEVER written inside the repo. The training-only CWD projection and its optimizer
     group are written to `projection.pt` beside the checkpoint, never into it, so `model_state_dict`
     is already the clean E6/E7 deployment student and the checkpoint carries nothing to strip.
+  * Launch fields (lane 4(a); K2, PL-28), in both modes: `--lambda-selection` and `--alpha-selection`
+    name the selection files a launch takes lambda and alpha from (the records folder's copies; for
+    alpha also the decision record that cuts the sweep), and `--records-commit` the commit those
+    records come from. A file for a term the stage does not instantiate is refused
+    ([selection_term]), as is a missing or unreadable file ([selection_file_missing]) and a records
+    commit other than 40 lowercase hex characters ([records_commit_format]). The trainer hashes the
+    files and checks nothing else: run_meta records them, with arm, descriptive and parent_of_e4_e7,
+    after teacher_mock, and the launch gate and check-run-meta validate them (lane 4(b)).
 
 Exit codes of main() (and of train_e2.py / train_e3.py):
   0  the run finished and every hard check passed (RESULT: PASS); argparse's --help also exits 0
@@ -608,6 +616,82 @@ def ckpt_dir_fresh_error(ckpt_dir) -> str | None:
     return None
 
 
+# ------------------------------------------------------------- launch fields (lane 4(a); K2, PL-28)
+# run_meta's launch fields, after teacher_mock. arm names the exploratory arm (AM-17 item 7, AM-17b item
+# 1); descriptive marks plan P5's descriptive runs, A, F and G and a horizon other than E1's 80,000 (AM-16
+# item 3). It is not the scope of AM-7a item 3's arm rule, which (amended by AM-19 item 5) also covers E2
+# and E3 at seeds 43 and 44, runs descriptive does not mark: exit handling reads the stage and the seed (the
+# runbook's table), never descriptive alone. parent_of_e4_e7 states eligibility only (E3 on the
+# 80,000-iteration horizon; AM-4a item 5), the selection file names the run of record. The trainer hashes
+# the selection files a launch names and checks nothing else: the launch gate and check-run-meta validate
+# them (lane 4(b); F1).
+ARMS = ("a", "f", "g")
+SELECTION_KEYS = ("lambda_logit", "alpha_cwd")          # run_meta selection_sha256 / selection_files
+SELECTION_TERMS = {"lambda_logit": "logit_kd", "alpha_cwd": "cwd_feat"}
+SELECTION_FLAGS = {"lambda_logit": "--lambda-selection", "alpha_cwd": "--alpha-selection"}
+COMMIT_ID_RE = re.compile(r"[0-9a-f]{40}")
+
+
+def records_commit_error(records_commit) -> str | None:
+    """PL-28: a records commit is a full commit id, 40 lowercase hex characters. None if OK."""
+    if records_commit is None or (isinstance(records_commit, str) and COMMIT_ID_RE.fullmatch(records_commit)):
+        return None
+    return (f"[records_commit_format] --records-commit {records_commit!r} is not a full commit id (40 "
+            "lowercase hex characters)")
+
+
+def selection_args(stage, files: Mapping, records_commit) -> tuple[dict | None, str | None]:
+    """main()'s lane 4(a) arguments, in both modes. `files` maps each SELECTION_KEYS entry to the path
+    its flag gave, or None. A file for a term the stage does not instantiate is refused, not ignored;
+    a given path must be an existing, readable regular file, which is hashed here. Returns (selections,
+    None), selections mapping each key to None or {"path": the resolved path, "sha256"}; or (None, the
+    refusal text led by its code)."""
+    selections = {}
+    for key in SELECTION_KEYS:
+        path = files.get(key)
+        if path is None:
+            selections[key] = None
+            continue
+        flag, term = SELECTION_FLAGS[key], SELECTION_TERMS[key]
+        if not stage[term]:
+            return None, (f"[selection_term] {flag} was given, but stage {stage['name']} has no {term} term "
+                          f"(terms on: {', '.join(instantiated_terms(stage))})")
+        if not os.path.isfile(path):
+            return None, f"[selection_file_missing] {flag} {path!r} is not an existing file"
+        try:
+            selections[key] = {"path": str(Path(path).resolve()), "sha256": sha256_file(path)}
+        except (OSError, RuntimeError, ValueError) as e:
+            return None, f"[selection_file_missing] {flag} {path!r} cannot be read ({type(e).__name__}: {e})"
+    error = records_commit_error(records_commit)
+    if error is not None:
+        return None, error
+    return selections, None
+
+
+def launch_fields(stage, *, horizon: int, selections=None, records_commit=None) -> dict:
+    """run_meta's launch fields, in their order: arm, descriptive, parent_of_e4_e7, selection_sha256,
+    selection_files ({lambda_logit, alpha_cwd}, each null when no file was named) and records_commit
+    (null when absent). `selections` is None or selection_args()'s map. A direct run() call with another
+    key, a file for a term the stage does not instantiate or a malformed records commit raises
+    ValueError (main() refuses them first)."""
+    sel = dict.fromkeys(SELECTION_KEYS) if selections is None else dict(selections)
+    if sorted(sel) != sorted(SELECTION_KEYS):
+        raise ValueError(f"[selection_term] selections {sorted(sel)}: the keys are {list(SELECTION_KEYS)}")
+    for key in SELECTION_KEYS:
+        if sel[key] is not None and not stage[SELECTION_TERMS[key]]:
+            raise ValueError(f"[selection_term] a {key} selection file for stage {stage['name']}, which has "
+                             f"no {SELECTION_TERMS[key]} term")
+    error = records_commit_error(records_commit)
+    if error is not None:
+        raise ValueError(error)
+    return {"arm": stage["name"] if stage["key"] in ARMS else None,
+            "descriptive": stage["key"] in ARMS or horizon != E1_STUDENT["iterations"],
+            "parent_of_e4_e7": stage["key"] == "e3" and horizon == E1_STUDENT["iterations"],
+            "selection_sha256": {k: None if sel[k] is None else sel[k]["sha256"] for k in SELECTION_KEYS},
+            "selection_files": {k: None if sel[k] is None else sel[k]["path"] for k in SELECTION_KEYS},
+            "records_commit": records_commit}
+
+
 # ---------------------------------------------------------------- AM-7 aborts (L-KD-HARDEN item 3)
 # AM-7 (b)'s pre-registered parameters (DL-04). configs/distill.py AM7_DIVERGENCE must carry them:
 # another window, factor or ramp rule is a new amendment, not a config edit, so the import refuses it.
@@ -727,7 +811,8 @@ def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeach
         max_val_batches: int | None, num_workers: int, ckpt_dir_arg: str | None,
         semantics_declared=None, semantics_override: bool = False,
         grad_clip_norm: float | None, log_every: int, seed: int,
-        alpha: float | None = None, alpha_offgrid: bool = False) -> int:
+        alpha: float | None = None, alpha_offgrid: bool = False,
+        selections=None, records_commit: str | None = None) -> int:
     wall_clock_start = time.time()
     # Item 2i: set_seed exports CUBLAS_WORKSPACE_CONFIG and the determinism settings, which must precede
     # the first CUDA op (contract B6), so CUDA must still be uninitialised here; main() checks the same
@@ -762,6 +847,8 @@ def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeach
         raise ValueError(f"stage {stage['name']} has no feature-map CWD term; alpha must be None")
     if stage["cwd_feat"]:
         alpha = float(ALPHA_CWD_FEAT if alpha is None else alpha)
+    launch = launch_fields(stage, horizon=E1_STUDENT["iterations"], selections=selections,
+                           records_commit=records_commit)
     print(f"[stage] {stage['name']} | objective: {stage['objective']} | terms: "
           + " ".join(f"{t}={'on' if stage[t] else 'off'}" for t in TERMS))
     print(f"[mode] {mode.upper()} | torch {torch.__version__} | device={dev} | "
@@ -885,6 +972,7 @@ def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeach
     # L-KD-HARDEN item 5: E1's run_meta keys, through train_e1's provenance helpers, plus
     # persistent_workers (E1's TRAIN-loader argument); then the KD carriers. teacher_provenance holds the
     # twelve DL-50 keys of TeacherProvenance.as_dict() (L-CKPT-GUARD), the same dict as the payload's.
+    # Lane 4(a) (K2): the launch fields last.
     git_head, git_head_source = _git_provenance()
     meta.update({"wall_clock": time.time(), "git_head": git_head, "git_head_source": git_head_source,
                  "image_digest": _image_digest(), "torch": torch.__version__, "numpy": np.__version__,
@@ -901,7 +989,7 @@ def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeach
                  "tf32": tf32_state(),
                  "teacher_provenance": (None if teacher.provenance is None
                                         else teacher.provenance.as_dict()),
-                 "teacher_mock": bool(is_mock)})
+                 "teacher_mock": bool(is_mock), **launch})
     with open(meta_path, "a", encoding="utf-8") as _f:
         _f.write(json.dumps(meta) + "\n")
     if stage["logit_kd"]:
@@ -1204,6 +1292,17 @@ def parse_args(argv=None, stage_default: str | None = None):
     p.add_argument("--allow-offgrid", action="store_true",
                    help="dry runs only (tests): accept an --alpha outside the AM-16 grid; recorded "
                         "in run_meta as alpha_offgrid; a real run refuses it")
+    p.add_argument("--lambda-selection", default=None, metavar="PATH",
+                   help="stages with Logit KD: the lambda selection file the launch takes --lambda-logit "
+                        "from (the records folder's copy, PL-28); hashed into run_meta selection_sha256 "
+                        "and selection_files; the launch gate validates it")
+    p.add_argument("--alpha-selection", default=None, metavar="PATH",
+                   help="stages with the feature-map CWD term: the alpha selection file, or the decision "
+                        "record that cuts the alpha sweep (AM-19 item 2(g)), the launch takes --alpha from; "
+                        "hashed into run_meta like --lambda-selection")
+    p.add_argument("--records-commit", default=None, metavar="SHA",
+                   help="the commit the launch's records were read from, 40 lowercase hex characters "
+                        "(PL-28); written to run_meta as records_commit (null when absent)")
     p.add_argument("--device", default=None)
     p.add_argument("--init", choices=["none", "imagenet"], default=None)
     p.add_argument("--batch-size", type=int, default=None)
@@ -1258,6 +1357,13 @@ def main(argv=None, stage_default: str | None = None) -> int:
                                  alpha=args.alpha, allow_offgrid=args.allow_offgrid, mode=mode)
     if term_error is not None:
         print(f"REFUSING to start the {mode} {stage['name']} run: {term_error}", file=sys.stderr)
+        return 2
+    # ---- lane 4(a) (K2, PL-28): the selection files are hashed here, the records commit checked ----
+    selections, selection_error = selection_args(
+        stage, {"lambda_logit": args.lambda_selection, "alpha_cwd": args.alpha_selection},
+        args.records_commit)
+    if selection_error is not None:
+        print(f"REFUSING to start the {mode} {stage['name']} run: {selection_error}", file=sys.stderr)
         return 2
     alpha = (None if not stage["cwd_feat"]
              else float(ALPHA_CWD_FEAT if args.alpha is None else args.alpha))
@@ -1437,7 +1543,8 @@ def main(argv=None, stage_default: str | None = None) -> int:
                    grad_clip_norm=args.grad_clip_norm, log_every=args.log_every, seed=args.seed,
                    semantics_declared=args.lambda_semantics,
                    semantics_override=bool(args.allow_semantics_mismatch),
-                   alpha=alpha, alpha_offgrid=alpha_offgrid)
+                   alpha=alpha, alpha_offgrid=alpha_offgrid,
+                   selections=selections, records_commit=args.records_commit)
     except RunAborted as e:                       # run() raises; the process exits cleanly with code 3
         r = e.record
         print(f"RESULT: ABORTED rule={r['rule']} iter={r['iter']} cause={r['cause']}; the run_abort record "
