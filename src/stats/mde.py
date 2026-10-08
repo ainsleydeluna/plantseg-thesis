@@ -21,6 +21,12 @@ d is not centred (item 3(c): "a constant shift delta is added to the observed di
 "(d + delta)"). Exact ties (d == 0, the Pratt zeros) all become +delta for every delta > 0, which deflates
 MDE_W under the constant-shift null (lane 6 (f)); share_ties and n_zero are recorded with every pair.
 
+Refused (MdeError): a d that is not a finite 1-D vector of at least two values, and a d of exact zeros only (two
+runs that agree image for image), which the pre-registered call refuses at delta 0. A d with some non-zero values
+can still draw an all-zero resample row at delta 0 when m is tiny; the call then raises its own ValueError. At
+m of about 840 and n of about 1,550 that has probability share_ties ** n, so it is not guarded here: catching it
+would add a rule the pre-registered call does not have.
+
 Pure: no I/O, no Git, no randomness beyond the seeded generator. Every rule is a module-level name read at
 call time, so scripts/smoke_mde.py can replace one rule at a time (its mutation set).
 """
@@ -119,11 +125,23 @@ def sample_sd(d) -> float:
     return float(np.std(np.asarray(d, dtype=np.float64), ddof=1))
 
 
+def check_d(d) -> np.ndarray:
+    """The pair's differences as float64, refused unless a finite 1-D vector of at least two values with at
+    least one non-zero value."""
+    d = np.asarray(d, dtype=np.float64)
+    if d.ndim != 1 or d.size < 2:
+        raise MdeError(f"d must be a 1-D vector of at least two differences, got shape {d.shape}")
+    if not np.isfinite(d).all():
+        raise MdeError(f"d holds {int(np.count_nonzero(~np.isfinite(d)))} non-finite difference(s)")
+    if np.count_nonzero(d) == 0:
+        raise MdeError("every difference is an exact zero: the two runs agree image for image, and the "
+                       "pre-registered call refuses an all-zero sample")
+    return d
+
+
 def pair_summary(d, n: int, *, seed=None, b=None, grid=None) -> dict:
     """One pair's shifted-null power curve and MDE_W, with the descriptive fields of lane 6 (c)."""
-    d = np.asarray(d, dtype=np.float64)
-    if d.ndim != 1 or d.size < 2 or not np.isfinite(d).all():
-        raise MdeError(f"d must be a finite 1-D vector of at least two differences, got shape {d.shape}")
+    d = check_d(d)
     if isinstance(n, bool) or not isinstance(n, int) or n < 1:
         raise MdeError(f"n must be a positive int, got {n!r}")
     seed = RNG_SEED if seed is None else seed
@@ -166,4 +184,4 @@ __all__ = ["N_TEST", "N_VAL", "B", "RNG_SEED", "GRID", "GUARD_POINTS", "ALPHA", 
            "WILCOXON_KWARGS", "WILCOXON_CALL", "INDEX_CALL", "Z_ALPHA", "Z_POWER", "DZ_FORMULA",
            "EFFICIENCY", "TAU_P", "MdeError", "min_count", "n_planning", "n_planning_rule",
            "resample_indices", "wilcoxon_p", "rejects", "qualifies", "rejection_counts", "guard_index",
-           "sample_sd", "pair_summary", "overall", "analytic", "power_caveat"]
+           "sample_sd", "check_d", "pair_summary", "overall", "analytic", "power_caveat"]

@@ -7,41 +7,52 @@ repository, then dressed (stats_fixtures.edit_summary) with the DL-17 B66 pins s
 eval_runtime (cuda:0, NVIDIA A40, batch 16, 53 batches, image b80b645d..., iteration 80000), the checkpoint
 sha256 cf0879f7..., dataset_level.all_class_miou 0.36314016580581665 and per_class.gt_support summing to
 159,279,104. No PlantSeg image, mask, checkpoint or TEST file is read; nothing is written into the repository.
-Every created path lies under the temporary root, whose realpath is checked to contain no "test" before any
-CLI call; the TEST-path refusals use paths that are never created.
+Every created path lies under the temporary root. Its parent is TMPDIR, whose realpath is checked to contain
+no "test" before anything is created; its own name is a fixed prefix plus hex digits, which cannot spell
+"test". The TEST-path refusals use paths that are never created. Refusals that could write if their gate
+regressed run with td.write_files_exclusive replaced by a tripwire.
 
   U  units of src/stats/mde.py: U0 the constants; n_planning; the grid; the 3-point guard on integer counts;
      the max over pairs; the caveat boundary; p < alpha strict; a spy on every pre-registered call; a spy on
-     the index draw; U8b the draw equals default_rng(42).choice(d + delta) on this numpy; the analytic rule
+     the index draw; U8b the draw equals default_rng(42).choice(d + delta) on this numpy; the analytic rule;
+     U10 the refused d (exact zeros only, non-finite, too short)
   D  lane 6 (d) d1-d3 on exactly symmetric synthetic d (the erratum; see the lane report): d1 30% zeros, d2 no
      zeros with SD 0.10; D1e the tie counts; D2b non-centring (MDE_W(d2 + 0.003) = MDE_W(d2) - 0.003)
   B  the band round trip through its reader src/training/sweep_select.py dl27_band
-  C  the CLI on synthetic VAL artifacts: exit 0, the two files, the entry's keys and the report validator, the
-     report layer's "pending" for an uncommitted entry, byte-identical reruns, the pair orientation
-  R  refusals (exit 2, nothing written): a test path in each of the seven path flags, existing outputs, missing
-     inputs, provenance mismatches, the lane 6 (f) AM-5 STOP, out-dir inside the repository, mode flags, the
-     same run twice, --expect-k-val, a best.json with an extra key, the environment pin, the MANIFEST pin
-  S  computed STOPs (exit 1, nothing written): the re-derivation of item 3(a)'s field; no qualifying delta
+  C  the CLI on synthetic VAL artifacts: exit 0, the two files, the DL line, the entry's keys and every headline
+     number recomputed from the entry with literals, the report validator, the report layer's "pending" for an
+     uncommitted entry, byte-identical reruns, the pair orientation; C6 the same numbers from an in-process run
+  R  refusals (exit 2, nothing written): a test path in each of the seven path flags, a path resolving to a
+     test location, existing outputs, missing inputs, provenance mismatches (each gate), the lane 6 (f) AM-5
+     STOP (same K, other ids; and another K), out-dir inside the repository, mode flags in both directions,
+     the run-of-record binding (HEAD, the code files, a clean tree), the same run twice (directories, run_ids,
+     checkpoints), --expect-k-val, best.json content, the rule file's band, the environment, the MANIFEST
+     pin, two runs that agree image for image
+  S  computed STOPs (exit 1, nothing written): the re-derivation of item 3(a)'s field (value; class count); no
+     qualifying delta; the report validator; the band read back through its reader
   M  mutations of one rule each, every one killed by the named check
 
-Run (TMPDIR's realpath must contain no "test"):
+Run (TMPDIR must be set; its realpath must contain no "test"):
     env TMPDIR=/tmp/s4scratch PYTHONPATH=<repo> python -B scripts/smoke_mde.py
 """
 from __future__ import annotations
 
+import builtins
 import contextlib
+import copy
 import hashlib
 import io
 import json
 import math
 import os
+import secrets
 import shutil
 import statistics
 import subprocess
 import sys
-import tempfile
 import time
 import traceback
+from fractions import Fraction
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -58,6 +69,7 @@ from src.eval.artifacts import EVAL_RUNTIME_VERSION, MANIFEST_NAME  # noqa: E402
 from src.eval.evaluate import Condition  # noqa: E402
 from src.stats import mde as M  # noqa: E402
 from src.stats import report as RP  # noqa: E402
+from src.stats.val_artifacts import load_val_artifact  # noqa: E402
 from src.training import sweep_select as SS  # noqa: E402
 
 N, K = 846, 6
@@ -70,8 +82,14 @@ BEST = {"42": CEA.DL17_REFERENCE_MIOU, "43": 0.34126096963882446, "44": 0.354846
 PLAN_S, PLAN_BAND = 0.011045744504733232, 0.015621041685101825        # FACTS 3, smoke fixture values only
 KWARGS = {"zero_method": "pratt", "alternative": "greater", "correction": True, "method": "approx"}
 LANE6C_KEYS = ("artifacts", "n_included", "K_excluded", "n_planning", "pairs", "mde_w", "sd_delta", "dz_mde",
-               "mde_t", "mde_t_range", "tau_p", "power_caveat", "scipy_version", "seed", "git_commit")
+               "mde_t", "mde_t_range", "tau_p", "power_caveat", "scipy_version", "seed", "git_commit",
+               "decision_log_line")
 PAIR_KEYS = ("n", "mean", "sd", "share_ties", "power_curve", "mde_w", "m", "n_zero")
+PAIR_ORDER = ("43-42", "44-42", "44-43")
+#: AM-17 item 3(e), verbatim (docs/PREREGISTRATION_AMENDMENTS.md:410-412): a literal, not mde_entry.LABEL
+LABEL_3E = ("planning proxy — seed-pair differences approximate noise, not the spread of between-recipe "
+            "differences, so the true MDE may be larger. Reported with the results; it changes no test or "
+            "decision.")
 RESULTS: list = []
 NORMAL: dict = {}
 
@@ -111,9 +129,15 @@ def no_filesystem():
             calls.append((name, str(a[0]) if a else ""))
             raise AssertionError(f"filesystem call {name} before the test-path refusal")
         return blocked
-    targets = [(os, "stat"), (os, "lstat"), (os, "scandir"), (os, "listdir"), (os, "mkdir"), (os.path, "realpath")]
+    targets = [(os, "stat"), (os, "lstat"), (os, "scandir"), (os, "listdir"), (os, "mkdir"), (os.path, "realpath"),
+               (builtins, "open"), (io, "open"), (os, "open"), (os, "access")]
     with patched(*[(obj, name, make(name)) for obj, name in targets]):
         yield calls
+
+
+def tripwire(*a, **k):
+    """Replaces td.write_files_exclusive where a regressed gate could otherwise write."""
+    raise AssertionError("write attempted")
 
 
 def run_cli(argv) -> tuple[int, str, str]:
@@ -219,8 +243,10 @@ def setup_fixtures() -> None:
     CTX.Bset, _ = build_set("fxB", (0.70, 0.76, 0.70))
     CTX.best = {s: write_best(CTX.root / "best" / f"s{s}" / "best.json", s) for s in SEEDS}
     CTX.pins = {s: manifest_sha(CTX.A[s]) for s in SEEDS}
-    alt_truth = F.make_truth(N, K + 2, F.int_seed("fxA-alt", "truth"))
+    alt_truth = F.make_truth(N, K, F.int_seed("fxA-alt", "truth"))              # the same K, other image ids
     CTX.alt44 = write_seed(CTX.repo_A, CTX.repo_A / "runs/val/e1_s44_alt", alt_truth, "44", 0.70, "fxA-alt")
+    alt2_truth = F.make_truth(N, K + 2, F.int_seed("fxA-alt2", "truth"))        # another K
+    CTX.alt44b = write_seed(CTX.repo_A, CTX.repo_A / "runs/val/e1_s44_alt2", alt2_truth, "44", 0.70, "fxA-alt2")
 
 
 # --------------------------------------------------------------------------------------------------
@@ -354,6 +380,19 @@ def U8b():
         b = d[M.resample_indices(13, 11, b=7)] + delta
         out.append(np.array_equal(a, b) and a.tobytes() == b.tobytes())
     return all(out) and np.__version__ == "1.26.4", {"equal": out, "numpy": np.__version__}
+
+
+def U10():
+    got = {}
+    for name, d in (("zeros", np.zeros(5)), ("nan", np.array([0.1, np.nan, 0.2])), ("one", np.array([0.1]))):
+        try:
+            M.check_d(d)
+            got[name] = "accepted"
+        except M.MdeError as e:
+            got[name] = str(e)
+    ok = ("exact zero" in got["zeros"] and "non-finite" in got["nan"] and "at least two" in got["one"]
+          and M.check_d([0.0, 0.1]).dtype == np.float64)
+    return ok, got
 
 
 def U9():
@@ -523,13 +562,66 @@ def setup_c() -> None:
     print("  " + CTX.c1[1].replace("\n", "\n  ").rstrip(), flush=True)
 
 
+def dl_line(so: str):
+    """The text of the CLI's printed 'DL line: ...' (None if absent)."""
+    return next((x[len("DL line: "):] for x in so.splitlines() if x.startswith("DL line: ")), None)
+
+
 def C1():
     code, so, se = CTX.c1
     files = listing(CTX.c1_out)
+    if code != 0 or files != sorted([ENTRY, BAND]):
+        return False, {"exit": code, "files": files, "stderr": se[-600:]}
     shas = {n: hashlib.sha256((CTX.c1_out / n).read_bytes()).hexdigest() for n in files}
-    ok = (code == 0 and files == sorted([ENTRY, BAND]) and "DL line: " in so
-          and all(f"{n} sha256 {h}" in so for n, h in shas.items()) and all(h in so for h in shas.values()))
-    return ok, {"exit": code, "files": files, "stderr": se[-600:]}
+    entry = json.loads((CTX.c1_out / ENTRY).read_text(encoding="utf-8"))
+    dl, arts = dl_line(so), entry["artifacts"]
+    need = [f"{ENTRY} sha256 {shas[ENTRY]}", f"{BAND} sha256 {shas[BAND]}", "share of exact-zero differences",
+            "n_zero", "so the three guard points share rows", "power_caveat", "label: planning proxy (item 3(e))",
+            "lane 6 (f): exact ties deflate MDE_W under the constant-shift null"]
+    need += [arts[s][k] for s in SEEDS for k in ("run_id", "checkpoint_sha256")]
+    need += [arts[s]["sha256s"][MANIFEST_NAME] for s in SEEDS]
+    missing = [x for x in need if dl is None or x not in dl]
+    stored = dl is not None and entry["decision_log_line"] == dl.replace(f" sha256 {shas[ENTRY]}", "", 1)
+    written = all(f"written: {n} sha256 {h}" in so for n, h in shas.items())
+    return not missing and stored and written, {"missing": missing, "stored_equals_printed": stored,
+                                                "written_lines": written, "dl": dl}
+
+
+def guard_k(counts, need=1600):
+    """The smoke's own 3-point guard on integer counts (not mde.guard_index)."""
+    for k in range(len(counts) - 2):
+        if counts[k] >= need and counts[k + 1] >= need and counts[k + 2] >= need:
+            return k
+    return None
+
+
+def entry_values(entry: dict) -> list:
+    """Every headline number of the entry against its recomputation from the entry itself, with literals."""
+    pairs, n, bad = entry["pairs"], entry["n_planning"], []
+    for name in PAIR_ORDER:
+        p = pairs[name]
+        k = guard_k(p["rejections"])
+        if not (p["n"] == n == entry["resampling"]["size"] and p["m"] == entry["n_included"]):
+            bad.append([name, "n and m", p["n"], p["m"]])
+        if not (len(p["rejections"]) == len(p["power_curve"]) == 51 and p["power_min_count"] == 1600):
+            bad.append([name, "51 grid points, power_min_count 1600"])
+        if p["power_curve"] != [[j / 1000, c / 2000] for j, c in enumerate(p["rejections"])]:
+            bad.append([name, "power_curve"])
+        if k is None or p["mde_w"] != k / 1000 or p["mde_w_index"] != k:
+            bad.append([name, "mde_w", p["mde_w"], k])
+    best = PAIR_ORDER[0]
+    for name in PAIR_ORDER[1:]:
+        if pairs[name]["mde_w"] > pairs[best]["mde_w"]:
+            best = name                                                    # the first pair wins a tie
+    sd = max(pairs[name]["sd"] for name in PAIR_ORDER)
+    dz = (2.4977 + 0.8416) / math.sqrt(n)
+    want = {"mde_w": pairs[best]["mde_w"], "mde_w_pair": best, "sd_delta": sd, "dz_mde": dz, "mde_t": dz * sd,
+            "mde_t_range": [dz * sd * 1.023, dz * sd * 1.076], "power_caveat": pairs[best]["mde_w"] > 0.010,
+            "n_planning": round(Fraction(1561 * entry["n_included"], 846)), "label": LABEL_3E}
+    bad += [[key, entry[key], value] for key, value in want.items() if entry[key] != value]
+    if entry["resampling"]["B"] != 2000:
+        bad.append(["resampling.B", entry["resampling"]["B"]])
+    return bad
 
 
 def C2():
@@ -541,14 +633,27 @@ def C2():
         "run_id" in entry["artifacts"][s] and "sha256s" in entry["artifacts"][s] for s in SEEDS)
     pins = [c for c in entry["provenance_checks"] if "MANIFEST.sha256" in c[0]]
     res = entry["resampling"]
+    values = entry_values(entry)
     ok = (all(k in entry for k in LANE6C_KEYS) and pairs_ok and arts_ok and RP.validate_mde_entry(entry) == ()
-          and all(c[1] is True for c in entry["provenance_checks"]) and len(pins) == 3
-          and entry["power_caveat"] == (entry["mde_w"] > 0.010) and entry["tau_p"] == 0.010
-          and entry["dl27_band"]["sha256"] == hashlib.sha256(band_bytes).hexdigest()
+          and all(c[1] is True for c in entry["provenance_checks"]) and len(pins) == 3 and not values
+          and entry["tau_p"] == 0.010 and entry["dl27_band"]["sha256"] == hashlib.sha256(band_bytes).hexdigest()
           and res["drawn_once_per_pair"] is True and res["guard_points_share_rows"] is True
-          and res["numpy_version"] == np.__version__ and entry["n_planning"] == M.n_planning(entry["n_included"])
+          and res["numpy_version"] == np.__version__ and entry["artifacts"]["42"]["dl17_delta"] == 0.0
+          and all(entry["artifacts"][s]["checkpoint_iteration"] == 80000
+                  and entry["artifacts"][s]["checkpoint_path_basename"] == "e1_student_best_iter80000.pt"
+                  and "governed_paths_clean" in entry["artifacts"][s] for s in SEEDS)
           and entry["K_excluded"] == K and entry["seed"] == 42 and entry["artifact_status"] == "smoke")
-    return ok, {k: entry.get(k) for k in ("mde_w", "mde_w_pair", "n_included", "n_planning", "power_caveat")}
+    return ok, {"values": values, **{k: entry.get(k) for k in ("mde_w", "mde_w_pair", "n_included", "n_planning")}}
+
+
+def C6():
+    out = fresh_out("c6")
+    with patched((M, "rejection_counts", fast_counts)):
+        code, so, se = run_cli(argv_for(out))
+    if code != 0 or not (out / ENTRY).exists():
+        return False, {"exit": code, "stderr": se[-500:]}
+    bad = entry_values(json.loads((out / ENTRY).read_text(encoding="utf-8")))
+    return not bad, bad
 
 
 def C3():
@@ -675,18 +780,42 @@ def R4f():
 
 def R5():
     out = fresh_out("r5")
-    return expect(argv_for(out, arts=_with("44", CTX.alt44)), 2, "STOP (lane 6 (f))", out)
+    a, b = (load_val_artifact(Path(p), label=t).run.am5 for p, t in ((CTX.A["44"], "a"), (CTX.alt44, "b")))
+    same_k, other_ids = a.excluded_count == b.excluded_count, a.excluded_ids != b.excluded_ids
+    ok, det = expect(argv_for(out, arts=_with("44", CTX.alt44)), 2, "STOP (lane 6 (f))", out)
+    return ok and same_k and other_ids, dict(det, same_k=same_k, other_ids=other_ids)
+
+
+def R5b():
+    out = fresh_out("r5b")
+    return expect(argv_for(out, arts=_with("44", CTX.alt44b)), 2, "STOP (lane 6 (f))", out)
 
 
 def R6():
     inside = REPO / "s4_smoke_out_inside_never"
-    ok, det = expect(argv_for(inside), 2, "outside the repository", inside)
+    with patched((ME.td, "write_files_exclusive", tripwire), (M, "rejection_counts", fast_counts)):
+        ok, det = expect(argv_for(inside), 2, "outside the repository", inside)
     return ok and not inside.exists(), det
+
+
+FLAG_GATE = "a real run requires --script-commit and --script-commit-dl-id"
 
 
 def R7a():
     out = fresh_out("r7a")
-    return expect(argv_for(out, synthetic=False), 2, "--script-commit", out)
+    return expect(argv_for(out, synthetic=False), 2, FLAG_GATE, out)
+
+
+def R7d():
+    out = fresh_out("r7d")
+    return expect(argv_for(out, synthetic=False, extra=["--script-commit", "0" * 40]), 2, FLAG_GATE, out)
+
+
+def R7e():
+    import src.eval.adapters as AD
+    out = fresh_out("r7e")
+    with patched((AD, "DATASET_NAME", F.FIXTURE_DATASET_NAME), (M, "rejection_counts", fast_counts)):
+        return expect(argv_for(out), 2, "--synthetic-inputs is True", out)
 
 
 def R7b():
@@ -711,6 +840,36 @@ def R8():
     return expect(argv_for(out, arts=_with("43", CTX.A["42"])), 2, "three runs", out)
 
 
+def R8b():
+    out = fresh_out("r8b")
+    return expect(argv_for(out, arts=_with("43", CTX.v_copy42)), 2, "their run_ids", out)
+
+
+def R8c():
+    out = fresh_out("r8c")
+    return expect(argv_for(out, arts=_with("43", CTX.v_copy42_id)), 2, "their checkpoints", out)
+
+
+def R4g():
+    out = fresh_out("r4g")
+    return expect(argv_for(out, arts=_with("44", CTX.v_stage)), 2, "expected stage/role/precision", out)
+
+
+def R4h():
+    out = fresh_out("r4h")
+    return expect(argv_for(out, arts=_with("44", CTX.v_precision)), 2, "expected stage/role/precision", out)
+
+
+def R4i():
+    out = fresh_out("r4i")
+    return expect(argv_for(out, arts=_with("43", CTX.v_inputs)), 2, "inputs on the model device", out)
+
+
+def R4j():
+    out = fresh_out("r4j")
+    return expect(argv_for(out, arts=_with("44", CTX.v_policy)), 2, "the determinism policy applied", out)
+
+
 def R9():
     out = fresh_out("r9")
     return expect(argv_for(out, extra=["--expect-k-val", str(K + 1)]), 2, "K_val is", out)
@@ -721,6 +880,13 @@ def R10():
     best = dict(CTX.best, **{"42": write_best(CTX.root / "best_extra" / "s42" / "best.json", "42",
                                               extra={"note": "extra"})})
     return expect(argv_for(out, best=best), 2, "keys", out)
+
+
+def R10b():
+    out = fresh_out("r10b")
+    best = dict(CTX.best, **{"42": write_best(CTX.root / "best_int" / "s42" / "best.json", "42",
+                                              extra={"best_ckpt": 7})})
+    return expect(argv_for(out, best=best), 2, "is not a path", out)
 
 
 def R11():
@@ -734,20 +900,115 @@ def R12():
     out = fresh_out("r12")
     extra = pin_args()
     extra[extra.index("--expect-manifest-sha256-43") + 1] = "0" * 64
-    return expect(argv_for(out, extra=extra), 2, "MANIFEST.sha256", out)
+    code, so, se = run_cli(argv_for(out, extra=extra))
+    ok = code == 2 and "MANIFEST.sha256" in se and CTX.pins["43"] in se and listing(out) == []
+    return ok, {"exit": code, "observed_hash_in_message": CTX.pins["43"] in se, "stderr": se.strip()[-500:]}
+
+
+def fake_git(head, status=""):
+    """td._git for the binding cases: no git process runs."""
+    def _git(*args):
+        if args[:2] == ("rev-parse", "HEAD"):
+            return None if head is None else head + "\n"
+        return status if args[:1] == ("status",) else None
+    return _git
+
+
+def binding_case(tag: str, head, status: str, needle: str, extra_patches=()) -> tuple[bool, dict]:
+    out = fresh_out(tag)
+    with patched((ME.td, "_git", fake_git(head, status)), *extra_patches):
+        return expect(argv_for(out, synthetic=False, extra=_real_extra()), 2, needle, out)
+
+
+def R13a():
+    return binding_case("r13a", None, "", "git HEAD could not be read")
+
+
+def R13b():
+    return binding_case("r13b", "1" * 40, "", f"HEAD {'1' * 40} != --script-commit {'0' * 40}")
+
+
+def R13c():
+    return binding_case("r13c", "0" * 40, "", "code file(s) missing at HEAD",
+                        ((ME, "CODE_FILES", ME.CODE_FILES + ("scripts/s4_absent_never.py",)),))
+
+
+def R13d():
+    return binding_case("r13d", "0" * 40, " M src/x.py\n", "needs them clean at HEAD")
+
+
+def R14():
+    out = fresh_out("r14")
+    alias = CTX.root / "alias_s43"                                    # never created
+    target = str(CTX.root / "never" / "never_TeSt_alias")             # never created
+    real = os.path.realpath
+
+    def fake(p, *a, **k):
+        return target if os.fspath(p) == str(alias) else real(p, *a, **k)
+    with patched((os.path, "realpath", fake), (ME.td, "write_files_exclusive", tripwire),
+                 (M, "rejection_counts", fast_counts)):
+        ok, det = expect(argv_for(out, arts=_with("43", alias)), 2, "resolving to a 'test' location", out)
+    return ok and not os.path.lexists(alias) and not os.path.lexists(target), det
+
+
+def rules_with(**band):
+    real = SS.load_rules
+
+    def fake(*a, **k):
+        rules = copy.deepcopy(real(*a, **k))
+        rules["alpha_cwd"]["band"].update(band)
+        return rules
+    return fake
+
+
+def R15a():
+    out = fresh_out("r15a")
+    with patched((SS, "load_rules", rules_with(floor=0.01)), (M, "rejection_counts", fast_counts)):
+        return expect(argv_for(out), 2, "is not the DL-27 rule", out)
+
+
+def R15b():
+    out = fresh_out("r15b")
+    with patched((SS, "load_rules", rules_with(kind="fixed")), (M, "rejection_counts", fast_counts)):
+        return expect(argv_for(out), 2, "is not the DL-27 rule", out)
+
+
+def R16():
+    out = fresh_out("r16")
+
+    def missing():
+        raise ModuleNotFoundError("No module named 'statsmodels'", name="statsmodels")
+    with patched((ME, "software_environment_block", missing)):
+        return expect(argv_for(out), 2, "the running stack lacks statsmodels", out)
+
+
+def R17():
+    out = fresh_out("r17")
+    with patched((M, "rejection_counts", fast_counts)):
+        return expect(argv_for(out, arts=_with("43", CTX.v_zero)), 2, "every difference is an exact zero", out)
 
 
 def S1():
     out = fresh_out("s1")
-    dest = CTX.root / "variants" / "s44_value"
-    shutil.copytree(CTX.A["44"], dest)
-    p = dest / "per_image.jsonl"
-    rows = [json.loads(x) for x in p.read_text(encoding="utf-8").splitlines()]
-    i = next(j for j, r in enumerate(rows) if r["n_eligible_disease_only"] > 0 and r["disease_only_miou"] <= 0.99)
-    rows[i]["disease_only_miou"] += 1e-3
-    p.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows), encoding="utf-8", newline="\n")
-    F.rehash(dest)
-    return expect(argv_for(out, arts=_with("44", dest)), 1, "re-derivation", out)
+    return expect(argv_for(out, arts=_with("44", CTX.v_value)), 1, "re-derivation", out)
+
+
+def S3():
+    out = fresh_out("s3")
+    with patched((M, "power_caveat", lambda w: not (w > M.TAU_P)), (M, "rejection_counts", fast_counts)):
+        return expect(argv_for(out), 1, "fails the report layer's validator", out)
+
+
+def S4():
+    out = fresh_out("s4")
+    with patched((M, "rejection_counts", fast_counts)):
+        return expect(argv_for(out, arts=_with("44", CTX.v_count)), 1, "class count", out)
+
+
+def S5():
+    out = fresh_out("s5")
+    with patched((ME, "band_sd", statistics.pstdev), (M, "rejection_counts", fast_counts)):
+        return expect(argv_for(out), 1, "refused by its reader", out)
 
 
 def fast_counts(d, idx, grid):
@@ -777,6 +1038,43 @@ def setup_variants() -> None:
     CTX.v_batch = variant(CTX.A["42"], "s42_batch", setr(("run", "eval_runtime", "batch_size"), 8))
     CTX.v_miou = variant(CTX.A["42"], "s42_miou",
                          setr(("dataset_level", "all_class_miou"), CEA.DL17_REFERENCE_MIOU + 2e-4))
+    CTX.v_stage = variant(CTX.A["44"], "s44_stage", setr(("run", "stage"), "E2"))
+    CTX.v_precision = variant(CTX.A["44"], "s44_precision", setr(("run", "precision"), "int8"))
+    CTX.v_inputs = variant(CTX.A["43"], "s43_inputs", setr(("run", "eval_runtime", "input_devices"), ["cpu"]))
+    CTX.v_policy = variant(CTX.A["44"], "s44_policy",
+                           setr(("run", "eval_runtime", "determinism_policy_applied"), False))
+    CTX.v_copy42 = CTX.root / "variants" / "s42_copy"                 # the same run in another directory
+    shutil.copytree(CTX.A["42"], CTX.v_copy42)
+    CTX.v_copy42_id = variant(CTX.A["42"], "s42_copy_id", setr(("run", "run_id"), "fxA-e1-s42-copy"))
+
+    def as_s43(j):                                                    # s42's scores as a distinct seed-43 run
+        j["run"]["run_id"] = "fxA-e1-s43-same-scores"
+        j["run"]["checkpoint_sha256"] = hashlib.sha256(b"fxA same scores as s42").hexdigest()
+        j["run"]["eval_runtime"]["checkpoint_best_val_miou_all_class"] = BEST["43"]
+        return j
+    CTX.v_zero = variant(CTX.A["42"], "s42_scores_as_s43", as_s43)
+
+    def bump_value(rows):
+        i = next(j for j, r in enumerate(rows) if r["n_eligible_disease_only"] > 0 and r["disease_only_miou"] <= 0.99)
+        rows[i]["disease_only_miou"] += 1e-3
+
+    def bump_count(rows):
+        i = next(j for j, r in enumerate(rows) if r["n_eligible_disease_only"] > 0)
+        rows[i]["n_eligible_disease_only"] += 1
+    CTX.v_value = per_image_variant(CTX.A["44"], "s44_value", bump_value)
+    CTX.v_count = per_image_variant(CTX.A["44"], "s44_count", bump_count)
+
+
+def per_image_variant(src: Path, tag: str, fn) -> Path:
+    """A copy of an artifact with per_image.jsonl edited by fn(rows) and the manifest rehashed."""
+    dest = CTX.root / "variants" / tag
+    shutil.copytree(src, dest)
+    p = dest / "per_image.jsonl"
+    rows = [json.loads(x) for x in p.read_text(encoding="utf-8").splitlines()]
+    fn(rows)
+    p.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows), encoding="utf-8", newline="\n")
+    F.rehash(dest)
+    return dest
 
 
 # --------------------------------------------------------------------------------------------------
@@ -800,6 +1098,51 @@ def min_overall(pairs):
     return pairs[name]["mde_w"], name
 
 
+_REAL_PAIR_SUMMARY = M.pair_summary
+
+
+def resample_at_m(d, n, **kw):
+    """Mutation: each pair resampled at m = n_included instead of n_planning (the size the entry records)."""
+    return _REAL_PAIR_SUMMARY(d, len(d), **kw)
+
+
+def binding_without_tree(args) -> dict:
+    """Mutation: commit_binding without its clean-tree check."""
+    head = ME.td.git_head()
+    if head is None:
+        raise ME.td.Refused("git HEAD could not be read")
+    if head != args.script_commit:
+        raise ME.td.Refused(f"HEAD {head} != --script-commit {args.script_commit}")
+    return {"head": head, "script_commit": args.script_commit, "script_commit_dl_id": args.script_commit_dl_id}
+
+
+def guard_names_only(paths: dict) -> None:
+    """Mutation: guard_paths without its resolved-path stage."""
+    ME.td.refuse_test_names([str(v) for v in paths.values()], "path arguments")
+
+
+def mode_one_way(names, synthetic) -> None:
+    """Mutation: the mode gate refuses synthetic names in a real run only."""
+    from src.eval.adapters import DATASET_NAME
+    if any(n != DATASET_NAME for n in names) and not synthetic:
+        raise ME.td.Refused("--synthetic-inputs is False but the names are synthetic")
+
+
+def names_only(checks, what) -> None:
+    """Mutation: require_passed names the failed checks without their details."""
+    bad = [c[0] for c in checks if c[1] is not True]
+    if bad:
+        raise ME.td.Refused(f"{what}: {len(bad)} check(s) failed: {bad}")
+
+
+def check_d_with_zeros(d):
+    """Mutation: check_d accepts a d of exact zeros only."""
+    d = np.asarray(d, dtype=np.float64)
+    if d.ndim != 1 or d.size < 2 or not np.isfinite(d).all():
+        raise M.MdeError("refused")
+    return d
+
+
 MUTATIONS = [
     ("M1", "zero_method 'wilcox'", lambda: [(M, "WILCOXON_KWARGS", kw(zero_method="wilcox"))], "U7"),
     ("M2", "correction False", lambda: [(M, "WILCOXON_KWARGS", kw(correction=False))], "U7"),
@@ -821,6 +1164,26 @@ MUTATIONS = [
      lambda: [(ME, "check_commit", lambda arts: ["skipped", True, {}]), (M, "rejection_counts", fast_counts)], "R4a"),
     ("M17", "band s with pstdev", lambda: [(ME, "band_sd", statistics.pstdev)], "B1"),
     ("M18", "band without its floor", lambda: [(ME, "band_value", lambda s, fl: math.sqrt(2.0) * s)], "B5"),
+    ("M28", "pairs resampled at m = n_included", lambda: [(M, "pair_summary", resample_at_m)], "C6"),
+    ("M29", "analytic block at m = n_included",
+     lambda: [(ME, "analytic_block", lambda pairs, n: M.analytic([pairs[k]["sd"] for k in PAIR_ORDER],
+                                                                 pairs["43-42"]["m"]))], "C6"),
+    ("M30", "binding without its clean-tree check", lambda: [(ME, "commit_binding", binding_without_tree)], "R13d"),
+    ("M31", "path guard without its resolved-path stage", lambda: [(ME, "guard_paths", guard_names_only)], "R14"),
+    ("M32", "require_role skipped", lambda: [(ME, "require_role", lambda art, **k: None)], "R4g"),
+    ("M33", "mode gate in one direction only", lambda: [(ME, "check_mode", mode_one_way)], "R7e"),
+    ("M34", "distinctness without the checkpoints", lambda: [(ME, "DISTINCT", ME.DISTINCT[:2])], "R8c"),
+    ("M35", "AM-5 sets compared by count only",
+     lambda: [(ME, "same_excluded", lambda a5: len({a5[s].excluded_count for s in SEEDS}) == 1)], "R5"),
+    ("M36", "report validator skipped", lambda: [(ME, "validate_mde_entry", lambda doc: ())], "S3"),
+    ("M37", "class-count rule removed", lambda: [(ME, "count_ok", lambda n_stats, n_record: True)], "S4"),
+    ("M38", "band read-back skipped", lambda: [(ME, "band_self_check", lambda *a, **k: [])], "S5"),
+    ("M39", "rule file's band not validated",
+     lambda: [(ME, "band_floor", lambda: float(SS.load_rules()["alpha_cwd"]["band"]["floor"]))], "R15a"),
+    ("M40", "missing stats package not refused",
+     lambda: [(ME, "environment_check", lambda synthetic: ME.software_environment_block())], "R16"),
+    ("M41", "failed checks named without their details", lambda: [(ME, "require_passed", names_only)], "R12"),
+    ("M42", "a d of exact zeros only accepted", lambda: [(M, "check_d", check_d_with_zeros)], "R17"),
 ]
 
 
@@ -840,6 +1203,7 @@ def checks() -> list:
            ("U8", "index spy: one default_rng(42) and one integers(0, m, size=(b, n), int64) per pair", U8),
            ("U8b", "default_rng(42).choice(d + delta) == d[idx] + delta for delta 0, 0.001, 0.05 (numpy 1.26.4)", U8b),
            ("U9", "analytic: ddof 1, max SD, dz from literals, MDE_t and its range", U9),
+           ("U10", "check_d refuses exact zeros only, a non-finite value and a single value", U10),
            ("B1", "band: the writer's file passes dl27_band, (s, band) bitwise equal", B1),
            ("B2", "band: s + 1e-9 -> band_s_mismatch", B2), ("B3", "band: band + 1e-9 -> band_mismatch", B3),
            ("B4", "band: FACTS 3 values give s and band exactly", B4),
@@ -854,17 +1218,41 @@ def checks() -> list:
             ("R4c", "s44 with a null image_digest -> exit 2", R4c), ("R4d", "s42 at batch 8 (not DL-17) -> exit 2", R4d),
             ("R4e", "s42 all_class_miou off by 2e-4 -> exit 2", R4e),
             ("R4f", "best.json 43 != its artifact's checkpoint value -> exit 2", R4f),
-            ("R5", "s44 with another AM-5 set -> exit 2 STOP (lane 6 (f))", R5),
-            ("R6", "--out-dir inside the repository -> exit 2", R6),
-            ("R7a", "real mode without --script-commit -> exit 2", R7a),
+            ("R4g", "s44 at stage E2 -> exit 2 (require_role)", R4g),
+            ("R4h", "s44 at precision int8 -> exit 2 (require_role)", R4h),
+            ("R4i", "s43 with its inputs on the CPU -> exit 2", R4i),
+            ("R4j", "s44 without the determinism policy -> exit 2", R4j),
+            ("R5", "s44 with another AM-5 set of the same size -> exit 2 STOP (lane 6 (f))", R5),
+            ("R5b", "s44 with an AM-5 set of another size -> exit 2 STOP (lane 6 (f))", R5b),
+            ("R6", "--out-dir inside the repository -> exit 2 (writes tripwired)", R6),
+            ("R7a", "real mode without the binding flags -> exit 2 (the flag gate's own words)", R7a),
             ("R7b", "--generated-utc in real mode -> exit 2", R7b),
             ("R7c", "synthetic inputs without --synthetic-inputs (binding patched) -> exit 2", R7c),
-            ("R8", "--s43 given the s42 directory -> exit 2", R8), ("R9", "--expect-k-val K+1 -> exit 2", R9),
+            ("R7d", "real mode with --script-commit but no --script-commit-dl-id -> exit 2", R7d),
+            ("R7e", "the evaluator's dataset name with --synthetic-inputs -> exit 2", R7e),
+            ("R8", "--s43 given the s42 directory -> exit 2", R8),
+            ("R8b", "--s43 given a copy of s42 (same run_id) -> exit 2", R8b),
+            ("R8c", "--s43 given s42 under another run_id (same checkpoint) -> exit 2", R8c),
+            ("R9", "--expect-k-val K+1 -> exit 2", R9),
             ("R10", "best.json with an extra key -> exit 2", R10),
+            ("R10b", "best.json with a non-string best_ckpt -> exit 2", R10b),
             ("R11", "real mode with matches_pinned False -> exit 2", R11),
-            ("R12", "a wrong --expect-manifest-sha256-43 -> exit 2", R12),
+            ("R12", "a wrong --expect-manifest-sha256-43 -> exit 2, the observed hash in the message", R12),
+            ("R13a", "binding: HEAD unreadable -> exit 2", R13a),
+            ("R13b", "binding: HEAD != --script-commit -> exit 2", R13b),
+            ("R13c", "binding: a code file missing -> exit 2", R13c),
+            ("R13d", "binding: src/configs/scripts not clean -> exit 2", R13d),
+            ("R14", "a --s43 resolving to a test location -> exit 2, nothing created", R14),
+            ("R15a", "the rule file's band floor 0.01 -> exit 2", R15a),
+            ("R15b", "the rule file's band kind 'fixed' -> exit 2", R15b),
+            ("R16", "a stack without statsmodels -> exit 2", R16),
+            ("R17", "two runs that agree image for image -> exit 2", R17),
             ("S1", "a per-image value off by 1e-3 -> exit 1 (re-derivation), nothing written", S1),
-            ("S2", "no qualifying delta -> exit 1, nothing written, three curves printed", S2)]
+            ("S2", "no qualifying delta -> exit 1, nothing written, three curves printed", S2),
+            ("S3", "an entry the report validator rejects -> exit 1, nothing written", S3),
+            ("S4", "a per-image class count off by one -> exit 1, nothing written", S4),
+            ("S5", "a band its reader refuses -> exit 1, nothing written", S5),
+            ("C6", "in-process CLI (fast counts): every headline number recomputed from the entry", C6)]
     return out
 
 
@@ -896,12 +1284,29 @@ def run_check(cid, desc, fn) -> bool:
     return ok
 
 
+def make_root(prefix: str):
+    """The temporary root, created only after TMPDIR's realpath is known to hold no 'test'. Its name is the
+    prefix plus hex digits, which contain neither 's' nor 't', so it cannot spell 'test' either."""
+    base = os.environ.get("TMPDIR")
+    if not base:
+        return None, "TMPDIR is not set; run with TMPDIR=/tmp/s4scratch"
+    real = os.path.realpath(base)
+    if "test" in real.lower() or not os.path.isdir(real):
+        return None, f"TMPDIR resolves to {real!r}, which contains 'test' or is not a directory"
+    root = Path(real) / f"{prefix}{secrets.token_hex(4)}"
+    root.mkdir(exist_ok=False)
+    return root, None
+
+
 def main() -> int:
     t_all = time.time()
-    root = Path(tempfile.mkdtemp(prefix="s4_smoke_mde_"))
+    root, why = make_root("s4_smoke_mde_")
+    if root is None:
+        print(f"ABORT: {why}", file=sys.stderr)
+        return 2
     real = os.path.realpath(root)
     if "test" in real.lower():
-        print(f"ABORT: the temporary root {real} contains 'test'; set TMPDIR=/tmp/s4scratch", file=sys.stderr)
+        print(f"ABORT: the temporary root {real} contains 'test'", file=sys.stderr)
         return 2
     CTX.root = root
     print(f"smoke_mde: temporary root {real} (left in place); numpy {np.__version__}", flush=True)

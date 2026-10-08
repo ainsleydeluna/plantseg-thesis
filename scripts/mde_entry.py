@@ -19,7 +19,8 @@ Checks, in order; the first failure exits:
   2  flags: a real run needs --script-commit and --script-commit-dl-id and refuses --generated-utc
   3  --out-dir resolves outside the repository; neither output exists yet
   4  real run: HEAD == --script-commit, the code files present, `git status -- src configs scripts` empty, and
-     the running stack equal to src/stats/artifact.py PINNED_ENVIRONMENT
+     the running stack equal to src/stats/artifact.py PINNED_ENVIRONMENT (a stack without scipy or statsmodels
+     is refused in either mode)
   5  the inputs exist
   6  each artifact loads through src/stats/val_artifacts.py (MANIFEST and strict JSON, canvas only,
      Policy.REHEARSAL: VAL, 846 rows, a real-run artifact, AM-5 flags read or derived) as stage E1, student,
@@ -37,6 +38,10 @@ Checks, in order; the first failure exits:
   12 the band file, read back through its reader (sweep_select.dl27_band) before anything is written (exit 1
      on disagreement), and the entry, checked by the report layer's validator (report.validate_mde_entry;
      exit 1 on a problem)
+A failed check's message carries each failed check's detail (the observed values), because nothing is written.
+The printed "DL line:" is the decision text of the DL row (plan section 7.1 with Annex A section 4's MDE part):
+the three artifacts (run_id, MANIFEST.sha256 sha256, checkpoint sha256), the MDE with share_ties and n_zero per
+pair, and the band; the entry stores the same line without its own sha256.
 Outputs, serialized first and created exclusively, both or neither ("synthetic_" prefix for synthetic inputs):
   <out-dir>/mde_entry_<UTC>.json  the AM-17 item 3 entry: lane 6 (c)'s fields plus provenance
   <out-dir>/dl27_band.json        {"e1_best_val": {"42", "43", "44"}, "s", "band"}: exactly the reader's keys
@@ -69,7 +74,7 @@ from src.eval.artifacts import MANIFEST_NAME  # noqa: E402
 from src.eval.evaluate import F32_TOL  # noqa: E402
 from src.stats import mde as M  # noqa: E402
 from src.stats.align import METRIC_DISEASE_ONLY, AlignmentError, align_runs  # noqa: E402
-from src.stats.artifact import software_environment_block  # noqa: E402
+from src.stats.artifact import PINNED_ENVIRONMENT, software_environment_block  # noqa: E402
 from src.stats.ingest import EXPECTED_ROWS_VAL, Policy  # noqa: E402
 from src.stats.report import TAU_P, validate_mde_entry  # noqa: E402
 from src.stats.val_artifacts import (ValArtifactError, code_provenance, load_val_artifact,  # noqa: E402
@@ -84,6 +89,7 @@ AUTHORITY = ("AM-17 item 3 (docs/PREREGISTRATION_AMENDMENTS.md:393-418); docs/la
 SEEDS = ("42", "43", "44")
 PAIRS = (("43-42", "42", "43"), ("44-42", "42", "44"), ("44-43", "43", "44"))    # (name, baseline, candidate)
 ENTRY_PREFIX, BAND_NAME, SYNTHETIC_PREFIX = "mde_entry_", "dl27_band.json", "synthetic_"
+RECORD_DIR = "reports/derived/"                      # where the docs commit copies the outputs of record (§7.3)
 BAND_RULE_FILE = "reports/derived/dl27_band.json"    # configs/sweep_rules.json alpha_cwd.band.file
 BAND_FLOOR = 0.005                                   # DL-27: "the larger of 0.5 pp and sqrt(2) x ... SD"
 PATH_FLAGS = ("s42", "s43", "s44", "best_json_42", "best_json_43", "best_json_44", "out_dir")
@@ -100,9 +106,9 @@ SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 #: every repository file whose code shapes a number in the outputs (recorded with its sha256)
 CODE_FILES = ("scripts/mde_entry.py", "src/stats/mde.py", "src/stats/val_artifacts.py", "src/stats/ingest.py",
               "src/stats/align.py", "src/stats/report.py", "src/stats/artifact.py", "src/eval/artifacts.py",
-              "src/eval/evaluate.py", "src/eval/metrics.py", "src/eval/teacher_diag.py",
-              "src/training/sweep_select.py", "scripts/compare_eval_artifacts.py", "configs/sweep_rules.json",
-              "configs/distill.py")
+              "src/eval/evaluate.py", "src/eval/metrics.py", "src/eval/adapters.py", "src/eval/protocols.py",
+              "src/eval/teacher_diag.py", "src/training/sweep_select.py", "scripts/compare_eval_artifacts.py",
+              "configs/sweep_rules.json", "configs/distill.py")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -171,7 +177,11 @@ def commit_binding(args) -> dict:
 
 
 def environment_check(synthetic: bool) -> dict:
-    env = software_environment_block()
+    try:
+        env = software_environment_block()
+    except ImportError as e:
+        raise td.Refused(f"the running stack lacks {e.name or e}: the entry needs src/stats/artifact.py "
+                         f"PINNED_ENVIRONMENT {PINNED_ENVIRONMENT}") from e
     if not synthetic and env.get("matches_pinned") is not True:
         raise td.Refused(f"the running stack {env.get('observed')} is not the pinned {env.get('pinned')} "
                          "(src/stats/artifact.py PINNED_ENVIRONMENT): the pre-registered call is version-specific")
@@ -190,6 +200,11 @@ def require_inputs(args) -> None:
 # --------------------------------------------------------------------------------------------------
 # 6-8 artifacts, provenance, AM-5
 # --------------------------------------------------------------------------------------------------
+#: the distinctness gate (R2: seed identity rests on it with the MANIFEST pins and the recorded checkpoints)
+DISTINCT = (("directories", lambda a: str(a.path.resolve())), ("run_ids", lambda a: a.run_id),
+            ("checkpoints", lambda a: a.summary["run"].get("checkpoint_sha256")))
+
+
 def load_artifacts(args, synthetic: bool) -> dict:
     arts = {}
     for s in SEEDS:
@@ -200,8 +215,7 @@ def load_artifacts(args, synthetic: bool) -> dict:
         except ValArtifactError as e:
             raise td.Refused(str(e)) from e
         arts[s] = art
-    for what, get in (("directories", lambda a: str(a.path.resolve())), ("run_ids", lambda a: a.run_id),
-                      ("checkpoints", lambda a: a.summary["run"].get("checkpoint_sha256"))):
+    for what, get in DISTINCT:
         vals = [get(arts[s]) for s in SEEDS]
         if None in vals or len(set(vals)) != len(SEEDS):
             raise td.Refused(f"the three seeds must be three runs: their {what} are {vals}")
@@ -210,13 +224,18 @@ def load_artifacts(args, synthetic: bool) -> dict:
             require_comparable(arts[b], arts[c])
     except ValArtifactError as e:
         raise td.Refused(str(e)) from e
+    check_mode(sorted({arts[s].summary["dataset"]["name"] for s in SEEDS}), synthetic)
+    return arts
+
+
+def check_mode(names: list, synthetic: bool) -> None:
+    """--synthetic-inputs must agree with the inputs' dataset names in both directions: synthetic names in a real
+    run, and the evaluator's name with --synthetic-inputs (which would skip the binding and the pinned stack)."""
     from src.eval.adapters import DATASET_NAME
-    names = sorted({arts[s].summary["dataset"]["name"] for s in SEEDS})
     is_synthetic = any(n != DATASET_NAME for n in names)
     if is_synthetic != synthetic:
         raise td.Refused(f"--synthetic-inputs is {synthetic} but the inputs' dataset names {names} say "
                          f"{is_synthetic} (synthetic iff a name is not the evaluator's {DATASET_NAME!r})")
-    return arts
 
 
 def _runtime(art) -> dict:
@@ -277,9 +296,15 @@ def check_dl17(arts: dict) -> list:
             not problems, problems]
 
 
+def dl17_delta_of(art):
+    """|all_class_miou - the DL-17 reference| of one artifact, or None when the value is not a finite float."""
+    miou = art.summary["dataset_level"].get("all_class_miou")
+    return abs(miou - CEA.DL17_REFERENCE_MIOU) if type(miou) is float and math.isfinite(miou) else None
+
+
 def check_dl17_delta(arts: dict) -> list:
     miou = arts["42"].summary["dataset_level"].get("all_class_miou")
-    delta = abs(miou - CEA.DL17_REFERENCE_MIOU) if type(miou) is float and math.isfinite(miou) else None
+    delta = dl17_delta_of(arts["42"])
     return [f"s42 all-class VAL mIoU within DL17_BAND {CEA.DL17_BAND} of the DL-17 reference "
             f"{CEA.DL17_REFERENCE_MIOU!r} (DL-17 PASS)",
             delta is not None and delta <= CEA.DL17_BAND, {"all_class_miou": miou, "abs_delta": delta}]
@@ -306,15 +331,22 @@ def provenance_checks(arts: dict, args) -> list:
 
 
 def require_passed(checks: list, what: str) -> None:
-    bad = [c[0] for c in checks if c[1] is not True]
+    """Refuse on any failed check, naming each with its detail: nothing is written, so the message is the record."""
+    bad = [[c[0], c[2]] for c in checks if c[1] is not True]
     if bad:
-        raise td.Refused(f"{what}: {len(bad)} check(s) failed (no re-score without a ruling): {bad}")
+        raise td.Refused(f"{what}: {len(bad)} check(s) failed (no re-score without a ruling): "
+                         f"{json.dumps(bad, ensure_ascii=False, default=str)}")
+
+
+def same_excluded(a5: dict) -> bool:
+    """Lane 6 (a) 'asserted identical excluded sets': the image ids, not only their count."""
+    return len({a5[s].excluded_ids for s in SEEDS}) == 1
 
 
 def am5_and_order(arts: dict, args) -> dict:
     """Lane 6 (a): identical excluded sets (lane 6 (f) STOP otherwise), then one identical image order."""
     a5 = {s: arts[s].run.am5 for s in SEEDS}
-    if len({a5[s].excluded_ids for s in SEEDS}) != 1:
+    if not same_excluded(a5):
         detail = {f"s{s}": {"excluded": a5[s].excluded_count, "sha256": a5[s].excluded_ids_sha256} for s in SEEDS}
         raise td.Refused(f"STOP (lane 6 (f)): the AM-5 excluded sets differ across the seeds (a manifest "
                          f"mismatch): {detail}")
@@ -331,6 +363,12 @@ def am5_and_order(arts: dict, args) -> dict:
 # --------------------------------------------------------------------------------------------------
 # 9 the field of item 3(a), re-derived
 # --------------------------------------------------------------------------------------------------
+def count_ok(n_stats: int, n_record: int) -> bool:
+    """Decision (i): the image's disease classes with gt > 0 in the NPZ number n_eligible_disease_only, and at
+    least one (an included image has disease ground truth; 0 / 0 would otherwise pass as nan)."""
+    return n_stats == n_record and n_stats > 0
+
+
 def derivation_check(arts: dict) -> dict:
     """Decision (i): per image, the GT-present mean IoU over disease classes 1..115 from the sufficient
     statistics (float32 tp / (gt + pred - tp), as metrics._miou_from_cm) equals the stored disease_only_miou
@@ -349,13 +387,13 @@ def derivation_check(arts: dict) -> dict:
         cnt = np.bincount(img, minlength=size)
         for r in run.records:
             p = pos[r.image_id]
-            if cnt[p] != r.n_eligible_disease_only or cnt[p] == 0:
+            if not count_ok(int(cnt[p]), r.n_eligible_disease_only):
                 bad.append((f"s{s}", r.image_id, "class count", int(cnt[p]), r.n_eligible_disease_only))
                 continue
             diff = abs(float(sums[p] / cnt[p]) - float(r.disease_only_miou))
             rows += 1
             worst = max(worst, diff)
-            if diff > F32_TOL:
+            if not diff <= F32_TOL:                                   # a nan difference is a mismatch too
                 bad.append((f"s{s}", r.image_id, "value", diff))
     result = {"rule": "per image: mean over classes 1..115 with gt > 0 of float32 tp / (gt + pred - tp), from "
                       "sufficient_stats.npz, against per_image.jsonl disease_only_miou",
@@ -393,7 +431,11 @@ def compute_mde(arts: dict, included: int) -> tuple[dict, int, str]:
         pv = vectors[name]
         if pv.n != included:
             raise td.Refused(f"pair {name}: {pv.n} paired images, n_included is {included}")
-        pairs[name] = {"baseline": f"s{b}", "candidate": f"s{c}", **M.pair_summary(pv.delta, n)}
+        try:
+            summary = M.pair_summary(pv.delta, n)
+        except M.MdeError as e:
+            raise td.Refused(f"pair {name}: {e}") from e
+        pairs[name] = {"baseline": f"s{b}", "candidate": f"s{c}", **summary}
     ids_sha = hashlib.sha256("\n".join(next(iter(vectors.values())).image_ids).encode("utf-8")).hexdigest()
     missing = [name for name in pairs if pairs[name]["mde_w"] is None]
     if missing:
@@ -495,16 +537,24 @@ def band_self_check(band_bytes: bytes, floor: float, s: float, band: float) -> l
 # 12 the entry
 # --------------------------------------------------------------------------------------------------
 def artifact_record(art, s: str) -> dict:
+    """Recorded, not gated beyond the provenance checks: governed_paths_clean, the checkpoint's iteration and
+    the basename of the scored checkpoint path (open items for a ruling on gating them; see the lane report)."""
     run, rt = art.summary["run"], _runtime(art)
-    return {"run_id": art.run_id, "dir_name": art.path.name, "sha256s": dict(art.file_sha256s),
-            "checkpoint_sha256": run.get("checkpoint_sha256"), "repo_commit": run.get("repo_commit"),
-            "metric_impl_sha256": run.get("metric_impl_sha256"), "device_class": device_class(art),
-            "image_digest": rt.get("image_digest"), "batch_size": rt.get("batch_size"),
-            "forward_batches": rt.get("forward_batches"), "cudnn_version": rt.get("cudnn_version"),
-            "torch_cuda": rt.get("torch_cuda"), "all_class_miou": art.summary["dataset_level"].get("all_class_miou"),
-            "checkpoint_best_val_miou_all_class": rt.get("checkpoint_best_val_miou_all_class"),
-            "artifact_schema_version": art.summary.get("artifact_schema_version"),
-            "role": "DL-17 B66 re-score (run1)" if s == "42" else "in-chain A40 re-score"}
+    rec = {"run_id": art.run_id, "dir_name": art.path.name, "sha256s": dict(art.file_sha256s),
+           "checkpoint_sha256": run.get("checkpoint_sha256"), "repo_commit": run.get("repo_commit"),
+           "governed_paths_clean": run.get("governed_paths_clean"),
+           "metric_impl_sha256": run.get("metric_impl_sha256"), "device_class": device_class(art),
+           "image_digest": rt.get("image_digest"), "batch_size": rt.get("batch_size"),
+           "forward_batches": rt.get("forward_batches"), "cudnn_version": rt.get("cudnn_version"),
+           "torch_cuda": rt.get("torch_cuda"), "all_class_miou": art.summary["dataset_level"].get("all_class_miou"),
+           "checkpoint_best_val_miou_all_class": rt.get("checkpoint_best_val_miou_all_class"),
+           "checkpoint_iteration": rt.get("checkpoint_iteration"),
+           "checkpoint_path_basename": _basename(run.get("checkpoint_path")),
+           "artifact_schema_version": art.summary.get("artifact_schema_version"),
+           "role": "DL-17 B66 re-score (run1)" if s == "42" else "in-chain A40 re-score"}
+    if s == "42":
+        rec["dl17_delta"] = dl17_delta_of(art)
+    return rec
 
 
 def _g(x) -> str:
@@ -512,12 +562,22 @@ def _g(x) -> str:
 
 
 def decision_log_line(entry: dict, entry_name: str, entry_sha: str | None, band_name: str, band_sha: str) -> str:
-    p = entry["pairs"]
+    """The DL row's decision text: plan section 7.1 with Annex A section 4's MDE part, the seed-43/44
+    checkpoints (R2) and n_zero beside share_ties (R9 Q4). Real outputs are named at their record path
+    (reports/derived/, where the docs commit copies them); synthetic ones by their bare names. The entry stores the
+    line without its own sha256 (entry_sha None); the printed line adds it."""
+    p, arts, b = entry["pairs"], entry["artifacts"], entry["dl27_band"]
     names = [name for name, _, _ in PAIRS]
-    b = entry["dl27_band"]
     vals = b["e1_best_val"]
-    return (f"AM-17 item 3 MDE entry {entry_name}" + (f" sha256 {entry_sha}" if entry_sha else "")
-            + f": n_included {entry['n_included']} (K {entry['K_excluded']}); n_planning {entry['n_planning']}; "
+    where = "" if entry["synthetic_input_data"] else RECORD_DIR
+    a42 = arts["42"]                       # one commit, one device class, one image digest (provenance_checks)
+    runs = ", ".join(f"s{s} {arts[s]['run_id']} (MANIFEST.sha256 sha256 {arts[s]['sha256s'][MANIFEST_NAME]}, "
+                     f"checkpoint sha256 {arts[s]['checkpoint_sha256']})" for s in SEEDS)
+    return ("AM-17 item 3 MDE entry and AM-16 item 2 / DL-27 tie band (one entry, AM-17 item 3). "
+            f"MDE: {where}{entry_name}" + (f" sha256 {entry_sha}" if entry_sha else "")
+            + f"; E1 s42/s43/s44 VAL artifacts {runs} at evaluate_model.py commit {a42['repo_commit']}, "
+            f"{a42['device_class'][2]}, image {a42['image_digest']}; "
+            f"n_included {entry['n_included']} (K {entry['K_excluded']}); n_planning {entry['n_planning']}; "
             f"shifted-null MDE_W {_g(entry['mde_w'])} ("
             + ", ".join(f"{n.replace('-', '−')} {_g(p[n]['mde_w'])}" for n in names)
             + "; share of exact-zero differences " + "/".join(_g(p[n]["share_ties"]) for n in names)
@@ -528,16 +588,21 @@ def decision_log_line(entry: dict, entry_name: str, entry_sha: str | None, band_
             f"SD_Δ {_g(entry['sd_delta'])}, dz_MDE {_g(entry['dz_mde'])}, MDE_t {_g(entry['mde_t'])} "
             f"[{_g(entry['mde_t_range'][0])}, {_g(entry['mde_t_range'][1])}]; τ_P 0.010; power_caveat "
             f"{entry['power_caveat']}; label: planning proxy (item 3(e)); lane 6 (f): exact ties deflate MDE_W "
-            f"under the constant-shift null. Band: {band_name} sha256 {band_sha}; E1 best VAL 42/43/44 "
+            f"under the constant-shift null. Band: {where}{band_name} sha256 {band_sha}; E1 best VAL 42/43/44 "
             f"{vals['42']!r}/{vals['43']!r}/{vals['44']!r} (best.json sha256s in the entry); s {b['s']!r}; band "
             f"= max(0.005, √2·s) = {b['band']!r}. Code {entry['git_commit']} ({entry['script_commit_dl_id']}).")
+
+
+def analytic_block(pairs: dict, n: int) -> dict:
+    """Item 3(d) over the three pairs' SDs at n = n_planning, the resample size."""
+    return M.analytic([pairs[name]["sd"] for name, _, _ in PAIRS], n)
 
 
 def assemble(*, args, synthetic, generated, arts, checks, am5, derivation, pairs, n, ids_sha, band_doc,
              band_sha, band_files, band_checks, band_trace, floor, env, binding, band_name) -> dict:
     import scipy
     mde_w, mde_pair = M.overall(pairs)
-    ana = M.analytic([pairs[name]["sd"] for name, _, _ in PAIRS], n)
+    ana = analytic_block(pairs, n)
     return {
         "schema": SCHEMA, "lane": LANE, "script": SCRIPT, "authority": AUTHORITY,
         "artifact_status": "smoke" if synthetic else "provisional", "synthetic_input_data": synthetic,
