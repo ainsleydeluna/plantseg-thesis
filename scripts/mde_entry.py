@@ -19,8 +19,7 @@ Checks, in order; the first failure exits:
   2  flags: a real run needs --script-commit and --script-commit-dl-id and refuses --generated-utc
   3  --out-dir resolves outside the repository; neither output exists yet
   4  real run: HEAD == --script-commit, the code files present, `git status -- src configs scripts` empty, and
-     the running stack equal to src/stats/artifact.py PINNED_ENVIRONMENT (a stack without scipy or statsmodels
-     is refused in either mode)
+     the running stack equal to src/stats/artifact.py PINNED_ENVIRONMENT
   5  the inputs exist
   6  each artifact loads through src/stats/val_artifacts.py (MANIFEST and strict JSON, canvas only,
      Policy.REHEARSAL: VAL, 846 rows, a real-run artifact, AM-5 flags read or derived) as stage E1, student,
@@ -38,6 +37,9 @@ Checks, in order; the first failure exits:
   12 the band file, read back through its reader (sweep_select.dl27_band) before anything is written (exit 1
      on disagreement), and the entry, checked by the report layer's validator (report.validate_mde_entry;
      exit 1 on a problem)
+Before any of these, at import: a stack without numpy, scipy or statsmodels is refused (exit 2, nothing read or
+written). src.stats imports scipy and statsmodels when it is imported, so the guard runs before that import and
+names the missing package instead of ending in an import traceback (exit 1).
 A failed check's message carries each failed check's detail (the observed values), because nothing is written.
 The printed "DL line:" is the decision text of the DL row (plan section 7.1 with Annex A section 4's MDE part):
 the three artifacts (run_id, MANIFEST.sha256 sha256, checkpoint sha256), the MDE with share_ties and n_zero per
@@ -66,6 +68,23 @@ REPO = Path(__file__).resolve().parents[1]
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
+
+def require_stats_stack() -> None:
+    """The stack the stats layer imports when it is imported: missing, it is a refusal (exit 2), never an import
+    traceback. The pinned versions themselves are checked later (environment_check, src/stats/artifact.py)."""
+    try:
+        import numpy  # noqa: F401
+        import scipy  # noqa: F401
+        import statsmodels  # noqa: F401
+    except ImportError as e:
+        print(f"REFUSED: Refused: the running stack lacks {e.name or e}: the entry needs the pinned stack (python "
+              "3.11, numpy 1.26.4, scipy 1.11.4, statsmodels 0.14.6; src/stats/artifact.py PINNED_ENVIRONMENT)",
+              file=sys.stderr)
+        raise SystemExit(2) from None
+
+
+require_stats_stack()
+
 import numpy as np  # noqa: E402
 
 from scripts import compare_eval_artifacts as CEA  # noqa: E402
@@ -74,7 +93,7 @@ from src.eval.artifacts import MANIFEST_NAME  # noqa: E402
 from src.eval.evaluate import F32_TOL  # noqa: E402
 from src.stats import mde as M  # noqa: E402
 from src.stats.align import METRIC_DISEASE_ONLY, AlignmentError, align_runs  # noqa: E402
-from src.stats.artifact import PINNED_ENVIRONMENT, software_environment_block  # noqa: E402
+from src.stats.artifact import software_environment_block  # noqa: E402
 from src.stats.ingest import EXPECTED_ROWS_VAL, Policy  # noqa: E402
 from src.stats.report import TAU_P, validate_mde_entry  # noqa: E402
 from src.stats.val_artifacts import (ValArtifactError, code_provenance, load_val_artifact,  # noqa: E402
@@ -177,11 +196,7 @@ def commit_binding(args) -> dict:
 
 
 def environment_check(synthetic: bool) -> dict:
-    try:
-        env = software_environment_block()
-    except ImportError as e:
-        raise td.Refused(f"the running stack lacks {e.name or e}: the entry needs src/stats/artifact.py "
-                         f"PINNED_ENVIRONMENT {PINNED_ENVIRONMENT}") from e
+    env = software_environment_block()
     if not synthetic and env.get("matches_pinned") is not True:
         raise td.Refused(f"the running stack {env.get('observed')} is not the pinned {env.get('pinned')} "
                          "(src/stats/artifact.py PINNED_ENVIRONMENT): the pre-registered call is version-specific")

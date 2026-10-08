@@ -7,10 +7,12 @@ repository, then dressed (stats_fixtures.edit_summary) with the DL-17 B66 pins s
 eval_runtime (cuda:0, NVIDIA A40, batch 16, 53 batches, image b80b645d..., iteration 80000), the checkpoint
 sha256 cf0879f7..., dataset_level.all_class_miou 0.36314016580581665 and per_class.gt_support summing to
 159,279,104. No PlantSeg image, mask, checkpoint or TEST file is read; nothing is written into the repository.
-Every created path lies under the temporary root. Its parent is TMPDIR, whose realpath is checked to contain
-no "test" before anything is created; its own name is a fixed prefix plus hex digits, which cannot spell
-"test". The TEST-path refusals use paths that are never created. Refusals that could write if their gate
-regressed run with td.write_files_exclusive replaced by a tripwire.
+Every created path lies under the temporary root. Its parent is TMPDIR, whose string and realpath are both
+checked to contain no "test" before anything is created; its own name is a fixed prefix plus hex digits, which
+cannot spell "test". The TEST-path refusals use paths that are never created. R6 (an out-dir inside the
+repository) and R14 (a path resolving to a test location) run with td.write_files_exclusive replaced by a
+tripwire; every other check writes only under the temporary root. A child process (R16a-b) shows only the type
+and message of an uncaught error, so no traceback line is read.
 
   U  units of src/stats/mde.py: U0 the constants; n_planning; the grid; the 3-point guard on integer counts;
      the max over pairs; the caveat boundary; p < alpha strict; a spy on every pre-registered call; a spy on
@@ -580,6 +582,7 @@ def C1():
             "lane 6 (f): exact ties deflate MDE_W under the constant-shift null"]
     need += [arts[s][k] for s in SEEDS for k in ("run_id", "checkpoint_sha256")]
     need += [arts[s]["sha256s"][MANIFEST_NAME] for s in SEEDS]
+    need += dl_fields(entry, ENTRY, shas[ENTRY], f"{BAND} sha256 {shas[BAND]}", " (None).")
     missing = [x for x in need if dl is None or x not in dl]
     stored = dl is not None and entry["decision_log_line"] == dl.replace(f" sha256 {shas[ENTRY]}", "", 1)
     written = all(f"written: {n} sha256 {h}" in so for n, h in shas.items())
@@ -850,24 +853,30 @@ def R8c():
     return expect(argv_for(out, arts=_with("43", CTX.v_copy42_id)), 2, "their checkpoints", out)
 
 
+def fast_expect(argv, code_want: int, needle: str, out: Path) -> tuple[bool, dict]:
+    """expect() with fast counts, so a regressed gate never runs the full MDE."""
+    with patched((M, "rejection_counts", fast_counts)):
+        return expect(argv, code_want, needle, out)
+
+
 def R4g():
     out = fresh_out("r4g")
-    return expect(argv_for(out, arts=_with("44", CTX.v_stage)), 2, "expected stage/role/precision", out)
+    return fast_expect(argv_for(out, arts=_with("44", CTX.v_stage)), 2, "expected stage/role/precision", out)
 
 
 def R4h():
     out = fresh_out("r4h")
-    return expect(argv_for(out, arts=_with("44", CTX.v_precision)), 2, "expected stage/role/precision", out)
+    return fast_expect(argv_for(out, arts=_with("44", CTX.v_precision)), 2, "expected stage/role/precision", out)
 
 
 def R4i():
     out = fresh_out("r4i")
-    return expect(argv_for(out, arts=_with("43", CTX.v_inputs)), 2, "inputs on the model device", out)
+    return fast_expect(argv_for(out, arts=_with("43", CTX.v_inputs)), 2, "inputs on the model device", out)
 
 
 def R4j():
     out = fresh_out("r4j")
-    return expect(argv_for(out, arts=_with("44", CTX.v_policy)), 2, "the determinism policy applied", out)
+    return fast_expect(argv_for(out, arts=_with("44", CTX.v_policy)), 2, "the determinism policy applied", out)
 
 
 def R9():
@@ -886,7 +895,7 @@ def R10b():
     out = fresh_out("r10b")
     best = dict(CTX.best, **{"42": write_best(CTX.root / "best_int" / "s42" / "best.json", "42",
                                               extra={"best_ckpt": 7})})
-    return expect(argv_for(out, best=best), 2, "is not a path", out)
+    return fast_expect(argv_for(out, best=best), 2, "is not a path", out)
 
 
 def R11():
@@ -973,13 +982,79 @@ def R15b():
         return expect(argv_for(out), 2, "is not the DL-27 rule", out)
 
 
-def R16():
-    out = fresh_out("r16")
+#: set by mutation M40 only: the child runs mde_entry.py with its import-time stack guard call removed
+STACK_GUARD_REMOVED = False
+STACK_CHILD = """import sys
+sys.excepthook = lambda t, v, tb: print("UNCAUGHT " + t.__name__ + ": " + str(v), file=sys.stderr)
+sys.modules[{module!r}] = None
+script = {script!r}
+source = open(script, encoding="utf-8").read()
+if {removed!r}:
+    source = source.replace("\\nrequire_stats_stack()\\n", "\\n", 1)
+sys.argv = [script] + {argv!r}
+exec(compile(source, script, "exec"), {{"__name__": "__main__", "__file__": script}})
+"""
 
-    def missing():
-        raise ModuleNotFoundError("No module named 'statsmodels'", name="statsmodels")
-    with patched((ME, "software_environment_block", missing)):
-        return expect(argv_for(out), 2, "the running stack lacks statsmodels", out)
+
+def stack_case(tag: str, module: str) -> tuple[bool, dict]:
+    """A child process in which `module` cannot be imported (sys.modules[module] = None). Its excepthook prints
+    only the type and message of an uncaught error, so no traceback line of any module is ever read or shown."""
+    out = fresh_out(tag)
+    child = STACK_CHILD.format(module=module, script=str(REPO / "scripts" / "mde_entry.py"),
+                               removed=STACK_GUARD_REMOVED, argv=[str(x) for x in argv_for(out)])
+    p = subprocess.run([sys.executable, "-B", "-c", child], cwd=str(REPO), capture_output=True, text=True,
+                       env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
+    ok = p.returncode == 2 and f"the running stack lacks {module}" in p.stderr and listing(out) == []
+    return ok, {"exit": p.returncode, "stderr": p.stderr.strip()[-300:], "left": listing(out)}
+
+
+def R16a():
+    return stack_case("r16a", "statsmodels")
+
+
+def R16b():
+    return stack_case("r16b", "scipy")
+
+
+def C7():
+    """A completed real-mode run (git faked to a clean HEAD equal to --script-commit; the fixtures' dataset name
+    taken as the evaluator's; fast counts): the record-path names, the DL id and every field of the DL line."""
+    import src.eval.adapters as AD
+    out = fresh_out("c7")
+    with patched((ME.td, "_git", fake_git("0" * 40, "")), (AD, "DATASET_NAME", F.FIXTURE_DATASET_NAME),
+                 (M, "rejection_counts", fast_counts)):
+        code, so, se = run_cli(argv_for(out, synthetic=False, extra=_real_extra()))
+    entry_name = next((x.split()[1] for x in so.splitlines() if x.startswith("written: mde_entry_")), None)
+    if code != 0 or entry_name is None or not (out / entry_name).exists():
+        return False, {"exit": code, "stderr": se[-500:], "files": listing(out)}
+    entry = json.loads((out / entry_name).read_text(encoding="utf-8"))
+    dl, sha = dl_line(so), hashlib.sha256((out / entry_name).read_bytes()).hexdigest()
+    band_sha = hashlib.sha256((out / "dl27_band.json").read_bytes()).hexdigest()
+    missing = [x for x in dl_fields(entry, f"reports/derived/{entry_name}", sha,
+                                    f"reports/derived/dl27_band.json sha256 {band_sha}", " (DL-99).") if x not in dl]
+    stored = entry["decision_log_line"] == dl.replace(f" sha256 {sha}", "", 1)
+    return (not missing and stored and entry["artifact_status"] == "provisional"
+            and entry["script_commit_dl_id"] == "DL-99"), {"missing": missing, "stored_equals_printed": stored}
+
+
+def dl_fields(entry: dict, entry_ref: str, entry_sha: str, band_ref: str, tail: str) -> list:
+    """The DL line's expected fields, built from the entry's values with the smoke's own formatting."""
+    def g(x):
+        return f"{x:.6g}"
+    p, a, b = entry["pairs"], entry["artifacts"], entry["dl27_band"]
+    lo, hi = entry["mde_t_range"]
+    return ["AM-17 item 3 MDE entry and AM-16 item 2 / DL-27 tie band (one entry, AM-17 item 3). "
+            f"MDE: {entry_ref} sha256 {entry_sha}; E1 s42/s43/s44 VAL artifacts s42 {a['42']['run_id']} ",
+            f"at evaluate_model.py commit {a['42']['repo_commit']}, NVIDIA A40, image {CEA.DL17_IMAGE_DIGEST}; ",
+            f"n_included {entry['n_included']} (K {entry['K_excluded']}); n_planning {entry['n_planning']}; ",
+            f"shifted-null MDE_W {g(entry['mde_w'])} (43−42 {g(p['43-42']['mde_w'])}, 44−42 {g(p['44-42']['mde_w'])}, "
+            f"44−43 {g(p['44-43']['mde_w'])}; ",
+            "share of exact-zero differences " + "/".join(g(p[k]["share_ties"]) for k in PAIR_ORDER)
+            + ", n_zero " + "/".join(str(p[k]["n_zero"]) for k in PAIR_ORDER) + "; ",
+            f"SD_Δ {g(entry['sd_delta'])}, dz_MDE {g(entry['dz_mde'])}, MDE_t {g(entry['mde_t'])} [{g(lo)}, {g(hi)}]; ",
+            f"power_caveat {entry['power_caveat']}; ",
+            f"Band: {band_ref}; E1 best VAL 42/43/44 {BEST['42']!r}/{BEST['43']!r}/{BEST['44']!r} ",
+            f"s {PLAN_S!r}; band = max(0.005, √2·s) = {PLAN_BAND!r}.", tail]
 
 
 def R17():
@@ -1099,6 +1174,7 @@ def min_overall(pairs):
 
 
 _REAL_PAIR_SUMMARY = M.pair_summary
+_REAL_DL_LINE = ME.decision_log_line
 
 
 def resample_at_m(d, n, **kw):
@@ -1106,14 +1182,22 @@ def resample_at_m(d, n, **kw):
     return _REAL_PAIR_SUMMARY(d, len(d), **kw)
 
 
-def binding_without_tree(args) -> dict:
-    """Mutation: commit_binding without its clean-tree check."""
-    head = ME.td.git_head()
-    if head is None:
-        raise ME.td.Refused("git HEAD could not be read")
-    if head != args.script_commit:
-        raise ME.td.Refused(f"HEAD {head} != --script-commit {args.script_commit}")
-    return {"head": head, "script_commit": args.script_commit, "script_commit_dl_id": args.script_commit_dl_id}
+def binding_without(rule: str):
+    """Mutation: commit_binding without one rule ('tree': the clean-tree check; 'files': the code-files check)."""
+    def binding(args) -> dict:
+        head = ME.td.git_head()
+        if head is None:
+            raise ME.td.Refused("git HEAD could not be read")
+        if head != args.script_commit:
+            raise ME.td.Refused(f"HEAD {head} != --script-commit {args.script_commit}")
+        missing = [p for p in ME.CODE_FILES if not (ME.REPO / p).is_file()]
+        if rule != "files" and missing:
+            raise ME.td.Refused(f"{len(missing)} code file(s) missing at HEAD: {missing}")
+        tree = ME.td.git_status(("src", "configs", "scripts"))
+        if rule != "tree" and (tree is None or tree.strip()):
+            raise ME.td.Refused("git status lists entries; a real run needs them clean at HEAD")
+        return {"head": head, "script_commit": args.script_commit, "script_commit_dl_id": args.script_commit_dl_id}
+    return binding
 
 
 def guard_names_only(paths: dict) -> None:
@@ -1168,7 +1252,7 @@ MUTATIONS = [
     ("M29", "analytic block at m = n_included",
      lambda: [(ME, "analytic_block", lambda pairs, n: M.analytic([pairs[k]["sd"] for k in PAIR_ORDER],
                                                                  pairs["43-42"]["m"]))], "C6"),
-    ("M30", "binding without its clean-tree check", lambda: [(ME, "commit_binding", binding_without_tree)], "R13d"),
+    ("M30", "binding without its clean-tree check", lambda: [(ME, "commit_binding", binding_without("tree"))], "R13d"),
     ("M31", "path guard without its resolved-path stage", lambda: [(ME, "guard_paths", guard_names_only)], "R14"),
     ("M32", "require_role skipped", lambda: [(ME, "require_role", lambda art, **k: None)], "R4g"),
     ("M33", "mode gate in one direction only", lambda: [(ME, "check_mode", mode_one_way)], "R7e"),
@@ -1180,10 +1264,15 @@ MUTATIONS = [
     ("M38", "band read-back skipped", lambda: [(ME, "band_self_check", lambda *a, **k: [])], "S5"),
     ("M39", "rule file's band not validated",
      lambda: [(ME, "band_floor", lambda: float(SS.load_rules()["alpha_cwd"]["band"]["floor"]))], "R15a"),
-    ("M40", "missing stats package not refused",
-     lambda: [(ME, "environment_check", lambda synthetic: ME.software_environment_block())], "R16"),
+    ("M40", "the import-time stack guard removed (in the child's source)",
+     lambda: [(sys.modules[__name__], "STACK_GUARD_REMOVED", True)], "R16a"),
     ("M41", "failed checks named without their details", lambda: [(ME, "require_passed", names_only)], "R12"),
     ("M42", "a d of exact zeros only accepted", lambda: [(M, "check_d", check_d_with_zeros)], "R17"),
+    ("M51", "the DL line prints dz_MDE as MDE_t",
+     lambda: [(ME, "decision_log_line", lambda entry, *a: _REAL_DL_LINE(dict(entry, mde_t=entry["dz_mde"]), *a))],
+     "C7"),
+    ("M52", "binding without its code-files check", lambda: [(ME, "commit_binding", binding_without("files"))],
+     "R13c"),
 ]
 
 
@@ -1245,14 +1334,17 @@ def checks() -> list:
             ("R14", "a --s43 resolving to a test location -> exit 2, nothing created", R14),
             ("R15a", "the rule file's band floor 0.01 -> exit 2", R15a),
             ("R15b", "the rule file's band kind 'fixed' -> exit 2", R15b),
-            ("R16", "a stack without statsmodels -> exit 2", R16),
+            ("R16a", "a child process without statsmodels -> exit 2 (the import-time guard), nothing written", R16a),
+            ("R16b", "a child process without scipy -> exit 2 (the import-time guard), nothing written", R16b),
             ("R17", "two runs that agree image for image -> exit 2", R17),
             ("S1", "a per-image value off by 1e-3 -> exit 1 (re-derivation), nothing written", S1),
             ("S2", "no qualifying delta -> exit 1, nothing written, three curves printed", S2),
             ("S3", "an entry the report validator rejects -> exit 1, nothing written", S3),
             ("S4", "a per-image class count off by one -> exit 1, nothing written", S4),
             ("S5", "a band its reader refuses -> exit 1, nothing written", S5),
-            ("C6", "in-process CLI (fast counts): every headline number recomputed from the entry", C6)]
+            ("C6", "in-process CLI (fast counts): every headline number recomputed from the entry", C6),
+            ("C7", "a completed real-mode run (git faked, fast counts): record paths, DL-99 and every DL-line field",
+             C7)]
     return out
 
 
@@ -1290,6 +1382,8 @@ def make_root(prefix: str):
     base = os.environ.get("TMPDIR")
     if not base:
         return None, "TMPDIR is not set; run with TMPDIR=/tmp/s4scratch"
+    if "test" in base.lower():                                        # the string first, before any filesystem call
+        return None, "TMPDIR contains 'test'"
     real = os.path.realpath(base)
     if "test" in real.lower() or not os.path.isdir(real):
         return None, f"TMPDIR resolves to {real!r}, which contains 'test' or is not a directory"
