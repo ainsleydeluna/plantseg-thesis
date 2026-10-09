@@ -1,0 +1,355 @@
+{
+  "schema": "plantseg-aspect-ratio-census/1.0.0",
+  "census": "aspect-ratio",
+  "lane": "S4",
+  "script": "scripts/split_censuses.py",
+  "authority": "DL-49 (docs/DECISION_LOG.md:108); docs/IMPLEMENTATION_CONTRACT.md B3 'Zero-valid samples' (:370)",
+  "artifact_status": "provisional",
+  "synthetic_input_data": false,
+  "generated_utc": "2026-10-09T03:47:40Z",
+  "code": {
+    "commit": "147f643a06affab6926c4232991d1b0292c3853c",
+    "code_files_clean_at_commit": true,
+    "code_files": {
+      "scripts/split_censuses.py": "5fca2e59cd6ee0c200a84c31892907f693d9e70a3e9296e3dbefc799d9c7c727",
+      "scripts/hash_split_files.py": "fdf5a7e2762a85a3b878ff9b51282e5a0b6bea8dae4500f469aee68f5669ce9e",
+      "src/eval/teacher_diag.py": "2e0933be4659f4ace3acc1f174a1012f05b76811ffb7261ccd64cd3130bff91b",
+      "src/eval/artifacts.py": "540eea7906d29674d9231bcb53758a20a41ee36cd8bfbcf3207db3905e8bf181",
+      "src/eval/evaluate.py": "0b609a0e8e6843940805237b8fd2d76f3a888cbf3141d45b95fae086986789d2"
+    },
+    "binding": {
+      "head": "147f643a06affab6926c4232991d1b0292c3853c",
+      "script_commit": "147f643a06affab6926c4232991d1b0292c3853c",
+      "script_commit_dl_id": "DL-99"
+    }
+  },
+  "environment": {
+    "python": "3.11.16",
+    "numpy": "1.26.4",
+    "pillow": "12.3.0",
+    "image_digest": "sha256:cb413304e2445e5c8ac3786f7a370f2ed05a07d11843b11687bb9eb23dc32c2b",
+    "torch": "2.1.0+cu121"
+  },
+  "inputs": {
+    "folders": [
+      "images/train",
+      "images/val"
+    ],
+    "listing": "one os.scandir per folder; no recursion; no other folder",
+    "image_rule": "os.path.splitext(name)[1].lower() in ('.jpg', '.jpeg') (scripts/hash_split_files.py IMAGE_SUFFIXES; src/eval/adapters.py list_split_stems, which differs only for names made of leading dots and the suffix)",
+    "expected": {
+      "train": 5367,
+      "val": 846
+    },
+    "entries": {
+      "train": {
+        "files": 5367,
+        "dirs": 0,
+        "other": 0,
+        "symlinks": 0,
+        "dot_files": 0
+      },
+      "val": {
+        "files": 846,
+        "dirs": 0,
+        "other": 0,
+        "symlinks": 0,
+        "dot_files": 0
+      }
+    }
+  },
+  "definition": {
+    "aspect_ratio": "max(W, H) / min(W, H) of the stored header size (PIL Image.open(...).size; no pixel decoded); invariant under EXIF 90-degree rotations",
+    "above": "strictly above, in integers: 10 * long > 126 * short (12.6), 10 * long > 265 * short (26.5)"
+  },
+  "thresholds": [
+    {
+      "value": 12.6,
+      "source": "B3: every valid 32x32 cell is lost only above aspect ratio about 12.6 at the worst scale r = 0.75 (certain from about 24.8)"
+    },
+    {
+      "value": 26.5,
+      "source": "B3: every valid 64x64 cell is lost only above about 26.5"
+    }
+  ],
+  "splits": {
+    "train": {
+      "n": 5367,
+      "max_ar": 4.5,
+      "max_ar_exact": "3600/800",
+      "max_ar_image": {
+        "split": "train",
+        "stem": "banana_bunchy_top_Google_0109",
+        "file": "banana_bunchy_top_Google_0109.jpg",
+        "w": 3600,
+        "h": 800
+      },
+      "count_above_12_6": 0,
+      "count_above_26_5": 0,
+      "top10": [
+        {
+          "split": "train",
+          "stem": "banana_bunchy_top_Google_0109",
+          "w": 3600,
+          "h": 800,
+          "ar": 4.5
+        },
+        {
+          "split": "train",
+          "stem": "corn_rust_google_0049",
+          "w": 2338,
+          "h": 597,
+          "ar": 3.916247906197655
+        },
+        {
+          "split": "train",
+          "stem": "potato_early_blight_google_0119",
+          "w": 750,
+          "h": 230,
+          "ar": 3.260869565217391
+        },
+        {
+          "split": "train",
+          "stem": "tobacco_brown_spot_Bing_0015",
+          "w": 600,
+          "h": 199,
+          "ar": 3.0150753768844223
+        },
+        {
+          "split": "train",
+          "stem": "wheat_loose_smut_Bing_0355",
+          "w": 1020,
+          "h": 339,
+          "ar": 3.0088495575221237
+        },
+        {
+          "split": "train",
+          "stem": "coffee_leaf_rust_23",
+          "w": 597,
+          "h": 199,
+          "ar": 3.0
+        },
+        {
+          "split": "train",
+          "stem": "wheat_head_scab_Bing_0088",
+          "w": 800,
+          "h": 267,
+          "ar": 2.9962546816479403
+        },
+        {
+          "split": "train",
+          "stem": "wheat_head_scab_Bing_0165",
+          "w": 488,
+          "h": 1443,
+          "ar": 2.956967213114754
+        },
+        {
+          "split": "train",
+          "stem": "tomato_mosaic_virus_117",
+          "w": 443,
+          "h": 150,
+          "ar": 2.953333333333333
+        },
+        {
+          "split": "train",
+          "stem": "wheat_head_scab_Baidu_0484",
+          "w": 570,
+          "h": 198,
+          "ar": 2.878787878787879
+        }
+      ],
+      "formats": {
+        "JPEG": 5363,
+        "MPO": 1,
+        "PNG": 3
+      },
+      "header_warnings": {}
+    },
+    "val": {
+      "n": 846,
+      "max_ar": 3.84,
+      "max_ar_exact": "1920/500",
+      "max_ar_image": {
+        "split": "val",
+        "stem": "coffee_berry_blotch_Google_0058",
+        "file": "coffee_berry_blotch_Google_0058.jpg",
+        "w": 1920,
+        "h": 500
+      },
+      "count_above_12_6": 0,
+      "count_above_26_5": 0,
+      "top10": [
+        {
+          "split": "val",
+          "stem": "coffee_berry_blotch_Google_0058",
+          "w": 1920,
+          "h": 500,
+          "ar": 3.84
+        },
+        {
+          "split": "val",
+          "stem": "coffee_leaf_rust_google_0035",
+          "w": 2560,
+          "h": 800,
+          "ar": 3.2
+        },
+        {
+          "split": "val",
+          "stem": "wheat_septoria_blotch_Google_0212",
+          "w": 752,
+          "h": 266,
+          "ar": 2.827067669172932
+        },
+        {
+          "split": "val",
+          "stem": "wheat_loose_smut_Baidu_0013",
+          "w": 800,
+          "h": 320,
+          "ar": 2.5
+        },
+        {
+          "split": "val",
+          "stem": "wheat_loose_smut_Baidu_0021",
+          "w": 800,
+          "h": 320,
+          "ar": 2.5
+        },
+        {
+          "split": "val",
+          "stem": "apple_mosaic_virus_google_0058",
+          "w": 535,
+          "h": 226,
+          "ar": 2.3672566371681416
+        },
+        {
+          "split": "val",
+          "stem": "corn_rust_65",
+          "w": 2019,
+          "h": 871,
+          "ar": 2.318025258323766
+        },
+        {
+          "split": "val",
+          "stem": "bell_pepper_bacterial_spot_Bing_0027",
+          "w": 493,
+          "h": 213,
+          "ar": 2.3145539906103285
+        },
+        {
+          "split": "val",
+          "stem": "banana_anthracnose_Bing_0000",
+          "w": 1809,
+          "h": 821,
+          "ar": 2.203410475030451
+        },
+        {
+          "split": "val",
+          "stem": "corn_northern_leaf_blight_google_0098",
+          "w": 907,
+          "h": 413,
+          "ar": 2.196125907990315
+        }
+      ],
+      "formats": {
+        "JPEG": 845,
+        "PNG": 1
+      },
+      "header_warnings": {}
+    }
+  },
+  "combined": {
+    "n": 6213,
+    "max_ar": 4.5,
+    "max_ar_exact": "3600/800",
+    "max_ar_image": {
+      "split": "train",
+      "stem": "banana_bunchy_top_Google_0109",
+      "file": "banana_bunchy_top_Google_0109.jpg",
+      "w": 3600,
+      "h": 800
+    },
+    "count_above_12_6": 0,
+    "count_above_26_5": 0,
+    "top10": [
+      {
+        "split": "train",
+        "stem": "banana_bunchy_top_Google_0109",
+        "w": 3600,
+        "h": 800,
+        "ar": 4.5
+      },
+      {
+        "split": "train",
+        "stem": "corn_rust_google_0049",
+        "w": 2338,
+        "h": 597,
+        "ar": 3.916247906197655
+      },
+      {
+        "split": "val",
+        "stem": "coffee_berry_blotch_Google_0058",
+        "w": 1920,
+        "h": 500,
+        "ar": 3.84
+      },
+      {
+        "split": "train",
+        "stem": "potato_early_blight_google_0119",
+        "w": 750,
+        "h": 230,
+        "ar": 3.260869565217391
+      },
+      {
+        "split": "val",
+        "stem": "coffee_leaf_rust_google_0035",
+        "w": 2560,
+        "h": 800,
+        "ar": 3.2
+      },
+      {
+        "split": "train",
+        "stem": "tobacco_brown_spot_Bing_0015",
+        "w": 600,
+        "h": 199,
+        "ar": 3.0150753768844223
+      },
+      {
+        "split": "train",
+        "stem": "wheat_loose_smut_Bing_0355",
+        "w": 1020,
+        "h": 339,
+        "ar": 3.0088495575221237
+      },
+      {
+        "split": "train",
+        "stem": "coffee_leaf_rust_23",
+        "w": 597,
+        "h": 199,
+        "ar": 3.0
+      },
+      {
+        "split": "train",
+        "stem": "wheat_head_scab_Bing_0088",
+        "w": 800,
+        "h": 267,
+        "ar": 2.9962546816479403
+      },
+      {
+        "split": "train",
+        "stem": "wheat_head_scab_Bing_0165",
+        "w": 488,
+        "h": 1443,
+        "ar": 2.956967213114754
+      }
+    ],
+    "formats": {
+      "JPEG": 6208,
+      "MPO": 1,
+      "PNG": 4
+    },
+    "header_warnings": {}
+  },
+  "dims_list_sha256": "c19f5deacdd4b7d33ad4190ef56ea1da58cacf0eac67508d86c8e6642f9c37d5",
+  "dims_list_rule": "sha256 over 'split\\tstem\\tw\\th\\n' per image, TRAIN then VAL, name-sorted",
+  "status": "written"
+}

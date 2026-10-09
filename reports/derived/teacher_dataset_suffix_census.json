@@ -1,0 +1,168 @@
+{
+  "schema": "plantseg-teacher-suffix-census/1.0.0",
+  "census": "teacher-suffix",
+  "lane": "S4",
+  "script": "scripts/split_censuses.py",
+  "authority": "DL-55 (docs/DECISION_LOG.md:114; A1 N3)",
+  "artifact_status": "provisional",
+  "synthetic_input_data": false,
+  "generated_utc": "2026-10-09T03:47:15Z",
+  "code": {
+    "commit": "147f643a06affab6926c4232991d1b0292c3853c",
+    "code_files_clean_at_commit": true,
+    "code_files": {
+      "scripts/split_censuses.py": "5fca2e59cd6ee0c200a84c31892907f693d9e70a3e9296e3dbefc799d9c7c727",
+      "scripts/hash_split_files.py": "fdf5a7e2762a85a3b878ff9b51282e5a0b6bea8dae4500f469aee68f5669ce9e",
+      "src/eval/teacher_diag.py": "2e0933be4659f4ace3acc1f174a1012f05b76811ffb7261ccd64cd3130bff91b",
+      "src/eval/artifacts.py": "540eea7906d29674d9231bcb53758a20a41ee36cd8bfbcf3207db3905e8bf181",
+      "src/eval/evaluate.py": "0b609a0e8e6843940805237b8fd2d76f3a888cbf3141d45b95fae086986789d2"
+    },
+    "binding": {
+      "head": "147f643a06affab6926c4232991d1b0292c3853c",
+      "script_commit": "147f643a06affab6926c4232991d1b0292c3853c",
+      "script_commit_dl_id": "DL-99"
+    }
+  },
+  "environment": {
+    "python": "3.11.16",
+    "numpy": "1.26.4",
+    "pillow": "12.3.0",
+    "image_digest": "sha256:cb413304e2445e5c8ac3786f7a370f2ed05a07d11843b11687bb9eb23dc32c2b",
+    "torch": "2.1.0+cu121"
+  },
+  "inputs": {
+    "folders": [
+      "images/train",
+      "images/val"
+    ],
+    "listing": "one os.scandir per folder; no recursion; no other folder",
+    "teacher_rule": "not name.startswith('.') and name.endswith('.jpg') (configs/teacher/segnext_mscan-b_1xb16-adamw-40k_plantseg116-512x512.py:207 img_suffix, exact and case-sensitive; mmengine LocalBackend.list_dir_or_file skips dot-named files and still enters dot-named directories, which the no-subdirectory check fails [U: transcribed, mmengine is not in the repository])",
+    "student_rule": "os.path.splitext(name)[1].lower() in ('.jpg', '.jpeg')",
+    "expected": {
+      "train": 5367,
+      "val": 846
+    }
+  },
+  "splits": {
+    "train": {
+      "n_files": 5367,
+      "n_dirs": 0,
+      "n_other": 0,
+      "n_symlinks": 0,
+      "n_dot_files": 0,
+      "suffix_counts": {
+        ".jpg": 5367
+      },
+      "teacher_rule_count": 5367,
+      "student_rule_count": 5367,
+      "student_stems_unique": true,
+      "stem_sets_equal": true,
+      "n_only_teacher": 0,
+      "only_teacher": [],
+      "n_only_student": 0,
+      "only_student": []
+    },
+    "val": {
+      "n_files": 846,
+      "n_dirs": 0,
+      "n_other": 0,
+      "n_symlinks": 0,
+      "n_dot_files": 0,
+      "suffix_counts": {
+        ".jpg": 846
+      },
+      "teacher_rule_count": 846,
+      "student_rule_count": 846,
+      "student_stems_unique": true,
+      "stem_sets_equal": true,
+      "n_only_teacher": 0,
+      "only_teacher": [],
+      "n_only_student": 0,
+      "only_student": []
+    }
+  },
+  "records": {
+    "file": "teacher_selection_records.jsonl",
+    "records_sha256": "3448daf348f3e9ddf0c1db5bca229599a8b9aae702486ea17d0500f079816cac",
+    "expected_sha256": "3448daf348f3e9ddf0c1db5bca229599a8b9aae702486ea17d0500f079816cac",
+    "expected_source": "DL-68, docs/DECISION_LOG.md:127",
+    "expected_sha256_matches": true,
+    "rows": 10,
+    "iterations": [
+      4000,
+      8000,
+      12000,
+      16000,
+      20000,
+      24000,
+      28000,
+      32000,
+      36000,
+      40000
+    ],
+    "expected_iterations": [
+      4000,
+      8000,
+      12000,
+      16000,
+      20000,
+      24000,
+      28000,
+      32000,
+      36000,
+      40000
+    ],
+    "val_images": [
+      846,
+      846,
+      846,
+      846,
+      846,
+      846,
+      846,
+      846,
+      846,
+      846
+    ],
+    "val_manifest_sha256": [
+      "35f6788e840a2dc22cf0c5caa552b9c6a85d3dbd1bbbe594c1b52102aa828fa3"
+    ],
+    "mIoU_full": [
+      0.2799563705921173,
+      0.33016303181648254,
+      0.3613571524620056,
+      0.36637264490127563,
+      0.37521177530288696,
+      0.3857521116733551,
+      0.37532469630241394,
+      0.37335753440856934,
+      0.38273364305496216,
+      0.38146138191223145
+    ],
+    "mIoU_full_note": "recorded, not gated: compare with DL-68's ten values",
+    "teacher_of_record_checkpoint_in_rows": true
+  },
+  "val_manifest": {
+    "census": "35f6788e840a2dc22cf0c5caa552b9c6a85d3dbd1bbbe594c1b52102aa828fa3",
+    "records": "35f6788e840a2dc22cf0c5caa552b9c6a85d3dbd1bbbe594c1b52102aa828fa3",
+    "equal": true,
+    "rule": "hash_split_manifest over ManifestEntry(i, stem, stem) for the name-sorted VAL files under the teacher's rule (exact '.jpg', no leading dot): the order the teacher hook hashes (src/training/teacher_components.py:214-224; 'BaseSegDataset sorts by img_path', teacher config :249); mmseg's own listing is not in the repository"
+  },
+  "expectation": {
+    "train_teacher_rule_count_is_5367": true,
+    "train_student_rule_count_is_5367": true,
+    "train_stem_sets_equal": true,
+    "train_no_subdirectory": true,
+    "val_teacher_rule_count_is_846": true,
+    "val_student_rule_count_is_846": true,
+    "val_stem_sets_equal": true,
+    "val_no_subdirectory": true,
+    "records_rows_10": true,
+    "records_iterations_4000_to_40000": true,
+    "records_val_images_846_in_every_row": true,
+    "records_val_manifest_uniform": true,
+    "records_val_manifest_equals_census": true
+  },
+  "expectation_met": true,
+  "status": "written"
+}

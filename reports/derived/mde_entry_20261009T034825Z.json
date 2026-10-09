@@ -1,0 +1,1205 @@
+{
+  "schema": "plantseg-mde-entry/1.0.0",
+  "lane": "L-AM17-MDE",
+  "script": "scripts/mde_entry.py",
+  "authority": "AM-17 item 3 (docs/PREREGISTRATION_AMENDMENTS.md:393-418); docs/lane_specs/part1.md lane 6; DL-27 / AM-16 item 2 (the alpha tie band)",
+  "artifact_status": "provisional",
+  "synthetic_input_data": false,
+  "generated_utc": "2026-10-09T03:48:25Z",
+  "artifacts": {
+    "42": {
+      "run_id": "dl17_run1",
+      "dir_name": "s42",
+      "sha256s": {
+        "MANIFEST.sha256": "79b06c9da3925d2b0401e67d9b4dbea66b6189ac24cb8c6f542e4e84ce2091fa",
+        "per_image.jsonl": "f0956084909edace3ca4e1c379ef658ff86e0ace68ae48c126cf3932bf9ec3ca",
+        "sufficient_stats.npz": "6d73de6b5313c94e24875b2e1bffd0e06ce9d3598b8b599694b49a5bd8242f6a",
+        "summary.json": "e45fadfacfeb3a2669564ba8f8ad507c432371b960ee80f586228d18b367dfff"
+      },
+      "checkpoint_sha256": "cf0879f7007dfacbd0d510085ff28a4b47ee845ddb8fd599611d74109e1d6a03",
+      "repo_commit": "73fd4d7e0db699eba940526cc5b24d4b73ca51b9",
+      "governed_paths_clean": true,
+      "metric_impl_sha256": "9898d6dc0ec68f15c8c90cebb5889914c0a2de2e3bd409c3fba9ba14e1be86d9",
+      "device_class": [
+        "cuda",
+        "cuda",
+        "NVIDIA A40"
+      ],
+      "image_digest": "sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf",
+      "batch_size": 16,
+      "forward_batches": 53,
+      "cudnn_version": 8902,
+      "torch_cuda": "12.1",
+      "all_class_miou": 0.36314016580581665,
+      "checkpoint_best_val_miou_all_class": 0.36314016580581665,
+      "checkpoint_iteration": 80000,
+      "checkpoint_path_basename": "e1_student_best_iter80000.pt",
+      "artifact_schema_version": null,
+      "role": "DL-17 B66 re-score (run1)",
+      "dl17_delta": 0.0
+    },
+    "43": {
+      "run_id": "rescore_s43",
+      "dir_name": "s43",
+      "sha256s": {
+        "MANIFEST.sha256": "9b4227a5c902c95c2304be316ea8be228ceef99bdbe24e689f96011b1eb2d690",
+        "per_image.jsonl": "05426132563bfd886df19a2937b131784347b58a0f0b9eb0a3be13b80fcec8aa",
+        "sufficient_stats.npz": "125e974ce72c0e61c60cc55589e3149dc298db078183dc1d5a3d348502d99ef8",
+        "summary.json": "f449dde9323bc1a176356da833160eb5b7f45af0c54002eb10420cb0ca8735bd"
+      },
+      "checkpoint_sha256": "95f21204788f2986aba9311272c7f7e84f8d2049724c4bfdf5b0da66b6a78153",
+      "repo_commit": "73fd4d7e0db699eba940526cc5b24d4b73ca51b9",
+      "governed_paths_clean": true,
+      "metric_impl_sha256": "9898d6dc0ec68f15c8c90cebb5889914c0a2de2e3bd409c3fba9ba14e1be86d9",
+      "device_class": [
+        "cuda",
+        "cuda",
+        "NVIDIA A40"
+      ],
+      "image_digest": "sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf",
+      "batch_size": 16,
+      "forward_batches": 53,
+      "cudnn_version": 8902,
+      "torch_cuda": "12.1",
+      "all_class_miou": 0.34126096963882446,
+      "checkpoint_best_val_miou_all_class": 0.34126096963882446,
+      "checkpoint_iteration": 72000,
+      "checkpoint_path_basename": "e1_student_best_iter72000.pt",
+      "artifact_schema_version": null,
+      "role": "in-chain A40 re-score"
+    },
+    "44": {
+      "run_id": "rescore_s44",
+      "dir_name": "s44",
+      "sha256s": {
+        "MANIFEST.sha256": "e9e03ed4566a6a85ccb2ad7f79228e4ae27fe8f6392309cb3504af8d5f3250b9",
+        "per_image.jsonl": "e1567fb8b97c3aa983cdeb290f2d49ca7a120e38ba5cb779c98740532449aba9",
+        "sufficient_stats.npz": "e3c2c735c89c379493487be2975e0c53100ef632b2c29ecaa0406b04fa5a11db",
+        "summary.json": "c3dfc8404c988cd5cbdf57dab25397ecb4b0b176338606e6ce494edb796b0a79"
+      },
+      "checkpoint_sha256": "ef95aefd8f383e3b23674e0c6abf040dfb1ef0da997a53140c59ced294108c8f",
+      "repo_commit": "73fd4d7e0db699eba940526cc5b24d4b73ca51b9",
+      "governed_paths_clean": true,
+      "metric_impl_sha256": "9898d6dc0ec68f15c8c90cebb5889914c0a2de2e3bd409c3fba9ba14e1be86d9",
+      "device_class": [
+        "cuda",
+        "cuda",
+        "NVIDIA A40"
+      ],
+      "image_digest": "sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf",
+      "batch_size": 16,
+      "forward_batches": 53,
+      "cudnn_version": 8902,
+      "torch_cuda": "12.1",
+      "all_class_miou": 0.3548465073108673,
+      "checkpoint_best_val_miou_all_class": 0.3548465073108673,
+      "checkpoint_iteration": 76000,
+      "checkpoint_path_basename": "e1_student_best_iter76000.pt",
+      "artifact_schema_version": null,
+      "role": "in-chain A40 re-score"
+    }
+  },
+  "provenance_checks": [
+    [
+      "one evaluate_model.py commit (run.repo_commit) across the three re-scores (AM-17 item 3(a): 'at one pinned commit')",
+      true,
+      {
+        "42": "73fd4d7e0db699eba940526cc5b24d4b73ca51b9",
+        "43": "73fd4d7e0db699eba940526cc5b24d4b73ca51b9",
+        "44": "73fd4d7e0db699eba940526cc5b24d4b73ca51b9"
+      }
+    ],
+    [
+      "one device class (run.env.device, model device type, gpu_name) across the three (AM-17 item 3(a): 'on the same device')",
+      true,
+      {
+        "42": [
+          "cuda",
+          "cuda",
+          "NVIDIA A40"
+        ],
+        "43": [
+          "cuda",
+          "cuda",
+          "NVIDIA A40"
+        ],
+        "44": [
+          "cuda",
+          "cuda",
+          "NVIDIA A40"
+        ]
+      }
+    ],
+    [
+      "s42: inputs on the model device (input_devices == [model_device]); a consistency check implied by 'one pinned commit': check_post_eval enforces it (src/eval/eval_runtime.py:195-205)",
+      true,
+      {
+        "model_device": "cuda:0",
+        "input_devices": [
+          "cuda:0"
+        ]
+      }
+    ],
+    [
+      "s42: the determinism policy applied; a consistency check implied by 'one pinned commit': the policy is unconditional for an FP32 student on CUDA (src/eval/eval_runtime.py:88-91)",
+      true,
+      true
+    ],
+    [
+      "s43: inputs on the model device (input_devices == [model_device]); a consistency check implied by 'one pinned commit': check_post_eval enforces it (src/eval/eval_runtime.py:195-205)",
+      true,
+      {
+        "model_device": "cuda:0",
+        "input_devices": [
+          "cuda:0"
+        ]
+      }
+    ],
+    [
+      "s43: the determinism policy applied; a consistency check implied by 'one pinned commit': the policy is unconditional for an FP32 student on CUDA (src/eval/eval_runtime.py:88-91)",
+      true,
+      true
+    ],
+    [
+      "s44: inputs on the model device (input_devices == [model_device]); a consistency check implied by 'one pinned commit': check_post_eval enforces it (src/eval/eval_runtime.py:195-205)",
+      true,
+      {
+        "model_device": "cuda:0",
+        "input_devices": [
+          "cuda:0"
+        ]
+      }
+    ],
+    [
+      "s44: the determinism policy applied; a consistency check implied by 'one pinned commit': the policy is unconditional for an FP32 student on CUDA (src/eval/eval_runtime.py:88-91)",
+      true,
+      true
+    ],
+    [
+      "one non-null image digest across the three (lane 6 (a) 'in-chain A40 re-scores' and DL-17's pinned image)",
+      true,
+      {
+        "42": "sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf",
+        "43": "sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf",
+        "44": "sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf"
+      }
+    ],
+    [
+      "s42 is a valid DL-17 B66 re-score (scripts/compare_eval_artifacts.py validity_problems)",
+      true,
+      []
+    ],
+    [
+      "s42 all-class VAL mIoU within DL17_BAND 0.0001 of the DL-17 reference 0.36314016580581665 (DL-17 PASS)",
+      true,
+      {
+        "all_class_miou": 0.36314016580581665,
+        "abs_delta": 0.0
+      }
+    ],
+    [
+      "s42: the sha256 of MANIFEST.sha256 equals --expect-manifest-sha256-42",
+      true,
+      {
+        "got": "79b06c9da3925d2b0401e67d9b4dbea66b6189ac24cb8c6f542e4e84ce2091fa",
+        "expected": "79b06c9da3925d2b0401e67d9b4dbea66b6189ac24cb8c6f542e4e84ce2091fa"
+      }
+    ],
+    [
+      "s43: the sha256 of MANIFEST.sha256 equals --expect-manifest-sha256-43",
+      true,
+      {
+        "got": "9b4227a5c902c95c2304be316ea8be228ceef99bdbe24e689f96011b1eb2d690",
+        "expected": "9b4227a5c902c95c2304be316ea8be228ceef99bdbe24e689f96011b1eb2d690"
+      }
+    ],
+    [
+      "s44: the sha256 of MANIFEST.sha256 equals --expect-manifest-sha256-44",
+      true,
+      {
+        "got": "e9e03ed4566a6a85ccb2ad7f79228e4ae27fe8f6392309cb3504af8d5f3250b9",
+        "expected": "e9e03ed4566a6a85ccb2ad7f79228e4ae27fe8f6392309cb3504af8d5f3250b9"
+      }
+    ]
+  ],
+  "n_val": 846,
+  "n_included": 846,
+  "K_excluded": 0,
+  "excluded_ids_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "am5_rule": "no_disease_gt",
+  "am5_source": {
+    "42": "derived",
+    "43": "derived",
+    "44": "derived"
+  },
+  "included_ids_sha256": "92de2a9678cbe93988abc49e27408a80769d38bee559bdacbcc2f9414f272b2f",
+  "included_ids_order": "sorted image_id (src/stats/align.py align_runs)",
+  "n_planning": 1561,
+  "n_planning_rule": "round(Fraction(1561 * 846, 846)) = round(1320606/846) = 1561 (exact rational, ties to even)",
+  "grid": {
+    "delta": "k / 1000 for k = 0..50 (0.000 ... 0.050)",
+    "points": 51,
+    "candidates": "k = 0..48 (the guard needs k + 1 and k + 2 on the grid)"
+  },
+  "resampling": {
+    "B": 2000,
+    "size": 1561,
+    "rng": "numpy.random.default_rng(42).integers(0, m, size=(B, n), dtype=numpy.int64)",
+    "drawn_once_per_pair": true,
+    "equivalent_to": "default_rng(42) re-seeded per (pair, delta): the draw depends neither on delta nor on the values, so default_rng(42).choice(d + delta, size=(B, n), replace=True) == d[idx] + delta",
+    "guard_points_share_rows": true,
+    "numpy_version": "1.26.4"
+  },
+  "test": {
+    "call": "scipy.stats.wilcoxon(x, zero_method='pratt', alternative='greater', correction=True, method='approx')",
+    "alpha": 0.00625,
+    "rejection": "p < alpha",
+    "power": "rejections / B",
+    "guard": "power >= 0.80 at delta and at the next two grid points (MC noise guard over shared rows)",
+    "power_min_count": 1600,
+    "centring": "none: d + delta (item 3(c); lane 6 (a))"
+  },
+  "pairs": {
+    "43-42": {
+      "baseline": "s42",
+      "candidate": "s43",
+      "m": 846,
+      "n": 1561,
+      "n_zero": 96,
+      "share_ties": 0.11347517730496454,
+      "mean": -0.0033176717318192093,
+      "sd": 0.17102829098063085,
+      "rejections": [
+        0,
+        0,
+        0,
+        1,
+        9,
+        51,
+        201,
+        451,
+        854,
+        1261,
+        1649,
+        1896,
+        1970,
+        1996,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000
+      ],
+      "power_curve": [
+        [
+          0.0,
+          0.0
+        ],
+        [
+          0.001,
+          0.0
+        ],
+        [
+          0.002,
+          0.0
+        ],
+        [
+          0.003,
+          0.0005
+        ],
+        [
+          0.004,
+          0.0045
+        ],
+        [
+          0.005,
+          0.0255
+        ],
+        [
+          0.006,
+          0.1005
+        ],
+        [
+          0.007,
+          0.2255
+        ],
+        [
+          0.008,
+          0.427
+        ],
+        [
+          0.009,
+          0.6305
+        ],
+        [
+          0.01,
+          0.8245
+        ],
+        [
+          0.011,
+          0.948
+        ],
+        [
+          0.012,
+          0.985
+        ],
+        [
+          0.013,
+          0.998
+        ],
+        [
+          0.014,
+          1.0
+        ],
+        [
+          0.015,
+          1.0
+        ],
+        [
+          0.016,
+          1.0
+        ],
+        [
+          0.017,
+          1.0
+        ],
+        [
+          0.018,
+          1.0
+        ],
+        [
+          0.019,
+          1.0
+        ],
+        [
+          0.02,
+          1.0
+        ],
+        [
+          0.021,
+          1.0
+        ],
+        [
+          0.022,
+          1.0
+        ],
+        [
+          0.023,
+          1.0
+        ],
+        [
+          0.024,
+          1.0
+        ],
+        [
+          0.025,
+          1.0
+        ],
+        [
+          0.026,
+          1.0
+        ],
+        [
+          0.027,
+          1.0
+        ],
+        [
+          0.028,
+          1.0
+        ],
+        [
+          0.029,
+          1.0
+        ],
+        [
+          0.03,
+          1.0
+        ],
+        [
+          0.031,
+          1.0
+        ],
+        [
+          0.032,
+          1.0
+        ],
+        [
+          0.033,
+          1.0
+        ],
+        [
+          0.034,
+          1.0
+        ],
+        [
+          0.035,
+          1.0
+        ],
+        [
+          0.036,
+          1.0
+        ],
+        [
+          0.037,
+          1.0
+        ],
+        [
+          0.038,
+          1.0
+        ],
+        [
+          0.039,
+          1.0
+        ],
+        [
+          0.04,
+          1.0
+        ],
+        [
+          0.041,
+          1.0
+        ],
+        [
+          0.042,
+          1.0
+        ],
+        [
+          0.043,
+          1.0
+        ],
+        [
+          0.044,
+          1.0
+        ],
+        [
+          0.045,
+          1.0
+        ],
+        [
+          0.046,
+          1.0
+        ],
+        [
+          0.047,
+          1.0
+        ],
+        [
+          0.048,
+          1.0
+        ],
+        [
+          0.049,
+          1.0
+        ],
+        [
+          0.05,
+          1.0
+        ]
+      ],
+      "power_min_count": 1600,
+      "mde_w_index": 10,
+      "mde_w": 0.01
+    },
+    "44-42": {
+      "baseline": "s42",
+      "candidate": "s44",
+      "m": 846,
+      "n": 1561,
+      "n_zero": 99,
+      "share_ties": 0.11702127659574468,
+      "mean": -0.00503457827349917,
+      "sd": 0.16857576661288676,
+      "rejections": [
+        0,
+        15,
+        57,
+        190,
+        487,
+        948,
+        1420,
+        1714,
+        1894,
+        1979,
+        1995,
+        1998,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000
+      ],
+      "power_curve": [
+        [
+          0.0,
+          0.0
+        ],
+        [
+          0.001,
+          0.0075
+        ],
+        [
+          0.002,
+          0.0285
+        ],
+        [
+          0.003,
+          0.095
+        ],
+        [
+          0.004,
+          0.2435
+        ],
+        [
+          0.005,
+          0.474
+        ],
+        [
+          0.006,
+          0.71
+        ],
+        [
+          0.007,
+          0.857
+        ],
+        [
+          0.008,
+          0.947
+        ],
+        [
+          0.009,
+          0.9895
+        ],
+        [
+          0.01,
+          0.9975
+        ],
+        [
+          0.011,
+          0.999
+        ],
+        [
+          0.012,
+          1.0
+        ],
+        [
+          0.013,
+          1.0
+        ],
+        [
+          0.014,
+          1.0
+        ],
+        [
+          0.015,
+          1.0
+        ],
+        [
+          0.016,
+          1.0
+        ],
+        [
+          0.017,
+          1.0
+        ],
+        [
+          0.018,
+          1.0
+        ],
+        [
+          0.019,
+          1.0
+        ],
+        [
+          0.02,
+          1.0
+        ],
+        [
+          0.021,
+          1.0
+        ],
+        [
+          0.022,
+          1.0
+        ],
+        [
+          0.023,
+          1.0
+        ],
+        [
+          0.024,
+          1.0
+        ],
+        [
+          0.025,
+          1.0
+        ],
+        [
+          0.026,
+          1.0
+        ],
+        [
+          0.027,
+          1.0
+        ],
+        [
+          0.028,
+          1.0
+        ],
+        [
+          0.029,
+          1.0
+        ],
+        [
+          0.03,
+          1.0
+        ],
+        [
+          0.031,
+          1.0
+        ],
+        [
+          0.032,
+          1.0
+        ],
+        [
+          0.033,
+          1.0
+        ],
+        [
+          0.034,
+          1.0
+        ],
+        [
+          0.035,
+          1.0
+        ],
+        [
+          0.036,
+          1.0
+        ],
+        [
+          0.037,
+          1.0
+        ],
+        [
+          0.038,
+          1.0
+        ],
+        [
+          0.039,
+          1.0
+        ],
+        [
+          0.04,
+          1.0
+        ],
+        [
+          0.041,
+          1.0
+        ],
+        [
+          0.042,
+          1.0
+        ],
+        [
+          0.043,
+          1.0
+        ],
+        [
+          0.044,
+          1.0
+        ],
+        [
+          0.045,
+          1.0
+        ],
+        [
+          0.046,
+          1.0
+        ],
+        [
+          0.047,
+          1.0
+        ],
+        [
+          0.048,
+          1.0
+        ],
+        [
+          0.049,
+          1.0
+        ],
+        [
+          0.05,
+          1.0
+        ]
+      ],
+      "power_min_count": 1600,
+      "mde_w_index": 7,
+      "mde_w": 0.007
+    },
+    "44-43": {
+      "baseline": "s43",
+      "candidate": "s44",
+      "m": 846,
+      "n": 1561,
+      "n_zero": 102,
+      "share_ties": 0.12056737588652482,
+      "mean": -0.001716906541679961,
+      "sd": 0.16367309252041046,
+      "rejections": [
+        168,
+        1017,
+        1509,
+        1815,
+        1956,
+        1991,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000,
+        2000
+      ],
+      "power_curve": [
+        [
+          0.0,
+          0.084
+        ],
+        [
+          0.001,
+          0.5085
+        ],
+        [
+          0.002,
+          0.7545
+        ],
+        [
+          0.003,
+          0.9075
+        ],
+        [
+          0.004,
+          0.978
+        ],
+        [
+          0.005,
+          0.9955
+        ],
+        [
+          0.006,
+          1.0
+        ],
+        [
+          0.007,
+          1.0
+        ],
+        [
+          0.008,
+          1.0
+        ],
+        [
+          0.009,
+          1.0
+        ],
+        [
+          0.01,
+          1.0
+        ],
+        [
+          0.011,
+          1.0
+        ],
+        [
+          0.012,
+          1.0
+        ],
+        [
+          0.013,
+          1.0
+        ],
+        [
+          0.014,
+          1.0
+        ],
+        [
+          0.015,
+          1.0
+        ],
+        [
+          0.016,
+          1.0
+        ],
+        [
+          0.017,
+          1.0
+        ],
+        [
+          0.018,
+          1.0
+        ],
+        [
+          0.019,
+          1.0
+        ],
+        [
+          0.02,
+          1.0
+        ],
+        [
+          0.021,
+          1.0
+        ],
+        [
+          0.022,
+          1.0
+        ],
+        [
+          0.023,
+          1.0
+        ],
+        [
+          0.024,
+          1.0
+        ],
+        [
+          0.025,
+          1.0
+        ],
+        [
+          0.026,
+          1.0
+        ],
+        [
+          0.027,
+          1.0
+        ],
+        [
+          0.028,
+          1.0
+        ],
+        [
+          0.029,
+          1.0
+        ],
+        [
+          0.03,
+          1.0
+        ],
+        [
+          0.031,
+          1.0
+        ],
+        [
+          0.032,
+          1.0
+        ],
+        [
+          0.033,
+          1.0
+        ],
+        [
+          0.034,
+          1.0
+        ],
+        [
+          0.035,
+          1.0
+        ],
+        [
+          0.036,
+          1.0
+        ],
+        [
+          0.037,
+          1.0
+        ],
+        [
+          0.038,
+          1.0
+        ],
+        [
+          0.039,
+          1.0
+        ],
+        [
+          0.04,
+          1.0
+        ],
+        [
+          0.041,
+          1.0
+        ],
+        [
+          0.042,
+          1.0
+        ],
+        [
+          0.043,
+          1.0
+        ],
+        [
+          0.044,
+          1.0
+        ],
+        [
+          0.045,
+          1.0
+        ],
+        [
+          0.046,
+          1.0
+        ],
+        [
+          0.047,
+          1.0
+        ],
+        [
+          0.048,
+          1.0
+        ],
+        [
+          0.049,
+          1.0
+        ],
+        [
+          0.05,
+          1.0
+        ]
+      ],
+      "power_min_count": 1600,
+      "mde_w_index": 3,
+      "mde_w": 0.003
+    }
+  },
+  "mde_w": 0.01,
+  "mde_w_pair": "43-42",
+  "sd_delta": 0.17102829098063085,
+  "dz_mde": 0.08451892915205214,
+  "dz_formula": "(2.4977 + 0.8416) / sqrt(n_planning)",
+  "mde_t": 0.014455128008388498,
+  "mde_t_range": [
+    0.014787595952581431,
+    0.015553717737026025
+  ],
+  "tau_p": 0.01,
+  "power_caveat": false,
+  "label": "planning proxy — seed-pair differences approximate noise, not the spread of between-recipe differences, so the true MDE may be larger. Reported with the results; it changes no test or decision.",
+  "ties_note": "lane 6 (f): the constant-shift null removes Pratt zeros (the pre-registered approximation): every exact-zero difference becomes +delta for delta > 0, so exact ties deflate MDE_W; read MDE_W with each pair's share_ties and n_zero",
+  "derivation_check": {
+    "rule": "per image: mean over classes 1..115 with gt > 0 of float32 tp / (gt + pred - tp), from sufficient_stats.npz, against per_image.jsonl disease_only_miou",
+    "rows_checked": 2538,
+    "max_abs_diff": 0.0,
+    "tolerance": 1e-06,
+    "mismatches": 0
+  },
+  "dl27_band": {
+    "file": "dl27_band.json",
+    "sha256": "3f33ab525037e9744b21b9abc19b60190f58f7832e3006783d759ec23ddf6ee4",
+    "e1_best_val": {
+      "42": 0.36314016580581665,
+      "43": 0.34126096963882446,
+      "44": 0.3548465073108673
+    },
+    "s": 0.011045744504733232,
+    "band": 0.015621041685101825,
+    "floor": 0.005,
+    "rule": "band = max(floor, sqrt(2) * s); s = statistics.stdev of the three values (sweep_select.dl27_band)",
+    "best_json": {
+      "42": {
+        "sha256": "8b4e61e8bbd8df0cce3e97d4995e166856aa99135aaf4a6fec44a3e69c2a0d2c",
+        "best_ckpt_basename": "e1_student_best_iter80000.pt",
+        "best_ckpt_basename_matches_checkpoint_path": true
+      },
+      "43": {
+        "sha256": "211010455051cde87c64f2234b09ea2466c213a7e28ec5b2f1ea0efe83983252",
+        "best_ckpt_basename": "e1_student_best_iter72000.pt",
+        "best_ckpt_basename_matches_checkpoint_path": true
+      },
+      "44": {
+        "sha256": "959065955be441f0ab0db633ba61bef082b6a264e6b7346857a059a15d692f1b",
+        "best_ckpt_basename": "e1_student_best_iter76000.pt",
+        "best_ckpt_basename_matches_checkpoint_path": true
+      }
+    },
+    "cross_checks": [
+      [
+        "s42: best.json best_val_miou_all_class == the artifact's eval_runtime.checkpoint_best_val_miou_all_class",
+        true,
+        {
+          "best_json": 0.36314016580581665,
+          "artifact": 0.36314016580581665
+        }
+      ],
+      [
+        "s43: best.json best_val_miou_all_class == the artifact's eval_runtime.checkpoint_best_val_miou_all_class",
+        true,
+        {
+          "best_json": 0.34126096963882446,
+          "artifact": 0.34126096963882446
+        }
+      ],
+      [
+        "s44: best.json best_val_miou_all_class == the artifact's eval_runtime.checkpoint_best_val_miou_all_class",
+        true,
+        {
+          "best_json": 0.3548465073108673,
+          "artifact": 0.3548465073108673
+        }
+      ]
+    ],
+    "reader_trace": [
+      "band: s = 0.011045744504733232 (sample SD, n=3, E1 seeds 42-44 = [0.36314016580581665, 0.34126096963882446, 0.3548465073108673]); sqrt(2)*s = 0.015621041685101825; band = max(0.005, sqrt(2)*s) = 0.015621041685101825"
+    ]
+  },
+  "scipy_version": "1.11.4",
+  "numpy_version": "1.26.4",
+  "software_environment": {
+    "pinned": {
+      "python": "3.11",
+      "numpy": "1.26.4",
+      "scipy": "1.11.4",
+      "statsmodels": "0.14.6"
+    },
+    "observed": {
+      "python": "3.11",
+      "numpy": "1.26.4",
+      "scipy": "1.11.4",
+      "statsmodels": "0.14.6"
+    },
+    "matches_pinned": true
+  },
+  "seed": 42,
+  "git_commit": "147f643a06affab6926c4232991d1b0292c3853c",
+  "code": {
+    "code_commit": "147f643a06affab6926c4232991d1b0292c3853c",
+    "code_clean_at_commit": true,
+    "code_files": {
+      "scripts/mde_entry.py": "8de3c79f8ec1eedd13fa6049a2cf5141dea5c21e0ed190297fce7cbe3f7bc108",
+      "src/stats/mde.py": "08c6decdb2645f3e2d0cbf9087eaecd977a33ad241d1ff5b2bc09d080f939ba9",
+      "src/stats/val_artifacts.py": "ea365d3d905cd78206c010bdb9d8476ee112596894d73624cf4718250d1a3aec",
+      "src/stats/ingest.py": "bf44a0fafa4ccbca53caaaa8e1e1d429424387eaace6bc6c45b99e5ca8732fca",
+      "src/stats/align.py": "61c48956358e1d8b258b412fa5d4dcde29c6d3c46156243f8d68d102dd1df309",
+      "src/stats/report.py": "eeb40ceed5e2e32dd7ff8bb691883609a3d6f9a1c887c1a131f94c0d71b7b156",
+      "src/stats/artifact.py": "a93cd331ca334cdeea766700b0aec56edb5819a006e1a03cd74674b2bae170d9",
+      "src/eval/artifacts.py": "540eea7906d29674d9231bcb53758a20a41ee36cd8bfbcf3207db3905e8bf181",
+      "src/eval/evaluate.py": "0b609a0e8e6843940805237b8fd2d76f3a888cbf3141d45b95fae086986789d2",
+      "src/eval/metrics.py": "9898d6dc0ec68f15c8c90cebb5889914c0a2de2e3bd409c3fba9ba14e1be86d9",
+      "src/eval/adapters.py": "9e7de9f0f56d5fb457a4e67754db1cac23ea57fb7ef4e14ec980785c8baceb0c",
+      "src/eval/protocols.py": "e67e75f028bf1a8ddec61d04009491f51a92ceeaedf099fc8d3a67e8b6257bfc",
+      "src/eval/teacher_diag.py": "2e0933be4659f4ace3acc1f174a1012f05b76811ffb7261ccd64cd3130bff91b",
+      "src/training/sweep_select.py": "8a32479cc1426a1cf0676d163bc503af1982683c6fcb77ebfec4bf5908f2e3cf",
+      "scripts/compare_eval_artifacts.py": "94e7c3e57a6c4fda813c71afb6e1fb28329f21996939360192260a8e0eb13818",
+      "configs/sweep_rules.json": "ebfff9cc606be613a4011cb0cc0dea9bb90789704a144ac514ea056970eef661",
+      "configs/distill.py": "025dab78e4097b48f79cdf273a339a40848747ded540eaba66b32bea2ee14a1e"
+    }
+  },
+  "script_commit": "147f643a06affab6926c4232991d1b0292c3853c",
+  "script_commit_dl_id": "DL-99",
+  "decision_log_line": "AM-17 item 3 MDE entry and AM-16 item 2 / DL-27 tie band (one entry, AM-17 item 3). MDE: reports/derived/mde_entry_20261009T034825Z.json; E1 s42/s43/s44 VAL artifacts s42 dl17_run1 (MANIFEST.sha256 sha256 79b06c9da3925d2b0401e67d9b4dbea66b6189ac24cb8c6f542e4e84ce2091fa, checkpoint sha256 cf0879f7007dfacbd0d510085ff28a4b47ee845ddb8fd599611d74109e1d6a03), s43 rescore_s43 (MANIFEST.sha256 sha256 9b4227a5c902c95c2304be316ea8be228ceef99bdbe24e689f96011b1eb2d690, checkpoint sha256 95f21204788f2986aba9311272c7f7e84f8d2049724c4bfdf5b0da66b6a78153), s44 rescore_s44 (MANIFEST.sha256 sha256 e9e03ed4566a6a85ccb2ad7f79228e4ae27fe8f6392309cb3504af8d5f3250b9, checkpoint sha256 ef95aefd8f383e3b23674e0c6abf040dfb1ef0da997a53140c59ced294108c8f) at evaluate_model.py commit 73fd4d7e0db699eba940526cc5b24d4b73ca51b9, NVIDIA A40, image sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf; n_included 846 (K 0); n_planning 1561; shifted-null MDE_W 0.01 (43−42 0.01, 44−42 0.007, 44−43 0.003; share of exact-zero differences 0.113475/0.117021/0.120567, n_zero 96/99/102; B 2,000 resamples of size n from default_rng(42) — one index matrix per pair, identical to re-seeding per (pair, δ), so the three guard points share rows; the pre-registered Wilcoxon call, α 0.00625, p < α, 3-point guard; scipy 1.11.4, numpy 1.26.4); SD_Δ 0.171028, dz_MDE 0.0845189, MDE_t 0.0144551 [0.0147876, 0.0155537]; τ_P 0.010; power_caveat False; label: planning proxy (item 3(e)); lane 6 (f): exact ties deflate MDE_W under the constant-shift null. Band: reports/derived/dl27_band.json sha256 3f33ab525037e9744b21b9abc19b60190f58f7832e3006783d759ec23ddf6ee4; E1 best VAL 42/43/44 0.36314016580581665/0.34126096963882446/0.3548465073108673 (best.json sha256s in the entry); s 0.011045744504733232; band = max(0.005, √2·s) = 0.015621041685101825. Code 147f643a06affab6926c4232991d1b0292c3853c (DL-99)."
+}
