@@ -62,6 +62,17 @@ SAFETY MODEL (mirrors train_e1.py, plus the distillation-specific gates):
     commit other than 40 lowercase hex characters ([records_commit_format]). The trainer hashes the
     files and checks nothing else: run_meta records them, with arm, descriptive and parent_of_e4_e7,
     after teacher_mock, and the launch gate and check-run-meta validate them (lane 4(b)).
+  * KD arms (L-TEACHER-ARMS C1; AM-18 item 3): `--arm NAME` names an arm registered in configs/kd_arms/
+    (src/training/kd_arms.py); without it nothing below runs and the run is as at 8487551. An arm run
+    is E3's recipe of record at seed 42 and 80,000 iterations ([arm_stage]; [arm_seed] in a real run;
+    [arm_iterations]; an unknown or malformed arm is [arm_spec]). Its teacher is the checkpoint that
+    --teacher-ckpt names and --teacher-ckpt-sha256 hashes, as in any run: the trainer does not compare
+    it with the arm's arm_teacher, nor check the arm's go rule (an arm launch gate's checks, which this
+    file does not implement). Its run_meta names it in
+    arm, descriptive (true) and parent_of_e4_e7 (false) and ends with target_construction (K and the
+    number of views, AM-18 item 3's header); its checkpoint payload carries arm and target_construction.
+    An arm whose registry entry names a target builder builds each step's Logit-KD and CWD logit-map
+    targets with it (kd_arms' TargetBuilder interface).
 
 Exit codes of main() (and of train_e2.py / train_e3.py):
   0  the run finished and every hard check passed (RESULT: PASS); argparse's --help also exits 0
@@ -365,13 +376,14 @@ def build_optimizer(student, projection, teacher: FrozenTeacher | None = None):
 def save_distill_checkpoint(ckpt_dir: Path, stage: dict, student, projection, optimizer, scheduler,
                             sched_name: str, it: int, best_miou: float, teacher_provenance,
                             semantics_declared=None, semantics_override: bool = False, *,
-                            lambda_logit=None, alpha=None) -> str:
+                            lambda_logit=None, alpha=None, arm=None) -> str:
     """Write a distillation checkpoint, and projection.pt beside it when cwd_feat is instantiated.
 
     `model_state_dict` holds the student ONLY and `optimizer_state_dict` only the student's param
     group: the training-only projection and its optimizer group go to projection.pt (L-AM17B-FG), so
     the checkpoint E6/E7 consume carries nothing to strip (contract B3/B4). The split is asserted
-    before writing. The payload records the stage's term switches and its instantiated weights.
+    before writing. The payload records the stage's term switches and its instantiated weights, and an
+    arm run's (`arm`: a kd_arms.ArmSpec; L-TEACHER-ARMS C1) also its arm and target construction.
     """
     path = _assert_outside_repo(Path(ckpt_dir)) / f"{stage['key']}_student_best_iter{it}.pt"
     student_state = student.state_dict()
@@ -399,6 +411,11 @@ def save_distill_checkpoint(ckpt_dir: Path, stage: dict, student, projection, op
         payload.update({"logit_kd_semantics": LOGIT_KD_SEMANTICS,
                         "logit_kd_semantics_declared": semantics_declared,
                         "logit_kd_semantics_override_used": bool(semantics_override)})
+    if arm is not None:
+        # AM-18 item 3: the arm travels with its checkpoint. E6/E7's loader identifies an E3 source by its
+        # stage and ignores other keys (src/quant/checkpoint.py), so it takes this file as it takes E3's:
+        # run_meta's parent_of_e4_e7 and the selection records keep an arm out of E4-E7, not the loader.
+        payload.update({"arm": arm.run_stage, "target_construction": arm.target_construction})
     _atomic_save(payload, path)          # train_e1's same-directory .tmp + os.replace (item 7)
     if projection is not None:
         save_projection(Path(ckpt_dir) / PROJECTION_FILE, projection, projection_opt,
@@ -476,7 +493,7 @@ def input_probe(seen: dict, name: str):
 
 def distillation_losses(*, stage: dict, logits, head_logits, c5, mask, teacher_out, projection,
                         lambda_logit: float | None, ramp=1.0, alpha: float | None = None,
-                        beta: float | None = None):
+                        beta: float | None = None, targets=None):
     """Compute the stage's INSTANTIATED distillation terms. Returns (total_distill, parts dict).
 
     Teacher tensors arrive detached from `FrozenTeacher`, so nothing here can push gradient into the
@@ -486,7 +503,10 @@ def distillation_losses(*, stage: dict, logits, head_logits, c5, mask, teacher_o
     in the pre-lane order logit_kd -> cwd_feat -> cwd_logit, each as `ramp * weight * loss`, so a
     stage's total is bitwise the pre-lane total restricted to its terms, and equals the three-term
     total with the missing terms weighted 0.0. `parts` reports the UNRAMPED loss values so the log
-    stays diagnostic. alpha and beta default to the config values (50 and 3).
+    stays diagnostic. alpha and beta default to the config values (50 and 3). `targets` is None, or
+    the Targets an arm's target builder built for this step (kd_arms' TargetBuilder interface;
+    L-TEACHER-ARMS C1): its losses then stand in for the Logit-KD and CWD logit-map calls on the
+    teacher's logits, and the feature-map term is unchanged.
     """
     alpha = ALPHA_CWD_FEAT if alpha is None else alpha
     beta = BETA_CWD_LOGIT if beta is None else beta
@@ -519,7 +539,8 @@ def distillation_losses(*, stage: dict, logits, head_logits, c5, mask, teacher_o
     if stage["logit_kd"]:
         if lambda_logit is None:
             raise ValueError(f"stage {stage['name']} instantiates Logit KD but lambda_logit is None")
-        l_kd = logit_kd_kl(head_logits, t_logits_os8, valid_os8, T=T_LOGIT)
+        l_kd = (logit_kd_kl(head_logits, t_logits_os8, valid_os8, T=T_LOGIT) if targets is None
+                else targets.logit_kd_loss(head_logits, valid_os8, T_LOGIT))
         total = total + factor("logit_kd") * lambda_logit * l_kd
         parts["logit_kd"] = float(l_kd.detach())
 
@@ -545,7 +566,8 @@ def distillation_losses(*, stage: dict, logits, head_logits, c5, mask, teacher_o
     # channels_norm defaults to this map's own channel count (116 classes) — 320 is the FEATURE-map
     # normalisation only and must never be hard-coded here.
     if stage["cwd_logit"]:
-        l_logit_map = cwd_channelwise_kl(head_logits, t_logits_os8, valid_os8, T=T_CWD)
+        l_logit_map = (cwd_channelwise_kl(head_logits, t_logits_os8, valid_os8, T=T_CWD) if targets is None
+                       else targets.cwd_logit_loss(head_logits, valid_os8, T_CWD))
         total = total + factor("cwd_logit") * beta * l_logit_map
         parts["cwd_logit"] = float(l_logit_map.detach())
     return total, parts
@@ -631,7 +653,10 @@ def ckpt_dir_fresh_error(ckpt_dir) -> str | None:
 # runbook's table), never descriptive alone. parent_of_e4_e7 states eligibility only (E3 on the
 # 80,000-iteration horizon; AM-4a item 5), the selection file names the run of record. The trainer hashes
 # the selection files a launch names and checks nothing else: the launch gate and check-run-meta validate
-# them (lane 4(b); F1).
+# them (lane 4(b); F1). An AM-18 item 3 KD arm (--arm; L-TEACHER-ARMS C1) is an E3 row at 80,000 iterations
+# with arm its run stage (E3-R1, E3-R2), descriptive true and parent_of_e4_e7 false, never a parent of a run
+# of record, and target_construction after records_commit; it follows AM-7a item 3's arm rule (AM-18 item
+# 3(e)), so its exit handling reads arm as well as the stage and the seed.
 ARMS = ("a", "f", "g")
 SELECTION_KEYS = ("lambda_logit", "alpha_cwd")          # run_meta selection_sha256 / selection_files
 SELECTION_TERMS = {"lambda_logit": "logit_kd", "alpha_cwd": "cwd_feat"}
@@ -675,12 +700,15 @@ def selection_args(stage, files: Mapping, records_commit) -> tuple[dict | None, 
     return selections, None
 
 
-def launch_fields(stage, *, horizon: int, selections=None, records_commit=None) -> dict:
+def launch_fields(stage, *, horizon: int, selections=None, records_commit=None, arm=None) -> dict:
     """run_meta's launch fields, in their order: arm, descriptive, parent_of_e4_e7, selection_sha256,
     selection_files ({lambda_logit, alpha_cwd}, each null when no file was named) and records_commit
     (null when absent). `selections` is None or selection_args()'s map. A direct run() call with another
     key, a file for a term the stage does not instantiate or a malformed records commit raises
-    ValueError (main() refuses them first)."""
+    ValueError (main() refuses them first). `arm` (L-TEACHER-ARMS C1) is None or the kd_arms.ArmSpec of
+    an AM-18 item 3 arm run: arm is then its run stage, the run is descriptive and never a parent of a
+    run of record (AM-18 item 3(d)), and its target construction (K and the number of views; AM-18
+    item 3's header) follows records_commit as the last field."""
     sel = dict.fromkeys(SELECTION_KEYS) if selections is None else dict(selections)
     if sorted(sel) != sorted(SELECTION_KEYS):
         raise ValueError(f"[selection_term] selections {sorted(sel)}: the keys are {list(SELECTION_KEYS)}")
@@ -691,12 +719,16 @@ def launch_fields(stage, *, horizon: int, selections=None, records_commit=None) 
     error = records_commit_error(records_commit)
     if error is not None:
         raise ValueError(error)
-    return {"arm": stage["name"] if stage["key"] in ARMS else None,
-            "descriptive": stage["key"] in ARMS or horizon != E1_STUDENT["iterations"],
-            "parent_of_e4_e7": stage["key"] == "e3" and horizon == E1_STUDENT["iterations"],
-            "selection_sha256": {k: None if sel[k] is None else sel[k]["sha256"] for k in SELECTION_KEYS},
-            "selection_files": {k: None if sel[k] is None else sel[k]["path"] for k in SELECTION_KEYS},
-            "records_commit": records_commit}
+    fields = {"arm": stage["name"] if stage["key"] in ARMS else None,
+              "descriptive": stage["key"] in ARMS or horizon != E1_STUDENT["iterations"],
+              "parent_of_e4_e7": stage["key"] == "e3" and horizon == E1_STUDENT["iterations"],
+              "selection_sha256": {k: None if sel[k] is None else sel[k]["sha256"] for k in SELECTION_KEYS},
+              "selection_files": {k: None if sel[k] is None else sel[k]["path"] for k in SELECTION_KEYS},
+              "records_commit": records_commit}
+    if arm is not None:
+        fields.update(arm=arm.run_stage, descriptive=True, parent_of_e4_e7=False)
+        fields["target_construction"] = arm.target_construction
+    return fields
 
 
 # ---------------------------------------------------------------- AM-7 aborts (L-KD-HARDEN item 3)
@@ -819,7 +851,8 @@ def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeach
         semantics_declared=None, semantics_override: bool = False,
         grad_clip_norm: float | None, log_every: int, seed: int,
         alpha: float | None = None, alpha_offgrid: bool = False,
-        selections=None, records_commit: str | None = None, poly_horizon: int | None = None) -> int:
+        selections=None, records_commit: str | None = None, poly_horizon: int | None = None,
+        arm=None) -> int:
     wall_clock_start = time.time()
     # Item 2i: set_seed exports CUBLAS_WORKSPACE_CONFIG and the determinism settings, which must precede
     # the first CUDA op (contract B6), so CUDA must still be uninitialised here; main() checks the same
@@ -834,6 +867,10 @@ def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeach
     sched_error = schedule_gate_error(mode, max_iters, horizon=horizon)   # item 2c, repeated for direct calls
     if sched_error is not None:
         raise RuntimeError(sched_error)
+    if arm is not None:              # L-TEACHER-ARMS C1: main()'s arm refusals, repeated for direct calls
+        arm_error = arm.run_error(stage_key=stage["key"], seed=seed, horizon=horizon, mode=mode)
+        if arm_error is not None:
+            raise ValueError(f"[{arm_error[0]}] {arm_error[1]}")
     if mode == "real":
         # Item 2 for direct calls: the real-run gates of main() that run() can check itself.
         if not ckpt_dir_arg:                      # None or "": resolve_ckpt_dir would take a temp dir
@@ -856,9 +893,14 @@ def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeach
         raise ValueError(f"stage {stage['name']} has no feature-map CWD term; alpha must be None")
     if stage["cwd_feat"]:
         alpha = float(ALPHA_CWD_FEAT if alpha is None else alpha)
-    launch = launch_fields(stage, horizon=horizon, selections=selections, records_commit=records_commit)
+    launch = launch_fields(stage, horizon=horizon, selections=selections, records_commit=records_commit,
+                           arm=arm)
     print(f"[stage] {stage['name']} | objective: {stage['objective']} | terms: "
           + " ".join(f"{t}={'on' if stage[t] else 'off'}" for t in TERMS))
+    if arm is not None:
+        print(f"[arm] {arm.run_stage} (AM-18 item 3; {Path(arm.path).name} sha256 {arm.sha256[:12]}): target "
+              f"construction K={arm.K} views={arm.views}; teacher {arm.teacher}"
+              + (f" {arm.arm_teacher}" if arm.arm_teacher else "") + "; descriptive, never a parent of E4-E7")
     print(f"[mode] {mode.upper()} | torch {torch.__version__} | device={dev} | "
           f"cuda_available={torch.cuda.is_available()} | num_classes={NUM_CLASSES}")
     print(f"[budget] max_iters={max_iters} batch_size={batch_size} val_interval={val_interval} "
@@ -900,6 +942,10 @@ def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeach
               f"params={sum(p.numel() for p in projection.parameters()):,} "
               f"(TRAINING-ONLY; written with its optimizer group to {PROJECTION_FILE}, never into the "
               f"student checkpoint)")
+    # L-TEACHER-ARMS C1: an arm whose registry entry names a target builder (kd_arms' TargetBuilder) builds
+    # each step's Logit-KD and CWD logit-map targets with it; every other run has none. It is made after the
+    # projection, so it cannot shift the projection's initial weights, and before anything is written.
+    builder = None if arm is None else arm.make_builder()
 
     # Item 6: E1's TRAIN-loader call verbatim (train_e1.run), so at equal seed and num_workers a KD
     # stage consumes E1's realized sample stream for the whole run, not only its first epoch.
@@ -1047,7 +1093,8 @@ def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeach
         window fields are AM-7 (b)'s; another rule records only the monitor's running minimum."""
         input_finite = bool(torch.isfinite(img).all())
         teacher_finite = bool(torch.isfinite(teacher_out.logits).all()) and (
-            teacher_out.feat_s16 is None or bool(torch.isfinite(teacher_out.feat_s16).all()))
+            teacher_out.feat_s16 is None or bool(torch.isfinite(teacher_out.feat_s16).all())) and (
+            targets is None or bool(targets.finite))        # an arm's built targets (L-TEACHER-ARMS C1)
         hit = hit or {}
         running_min = hit.get("running_min", None if am7b is None else am7b.running_min)
         record = {"event": "run_abort", "iter": it, "rule": rule,
@@ -1065,6 +1112,7 @@ def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeach
               f"The real {stage['name']} run stops here; no run_end is written.", file=sys.stderr)
         raise RunAborted(record)
 
+    targets = None                       # the step's arm targets; None in every run without a builder
     for it in range(1, max_iters + 1):
         t_iter = time.time()
         img, mask = next(train_iter)
@@ -1106,6 +1154,9 @@ def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeach
         finally:
             for h in hooks:
                 h.remove()
+        # L-TEACHER-ARMS C1: an arm's target builder runs after the step-1 probe, so the probe compares the
+        # student's input with the trainer's own teacher call only.
+        targets = None if builder is None else builder.build(teacher, model_input, teacher_out)
         if it == 1:
             checks["teacher_same_augmented_input"] = (
                 seen.get("student") == seen.get("teacher")
@@ -1124,7 +1175,7 @@ def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeach
         distill, parts = distillation_losses(
             stage=stage, logits=logits, head_logits=head_logits, c5=c5, mask=mask,
             teacher_out=teacher_out, projection=projection, lambda_logit=lambda_logit,
-            ramp=ramp_by_term, alpha=alpha)
+            ramp=ramp_by_term, alpha=alpha, targets=targets)
         loss = sup + distill
         if it == 1:
             checks["distill_ramp_starts_at_zero"] = all(
@@ -1230,7 +1281,7 @@ def run(*, stage: dict, mode: str, device: str, pretrained, teacher: FrozenTeach
                                                     scheduler, sched_name, it, best_miou,
                                                     teacher.provenance, semantics_declared,
                                                     semantics_override, lambda_logit=lambda_logit,
-                                                    alpha=alpha)
+                                                    alpha=alpha, arm=arm)
                 write_best_pointer(ckpt_dir, best_ckpt, best_miou)   # E1's best.json schema
                 print(f"[ckpt {it:>4}/{max_iters}] new best all_class_miou={best_miou:.5f} "
                       f"-> {best_ckpt}")
@@ -1314,6 +1365,10 @@ def parse_args(argv=None, stage_default: str | None = None):
     p.add_argument("--records-commit", default=None, metavar="SHA",
                    help="the commit the launch's records were read from, 40 lowercase hex characters "
                         "(PL-28); written to run_meta as records_commit (null when absent)")
+    p.add_argument("--arm", default=None, metavar="NAME",
+                   help="an AM-18 item 3 KD arm registered in configs/kd_arms/ (src/training/kd_arms.py), "
+                        "e.g. e3-r1: E3's recipe of record at seed 42 and 80,000 iterations, recorded in "
+                        "run_meta and the checkpoint as that arm; default none (no arm)")
     p.add_argument("--device", default=None)
     p.add_argument("--init", choices=["none", "imagenet"], default=None)
     p.add_argument("--batch-size", type=int, default=None)
@@ -1392,6 +1447,19 @@ def main(argv=None, stage_default: str | None = None) -> int:
     horizon = args.iterations or E1_STUDENT["iterations"]
     max_iters = ((args.max_iters if args.max_iters is not None else horizon)
                  if mode == "real" else (args.max_iters or 4))
+
+    # L-TEACHER-ARMS C1 (AM-18 item 3): an arm run names a registered arm; a run without --arm never reads
+    # the registry.
+    arm = None
+    if args.arm is not None:
+        from src.training import kd_arms
+        try:
+            arm = kd_arms.load_arm(args.arm)
+        except kd_arms.ArmSpecError as e:
+            return refuse(kd_arms.ArmSpecError.code, str(e))
+        arm_error = arm.run_error(stage_key=stage["key"], seed=args.seed, horizon=horizon, mode=mode)
+        if arm_error is not None:
+            return refuse(*arm_error)
 
     def both_mode_gates() -> int | None:
         """L-KD-HARDEN items 2j and 2c, the log cadence (Q10) and R6's --teacher-ckpt-sha256 format and
@@ -1565,7 +1633,10 @@ def main(argv=None, stage_default: str | None = None) -> int:
                    semantics_declared=args.lambda_semantics,
                    semantics_override=bool(args.allow_semantics_mismatch),
                    alpha=alpha, alpha_offgrid=alpha_offgrid,
-                   selections=selections, records_commit=args.records_commit, poly_horizon=horizon)
+                   selections=selections, records_commit=args.records_commit, poly_horizon=horizon,
+                   # an arm run only: without --arm, main() calls run() with 8487551's keywords
+                   # (smoke_distill_schedule K09's golden)
+                   **({} if arm is None else {"arm": arm}))
     except RunAborted as e:                       # run() raises; the process exits cleanly with code 3
         r = e.record
         print(f"RESULT: ABORTED rule={r['rule']} iter={r['iter']} cause={r['cause']}; the run_abort record "

@@ -1,0 +1,16 @@
+{
+  "format": "kd_arm/1",
+  "name": "e3-r1",
+  "run_stage": "E3-R1",
+  "e7_stage": "E7-R1",
+  "stage": "e3",
+  "seed": 42,
+  "horizon": 80000,
+  "teacher": "arm",
+  "arm_teacher": "R1",
+  "go_rule": true,
+  "K": 1,
+  "views": 1,
+  "targets": null,
+  "cut_place": 4
+}
