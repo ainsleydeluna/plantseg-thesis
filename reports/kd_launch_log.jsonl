@@ -1,0 +1,1 @@
+{"format": "kd_launch_log/1", "event": "launch", "run_id": "e2_s42_lambda1_80k_a1", "stage": "E2", "seed": 42, "horizon": 80000, "sweep": "lambda_logit", "value": 1.0, "lambda_logit": 1.0, "alpha_cwd": null, "attempt": 1, "schedule": "T", "code_pin": "8487551ca67bd50ffbe911d1f3e93244841cbc9f", "ckpt_dir": "/workspace/kd/e2_s42_lambda1_80k_a1", "am8a_report": null}
