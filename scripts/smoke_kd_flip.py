@@ -44,8 +44,9 @@ Checks (32; C1 had the 28 that need no registry file):
                                             logits
   cm_equal_views_match_single_view          with two equal views the Logit-KD term and its gradient are logit_kd_kl's
                                             bit for bit and the CWD term is cwd_channelwise_kl's within 1e-6
-                                            relative; a teacher whose draws do not move its outputs gives build() two
-                                            equal views
+                                            relative on this fixture (finite logits, a CWD term of about 4.2; the
+                                            float32 gap grows as the term shrinks: review finding FT-2); a teacher
+                                            whose draws do not move its outputs gives build() two equal views
   cm_feature_term_unflipped_stage3          build() leaves call 1's Stage 3 untouched; with W's targets the trainer's
                                             feature term is E3's bit for bit; in every run step it reads call 1's
                                             Stage 3, never call 2's

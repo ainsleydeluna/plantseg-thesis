@@ -96,6 +96,18 @@ def per_step_forwards(stage: dict) -> dict:
     return out
 
 
+def draws_per_step(stage: dict) -> list:
+    """K6's draws per step: the M4-KD draws that each step's teacher forwards took, the sum of their draws_delta
+    (None for a step with a forward whose draws are unknown), steps in order (review finding RIR-3: a forward count
+    would read 2 where call 1 took two draws)."""
+    by_step = per_step_forwards(stage)
+    out = []
+    for t in sorted(k for k in by_step if isinstance(k, int)):
+        deltas = [f.get("draws_delta") for f in by_step[t]]
+        out.append(sum(deltas) if all(isinstance(d, int) and not isinstance(d, bool) for d in deltas) else None)
+    return out
+
+
 def eval_children(doc: dict) -> dict:
     st = doc.get("stage") or {}
     ok = st.get("child_rc") == 0 and st.get("run_rc") == 0 and not st.get("error")
@@ -484,7 +496,7 @@ def cmd_run(a) -> int:
            "teacher_forward_ms": {k: {"ms": v, "stats_steps_6_25": stats((v or [])[THROUGHPUT_STEPS[0] - 1:
                                                                                    THROUGHPUT_STEPS[1]])}
                                   for k, v in calls.items()},
-           "draws_per_step": [len(v) for _, v in sorted(per_step_forwards(stage).items())],
+           "draws_per_step": draws_per_step(stage),
            "torch": stage.get("torch"), "gpu_name": stage.get("gpu_name")}
     rows, verdict = evaluate(doc, pd.teacher_identity_problems)
     w_med = doc["throughput"][RUN_STAGE.lower()]["iter_seconds"]["median"]
@@ -580,10 +592,23 @@ def selfcheck_evaluator() -> None:
                                   "state_sha256": "0" * 64, "rng_unchanged": True}
                                  for t in range(1, STEPS + 1) for k in (1, 2, 3)]
         st["nmf"]["final_draws"] = 3 * STEPS
-    draw_cases = (("one", one_per_step), ("three", three_per_step))
-    for label, edit in draw_cases:
-        v, st, det = verdict_of(edit)
-        scheck(f"s_draws_{label}_per_step_stops", st.get("nmf_draws") == "STOP" and v == "STOP", det.get("nmf_draws"))
+
+    def three_in_two_forwards(d):          # call 1 takes two draws and call 2 one: two forwards, three draws
+        st = d["stage"]
+        st["nmf"]["forwards"] = [{"step": t, "call": k, "draws_before": 3 * (t - 1) + 2 * (k - 1),
+                                  "draws_delta": 3 - k, "state_sha256": "0" * 64, "rng_unchanged": True}
+                                 for t in range(1, STEPS + 1) for k in (1, 2)]
+        st["nmf"]["final_draws"] = 3 * STEPS
+
+    def stops(edit, draws: int) -> tuple:  # the draws check STOPs, and K6's draws_per_step reads the draws taken
+        doc = synthetic_doc()
+        v, st, det = verdict_of(edit, doc=doc)
+        got = draws_per_step(doc["stage"])
+        return st.get("nmf_draws") == "STOP" and v == "STOP" and got == [draws] * STEPS, (det.get("nmf_draws"), got[:3])
+    ok, detail = stops(one_per_step, 1)
+    scheck("s_draws_one_per_step_stops", ok, detail)
+    (ok_a, detail_a), (ok_b, detail_b) = stops(three_per_step, 3), stops(three_in_two_forwards, 3)
+    scheck("s_draws_three_per_step_stops", ok_a and ok_b, (detail_a, detail_b))
 
     # time (2): at 2 x E3's median, and above it
     def seconds(value):
@@ -788,10 +813,17 @@ def cmd_selfcheck() -> int:
     print("=" * 78)
     print("W POD SMOKE --selfcheck (CPU; the evaluator, the refusals, a stub child and the driver; never a pod PASS)")
     print("=" * 78)
-    work = Path(tempfile.gettempdir()).resolve() / f"kd_flip_pod_selfcheck_{os.getpid()}"
-    if "test" in str(work).lower():
-        print(f"REFUSED: {work} contains 'test' (SL-1)")
-        return 2
+    # SL-1 and the out-root rule (plan 1.0; review finding RIR-1): the DIAG guards, imported
+    from src.eval.teacher_diag import Refused, refuse_test_path, require_outside_repo
+    try:
+        for var in ("TMPDIR", "TEMP", "TMP"):          # before tempfile probes a candidate by writing to it
+            if os.environ.get(var):
+                refuse_test_path(os.environ[var], f"${var} (set it elsewhere)")
+        work = Path(tempfile.gettempdir()) / f"kd_flip_pod_selfcheck_{os.getpid()}"
+        refuse_test_path(work, "the selfcheck work dir (set TMPDIR elsewhere)")
+        work = require_outside_repo(work, "the selfcheck work dir")
+    except Refused as e:
+        return refused("selfcheck_work_dir", str(e))
     work.mkdir()
     for name, fn in (("evaluator", selfcheck_evaluator), ("refusals", lambda: selfcheck_refusals(work)),
                      ("child", lambda: selfcheck_child(work))):

@@ -23,10 +23,21 @@ TargetBuilder interface that src/training/kd_arms.py states (frozen: audit rulin
                       cells. With z2 == z1, p is t_prob bit for bit and the loss is E3's bit for bit.
            CWD logit  per channel, q = (q1 + q2) / 2, with q_v the softmax over the h*w cells of z_v/T and the
                       invalid cells at the dtype's most negative finite value (cwd_channelwise_kl's masking); the
-                      loss sums q (log q - log_softmax(s/T)) over the valid cells and takes cwd_channelwise_kl's
-                      normalisation (T^2 / C with C = 116, zero for a sample with no valid cell, batch mean). With
-                      z2 == z1 it equals E3's within 1e-6 relative: the log of an average is not a log_softmax.
+                      loss sums xlogy(q, q) - q log_softmax(s/T) over the valid cells (plan (vi)'s form) and takes
+                      cwd_channelwise_kl's normalisation (T^2 / C with C = 116, zero for a sample with no valid
+                      cell, batch mean). With z2 == z1 it is E3's term in exact arithmetic (float64 agrees to about
+                      1e-12 relative) but not bit for bit: W takes xlogy of a softmax where E3 uses a log_softmax
+                      and its exp. In float32 the two round differently in the cancellation between the sums of
+                      q log q and q log_softmax(s/T), a gap that grows as the term shrinks (about 1e-7 relative at
+                      a term value of 0.5, 1e-5 at 5e-3, 1e-3 at 5e-5), of the order of E3's own float32 error
+                      (review finding FT-2).
            The validity mask is the trainer's, on the crop's grid: view 2 is flipped back, the mask never is.
+  non-finite  a NaN or +inf teacher logit in either view gives a NaN loss, as in E3 (both terms at a valid cell, the
+           Logit-KD term at a masked one), so AM-7 (a) stops a real run. A teacher -inf at a valid cell does not
+           (review finding FT-1, an open item for a ruling): that view's softmax gives the cell probability 0, so
+           the CWD logit-map term stays finite where E3's cwd_channelwise_kl gives NaN (L-KD-HARDEN item 9), and
+           W's run goes on. `finite` is false then, and the AM-7 abort record reads it whenever another rule stops
+           the run.
   K        1 only. DL-84 makes item 6(a)'s K-draw correction unavailable and DL-96 adds no K8 arm, so a builder
            whose K is not 1 is refused.
 
