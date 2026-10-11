@@ -24,13 +24,17 @@ record     writes arm_teacher_record/1 exclusively at --out (outside the reposit
              incomplete  anything else: a stop by pod or host, repeated under AM-8a in a new _a<n> work dir.
            Exit 0 complete, 1 diverged or incomplete (the record is still written), 2 refused (nothing written).
 The record names the work dir and attempt, both configurations (the arm's training config and the record
-config it is evaluated with; plan decision (iv)), the launch provenance files' sha256 and their rows, the logs'
+config it is evaluated with; plan decision (iv)), the registered difference (REG[arm]'s canonical JSON and its
+sha256, which must equal the launch provenance's), the launch provenance files' sha256 and their rows, the logs'
 sha256 (R2's launcher binds its reference log to R1's), the selection, every interval checkpoint's sha256, the
-EMA checks and the writer. --generated-utc is for synthetic runs.
+EMA checks and the writer. The launch provenance is bound to --work-dir by the work dir's name and attempt (the
+laptop records a copy of the pod's folder, ruling R11). --generated-utc is for synthetic runs: a work dir whose
+provenance records a launch refuses it.
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import re
@@ -187,10 +191,20 @@ def cmd_record(args) -> int:
     if not prov_p.is_file():
         raise Refused(f"{prov_p.name} is missing: {work.name} is not a launched arm run")
     prov = json.loads(prov_p.read_text(encoding="utf-8"))
-    if prov.get("arm") != args.arm or Path(str(prov.get("work_dir"))).resolve() != work \
-            or (prov.get("config") or {}).get("sha256") != args.config_sha256:
-        raise Refused(f"{prov_p.name} names arm {prov.get('arm')!r}, work dir {prov.get('work_dir')!r} and config "
-                      f"{(prov.get('config') or {}).get('sha256')!r}")
+    # The work dir is bound by its name and attempt, not its absolute path: R11 records a copy of the pod's
+    # /workspace/arm_runs/<name> on the laptop (review VREC-2).
+    if prov.get("arm") != args.arm or Path(str(prov.get("work_dir"))).name != work.name \
+            or prov.get("attempt") != int(m.group(2)) or (prov.get("config") or {}).get("sha256") != args.config_sha256:
+        raise Refused(f"{prov_p.name} names arm {prov.get('arm')!r}, work dir {prov.get('work_dir')!r} (attempt "
+                      f"{prov.get('attempt')!r}) and config {(prov.get('config') or {}).get('sha256')!r}")
+    if args.generated_utc is not None and prov.get("launch") is True:
+        raise Refused("--generated-utc is for synthetic runs; this work dir's provenance records a launch")
+    rd = prov.get("registered_difference") if isinstance(prov.get("registered_difference"), dict) else {}
+    diff_b = _reg_bytes(args.arm)
+    diff_sha = hashlib.sha256(diff_b).hexdigest()
+    if rd.get("sha256") != diff_sha or rd.get("reg_sha256") != diff_sha:
+        raise Refused(f"{prov_p.name}: registered difference sha256 {rd.get('sha256')!r} (REG {rd.get('reg_sha256')!r})"
+                      f" is not REG[{args.arm}]'s {diff_sha} at this checkout")
     logs = read_logs(work)
     sel_p = work / SELECTION_FILE
     if logs["records"] and not sel_p.is_file():
@@ -220,13 +234,14 @@ def cmd_record(args) -> int:
     launch = json.loads(launch_p.read_text(encoding="utf-8")) if launch_p.is_file() else {}
     rows = prov.get("rows") or {}
     doc = {"format": RECORD_FORMAT, "arm": args.arm, "status": status, "first_nonfinite": logs["first_nonfinite"],
-           "work_dir": {"path": str(work), "name": work.name, "attempt": int(m.group(2))},
+           "work_dir": {"path": str(work), "name": work.name, "attempt": int(m.group(2)),
+                        "launched_path": str(prov.get("work_dir"))},
            "dl": {"config": (rows.get("config") or {}).get("dl"),
                   "table": (rows.get("r2_table") or {}).get("dl") if args.arm == "R2" else None},
            "train_config": {"path_rel": ARM_CONFIGS[args.arm], "sha256": args.config_sha256,
                             "git_blob": _git_blob(ARM_CONFIGS[args.arm])},
            "eval_config": {"path_rel": RECORD_CONFIG_REL, "sha256": file_sha256(ev), "git_blob": _git_blob(RECORD_CONFIG_REL)},
-           "registered_difference": prov.get("registered_difference"),
+           "registered_difference": dict(rd, json=json.loads(diff_b.decode("utf-8"))),
            "launch": {"teacher_arm_launch_provenance_sha256": file_sha256(prov_p),
                       "teacher_launch_provenance_sha256": file_sha256(launch_p) if launch_p.is_file() else None,
                       "launcher_sha256s": {k: (v or {}).get("sha256") for k, v in (prov.get("modules") or {}).items()},
@@ -252,6 +267,13 @@ def cmd_record(args) -> int:
 
 def _inside(p: Path, d: Path) -> bool:
     return p == d or d in p.parents
+
+
+def _reg_bytes(arm: str) -> bytes:
+    """REG[arm]'s canonical JSON, as the launcher's configuration gate and the configuration row hold it (plan
+    decision (iv): registered_difference {json, sha256}; review REC-7)."""
+    import scripts.launch_teacher_arm as lta
+    return lta.canonical_bytes(lta.reg(arm))
 
 
 def _head() -> str | None:

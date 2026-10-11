@@ -21,6 +21,8 @@ and its train pipeline (ruling R1, audit F4).
 
 Gates, in this order; the first failure refuses ("PREFLIGHT FAILED [code]", exit 2). Without --launch the run is
 the rehearsal: every gate but the launch runs, so PREFLIGHT PASS covers every non-GPU gate (ruling R7, audit F22).
+An input file that cannot be read is a refusal too: [r2_table_unreadable], [r1_record_unreadable],
+[previous_record_unreadable], [reference_unusable], or [repeat_report_missing] for a report path that is not a file.
   1  authorization  --real-run and --confirm-real-run; --launch refuses --skip-cuda-probe (as the frozen launcher)
   2  flags          the arm's flag set (explicit paths only: the frozen environment fallbacks never apply)
   3  paths          every path argument through teacher_diag.refuse_test_path, the as-given string first (SL-1)
@@ -221,7 +223,10 @@ def _p_t(row: str, head: str, dl_id: str, code: str) -> str:
 
 def _read_record(path, sha256: str, *, code: str, what: str) -> tuple[dict, str]:
     """An arm_teacher_record/1 file whose sha256 is the given one."""
-    got = _sha256(path)
+    try:
+        got = _sha256(path)
+    except OSError as e:
+        raise PreflightError(f"{code}_unreadable", f"{what} {path}: unreadable ({type(e).__name__}: {e})") from e
     if got != sha256:
         raise PreflightError(f"{code}_sha256_mismatch", f"{what} {path}: sha256 {got}, expected {sha256}")
     try:
@@ -390,7 +395,11 @@ def gate_attempt(args, src, n: int) -> dict | None:
         raise PreflightError("arm_already_complete", f"{want} completed: {args.arm} is never repeated")
     if status != "incomplete":
         raise PreflightError("previous_record_invalid", f"--previous-record status {status!r}")
-    report = src.show(args.records_commit, args.am8a_report)
+    try:
+        report = src.show(args.records_commit, args.am8a_report)
+    except RuntimeError as e:                  # a path naming a tree, not a file
+        raise PreflightError("repeat_report_missing", f"--am8a-report {args.am8a_report} is not a file of the "
+                                                      f"records commit ({e})") from e
     if report is None:
         raise PreflightError("repeat_report_missing", f"--am8a-report {args.am8a_report} is not in the records "
                                                        "commit (AM-8a; AM-19 item 3(a))")
@@ -464,7 +473,11 @@ def gate_table(args, src, arm_cfg) -> dict:
     """The pinned R2 table (both arms; AM-18 item 7(a)): its bytes, its rules, the committed strata counts; for R2
     the repeat counts of the dataset its config builds (AM-18 item 2(b)(i))."""
     from src.training import teacher_arm_components as tac
-    data = Path(args.r2_table).read_bytes()
+    try:
+        data = Path(args.r2_table).read_bytes()
+    except OSError as e:
+        raise PreflightError("r2_table_unreadable", f"--r2-table {args.r2_table}: unreadable "
+                                                    f"({type(e).__name__}: {e})") from e
     sha = hashlib.sha256(data).hexdigest()
     if sha != args.r2_table_sha256:
         raise PreflightError("r2_table_sha256_mismatch", f"--r2-table {args.r2_table}: sha256 {sha}, the row's "
@@ -588,7 +601,11 @@ def gate_arithmetic(args, src, dl_text: str, r1: dict | None) -> dict:
         raise PreflightError("schedule_format", f"{ss.SCHEDULE_REL}: schedule {in_force!r}, entry {entry!r}")
     figures = []
     if args.reference_log is not None:
-        sha = _sha256(args.reference_log)
+        try:
+            sha = _sha256(args.reference_log)
+        except OSError as e:
+            raise PreflightError("reference_unusable", f"--reference-log {args.reference_log}: unreadable "
+                                                       f"({type(e).__name__}: {e})") from e
         if sha != args.reference_log_sha256:
             raise PreflightError("reference_log_sha256_mismatch", f"--reference-log: sha256 {sha}, expected "
                                                                   f"{args.reference_log_sha256}")

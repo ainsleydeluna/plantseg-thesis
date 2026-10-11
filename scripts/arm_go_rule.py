@@ -4,8 +4,8 @@
 
     python -B scripts/arm_go_rule.py --arm R1|R2 --teacher-record PATH --teacher-record-sha256 HEX
         --arm-output teacher_d2_arm-<X>_<UTC>.json --control-output teacher_d2_control_<UTC>.json
-        --item1b-output teacher_d2_<UTC>.json --out PATH [--host-fault-dl DL-n] [--void-session-dl DL-n]
-        [--generated-utc UTC]
+        --item1b-output teacher_d2_<UTC>.json --item1b-dl DL-n --out PATH [--host-fault-dl DL-n]
+        [--void-session-dl DL-n --void-control-output PATH] [--generated-utc UTC]
 
 E3-X and E7-X run if either (literal constants, exact float comparisons):
     VAL_X > 0.38576993346214294; or
@@ -15,14 +15,22 @@ all_class_miou and ECE), ECE_B from the control output of the same session (the 
 first, at the same commit), and item 1(b)'s ECE is reported beside it. Before any decision:
   * the teacher record is arm_teacher_record/1 of this arm, complete, with the given sha256, and the arm output
     scored exactly its M12-selected checkpoint (by sha256; cm_go_rule_binds_m12_checkpoint);
-  * the outputs are DIAG's D2 outputs (lane, script, roles: arm X; record control; record item1); the control
-    was checked against this item 1(b) output; control and arm ran at the same code commit, the control first;
-  * all three ran on one host, the item 1(b) host (DIAG's environment cpu_model; the hostnames, which name a
-    container inside Docker, are recorded only), unless --host-fault-dl names a RECORDED row (at HEAD of this
-    clone) that documents that host's fault and names the item 1(b) output's sha256;
+  * the outputs are DIAG's D2 outputs (lane, script, roles: arm X; record control; record item1); the item 1(b)
+    output is the output of record: --item1b-dl names its RECORDED row, which carries "item 1(b) D2 VAL execution
+    of record" and the file's sha256 (DL-92; a case (ii) repeat has its own row); the control was checked against
+    it; the control and the arm ran at the item 1(b) output's commit (the D2 script's commit of record, P), the
+    control first;
+  * the control and the arm ran on one host (a session is one sequence of processes on one host at one commit),
+    and that host is the item 1(b) host (DIAG's environment cpu_model; the hostnames, which name a container
+    inside Docker, are recorded only), unless --host-fault-dl names a RECORDED row that carries "AM-18 item 5
+    host fault" and the item 1(b) output's sha256;
   * the control reproduced 0.38576993346214294 within 1e-5. If not, the session is void: a STOP, nothing written
-    (exit 1); when --void-session-dl names the RECORDED row of an earlier void session of this X, the recurrence
-    makes X not evaluable: the record is written with verdict not_evaluable (exit 1).
+    (exit 1). A recurrence makes X not evaluable, and the record is written with verdict not_evaluable (exit 1):
+    --void-control-output is the earlier void session's control output (record role, not reproduced, checked
+    against the same item 1(b) output, at the same commit, ended before this control started, another file) and
+    --void-session-dl names its RECORDED row, which carries "AM-18 item 5 void session", the teacher record's
+    sha256 and that control output's sha256.
+Every row is read at HEAD of this clone.
 Exit: 0 written (go or no_go); 1 STOP (void session) or not_evaluable (written); 2 refused, nothing written.
 The record, arm_go_rule/1, is created exclusively at --out (outside the repository; the orchestrator commits a
 copy at reports/arms/arm_go_rule_<arm>.json and enters the outcome with the values and the artifacts' sha256 in
@@ -53,6 +61,11 @@ VAL_GATE = 0.38576993346214294          # AM-18 item 5: the teacher of record's 
 VAL_FLOOR = 0.37576993346214294         # AM-18 item 5: 1 pp below it
 REPRO_TOLERANCE = 1e-5                  # AM-18 item 5: the control reproduces VAL_GATE within 1e-5
 ARMS = ("R1", "R2")
+# The literals that identify the rows the go rule reads (review REC-1, REC-2, VREC-1): a row that merely names the
+# same sha256 (DL-92 names the item 1(b) output; the R1-record row names the teacher record) is not such a row.
+ITEM1B_MARKER = "item 1(b) D2 VAL execution of record"        # DL-92's words
+HOST_FAULT_MARKER = "AM-18 item 5 host fault"
+VOID_SESSION_MARKER = "AM-18 item 5 void session"
 
 
 class Refused(RuntimeError):
@@ -105,6 +118,23 @@ def _host(doc: dict):
     return (doc.get("environment") or {}).get("cpu_model")
 
 
+def reproduced_of(control: dict) -> bool:
+    """AM-18 item 5: the control re-score reproduced VAL_GATE within 1e-5 (DIAG's record gate passed)."""
+    gate = control.get("gates") if isinstance(control.get("gates"), dict) else {}
+    miou = _num(control, "pass", "all_class_miou")
+    return (control.get("status") == "written" and gate.get("passed") is True and miou is not None
+            and abs(miou - VAL_GATE) <= REPRO_TOLERANCE)
+
+
+def _head() -> str | None:
+    """This clone's HEAD: the go rule's own commit, recorded in its output (AM-18 execution rules; review REC-6)."""
+    from src.training.sweep_select import HeadSource
+    try:
+        return HeadSource(REPO).head() or None
+    except OSError:
+        return None
+
+
 def dl_row(dl_id: str, need: tuple, what: str) -> dict:
     """A RECORDED decision-log row at HEAD of this clone carrying every string in `need`."""
     import scripts.preflight_arms as pa
@@ -146,38 +176,65 @@ def evaluate(args) -> tuple[int, dict | None]:
         raise Refused("--item1b-output is not the record role's item 1(b) output")
     if control.get("role") != "record" or control.get("purpose") != "control":
         raise Refused("--control-output is not the record role's control re-score")
+    item1b_row = dl_row(args.item1b_dl, (ITEM1B_MARKER, item1b_sha),
+                        f"--item1b-dl (the row of item 1(b)'s D2 VAL output of record: {ITEM1B_MARKER!r} and the "
+                        "file's sha256; DL-92)")
     x_sha = ((arm.get("teacher") or {}).get("checkpoint") or {}).get("sha256_verified")
     if x_sha != ck["sha256"]:
         raise Refused(f"the arm output scored checkpoint {x_sha}; {args.arm}'s M12 selection is {ck.get('name')} "
                       f"{ck['sha256']} (AM-18 item 2(c): X at its M12-selected checkpoint)")
     if ((control.get("inputs") or {}).get("of_record_output") or {}).get("sha256") != item1b_sha:
         raise Refused("the control was not checked against this --item1b-output")
+    head_1b = (item1b.get("code") or {}).get("head")
     head_c, head_a = (control.get("code") or {}).get("head"), (arm.get("code") or {}).get("head")
-    if not head_c or head_c != head_a:
-        raise Refused(f"the control ran at {head_c} and the arm at {head_a}: the same commit is required")
+    if not head_1b or head_c != head_1b or head_a != head_1b:
+        raise Refused(f"the item 1(b) output ran at {head_1b}, the control at {head_c} and the arm at {head_a}: the "
+                      "control and the arm run at the D2 script's commit of record, the item 1(b) output's (AM-18 "
+                      "execution rules; ruling R11: D2 at P)")
     end_c, start_a = (control.get("environment") or {}).get("end_utc"), arm.get("start_utc")
     if not (isinstance(end_c, str) and isinstance(start_a, str) and end_c <= start_a):
         raise Refused(f"the control ended {end_c} and the arm started {start_a}: the control is scored first")
     hosts = {"item1b": _host(item1b), "control": _host(control), "arm": _host(arm)}
     hostnames = {k: (d.get("environment") or {}).get("hostname") for k, d in (("item1b", item1b),
                                                                               ("control", control), ("arm", arm))}
+    if not hosts["control"] or hosts["control"] != hosts["arm"]:
+        raise Refused(f"hosts {hosts}: the control and the arm are one session on one host (AM-18: a session is "
+                      "one sequence of processes on one host at one commit)")
     fault = None
-    if not hosts["item1b"] or len(set(hosts.values())) != 1:
+    if hosts["item1b"] != hosts["control"]:
         if args.host_fault_dl is None:
             raise Refused(f"hosts {hosts}: the session runs on the item 1(b) host, another only after a documented "
                           "fault of that host (--host-fault-dl)")
-        fault = dl_row(args.host_fault_dl, (item1b_sha,), "--host-fault-dl (a documented fault of the host that "
-                                                          "produced the item 1(b) output, naming its sha256)")
+        fault = dl_row(args.host_fault_dl, (HOST_FAULT_MARKER, item1b_sha),
+                       f"--host-fault-dl (a documented fault of the item 1(b) host: {HOST_FAULT_MARKER!r} and the "
+                       "item 1(b) output's sha256)")
     val_x, ece_x = _num(arm, "pass", "all_class_miou"), _num(arm, "calibration", "ece")
     ece_b, miou_b = _num(control, "calibration", "ece"), _num(control, "pass", "all_class_miou")
     ece_1b = _num(item1b, "calibration", "ece")
     if val_x is None or ece_x is None:
         raise Refused("the arm output has no finite all_class_miou and ECE")
-    gate = control.get("gates") if isinstance(control.get("gates"), dict) else {}
-    reproduced = (control.get("status") == "written" and gate.get("passed") is True and miou_b is not None
-                  and abs(miou_b - VAL_GATE) <= REPRO_TOLERANCE)
-    void = None if args.void_session_dl is None else dl_row(
-        args.void_session_dl, (args.teacher_record_sha256,), "--void-session-dl (an earlier void session of this X)")
+    reproduced = reproduced_of(control)
+    void = None
+    if (args.void_session_dl is None) != (args.void_control_output is None):
+        raise Refused("--void-session-dl and --void-control-output name the earlier void session together")
+    if args.void_session_dl is not None:
+        prev, prev_sha = read_d2(args.void_control_output, synthetic=synthetic, what="--void-control-output",
+                                 statuses=("written", "not reproduced"))
+        end_p, start_c = (prev.get("environment") or {}).get("end_utc"), control.get("start_utc")
+        if (prev.get("role") != "record" or prev.get("purpose") != "control" or prev_sha == control_sha
+                or reproduced_of(prev)
+                or ((prev.get("inputs") or {}).get("of_record_output") or {}).get("sha256") != item1b_sha
+                or (prev.get("code") or {}).get("head") != head_1b
+                or not (isinstance(end_p, str) and isinstance(start_c, str) and end_p <= start_c)):
+            raise Refused(f"--void-control-output is not an earlier void session's control: role "
+                          f"{prev.get('role')!r} purpose {prev.get('purpose')!r}, this session's own file "
+                          f"{prev_sha == control_sha}, reproduced {reproduced_of(prev)}, ended {end_p} (this control "
+                          f"started {start_c}); it must be another not-reproduced control re-score of this item 1(b) "
+                          "output at the same commit, ended before this control started")
+        void = dict(dl_row(args.void_session_dl, (VOID_SESSION_MARKER, args.teacher_record_sha256, prev_sha),
+                           f"--void-session-dl (the earlier void session of this X: {VOID_SESSION_MARKER!r}, the "
+                           "teacher record's sha256 and that session's control output's sha256)"),
+                    control_output={"path": str(args.void_control_output), "sha256": prev_sha})
     if not reproduced and void is None:
         print(f"STOP: the control did not reproduce {VAL_GATE!r} within {REPRO_TOLERANCE} (all_class_miou "
               f"{miou_b!r}, status {control.get('status')!r}): the session is void; nothing is written (AM-18 item 5)")
@@ -197,11 +254,11 @@ def evaluate(args) -> tuple[int, dict | None]:
            "teacher_record": {"path": str(rec_p), "sha256": args.teacher_record_sha256},
            "inputs": {"arm_output": {"path": str(args.arm_output), "sha256": arm_sha},
                       "control_output": {"path": str(args.control_output), "sha256": control_sha},
-                      "item1b_output": {"path": str(args.item1b_output), "sha256": item1b_sha}},
+                      "item1b_output": {"path": str(args.item1b_output), "sha256": item1b_sha, "row": item1b_row}},
            "session": {"hosts": hosts, "hostnames": hostnames, "host_fault": fault, "commit": head_a,
                        "control_end_utc": end_c,
                        "arm_start_utc": start_a, "void_session": void},
-           "writer": {"script_rel": SCRIPT_REL, "script_sha256": _sha(Path(__file__).resolve())},
+           "writer": {"script_rel": SCRIPT_REL, "script_sha256": _sha(Path(__file__).resolve()), "commit": _head()},
            "generated_utc": args.generated_utc or utc_now()}
     return (EXIT_OK if verdict in ("go", "no_go") else EXIT_STOP), doc
 
@@ -210,10 +267,11 @@ def parse_args(argv=None):
     p = argparse.ArgumentParser(description="AM-18 item 5 go rule (L-TEACHER-ARMS C4).", allow_abbrev=False)
     p.add_argument("--arm", choices=ARMS, required=True)
     for name in ("--teacher-record", "--teacher-record-sha256", "--arm-output", "--control-output",
-                 "--item1b-output", "--out"):
+                 "--item1b-output", "--item1b-dl", "--out"):
         p.add_argument(name, required=True)
     p.add_argument("--host-fault-dl", default=None)
     p.add_argument("--void-session-dl", default=None)
+    p.add_argument("--void-control-output", default=None)
     p.add_argument("--generated-utc", default=None)
     return p.parse_args(argv)
 
@@ -225,8 +283,9 @@ def main(argv=None) -> int:
     try:
         for value, flag in ((args.teacher_record, "--teacher-record"), (args.arm_output, "--arm-output"),
                             (args.control_output, "--control-output"), (args.item1b_output, "--item1b-output"),
-                            (args.out, "--out")):
-            refuse_test_path(value, flag)
+                            (args.void_control_output, "--void-control-output"), (args.out, "--out")):
+            if value is not None:
+                refuse_test_path(value, flag)
         out = require_outside_repo(args.out, "--out")
         if out.exists():
             raise Refused(f"--out {out} exists: the record is written once")

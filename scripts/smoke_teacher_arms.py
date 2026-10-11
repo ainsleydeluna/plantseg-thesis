@@ -20,7 +20,8 @@ checkout) are replaced in-process, and the init checkpoint's sha256 is accepted 
 check_init_checkpoint call (smoke_teacher_launch's pattern); those gates are smoke_teacher_launch's. No folder or
 file this smoke creates has "test" in its name: the "test" refusals are shown on never-created path strings,
 refused before any filesystem call. Mutations are monkeypatches, each restored, and each must make its named
-check FAIL.
+check FAIL; the check first runs again without the mutation and must PASS, so a kill cannot come from a re-run
+that fails anyway (C5, review LAUNCHER-V1). The launcher's arithmetic runs at a fixed clock (2026-10-11T00:00Z).
 
     python -B scripts/smoke_teacher_arms.py [--work-dir DIR]
 Exit 0 only when every check passes ("RESULT: PASS (98/98)"); 1 otherwise; 2 when it cannot run.
@@ -39,10 +40,12 @@ import io  # noqa: E402
 import json  # noqa: E402
 import math  # noqa: E402
 import os  # noqa: E402
+import shutil  # noqa: E402
 import subprocess  # noqa: E402
 import tempfile  # noqa: E402
 import time  # noqa: E402
 import traceback  # noqa: E402
+from datetime import datetime, timezone  # noqa: E402
 from fractions import Fraction  # noqa: E402
 from pathlib import Path  # noqa: E402
 from types import SimpleNamespace  # noqa: E402
@@ -52,6 +55,9 @@ if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 SMOKE = sys.modules[__name__]
 STACK = {"mmengine": "0.10.7", "mmseg": "1.2.2", "mmcv": "2.1.0"}
+# The launcher's clock in this smoke: its AM-19 3(b) arithmetic is judged at a fixed instant, so the result does not
+# change on 2026-11-03 (review LAUNCHER-4). 20,800 s fits before schedule T's freeze date; 4,000,000 s does not.
+SMOKE_NOW = datetime(2026, 10, 11, tzinfo=timezone.utc).timestamp()
 
 
 def teacher_stack_problem() -> str | None:
@@ -230,7 +236,7 @@ def commit_files(repo: Path, files: dict, msg: str) -> str:
         git(repo, "add", "--", rel)
     git(repo, "commit", "-q", "-m", msg)
     head = git(repo, "rev-parse", "HEAD")
-    git(repo, "branch", f"fx_{head[:12]}", head)
+    git(repo, "branch", "-f", f"fx_{head[:12]}", head)      # the same files in the same second: the same commit
     return head
 
 
@@ -243,6 +249,17 @@ def fx(name):
     if name not in FX:
         FX[name] = globals()[f"_fx_{name}"]()
     return FX[name]
+
+
+_FRESH = [0]
+
+
+def fresh(*parts) -> Path:
+    """A new path under the work dir, never created here: a check that writes outputs gives each invocation its
+    own, so it passes again when the mutation table re-runs it (review LAUNCHER-V1)."""
+    _FRESH[0] += 1
+    *head, last = parts
+    return W.joinpath(*head, f"{last}_{_FRESH[0]}")
 
 
 def _fx_root():
@@ -329,9 +346,10 @@ def records_commit(rows, extra=None) -> str:
     git(fxr.repo, "checkout", "-q", "--detach", fxr.p_t)
     files = {"docs/DECISION_LOG.md": dl_text(rows), STRATA_REL: fx("root").strata_b,
              "configs/kd_schedule.json": fxr.sched, **(extra or {})}
-    h = commit_files(fxr.repo, files, "records")
-    git(fxr.repo, "checkout", "-q", "--detach", fxr.p_t)
-    return h
+    try:
+        return commit_files(fxr.repo, files, "records")
+    finally:                                         # HEAD stays P_T for every later check
+        git(fxr.repo, "checkout", "-q", "--detach", fxr.p_t)
 
 
 @contextlib.contextmanager
@@ -356,7 +374,8 @@ def launcher_ctx():
         with patched((lta, "GIT_ROOT", fx("repo").repo), (ltf, "check_init_checkpoint", cic),
                      (ltf, "check_inherited_cublas", lambda: None),
                      (ltf, "check_governed_clean", lambda porcelain=None: {"governed_paths_clean": True,
-                                                                           "smoke_stub": True})):
+                                                                           "smoke_stub": True}),
+                     (lta, "time", SimpleNamespace(time=lambda: SMOKE_NOW))):
             yield
     finally:
         os.environ.clear()
@@ -547,9 +566,10 @@ def make_run(name, *, last_iter=40000, vals=10, nan_iter=None, val_nan_at=None, 
     (work / "20261011_000000" / "vis_data").mkdir(parents=True)
     cfg_sha = sha(REPO / L.lta.ARM_CONFIGS[arm])
     (work / "teacher_arm_launch_provenance.json").write_bytes(canon({
-        "format": "teacher_arm_launch_provenance/1", "arm": arm, "work_dir": str(work),
+        "format": "teacher_arm_launch_provenance/1", "arm": arm, "attempt": 1, "work_dir": str(work),
         "config": {"sha256": cfg_sha}, "rows": {"config": {"dl": "DL-903"}, "r2_table": {"dl": "DL-904"}},
-        "registered_difference": {"sha256": L.lta.reg_sha256(arm)}, "modules": {"launcher": {"sha256": "a" * 64}},
+        "registered_difference": {"sha256": L.lta.reg_sha256(arm), "reg_sha256": L.lta.reg_sha256(arm)},
+        "modules": {"launcher": {"sha256": "a" * 64}},
         "checkout_git_head": "b" * 40, "records_commit": "c" * 40, "r2_table": {"sha256": "d" * 64}}))
     (work / "teacher_launch_provenance.json").write_bytes(canon({"image_digest_declared": "sha256:" + "e" * 64}))
     if no_log:                                       # stopped before the first log row (iteration 50)
@@ -621,24 +641,40 @@ def d2_doc(role, *, purpose=None, arm_id=None, miou=0.39, ece=0.05, ckpt_sha=Non
     return doc
 
 
-def item1b_bytes() -> bytes:
-    return canon(d2_doc("record", purpose="item1", miou=0.38576993346214294, ece=0.061, start="2026-10-01T00:00:00Z",
-                        end="2026-10-01T01:00:00Z"))
+def item1b_bytes(variant=False) -> bytes:
+    """Item 1(b)'s output of record (DL-952 names it); the variant is a second item1 pass of the same teacher."""
+    return canon(d2_doc("record", purpose="item1", miou=0.38576993346214294, ece=0.062 if variant else 0.061,
+                        start="2026-10-01T00:00:00Z", end="2026-10-01T01:00:00Z"))
+
+
+def void_prev_bytes() -> bytes:
+    """The control output of an earlier void session of R1's X (2e-5 off), ended before go_files' sessions."""
+    return canon(d2_doc("record", purpose="control", miou=0.38576993346214294 + 2e-5, ece=0.06,
+                        start="2026-10-11T01:00:00Z", end="2026-10-11T01:30:00Z", status="not reproduced",
+                        gate_passed=False, of_record_sha=sha(item1b_bytes())))
+
+
+def _fx_voidprev():
+    p = W / "go_void" / "teacher_d2_control_20261011T010000Z.json"
+    p.parent.mkdir(parents=True)
+    p.write_bytes(void_prev_bytes())
+    return p
 
 
 def go_files(tag, *, val_x=0.39, ece_x=0.05, ece_b=0.06, control_miou=0.38576993346214294, control_status="written",
-             gate_passed=True, arm_ckpt=None, host_arm="laptop", control_head="f" * 40):
-    d = W / "go" / tag
+             gate_passed=True, arm_ckpt=None, host_arm="laptop", host_control="laptop", control_head="f" * 40,
+             arm_head="f" * 40, item1b_variant=False):
+    d = fresh("go", tag)
     d.mkdir(parents=True)
     rec = fx("complete_record")
     item1b = d / "teacher_d2_20261001T000000Z.json"
-    item1b.write_bytes(item1b_bytes())
+    item1b.write_bytes(item1b_bytes(item1b_variant))
     control = d / "teacher_d2_control_20261012T010000Z.json"
     control.write_bytes(canon(d2_doc("record", purpose="control", miou=control_miou, ece=ece_b, head=control_head,
-                                     start="2026-10-12T01:00:00Z", end="2026-10-12T01:30:00Z", status=control_status,
-                                     gate_passed=gate_passed, of_record_sha=sha(item1b))))
+                                     host=host_control, start="2026-10-12T01:00:00Z", end="2026-10-12T01:30:00Z",
+                                     status=control_status, gate_passed=gate_passed, of_record_sha=sha(item1b))))
     arm = d / "teacher_d2_arm-R1_20261012T020000Z.json"
-    arm.write_bytes(canon(d2_doc("arm", arm_id="R1", miou=val_x, ece=ece_x, host=host_arm,
+    arm.write_bytes(canon(d2_doc("arm", arm_id="R1", miou=val_x, ece=ece_x, host=host_arm, head=arm_head,
                                  ckpt_sha=arm_ckpt or rec.doc["selection"]["checkpoint"]["sha256"])))
     return SimpleNamespace(dir=d, item1b=item1b, control=control, arm=arm, rec=rec)
 
@@ -646,18 +682,32 @@ def go_files(tag, *, val_x=0.39, ece_x=0.05, ece_b=0.06, control_miou=0.38576993
 def go_argv(g, out, extra=()):
     return ["--arm", "R1", "--teacher-record", str(g.rec.path), "--teacher-record-sha256", g.rec.sha,
             "--arm-output", str(g.arm), "--control-output", str(g.control), "--item1b-output", str(g.item1b),
-            "--out", str(out), "--generated-utc", "2026-10-12T03:00:00Z", *extra]
+            "--item1b-dl", "DL-952", "--out", str(out), "--generated-utc", "2026-10-12T03:00:00Z", *extra]
+
+
+def go_main(argv):
+    """The go rule's CLI with this smoke's decision log at HEAD of its clone (every row is read there)."""
+    with patched((L.agr, "GIT_ROOT", fx("dlrepo"))):
+        return run_main(L.agr.main, argv)
 
 
 def _fx_dlrepo():
-    """A clone whose HEAD holds the go rule's rows: a fault of the item 1(b) host and a void session of the record."""
+    """A clone whose HEAD holds the go rule's rows, with the literal markers the go rule requires: the item 1(b)
+    output of record (DL-92's wording), a fault of the item 1(b) host, an earlier void session of R1's X; and a row
+    that names the R1 record without being a void-session row (the R1-record row R2's launch reads)."""
     repo = W / "dlroot"
     repo.mkdir()
     git(repo, "init", "-q")
     rec = fx("complete_record")
     commit_files(repo, {"docs/DECISION_LOG.md": dl_text([
-        ("DL-950", "RECORDED", f"fault of the host of the item 1(b) output {sha(item1b_bytes())} (smoke)"),
-        ("DL-951", "RECORDED", f"void session of the R1 teacher record {rec.sha} (smoke)")])}, "rows")
+        ("DL-950", "RECORDED", f"AM-18 item 5 host fault: the item 1(b) host failed (smoke); item 1(b) output "
+                               f"{sha(item1b_bytes())}"),
+        ("DL-951", "RECORDED", f"AM-18 item 5 void session of R1's X (teacher record {rec.sha}): control "
+                               f"{sha(void_prev_bytes())} not reproduced (smoke)"),
+        ("DL-952", "RECORDED (smoke)", f"The AM-18 item 1(b) D2 VAL execution of record (smoke). Output of record: "
+                                       f"teacher_d2_20261001T000000Z.json, sha256 {sha(item1b_bytes())}"),
+        ("DL-953", "RECORDED", f"R1 record (arm_teacher_record_R1.json) sha256 {rec.sha}: complete; R2 may launch "
+                               "(smoke)")])}, "rows")
     return repo
 
 
@@ -1123,15 +1173,16 @@ def mini_strata(tag, plan, bump=None):
 @case
 def cm_table_builder_counts_vs_strata():
     root, plan = mini_root("counts")
-    good = build_table(root, mini_strata("counts_ok", plan), W / "mini" / "counts_ok_out",
+    ok_out, bad_out = fresh("mini", "counts_ok_out"), fresh("mini", "counts_bad_out")
+    good = build_table(root, mini_strata("counts_ok", plan), ok_out,
                        extra=["--expected-images", "40", "--generated-utc", "2026-10-11T00:00:00Z"])
-    bad = build_table(root, mini_strata("counts_bad", plan, bump=2), W / "mini" / "counts_bad_out",
+    bad = build_table(root, mini_strata("counts_bad", plan, bump=2), bad_out,
                       extra=["--expected-images", "40", "--generated-utc", "2026-10-11T00:00:00Z"])
-    stop_p = W / "mini" / "counts_bad_out" / "r2_table_STOP.json"
+    stop_p = bad_out / "r2_table_STOP.json"
     stop = json.loads(stop_p.read_text(encoding="utf-8")) if stop_p.is_file() else {}
-    ok = (good[0] == 0 and (W / "mini" / "counts_ok_out" / "r2_table_v1.json").is_file() and bad[0] == 1
+    ok = (good[0] == 0 and (ok_out / "r2_table_v1.json").is_file() and bad[0] == 1
           and [d["class_id"] for d in stop.get("differing_classes", [])] == [2]
-          and not (W / "mini" / "counts_bad_out" / "r2_table_v1.json").exists())
+          and not (bad_out / "r2_table_v1.json").exists())
     return ok, f"matching strata: exit {good[0]}; class 2 off by one: exit {bad[0]}, STOP lists " \
                f"{[d['class_id'] for d in stop.get('differing_classes', [])]}"
 
@@ -1228,13 +1279,31 @@ def cm_record_complete():
     d = rec.doc
     sel = d["selection"]["checkpoint"]
     p = rec.work / sel["name"]
+    reg_b = L.lta.canonical_bytes(L.lta.reg("R1"))
+    # The laptop records a copy of the pod's work dir (ruling R11): bound by name and attempt (review VREC-2) ...
+    moved = fresh("moved", "laptop_copy") / rec.work.name
+    shutil.copytree(rec.work, moved)
+    out_m = fresh("records", "moved_record").with_suffix(".json")
+    rc_m, _, text_m = run_main(L.atr.main, record_argv(moved, out_m))
+    doc_m = json.loads(out_m.read_text(encoding="utf-8")) if out_m.is_file() else {}
+    # ... and a launched work dir refuses --generated-utc, which is for synthetic runs (review REC-8)
+    prov_p = moved / "teacher_arm_launch_provenance.json"
+    prov_p.write_bytes(canon(dict(json.loads(prov_p.read_text(encoding="utf-8")), launch=True)))
+    out_l = fresh("records", "launched_record").with_suffix(".json")
+    rc_l, _, text_l = run_main(L.atr.main, record_argv(moved, out_l))
     ok = (d["status"] == "complete" and sel["name"] == "iter_40000.pth" and sel["sha256"] == sha(p)
           and sel["bytes"] == p.stat().st_size and [c["iteration"] for c in d["interval_checkpoints"]]
           == list(range(4000, 40001, 4000)) and d["ema_checks"]["steps_equal_iteration"]
           and d["ema_checks"]["state_dict_differs_from_raw"] and d["work_dir"]["attempt"] == 1
           and d["logs"]["scalars_sha256"] == sha(rec.work / "20261011_000000" / "vis_data" / "scalars.json")
-          and d["eval_config"]["sha256"] == sha(L.lta.RECORD_CONFIG))
-    return ok, f"status {d['status']}; selected {sel['name']}; ema {d['ema_checks']}"
+          and d["eval_config"]["sha256"] == sha(L.lta.RECORD_CONFIG)
+          and d["registered_difference"]["json"] == json.loads(reg_b.decode("utf-8"))           # review REC-7
+          and d["registered_difference"]["sha256"] == sha(reg_b)
+          and rc_m == 0 and doc_m.get("status") == "complete"
+          and (doc_m.get("work_dir") or {}).get("launched_path") == str(rec.work)
+          and rc_l == 2 and "--generated-utc" in text_l and never_created(out_l))
+    return ok, f"status {d['status']}; selected {sel['name']}; ema {d['ema_checks']}; a moved copy: exit {rc_m}; " \
+               f"launched with --generated-utc: exit {rc_l}"
 
 
 @case
@@ -1264,40 +1333,59 @@ def cm_go_rule_conditions():
     want = {"=gate, ECE equal": "no_go", "just over gate": "go", "=floor, ECE lower": "go",
             "just under floor": "no_go", "=floor, ECE equal": "no_go"}
     g = go_files("conditions", val_x=gate, ece_x=0.07, ece_b=0.06)
-    rc, _, out = run_main(L.agr.main, go_argv(g, g.dir / "go.json"))
-    doc = json.loads((g.dir / "go.json").read_text(encoding="utf-8"))
+    rc, _, out = go_main(go_argv(g, g.dir / "go.json"))
+    doc = json.loads((g.dir / "go.json").read_text(encoding="utf-8")) if (g.dir / "go.json").is_file() else {}
+    head = L.lta.ss.HeadSource(REPO).head()
     ok = (got == want and L.agr.VAL_GATE == gate and L.agr.VAL_FLOOR == floor and rc == 0
-          and doc["verdict"] == "no_go" and doc["values"]["val_x"] == gate)
-    return ok, f"{got}; through the CLI at VAL_X = gate: {doc['verdict']}"
+          and doc.get("verdict") == "no_go" and doc["values"]["val_x"] == gate
+          and doc["writer"].get("commit") == head and doc["inputs"]["item1b_output"]["row"]["dl"] == "DL-952")
+    return ok, f"{got}; through the CLI at VAL_X = gate: {doc.get('verdict')}; writer commit " \
+               f"{(doc.get('writer') or {}).get('commit')}"
 
 
 @case
 def cm_go_rule_control_reproduction():
     g = go_files("repro")
-    rc_ok, _, _ = run_main(L.agr.main, go_argv(g, g.dir / "ok.json"))
+    rc_ok, _, _ = go_main(go_argv(g, g.dir / "ok.json"))
     v = go_files("void", control_miou=0.38576993346214294 + 2e-5, control_status="not reproduced", gate_passed=False)
-    rc_v, _, out_v = run_main(L.agr.main, go_argv(v, v.dir / "void.json"))
-    with patched((L.agr, "GIT_ROOT", fx("dlrepo"))):
-        rc_n, _, _ = run_main(L.agr.main, go_argv(v, v.dir / "ne.json", ["--void-session-dl", "DL-951"]))
+    rc_v, _, out_v = go_main(go_argv(v, v.dir / "void.json"))
+    prev = ["--void-control-output", str(fx("voidprev"))]
+    rc_n, _, _ = go_main(go_argv(v, v.dir / "ne.json", ["--void-session-dl", "DL-951", *prev]))
     ne = json.loads((v.dir / "ne.json").read_text(encoding="utf-8")) if (v.dir / "ne.json").is_file() else {}
-    o = go_files("otherhost", host_arm="another laptop")
-    rc_h, _, _ = run_main(L.agr.main, go_argv(o, o.dir / "host.json"))
-    with patched((L.agr, "GIT_ROOT", fx("dlrepo"))):
-        rc_f, _, _ = run_main(L.agr.main, go_argv(o, o.dir / "fault.json", ["--host-fault-dl", "DL-950"]))
-    late = go_files("late", control_head="e" * 40)
-    rc_c, _, _ = run_main(L.agr.main, go_argv(late, late.dir / "commit.json"))
+    refused = {     # REC-2: a row that only names the record; this session's own control; a flag alone
+        "record_row": go_main(go_argv(v, v.dir / "r1.json", ["--void-session-dl", "DL-953", *prev]))[0],
+        "own_control": go_main(go_argv(v, v.dir / "r2.json", ["--void-session-dl", "DL-951",
+                                                              "--void-control-output", str(v.control)]))[0],
+        "row_alone": go_main(go_argv(v, v.dir / "r3.json", ["--void-session-dl", "DL-951"]))[0]}
+    o = go_files("otherhost", host_arm="another laptop", host_control="another laptop")
+    rc_h, _, _ = go_main(go_argv(o, o.dir / "host.json"))
+    rc_f, _, _ = go_main(go_argv(o, o.dir / "fault.json", ["--host-fault-dl", "DL-950"]))
     fault = json.loads((o.dir / "fault.json").read_text(encoding="utf-8")) if (o.dir / "fault.json").is_file() else {}
+    refused["item1b_row_as_fault"] = go_main(go_argv(o, o.dir / "r4.json", ["--host-fault-dl", "DL-952"]))[0]  # REC-1
+    split = go_files("split", host_arm="another laptop")                                                  # REC-3
+    refused["split_session"] = go_main(go_argv(split, split.dir / "r5.json", ["--host-fault-dl", "DL-950"]))[0]
+    late = go_files("late", control_head="e" * 40)
+    refused["control_other_commit"] = go_main(go_argv(late, late.dir / "r6.json"))[0]
+    notp = go_files("notp", control_head="e" * 40, arm_head="e" * 40)                                     # REC-4
+    refused["session_not_at_item1b_commit"] = go_main(go_argv(notp, notp.dir / "r7.json"))[0]
+    fresh_1b = go_files("item1b_pass", item1b_variant=True)                                             # VREC-1
+    refused["item1b_not_of_record"] = go_main(go_argv(fresh_1b, fresh_1b.dir / "r8.json"))[0]
+    written = [p.name for d in (v.dir, o.dir, split.dir, late.dir, notp.dir, fresh_1b.dir)
+               for p in d.glob("r[0-9].json")]
+    vs = ne.get("session", {}).get("void_session") or {}
     ok = (rc_ok == 0 and rc_v == 1 and "void" in out_v and not (v.dir / "void.json").exists() and rc_n == 1
-          and ne.get("verdict") == "not_evaluable" and rc_h == 2 and rc_f == 0
-          and (fault.get("session") or {}).get("host_fault", {}).get("dl") == "DL-950" and rc_c == 2)
+          and ne.get("verdict") == "not_evaluable" and vs.get("dl") == "DL-951"
+          and (vs.get("control_output") or {}).get("sha256") == sha(void_prev_bytes())
+          and rc_h == 2 and rc_f == 0 and (fault.get("session") or {}).get("host_fault", {}).get("dl") == "DL-950"
+          and set(refused.values()) == {2} and not written)
     return ok, f"reproduced: exit {rc_ok}; 2e-5 off: exit {rc_v}, nothing written; recurrence: {ne.get('verdict')}; " \
-               f"another host: exit {rc_h}, with a documented fault: exit {rc_f}; another commit: exit {rc_c}"
+               f"another host: exit {rc_h}, with a documented fault: exit {rc_f}; refused {refused}; written {written}"
 
 
 @case
 def cm_go_rule_binds_m12_checkpoint():
     g = go_files("binds", arm_ckpt="0" * 64)
-    rc, _, out = run_main(L.agr.main, go_argv(g, g.dir / "go.json"))
+    rc, _, out = go_main(go_argv(g, g.dir / "go.json"))
     return rc == 2 and "M12" in out and not (g.dir / "go.json").exists(), f"exit {rc}"
 
 
@@ -1332,7 +1420,7 @@ def rf_test_path_record():
 def rf_test_path_go_rule():
     g = go_files("tp")
     bad = g.dir / "go_test.json"
-    rc, _, out = run_main(L.agr.main, go_argv(g, bad))
+    rc, _, out = go_main(go_argv(g, bad))
     return rc == 2 and "REFUSED" in out and never_created(bad), out.strip()[:80]
 
 
@@ -1357,7 +1445,7 @@ def rf_existing_output_go_rule():
     g = go_files("exists")
     out = g.dir / "go.json"
     out.write_text("{}\n", encoding="utf-8")
-    rc, _, text = run_main(L.agr.main, go_argv(g, out))
+    rc, _, text = go_main(go_argv(g, out))
     return rc == 2 and out.read_text(encoding="utf-8") == "{}\n", text.strip()[:80]
 
 
@@ -1380,7 +1468,7 @@ def rf_missing_input_control_output():
     g = go_files("nocontrol")
     argv = go_argv(g, g.dir / "go.json")
     argv[argv.index("--control-output") + 1] = str(g.dir / "absent_control.json")
-    rc, _, text = run_main(L.agr.main, argv)
+    rc, _, text = go_main(argv)
     return rc == 2 and never_created(g.dir / "go.json"), text.strip()[:80]
 
 
@@ -1405,7 +1493,9 @@ def rf_wrong_checkpoint_pin_r1_record_sha():
     changed = W / "records" / "arm_teacher_record_R1_changed.json"
     changed.write_bytes(rec.path.read_bytes().replace(b'"complete"', b'"complete" '))
     rc, err, _ = launch("R2", r1_record=str(changed))
-    return rc == 2 and "[r1_record_sha256_mismatch]" in err, err[:80]
+    rc_a, err_a, _ = launch("R2", r1_record=str(W / "records" / "absent_r1_record.json"))     # review LAUNCHER-3
+    return rc == rc_a == 2 and "[r1_record_sha256_mismatch]" in err and "[r1_record_unreadable]" in err_a, \
+        f"{err[:60]}; absent: {err_a[:50]}"
 
 
 @case
@@ -1456,8 +1546,8 @@ def dt_record_twice_identical():
 def dt_go_rule_twice_identical():
     g = go_files("twice")
     a, b = g.dir / "a.json", g.dir / "b.json"
-    rc_a, _, _ = run_main(L.agr.main, go_argv(g, a))
-    rc_b, _, _ = run_main(L.agr.main, go_argv(g, b))
+    rc_a, _, _ = go_main(go_argv(g, a))
+    rc_b, _, _ = go_main(go_argv(g, b))
     return rc_a == rc_b == 0 and a.read_bytes() == b.read_bytes(), f"sha {sha(a)}"
 
 
@@ -1544,25 +1634,35 @@ def cm_paste_exif_rotated_frame():
     p = fx("paste")
     with L.Image.open(p.img_dir / "t_rot.jpg") as im, L.Image.open(p.ann_dir / "t_rot.png") as mk:
         stored = im.size
-        img, mask, info = paste(im, mk, Script(ints=[0, 28, 19]))
+        # (20, 19) is a valid placement in both frames, so a frame-ignoring mutant fails this check's comparisons,
+        # not the scripted draw's range assertion
+        img, mask, info = paste(im, mk, Script(ints=[0, 20, 19]))
         out_size, mask_size = img.size, mask.size
         lab = np.asarray(mask)
     t = L.tac.RareClassCopyPasteTrainTransform()
     t._count({"img_path": "t_rot.jpg"}, info)
+    # The same rule for S (R6: "the same holds for S"; review r2data-2): t_rot as the source of an unrotated 40x40 T.
+    # Its corrected frame is 32 x 24 with an 8 x 6 class bbox, so f = 40/32 gives a 10 x 8 patch (8 x 10 unframed).
+    im2, mk2 = t_pair(np.zeros((40, 40), dtype=np.uint8))
+    _, _, info2 = paste(im2, mk2, Script(ints=[0, 5, 5]), pool=("t_rot",))
     ok = (stored == (32, 24) and info["frame_resized_t"] and out_size == mask_size == (24, 32) and info["accepted"]
-          and (lab[28:31, 19:23] == 9).any() and t.counts["pasted_with_resized_frame"] == 1)
-    return ok, f"stored {stored}, frame {out_size}, mask {mask_size}, counts {t.counts['pasted_with_resized_frame']}"
+          and (lab[20:23, 19:23] == 9).any() and t.counts["pasted_with_resized_frame"] == 1
+          and info2["frame_resized_s"] and not info2["frame_resized_t"] and info2["size"] == [10, 8]
+          and info2["accepted"] and info2["pasted_pixels"] > 0)
+    return ok, f"stored {stored}, frame {out_size}, mask {mask_size}, counts " \
+               f"{t.counts['pasted_with_resized_frame']}; rotated S: size {info2['size']}, S frame resized " \
+               f"{info2['frame_resized_s']}"
 
 
 @case
 def rf_table_two_labels_stop():
     root, plan = mini_root("two", two_label="m005")
-    rc, _, _ = build_table(root, mini_strata("two", plan), W / "mini" / "two_out",
+    out = fresh("mini", "two_out")
+    rc, _, _ = build_table(root, mini_strata("two", plan), out,
                            extra=["--expected-images", "40", "--generated-utc", "2026-10-11T00:00:00Z"])
-    stop_p = W / "mini" / "two_out" / "r2_table_STOP.json"
+    stop_p = out / "r2_table_STOP.json"
     stop = json.loads(stop_p.read_text(encoding="utf-8")) if stop_p.is_file() else {}
-    ok = rc == 1 and stop.get("two_label_images") == ["m005"] and never_created(W / "mini" / "two_out" /
-                                                                                 "r2_table_v1.json")
+    ok = rc == 1 and stop.get("two_label_images") == ["m005"] and never_created(out / "r2_table_v1.json")
     return ok, f"exit {rc}; two-label images {stop.get('two_label_images')}"
 
 
@@ -1593,7 +1693,9 @@ def cm_canonical_diff_table_path_by_variable():
     a = L.lta.canonical_bytes(arm_diff("R2"))
     b = L.lta.canonical_bytes(arm_diff("R2", table=other))
     reg = L.lta.canonical_bytes(L.lta.reg("R2"))
-    return a == b == reg and b'"$PLANTSEG_R2_TABLE"' in a, f"two hosts' table paths give one diff, sha {sha(a)}"
+    by_var = b'"$PLANTSEG_R2_TABLE"' in a
+    return a == b == reg and by_var, f"two hosts' table paths give one diff: {a == b}; equal to REG: {a == reg}; " \
+                                     f"table_path by variable: {by_var}; sha {sha(a)}"
 
 
 @case
@@ -1603,7 +1705,10 @@ def rf_r2_table_file_sha_mismatch():
     copy_p.parent.mkdir()
     copy_p.write_bytes(r.table_b + b"\n")
     rc, err, _ = launch("R2", r2_table=str(copy_p))
-    return rc == 2 and "[r2_table_sha256_mismatch]" in err, err[:80]
+    absent = copy_p.parent / "absent_r2_table_v1.json"          # an input that cannot be read (review LAUNCHER-3)
+    rc_a, err_a, _ = launch("R2", r2_table=str(absent))
+    return rc == rc_a == 2 and "[r2_table_sha256_mismatch]" in err and "[r2_table_unreadable]" in err_a, \
+        f"{err[:60]}; absent: {err_a[:50]}"
 
 
 def big_log():
@@ -1622,8 +1727,10 @@ def cm_teacher_arith_reference_log():
     ref = (ar.get("references") or [{}])[0]
     slow = big_log()
     rc_s, err_s, _ = launch("R1", reference_log=str(slow), reference_log_sha256=sha(slow))
+    rc_a, err_a, _ = launch("R1", reference_log=str(W / "reference" / "absent_scalars.json"),
+                            reference_log_sha256="0" * 64)                                   # review LAUNCHER-3
     ok = (rc == 0 and ar.get("applied_s_per_iter") == s.median and ref.get("rows") == 80 and ar.get("cut") is False
-          and rc_s == 2 and "[arm_cut_by_arithmetic]" in err_s)
+          and rc_s == 2 and "[arm_cut_by_arithmetic]" in err_s and rc_a == 2 and "[reference_unusable]" in err_a)
     return ok, f"median {ar.get('applied_s_per_iter')} over {ref.get('rows')} training rows: not cut; 100 s/iter: " \
                f"{err_s[:40]}"
 
@@ -1679,11 +1786,11 @@ def prev_record(status, attempt=1):
     return p
 
 
-def repeat_launch(status, *, report="reports/arms/am8a_r1_a1.md", records=None):
-    p = prev_record(status)
+def repeat_launch(status, *, report="reports/arms/am8a_r1_a1.md", records=None, prev_path=None):
+    p = prev_path or prev_record(status)
     _RUNS[0] += 1
     work = W / "runs" / f"r{_RUNS[0]}" / "teacher-r1_s42_40k_a2"
-    extra = ["--previous-record", str(p), "--previous-record-sha256", sha(p)]
+    extra = ["--previous-record", str(p), "--previous-record-sha256", sha(p) if p.is_file() else "0" * 64]
     if report is not None:
         extra += ["--am8a-report", report]
     return launch("R1", work=work, records=records or fx("repo").h2, extra=extra)
@@ -1692,15 +1799,19 @@ def repeat_launch(status, *, report="reports/arms/am8a_r1_a1.md", records=None):
 @case
 def rf_teacher_arm_rerun_after_divergence():
     rc, err, _ = repeat_launch("diverged")
-    return rc == 2 and "[arm_rerun_after_divergence]" in err, err[:80]
+    return rc == 2 and "[arm_rerun_after_divergence]" in err, f"exit {rc}: {err[:80]}"
 
 
 @case
 def rf_teacher_arm_repeat_without_report():
     rc_a, err_a, _ = repeat_launch("incomplete", report=None)
     rc_b, err_b, _ = repeat_launch("incomplete", records=fx("repo").h)
-    ok = rc_a == rc_b == 2 and "[repeat_report_missing]" in err_a and "[repeat_report_missing]" in err_b
-    return ok, f"no flag: {err_a[:40]}; not at H: {err_b[:40]}"
+    rc_d, err_d, _ = repeat_launch("incomplete", report="reports/arms")         # a folder at H, not a file
+    rc_p, err_p, _ = repeat_launch("incomplete", prev_path=W / "records" / "absent_prev.json")   # LAUNCHER-3
+    ok = (rc_a == rc_b == rc_d == rc_p == 2 and "[repeat_report_missing]" in err_a
+          and "[repeat_report_missing]" in err_b and "[repeat_report_missing]" in err_d
+          and "[previous_record_unreadable]" in err_p)
+    return ok, f"no flag: {err_a[:40]}; not at H: {err_b[:40]}; a folder: {err_d[:40]}; absent record: {err_p[:40]}"
 
 
 @case
@@ -1865,8 +1976,10 @@ def m_rows_at_head():
 
 
 def m_table_path_by_value():
-    keys = {k: v for k, v in L.lta.ENV_KEYS.items() if k != "table_path"}
-    return patched((L.lta, "ENV_KEYS", keys))
+    """The canonical form keeps table_path's value (the by-variable rule skipped for that key only); ENV_KEYS and so
+    REG stay intact, and the check fails on its comparison (review r2data-1, LAUNCHER-5, REC-9)."""
+    orig = L.lta._by_variable
+    return patched((L.lta, "_by_variable", lambda v, key=None: v if key == "table_path" else orig(v, key)))
 
 
 def m_half_up():
@@ -1984,15 +2097,19 @@ def main(argv=None) -> int:
     print("-" * 100)
     for mname, check, make in MUTATIONS:
         t1 = time.time()
-        try:
-            with make():
-                ok, detail, _ = run_case(check)
-            killed = not ok
-        except Exception as e:  # noqa: BLE001
-            killed, detail = False, f"the mutation could not be applied: {type(e).__name__}: {e}"
+        ok_c, detail_c, _ = run_case(check)          # the control: the check passes again without the mutation
+        if not ok_c:
+            killed, detail = False, f"{check} fails when re-run unmutated, so the mutation proves nothing: {detail_c}"
+        else:
+            try:
+                with make():
+                    ok, detail, _ = run_case(check)
+                killed = not ok
+            except Exception as e:  # noqa: BLE001
+                killed, detail = False, f"the mutation could not be applied: {type(e).__name__}: {e}"
         results.append((f"mut[{mname}]", killed))
         print(f"  mutation {mname!r:<58} -> {check}: {'FAIL (killed)' if killed else 'PASS (not killed)'} "
-              f"({time.time() - t1:.1f}s)", flush=True)
+              f"({time.time() - t1:.1f}s; control PASS {ok_c}) {detail[:240]}", flush=True)
     n_ok = sum(ok for _, ok in results)
     print("=" * 100)
     print(f"checks {len(ORDER)}, mutations {len(MUTATIONS)}, total {len(results)}")

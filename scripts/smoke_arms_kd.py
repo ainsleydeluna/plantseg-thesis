@@ -33,7 +33,8 @@ Checks (61):
                        cm_launched_and_not_launched_lines
   E7-X (4)             cm_e7_arm_wrapper_requires_arm_run_meta, cm_e7_arm_record_binds, rf_test_path_e7,
                        rf_existing_output_e7
-  mutations (13)       each a monkeypatched variant; the smoke asserts that the named check FAILS under it:
+  mutations (13)       each a monkeypatched variant; the smoke asserts that the named check, which first passes
+                       again unmutated (the control, C5), FAILS under it:
                        mut_parent_true (cm_run_meta_arm_fields), mut_target_construction_missing
                        (cm_run_meta_target_construction_k1_v1), mut_arm_key_in_default_run_meta
                        (cm_default_run_meta_has_no_arm_key), mut_stage_e3_in_arm_line
@@ -723,11 +724,13 @@ def c_rf_entry():
             f"rc={rc} {out.getvalue()[-200:]}")
 
 
-def divergence_case(label: str, *, diverged: bool) -> tuple:
-    """The arm's attempt 1 launched and ended in a valid AM-7a divergence record (or in a pod stop with no trainer
-    record); attempt 2 with its AM-8a report: (entry's result, the gate's launch_order)."""
+def repeat_case(label: str, *, attempt1: str, report: bool = True, previous_run: bool = True) -> tuple:
+    """The arm's attempt 2 after attempt 1 ended as `attempt1`: "diverged" (launched; a valid AM-7a divergence
+    record), "stopped" (launched; a pod stop with no trainer record) or "unresolved" (a launch line only); with or
+    without its AM-8a report and --previous-run: (entry's result, the gate's launch_order)."""
     sss, ss, pa = L.sss, L.ss, L.pa
     spec = spec_of("e3-r1")
+    diverged = attempt1 == "diverged"
     c = ArmCase(f"div_{label}", spec)
     files, tr_sha, go_sha = arm_record_files(spec)
     c.files.update(files)
@@ -737,26 +740,47 @@ def divergence_case(label: str, *, diverged: bool) -> tuple:
     d = sss.make_run(runs, "E3", 50.0, 0.4, name=rid1, finished=False, run_end=False, with_best=False, with_ckpt=False,
                      abort={"it": 5000, "rule": "AM-7(a)"} if diverged else None, nonfinite=diverged,
                      launch=sss.BASE_A + 7200.0)
-    line1 = c.line()
-    launched = {"event": "launched", "run_id": rid1, "run_meta_sha256": ss.sha256_file(d / "e3_run_meta.jsonl"),
-                "launch_time_utc": sss.BASE_A + 7200.0, "git_head": c.pin, "records_commit": "e" * 40,
-                "decision_date": None, "launch_order_position": None}
-    events = [line1, launched]
-    if not diverged:
+    events = [c.line()]
+    if attempt1 != "unresolved":
+        events.append({"event": "launched", "run_id": rid1, "run_meta_sha256": ss.sha256_file(d / "e3_run_meta.jsonl"),
+                       "launch_time_utc": sss.BASE_A + 7200.0, "git_head": c.pin, "records_commit": "e" * 40,
+                       "decision_date": None, "launch_order_position": None})
+    if attempt1 == "stopped":
         events.append({"event": "stopped", "run_id": rid1,
                        "report": c.sw.report(f"reports/stops/{rid1}.md", f"{rid1}: the pod was lost (synthetic)\n")})
-    rep_rel = f"reports/am8a/{pa.run_id_of(spec, 1.0, 50.0, 2)}.md"
-    rep = c.sw.report(rep_rel, "AM-8a report before attempt 2 (synthetic)\n")
+    rep_rel = rep = None
+    if report:
+        rep_rel = f"reports/am8a/{pa.run_id_of(spec, 1.0, 50.0, 2)}.md"
+        rep = c.sw.report(rep_rel, "AM-8a report before attempt 2 (synthetic)\n")
+    prev = [d] if previous_run else []
     # entry, at the tip (attempt 1's lines and the report committed)
     c.commit_h(events)
     c.dl_extra = ""
     sc = SimpleNamespace(repo=c.sw.repo, pin=c.pin)
-    got_entry = entry(sc, "e3-r1", attempt=2, report=rep_rel, previous_runs=[d])[0]
+    got_entry = entry(sc, "e3-r1", attempt=2, report=rep_rel, previous_runs=prev)[0]
     # the gate, for attempt 2's committed line
     line2 = c.line(attempt=2, report=rep)
-    ctx = c.ctx(line2, report=rep_rel, previous_runs=[d])
+    ctx = c.ctx(line2, report=rep_rel, previous_runs=prev)
     got_gate = run_stages(ctx)
     return got_entry, got_gate
+
+
+def divergence_case(label: str, *, diverged: bool) -> tuple:
+    """Attempt 1 launched and ended in a valid AM-7a divergence record (or in a pod stop with no trainer record);
+    attempt 2 with its AM-8a report and --previous-run."""
+    return repeat_case(label, attempt1="diverged" if diverged else "stopped")
+
+
+def dry_run_stub(seen: list, *, arm_line: bool = True):
+    """ctx['child_run'] for pa's kd_dry_run: records the argv and prints what the trainer's dry run prints."""
+    def run(argv, timeout):
+        argv = [str(a) for a in argv]
+        seen.append(argv)
+        out = [f"[ckpt] dir={argv[argv.index('--ckpt-dir') + 1]} (verified OUTSIDE repo)"]
+        if arm_line:
+            out.append("[arm] E3-R1 (dry run stub)")
+        return SimpleNamespace(returncode=0, stdout="\n".join(out + ["RESULT: PASS"]) + "\n", stderr="")
+    return run
 
 
 @case("rf_arm_repeat_after_divergence")
@@ -782,7 +806,27 @@ def c_stage_list():
                "arm_cut_arithmetic")
     ok = (names == want and len(names) == 19 and all(ours[n] is e1[n] for n in reused_e1)
           and all(ours[n] is kd[n] for n in reused_pd) and all(ours[n] is not kd.get(n) for n in arm_own))
-    return ok, names
+    # pa's own launch_order keeps pd's repeat rules (plan §2 entry 17), on both sides (review KDG-2) ...
+    rep = {"no_report": repeat_case("noreport", attempt1="stopped", report=False),
+           "unresolved": repeat_case("unresolved", attempt1="unresolved"),
+           "no_previous_run": repeat_case("noprev", attempt1="diverged", previous_run=False)}
+    want_rep = {"no_report": ("repeat_report_missing", "launch_order:repeat_report_missing"),
+                "unresolved": ("previous_attempt_unresolved", "launch_order:previous_attempt_unresolved"),
+                "no_previous_run": ("previous_run_missing", "launch_order:previous_run_missing")}
+    # ... and its own kd_dry_run runs pd's dry run as the arm, with the arm teacher (plan §2 entry 4)
+    ctx = standard_case("dry_run")
+    pre = run_stages(ctx, ("records",))
+    seen: list = []
+    ctx["child_run"] = dry_run_stub(seen)
+    dr_ok = run_stages(ctx, ("kd_dry_run",))
+    argv = seen[-1] if seen else []
+    ctx["child_run"] = dry_run_stub([], arm_line=False)
+    dr_no_arm = run_stages(ctx, ("kd_dry_run",))
+    dry = (pre == "PASS" and dr_ok == "PASS" and "--arm" in argv and argv[argv.index("--arm") + 1] == "e3-r1"
+           and argv[argv.index("--teacher-ckpt-sha256") + 1] == sha(X_BYTES)
+           and dr_no_arm == "kd_dry_run:kd_dry_run_failed")
+    ok = ok and rep == want_rep and dry
+    return ok, f"{names}; repeats {rep}; dry run {dr_ok}/{dr_no_arm} argv {argv[-6:]}"
 
 
 @case("cm_gate_teacher_identity_arm_values")
@@ -814,8 +858,12 @@ def c_go_rule():
     got_go = run_stages(standard_case("go_go"))
     got_no = run_stages(standard_case("go_no_go", records={"verdict": "no_go"}))
     got_ne = run_stages(standard_case("go_not_evaluable", records={"verdict": "not_evaluable"}))
-    ok = got_go == "PASS" and got_no == "records:go_rule_not_go" and got_ne == "records:go_rule_not_go"
-    return ok, f"go={got_go} no_go={got_no} not_evaluable={got_ne}"
+    # the go-rule record is bound to X and to the teacher record (plan §3(v), (iv) check 4; review KDG-3)
+    got_ck = run_stages(standard_case("go_other_ckpt", records={"go_ck": "0" * 64}))
+    got_arm = run_stages(standard_case("go_other_arm", records={"go_arm": "R2"}))
+    ok = (got_go == "PASS" and got_no == "records:go_rule_not_go" and got_ne == "records:go_rule_not_go"
+          and got_ck == "records:go_rule_record_invalid" and got_arm == "records:go_rule_record_invalid")
+    return ok, f"go={got_go} no_go={got_no} not_evaluable={got_ne} other_ckpt={got_ck} other_arm={got_arm}"
 
 
 @case("cm_gate_approval_row_required")
@@ -998,7 +1046,12 @@ def c_rf_teacher_record():
     c.files.update(files)
     c.dl_extra = dl_rows(c.pin, go_row=f"R1 go rule: go; {go_sha}; {tr_sha} (synthetic)")
     got = run_stages(c.ctx(c.line()))
-    return got == "records:teacher_record_missing", got
+    # a teacher record that is not R1's complete record (plan §3(iv) check 1; review KDG-3)
+    bad = {k: run_stages(standard_case(f"tr_{k}", records=v)) for k, v in
+           (("diverged", {"status": "diverged"}), ("incomplete", {"status": "incomplete"}),
+            ("other_arm", {"tr_arm": "R2"}))}
+    ok = got == "records:teacher_record_missing" and set(bad.values()) == {"records:teacher_record_invalid"}
+    return ok, f"missing={got} {bad}"
 
 
 @case("rf_wrong_checkpoint_pin")
@@ -1554,6 +1607,10 @@ def main(argv=None) -> int:
     for mname, killed_by, make in MUTATIONS:
         if not base.get(killed_by):
             check(mname, False, f"{killed_by} does not pass unmutated, so the mutation proves nothing")
+            continue
+        ok_c, detail_c = run_case(killed_by)          # the control: it passes again without the mutation
+        if not ok_c:
+            check(mname, False, f"{killed_by} fails when re-run unmutated, so the mutation proves nothing: {detail_c}")
             continue
         with make():
             ok, detail = run_case(killed_by)
