@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Smoke for AM-18 item 3(b)'s arm W, run stage E3-flip (lane L-KD-WRAP, commit C1; ARMS plan section 4 item 4 and
-decision (vi); Tier F audit F28 and F29; GO rulings K2, K3 and K5, amendment A1).
+"""Smoke for AM-18 item 3(b)'s arm W, run stage E3-flip (lane L-KD-WRAP, commits C1 and C2; ARMS plan section 4 item
+4 and decision (vi); Tier F audit F28 and F29; GO rulings K2 to K6, amendment A1).
 
 CPU only, torch only: no dataset, checkpoint, GPU, download or teacher stack. Two kinds of evidence:
   function level  src/distill/flip_targets.py in this process, against float64 references written out here and
@@ -11,14 +11,20 @@ CPU only, torch only: no dataset, checkpoint, GPU, download or teacher stack. Tw
   run level       train_distill.run() dry runs (stage e3, CPU, batch 2, seed 42, 3 steps, a validation at step 3)
                   through scripts/invariance_harness.py's worker, unchanged: its synthetic 16 + 4 TRAIN/VAL set and
                   its stub teacher, a fixed-weight MSCAN-shaped network whose ham head draws once per forward from
-                  the M4-KD stream, wrapped in the trainer's own SegNeXtTeacherAdapter and FrozenTeacher. The arm is
-                  bound to run() (arm=<ArmSpec>), so the trainer makes the builder and calls build() through the seam.
-                  The recorders only observe: each teacher call (its input, the stream's draws, the CPU RNG state,
-                  the probe's hooks, its outputs), each student forward, each build() and the mask each loss gets.
-At C1 no registry file exists: the arm is kd_arms.parse_arm() of a kd_arm/1 file outside the repository holding the
-registry entry's values (GO ruling K4), which the trainer takes as it takes a registered arm.
+                  the M4-KD stream, wrapped in the trainer's own SegNeXtTeacherAdapter and FrozenTeacher. The
+                  registered arm, kd_arms.load_arm("e3-flip"), is bound to run() (arm=<ArmSpec>), so the trainer makes
+                  FlipTargets and calls build() through the seam. The recorders only observe: each teacher call (its
+                  input, the stream's draws, the CPU RNG state, the probe's hooks, its outputs), each student forward,
+                  each build() and the mask each loss gets. main()'s `--arm e3-flip` is probed with run() recorded.
+  pod smoke       scripts/smoke_kd_flip_pod.py's refusals of a path containing "test" and of an existing output.
 
-Checks (28 at C1):
+Checks (32; C1 had the 28 that need no registry file):
+  cm_flip_registry_entry                    configs/kd_arms/e3_flip.json is GO ruling K4's values in e3_r1.json's key
+                                            order and format; kd_arms.load_arms() registers e3-flip with them beside
+                                            e3-r1 and e3-r2; load_arm resolves FlipTargets and make_builder() makes
+                                            one; main() hands run() the registered arm for `--arm e3-flip` (with the
+                                            keywords of its run without --arm) and, without it, no arm, the registry
+                                            not read
   cm_two_calls_per_step                     build() calls the teacher once; each training step makes two calls, the
                                             trainer's on the batch and then build()'s, both at batch 2
   cm_unflipped_call_is_e3_call              at step 1, call 1 is E3's call: the same input, logits, Stage 3 and
@@ -52,8 +58,12 @@ Checks (28 at C1):
                                             build() never receives the student
   cm_step1_checks_pass                      the trainer's 20 checks PASS and RESULT: PASS; at step 1 the probe's hook
                                             sees call 1 and is gone by call 2 (F29)
+  cm_run_meta_flip                          W's run_meta row differs from E3's in exactly arm "E3-flip", descriptive
+                                            true, parent_of_e4_e7 false and a last key target_construction {K 1,
+                                            views 2}; each payload carries E3's keys and facts plus arm and
+                                            target_construction with those values
   cm_k_not_1_refused                        FlipTargets is K 1 and VIEWS 2; a builder with another K refuses itself;
-                                            kd_arm/1 refuses K 2 and 8; an arm with K 1 refuses a builder with K 8
+                                            kd_arm/1 refuses K 2 and 8; the registered arm refuses a builder with K 8
   cm_validity_mask_original_orientation     both terms use the mask as given; in every run step both get the
                                             trainer's valid_os8 of the crop
   cm_abort_teacher_finite_reads_targets     A1.1, at function level: with call 1 finite and call 2 not, finite is
@@ -61,6 +71,12 @@ Checks (28 at C1):
                                             its source, gives teacher_finite false (true without targets or with
                                             finite ones). No non-real run reaches abort(): each abort() call in
                                             run() sits under `mode == "real"` or the real-only AM-7 (b) monitor
+  rf_pod_smoke_test_path                    smoke_kd_flip_pod.py run refuses an --evidence, --e3-reference or
+                                            --teacher-ckpt containing "test" (exit 2, REFUSED [sl1_path]), before any
+                                            filesystem call: the path is never created
+  rf_pod_smoke_existing_output              smoke_kd_flip_pod.py run refuses an existing output (its JSON or its run
+                                            folder; exit 2, REFUSED [existing_output]), leaves it unchanged and starts
+                                            no child
   dt_flip_two_runs_identical_bytes          two W runs: their step JSONs and records are byte-identical
   mut_<name> x10                            each mutation, by monkeypatch here or in a worker, fails its named check,
                                             which passes without it: average_logits (never_logits), no_flip_back
@@ -73,7 +89,8 @@ Checks (28 at C1):
 
 Usage:  python -B scripts/smoke_kd_flip.py [--work-dir DIR] [--threads N]
   --work-dir  a new folder outside the repository (default: <tempdir>/kd_flip_smoke_<pid>_<n>); outputs are kept
-The smoke re-invokes itself with `--internal flip_worker ...` for each trainer run; that is not part of its CLI.
+The smoke re-invokes itself with `--internal flip_worker ...` for each trainer run and `--internal main_probe ...`
+for main(); that is not part of its CLI.
 Exit codes: 0 PASS; 1 a check failed; 2 refused, nothing written (a path containing "test", an existing --work-dir,
 a --work-dir inside the repository).
 """
@@ -86,6 +103,7 @@ import functools
 import hashlib
 import importlib
 import inspect
+import io
 import json
 import os
 import subprocess
@@ -106,10 +124,15 @@ from scripts.invariance_harness import compare_step_dirs, make_synthetic_dataset
 from scripts.smoke_kd_step import HARD_CHECKS  # noqa: E402
 
 # GO ruling K4: the registry entry's values, in e3_r1.json's key order
+ARM_NAME = "e3-flip"
 REGISTRY_ENTRY = {"format": "kd_arm/1", "name": "e3-flip", "run_stage": "E3-flip", "e7_stage": "E7-flip",
                   "stage": "e3", "seed": 42, "horizon": 80000, "teacher": "record", "arm_teacher": None,
                   "go_rule": False, "K": 1, "views": 2,
                   "targets": {"module": "src.distill.flip_targets", "builder": "FlipTargets"}, "cut_place": 2}
+REGISTRY_FILE = REPO / "configs" / "kd_arms" / "e3_flip.json"
+ARM_FIELDS = {"arm": "E3-flip", "descriptive": True, "parent_of_e4_e7": False,
+              "target_construction": {"K": 1, "views": 2}}
+PROBE_ARGV = ["--stage", "e3", "--dry-run", "--lambda-logit", "1"]     # main()'s dry E3 launch, run() recorded
 STEPS, VAL_INTERVAL, BATCH = 3, 3, 2           # the harness's batch; a validation at the last step
 WORKER_TIMEOUT = 3600                          # seconds; below STEP 5's 10,800
 STUB_SEED = 4243
@@ -145,9 +168,9 @@ def _child_paths(*values) -> None:
             raise SystemExit(2)
 
 
-def instrument(rec, *, arm_json, mutation: str, code_root: Path, record: dict) -> None:
-    """Bind the arm to run() and add the recorders (and a run-level mutation) in the worker's process, once the
-    harness has installed its own recorder and before its run() call."""
+def instrument(rec, *, arm, mutation: str, code_root: Path, record: dict) -> None:
+    """Bind the registered arm (None: none, an E3 run) to run() and add the recorders (and a run-level mutation) in
+    the worker's process, once the harness has installed its own recorder and before its run() call."""
     import torch
     from src.training import kd_arms
     from src.training.losses import downsample_validity
@@ -160,9 +183,8 @@ def instrument(rec, *, arm_json, mutation: str, code_root: Path, record: dict) -
     state = {"step": 0, "batch": None, "in_build": False, "pending": None, "probe": None, "targets": None}
     record.update(arm=None, mutation=mutation, batches=[], calls=[], student=[], builds=[], losses=[], masks=[])
 
-    if arm_json is not None:
-        spec = kd_arms.parse_arm(arm_json)
-        spec.builder_class()
+    if arm is not None:
+        spec = kd_arms.load_arm(arm)
         record["arm"] = {"run_stage": spec.run_stage, "target_construction": spec.target_construction}
         run = td.run
 
@@ -282,12 +304,12 @@ def flip_worker(argv) -> int:
     """invariance_harness's worker, unchanged, with instrument()'s recorders added when it installs its own
     recorder, just before its run() call; the records and each checkpoint's arm fields go to <out>/flip_record.json."""
     ap = argparse.ArgumentParser(prog="smoke_kd_flip.py --internal flip_worker")
-    ap.add_argument("--arm-json", default=None)
+    ap.add_argument("--arm", default=None, choices=(ARM_NAME,))
     ap.add_argument("--mutation", default="none", choices=("none", *RUN_MUTATIONS))
     ap.add_argument("--code-root", required=True)
     ap.add_argument("--out", required=True)
     a, rest = ap.parse_known_args(argv)
-    _child_paths(a.arm_json, a.code_root, a.out, *rest)
+    _child_paths(a.code_root, a.out, *rest)
     code_root = Path(a.code_root).resolve()
     import scripts.invariance_harness as harness
     install = harness._Recorder.install
@@ -295,7 +317,7 @@ def flip_worker(argv) -> int:
 
     def install_with_flip(rec) -> None:
         install(rec)
-        instrument(rec, arm_json=a.arm_json, mutation=a.mutation, code_root=code_root, record=record)
+        instrument(rec, arm=a.arm, mutation=a.mutation, code_root=code_root, record=record)
     harness._Recorder.install = install_with_flip
     rc = harness.worker(["--code-root", str(code_root), "--out", a.out, *rest])
     import torch
@@ -308,28 +330,70 @@ def flip_worker(argv) -> int:
     return rc
 
 
-INTERNAL = {"flip_worker": flip_worker}
+def main_probe(argv) -> int:
+    """main() for a dry E3 launch, with and without `--arm e3-flip`, run() replaced by a recorder: the keywords run()
+    gets, the arm it gets and the builder that arm makes, and whether the registry module was imported by then."""
+    ap = argparse.ArgumentParser(prog="smoke_kd_flip.py --internal main_probe")
+    ap.add_argument("--code-root", required=True)
+    a = ap.parse_args(argv)
+    _child_paths(a.code_root)
+    code_root = Path(a.code_root).resolve()
+    sys.path[:] = [str(code_root)] + [p for p in sys.path if p and Path(p).resolve() != code_root
+                                      and not (Path(p) / "src" / "training" / "train_distill.py").exists()]
+    import src.training.train_distill as td
+    out = {}
+    for label, extra in (("default", []), ("arm", ["--arm", ARM_NAME])):
+        calls, err = [], io.StringIO()
+        td.run = lambda **kw: calls.append(kw) or 0      # noqa: B023 (one launch at a time)
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            try:
+                rc = td.main([*PROBE_ARGV, *extra])
+            except SystemExit as e:                     # argparse errors
+                rc = e.code
+        kw = calls[0] if len(calls) == 1 else {}
+        spec = kw.get("arm")
+        builder = None if spec is None else spec.make_builder()
+        out[label] = {"rc": rc, "run_calls": len(calls), "registry_imported": "src.training.kd_arms" in sys.modules,
+                      "keys": sorted(kw),
+                      "values": json.loads(json.dumps({k: v for k, v in kw.items() if k not in ("teacher", "arm")},
+                                                      default=repr)),
+                      "arm": None if spec is None else {"run_stage": spec.run_stage,
+                                                        "target_construction": spec.target_construction,
+                                                        "builder": f"{type(builder).__module__}."
+                                                                   f"{type(builder).__qualname__}"},
+                      "stderr_tail": err.getvalue()[-300:]}
+    print(json.dumps(out))
+    return 0
 
 
-def run_flip_worker(*, work: Path, data_root: Path, label: str, threads: int, arm_json=None,
+INTERNAL = {"flip_worker": flip_worker, "main_probe": main_probe}
+
+
+def child_env(threads: int, data_root: Path) -> dict:
+    """invariance_harness.run_worker's environment for a child of this smoke."""
+    env = dict(os.environ)
+    env.pop("PYTHONPATH", None)
+    env.update({"PYTHONHASHSEED": "0", "PYTHONDONTWRITEBYTECODE": "1", "OMP_NUM_THREADS": str(threads),
+                "MKL_NUM_THREADS": str(threads), "PLANTSEG_DATA_ROOT": str(data_root)})
+    return env
+
+
+def run_flip_worker(*, work: Path, data_root: Path, label: str, threads: int, arm=None,
                     mutation: str = "none") -> dict:
     """One trainer run in a fresh process, in invariance_harness.run_worker's environment: its exit code, the
     harness's run summary and step JSONs, the recorders' record and the trainer's printed checks."""
     out = work / label
     args = ["--code-root", REPO, "--data-root", data_root, "--out", out, "--stage", "e3", "--steps", STEPS,
             "--val-interval", VAL_INTERVAL, "--threads", threads]
-    if arm_json is not None:
-        args += ["--arm-json", arm_json]
+    if arm is not None:
+        args += ["--arm", arm]
     if mutation != "none":
         args += ["--mutation", mutation]
-    env = dict(os.environ)
-    env.pop("PYTHONPATH", None)
-    env.update({"PYTHONHASHSEED": "0", "PYTHONDONTWRITEBYTECODE": "1", "OMP_NUM_THREADS": str(threads),
-                "MKL_NUM_THREADS": str(threads), "PLANTSEG_DATA_ROOT": str(data_root)})
     cmd = [sys.executable, "-B", str(Path(__file__).resolve()), "--internal", "flip_worker", *map(str, args)]
     t0 = time.time()
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=WORKER_TIMEOUT, cwd=str(work), env=env)
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=WORKER_TIMEOUT, cwd=str(work),
+                              env=child_env(threads, data_root))
         rc, text = proc.returncode, proc.stdout + "\n--- stderr ---\n" + proc.stderr
     except subprocess.TimeoutExpired:
         rc, text = None, f"timed out after {WORKER_TIMEOUT} s"
@@ -869,14 +933,14 @@ def c_k_not_1(ft, runs, work: Path):
     for k in (2, 8):
         p = write_arm_json(work / "arm_json" / f"k{k}", K=k)
         parts[f"kd_arm/1 refuses K {k}"] = raises(lambda p=p: kd_arms.parse_arm(p), kd_arms.ArmSpecError, f"K {k}")
-    spec = kd_arms.parse_arm(write_arm_json(work / "arm_json" / "k1"))
-    parts["an arm with K 1 resolves FlipTargets"] = (spec.K == 1 and spec.views == 2
-                                                     and spec.builder_class() is ft.FlipTargets)
+    spec = kd_arms.load_arm(ARM_NAME)
+    parts["the registered arm (K 1) resolves FlipTargets"] = (spec.K == 1 and spec.views == 2
+                                                              and spec.builder_class() is ft.FlipTargets)
     saved = ft.FlipTargets.K
     ft.FlipTargets.K = 8
     try:
-        parts["an arm with K 1 refuses a builder with K 8"] = raises(spec.builder_class, kd_arms.ArmSpecError,
-                                                                    "FlipTargets.K is 8")
+        parts["the registered arm refuses a builder with K 8"] = raises(spec.builder_class, kd_arms.ArmSpecError,
+                                                                       "FlipTargets.K is 8")
         parts["and FlipTargets() refuses K 8"] = raises(ft.FlipTargets, ft.FlipTargetsError, "[flip_k]")
     finally:
         ft.FlipTargets.K = saved
@@ -941,15 +1005,148 @@ def c_determinism(ft, runs):
     return verdict(parts, f"{cmp['n_old']}/{cmp['n_new']} step JSONs, first mismatch {cmp['mismatches'][:1]}")
 
 
-CHECKS = (("cm_two_calls_per_step", c_two_calls), ("cm_unflipped_call_is_e3_call", c_unflipped_call),
-          ("cm_second_call_on_hflip", c_second_call_hflip), ("cm_flip_back_alignment", c_flip_back),
-          ("cm_logit_kd_prob_average_T4", c_logit_kd_t4), ("cm_cwd_logit_prob_average_T4_per_channel", c_cwd_t4),
-          ("cm_per_term_softmax", c_per_term_softmax), ("cm_never_logits", c_never_logits),
-          ("cm_equal_views_match_single_view", c_equal_views), ("cm_feature_term_unflipped_stage3", c_feature_term),
-          ("cm_nmf_two_draws_per_step", c_nmf_draws), ("cm_cpu_rng_unchanged_by_call2", c_cpu_rng),
-          ("cm_student_one_forward_original_crop", c_student), ("cm_step1_checks_pass", c_step1),
-          ("cm_k_not_1_refused", c_k_not_1), ("cm_validity_mask_original_orientation", c_mask),
-          ("cm_abort_teacher_finite_reads_targets", c_abort), ("dt_flip_two_runs_identical_bytes", c_determinism))
+def c_registry_entry(ft, runs, work: Path):
+    from src.training import kd_arms
+    r1 = json.loads((REGISTRY_FILE.parent / "e3_r1.json").read_text(encoding="utf-8"))
+    arms = kd_arms.load_arms()
+    spec = arms.get(ARM_NAME)
+    expected = {k: tuple(v.values()) if k == "targets" else v for k, v in REGISTRY_ENTRY.items() if k != "format"}
+    parts = {"the file is K4's values, json.dumps(indent=2) and a final newline": (
+                 REGISTRY_FILE.is_file()
+                 and REGISTRY_FILE.read_bytes() == (json.dumps(REGISTRY_ENTRY, indent=2) + "\n").encode("utf-8")),
+             "in e3_r1.json's key order": list(REGISTRY_ENTRY) == list(r1),
+             "load_arms() registers e3-flip with those values": (
+                 spec is not None and {k: getattr(spec, k) for k in expected} == expected),
+             "beside e3-r1 and e3-r2 only": sorted(arms) == ["e3-flip", "e3-r1", "e3-r2"],
+             "load_arm resolves FlipTargets, a module in src/distill": (
+                 kd_arms.load_arm(ARM_NAME).builder_class() is ft.FlipTargets
+                 and Path(ft.__file__).resolve().parent == (REPO / "src" / "distill").resolve()),
+             "make_builder() makes a FlipTargets": isinstance(kd_arms.load_arm(ARM_NAME).make_builder(),
+                                                              ft.FlipTargets)}
+    cmd = [sys.executable, "-B", str(Path(__file__).resolve()), "--internal", "main_probe", "--code-root", str(REPO)]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=WORKER_TIMEOUT, cwd=str(work),
+                              env=child_env(1, work / "data"))
+        (work / "main_probe.log").write_text(f"rc={proc.returncode}\n{proc.stdout}\n--- stderr ---\n{proc.stderr}",
+                                             encoding="utf-8")
+        probe = json.loads(proc.stdout.strip().splitlines()[-1]) if proc.returncode == 0 else {}
+    except (subprocess.TimeoutExpired, ValueError, IndexError):
+        probe = {}
+    d, a = probe.get("default") or {}, probe.get("arm") or {}
+    parts["main() without --arm: one run() call, no arm, the registry not read"] = (
+        d.get("rc") == 0 and d.get("run_calls") == 1 and "arm" not in d.get("keys", ["arm"])
+        and d.get("registry_imported") is False)
+    parts["main() with --arm e3-flip hands run() the registered arm, which makes FlipTargets"] = (
+        a.get("rc") == 0 and a.get("run_calls") == 1 and a.get("keys") == sorted([*d.get("keys", []), "arm"])
+        and canonical(a.get("values")) == canonical(d.get("values"))
+        and a.get("arm") == {"run_stage": ARM_FIELDS["arm"], "target_construction": ARM_FIELDS["target_construction"],
+                             "builder": "src.distill.flip_targets.FlipTargets"})
+    return verdict(parts, f"main() probe: default {None if not d else (d.get('rc'), d.get('registry_imported'))}, "
+                          f"arm {None if not a else (a.get('rc'), a.get('arm'), a.get('stderr_tail', '')[-120:])}")
+
+
+def c_run_meta(ft, runs):
+    w, e3 = runs["flip"], runs["e3"]
+    wr, er = meta_row(w), meta_row(e3)
+    parts = {"the W and E3 runs finished, one run_meta row each": ran(w) and ran(e3) and None not in (wr, er)}
+    differing = None
+    if wr is not None and er is not None:
+        a, b = without_identity(er), without_identity(wr)
+        differing = sorted(k for k in set(a) | set(b)
+                           if canonical(a.get(k, "<absent>")) != canonical(b.get(k, "<absent>")))
+        restored = {k: v for k, v in b.items() if k != "target_construction"}
+        restored.update({k: a[k] for k in ("arm", "descriptive", "parent_of_e4_e7") if k in a})
+        parts["W's row differs from E3's in exactly arm, descriptive, parent_of_e4_e7 and target_construction"] = (
+            differing == sorted(ARM_FIELDS))
+        parts["arm E3-flip, descriptive true, parent_of_e4_e7 false, target_construction {K 1, views 2}"] = all(
+            k in wr and canonical(wr[k]) == canonical(v) for k, v in ARM_FIELDS.items())
+        parts["target_construction is the row's last key"] = list(wr)[-1] == "target_construction"
+        parts["the rest of the row is E3's, in its order"] = canonical(restored) == canonical(a)
+    pe = (e3.get("summary") or {}).get("checkpoints") or []
+    pw = (w.get("summary") or {}).get("checkpoints") or []
+    parts["each payload carries E3's keys and facts plus arm and target_construction"] = (
+        bool(pe) and len(pe) == len(pw) and all(
+            set(c2["keys"]) == set(c1["keys"]) | {"arm", "target_construction"}
+            and {k: v for k, v in c1.items() if k != "keys"} == {k: v for k, v in c2.items() if k != "keys"}
+            for c1, c2 in zip(pe, pw)))
+    vw = (w.get("record") or {}).get("payloads") or []
+    ve = (e3.get("record") or {}).get("payloads") or []
+    parts["W's payloads hold arm E3-flip and target_construction {K 1, views 2}; E3's hold neither"] = (
+        bool(vw) and all(v["arm"] == ARM_FIELDS["arm"] and v["target_construction"] == ARM_FIELDS["target_construction"]
+                         for v in vw)
+        and bool(ve) and all(v["arm"] == v["target_construction"] == "<absent>" for v in ve))
+    return verdict(parts, f"differing keys {differing}")
+
+
+def c_rf_test_path(ft, runs, work: Path):
+    import scripts.preflight_distill as pd
+    base = ["run", "--expect-head", "0" * 40, "--teacher-ckpt", str(work / "pod_teacher" / pd.TEACHER_FILE),
+            "--teacher-ckpt-sha256", pd.TEACHER_SHA256, "--evidence", str(work / "pod_evidence")]
+    parts = {}
+    for flag, value in (("--evidence", work / "pod_test_evidence"), ("--e3-reference", work / "kd_smoke_test.json"),
+                        ("--teacher-ckpt", work / "pod_teacher_test" / pd.TEACHER_FILE)):
+        argv = list(base)
+        if flag in argv:
+            argv[argv.index(flag) + 1] = str(value)
+        else:
+            argv += [flag, str(value)]
+        proc = subprocess.run([sys.executable, "-B", str(REPO / "scripts" / "smoke_kd_flip_pod.py"), *argv],
+                              capture_output=True, text=True, timeout=600, cwd=str(work),
+                              env=child_env(1, work / "data"))
+        parts[f"{flag} containing 'test' is refused, nothing made"] = (
+            proc.returncode == 2 and "REFUSED [sl1_path]" in proc.stdout and "RESULT: REFUSED (sl1_path)" in proc.stdout
+            and not os.path.lexists(value) and not os.path.lexists(value.parent / value.name.split(".")[0])
+            and not (work / "pod_evidence").exists())
+    return verdict(parts)
+
+
+def c_rf_existing_output(ft, runs, work: Path):
+    pod = importlib.import_module("scripts.smoke_kd_flip_pod")
+    stamp = "20261011T120000Z"
+    started = []
+
+    def no_child(*args, **_kw):
+        started.append(args)
+        raise RuntimeError("a child was started")
+    saved = pod.utc_stamp, pod.run_child
+    pod.utc_stamp, pod.run_child = (lambda: stamp), no_child
+    parts = {}
+    try:
+        for label in ("JSON", "run folder"):
+            ev = work / f"pod_evidence_existing_{label.split()[-1].lower()}"
+            ev.mkdir()
+            target = ev / (f"kd_flip_pod_smoke_{stamp}.json" if label == "JSON" else f"kd_flip_pod_smoke_{stamp}")
+            if label == "JSON":
+                target.write_bytes(b"an earlier result\n")
+            else:
+                target.mkdir()
+            before = sorted(p.name for p in ev.iterdir())
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                rc = pod.cmd_run(argparse.Namespace(expect_head="0" * 40, teacher_ckpt=str(work / "pod_teacher_x"
+                                                                                           / "iter_24000.pth"),
+                                                    teacher_ckpt_sha256="0" * 64, evidence=str(ev), e3_reference=None))
+            parts[f"an existing {label} is refused and left as it was"] = (
+                rc == 2 and "REFUSED [existing_output]" in out.getvalue()
+                and sorted(p.name for p in ev.iterdir()) == before
+                and (target.read_bytes() == b"an earlier result\n" if label == "JSON" else not any(target.iterdir())))
+    finally:
+        pod.utc_stamp, pod.run_child = saved
+    parts["no child was started"] = not started
+    return verdict(parts)
+
+
+CHECKS = (("cm_flip_registry_entry", c_registry_entry), ("cm_two_calls_per_step", c_two_calls),
+          ("cm_unflipped_call_is_e3_call", c_unflipped_call), ("cm_second_call_on_hflip", c_second_call_hflip),
+          ("cm_flip_back_alignment", c_flip_back), ("cm_logit_kd_prob_average_T4", c_logit_kd_t4),
+          ("cm_cwd_logit_prob_average_T4_per_channel", c_cwd_t4), ("cm_per_term_softmax", c_per_term_softmax),
+          ("cm_never_logits", c_never_logits), ("cm_equal_views_match_single_view", c_equal_views),
+          ("cm_feature_term_unflipped_stage3", c_feature_term), ("cm_nmf_two_draws_per_step", c_nmf_draws),
+          ("cm_cpu_rng_unchanged_by_call2", c_cpu_rng), ("cm_student_one_forward_original_crop", c_student),
+          ("cm_step1_checks_pass", c_step1), ("cm_run_meta_flip", c_run_meta), ("cm_k_not_1_refused", c_k_not_1),
+          ("cm_validity_mask_original_orientation", c_mask), ("cm_abort_teacher_finite_reads_targets", c_abort),
+          ("rf_pod_smoke_test_path", c_rf_test_path), ("rf_pod_smoke_existing_output", c_rf_existing_output),
+          ("dt_flip_two_runs_identical_bytes", c_determinism))
 # Each mutation and the check that must fail under it; "run" mutations act in a worker's trainer run
 MUTATIONS = (("average_logits", "cm_never_logits", "function"),
              ("no_flip_back", "cm_flip_back_alignment", "function"),
@@ -1023,9 +1220,10 @@ def mutated(ft, name: str):
 
 
 def evaluate(fn, ft, runs, work: Path) -> tuple:
-    """A check's (ok, detail); a check that raises fails with the error."""
+    """A check's (ok, detail); a check that raises fails with the error. A check that names `work` gets the work
+    folder."""
     try:
-        return fn(ft, runs, work) if fn is c_k_not_1 else fn(ft, runs)
+        return fn(ft, runs, work) if "work" in inspect.signature(fn).parameters else fn(ft, runs)
     except Exception as e:  # noqa: BLE001 - a check that raises fails
         return False, f"raised {type(e).__name__}: {e}"
 
@@ -1071,20 +1269,19 @@ def main(argv=None) -> int:
     work.mkdir(parents=True)
     t0 = time.time()
     print("=" * 78)
-    print(f"KD FLIP SMOKE (L-KD-WRAP C1) -- CPU, function level and {STEPS}-step stub-teacher trainer runs")
+    print(f"KD FLIP SMOKE (L-KD-WRAP) -- CPU, function level and {STEPS}-step stub-teacher trainer runs")
     print(f"work dir: {work}")
     print("=" * 78, flush=True)
     import torch
     torch.set_num_threads(a.threads)
     ft = importlib.import_module("src.distill.flip_targets")
-    arm_json = write_arm_json(work / "arm_json" / "registry_values")
     data_root = work / "data"
     make_synthetic_dataset(data_root)
     runs = {}
-    for label, arm, mutation in (("flip", arm_json, "none"), ("flip_repeat", arm_json, "none"), ("e3", None, "none"),
-                                 *((f"mut_{m}", arm_json, m) for m in RUN_MUTATIONS)):
-        runs[label] = run_flip_worker(work=work, data_root=data_root, label=label, threads=a.threads,
-                                      arm_json=arm, mutation=mutation)
+    for label, arm, mutation in (("flip", ARM_NAME, "none"), ("flip_repeat", ARM_NAME, "none"), ("e3", None, "none"),
+                                 *((f"mut_{m}", ARM_NAME, m) for m in RUN_MUTATIONS)):
+        runs[label] = run_flip_worker(work=work, data_root=data_root, label=label, threads=a.threads, arm=arm,
+                                      mutation=mutation)
         r = runs[label]
         print(f"[run] {label:28} rc={r['returncode']} {r['seconds']:7.1f} s "
               f"{(r.get('summary') or {}).get('trainer_result')}", flush=True)
