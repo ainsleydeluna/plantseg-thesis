@@ -600,3 +600,309 @@ trailers; the GO says "No trailers", so no commit carries one.
    asks for teacher_diag's `refuse_test_path` "imported, not copied", where `run` copies its two halves inline
    (equivalent today; the selfcheck now imports it). Neither was a finding; both are candidates for a later
    hardening commit if the orchestrator wants one.
+
+## (l) GO-2
+
+GO-2 `kdwrap_go2_20261012.md` (orchestrator, Mon 12 Oct 2026, 11:0x +08:00), 18,358 B, sha256
+`33963d5cfa908fc1fd43c90ed37f7727f3ec09e3de5f049928235ecf97e0db26`: rulings G1 (FT-1: W stops on a non-finite
+teacher logit at a valid cell, as E3 does), G2 (the counts of record: smoke_kd_flip 34, the pod selfcheck 17; D3
+accepted), G3 (no other hardening before the W cutoff), G4 ((k) items 2, 5, 7 and 8: no action; item 4 answered
+below) and G5 (the merged-tree acceptance). Same session, Mon 12 Oct 2026 (UTC); Opus 5.5 at max effort.
+
+### STEP 0 (03:09 UTC, MEASURED)
+
+| # | command | output |
+|---|---|---|
+| 1 | `git rev-parse HEAD` | `dff52375700405d8f4b6a1c0ac1b58f93f84708f` |
+| 2 | `git symbolic-ref HEAD` | `refs/heads/lane/kd-wrap` |
+| 3 | `git status --porcelain=v1 -- . <X>` | (nothing) |
+
+All three matched, so STEP 1's recovery was not run.
+
+### STEP 1 (03:10 UTC, MEASURED)
+
+| # | command | output |
+|---|---|---|
+| 1 | `git fetch origin master` | `* branch master -> FETCH_HEAD` / `2e3c88a..0b219e9  master -> origin/master`, exit 0 |
+| 2 | `git rev-parse FETCH_HEAD` | `0b219e949b56c121bf3c048671bef19b00de5e12` (= P_T) |
+| 3 | `git fetch origin lane/kd-wrap` | `* branch lane/kd-wrap -> FETCH_HEAD`, exit 0 |
+| 4 | `git rev-parse FETCH_HEAD` | `dff52375700405d8f4b6a1c0ac1b58f93f84708f` |
+
+### STEP 2, /tmp/kw2venv (03:10–03:12 UTC, MEASURED)
+
+Named before installing: torch 2.1.0+cpu and torchvision 0.16.0+cpu (the PyTorch CPU index), mmcv 2.1.0 (OpenMMLab's
+CPU/torch2.1 wheel index), the 41 pinned packages of the third command, and ftfy 6.3.0 without dependencies.
+
+| command | exit | estimate | measured |
+|---|---|---|---|
+| `/usr/bin/python3.11 -m venv /tmp/kw2venv` | 0 | ~10 s | 4 s |
+| `… pip install --no-cache-dir torch==2.1.0+cpu torchvision==0.16.0+cpu --index-url https://download.pytorch.org/whl/cpu` | 0 | ~1 min | 43 s |
+| `… pip install --no-cache-dir mmcv==2.1.0 -f https://download.openmmlab.com/mmcv/dist/cpu/torch2.1/index.html` | 0 | ~1–2 min | 35 s |
+| `… pip install --no-cache-dir mmengine==0.10.7 mmsegmentation==1.2.2 … urllib3==1.26.20` (GO-2's list) | 0 | ~2 min | 23 s |
+| `… pip install --no-cache-dir --no-deps ftfy==6.3.0` | 0 | ~5 s | 1 s |
+| `/tmp/kw2venv/bin/python -m pip freeze` | 0 | — | — |
+
+The mmcv step resolved newer dependency versions (opencv-python 5.0.0.93, matplotlib 3.11.2, rich 15.0.0 and
+others); the pinned step replaced each with GO-2's pin. The freeze has exactly the 44 packages of GO-2's list (a
+sorted `diff` against it printed nothing): Python 3.11.17, torch 2.1.0+cpu, torchvision 0.16.0+cpu, mmcv 2.1.0,
+mmengine 0.10.7, mmsegmentation 1.2.2, numpy 1.26.4, scipy 1.11.4, opencv-python 4.8.1.78 and the rest as listed.
+
+```
+addict==2.4.0
+certifi==2026.6.17
+charset-normalizer==3.4.7
+contourpy==1.3.3
+cycler==0.12.1
+filelock==3.14.0
+fonttools==4.63.0
+fsspec==2026.4.0
+ftfy==6.3.0
+idna==3.18
+Jinja2==3.1.6
+kiwisolver==1.5.0
+markdown-it-py==4.2.0
+MarkupSafe==3.0.3
+matplotlib==3.11.0
+mdurl==0.1.2
+mmcv==2.1.0
+mmengine==0.10.7
+mmsegmentation==1.2.2
+mpmath==1.3.0
+networkx==3.6.1
+numpy==1.26.4
+opencv-python==4.8.1.78
+packaging==24.2
+pillow==12.3.0
+platformdirs==4.10.0
+prettytable==3.18.0
+Pygments==2.20.0
+pyparsing==3.3.2
+python-dateutil==2.9.0.post0
+PyYAML==6.0.3
+regex==2026.5.9
+requests==2.28.2
+rich==13.4.2
+scipy==1.11.4
+six==1.17.0
+sympy==1.14.0
+termcolor==3.3.0
+torch==2.1.0+cpu
+torchvision==0.16.0+cpu
+typing_extensions==4.15.0
+urllib3==1.26.20
+wcwidth==0.8.1
+yapf==0.43.0
+```
+
+### C5 and C6 (MEASURED)
+
+| # | sha | subject | paths (+/−) |
+|---|---|---|---|
+| C5 | `02051bc3dcc3cdf36c96a2492a5975b4440208aa` | L-KD-WRAP C5: a non-finite teacher logit at a valid cell stops W as it stops E3 (FT-1) | `src/distill/flip_targets.py` (+19 −7), `scripts/smoke_kd_flip.py` (+88 −7) |
+| C6 | `a60b0088614d55677087b2cc24475423610644f3` | L-KD-WRAP C6: review fixes | `src/distill/flip_targets.py` (+4 −3) |
+| C7 | this commit | L-KD-WRAP C7: GO-2 report section | `docs/lane_reports/kd-wrap.md` (this section) |
+
+Each by `git commit --only -- <paths>` after a scoped `git status` and `git diff`; no message carries a trailer.
+
+**C5, the change (G1).** `FlipViewTargets.cwd_logit_loss` now ends its KL with `propagate_nonfinite(kl, view1, view2,
+m)`: a `torch.where` that writes NaN into the KL entries [B, C, h*w] of every valid cell (`m`) at which either view's
+teacher logit is NaN, +inf or -inf, in any channel. The term is then NaN, so the loss is NaN and AM-7 (a) stops a real
+run, as cwd_channelwise_kl's NaN does for E3 (losses.py:165-168, L-KD-HARDEN item 9). Masked cells stay scrubbed: the
+condition is false there, and E3's masking is untouched. On finite inputs the condition is false everywhere and the
+`where` is the identity, value and gradient, so plan (vi)'s arithmetic (K3) and every existing check's value are
+unchanged bit for bit (part (v) below; the review measured 3,600 finite cases bit for bit against dff5237's code). The
+Logit-KD term and `finite` are unchanged. The module docstring's "non-finite" paragraph states the new behaviour, the
+Logit-KD parity for a lone -inf (finite in both arms), and FT-1 as closed.
+
+**C6** (review finding G1F-1). The mask of non-finite logits is reshaped to `kl.shape` instead of `(b, c, -1)`, which
+raised on an empty batch or channel axis where dff5237's code and E3 return NaN; no run reaches that case.
+
+**The new check** `cm_cwd_logit_nonfinite_valid_cell_stops` (scripts/smoke_kd_flip.py, `c_cwd_nonfinite`), on
+math_fixture (sample 0, channel 3; the valid cell (6, 5) and the masked cell (6, 1); T_cwd = 4), six parts:
+
+| part | what it asserts |
+|---|---|
+| the cells | (6, 5) is valid and (6, 1) masked in the fixture's mask |
+| (i) | a -inf at the valid cell of view 1 makes the CWD logit-map term NaN |
+| (ii) | a -inf at that cell of view 2 only makes it NaN |
+| (iii) | a -inf at the masked cell only, in view 1 and in view 2 separately, gives a finite term equal (torch.equal) to the term with that logit 7.0 |
+| (iv) | with z2 == z1 and the valid -inf, W's term is NaN and E3's cwd_channelwise_kl on the same inputs is non-finite |
+| (v) | on five finite fixtures (the two views at T_cwd and at T 2, two equal views, the sample with no valid cell, the stub teacher's two views from build()), the term and its gradient equal dff5237's code's bit for bit (torch.equal); that code is `src/distill/flip_targets.py` at `dff52375…`, read with `git show`, its git blob `a08814dc…` checked, run as a module of its own |
+
+Its mutation `mut_nonfinite_scrubbed` replaces `propagate_nonfinite` with the identity (the propagation removed); under
+it (i), (ii) and (iv) fail, and the check passes without it. smoke_kd_flip has 34 checks (G2): 20 clause-map
+checks, 2 refusals, 1 determinism check and 11 mutations. Part (v) needs dff5237 in the object store (a shallow clone
+without it fails the part, loudly).
+
+### The review of C5 (STEP 4, DL-24)
+
+One read-only verification workflow on `dff5237..02051bc`: `kdwrap-go2-c5-review`, run `wf_ac730321-c9c`, 03:32–03:49
+UTC (16.9 min), 3 agents, 92 tool calls: a reviewer of G1's fidelity (against losses.py:154-169 and AM-18 item 3(b))
+and a reviewer of the new check's and mutation's validity, each to be followed by an adversarial verifier that
+defaults to refuted (the check reviewer had no finding, so its verifier did not run). Snapshot before and after: HEAD
+`02051bc…`, an empty scoped status and the five lane files' sha256, identical (`diff` printed nothing).
+
+| id | dimension | finding | verdict | resolution |
+|---|---|---|---|---|
+| G1F-1 | G1 fidelity | `propagate_nonfinite`'s `reshape(b, c, -1)` raises on an empty batch or channel axis, where dff5237's code and E3 return NaN | CONFIRMED (minor, latent: no run reaches it) | C6: `reshape(kl.shape)`; NaN as before on those inputs, every other value and gradient unchanged |
+| G1F-2 | G1 fidelity | The docstring's "a lone -inf is a zero target probability" is not W's averaged target when only one view holds the -inf | REFUTED: documentation only, accurate in the module's own terms (each view's t_prob is zero there; the target p is defined as their average), at most ambiguous wording | none |
+
+The check reviewer found no defect: each part tests what G1 names, the mutation is killed by (i), (ii) and (iv), and
+nine other wrong implementations it tried (propagating at masked cells too, in view 1 only, only when every valid cell
+is non-finite, only when both views are, with view 2's mask flipped, with h and w swapped, whenever `finite` is false,
+for NaN and +inf only, or a changed finite arithmetic) each fail at least one part. The G1 reviewer measured 3,600
+finite cases, the non-finite classes in either or both views, and the trainer's shapes through `build()`.
+
+### (k) item 4 (G4), REPOSITORY-PROVEN at P_T `0b219e9`
+
+`scripts/preflight_arms.py` reads W's figure with one reader for every reference smoke:
+
+- `pod_smoke_format(spec)` (:479–482) is `f"kd_{spec.run_stage[len('E3-'):].lower()}_pod_smoke/1"`: for E3-flip,
+  `kd_flip_pod_smoke/1`, smoke_kd_flip_pod.py's FORMAT;
+- `smoke_figure(path, key)` (:485–491) reads `throughput[key]["iter_seconds"]["median"]` (:488) and refuses a value
+  that is not a finite positive number (`reference_unusable`);
+- `reference_smoke(path, spec)` (:494–508) maps the format to the key: `kd_smoke/1` to `"e3"`, the arm's own format
+  to `spec.name` (`"e3-flip"`, the key smoke_kd_flip_pod.py writes);
+- `stage_arm_cut_arithmetic` calls it for each `--reference-smoke` (:768; the flag at :1339), and `cut_arithmetic`
+  (:537–560) applies `APPLIED = max` (:139) to the figures: the larger (F40).
+
+On the merged tree, a no-write computation with P_T's preflight_arms and the registered e3-flip entry gave
+`pod_smoke_format` = `'kd_flip_pod_smoke/1'` and the key `'e3-flip'`, both equal to smoke_kd_flip_pod.py's constants.
+
+The smoke_arms_kd check that exercises that reader is `cm_arith_flip_reference_max` (scripts/smoke_arms_kd.py:1160–1173
+at P_T): through `stage_arm_cut_arithmetic` it reads a `kd_smoke/1` JSON (throughput["e3"], median 1.0) and the arm's
+own pod-smoke JSON (`pod_smoke_format(spec)`, median 1.5), applies the larger (1.5), and refuses that format for
+another arm. It runs on the synthetic record-teacher entry `e3-rt`, not on e3-flip: no smoke_arms_kd check reads a
+`kd_flip_pod_smoke/1` file or the e3-flip entry itself. On this lane's side, the pod selfcheck's declared case reads the
+written JSON back at `throughput["e3-flip"]["iter_seconds"]["median"]`.
+
+### STEP 3, C5's acceptance (03:16–03:31 UTC, MEASURED)
+
+The C5 tree before its commit, in /tmp/kw2venv, each run alone under GO-2's prefix; estimate ~23 min in all,
+measured 893.0 s (14.9 min) of run time.
+
+| smoke | args | exit | result | estimate | measured |
+|---|---|---|---|---|---|
+| `smoke_kd_flip.py` |  | 0 | PASS (34/34) | ~2 min | 79.5 s |
+| `smoke_kd_flip_pod.py` | `--selfcheck` | 0 | PASS (17/17) | ~25 s | 12.8 s |
+| `smoke_frozen_blobs.py` |  | 0 | FROZEN BLOBS OK (10/10) | ~1 s | 0.0 s |
+| `smoke_invariance_distill.py` |  | 0 | PASS (112/112) | ~4 min | 143.4 s |
+| `smoke_invariance_distill.py` | `--cross-commit 8487551ca67bd50ffbe911d1f3e93244841cbc9f WORKTREE` | 0 | PASS (14/14) | ~5 min | 189.2 s |
+| `smoke_arms_invariance.py` |  | 0 | PASS (16/16) | ~8 min | 291.4 s |
+| `smoke_kd_step.py` | `--selfcheck` | 0 | PASS (108/108) | ~1 min | 29.3 s |
+| `smoke_distill_switches.py` |  | 0 | PASS (116/116) | ~5 s | 2.2 s |
+| `smoke_preflight_distill.py` |  | 1 | FAIL (183/184) | ~45 s | 26.4 s |
+| `smoke_distill.py` |  | 0 | PASS (95/95) | ~5 s | 2.6 s |
+| `smoke_eval_stage_artifacts.py` |  | 0 | PASS (66/66) | ~7 s | 3.6 s |
+| `smoke_select_sweeps.py` |  | 0 | PASS (499/499) | ~2.5 min | 83.0 s |
+| `smoke_loader_parity.py` |  | 0 | PASS (7/7) | ~5 s | 2.8 s |
+| `smoke_distill_schedule.py` |  | 0 | PASS (32/32, 2 skipped) | ~1 min | 26.8 s |
+
+The one failure is the environment fingerprint check GO-2 allows. Its line in the log:
+`f_this_venvs_fingerprint_is_not_the_kd_images_and_its_imports_have_values_of_record: FAIL ["python: '3.11.17' !=
+'3.11.16'", "torch: '2.1.0+cpu' != '2.1.0+cu121'", "torchvision: '0.16.0+cpu' != '0.16.0+cu121'"]`. Every other run
+has its count of record. Before the suite, the new check and its mutation ran once in process (no file written): the
+check held, and under the mutation it failed on (i), (ii) and (iv). Before C6's commit, smoke_kd_flip on the C6 tree:
+exit 0, PASS (34/34), estimate ~1.5 min, 65.6 s.
+
+### STEP 5, the merged-tree acceptance (G5, MEASURED)
+
+| # | command | output |
+|---|---|---|
+| 1 | `git branch check/kdw-on-pt <P_T> && git symbolic-ref HEAD refs/heads/check/kdw-on-pt && git checkout --no-overlay HEAD -- . <X>` | nothing printed, exit 0 (no classifier block) |
+| 2 | `git checkout --no-overlay lane/kd-wrap -- <KP>` | nothing printed, exit 0 |
+| 3 | `git diff --cached --name-only <P_T> -- . <X>` | exactly the five paths of <KP> |
+| 4 | `git diff --cached --quiet lane/kd-wrap -- <KP>` | exit 0 |
+| 5 | `git diff --quiet <P_T> -- <TP>` | exit 0 |
+
+The 23 rows ran on P_T plus the lane's five files at C6 `a60b0088…`, 03:51:59–04:12:45 UTC, each alone in
+/tmp/kw2venv under GO-2's prefix, every estimate stated before the start; estimate ~20 min in all, measured
+1246.0 s (20.8 min) of run time. Every row equals GO-2's expected column:
+
+| run | command (after the prefix) | exit | result | estimate | measured | = expected |
+|---|---|---|---|---|---|---|
+| kd_flip | `scripts/smoke_kd_flip.py` | 0 | PASS (34/34) | ~1.5 min | 65.6 s | yes |
+| kd_flip_pod_selfcheck | `scripts/smoke_kd_flip_pod.py --selfcheck` | 0 | PASS (17/17) | ~15 s | 12.7 s | yes |
+| teacher_arms | `scripts/smoke_teacher_arms.py` | 0 | PASS (98/98) | ~40 s | 36.8 s | yes |
+| arms_kd | `scripts/smoke_arms_kd.py` | 0 | PASS (61/61) | ~50 s | 52.1 s | yes |
+| arms_invariance | `scripts/smoke_arms_invariance.py` | 0 | PASS (16/16) | ~5 min | 308.6 s | yes |
+| invariance_distill | `scripts/smoke_invariance_distill.py` | 0 | PASS (112/112) | ~2.5 min | 149.7 s | yes |
+| invariance_cross_commit | `scripts/smoke_invariance_distill.py --cross-commit 8487551ca67bd50ffbe911d1f3e93244841cbc9f WORKTREE` | 0 | PASS (14/14) | ~3 min | 208.8 s | yes |
+| frozen_blobs | `scripts/smoke_frozen_blobs.py` | 0 | FROZEN BLOBS OK (10/10) | ~1 s | 0.0 s | yes |
+| kd_step_selfcheck | `scripts/smoke_kd_step.py --selfcheck` | 0 | PASS (108/108) | ~30 s | 31.0 s | yes |
+| distill_switches | `scripts/smoke_distill_switches.py` | 0 | PASS (116/116) | ~3 s | 2.4 s | yes |
+| preflight_distill | `scripts/smoke_preflight_distill.py` | 1 | FAIL (183/184) | ~30 s | 26.0 s | yes |
+| teacher_launch | `scripts/smoke_teacher_launch.py` | 0 | PASS (79/79) | ~8 s | 8.5 s | yes |
+| teacher_config | `scripts/smoke_teacher_config.py` | 0 | PASS (108/108) | ~5 s | 4.0 s | yes |
+| distill | `scripts/smoke_distill.py` | 0 | PASS (95/95) | ~3 s | 2.5 s | yes |
+| eval_stage_artifacts | `scripts/smoke_eval_stage_artifacts.py` | 0 | PASS (66/66) | ~5 s | 3.6 s | yes |
+| select_sweeps | `scripts/smoke_select_sweeps.py` | 0 | PASS (499/499) | ~1.5 min | 84.6 s | yes |
+| teacher_selection | `scripts/smoke_teacher_selection.py` | 1 | no RESULT line | ~3 s | 3.5 s | yes |
+| teacher_runner | `scripts/smoke_teacher_runner.py` | 2 | no RESULT line | ~1 s | 0.0 s | yes |
+| teacher_nmf | `scripts/smoke_teacher_nmf.py` | 0 | PASS (18/18) | ~25 s | 26.0 s | yes |
+| loader_parity | `scripts/smoke_loader_parity.py` | 0 | PASS (7/7) | ~3 s | 2.8 s | yes |
+| distill_schedule | `scripts/smoke_distill_schedule.py` | 0 | PASS (32/32, 2 skipped) | ~30 s | 28.1 s | yes |
+| teacher_selection_docenv | `PLANTSEG_MMSEG_STOCK_CONFIG=/tmp/kw2venv/lib/python3.11/site-packages/mmseg/.mim/configs/segnext/segnext_mscan-b_1xb16-adamw-160k_ade20k-512x512.py … scripts/smoke_teacher_selection.py` | 0 | PASS (54/54) | ~3 min | 184.8 s | yes |
+| teacher_runner_docenv | `CUBLAS_WORKSPACE_CONFIG=:4096:8 … scripts/smoke_teacher_runner.py` | 0 | PASS (48/48) | ~4 s | 3.9 s | yes |
+
+The three non-zero exits are the expected ones, for the expected reasons: smoke_preflight_distill's one failure is
+the fingerprint check (log line 121, the same line as at STEP 3); smoke_teacher_selection stops on
+`FileNotFoundError: [Errno 2] No such file or directory:
+'/usr/local/lib/python3.11/site-packages/mmseg/.mim/configs/segnext/segnext_mscan-b_1xb16-adamw-160k_ade20k-512x512.py'`;
+smoke_teacher_runner on `ENVIRONMENT: CUBLAS_WORKSPACE_CONFIG must be inherited as ':4096:8' before the interpreter
+starts (G8); got None.` In their documented environments the two pass (54/54 and 48/48).
+
+| # | command | output |
+|---|---|---|
+| 6 | `git symbolic-ref HEAD refs/heads/lane/kd-wrap && git checkout --no-overlay HEAD -- . <X>` | nothing printed, exit 0 |
+| 7 | `git rev-parse HEAD` | `a60b0088614d55677087b2cc24475423610644f3` (C6, the lane tip) |
+| 8 | `git status --porcelain=v1 -- . <X>` | (nothing) |
+| 9 | `git diff --stat lane/kd-wrap -- . <X>` | (nothing) |
+
+`check/kdw-on-pt` stays at P_T `0b219e9…`, local only. A1.2, reported once for GO-2: the cross-commit and
+arms-invariance runs again extracted 8487551's test-named code files into their work folders,
+`k1_invariance_1908_1` and `arms_smoke_2171_1` (STEP 3) and `k1_invariance_16984_1` and `arms_smoke_16305_1` (STEP 5),
+under /tmp/kwscratch; their names come from the smokes' own summary lines, and nothing under them was opened, listed,
+grepped, hashed or deleted.
+
+### Slips, refusals and deviations (GO-2)
+
+- **Deviations of form.** The new check has six parts: G1's (i)–(v) and a first part asserting that the fixture's
+  two cells are a valid and a masked one. Part (v) compares the gradient as well as the value, and adds the stub
+  teacher's two views (from `build()`) to math_fixture's four finite cases. Each addition only narrows what can pass.
+  The check reads dff5237's code with `git show` from inside the smoke (a read of one blob, its id checked), as
+  smoke_kd_step and the invariance harness already run git.
+- **Hook and classifier refusals.** None of my GO-2 commands was refused: the branch chain of STEP 5 ran without a
+  classifier block. The C5 review's agents met none.
+- **The stop hook.** Three times before C7 the session's stop hook asked for a commit and a push: for the
+  uncommitted C5 tree while its acceptance ran, for the unpushed C5, and for the merged tree's staged lane files on
+  `check/kdw-on-pt`, where G5 forbids any commit. None is approval (AGENTS.md; GO-2's RULES); I reported the conflict
+  once and committed and pushed only where GO-2 says.
+- **The C5 review's agents.** One Glob call of the G1 reviewer had no search path, so it searched from the repo
+  root, against the rule; its pattern `src/{__init__.py,distill/__init__.py,training/__init__.py}` listed three files,
+  and the reviewer reported it. Every other Grep or Glob took a path inside src/, scripts/ or configs/ with GREP-1's
+  glob. My audit of the 92 calls found no read of a test-named path, of anything under docs/reference/ or of
+  anything under /tmp/kwscratch, and no write.
+- **Scratch.** To verify C6 against dff5237's code without git inside Python, I wrote `git show
+  dff5237:src/distill/flip_targets.py` to /tmp/kwscratch/drafts/ft_dff5237.py and loaded it from there.
+- **SL-1 lines.** None appeared in any tool output.
+- **The merged-tree branch.** `check/kdw-on-pt` exists locally at P_T: nothing was committed on it, it was not
+  pushed, and it is not deleted (G5).
+
+### Open items after GO-2
+
+Closed by GO-2: (k) item 1 (FT-1, by G1 in C5), item 4 (answered above), item 6 (G2: smoke_kd_flip 34 and the pod
+selfcheck 17 are the counts of record) and item 8 (G4: the function-level test of D4 is accepted).
+
+1. **The W pod smoke** ((h); (k) item 2) is Ice's block after P_K exists and before E3-flip launches.
+2. **The merge.** The orchestrator's merge check, then Ice's merge (P_K), before Wed 14 Oct 2026 12:00 +08:00, the W
+   cutoff; otherwise the W-cut row comes before P_K ((i) row 3).
+3. **The backlog (G3).** The as-typed SL-1 loop of smoke_kd_flip_pod.py's `run`, which no check would miss, and plan
+   1.0's "imported, not copied" there ((k) item 9).
+4. **Left in the container** ((k) item 7, G4): the gitignored bytecode of (j) S6, the work folders under
+   /tmp/kwscratch (A1.2's extractions among them, unopened), /tmp/kw2venv and the local branch `check/kdw-on-pt`.
+   Nothing is deleted.
+5. **smoke_kd_flip needs dff5237.** Part (v) of the new check reads `dff5237:src/distill/flip_targets.py`; a clone
+   without that commit fails the part, loudly. After the merge it is in P_K's history.
+6. **The DL rows of (i)** take GO-2's results: row 1's acceptance reads smoke_kd_flip 34/34 and the merged-tree table
+   above, and DL-66's L-KD-WRAP line names this push's tip.
