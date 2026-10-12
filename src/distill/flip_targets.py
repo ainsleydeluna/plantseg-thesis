@@ -32,12 +32,13 @@ TargetBuilder interface that src/training/kd_arms.py states (frozen: audit rulin
                       a term value of 0.5, 1e-5 at 5e-3, 1e-3 at 5e-5), of the order of E3's own float32 error
                       (review finding FT-2).
            The validity mask is the trainer's, on the crop's grid: view 2 is flipped back, the mask never is.
-  non-finite  a NaN or +inf teacher logit in either view gives a NaN loss, as in E3 (both terms at a valid cell, the
-           Logit-KD term at a masked one), so AM-7 (a) stops a real run. A teacher -inf at a valid cell does not
-           (review finding FT-1, an open item for a ruling): that view's softmax gives the cell probability 0, so
-           the CWD logit-map term stays finite where E3's cwd_channelwise_kl gives NaN (L-KD-HARDEN item 9), and
-           W's run goes on. `finite` is false then, and the AM-7 abort record reads it whenever another rule stops
-           the run.
+  non-finite  a NaN, +inf or -inf teacher logit at a valid cell, in any channel of either view, makes the CWD
+           logit-map term NaN, as cwd_channelwise_kl's is for E3 (L-KD-HARDEN item 9: a non-finite value at a valid
+           position propagates), so the loss is NaN and AM-7 (a) stops a real run (GO-2 ruling G1; review finding
+           FT-1, closed). Masked cells stay scrubbed, as E3's masking scrubs them, and finite inputs keep the
+           arithmetic above bit for bit. The Logit-KD term is logit_kd_kl's arithmetic and behaves as E3's: a NaN or
+           +inf teacher logit gives NaN, and a lone -inf is a zero target probability with a finite value in both
+           arms. `finite` is false whenever either view holds a non-finite logit; the AM-7 abort record reads it.
   K        1 only. DL-84 makes item 6(a)'s K-draw correction unavailable and DL-96 adds no K8 arm, so a builder
            whose K is not 1 is refused.
 
@@ -89,6 +90,15 @@ def average(p1: torch.Tensor, p2: torch.Tensor) -> torch.Tensor:
     return (p1 + p2) * 0.5
 
 
+def propagate_nonfinite(kl: torch.Tensor, view1: torch.Tensor, view2: torch.Tensor, m: torch.Tensor) -> torch.Tensor:
+    """GO-2 ruling G1: the CWD logit-map term's KL entries [B, C, h*w], NaN at each valid cell (`m`, [B, 1, h*w]) where
+    either view's teacher logit is NaN, +inf or -inf, as cwd_channelwise_kl propagates one; the masked cells and the
+    finite inputs are returned as they are (an all-false where is the identity, value and gradient)."""
+    b, c = kl.shape[:2]
+    bad = ~(torch.isfinite(view1) & torch.isfinite(view2)).reshape(b, c, -1) & m
+    return torch.where(bad, kl.new_full((), float("nan")), kl)
+
+
 class FlipViewTargets:
     """One step's W targets (kd_arms' Targets): the two views' logits on the crop's grid.
 
@@ -130,7 +140,8 @@ class FlipViewTargets:
 
     def cwd_logit_loss(self, head_logits: torch.Tensor, valid: torch.Tensor, T: float) -> torch.Tensor:
         """The CWD logit-map term: per channel, the two views' averaged spatial probabilities as target, with
-        cwd_channelwise_kl's masking and normalisation (C = the map's own 116 channels)."""
+        cwd_channelwise_kl's masking and normalisation (C = the map's own 116 channels) and its propagation of a
+        non-finite teacher value at a valid cell (G1)."""
         self._check(head_logits, valid)
         b, c, h, w = head_logits.shape
         m = valid.reshape(b, 1, h * w)                             # [B,1,HW] bool
@@ -140,6 +151,7 @@ class FlipViewTargets:
         q_bar = average(spatial_probs(self.view1_logits, m, T), spatial_probs(self.view2_logits, m, T))
         kl = torch.xlogy(q_bar, q_bar) - q_bar * s_logp            # [B,C,HW]; 0 log 0 is 0
         kl = torch.where(m, kl, kl.new_zeros(()))                  # zero the masked cells only
+        kl = propagate_nonfinite(kl, self.view1_logits, self.view2_logits, m)  # G1: a valid non-finite cell is NaN
         has_valid = m.any(dim=-1).squeeze(1)                       # [B]
         per_sample = kl.sum(dim=(1, 2)) * (T * T) / c
         per_sample = per_sample * has_valid.to(per_sample.dtype)

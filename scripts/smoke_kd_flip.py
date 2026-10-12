@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Smoke for AM-18 item 3(b)'s arm W, run stage E3-flip (lane L-KD-WRAP, commits C1 and C2; ARMS plan section 4 item
-4 and decision (vi); Tier F audit F28 and F29; GO rulings K2 to K6, amendment A1).
+"""Smoke for AM-18 item 3(b)'s arm W, run stage E3-flip (lane L-KD-WRAP, commits C1, C2 and C5; ARMS plan section 4
+item 4 and decision (vi); Tier F audit F28 and F29; GO rulings K2 to K6, amendment A1; GO-2 rulings G1 and G2).
 
 CPU only, torch only: no dataset, checkpoint, GPU, download or teacher stack. Two kinds of evidence:
   function level  src/distill/flip_targets.py in this process, against float64 references written out here and
@@ -18,7 +18,7 @@ CPU only, torch only: no dataset, checkpoint, GPU, download or teacher stack. Tw
                   each build() and the mask each loss gets. main()'s `--arm e3-flip` is probed with run() recorded.
   pod smoke       scripts/smoke_kd_flip_pod.py's refusals of a path containing "test" and of an existing output.
 
-Checks (32; C1 had the 28 that need no registry file):
+Checks (34; C1 had the 28 that need no registry file, C2 32, C5 adds G1's check and mutation):
   cm_flip_registry_entry                    configs/kd_arms/e3_flip.json is GO ruling K4's values in e3_r1.json's key
                                             order and format; kd_arms.load_arms() registers e3-flip with them beside
                                             e3-r1 and e3-r2; load_arm resolves FlipTargets and make_builder() makes
@@ -72,21 +72,28 @@ Checks (32; C1 had the 28 that need no registry file):
                                             its source, gives teacher_finite false (true without targets or with
                                             finite ones). No non-real run reaches abort(): each abort() call in
                                             run() sits under `mode == "real"` or the real-only AM-7 (b) monitor
-  rf_pod_smoke_test_path                    smoke_kd_flip_pod.py run refuses an --evidence, --e3-reference or
+  cm_cwd_logit_nonfinite_valid_cell_stops   GO-2 ruling G1: a -inf at one valid cell of view 1, or of view 2 only,
+                                            makes the CWD logit-map term NaN; a -inf at a masked cell only (either
+                                            view) gives a finite term, the term with that logit finite; with z2 == z1
+                                            and a valid -inf, E3's cwd_channelwise_kl is non-finite too; on the finite
+                                            fixtures the term and its gradient are dff5237's code's bit for bit
+  rf_pod_smoke_test_path                   smoke_kd_flip_pod.py run refuses an --evidence, --e3-reference or
                                             --teacher-ckpt containing "test" (exit 2, REFUSED [sl1_path]), before any
                                             filesystem call: the path is never created
   rf_pod_smoke_existing_output              smoke_kd_flip_pod.py run refuses an existing output (its JSON or its run
                                             folder; exit 2, REFUSED [existing_output]), leaves it unchanged and starts
                                             no child
   dt_flip_two_runs_identical_bytes          two W runs: their step JSONs and records are byte-identical
-  mut_<name> x10                            each mutation, by monkeypatch here or in a worker, fails its named check,
+  mut_<name> x11                            each mutation, by monkeypatch here or in a worker, fails its named check,
                                             which passes without it: average_logits (never_logits), no_flip_back
                                             (flip_back_alignment), shared_softmax (per_term_softmax),
                                             feature_from_flipped_view (feature_term_unflipped_stage3),
                                             one_batched_call (nmf_two_draws_per_step), student_sees_flip
                                             (student_one_forward_original_crop), t_1 (logit_kd_prob_average_T4),
                                             flipped_mask (validity_mask_original_orientation), call2_inside_probe
-                                            (step1_checks_pass), finite_always_true (abort_teacher_finite_reads_targets)
+                                            (step1_checks_pass), finite_always_true
+                                            (abort_teacher_finite_reads_targets), nonfinite_scrubbed
+                                            (cwd_logit_nonfinite_valid_cell_stops)
 
 Usage:  python -B scripts/smoke_kd_flip.py [--work-dir DIR] [--threads N]
   --work-dir  a new folder outside the repository (default: <tempdir>/kd_flip_smoke_<pid>_<n>); outputs are kept
@@ -143,6 +150,8 @@ EQUAL_VIEWS_REL_TOL = 1e-6                     # plan (vi): the CWD logit-map te
 DISCRIMINATE = 1e-3                            # a variant a check must tell apart differs by more, relatively
 IDENTITY_KEYS = ("wall_clock", "git_head", "git_head_source")
 RUN_MUTATIONS = ("student_sees_flip", "call2_inside_probe")
+# GO-2 ruling G1 (v): the lane tip before C5 and its src/distill/flip_targets.py blob, the code finite values match
+G1_BASE = ("dff52375700405d8f4b6a1c0ac1b58f93f84708f", "a08814dcde95d0cc792182e60fbcfe00b9e360bd")
 
 results: list[tuple[str, bool, str]] = []
 
@@ -619,6 +628,23 @@ def abort_record_expression():
     return code, ast.get_source_segment(src, assign.value), assign.lineno, sorted(guards)
 
 
+def flip_targets_at(commit: str, blob: str):
+    """src/distill/flip_targets.py as `commit` holds it, read with `git show` (its git blob id checked against
+    `blob`) and run as a module of its own."""
+    path = "src/distill/flip_targets.py"
+    out = subprocess.run(["git", "-C", str(REPO), "--no-optional-locks", "show", f"{commit}:{path}"],
+                         capture_output=True, check=False)
+    if out.returncode != 0:
+        raise RuntimeError(f"git show {commit[:12]}:{path} failed: {out.stderr.decode(errors='replace')[:200]}")
+    data = out.stdout
+    got = hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
+    if got != blob:
+        raise RuntimeError(f"{path} at {commit[:12]} is blob {got}, not {blob}")
+    mod = types.ModuleType(f"flip_targets_{commit[:7]}")
+    exec(compile(data, f"{commit[:7]}:{path}", "exec"), mod.__dict__)  # noqa: S102 - the lane's own file, by blob
+    return mod
+
+
 # ============================================================================================== the checks
 def run_steps(r: dict) -> list:
     return [b["step"] for b in (r.get("record") or {}).get("batches", [])]
@@ -993,6 +1019,57 @@ def c_abort(ft, runs):
                           f"{[ok for _, ok in guards]}")
 
 
+def c_cwd_nonfinite(ft, runs):
+    """GO-2 ruling G1's five parts on math_fixture: sample 0, channel 3, the valid cell (6, 5) and the masked cell
+    (6, 1)."""
+    import torch
+    from src.training.losses import cwd_channelwise_kl
+    s, z1, z2, valid = math_fixture()
+    _, T = temperatures()
+    vcell, mcell, inf = (0, 3, 6, 5), (0, 3, 6, 1), float("-inf")
+
+    def put(z, cell, value):
+        z = z.clone()
+        z[cell] = value
+        return z
+
+    def term(a, b):
+        return ft.FlipViewTargets(a, b).cwd_logit_loss(s, valid, T)
+    old = flip_targets_at(*G1_BASE)
+    sc = flip_scenario(ft)
+    head = torch.randn(BATCH, NUM_CLASSES, 8, 8, generator=torch.Generator().manual_seed(5))
+    mask8 = torch.ones(BATCH, 8, 8, dtype=torch.bool)
+    mask8[1, :2] = False
+    fixtures = {"two views at T_cwd": (s, z1, z2, valid, T), "two views at T 2": (s, z1, z2, valid, 2.0),
+                "two equal views": (s, z1, z1.clone(), valid, T),
+                "a sample with no valid cell": (s[2:].contiguous(), z1[2:].contiguous(), z2[2:].contiguous(),
+                                                valid[2:], T)}
+    if sc.error is None:
+        fixtures["the stub teacher's two views"] = (head, sc.targets.view1_logits, sc.targets.view2_logits, mask8, T)
+    same = {}
+    for label, (x, a, b, mask, temp) in fixtures.items():
+        new = value_and_grad(lambda h, a=a, b=b, mask=mask, temp=temp: ft.FlipViewTargets(a, b).cwd_logit_loss(
+            h, mask, temp), x)
+        was = value_and_grad(lambda h, a=a, b=b, mask=mask, temp=temp: old.FlipViewTargets(a, b).cwd_logit_loss(
+            h, mask, temp), x)
+        same[label] = bitwise(new[0], was[0]) and bitwise(new[1], was[1])
+    masked = [(term(put(z1, mcell, inf), z2), term(put(z1, mcell, 7.0), z2)),
+              (term(z1, put(z2, mcell, inf)), term(z1, put(z2, mcell, 7.0)))]
+    zinf = put(z1, vcell, inf)
+    e3 = cwd_channelwise_kl(s, zinf, valid, T=T)
+    parts = {"the cells are a valid and a masked one": (bool(valid[vcell[0], vcell[2], vcell[3]])
+                                                        and not bool(valid[mcell[0], mcell[2], mcell[3]])),
+             "(i) a -inf at a valid cell of view 1 makes the term NaN": bool(torch.isnan(term(zinf, z2))),
+             "(ii) a -inf at that cell of view 2 only makes it NaN": bool(torch.isnan(term(z1, put(z2, vcell, inf)))),
+             "(iii) a -inf at a masked cell only, either view, gives the term with that logit finite": all(
+                 bool(torch.isfinite(a)) and bitwise(a, b) for a, b in masked),
+             "(iv) with z2 == z1 and the valid -inf, W's term is NaN and E3's cwd_channelwise_kl non-finite": (
+                 bool(torch.isnan(term(zinf, zinf.clone()))) and not bool(torch.isfinite(e3))),
+             "(v) on the finite fixtures the term and its gradient are dff5237's code's bit for bit": (
+                 sc.error is None and all(same.values()))}
+    return verdict(parts, f"E3 {float(e3)!r} with the valid -inf; dff5237's code bit for bit: {same}")
+
+
 def c_determinism(ft, runs):
     a, b = runs["flip"], runs["flip_repeat"]
     cmp = compare_step_dirs(a["out"], b["out"])
@@ -1146,6 +1223,7 @@ CHECKS = (("cm_flip_registry_entry", c_registry_entry), ("cm_two_calls_per_step"
           ("cm_cpu_rng_unchanged_by_call2", c_cpu_rng), ("cm_student_one_forward_original_crop", c_student),
           ("cm_step1_checks_pass", c_step1), ("cm_run_meta_flip", c_run_meta), ("cm_k_not_1_refused", c_k_not_1),
           ("cm_validity_mask_original_orientation", c_mask), ("cm_abort_teacher_finite_reads_targets", c_abort),
+          ("cm_cwd_logit_nonfinite_valid_cell_stops", c_cwd_nonfinite),
           ("rf_pod_smoke_test_path", c_rf_test_path), ("rf_pod_smoke_existing_output", c_rf_existing_output),
           ("dt_flip_two_runs_identical_bytes", c_determinism))
 # Each mutation and the check that must fail under it; "run" mutations act in a worker's trainer run
@@ -1158,7 +1236,8 @@ MUTATIONS = (("average_logits", "cm_never_logits", "function"),
              ("t_1", "cm_logit_kd_prob_average_T4", "function"),
              ("flipped_mask", "cm_validity_mask_original_orientation", "function"),
              ("call2_inside_probe", "cm_step1_checks_pass", "run"),
-             ("finite_always_true", "cm_abort_teacher_finite_reads_targets", "function"))
+             ("finite_always_true", "cm_abort_teacher_finite_reads_targets", "function"),
+             ("nonfinite_scrubbed", "cm_cwd_logit_nonfinite_valid_cell_stops", "function"))
 
 
 @contextlib.contextmanager
@@ -1211,6 +1290,8 @@ def mutated(ft, name: str):
                   lambda self, h, v, T, _o=orig: _o(self, h, torch.flip(v, dims=[-1]), T))
     elif name == "finite_always_true":
         patch(ft.FlipViewTargets, "finite", property(lambda self: True))
+    elif name == "nonfinite_scrubbed":       # G1's propagation removed: a valid non-finite cell scrubbed again
+        patch(ft, "propagate_nonfinite", lambda kl, *_a: kl)
     else:
         raise ValueError(f"no function-level mutation {name!r}")
     try:
