@@ -93,9 +93,10 @@ def average(p1: torch.Tensor, p2: torch.Tensor) -> torch.Tensor:
 def propagate_nonfinite(kl: torch.Tensor, view1: torch.Tensor, view2: torch.Tensor, m: torch.Tensor) -> torch.Tensor:
     """GO-2 ruling G1: the CWD logit-map term's KL entries [B, C, h*w], NaN at each valid cell (`m`, [B, 1, h*w]) where
     either view's teacher logit is NaN, +inf or -inf, as cwd_channelwise_kl propagates one; the masked cells and the
-    finite inputs are returned as they are (an all-false where is the identity, value and gradient)."""
-    b, c = kl.shape[:2]
-    bad = ~(torch.isfinite(view1) & torch.isfinite(view2)).reshape(b, c, -1) & m
+    finite inputs are returned as they are (an all-false where is the identity, value and gradient). The mask of
+    non-finite logits takes kl's own shape, so an empty batch or channel axis gives cwd_channelwise_kl's result
+    (review finding G1F-1)."""
+    bad = ~(torch.isfinite(view1) & torch.isfinite(view2)).reshape(kl.shape) & m
     return torch.where(bad, kl.new_full((), float("nan")), kl)
 
 
