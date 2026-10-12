@@ -1,0 +1,190 @@
+{
+  "format": "lambda_selection/1",
+  "rule": "AM-2 / DL-06",
+  "amendments": [
+    "AM-2",
+    "AM-7a"
+  ],
+  "rules_file": {
+    "path": "configs/sweep_rules.json",
+    "sha256": "ebfff9cc606be613a4011cb0cc0dea9bb90789704a144ac514ea056970eef661"
+  },
+  "candidates": [
+    {
+      "lambda": 0.25,
+      "run_id": "e2_s42_lambda0.25_80k_a1",
+      "best_val": 0.3795648515224457,
+      "ckpt_sha256": "20a68e3a130aef0a0d83dfd252b537e654fe60cc54c2d631d937730f5997b164",
+      "checkpoint_present": true
+    },
+    {
+      "lambda": 0.5,
+      "run_id": "e2_s42_lambda0.5_80k_a1",
+      "best_val": 0.38749080896377563,
+      "ckpt_sha256": "73dbc32dfc988124a9b81df24abd97c526f927ac2b094996411d174e89d32f06",
+      "checkpoint_present": true
+    },
+    {
+      "lambda": 1.0,
+      "run_id": "e2_s42_lambda1_80k_a1",
+      "best_val": 0.37515392899513245,
+      "ckpt_sha256": "7e082eae3aaba14cf7c098bdfc92c5e0c09393dbbab77fedcc4a071df234c4bf",
+      "checkpoint_present": true
+    },
+    {
+      "lambda": 2.0,
+      "run_id": "e2_s42_lambda2_80k_a1",
+      "best_val": 0.36609214544296265,
+      "ckpt_sha256": "438d6ee44c1e30cfe843ff14cf742484301af58cf7507b502d84177415397f7d",
+      "checkpoint_present": true
+    },
+    {
+      "lambda": 4.0,
+      "run_id": "e2_s42_lambda4_80k_a1",
+      "best_val": 0.3443554639816284,
+      "ckpt_sha256": "aadb2aeac5ac104d8925f360171f617b880346bccac317bdc16b5e992dd70ca2",
+      "checkpoint_present": true
+    }
+  ],
+  "band": 0.005,
+  "rule_trace": [
+    "best lambda-candidate value = 0.38749080896377563; tie band = 0.005 (inclusive: best - value <= band, decimal on the recorded values)",
+    "lambda=0.25 run=e2_s42_lambda0.25_80k_a1 best_val=0.3795648515224457 gap=0.00792595744132993 -> outside the band",
+    "lambda=0.5 run=e2_s42_lambda0.5_80k_a1 best_val=0.38749080896377563 gap=0E-17 -> tied",
+    "lambda=1 run=e2_s42_lambda1_80k_a1 best_val=0.37515392899513245 gap=0.01233687996864318 -> outside the band",
+    "lambda=2 run=e2_s42_lambda2_80k_a1 best_val=0.36609214544296265 gap=0.02139866352081298 -> outside the band",
+    "lambda=4 run=e2_s42_lambda4_80k_a1 best_val=0.3443554639816284 gap=0.04313534498214723 -> outside the band",
+    "a single candidate is within the band -> lambda = 0.5",
+    "boundary winner: False (None; grid ends [0.25, 4], finished set [0.25, 0.5, 1.0, 2.0, 4.0]); the grid is not extended",
+    "winner run e2_s42_lambda0.5_80k_a1 is E2 seed 42 (an existing run; checkpoint sha256 73dbc32dfc988124a9b81df24abd97c526f927ac2b094996411d174e89d32f06)"
+  ],
+  "winner": {
+    "lambda": 0.5,
+    "run_id": "e2_s42_lambda0.5_80k_a1",
+    "best_val": 0.38749080896377563,
+    "ckpt_sha256": "73dbc32dfc988124a9b81df24abd97c526f927ac2b094996411d174e89d32f06",
+    "checkpoint_present": true
+  },
+  "tie": false,
+  "tied": [
+    0.5
+  ],
+  "boundary": false,
+  "boundary_kind": null,
+  "winner_is": "E2 seed 42",
+  "excluded_am7a": [],
+  "n_finished": 5,
+  "n_diverged": 0,
+  "inputs": [
+    {
+      "run_dir": "/runs/e2_s42_lambda0.25_80k_a1",
+      "checkpoint": "e2_student_best_iter64000.pt",
+      "best_json_sha256": "1a2922ee44b50056953baf3fdebffd807d32947564363f75f41f8220a5c66331",
+      "run_meta_sha256": "d01756428fbed9218f6c737f4d34773afce0cf2b0d1bd199306ffabdf1cf1a9b"
+    },
+    {
+      "run_dir": "/runs/e2_s42_lambda0.5_80k_a1",
+      "checkpoint": "e2_student_best_iter64000.pt",
+      "best_json_sha256": "860f2a8ed23faf25bc9ea03ac78a26588713cbb7a9b13ab0056a3854a1c629bb",
+      "run_meta_sha256": "d3ec29ccaebf85d4d5c753abaaa72178fbf7fa2e84a7ee33a3a8e6667f08fac0"
+    },
+    {
+      "run_dir": "/runs/e2_s42_lambda1_80k_a1",
+      "checkpoint": "e2_student_best_iter64000.pt",
+      "best_json_sha256": "e4225403c07c14326f72e67fa5cef67e6c89ee5bf5ca27446cf0558f00a27989",
+      "run_meta_sha256": "7a82643a6c1493a583bb2bb604d25c66851c83187000768c7ec17f8d78a9005c"
+    },
+    {
+      "run_dir": "/runs/e2_s42_lambda2_80k_a1",
+      "checkpoint": "e2_student_best_iter48000.pt",
+      "best_json_sha256": "e1f37bde7e13070d810f6e745bee1878681cbe135b04eba202912121bc117830",
+      "run_meta_sha256": "67046d7819fd0e4b37dfcf6e2a0b933eb3943b4136c8c9fd6eb02181a2c95072"
+    },
+    {
+      "run_dir": "/runs/e2_s42_lambda4_80k_a1",
+      "checkpoint": "e2_student_best_iter68000.pt",
+      "best_json_sha256": "d77f774a546f82e66cf2251e9d82d544ad8deb46e8d65e2680484f3aac314534",
+      "run_meta_sha256": "12e9035d53ecc00f7bfe36128cc4433c512fbaea8d0aaa6d3ae8aeb98d9fc1c1"
+    }
+  ],
+  "generated_utc": "2026-10-12T02:29:55Z",
+  "script": {
+    "path": "scripts/select_lambda.py",
+    "sha256": "4c1fe762201e88b7512ac59418f67e23fc6896bb81236620897862ca5df9ad5d"
+  },
+  "schedule": {
+    "in_force": "T",
+    "file": "configs/kd_schedule.json",
+    "file_sha256": "cfc9c56ce80b1bd9204878148c9fc697455e37158e0f39119910e48a577cae1b",
+    "decision_log_entry": "DL-70",
+    "calendar_date": "2026-10-19",
+    "decision_date": "2026-10-19",
+    "cutoff_utc": 1792425600,
+    "alpha_cutoff_basis": null
+  },
+  "launch_log": {
+    "path": "reports/kd_launch_log.jsonl",
+    "sha256": "1b81a0ab1d8b522b6957ae0309e7e48cf7fec3c96834b044645d9dfcab21ef3d",
+    "lines": 10
+  },
+  "decision_record": null,
+  "decision_record_corrects": null,
+  "n_cut": 0,
+  "cut_am19": [],
+  "stopped_early_unexplained": [],
+  "edge_removed": [],
+  "directories": {
+    "0.25": [
+      "e2_s42_lambda0.25_80k_a1"
+    ],
+    "0.5": [
+      "e2_s42_lambda0.5_80k_a1"
+    ],
+    "1": [
+      "e2_s42_lambda1_80k_a1"
+    ],
+    "2": [
+      "e2_s42_lambda2_80k_a1"
+    ],
+    "4": [
+      "e2_s42_lambda4_80k_a1"
+    ]
+  },
+  "code": {
+    "head": "2e3c88a8e1b1bb30ce7d765fd3d59a36b89006eb",
+    "pin": "8487551ca67bd50ffbe911d1f3e93244841cbc9f",
+    "sweep_select_sha256": "8a32479cc1426a1cf0676d163bc503af1982683c6fcb77ebfec4bf5908f2e3cf"
+  },
+  "inputs_last_timestamp_utc": 1791740444.0714128,
+  "shortfall_disclosure": null,
+  "clock": {
+    "e2_s42_lambda1_80k_a1": {
+      "clock_backsteps": 0,
+      "max_backstep_seconds": 0.0
+    },
+    "e2_s42_lambda0.5_80k_a1": {
+      "clock_backsteps": 0,
+      "max_backstep_seconds": 0.0
+    },
+    "e2_s42_lambda2_80k_a1": {
+      "clock_backsteps": 0,
+      "max_backstep_seconds": 0.0
+    },
+    "e2_s42_lambda0.25_80k_a1": {
+      "clock_backsteps": 0,
+      "max_backstep_seconds": 0.0
+    },
+    "e2_s42_lambda4_80k_a1": {
+      "clock_backsteps": 0,
+      "max_backstep_seconds": 0.0
+    }
+  },
+  "on_course": {
+    "0.25": null,
+    "0.5": null,
+    "1": null,
+    "2": null,
+    "4": null
+  },
+  "on_course_repeat": {}
+}
