@@ -1293,7 +1293,7 @@ Code:
   implemented first);
 - L-KD-WRAP (items 3(b) and 3(c) and item 6(a)'s correction: per-switch target averaging in the KD
   trainer, default off, and under the correction also in the E6-KD step (L-AM3) and the SegNeXt-L
-  arm's KD runs; arm stage registration and launch profiles);
+  arm's KD runs; arm stage registration and launch profiles); [Note 2026-10-12 — split as DL-104 records (erratum E-61): the generic target seam, the arm stage registration and the launch profiles are carried by L-TEACHER-ARMS; L-KD-WRAP carries W's flip-averaged targets and the E3-flip/E7-flip registration file; item 3(c) and item 6(a)'s correction are not built (DL-96, DL-84).]
 - the TEST-manifest lane (item 8(c); arm scoring and reporting at TEST);
 - L-AM17-L for SegNeXt-L.
 
