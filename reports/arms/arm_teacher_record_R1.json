@@ -1,0 +1,191 @@
+{
+  "format": "arm_teacher_record/1",
+  "arm": "R1",
+  "status": "complete",
+  "first_nonfinite": null,
+  "work_dir": {
+    "path": "/arm_runs/teacher-r1_s42_40k_a1",
+    "name": "teacher-r1_s42_40k_a1",
+    "attempt": 1,
+    "launched_path": "/workspace/arm_runs/teacher-r1_s42_40k_a1"
+  },
+  "dl": {
+    "config": "DL-111",
+    "table": null
+  },
+  "train_config": {
+    "path_rel": "configs/teacher/arms/r1_bema.py",
+    "sha256": "9ccdd2b97ae73459562b1813f14461740a986c0456524ce1dc773892fad8fb03",
+    "git_blob": "46e7628f05857f7227546f400fdff86360c10c7a"
+  },
+  "eval_config": {
+    "path_rel": "configs/teacher/segnext_mscan-b_1xb16-adamw-40k_plantseg116-512x512.py",
+    "sha256": "1b94aa32a7d22be647d8e60a42daa1dd8dd756158b586feec6465385e299ae4a",
+    "git_blob": "3c6a7b28ebad5fce6187c307f87fd7fc91f81933"
+  },
+  "registered_difference": {
+    "entries": [
+      "custom_hooks",
+      "model.backbone.drop_path_rate"
+    ],
+    "sha256": "fde18fefc655102fdf2e154978aa20df7c8a5a077d5609ec1aa4a0aa170bce0d",
+    "reg_sha256": "fde18fefc655102fdf2e154978aa20df7c8a5a077d5609ec1aa4a0aa170bce0d",
+    "json": [
+      {
+        "arm": [
+          {
+            "type": "TeacherInitCompatibilityHook"
+          },
+          {
+            "seed": 42,
+            "type": "TeacherNMFEvalStreamHook"
+          },
+          {
+            "disease_key": "mIoU_disease_full",
+            "key": "mIoU_full",
+            "type": "TeacherSelectionRecordHook"
+          },
+          {
+            "begin_iter": 0,
+            "ema_type": "ExponentialMovingAverage",
+            "interval": 1,
+            "momentum": 0.0002,
+            "strict_load": false,
+            "type": "EMAHook",
+            "update_buffers": true
+          }
+        ],
+        "path": "custom_hooks",
+        "record": [
+          {
+            "type": "TeacherInitCompatibilityHook"
+          },
+          {
+            "seed": 42,
+            "type": "TeacherNMFEvalStreamHook"
+          },
+          {
+            "disease_key": "mIoU_disease_full",
+            "key": "mIoU_full",
+            "type": "TeacherSelectionRecordHook"
+          }
+        ]
+      },
+      {
+        "arm": 0.2,
+        "path": "model.backbone.drop_path_rate",
+        "record": 0.1
+      }
+    ]
+  },
+  "launch": {
+    "teacher_arm_launch_provenance_sha256": "29b85e9d039578a362a585381964d07edea5b252f94774ffc7ac384762fc2c45",
+    "teacher_launch_provenance_sha256": "75490803d527e6f0604b132035c816a45875625880d708558902926cacd61abc",
+    "launcher_sha256s": {
+      "launcher": "0b3eb069c6a8ac1cb746015ee940cfeb11eb2f94f23aa947c345325b01bd716b",
+      "frozen_launcher": "47537c016bde8a0119c625a04b31fbf4227924ad7cb201062bffbad69e8419a1",
+      "teacher_arm_components": "b26438481681539e012eeb2f94e63dd1b719e0e7a3c406b0629cf4e01e03fc81"
+    },
+    "checkout_git_head": "0b219e949b56c121bf3c048671bef19b00de5e12",
+    "records_commit": "96fa4050772a2a7c5e0399a4c6c602243c433808",
+    "image_digest_declared": "sha256:cb413304e2445e5c8ac3786f7a370f2ed05a07d11843b11687bb9eb23dc32c2b",
+    "r2_table_sha256": null
+  },
+  "progress": {
+    "last_logged_iteration": 40000,
+    "val_rows": 10,
+    "selection_records": 10
+  },
+  "logs": {
+    "scalars_rel": "20261012_120844/vis_data/scalars.json",
+    "scalars_sha256": "93f99f29e9dee34de295e68e1f88923d85bedfe699e8fea5f41732c606c6872a"
+  },
+  "selection": {
+    "teacher_selection_json_sha256": "d958f6b51d1260ac9be164c3b27639df41b20b19496063a0b7ee3c28bc751ffb",
+    "status": "final",
+    "selected_iteration": 20000,
+    "selected_mIoU_full": "0.38849183917045593",
+    "checkpoint": {
+      "name": "iter_20000.pth",
+      "sha256": "1535c2895ed68faad70e581783c51ae32d8bbc99c387763b4bac562853bd7ea3",
+      "bytes": 446306945
+    },
+    "recorded_checkpoint_sha256": "1535c2895ed68faad70e581783c51ae32d8bbc99c387763b4bac562853bd7ea3"
+  },
+  "interval_checkpoints": [
+    {
+      "iteration": 4000,
+      "name": "iter_4000.pth",
+      "sha256": "3c648a50f806c920a379e5df49978fb5dfb49f46bf148c44cfc344c8dc3eb600",
+      "bytes": 444127809
+    },
+    {
+      "iteration": 8000,
+      "name": "iter_8000.pth",
+      "sha256": "db0360589f335cdfb00ba33d2113e1840f3000af9fdb3bd22dc8137e14353a7f",
+      "bytes": 444671873
+    },
+    {
+      "iteration": 12000,
+      "name": "iter_12000.pth",
+      "sha256": "1c14f55abe1d0167c239ba2b29a6d8fc677de5645827541a43e5257c2dcd8085",
+      "bytes": 445216833
+    },
+    {
+      "iteration": 16000,
+      "name": "iter_16000.pth",
+      "sha256": "1a298ae9626183cca6ebc2ae2f3b9593c7fe7d7363df60572320fb822a755471",
+      "bytes": 445761601
+    },
+    {
+      "iteration": 20000,
+      "name": "iter_20000.pth",
+      "sha256": "1535c2895ed68faad70e581783c51ae32d8bbc99c387763b4bac562853bd7ea3",
+      "bytes": 446306945
+    },
+    {
+      "iteration": 24000,
+      "name": "iter_24000.pth",
+      "sha256": "d0ce20e55b3bd96ffd6ae13d190cc3c78ee6eea9e4c1758bb5b179d66553f35b",
+      "bytes": 446829313
+    },
+    {
+      "iteration": 28000,
+      "name": "iter_28000.pth",
+      "sha256": "fbbd2df22bacc80958808e4a011356cd677bbf2f83f01b2ef3029b8ff7c7c587",
+      "bytes": 447382657
+    },
+    {
+      "iteration": 32000,
+      "name": "iter_32000.pth",
+      "sha256": "0ee5078e379b670d4ac6a25d3aec24c796f66ec2da58d83f18aadd04f53b1a08",
+      "bytes": 447935489
+    },
+    {
+      "iteration": 36000,
+      "name": "iter_36000.pth",
+      "sha256": "a1435fb05a7c3b78c0fa57bab08973f3e255632be713836ffeffbb0bcaec61c6",
+      "bytes": 448488321
+    },
+    {
+      "iteration": 40000,
+      "name": "iter_40000.pth",
+      "sha256": "95146b2e3b69245cfa585a59776db078b1461f59f65268113f234878ed92f2ac",
+      "bytes": 449041153
+    }
+  ],
+  "ema_checks": {
+    "state_dict_entries": 854,
+    "ema_state_dict_present": true,
+    "steps": 20000,
+    "steps_equal_iteration": true,
+    "state_dict_differs_from_raw": true,
+    "raw_entries": 854
+  },
+  "writer": {
+    "script_rel": "scripts/arm_teacher_record.py",
+    "script_sha256": "344297cc442c2766da7eb404653a02413e2169793eb7d26dae174aa255ee4e81",
+    "commit": "96fa4050772a2a7c5e0399a4c6c602243c433808"
+  },
+  "generated_utc": "2026-10-13T06:04:40Z"
+}
