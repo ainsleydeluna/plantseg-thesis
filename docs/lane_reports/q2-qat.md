@@ -1208,9 +1208,9 @@ its rule:
   repeat is rejected too is rejected for good.
 - **Runs of record** (items 1(f) and 2(a)). Item 1(f)'s hold applies to them too: no record conversion before the
   AM-8a ruling. A selection with excluded epochs is a REPORT.
-- **Block A's GPU smoke count** `<n>` is 209: the final count of scripts/smoke_qat_runner.py, at §16's last commit.
+- **Block A's GPU smoke count** `<n>` is 214: the final count of scripts/smoke_qat_runner.py, at §17's last commit.
   `--device cuda` runs every section, as the CPU run does, and no check depends on the device
-  (REPOSITORY-PROVEN: scripts/smoke_qat_runner.py `main`). The CUDA count is therefore the CPU count, 209 (MEASURED on
+  (REPOSITORY-PROVEN: scripts/smoke_qat_runner.py `main`). The CUDA count is therefore the CPU count, 214 (MEASURED on
   CPU; the CUDA run is deferred).
 
 §12's notes on the blocks still hold:
@@ -1288,7 +1288,7 @@ tail -n 1 <EVID>/smoke_qat_runner_cuda.log
 ```
 Expected:
 ```
-RESULT: PASS (209/209)
+RESULT: PASS (214/214)
 ```
 Run 1 (clip 1.0):
 ```bash
@@ -1585,11 +1585,16 @@ Expected, for a run whose state stayed finite:
 ```
 RESULT: CONVERTED 15/15 (record)
 ```
-For a run with a checkpoint that fails item 1(a), a REPORT instead: one that completed non-finite, or one whose
-rejection check printed a deviation clause. `<k>` epochs converted, and the epochs whose checkpoints fail are
-excluded (item 2(a); `<k>` can be 0):
+For a run that completed non-finite, a REPORT instead. `<k>` epochs converted, and the epochs whose checkpoints fail
+item 1(a) are excluded (item 2(a); `<k>` can be 0):
 ```
 RESULT: CONVERTED <k>/15 (record; not convertible: <eNN … e15>)
+```
+For a run whose rejection check printed a deviation clause, conversion refuses the first checkpoint whose state flag
+disagrees with its epoch_end row or with item 1(a) (§17, G2), and exits 2. For a rejected pilot run this is item
+2(c)'s REPORT above; for a run of record it is a STOP:
+```
+RESULT: REFUSED -- e<NN> worker exited 2 (failed): RESULT: REFUSED [checkpoint_state_flag] -- <its checkpoint>: <what differs>: a deviation of the trainer, which fails the conversion (AM-21 item 2(c)). The eval directory <its eval directory> is spent; a re-run uses a new one.
 ```
 Check, then score:
 ```powershell
@@ -1647,7 +1652,7 @@ RESULT: SCORED 15/15 (record)
 RESULT: SELECTED epoch <NN> (E5, seed 42, clip 5.0)
 ```
 A rejected run has no select line. One with a checkpoint that fails item 1(a) prints the REPORT forms of the first
-two.
+two; one whose rejection check printed a deviation clause prints the refusal above instead, and its pass ends.
 
 Clip selection. `$SELS` lists the qat_selection.json of each run that printed SELECTED. Drop the path of a run that did
 not; with neither, `$SELS = @()`.
@@ -2723,3 +2728,650 @@ Each pause was resumed, not treated as a STOP, and the read-only checks were re-
     > d5_state_finite_false_alone_rejected, d5_nonfinite_since_step_alone_rejected, d5_nonfinite_row_only_rejected and
     > d5_both_rejected_no_winner_exit_2_a/b, and those of 16.4's CHECK ITEMS 11 and 12. Mutations: M23, X8, M33, M34
     > and those of CHECK ITEMS 11 and 12, each killed (16.6; M34 and the no_winner row: 16.4, RULING 5).
+
+## 17. Q2-G (the state flag in the epoch checkpoint)
+
+Session Q2-G was a new cloud session on `lane/q2-qat`, from `c19c0c2`. It ran under the orchestrator's GO of Tue 13
+Oct 2026 (23:47 Manila) and the GO's addendum of Wed 14 Oct (12:44: master is `a1a4512`, the α selection). The GO
+approves STEPS 1–9 under its SCOPE: G1 (N4, §16.11 item 2), G2, G3 (R3, §16.11 item 3) and G4 (this report). The
+labels are those of the rest of this report: MEASURED, DOCUMENTED, REPOSITORY-PROVEN, INFERRED.
+
+Every file:line names the commit it is read at, `935bbe2` unless said otherwise. Short names used in this section:
+- `qat` is src/quant/qat.py, `art` is src/quant/qat_artifacts.py, `sel` is src/quant/qat_select.py;
+- `eval` is scripts/qat_epoch_eval.py, `sqe` is scripts/select_qat_epoch.py, `sclip` is scripts/select_clip.py;
+- `runner` is scripts/smoke_qat_runner.py, `sart` is scripts/smoke_qat_artifacts.py, `ssel` is
+  scripts/smoke_qat_selection.py, `mut` is scripts/smoke_qat_mutations.py;
+- `§15 n` is line n of this report as this commit leaves it.
+
+### 17.1 Base, branch, commits and the venv
+
+**STEP 1 (MEASURED).** `git fetch origin master`, then `git merge-base --is-ancestor
+2b6000e8fe94b4be16b4d3b75afdf5fa3a53b1a3 origin/master && echo BASE-OK` printed `BASE-OK`. `git rev-parse origin/master`
+gave `a1a4512c56f0f92974db4b91100119b2215c37ac`, the addendum's commit.
+
+**STEP 2 (MEASURED).**
+- Pre-checks: the scoped `git status --porcelain=v1` printed nothing; `git ls-remote --heads origin lane/q2-qat` and
+  `git rev-parse FETCH_HEAD` both gave `c19c0c2300e9027efdbc13248273dec10ed3bc11`.
+- Recorded `git symbolic-ref HEAD`: `refs/heads/claude/peaceful-euler-joz7o4` (the session's starting branch, at
+  `a1a4512`; the clone was shallow).
+- The chain (`git branch lane/q2-qat c19c0c2… && git symbolic-ref HEAD refs/heads/lane/q2-qat && git checkout
+  --no-overlay HEAD -- . ':(exclude)docs/reference/reference.pdf'`) exited 0.
+- Post-checks: HEAD `c19c0c2300e9027efdbc13248273dec10ed3bc11`, `refs/heads/lane/q2-qat`; the scoped status, `git diff
+  --stat c19c0c2…` and `git diff --cached --stat c19c0c2…` printed nothing.
+
+**STEP 3, the venv (MEASURED).** `$SCR/q2gvenv`, built with `/usr/bin/python3.11 -m venv` (Python 3.11.17, as Q2-F's).
+Against `requirements.lock`:
+- **Pins installed from PyPI, all matching the lock:** numpy 1.26.4, scipy 1.11.4, pillow 12.3.0, statsmodels 0.14.6,
+  patsy 1.0.2, pandas 3.0.3, python-dateutil 2.9.0.post0, six 1.17.0, tzdata 2026.2, packaging 24.2; torch's and
+  torchvision's dependencies filelock 3.14.0, typing_extensions 4.15.0, sympy 1.14.0, mpmath 1.3.0, networkx 3.6.1,
+  Jinja2 3.1.6, MarkupSafe 3.0.3, fsspec 2026.4.0, requests 2.28.2, certifi 2026.6.17, charset-normalizer 3.4.7,
+  idna 3.18, urllib3 1.26.20.
+- **Different build:** torch 2.1.0+cpu and torchvision 0.16.0+cpu, installed `--no-deps` from
+  https://download.pytorch.org/whl/cpu; the lock has +cu121.
+- **Not in the lock:** the venv's own ensurepip pip 24.0 and setuptools 79.0.1.
+- `pip check`: no broken requirements. Quantized engines: qnnpack, none, onednn, x86, fbgemm; 4 CPU threads.
+- The wheels of numpy, scipy, pandas, statsmodels and torch ship their own test-named package folders, installed
+  under `$SCR/q2gvenv` outside the repository (INFERRED from the wheels' layout; not listed).
+
+**The commits** (STEP 5, STEP 6 and STEP 8). Each was made with `git commit --only -F <message file> -- <paths>`, after
+the scoped `git diff --stat` and `git status -sb`. No commit has a trailer. MEASURED for the four code commits:
+`git log --format=%B c19c0c2..935bbe2` holds no `Co-Authored-By`, `Claude-Session` or `Signed-off-by` line. This
+commit's message has none either.
+
+| SHA | Message | Files |
+|---|---|---|
+| `d1ad396735a51163f9ab0cbb60b5122ed126a129` | Write the state flag into each epoch checkpoint, read before the write (Q2-G, G1, AM-21 items 1(b), 1(c)) | src/quant/qat.py, scripts/smoke_qat_runner.py, scripts/smoke_qat_mutations.py |
+| `6baccb22420b8de0ae4a0b5165d0441ee00e77ab` | Refuse a checkpoint whose state flag disagrees with its epoch_end row or item 1(a) (Q2-G, G2, AM-21 item 2(a)) | src/quant/qat_artifacts.py, scripts/smoke_qat_artifacts.py, scripts/smoke_qat_mutations.py |
+| `73692eaf08cb5240f2b24697895ee808e92c9249` | State AM-21 items 2(a) and 3(a) in the QAT selection rules' texts (Q2-G, G3) | configs/qat_selection_rules.json |
+| `935bbe2f801dd79b2f2e5addbe02eb4d5e006e87` | Give each state-flag case its own verdict; add the timing predicate and agreeing-flag cases (Q2-G, DL-24 K-1-K-3) | scripts/smoke_qat_artifacts.py, scripts/smoke_qat_mutations.py |
+| this commit | Report Q2-G in the lane report's section 17; update §15's quoted lines (Q2-G, STEP 8) | docs/lane_reports/q2-qat.md (§15, §17) |
+
+`935bbe2` is the last code commit: every run of 17.2 and 17.4 is on it. The scoped diff stat (MEASURED):
+```
+git diff --stat c19c0c2300e9027efdbc13248273dec10ed3bc11 935bbe2f801dd79b2f2e5addbe02eb4d5e006e87 -- . ':(exclude)docs/reference/reference.pdf' ':(exclude)docs/reference' ':(exclude,icase)*test*'
+ configs/qat_selection_rules.json |  6 +--
+ scripts/smoke_qat_artifacts.py   | 91 +++++++++++++++++++++++++++++++++++++---
+ scripts/smoke_qat_mutations.py   | 65 +++++++++++++++++++++++++++-
+ scripts/smoke_qat_runner.py      | 49 +++++++++++++++++++++-
+ src/quant/qat.py                 | 37 ++++++++++------
+ src/quant/qat_artifacts.py       | 53 ++++++++++++++++++++---
+ 6 files changed, 272 insertions(+), 29 deletions(-)
+```
+- This commit adds only docs/lane_reports/q2-qat.md (§15 and §17).
+- Every changed file is on the GO's list. `scripts/qat_epoch_eval.py`, `scripts/synthetic_qat_fixtures.py` and
+  `scripts/smoke_qat_selection.py` were not needed and are unchanged.
+- No file on the GO's never-edit list changed: the 9 frozen files (smoke_frozen_blobs, 17.2), configs/quant.py,
+  configs/calibration/, src/quant/qat_select.py, docs/ outside this report, AGENTS.md, CLAUDE.md, .claude/ and
+  requirements*.
+
+### 17.2 RESULT lines: the STEP 4 baseline and the final run
+
+Both runs used the venv's python, with `PLANTSEG_DATA_ROOT` unset. Each smoke ran alone and in order, with nothing
+else running, and every one exited 0 (MEASURED):
+- **STEP 4:** at `c19c0c2`, 04:54:54Z–05:43:44Z, with `smoke_qat_artifacts --sections records`, as the GO says;
+- **STEP 7:** at `935bbe2`, 07:36:59Z–09:47:01Z, with `smoke_qat_artifacts` whole (its default sections).
+
+| Smoke | STEP 4 (`c19c0c2`) | Time | Final (`935bbe2`) | Time |
+|---|---|---|---|---|
+| smoke_frozen_blobs | FROZEN BLOBS OK (10/10) | 0 s | FROZEN BLOBS OK (10/10) | 0 s |
+| smoke_run_ptq | PASS (69/69) | 693 s | PASS (69/69) | 731 s |
+| smoke_calibration_lists | PASS (42/42) | 4 s | PASS (42/42) | 4 s |
+| smoke_qnnpack_ops | PASS (8/8) synthetic artifact | 321 s | PASS (8/8) synthetic artifact | 345 s |
+| smoke_eval_int8 | PASS (32/32) | 11 s | PASS (32/32) | 11 s |
+| smoke_efficiency | PASS (82/82) | 7 s | PASS (82/82) | 7 s |
+| smoke_quant_e4_e5 | PASS (58/58) | 7 s | PASS (58/58) | 7 s |
+| smoke_quant_e6_e7 | PASS (37/37) | 6 s | PASS (37/37) | 7 s |
+| smoke_quant_runners | PASS (77/77) | 5 s | PASS (77/77) | 5 s |
+| smoke_realrun_decisions | PASS (76/76) | 3 s | PASS (76/76) | 2 s |
+| smoke_qat_runner | PASS (209/209) | 210 s | **PASS (214/214)** | 236 s |
+| smoke_qat_seeding | PASS (9/9) | 53 s | PASS (9/9) | 54 s |
+| smoke_qat_selection | PASS (174/174) | 1,546 s | PASS (174/174) | 1,539 s |
+| smoke_qat_artifacts | `--sections records`: PASS (30/30) | 60 s | **whole: PASS (94/94)** | 4,850 s |
+| smoke_quant_x86_efficiency (whole) | PASS (103/103) | 4 s | PASS (103/103) | 4 s |
+
+**STEP 4 reproduced the GO's expected list** (§16.5's counts) exactly, so no difference needed a cause.
+
+**Counts that changed.** No existing check changed or was removed (REPOSITORY-PROVEN). In both smokes the diff
+`c19c0c2..935bbe2` only adds checks and helpers, and extends their docstrings, an import, `rewrite_payload`'s
+signature and `raise_case`'s record.
+- **smoke_qat_runner 209 → 214**, from G1's five checks (17.3):
+  - `d1_checkpoint_stores_its_epoch_end_state_flag`;
+  - `d1_checkpoint_state_flag_nonfinite_step10` and `d1_checkpoint_state_flag_nonfinite_step27`;
+  - `d1_checkpoint_state_finite_is_its_own_reading`;
+  - `d1_checkpoint_carries_the_epoch_end_first_finding`.
+- **smoke_qat_artifacts, records section, 30 → 42; whole, 82 (§16.5) → 94.** These are G2's twelve
+  checks (17.3): ten from `6baccb2`, and `d4_convert_epoch_timing_nonfinite_state_stored_finite_refused` and
+  `d4_convert_epoch_agreeing_nonfinite_state_not_convertible` from `935bbe2`.
+- **Every other count is unchanged.** That includes `smoke_frozen_blobs` (FROZEN BLOBS OK (10/10): none of the 9
+  frozen files changed) and `smoke_quant_x86_efficiency` whole (PASS (103/103): its `no_selection_in_trainer` and
+  sidecar-schema checks read the changed `qat`).
+- `d3_rules_agree_with_config` printed the rules' sha256 prefix `216f89d7bc84` at STEP 4 and `76addc57d036` in the final
+  run (17.6).
+
+**No run created a path whose name contains "test".**
+- The cases G1 and G2 add create run clones and eval directories named after the cases
+  (`run_records_state_flag`, `ev_<check name>`, `ev_state_flag_agrees`, `ev_state_flag_convert`: `sart:443`,
+  `sart:473`, `sart:485`, `sart:493`). None contains "test" (REPOSITORY-PROVEN).
+- Every other path comes from the fixtures as §16.9 describes them. `make_tree` writes TRAIN and VAL only, and the
+  name-check cases use paths that are never created. This is INFERRED from that design, as in §16.9: the temporary
+  trees were not listed.
+
+### 17.3 G1, G2 and G3: where each is implemented, its cases and its mutations
+
+File:line at `935bbe2` (REPOSITORY-PROVEN). `qat` is unchanged since `d1ad396`, and `art` since `6baccb2`. Every
+mutation named here is killed by the named checks in the harness evidence at `935bbe2` (17.4).
+
+**G1 (N4; AM-21 items 1(b) and 1(c)): the state flag in eNN.pt**, commit `d1ad396`.
+- **The epoch end** (`qat:1019–1029`). The trainer takes the state the checkpoint will hold (`qat:1021–1022`), reads
+  item 1(a)'s predicate on it (`qat:1023`), and records a first finding with `_mark_nonfinite` (`qat:1024–1025`). Only
+  then does it call `save_epoch_checkpoint`, with `state_finite=bool(finite)` and
+  `nonfinite_since_step=nonfinite_since` (`qat:1026–1029`). At `c19c0c2` the predicate was read after the write.
+- **eNN.pt.** `save_epoch_checkpoint` (`qat:712–741`) takes two keyword arguments, `state_finite` and
+  `nonfinite_since_step` (`qat:714–715`). It stores three more keys (`qat:734–735`): `state_finite` (that reading),
+  `state_nonfinite` (`nonfinite_since_step is not None`, after it) and `nonfinite_since_step`.
+  - Both arguments default to `None`. The one other caller, `scripts/smoke_quant_x86_efficiency.py:417–419` (a file
+    outside this GO), checks the sidecar schema without a reading. Such a checkpoint stores `state_finite` None, which
+    G2 refuses at conversion. Its docstring says so (`qat:718–721`).
+- **The epoch_end row** (`qat:1070–1079`) is unchanged: the same keys, its three values from the same variables
+  (`qat:1077–1078`). Nothing between the write and the row changes them: the VAL handler reads the predicate on the
+  same state and never marks (`qat:1040–1050`).
+- **Unchanged otherwise:** the predicate, the evaluation points (`qat:979`, `qat:1004`, `qat:1023`, `qat:1042`), every
+  telemetry row and the RESULT lines. One order changes, if `save_epoch_checkpoint` itself raises: the
+  `state_nonfinite` row of a first finding at the epoch end now comes before the `run_stop` or `run_abort` row.
+- **The module docstring's order of events:** `qat:21–28`.
+- **Cases** (`runner`). `checkpoint_flags` (`runner:171–178`) reads every eNN.pt back. `typed_flag` (`runner:161–163`)
+  compares its three values, type and value, with the expected flag and with its epoch_end row.
+  - `d1_checkpoint_stores_its_epoch_end_state_flag` (`runner:295`): the clean run, all 15 checkpoints
+    `(True, False, None)`.
+  - `d1_checkpoint_state_flag_nonfinite_step10` and `…_step27` (`runner:407`): `(False, True, k)` from the first bad
+    epoch on, `(True, False, None)` before it.
+  - `d1_checkpoint_carries_the_epoch_end_first_finding` (`runner:560`): the run in which only the epoch end finds the
+    non-finite state (a never-observed observer made NaN after step 9). Its e05.pt already stores `(False, True, 10)`.
+  - `d1_checkpoint_state_finite_is_its_own_reading` (`runner:522`): the repaired run. e07.pt, written before the VAL
+    pass that aborts, stores `(True, True, 10)`, the epoch end's own reading of the repaired state beside the run's
+    first finding. e06.pt stores `(False, True, 10)`.
+  - `raise_case` keeps each checkpoint's flag before it removes its run directory (`runner:496`).
+- **Mutations** (`mut:1241–1258`):
+
+| Mutation | Edit | Killed by |
+|---|---|---|
+| M124 | the epoch end's first finding recorded after eNN.pt is written | `d1_checkpoint_carries_the_epoch_end_first_finding` |
+| M125 | eNN.pt written without the epoch end's reading (`state_finite` None) | `d1_checkpoint_stores_its_epoch_end_state_flag` |
+| M126 | eNN.pt written without the run's first finding | `d1_checkpoint_state_flag_nonfinite_step10`, `…_step27`, `d1_checkpoint_carries_the_epoch_end_first_finding` |
+| M127 | eNN.pt's `state_finite` is the sticky flag, not the epoch end's reading | `d1_checkpoint_state_finite_is_its_own_reading` |
+| M128 | eNN.pt carries no state flag | `d1_checkpoint_stores_its_epoch_end_state_flag` |
+| M129 | eNN.pt's `state_nonfinite` always false | `d1_checkpoint_state_flag_nonfinite_step10`, `…_step27` |
+
+- The older mutations of the reordered block still apply exactly once and are still killed: M16, X6 and M46.
+
+**G2 (AM-21 item 2(a), "the checkpoint decides"; items 1(c) and 2(c)): the checkpoint agrees with its record**,
+commit `6baccb2`; its cases were completed in `935bbe2` (17.7).
+- **Where.** `convert_epoch` (`art:350`) is the one place that converts a checkpoint, for purposes record and timing
+  alike. It applies two checks.
+  - **Next to the identity check** (`art:386–388`): `state_flag_row_error` (`art:180–190`), refused at
+    `art:389–392`. The three stored keys (`STATE_FLAG_KEYS`, `art:52`) must be present in the checkpoint and in its
+    epoch_end row, and equal in type and value (`_same`, `art:175–177`: the bool True is not the int 1, nor the int
+    10 the float 10.0).
+  - **After item 1(a) is re-applied** (`art:403`): `state_flag_predicate_error` (`art:193–197`), refused at
+    `art:404–406`. The stored `state_finite` must equal that reading.
+- **The refusal.** A missing key or a mismatch is refused with the one code `checkpoint_state_flag`, before anything is
+  written. Its message ends with `STATE_FLAG_DEVIATION` (`art:53`): "a deviation of the trainer, which fails the
+  conversion (AM-21 item 2(c))".
+- **A checkpoint whose flag agrees** is handled as before: a finite one converts, and a non-finite one is recorded
+  "not convertible" (`art:407–413`) and excluded.
+- **The module docstring:** `art:3–9`.
+- **How the refusal surfaces.** `eval` is unchanged.
+  - Its convert-epoch worker prints `RESULT: REFUSED [checkpoint_state_flag] -- …` and exits 2 (`eval:614–616`).
+  - `convert` then writes `convert_STOP.json`, which spends the eval directory. It prints `RESULT: REFUSED -- eNN
+    worker exited 2 (failed): RESULT: REFUSED [checkpoint_state_flag] -- …` and exits 2 (`eval:198–209`).
+  - After that, `score` and `select_qat_epoch` refuse `[stop_present]` (`sel:291–294`), and select_clip reports a
+    rejected run's conversion as stopped (`sel:192–194`).
+  - That is AM-21 item 2(c), and item 3(d) for a rejected pilot run.
+- **Cases** (`sart:437–500`, the records section). The section's run is cloned once, with one deviation per epoch.
+  Each case's convert-epoch runs in the smoke's process until a mutation has let one case convert there (and trace
+  the student). From then on, every case runs in a fresh process (`convert_epoch_of`, `sart:467–470`), so each
+  verdict is the case's own.
+
+| Check | Epoch: what the clone holds | Expected |
+|---|---|---|
+| `d4_convert_epoch_state_nonfinite_unlike_its_row_refused` | e01: eNN.pt `state_nonfinite` true, its row false | `[checkpoint_state_flag]`, nothing written |
+| `d4_convert_epoch_without_state_flag_refused` | e02: eNN.pt without the three keys | the same |
+| `d4_convert_epoch_row_without_state_flag_refused` | e03: its row without `state_nonfinite` | the same |
+| `d4_convert_epoch_state_finite_unlike_its_row_refused` | e04: its row `state_finite` false; eNN.pt true, as item 1(a) reads its finite state | the same |
+| `d4_convert_epoch_since_step_unlike_its_row_refused` | e05: eNN.pt `nonfinite_since_step` 7, its row null | the same |
+| `d4_convert_epoch_nonfinite_state_stored_finite_refused` | e06: a NaN parameter; eNN.pt and its row as the trainer wrote them, finite | the same |
+| `d4_convert_epoch_state_flag_of_another_type_refused` | e07: a NaN parameter, flagged in both; eNN.pt's `nonfinite_since_step` the float 10.0, its row's the int 10 | the same |
+| `d4_convert_epoch_timing_state_flag_refused` | e01, `--purpose timing` | the same |
+| `d4_convert_epoch_timing_nonfinite_state_stored_finite_refused` | e06, `--purpose timing` | the same |
+| `d4_convert_epoch_agreeing_nonfinite_state_not_convertible` | e09: a NaN parameter, flagged in both, agreeing | `RESULT: QAT EPOCH 09 NOT CONVERTIBLE` and its not-convertible record |
+| `d4_convert_state_flag_refusal_spends_the_eval_dir` | `convert --purpose record` on the clone | `RESULT: REFUSED -- e01 worker exited 2 (failed): RESULT: REFUSED [checkpoint_state_flag] …`, `convert_STOP.json`, no `converted/` |
+| `d4_convert_epoch_finite_state_stored_nonfinite_refused` | e08: a finite state flagged non-finite in both | `[checkpoint_state_flag]`, nothing written |
+
+- **Mutations** (`mut:1261–1287`):
+
+| Mutation | Edit | Killed by |
+|---|---|---|
+| M130 | the stored flag not compared with its epoch_end row | `d4_convert_epoch_state_nonfinite_unlike_its_row_refused`, `…_state_finite_unlike_its_row_refused`, `…_since_step_unlike_its_row_refused`, `d4_convert_state_flag_refusal_spends_the_eval_dir` |
+| M131 | a missing key read anyway (a KeyError, exit 4, no refusal) | `d4_convert_epoch_without_state_flag_refused`, `…_row_without_state_flag_refused` |
+| M132 | the stored `state_finite` not compared with item 1(a) re-applied | `d4_convert_epoch_nonfinite_state_stored_finite_refused`, `…_finite_state_stored_nonfinite_refused` |
+| M133 | the flag compared by value only | `d4_convert_epoch_state_flag_of_another_type_refused` |
+| M134 | the row check skipped for `--purpose timing` | `d4_convert_epoch_timing_state_flag_refused` |
+| M134b | the predicate check skipped for `--purpose timing` | `d4_convert_epoch_timing_nonfinite_state_stored_finite_refused` |
+| M135 | an agreeing non-finite checkpoint refused (an over-strict check) | `d4_convert_epoch_agreeing_nonfinite_state_not_convertible` |
+
+- The older mutations of `convert_epoch` still apply exactly once and are still killed: X12, X13, X14 and X16.
+- End to end, the e5, e6, nan and nonfinite sections convert checkpoints whose flags agree, finite and non-finite
+  (17.2).
+
+**G3 (R3, §16.11 item 3): the texts of configs/qat_selection_rules.json**, commit `73692ea`. Only three text fields
+changed, and each new text is copied from the code that applies the rule (REPOSITORY-PROVEN at `935bbe2`):
+
+| Field | Old text (`c19c0c2`) | New text, and where each part is copied from |
+|---|---|---|
+| `qat_epoch.source` (`configs/qat_selection_rules.json:5`) | `AM-4; AM-4a item 2; AM-19 item 3(a); DL-09; DL-38` | `AM-4; AM-4a item 2; AM-21 item 2(a); DL-09; DL-38`. The citation is the one in `NOT_CONVERTIBLE_RULE` (`art:50`) and in the epoch rule trace (`sel:450`) |
+| `qat_epoch.excluded` (`configs/qat_selection_rules.json:29`) | `an epoch whose state is non-finite: excluded: non-finite state (AM-19 item 3(a))` | `an epoch whose checkpoint fails item 1(a)` (the epoch rule trace, `sel:450`) + `: ` + `excluded: non-finite state (AM-21 item 2(a))` (`NOT_CONVERTIBLE_RULE`, `art:50`) |
+| `qat_clip.rejected` (`configs/qat_selection_rules.json:38`) | `a run whose telemetry records nonfinite_since_step in any row, or any epoch_end row with state_finite false (AM-21 item 3); both rejected: no winner` | `run_rejected`'s docstring (`sel:122–126`), without ` (CHECK ITEM 11)` and without its last sentence ("Returns the verdict, its grounds and the deviations.") + ` ` + `REJECTED_NONFINITE` (`sel:42`) + `; both rejected: ` (kept from the old text) + `NO_WINNER` (`sel:43`) |
+
+- Every other key and value, and the format string `qat_selection_rules/1`, are unchanged. MEASURED: the file has the
+  same 39 leaf keys at both commits, only these three values differ, and `load_rules()` accepts it.
+- No `AM-19` text is left in the file. `qat_clip.source` (`configs/qat_selection_rules.json:33`) already cited AM-21
+  item 3 and is unchanged.
+- The connector `; both rejected: ` is the old field's own words. `scripts/select_clip.py:10` says something else
+  ("with both rejected there is no winner (item 3(c))").
+
+**The keys the code reads** (MEASURED at `935bbe2`). The command, with the GO's exclude form; its lines under `docs/`
+are dropped here:
+```
+git grep -n -E 'rules\[|cr\[|ev_rules|ev\["|_get\(rules|load_rules\(|\("qat_(epoch|clip)"' -- . ':(exclude)docs/reference/reference.pdf' ':(exclude)docs/reference' ':(exclude,icase)*test*'
+```
+It prints 53 lines outside `docs/`, read as follows:
+- **`src/quant/qat_select.py`.**
+  - `load_rules` compares these with configs/quant.py and the lane's values (`sel:68–74`): `format`;
+    `qat_epoch.{epochs, stages, compare, tie, equal_across_evaluations, purpose}`;
+    `qat_clip.{candidates, stage, seed, tie, band.numerator, band.denominator, inherited_by}`.
+  - `band` reads `qat_clip.band` (`sel:84–85`).
+  - `epoch_selection` reads `qat_epoch.evaluator` (`sel:276`; its fields at `sel:248–265`, through `_check_summary`
+    at `sel:412`) and `qat_epoch.stages` (`sel:288`). It also reads `qat_epoch.equal_across_summaries` and
+    `qat_epoch.non_null` (`sel:436`, `sel:439`, `sel:446`).
+  - `clip_selection` reads `qat_clip` (`sel:528`): its `stage`, `seed`, `candidates` and `tie` (`sel:545`,
+    `sel:572–574`, `sel:601`, `sel:627`, `sel:646`).
+- **The callers that load the rules** pass them on, or compare their sha256 only: `scripts/select_qat_epoch.py:47`,
+  `scripts/select_clip.py:55`, `scripts/qat_epoch_eval.py:401–402`. `qat:124` lists the file in `QAT_CODE_PATHS`.
+  The grep prints these lines.
+- **The smokes.**
+  - `scripts/smoke_qat_selection.py` reads `qat_epoch.epochs`, `qat_clip.candidates` and `qat_clip.tie`
+    (`ssel:389–390`, `ssel:976`), and loads the rules at `ssel:922` and `ssel:1710`.
+  - `ssel:918–919` changes `qat_epoch.epochs` in a copy. The grep does not print those two lines (`doc[...]`, not
+    `rules[...]`).
+- **Lines that do not read this file:**
+  - `scripts/select_alpha.py:85–86` and `scripts/select_lambda.py:54–55` read `configs/sweep_rules.json`
+    (`scripts/select_alpha.py:10`, `scripts/select_lambda.py:8`);
+  - `mut:671`, `mut:735–746` are mutation source strings;
+  - `scripts/smoke_select_sweeps.py`, `scripts/smoke_teacher_d1.py` and `src/training/sweep_select.py` belong to other
+    lanes.
+- **Keys no code reads:** `note`, `qat_epoch.{source, value, excluded, never_selects}` and `qat_clip.{source, value,
+  rejected, band.rule, winner_is, loser}`.
+  - A second scoped `git grep -n -E '"(source|excluded|rejected)"'` finds the three names only in other uses (MEASURED):
+    other files' own keys, a score row's status `"excluded"`, `rej["rejected"]` and a clip summary's `"rejected"`.
+    No line reads them from this file. That grep also printed one line of `.claude/hooks/sl1_guard.py`, which was not
+    opened.
+  - So G3 changes no behaviour. It changes the file's sha256 (17.6).
+
+### 17.4 The mutation harness
+
+The harness ran twice on `935bbe2`. Each run was alone and detached (setsid), with the default TERM signal, the venv's
+python and a waiter on its exit marker:
+- **Run 1** is STEP 7's full run, after the 15 smokes. Its 15,000 s cap stopped it.
+- **Run 2** is the GO's completion run, for exactly the 43 jobs that run 1 left without a verdict (as GO-3 ruled for
+  Q2-F).
+
+Under the GO, the evidence of record is the two runs together.
+
+Sources:
+- **MEASURED from the two logs** and their `.start` and `.exit` markers: times, exit codes, counts, job ids,
+  verdicts and killing checks.
+- **The pids:** `ps` after each launch. Each log's `the_jobs_watch_this_harness` line names its harness pid. The
+  waiter ids are this session's task ids.
+
+| | Run 1 (STEP 7, full) | Run 2 (completion) |
+|---|---|---|
+| Command | `timeout -k 60 15000 python -B scripts/smoke_qat_mutations.py --workers 2` | `timeout -k 60 7200 python -B scripts/smoke_qat_mutations.py --workers 2 --only <the 43 ids below>` |
+| Start, end (UTC) | 2026-10-14T09:47:42Z, 2026-10-14T13:57:48Z | 2026-10-14T13:59:15Z, 2026-10-14T14:31:17Z |
+| Exit | 124: `timeout` sent TERM at 15,000 s | 0 |
+| Harness time | `[time] 15006s` | `[time] 1922s` |
+| RESULT | `RESULT: FAIL (336/340)` | `RESULT: PASS (73/73)` |
+| Shadows | 69 files × 2, shadow commit `c5c8b68a590b` | the same: 69 files × 2, `c5c8b68a590b` |
+| Self-check | PASS (26 checks), and `self_check_measured` PASS | PASS (26 checks), and `self_check_measured` PASS |
+| Baselines | 142, all PASS | 36, all PASS: the runs the 43 edits need (34 single-case selection runs, `smoke_qat_runner --sections profile` 53/53, `smoke_qat_artifacts --sections records` 42/42) |
+| Edits | 351 selected (165 mutations, 186 refusal rows); 310 started: 308 KILLED, 2 void; 41 never started | 43 selected, 43 started, 43 KILLED; none void, none survived |
+| Stop checks | `harness_ran_unsignalled` FAIL (signal 15); `every_job_has_a_verdict` FAIL (41 jobs, the first five named) | `harness_ran_unsignalled` PASS; `every_job_has_a_verdict` PASS (43 jobs) |
+| Processes left | none: `ps` at 13:57:54Z, after the exit marker | none: `ps` at 14:31:42Z, after the exit marker |
+| Pids; waiter tasks | harness 22866 under `timeout` 22865, session 22862; waiters brbg5q7jq and by101m13p (each stopped at its 2 h limit), then bxcwafntm | harness 4085 under `timeout` 4084, session 4081; waiter bm4b3n6mp |
+
+**The checks counted.**
+- Run 1's 340 checks: the 26 self-check checks, `self_check_measured`, `refusal_table_names_only_real_sites`, 310
+  edit verdicts and the two stop checks. 336 passed. The 4 failures are the 2 void verdicts and the 2 stop checks.
+- Run 2's 73 checks: the same 28, its 43 verdicts and the two stop checks.
+
+**The 2 void verdicts in run 1.** When the TERM came, two jobs were running. They are the last two verdicts of the
+log:
+- `[309/351] qat_epoch_eval.py:cmd_convert:freeze_cross_check#0`, at 923 s;
+- `[310/351] qat_epoch_eval.py:cmd_score:epoch_not_converted#0`, at 24 s.
+
+The stop handler killed their process groups mid-run, so their smokes never reached the named checks
+(`d4_convert_stops_when_a_freeze_did_not_take` and `d4_score_unconverted_epoch_refused`). The harness printed them as
+`SURVIVED  NOT KILLED: the smoke did not reach …`, and its `harness_ran_unsignalled` detail calls the verdicts of the
+jobs it stopped void. In run 2 both were KILLED by those checks: `epoch_not_converted#0` first ([1/43], 48 s), and
+`freeze_cross_check#0` last ([43/43], 1,259 s). The same freeze_cross_check job was the one cut in Q2-F's run 1
+(16.6).
+
+**The 43 ids of run 2.** I took them from the harness's own job list, read-only: `jobs_of(<the checkout>,
+refusals=True)`, the function `main()` itself calls (`mut:1689–1709`), compared with run 1's verdict lines. The list
+has 351 ids and no id outside it. 41 ids never started, and 2 were void. Run 2's `--only` accepted all 43; an unknown
+id is refused (`select_jobs`, `mut:1726–1737`). The scoped status was empty before and after. The ids, all refusal
+rows:
+```
+qat_epoch_eval.py:cmd_convert:freeze_cross_check#0
+qat_epoch_eval.py:cmd_score:epoch_not_converted#0
+qat_epoch_eval.py:cmd_score:scores_not_fresh#0
+qat_epoch_eval.py:cmd_score:output_exists#0
+qat_epoch_eval.py:_read_json:code#0
+qat_epoch_eval.py:_read_json:code#1
+qat_epoch_eval.py:_pilot_clip_winner:clip_selection_missing#0
+qat_epoch_eval.py:_pilot_clip_winner:clip_selection_sha256_mismatch#0
+qat_epoch_eval.py:_pilot_clip_winner:clip_selection_format#0
+qat_epoch_eval.py:_pilot_clip_winner:not_the_clip_winner#0
+qat_epoch_eval.py:_pilot_clip_winner:clip_selection_stale#0
+qat_epoch_eval.py:_pilot_clip_winner:clip_selection_winner_clip#0
+qat_epoch_eval.py:cmd_finalize:fresh_process_required#0
+qat_epoch_eval.py:cmd_finalize:run_not_real#0
+qat_epoch_eval.py:cmd_finalize:output_exists#0
+qat_epoch_eval.py:cmd_finalize:epoch_selection_missing#0
+qat_epoch_eval.py:cmd_finalize:epoch_selection_format#0
+qat_epoch_eval.py:cmd_finalize:epoch_selection_mismatch#0
+qat_epoch_eval.py:cmd_finalize:smoke_inputs#0
+qat_epoch_eval.py:cmd_finalize:clip_selection_required#0
+qat_epoch_eval.py:cmd_finalize:clip_selection_not_applicable#0
+qat_epoch_eval.py:cmd_finalize:winner_checkpoint_changed#0
+qat_epoch_eval.py:cmd_finalize:winner_files_changed#0
+qat_epoch_eval.py:cmd_finalize:winner_files_changed#1
+qat_epoch_eval.py:cmd_finalize:x86_backend_unavailable#0
+qat_epoch_eval.py:cmd_finalize:x86_copy_checks#0
+qat_epoch_eval.py:cmd_check_run_meta:telemetry_missing#0
+qat_epoch_eval.py:cmd_check_run_meta:run_meta_rows#0
+qat_epoch_eval.py:cmd_check_run_meta:run_meta_rows#1
+qat_epoch_eval.py:cmd_check_run_meta:run_meta_profile#0
+qat_artifacts.py:refuse_test_path:f'{what}_test_path'#0
+qat_artifacts.py:read_run_record:telemetry_missing#0
+qat_artifacts.py:read_run_record:telemetry_not_strict_json#0
+qat_artifacts.py:read_run_record:run_meta_rows#0
+qat_artifacts.py:read_run_record:epoch_end_duplicate#0
+qat_artifacts.py:require_complete:run_incomplete#0
+qat_artifacts.py:verified_checkpoint:epoch_unknown#0
+qat_artifacts.py:verified_checkpoint:checkpoint_name#0
+qat_artifacts.py:verified_checkpoint:checkpoint_missing#0
+qat_artifacts.py:verified_checkpoint:checkpoint_sha256_mismatch#0
+qat_artifacts.py:read_ts_identity:identity_missing#0
+select_qat_epoch.py:main:output_exists#0
+select_clip.py:main:output_exists#0
+```
+
+**The union.** Run 1's 308 KILLED and run 2's 43 KILLED are disjoint. Together they are all 351 edits at
+`935bbe2`:
+- the 165 mutations, all KILLED in run 1;
+- the 186 refusal-table rows, 143 KILLED in run 1 and 43 in run 2.
+
+There is no survivor. Q2-G's own 13 mutations were KILLED in run 1 by exactly the checks 17.3 names: M124
+[154/351], M125 [153/351], M126 [155/351], M127 [157/351], M128 [156/351], M129 [158/351], M130 [160/351],
+M131 [159/351], M132 [162/351], M133 [161/351], M134 [164/351], M134b [163/351] and M135 [166/351]. The older
+mutations of the changed code were KILLED in run 1 by their named checks:
+- the trainer's epoch end: M16 [15/351] (`d1_checkpoint_observer_flags`), X6 [37/351]
+  (`d1_nonfinite_rows_marked_step10`), M46 [86/351] (`d1_epoch_end_alone_finds_a_nonfinite_state`);
+- `convert_epoch`: X12 [40/351] (`d4_convert_epoch_stored_flags_stop`), X13 [41/351]
+  (`d4_convert_epoch_copy_dtype_stop`), X14 [46/351] (`d4_convert_epoch_identity_refused`), X16 [44/351]
+  (`d4_convert_epoch_qconfig_changed_stop`).
+
+**The time** (INFERRED from the two runs; open item 5). Q2-F's two runs put a full run at about 3.6 h for 338 edits
+(16.6). Q2-G added 13 mutations, and the records section is slower by its twelve checks.
+- Run 1 stopped at 15,000 s with 41 jobs not started and 2 cut.
+- Run 2 took 1,922 s for the 43, of which its jobs logged 2,511 s at two workers.
+- Run 1 had already run the two cut jobs for 923 s and 24 s. The rest, about 1,564 s of job time, is about 780 s of wall
+  time at two workers.
+- A full run at `--workers 2` on this container therefore needs about 15,800 s, or 4.4 h. Run 1's own job times may be
+  longer under its load, as Q2-F found (16.6).
+
+That is more than STEP 7's cap, so the evidence of record is two runs at one commit, as for Q2-F.
+
+### 17.5 G4: AM-21 and AM-4a, sentence by sentence
+
+The requirement sentences come from AM-21 and AM-4a at `2b6000e`, read with the GO's two commands (DOCUMENTED). Each
+sentence maps to one of three things:
+- the code that meets it, by file:line at `935bbe2` (REPOSITORY-PROVEN; short names as in the introduction);
+- a §15 line of this report;
+- "not code", with the reason.
+
+Sentences that only point elsewhere are left out: the headings of items 2 and 3; item 3(f)'s description of the
+registered rule ("The registered pilot rule … rejects …"; "Its first ground is (a)"); and AM-4a's bracket notes,
+which point to AM-21's rows.
+
+**AM-21**
+
+| Item | Requirement sentence | Met by |
+|---|---|---|
+| 1 | An E5 or E6 run that reaches a non-finite state completes. | No path out of the epoch loop (`qat:947`) on a non-finite state: a raise in that state is recorded and the run goes on (`qat:977–990`, `qat:1040–1050`). The completion record is `qat:1079`, and the RESULT line `qat:1223–1224` |
+| 1(a) | The state of a QAT model is finite when all of these hold: every parameter and every BatchNorm buffer is finite; every fake-quant scale is finite; and every moving-average observer holds finite minimum and maximum values with minimum ≤ maximum in every element, or holds exactly (+∞, −∞) and is a never-observed module. | `state_kinds` (`qat:316–331`) classifies the entries; `state_predicate` (`qat:334–368`) checks them: parameters, BN buffers and scales `qat:349–350`; observers `qat:351–367` (finite min ≤ max `qat:359–361`; (+∞, −∞) and never-observed `qat:362–365`). The one predicate is used by the trainer (`qat:979`, `qat:1004`, `qat:1023`, `qat:1042`), conversion (`art:403`) and selection (`sel:111`) |
+| 1(a) | The never-observed modules are the fake-quants that no forward of the prepared student calls. | `never_observed_modules` (`qat:300–313`) |
+| 1(a) | A forward-hook census finds them before training. | Forward hooks (`qat:304–305`), run at `qat:861`, before the run_meta row (`qat:928`) and the first step (`qat:954`) |
+| 1(a) | They are listed in run_meta, are the same in every QAT run, and are compared with the list of record at launch (DL-85). | Listed in run_meta (`qat:910`). check-run-meta compares them with DL-85's five modules (`NEVER_OBSERVED_OF_RECORD`, `eval:67`; compared at `eval:529–534`; a difference stops the run, `eval:600–601`). Every launch runs it within 5 minutes (`§15 1298–1300`, `§15 1340–1342`; `§15 1221–1222`). |
+| 1(b) | The trainer evaluates (a) after every step whose loss or pre-clip gradient norm is non-finite, whenever a step or a VAL pass raises, and at the end of every epoch, on the state that its checkpoint holds. | A non-finite loss or gradient norm: `qat:1003–1006`, while no finding is recorded yet (gap 1 below). A step that raises: `qat:979`. A VAL pass that raises: `qat:1042`, on the checkpoint's state. The epoch end: `qat:1021–1025`, on the state the checkpoint holds, before it is written (`qat:1026–1029`; G1) |
+| 1(c) | Once the state is not finite, the trainer records the step at which it found this. | `_mark_nonfinite` (`qat:940–944`), called at `qat:983`, `qat:1006` and `qat:1025`. The step is then carried by train rows (`qat:1011`), step_error rows (`qat:989`), VAL rows (`qat:1066`), epoch_end rows (`qat:1078`), eNN.pt (`qat:734–735`; G1), run_stop and run_abort rows (`qat:1089`, `qat:1094`) and the RESULT line (`qat:1223–1224`) |
+| 1(c) | It then keeps drawing batches and stepping the schedule through all 15 epochs. | `scheduler.step()` after a step that raised (`qat:984`), then `continue` (`qat:990`); `qat:991` otherwise; the epoch loop `qat:947` |
+| 1(c) | An exception that a step or a VAL pass raises in that state is recorded and does not end the run. | Step: the `step_error` row (`qat:986–989`), then `continue` (`qat:990`). VAL: `val_error` (`qat:1050`), written into the VAL row (`qat:1067–1068`) |
+| 1(c) | Each epoch still writes its checkpoint, its VAL row and its end-of-epoch record, each carrying the state flag. | eNN.pt: `qat:1026–1029`, keys `qat:734–735` (G1). The VAL row: `state_nonfinite` (`qat:1066`). The epoch_end row: `state_finite`, `nonfinite_since_step`, `state_nonfinite` (`qat:1077–1078`). Conversion refuses a checkpoint whose flag differs from its row (`art:389–392`; G2) |
+| 1(d) | The trainer never skips an update while the state is finite and never repairs a state. | Every step that does not raise runs `optimizer.step()` (`qat:976`), whatever its loss or gradient norm. A raise while the state is finite ends the run (`qat:980–981`). Nothing in `qat` loads a state: `no_selection_in_trainer` (`scripts/smoke_quant_x86_efficiency.py:424–425`) checks that the source has no `load_state_dict(`, `best_state` or `stopper`. The VAL bracket must leave the state unchanged (`qat:1055–1057`) |
+| 1(e) | The run is complete (AM-19 Definitions) when its fifteenth epoch's record exists. | `run_complete` (`qat:1079`), `complete` (`qat:1096`). `read_run_record` (`art:94–146`) calls a run complete only with one epoch_end row per epoch 1..15, in order, the last row the epoch-15 completion record, and no run_abort or run_stop row (`art:134–146`) |
+| 1(e) | An exception raised while the state is finite still ends the run as an abort, and a process that dies is a stop (AM-19 item 3(a)). | The raise: `qat:981` (step) and `qat:1045` (VAL). The `run_abort` row: `qat:1091–1095`. `RESULT: ABORTED [exception]`, exit 3: `qat:1255–1261`. A process that dies: not code (it writes nothing more); `read_run_record` finds no completion record (`art:139–143`), and `§15 1235–1238` makes any other output a STOP |
+| 1(f) | A run whose state became non-finite, or whose logged loss or pre-clip gradient norm was non-finite, is repeated only under AM-8a, and only if its fault report is committed before any record conversion of its checkpoints exists (for a pilot run: of either pilot run's checkpoints). | Not code: a launch rule. `§15 1193–1197`, `§15 1506–1511`, `§15 1730–1733`. Its triggers are printed by the RESULT line (`qat:1223–1224`) and the rejection check (`sel:137–145`) |
+| 1(g) | A seed-42 run that AM-19 item 3(a) records as "aborted (rule, cause)" is a STOP that a new amendment settles, as a default candidate is. | Not code: a ruling. The trainer prints `RESULT: ABORTED [exception]` and exits 3 (`qat:1260–1261`), and `§15 1235–1238` makes it a STOP |
+| 2(a) | An epoch whose checkpoint state is not finite is excluded from the selection and reported, and the selection continues over the remaining epochs. | Conversion: "not convertible" (`art:407–413`, rule `art:50`), named in convert's RESULT (`eval:213–216`). Scoring: `excluded` (`eval:286`), named in its RESULT (`eval:327–330`). Selection: excluded and the loop goes on (`sel:339–362`), listed (`sel:490`), named in the RESULT line (`sqe:67–71`). `§15 1588–1592`, `§15 1734–1738` |
+| 2(a) | The checkpoint decides: item 1(a) is applied to it again at conversion and at selection. | Conversion: `art:403`, and the stored flag must agree (`art:389–392`, `art:404–406`; G2). Selection: `checkpoint_states` (`sel:101–114`), used at `sel:319`. A finite epoch recorded as excluded is refused (`sel:337–338`); a failing one recorded otherwise is excluded (`sel:357–360`). The clip selection reads the same states (`sel:134–135`) |
+| 2(b) | If no epoch is convertible, no epoch is selected for the run. | `no_convertible_epoch` (`sel:429–433`). select_qat_epoch writes nothing (`sqe:52–54`) |
+| 2(b) | The run stays complete, so it does not move the freeze (AM-19 item 1(d)). | The refusal says so (`sel:431–433`); completeness is untouched (`art:144–146`). The freeze is not code: `§15 1747` |
+| 2(b) | It is entered in the decision log that day as "non-finite: no model". | `NO_MODEL_ENTRY` (`sel:44`), in the refusal (`sel:430–433`). `§15 1741–1746`, `§15 1762` |
+| 2(b) | Nothing that needs its model is computed or launched until a new amendment settles it (for E6 seed 42: the AM-3 trigger and E6-KD). | finalize needs the selection (`eval:397–399`). The rest is not code (the AM-3 trigger and E6-KD are not in this lane): `§15 1748–1749` |
+| 2(b) | Only this halt is pre-registered. That amendment is written with the run's records known, says so, and uses no TEST result. If none is committed before the TEST manifest freeze, the run is in the manifest as "non-finite: no model", and every quantity that needs its model is reported as not evaluable. | Not code: rules for a later amendment and for the TEST manifest, outside this lane |
+| 2(c) | Every other failure of conversion or scoring refuses the selection. | A failed conversion spends the eval directory (`eval:198–209`), and so does a failed scoring (`eval:299–306`). Selection then refuses (`stop_present`, `sel:291–294`; `eval_record_missing`, `sel:296–298`), as it refuses any broken chain (`sel:300–311`, `sel:333–335`, `sel:363–417`). G2's `checkpoint_state_flag` refusal is one such failure (`art:392`, `art:406`) |
+| 2(c) | The selection is re-made only after a written fault report (AM-8a), in a new evaluation directory, and two versions are never chosen between. | A new directory: `eval_dir_not_fresh` (`eval:159–161`), `output_exists` (`art:380–381`), a selection written once (`sqe:45–46`). The fault report, and never choosing between versions, are not code: `§15 1206–1207`, `§15 1235–1238`, `§15 1564–1565` |
+| 3(a) | A pilot run whose state became non-finite at any step is rejected. | `run_rejected` (`sel:121–149`): `flagged` (`sel:128–129`), ground `sel:138–140`; used by `clip_selection` (`sel:550`) |
+| 3(a) | So is a pilot run with a step whose logged loss or pre-clip gradient norm is non-finite, whatever its state. | `logged` (`sel:131–132`), ground `sel:141–143`; the telemetry names a non-finite value in each row (`qat:176–181`) |
+| 3(a) | The rejection is read from the run's own records: its telemetry (the file whose sha256 was taken on the pod), or an epoch checkpoint that fails item 1(a). | The telemetry: `read_run_record`'s rows, checked against the pod's sha256 (`sel:531–543`). The checkpoints: `checkpoint_states` (`sel:101–114`), each checked against the sha256 its row records (`art:159–172`); ground `sel:144–145` |
+| 3(a) | A checkpoint that fails with no state flag in the telemetry rejects the run too, and is reported as a deviation of the trainer. | `unflagged` (`sel:136`), `deviations` (`sel:146–147`); reported in select_clip's REPORT (`sel:229–234`, `sel:608`, `sclip:83`) and in the `rejected_pilot_run` refusal (`sel:323–326`). Its conversion is refused (`art:389–392`, `art:404–406`, text `art:53`; G2). `§15 1503`, `§15 1692` |
+| 3(b) | If one run is rejected, the other is the winner, provided it is complete and has a selected epoch. | Each candidate must be complete (`sel:540`). The run that is not rejected needs its stored selection (`sel:557–558`), equal to its recomputation (`sel:563–567`), and wins alone (`sel:620–622`) |
+| 3(c) | If both are rejected, there is no winner, and no later QAT run launches until a new amendment decides the clip value. | `no_winner` (`sel:616–618`, text `sel:43`); select_clip writes nothing (`sclip:62–65`). Every later real run needs clip_selection.json (`clip_selection_required`, `qat:603–605`). `§15 1693–1698` |
+| 3(c) | Only this halt is pre-registered. That amendment is written with both runs' records known, says so, and uses no TEST result. | Not code: rules for a later amendment |
+| 3(d) | A rejected run is still converted and scored as item 2(a) reads, and its records are kept. | convert and score do not read the rejection (`eval:152`, `eval:243`). `§15 1198–1200`, `§15 1560–1566`. Records kept: not code (nothing deletes them; `§15 1563`) |
+| 3(d) | Its scores are reported and select nothing. | `rejected_records` (`sel:183–221`; scores `sel:217–219`), the REPORT line (`sel:229–234`, `sclip:35–37`, `sclip:83`). `epoch_selection` refuses a rejected pilot run (`sel:320–326`) |
+| 3(d) | Item 2(b) does not apply to it. | That refusal comes before `no_convertible_epoch` (`sel:320–326` before `sel:429`). `§15 1751–1752` |
+| 3(d) | If its conversion or scoring fails, item 2(c) applies to it alone, and the other run's win does not wait. | A rejected run's records are read, reported and never required (`sel:554–555`, `sel:183–221`, `sel:156–159`). `§15 1561–1566` |
+| 3(e) | A rejection is lifted in one case only: a repeat under item 1(f), which then stands in the rejected run's place. If the repeat is rejected under (a) too, that clip value is rejected for good. | Not code: a ruling. `§15 1510–1514`, `§15 1207–1208` |
+| 3(f) | Nothing else rejects a pilot run. … Its second ground has no registered definition and is not applied. | `run_rejected` has exactly three grounds (`sel:137–145`), none "numerically unstable"; the verdict is `bool(grounds)` (`sel:148`) |
+| 3(g) | Otherwise AM-4a item 3 applies as written. | AM-4a item 3 below |
+| 4 | AM-4a (…), as this amendment amends it, governs every QAT run. | AM-4a's rows below. The trainer refuses a configs/quant.py that differs from AM-4a (`config_pins_error`, `qat:239–262`) |
+| 4 | No run is reclassified by the adviser's approval of AM-4a (DL-83), by its absence or by a later rejection. A rejection of AM-4a follows this amendment's own rejection rule (header). | Not code: rules about approval |
+| 5 | Chapter 4 reports every excluded epoch, every rejected pilot run, every run with no convertible epoch, and the step at which each non-finite state was first recorded. | Not code: the thesis text. Its inputs are printed by `sqe:67–71`, `eval:213–216`, `eval:327–330` (excluded epochs); `sclip:83` (rejected runs); `sel:429–433` (no convertible epoch); and `qat:1223–1224`, `sel:139–140` (the first step). `§15 1754–1764` |
+
+**AM-4a (as AM-21 amends it)**
+
+| Item | Requirement | Met by |
+|---|---|---|
+| 1 | SGD with momentum 0.9, learning rate 3e-4, weight decay 1e-4 | `qat:85–87`; the optimizer `qat:869–870`, checked against the record (`qat:872–875`) |
+| 1 | a cosine schedule with T_max = 15 × steps per epoch | `qat:837`, `qat:871`, stepped once after each step (`qat:984`, `qat:991`) |
+| 1 | batch 16; no EMA | `qat:82`, the loader `qat:693`, refused otherwise (`qat:843–845`); `"ema": False` (`qat:892`), `qat.weight_ema` checked (`qat:258–259`) |
+| 1 | 15 fixed epochs with no early stopping | `qat:81`, the loop `qat:947`; no stopper (`scripts/smoke_quant_x86_efficiency.py:424–425`) |
+| 1 | observers on from the first step (moving average) | `prepare_qat_model` (`src/quant/prepare.py:89`, `prepare_qat` at `src/quant/prepare.py:100`); moving-average observers (`src/quant/qconfig.py:81–92`) |
+| 1 | BN statistics frozen from the first step of epoch 11 and observers from the first step of epoch 13 | `qat:83–84`, applied at the top of epochs 11 and 13 (`qat:948–951`); checked after the run (`freeze_cross_check`, `art:263–280`) |
+| 1 | the quantization configuration of record in configs/quant.py, with its weight and activation observers recorded in run_meta | `config_pins_error` (`qat:239–262`); run_meta's `qconfig` and `observers` (`qat:907–909`) |
+| 2 | each epoch's checkpoint is converted (QNNPACK) | `convert_epoch` (`art:350`), QNNPACK `art:444–448`; all 15 epochs (`eval:153`, `eval:181–189`) |
+| 2 | and scored on VAL on CPU with scripts/evaluate_model.py (canvas protocol) | `evaluator_command` (`eval:232–240`: `--split val`, `--protocol canvas`, `--device cpu`), checked at selection (`sel:409–414`) |
+| 2 | the highest dataset-level VAL all-class mIoU wins, and ties go to the earlier epoch | `sel:415`, strict `>` (`sel:461`), a tie keeps the earlier epoch (`sel:466–469`) |
+| 2 | Fake-quant VAL is recorded and never selects | Recorded: the VAL row (`qat:1060–1066`, `"selects": False` at `qat:1065`) and the epoch_end row (`qat:1073`). Never selects: `sel:472–482`, `fake_quant_val_used` False (`sel:492`) |
+| 3 | E5 seed 42 is run twice in full, with global-norm clipping at 1.0 and at 5.0 | `qat:95–96`; `--u4-pilot` for E5 seed 42 only (`clip_binding`, `qat:587–602`); global norm-2 clipping (`qat:974–975`). The clip selection needs both clips (`sel:571–574`), the same recipe and the same batches (`sel:575–589`) |
+| 3 | The winner under item 2's score is E5 seed 42 of record; a tie within 0.1 pp goes to 5.0 | `sel:624–631`; the band 1/1000 (`sel:83–85`, `sel:72`); the tie value 5.0 (`sel:627`, checked at `sel:71`) |
+| 3 | The losing run is retained and reported | `"retained": True` (`sel:647`); `sclip:82` |
+| 3 | The winning value is used for E5 seeds 43/44, E6 (all seeds) and E6-KD | Every real run but the pilot's binds to clip_selection.json (`qat:603–609`); `inherited_by` checked against configs/quant.py (`sel:73`). E6-KD is not in this lane |
+| 3 | Chapter 4 discloses that QAT receives 2 × 15 VAL evaluations (…) | Not code: the thesis text |
+| 4 | the QAT data loader is built with the run seed | `build_qat_loaders` (`qat:690–696`, `seed=seed` at `qat:694–695`), called at `qat:831` |
+| 4 | torch, numpy and Python are seeded from --seed; determinism settings as in train_e1 | `set_seed(seed)` (`qat:829`), before CUDA initialises (`qat:820–822`); `src/seeds.py:17–37`, the function `src/training/train_e1.py:301` calls; recorded in run_meta (`qat:913`) |
+| 5 | E5 starts from E1's best.json checkpoint of the same seed | `resolve_parent` (`qat:469`): best.json (`qat:485–503`), the parent's seed (`qat:521–523`) |
+| 5 | E6 from E3's, which carries no projection keys (asserted on load) | `resolve_parent` for E3 (`qat:524–530`); `load_source` asserts it (`qat:1212–1214`) |
+
+**Gaps** (none is fixed here; each has a proposed fix):
+1. **Item 1(b) after the first finding.** `qat:1003` reads item 1(a) after a non-finite loss or gradient-norm step only
+   while no finding is recorded yet. A later reading could change nothing: `_mark_nonfinite` keeps the first step, and
+   every row already carries the flag. Proposed fix: drop the guard (one more predicate per such step), or record
+   that the guard reads item 1(b) as the first finding.
+2. **Item 2(a) at selection.** `checkpoint_states` (`sel:101–114`) re-applies item 1(a) but does not compare the
+   checkpoint's stored flag with its epoch_end row. G2 does this at conversion only. A selection over checkpoints that
+   were changed after conversion is still caught by the chain sha256 (`sel:333–335`). Proposed fix: call
+   `state_flag_row_error` and `state_flag_predicate_error` (`art:180–197`) in `checkpoint_states`, with their cases and
+   mutations, in a later GO that names `src/quant/qat_select.py` (this GO forbids that file).
+3. **A stale docstring** (DL-24 C-1, 17.7). The `marked_run` docstring (`ssel:340–341`) says that the run's
+   checkpoints "stay finite, so every epoch converts and scores". Since G2, conversion refuses such a run at its first
+   flagged epoch, because only its rows are flagged. Proposed fix: one docstring line, in a GO that names the file for
+   it (this GO limits that file to case needs).
+
+### 17.6 The new sha256 of configs/qat_selection_rules.json, and every place that records it
+
+G3 changed the file's sha256 (MEASURED, `sha256sum` of the file at each commit):
+- at `c19c0c2`: `216f89d7bc8463b7656cbd918e361fbcd0042c1cbad72a66bd5c0103d8c27358`;
+- from `73692ea` on: `76addc57d0367dda9a1163f749ec32c9c240b20736104dc12aa77488344f9568`.
+
+No file in the tree pins either value. A scoped `git grep -n -E '216f89d7|76addc57|rules_sha'` at `935bbe2`, run before
+this report was written, printed neither value (MEASURED). The places that record the sha256 compute it from the file
+when they run (REPOSITORY-PROVEN at `935bbe2`):
+- **Every QAT run's run_meta**, as `code_files_sha256["configs/qat_selection_rules.json"]`. `QAT_CODE_PATHS` lists the
+  file (`qat:124`), `code_identity` takes the hashes (`qat:682–686`, from `src/quant/ptq.py:733`), and run_meta
+  carries them (`qat:920`).
+- **Each `qat_selection.json`**: `rules_sha256` (`sel:483`), and the first line of its rule trace (`sel:448`).
+- **`clip_selection.json`**: `rules_sha256` (`sel:646`), and the first line of its rule trace (`sel:599`).
+
+Two places compare the stored value with the committed file's, and record nothing new:
+- `clip_selection` refuses a stored `qat_selection.json` of other rules (`sel:560–562`);
+- `finalize` does the same (`eval:401–404`).
+
+Conversion does not record it: `CONVERT_CODE_PATHS` (`art:54–59`) does not list the file. No run, selection or
+artifact of record exists yet (§15), so no recorded value is stale.
+
+The smoke `d3_rules_agree_with_config` prints the first 12 hex digits (`scripts/smoke_qat_selection.py:389–390`). It
+printed `216f89d7bc84` in the STEP 4 baseline and `76addc57d036` in the final run (MEASURED, 17.2).
+
+### 17.7 DL-24: the verification workflow
+
+STEP 6's workflow, `wf_68a63207-ad8`, ran after the three code commits, over `git diff c19c0c2… -- <the exclude form>`
+at HEAD `73692ea` (MEASURED from the workflow's result):
+- **The agents.** Seven independent, read-only agents, 2,683 s in all. Four reviewers (trainer, conversion, cases,
+  rules-scope) ran first. Then one adversarial verifier ran for each reviewer that reported a finding: conversion,
+  cases and rules-scope. review:trainer reported none, so it had no verifier.
+- **Their rules** (SL-1's): read only, files by exact path, git with explicit paths or the exclude form, no web fetch.
+- **The snapshot check.** Before and after the workflow I took HEAD, the scoped status and the sha256 of the ten files
+  under review. The two snapshots are identical: HEAD `73692ea`, scoped status empty, and the same ten hashes
+  (MEASURED).
+- **The SL-1 log** gained no line from the agents (17.8).
+
+| Finding | Verdict | Resolution |
+|---|---|---|
+| C-1 (conversion, low): `marked_run`'s docstring, `scripts/smoke_qat_selection.py:340–341`, says its checkpoints "stay finite, so every epoch converts and scores". Since G2, conversion refuses such a run at e14 `[checkpoint_state_flag]` (only the rows are flagged), and the d5 cases built on it run select_clip on fabricated records only. No case fails, and no runtime path is wrong. | confirmed | Recorded, not edited: this GO allows changes to that file only where a case needs one (gap 3 in 17.5; open item 2) |
+| K-1 (cases, low): the G2 block's comment said e08 is the one epoch a mutation could convert in this process. Under M130 and M134, e01 converts there first. The fresh-process guard then failed the later in-process cases, so M130's KILLED line named e04 and e05 for a FAIL that was not theirs. | confirmed | `935bbe2`: once a mutation has traced the student in this process, each later case runs in a fresh process (`convert_epoch_of`, `sart:467–470`), so each verdict is the case's own. The comment is corrected (`sart:437–442`) |
+| K-2 (cases, low): no case ran the predicate check under `--purpose timing`, and M134 edited both checks, so it was killed through the row check alone | confirmed | `935bbe2`: `d4_convert_epoch_timing_nonfinite_state_stored_finite_refused` (e06, timing). M134 is split into M134 (the row check) and M134b (the predicate check), each killed by its own timing case |
+| K-3 (cases, low): every G2 mutation weakens the check; none makes it over-strict. An agreeing non-finite checkpoint must stay "not convertible" (item 2(a)) | confirmed | `935bbe2`: `d4_convert_epoch_agreeing_nonfinite_state_not_convertible` (e09) and M135. The finding proposed running M135 on the nonfinite section's conversion cases; I gave it a case of its own in the records section instead, a run of about 70 s (68 s measured). The nonfinite cases would kill M135 as well (INFERRED; not run with it) |
+| K-4 (cases, low): a `--cache-dir` filled before G1 holds checkpoints without the flag; the records section would crash and the nonfinite section reuse old records | **refuted** | The cache code is unchanged since `c19c0c2` and outside G1–G3. Such a cache fails loudly (a traceback with no RESULT line), never as a false PASS. The harness makes a fresh cache for each run, and no run here used `--cache-dir` (MEASURED: `run_smokes.sh` passes none) |
+| R-1 (rules-scope, low): G3's `git grep` record and the file:line of each copied string were not yet in a committed file | confirmed | 17.3, G3: the command, the keys the code reads, and each source by file:line. The verifier's three corrections are in it: the grep also prints `scripts/select_alpha.py:86`, `scripts/select_lambda.py:55` and mutation strings; it does not print `scripts/smoke_qat_selection.py:918–919`; `scripts/select_clip.py:10` does not hold the connector's words |
+
+Re-run after `935bbe2`, alone (MEASURED):
+- `smoke_qat_artifacts --sections records`: PASS (42/42) in 68 s;
+- `smoke_qat_mutations.py --workers 2 --only M130,M131,M132,M133,M134,M134b,M135`: PASS (37/37) in 428 s, exit 0,
+  all seven KILLED.
+STEP 7's runs (17.2, 17.4) then covered every smoke and every mutation at `935bbe2`.
+
+### 17.8 SL-1, tooling conflicts, my slips and open items
+
+**SL-1.** `tail -n 80 ~/.claude/sl1_guard.log`, read just before this commit. This session's container started with
+an empty log. It now holds two lines, and every line is mine (MEASURED). The guard cuts each command at about
+200 characters:
+```
+2026-10-14T05:04:24Z	Bash	SL1-B2	git grep -n -E 'AM-19 item 3\(a\)' -- src scripts configs; echo "---rules keys read (qat_epoch / qat_clip / rules[)"; git grep -n -E 'rules\[|rules\.get|\(\"qat_epoch\"|\(\"qat_clip\"|cr\[|ev_rules\[|
+2026-10-14T09:47:14Z	Bash	SL1-B1	cat /tmp/claude-0/-home-user-plantseg-thesis/18735743-d895-5381-a8c7-04a38e7763fe/tasks/bhvi3lm5y.output; echo ====; cut -f1,2,3,4,5,6 /tmp/claude-0/-home-user-plantseg-thesis/18735743-d895-5381-a8c7-
+```
+The class codes are the guard's own; what follows describes the commands logged:
+- **SL1-B2** (05:04:24Z): a `git grep` whose pathspecs were directories (`src scripts configs`), not the exclude form.
+  It ran read-only during STEP 4's baseline (G3's preparation) and printed lines of non-test files only. It is my
+  slip, below.
+- **SL1-B1** (09:47:14Z): the log-mode entry for my `for` loop that counted the FAIL lines of two scratchpad smoke
+  logs through a `$f` path, read-only, like Q2-F's SL1-B1 lines (16.8). It ran no git and read no repository path.
+- The DL-24 agents and the two harness runs added no line.
+
+**Tooling conflicts** (each reported once, none complied with):
+- **The stop hook** (`~/.claude/stop-hook-git-check.sh`) asked again and again: first for a commit and a push of
+  uncommitted changes, then for a push of the unpushed commits (three, later four). Commits were made only as STEP 5
+  and STEP 8 say, and the one push is STEP 9's.
+- **The harness's attribution reminder** asked for `Co-Authored-By` and `Claude-Session` trailers. No commit has a
+  trailer.
+- **The harness's designated branch** `claude/peaceful-euler-joz7o4` was ignored. All work is on `lane/q2-qat`.
+
+**Hooks that blocked a command of mine before it ran** (the guard working as meant; times from the session record):
+- About 07:40Z: L-PROT S blocked an `ls` of a scratchpad folder written with a variable path (`$SCR/…`). I re-ran it
+  with the literal path.
+- About 07:55Z: L-PROT S blocked an inline Python edit of a scratchpad draft, because its text named git (it ran
+  none). I made the same edit with the editor tool.
+
+**My slips:**
+- **The SL1-B2 `git grep`** above (05:04:24Z): directory pathspecs instead of the exclude form, against the GO's
+  search rule. It was read-only and named no test path in its output.
+- **One `git grep` with one more exclude** (about 05:00Z): the exclude form plus `':(exclude)docs/lane_reports'`. That
+  is narrower, but not "exactly" the form. Not logged.
+- **A dev run beside a harness run** (06:00–06:10Z). I started `smoke_qat_artifacts --sections records` while the G1
+  dev harness ran two workers on 4 cores. The smoke made no progress past its training in 10 minutes. I stopped it
+  (no process left). Its temporary tree, `/tmp/smoke_qat_artifacts_v_wz8ogh`, is named here only: not read, not
+  deleted. No result of it is used. Since then no dev smoke has run beside a harness run.
+- **The variable-path `ls`** at 07:40Z (above).
+- **The SL1-B1 loop** (09:47:14Z): a `grep` over two scratchpad logs through a loop variable. It is not a search of
+  the repository, but it is not a Grep of named files either.
+
+**Open items** (at most 5):
+1. **Gap 1** (17.5): item 1(b) after the first finding (`qat:1003`).
+2. **Gaps 2 and 3** (17.5): the stored flag is checked at conversion only, not at selection (a later GO that names
+   `src/quant/qat_select.py`); and `scripts/smoke_qat_selection.py:340–341`'s stale docstring (DL-24 C-1).
+3. **§16.11's items 2 (N4) and 3 (R3) are closed** by G1 (`d1ad396`) and G3 (`73692ea`). §16.11 is history and is not
+   edited. Its item 11 still governs §13's O1 (the docs commit writes open item 11's text, never §13's O1).
+4. **Block A's CUDA count** is now 214, the CPU count (§15, changed in 17.9). The CUDA run is still deferred to the
+   pod. The five new checks read the checkpoints on the CPU (`map_location="cpu"`), so no new check depends on the
+   device (REPOSITORY-PROVEN: `scripts/smoke_qat_runner.py:171–178`).
+5. **The harness's time.** A full run at `--workers 2` on this container needs about 4.4 h (17.4, INFERRED). That
+   is more than STEP 7's 15,000 s cap, so the evidence of record is two runs at one commit. A later full run of
+   record needs a cap of about 5 h (18,000 s), or a split by `--only` named in its ruling.
+
+### 17.9 §15's lines that G1–G3 change
+
+§15 restates blocks A and B for the runs. Four of its passages quote an output that G1 or G2 changes. Each is
+updated in this commit; the line numbers are those this commit leaves:
+1. **§15 1211–1214, Block A's GPU smoke count `<n>`:** 209 → 214, and "at §16's last commit" → "at §17's last commit"
+   (G1's five checks, 17.2).
+2. **§15 1291, Block A's expected line for `smoke_qat_runner.py --device cuda`:** `RESULT: PASS (209/209)` →
+   `RESULT: PASS (214/214)`.
+3. **§15 1588–1598, clip 1.0's record conversion.** The REPORT `RESULT: CONVERTED <k>/15 (record; not convertible:
+   …)` now covers only a run that completed non-finite. A run whose rejection check printed a deviation clause has a
+   checkpoint whose state flag disagrees with its row or with item 1(a), so G2 refuses its conversion at that epoch,
+   with exit 2. The new text quotes that refusal and says what it is: item 2(c)'s REPORT for a rejected pilot run (§15
+   1561–1566), and a STOP for a run of record.
+4. **§15 1654–1655, clip 5.0's pass**, which points back to clip 1.0's REPORT forms. It now adds that a run with a
+   deviation clause prints the refusal instead, and that its pass then ends.
+
+Checked and left unchanged:
+- **The trainer's RESULT lines** (§15 1316, 1322, 1358, 1363). G1 changes no RESULT line.
+- **"epoch_ckpts/ holds exactly e01.pt … e15.pt"** (§15 1218), and the 16 sha256 lines per run (§15 1333, 1372).
+  eNN.pt is still one file per epoch.
+- **The timing conversions** (§15 1388, 1535). `RESULT: CONVERTED 1/1 (timing)` is unchanged for a checkpoint whose
+  flag agrees. A deviating one is now refused, and §15 1235–1238 makes that a STOP, like any other output.
+- **The rejection check** (§15 1469–1474, 1489–1504) and **select_clip's outcomes** (§15 1676–1698). `run_rejected`
+  and `clip_selection` are unchanged; `sel` is not edited.
+- **No §15 line quotes the rules file's text or sha256** (G3).
