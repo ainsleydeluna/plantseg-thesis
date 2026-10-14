@@ -1,0 +1,495 @@
+{
+  "format": "arm_teacher_record/1",
+  "arm": "R2",
+  "status": "complete",
+  "first_nonfinite": null,
+  "work_dir": {
+    "path": "/arm_runs/teacher-r2_s42_40k_a1",
+    "name": "teacher-r2_s42_40k_a1",
+    "attempt": 1,
+    "launched_path": "/workspace/arm_runs/teacher-r2_s42_40k_a1"
+  },
+  "dl": {
+    "config": "DL-112",
+    "table": "DL-112"
+  },
+  "train_config": {
+    "path_rel": "configs/teacher/arms/r2_bema_rare.py",
+    "sha256": "2e73770e1a011422a4e30e3d7653827af77e6d1ac9e8cabb9a063c82ddde286e",
+    "git_blob": "5275139e8522e6ecfc9faf272278ea0fbd433657"
+  },
+  "eval_config": {
+    "path_rel": "configs/teacher/segnext_mscan-b_1xb16-adamw-40k_plantseg116-512x512.py",
+    "sha256": "1b94aa32a7d22be647d8e60a42daa1dd8dd756158b586feec6465385e299ae4a",
+    "git_blob": "3c6a7b28ebad5fce6187c307f87fd7fc91f81933"
+  },
+  "registered_difference": {
+    "entries": [
+      "custom_hooks",
+      "custom_imports.imports",
+      "model.backbone.drop_path_rate",
+      "train_dataloader.dataset"
+    ],
+    "sha256": "1639396c39b2969d0747d90e4f0fb31147d02fc0f4a7d1d8084acd16f0655256",
+    "reg_sha256": "1639396c39b2969d0747d90e4f0fb31147d02fc0f4a7d1d8084acd16f0655256",
+    "json": [
+      {
+        "arm": [
+          {
+            "type": "TeacherInitCompatibilityHook"
+          },
+          {
+            "seed": 42,
+            "type": "TeacherNMFEvalStreamHook"
+          },
+          {
+            "disease_key": "mIoU_disease_full",
+            "key": "mIoU_full",
+            "type": "TeacherSelectionRecordHook"
+          },
+          {
+            "begin_iter": 0,
+            "ema_type": "ExponentialMovingAverage",
+            "interval": 1,
+            "momentum": 0.0002,
+            "strict_load": false,
+            "type": "EMAHook",
+            "update_buffers": true
+          }
+        ],
+        "path": "custom_hooks",
+        "record": [
+          {
+            "type": "TeacherInitCompatibilityHook"
+          },
+          {
+            "seed": 42,
+            "type": "TeacherNMFEvalStreamHook"
+          },
+          {
+            "disease_key": "mIoU_disease_full",
+            "key": "mIoU_full",
+            "type": "TeacherSelectionRecordHook"
+          }
+        ]
+      },
+      {
+        "arm": [
+          "src.training.teacher_components",
+          "src.training.teacher_arm_components"
+        ],
+        "path": "custom_imports.imports",
+        "record": [
+          "src.training.teacher_components"
+        ]
+      },
+      {
+        "arm": 0.2,
+        "path": "model.backbone.drop_path_rate",
+        "record": 0.1
+      },
+      {
+        "arm": {
+          "dataset": {
+            "_scope_": "mmseg",
+            "data_prefix": {
+              "img_path": "images/train",
+              "seg_map_path": "annotations/train"
+            },
+            "data_root": "$PLANTSEG_DATA_ROOT",
+            "img_suffix": ".jpg",
+            "metainfo": {
+              "classes": {
+                "__tuple__": [
+                  "",
+                  "apple black rot",
+                  "apple mosaic virus",
+                  "apple rust",
+                  "apple scab",
+                  "banana anthracnose",
+                  "banana black leaf streak",
+                  "banana bunchy top",
+                  "banana cigar end rot",
+                  "banana cordana leaf spot",
+                  "banana panama disease",
+                  "basil downy mildew",
+                  "bean halo blight",
+                  "bean mosaic virus",
+                  "bean rust",
+                  "bell pepper bacterial spot",
+                  "bell pepper blossom end rot",
+                  "bell pepper frogeye leaf spot",
+                  "bell pepper powdery mildew",
+                  "blueberry anthracnose",
+                  "blueberry botrytis blight",
+                  "blueberry mummy berry",
+                  "blueberry rust",
+                  "blueberry scorch",
+                  "broccoli alternaria leaf spot",
+                  "broccoli downy mildew",
+                  "broccoli ring spot",
+                  "cabbage alternaria leaf spot",
+                  "cabbage black rot",
+                  "cabbage downy mildew",
+                  "carrot alternaria leaf blight",
+                  "carrot cavity spot",
+                  "carrot cercospora leaf blight",
+                  "cauliflower alternaria leaf spot",
+                  "cauliflower bacterial soft rot",
+                  "celery anthracnose",
+                  "celery early blight",
+                  "cherry leaf spot",
+                  "cherry powdery mildew",
+                  "citrus canker",
+                  "citrus greening disease",
+                  "coffee berry blotch",
+                  "coffee black rot",
+                  "coffee brown eye spot",
+                  "coffee leaf rust",
+                  "corn gray leaf spot",
+                  "corn northern leaf blight",
+                  "corn rust",
+                  "corn smut",
+                  "cucumber angular leaf spot",
+                  "cucumber bacterial wilt",
+                  "cucumber powdery mildew",
+                  "eggplant cercospora leaf spot",
+                  "eggplant phomopsis fruit rot",
+                  "eggplant phytophthora blight",
+                  "garlic leaf blight",
+                  "garlic rust",
+                  "ginger leaf spot",
+                  "ginger sheath blight",
+                  "grape black rot",
+                  "grape downy mildew",
+                  "grape leaf spot",
+                  "grapevine leafroll disease",
+                  "lettuce downy mildew",
+                  "lettuce mosaic virus",
+                  "maple tar spot",
+                  "peach anthracnose",
+                  "peach brown rot",
+                  "peach leaf curl",
+                  "peach rust",
+                  "peach scab",
+                  "plum bacterial spot",
+                  "plum brown rot",
+                  "plum pocket disease",
+                  "plum pox virus",
+                  "plum rust",
+                  "potato early blight",
+                  "potato late blight",
+                  "raspberry fire blight",
+                  "raspberry gray mold",
+                  "raspberry leaf spot",
+                  "raspberry yellow rust",
+                  "rice blast",
+                  "rice sheath blight",
+                  "soybean bacterial blight",
+                  "soybean brown spot",
+                  "soybean downy mildew",
+                  "soybean frog eye leaf spot",
+                  "soybean mosaic",
+                  "soybean rust",
+                  "squash powdery mildew",
+                  "strawberry anthracnose",
+                  "strawberry leaf scorch",
+                  "tobacco blue mold",
+                  "tobacco brown spot",
+                  "tobacco frogeye leaf spot",
+                  "tobacco mosaic virus",
+                  "tomato bacterial leaf spot",
+                  "tomato early blight",
+                  "tomato late blight",
+                  "tomato leaf mold",
+                  "tomato mosaic virus",
+                  "tomato septoria leaf spot",
+                  "tomato yellow leaf curl virus",
+                  "wheat bacterial leaf streak (black chaff)",
+                  "wheat head scab",
+                  "wheat leaf rust",
+                  "wheat loose smut",
+                  "wheat powdery mildew",
+                  "wheat septoria blotch",
+                  "wheat stem rust",
+                  "wheat stripe rust",
+                  "zucchini bacterial wilt",
+                  "zucchini downy mildew",
+                  "zucchini powdery mildew",
+                  "zucchini yellow mosaic virus"
+                ]
+              }
+            },
+            "pipeline": [
+              {
+                "type": "RareClassCopyPasteTrainTransform"
+              },
+              {
+                "type": "PackSegInputs"
+              }
+            ],
+            "reduce_zero_label": false,
+            "seg_map_suffix": ".png",
+            "table_path": "$PLANTSEG_R2_TABLE",
+            "type": "RareClassTrainDataset"
+          },
+          "oversample_thr": 0.003726476616359232,
+          "type": "ClassBalancedDataset"
+        },
+        "path": "train_dataloader.dataset",
+        "record": {
+          "_scope_": "mmseg",
+          "data_prefix": {
+            "img_path": "images/train",
+            "seg_map_path": "annotations/train"
+          },
+          "data_root": "$PLANTSEG_DATA_ROOT",
+          "img_suffix": ".jpg",
+          "metainfo": {
+            "classes": {
+              "__tuple__": [
+                "",
+                "apple black rot",
+                "apple mosaic virus",
+                "apple rust",
+                "apple scab",
+                "banana anthracnose",
+                "banana black leaf streak",
+                "banana bunchy top",
+                "banana cigar end rot",
+                "banana cordana leaf spot",
+                "banana panama disease",
+                "basil downy mildew",
+                "bean halo blight",
+                "bean mosaic virus",
+                "bean rust",
+                "bell pepper bacterial spot",
+                "bell pepper blossom end rot",
+                "bell pepper frogeye leaf spot",
+                "bell pepper powdery mildew",
+                "blueberry anthracnose",
+                "blueberry botrytis blight",
+                "blueberry mummy berry",
+                "blueberry rust",
+                "blueberry scorch",
+                "broccoli alternaria leaf spot",
+                "broccoli downy mildew",
+                "broccoli ring spot",
+                "cabbage alternaria leaf spot",
+                "cabbage black rot",
+                "cabbage downy mildew",
+                "carrot alternaria leaf blight",
+                "carrot cavity spot",
+                "carrot cercospora leaf blight",
+                "cauliflower alternaria leaf spot",
+                "cauliflower bacterial soft rot",
+                "celery anthracnose",
+                "celery early blight",
+                "cherry leaf spot",
+                "cherry powdery mildew",
+                "citrus canker",
+                "citrus greening disease",
+                "coffee berry blotch",
+                "coffee black rot",
+                "coffee brown eye spot",
+                "coffee leaf rust",
+                "corn gray leaf spot",
+                "corn northern leaf blight",
+                "corn rust",
+                "corn smut",
+                "cucumber angular leaf spot",
+                "cucumber bacterial wilt",
+                "cucumber powdery mildew",
+                "eggplant cercospora leaf spot",
+                "eggplant phomopsis fruit rot",
+                "eggplant phytophthora blight",
+                "garlic leaf blight",
+                "garlic rust",
+                "ginger leaf spot",
+                "ginger sheath blight",
+                "grape black rot",
+                "grape downy mildew",
+                "grape leaf spot",
+                "grapevine leafroll disease",
+                "lettuce downy mildew",
+                "lettuce mosaic virus",
+                "maple tar spot",
+                "peach anthracnose",
+                "peach brown rot",
+                "peach leaf curl",
+                "peach rust",
+                "peach scab",
+                "plum bacterial spot",
+                "plum brown rot",
+                "plum pocket disease",
+                "plum pox virus",
+                "plum rust",
+                "potato early blight",
+                "potato late blight",
+                "raspberry fire blight",
+                "raspberry gray mold",
+                "raspberry leaf spot",
+                "raspberry yellow rust",
+                "rice blast",
+                "rice sheath blight",
+                "soybean bacterial blight",
+                "soybean brown spot",
+                "soybean downy mildew",
+                "soybean frog eye leaf spot",
+                "soybean mosaic",
+                "soybean rust",
+                "squash powdery mildew",
+                "strawberry anthracnose",
+                "strawberry leaf scorch",
+                "tobacco blue mold",
+                "tobacco brown spot",
+                "tobacco frogeye leaf spot",
+                "tobacco mosaic virus",
+                "tomato bacterial leaf spot",
+                "tomato early blight",
+                "tomato late blight",
+                "tomato leaf mold",
+                "tomato mosaic virus",
+                "tomato septoria leaf spot",
+                "tomato yellow leaf curl virus",
+                "wheat bacterial leaf streak (black chaff)",
+                "wheat head scab",
+                "wheat leaf rust",
+                "wheat loose smut",
+                "wheat powdery mildew",
+                "wheat septoria blotch",
+                "wheat stem rust",
+                "wheat stripe rust",
+                "zucchini bacterial wilt",
+                "zucchini downy mildew",
+                "zucchini powdery mildew",
+                "zucchini yellow mosaic virus"
+              ]
+            }
+          },
+          "pipeline": [
+            {
+              "type": "ThesisTeacherTrainTransform"
+            },
+            {
+              "type": "PackSegInputs"
+            }
+          ],
+          "reduce_zero_label": false,
+          "seg_map_suffix": ".png",
+          "type": "BaseSegDataset"
+        }
+      }
+    ]
+  },
+  "launch": {
+    "teacher_arm_launch_provenance_sha256": "a147d534fa7f4cfafea176d82bcda4df15b934f241b25689a3ab954e24a62457",
+    "teacher_launch_provenance_sha256": "0814dc73dad1a2f9b1134b5d4115b950e6720dedb80df7b7b617cc8f5d65988f",
+    "launcher_sha256s": {
+      "launcher": "0b3eb069c6a8ac1cb746015ee940cfeb11eb2f94f23aa947c345325b01bd716b",
+      "frozen_launcher": "47537c016bde8a0119c625a04b31fbf4227924ad7cb201062bffbad69e8419a1",
+      "teacher_arm_components": "b26438481681539e012eeb2f94e63dd1b719e0e7a3c406b0629cf4e01e03fc81"
+    },
+    "checkout_git_head": "0b219e949b56c121bf3c048671bef19b00de5e12",
+    "records_commit": "2b6000e8fe94b4be16b4d3b75afdf5fa3a53b1a3",
+    "image_digest_declared": "sha256:cb413304e2445e5c8ac3786f7a370f2ed05a07d11843b11687bb9eb23dc32c2b",
+    "r2_table_sha256": "fc4cb4ce2ebd67996ead31c9d7cb339cb801e04fddeea2f738cb1008014be740"
+  },
+  "progress": {
+    "last_logged_iteration": 40000,
+    "val_rows": 10,
+    "selection_records": 10
+  },
+  "logs": {
+    "scalars_rel": "20261013_101552/vis_data/scalars.json",
+    "scalars_sha256": "fa49ef868627bde1856204ff40e3fb0f1c1e0e7d1454015daa5fbf7ec751d858"
+  },
+  "selection": {
+    "teacher_selection_json_sha256": "b25a2a4a439b8bd05f95f6b4307fe4ab9f881d461a415a69115c88076db5bd06",
+    "status": "final",
+    "selected_iteration": 24000,
+    "selected_mIoU_full": "0.3971906304359436",
+    "checkpoint": {
+      "name": "iter_24000.pth",
+      "sha256": "d5085961e1529d83b1fc13ff04fac83957bcc44c4f70a0635ff0d840083ffab9",
+      "bytes": 446857665
+    },
+    "recorded_checkpoint_sha256": "d5085961e1529d83b1fc13ff04fac83957bcc44c4f70a0635ff0d840083ffab9"
+  },
+  "interval_checkpoints": [
+    {
+      "iteration": 4000,
+      "name": "iter_4000.pth",
+      "sha256": "ce85276acba0775118a5a031c274ece6134e9a0054b217163bec700d8a0170ec",
+      "bytes": 444128897
+    },
+    {
+      "iteration": 8000,
+      "name": "iter_8000.pth",
+      "sha256": "2226b4b0b4e42d9ac939cfc9cfcda526f613d4f2edabd816aa9db01c6d4ebbb8",
+      "bytes": 444673217
+    },
+    {
+      "iteration": 12000,
+      "name": "iter_12000.pth",
+      "sha256": "7e5415eefdffb2c92895fd0395177a50a8426778a1221662230565fab8ad59f7",
+      "bytes": 445217793
+    },
+    {
+      "iteration": 16000,
+      "name": "iter_16000.pth",
+      "sha256": "856b09fe65abe692b8847fd9f80b7b24afe63a0c9214051d1751f2d1ffda3ed4",
+      "bytes": 445762433
+    },
+    {
+      "iteration": 20000,
+      "name": "iter_20000.pth",
+      "sha256": "d84d6bd2980545e989511d6e762249854c980c0b41f46b3d9db79ad4ec9885e3",
+      "bytes": 446306625
+    },
+    {
+      "iteration": 24000,
+      "name": "iter_24000.pth",
+      "sha256": "d5085961e1529d83b1fc13ff04fac83957bcc44c4f70a0635ff0d840083ffab9",
+      "bytes": 446857665
+    },
+    {
+      "iteration": 28000,
+      "name": "iter_28000.pth",
+      "sha256": "edb1699d550dc4bf2d8d3b5433b8f3edc5cf47420e7ded2324ed1d67dac0c5db",
+      "bytes": 447380289
+    },
+    {
+      "iteration": 32000,
+      "name": "iter_32000.pth",
+      "sha256": "d123777ea3b00a480416b2b0c6632f39062baf44ce718f8baf01f2b628534a8b",
+      "bytes": 447932225
+    },
+    {
+      "iteration": 36000,
+      "name": "iter_36000.pth",
+      "sha256": "dd1115604c0433192487a67c83a706d5faded5f269a838f4545d017aa56bd3a3",
+      "bytes": 448484097
+    },
+    {
+      "iteration": 40000,
+      "name": "iter_40000.pth",
+      "sha256": "4a2f8f98af6569723003a82662c08ee7cc735ace6f377ad496975034f200de46",
+      "bytes": 449036289
+    }
+  ],
+  "ema_checks": {
+    "state_dict_entries": 854,
+    "ema_state_dict_present": true,
+    "steps": 24000,
+    "steps_equal_iteration": true,
+    "state_dict_differs_from_raw": true,
+    "raw_entries": 854
+  },
+  "writer": {
+    "script_rel": "scripts/arm_teacher_record.py",
+    "script_sha256": "344297cc442c2766da7eb404653a02413e2169793eb7d26dae174aa255ee4e81",
+    "commit": "a1a4512c56f0f92974db4b91100119b2215c37ac"
+  },
+  "generated_utc": "2026-10-14T06:19:33Z"
+}
