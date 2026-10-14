@@ -1,8 +1,12 @@
 """Lane 6 (L-AM4 + L-AM1q): one QAT epoch converted to the INT8 artifacts of record (AM-4a item 2).
 
     epoch_ckpts/eNN.pt   (the pre-convert QAT state src/quant/qat.py wrote, in the x86 sidecar schema)
-      -> its sha256 against the epoch_end row; loaded weights_only; the state predicate (a non-finite
-         state is "not convertible": recorded, never converted)
+      -> its sha256 against the epoch_end row; loaded weights_only; its identity, and its state flag
+         against the epoch_end row's (AM-21 item 1(c))
+      -> the state predicate, re-applied: the stored state_finite must agree with it (item 2(a)); a
+         non-finite state is "not convertible": recorded, never converted. A state flag that is missing
+         or disagrees is refused (checkpoint_state_flag): a deviation of the trainer, which fails the
+         conversion (item 2(c)), whatever the purpose
       -> the observer and fake-quant flags its epoch must carry
       -> prepare_qat_model(build_student()) rebuilt and every tensor copied by name: equal key sets both
          ways, every entry equal with the same shape and dtype
@@ -44,6 +48,9 @@ CONVERTED_DIR = "converted"
 SCORES_DIR = "scores"
 PURPOSES = ("record", "timing")
 NOT_CONVERTIBLE_RULE = "excluded: non-finite state (AM-21 item 2(a))"
+# the state flag src/quant/qat.py save_epoch_checkpoint stores in eNN.pt: the values of the epoch's epoch_end row
+STATE_FLAG_KEYS = ("state_finite", "state_nonfinite", "nonfinite_since_step")
+STATE_FLAG_DEVIATION = "a deviation of the trainer, which fails the conversion (AM-21 item 2(c))"
 CONVERT_CODE_PATHS = (
     "src/quant/qat_artifacts.py", "src/quant/qat.py", "src/quant/ptq.py", "src/quant/prepare.py",
     "src/quant/qconfig.py", "src/quant/x86_latency.py", "src/quant/runner.py", "src/quant/stages.py",
@@ -163,6 +170,31 @@ def verified_checkpoint(rec: dict, epoch: int) -> tuple[Path, str]:
         raise QATRefused("checkpoint_sha256_mismatch", f"{p} has sha256 {sha}; its epoch_end row records "
                                                        f"{end.get('checkpoint_sha256')}")
     return p, sha
+
+
+def _same(a, b) -> bool:
+    """Equal in type and value: a recorded bool True is not the int 1, nor an int 10 the float 10.0."""
+    return type(a) is type(b) and a == b
+
+
+def state_flag_row_error(payload: dict, end: dict) -> str | None:
+    """AM-21 item 1(c): the state flag the epoch checkpoint stores against its epoch_end row's. None when each of the
+    three keys is present in both and equal in type and value; otherwise what is missing or differs."""
+    missing = ([f"the checkpoint's {k}" for k in STATE_FLAG_KEYS if k not in payload]
+               + [f"the epoch_end row's {k}" for k in STATE_FLAG_KEYS if k not in end])
+    if missing:
+        return f"no state flag: {', '.join(missing)} missing"
+    differ = [k for k in STATE_FLAG_KEYS if not _same(payload[k], end[k])]
+    if differ:
+        return "; ".join(f"it stores {k} {payload[k]!r}, its epoch_end row {end[k]!r}" for k in differ)
+    return None
+
+
+def state_flag_predicate_error(payload: dict, finite: bool) -> str | None:
+    """AM-21 item 2(a), the checkpoint decides: the stored state_finite against item 1(a) re-applied at conversion."""
+    if not _same(payload["state_finite"], finite):
+        return f"it stores state_finite {payload['state_finite']!r}; item 1(a) re-applied at conversion finds {finite}"
+    return None
 
 
 # ------------------------------------------------------------------ the prepared student and its state
@@ -354,6 +386,10 @@ def convert_epoch(run_dir, eval_dir, epoch: int, *, purpose: str, host_label: st
     wrong = {k: payload.get(k) for k, v in ident.items() if payload.get(k) != v}
     if wrong:
         raise QATRefused("checkpoint_identity", f"{ck} records {wrong}, the run {ident}")
+    # its state flag against its epoch_end row (AM-21 item 1(c)), whatever the purpose
+    row_flag = state_flag_row_error(payload, rec["ends"][epoch])
+    if row_flag:
+        raise QATRefused("checkpoint_state_flag", f"{ck}: {row_flag}: {STATE_FLAG_DEVIATION}")
     state = payload["model_state_dict"]
     skeleton = prepared_skeleton()
     kinds = Q.state_kinds(skeleton)
@@ -362,8 +398,12 @@ def convert_epoch(run_dir, eval_dir, epoch: int, *, purpose: str, host_label: st
               "qat_checkpoint": f"{Q.EPOCH_DIR}/{ck.name}", "qat_checkpoint_sha256": ck_sha,
               "telemetry_sha256": rec["telemetry_sha256"], "purpose": purpose, "host_label": host_label,
               "cpu_model": Q.cpu_model(), "smoke_inputs": bool(allow_smoke_inputs)}
-    # 4. the state predicate: a non-finite state is recorded and never converted
+    # 4. the state predicate, re-applied: the stored state_finite must agree with it (AM-21 item 2(a)); a non-finite
+    #    state is recorded and never converted
     ok, fails = Q.state_predicate(state, kinds, never)
+    pred_flag = state_flag_predicate_error(payload, ok)
+    if pred_flag:
+        raise QATRefused("checkpoint_state_flag", f"{ck}: {pred_flag}: {STATE_FLAG_DEVIATION}")
     if not ok:
         conv.mkdir(parents=True, exist_ok=True)
         doc = {**common, "status": "not convertible", "rule": NOT_CONVERTIBLE_RULE, "failing": fails,
@@ -504,7 +544,8 @@ def _convert_checked(rec, st, epoch, ck_sha, state, skeleton, paths, names, comm
 
 
 __all__ = ["CONVERTED_DIR", "IDENTITY_KEYS", "NOT_CONVERTIBLE_RULE", "PURPOSES", "QATIncomplete", "SCORES_DIR",
-           "alias_keys", "argmax_agreement", "bytes_equal", "convert_epoch", "epoch_names", "fake_quant_model",
-           "freeze_cross_check", "freeze_key_sets", "head_lsb", "json_bytes", "load_state_by_name",
-           "prepared_skeleton", "read_run_record", "read_ts_identity", "refuse_test_path", "require_complete",
+           "STATE_FLAG_DEVIATION", "STATE_FLAG_KEYS", "alias_keys", "argmax_agreement", "bytes_equal",
+           "convert_epoch", "epoch_names", "fake_quant_model", "freeze_cross_check", "freeze_key_sets", "head_lsb",
+           "json_bytes", "load_state_by_name", "prepared_skeleton", "read_run_record", "read_ts_identity",
+           "refuse_test_path", "require_complete", "state_flag_predicate_error", "state_flag_row_error",
            "stored_flags_error", "verified_checkpoint"]

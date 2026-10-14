@@ -14,7 +14,9 @@ steps are converted, scored and selected without their non-finite epochs; a run 
 step has no convertible epoch, and select_qat_epoch refuses it and writes nothing.
 
 Checks the identity and provenance of record, bitwise TorchScript / state_dict / eager parity read from
-disk, per-channel INT8 weights, no float region, the fresh-process guard, the evaluator accepting the
+disk, per-channel INT8 weights, no float region, the fresh-process guard, the refusal of a checkpoint whose
+state flag is missing or disagrees with its epoch_end row or with item 1(a) re-applied (AM-21 items 1(c),
+2(a); records section), the evaluator accepting the
 provenance, and the fake-quant vs converted agreement on a confident fixture (with two negative controls
 that must disagree). No PlantSeg data, no checkpoint of record; temp files outside the repository.
 
@@ -265,17 +267,32 @@ def rewrite_checkpoint(run: Path, epoch: int, edit) -> None:
     tel.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
 
 
-def rewrite_payload(run: Path, epoch: int, **fields) -> None:
-    """Rewrite eNN.pt's payload fields (not its state) and record its new sha256 in the run's epoch_end row."""
+def rewrite_payload(run: Path, epoch: int, *, drop: tuple = (), **fields) -> None:
+    """Rewrite eNN.pt's payload fields (not its state), the `drop` keys removed, and record its new sha256 in the
+    run's epoch_end row."""
     p = run / Q.EPOCH_DIR / f"e{epoch:02d}.pt"
     payload = torch.load(p, map_location="cpu", weights_only=True)
     payload.update(fields)
+    for k in drop:
+        payload.pop(k)
     torch.save(payload, p)
     tel = run / Q.TELEMETRY_NAME
     rows = [json.loads(line) for line in tel.read_text(encoding="utf-8").splitlines()]
     for r in rows:
         if r.get("event") == "epoch_end" and r["epoch"] == epoch:
             r["checkpoint_sha256"] = Q.sha256_file(p)
+    tel.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+
+
+def rewrite_end_row(run: Path, epoch: int, *, drop: tuple = (), **fields) -> None:
+    """The epoch's epoch_end row with `fields` set and the `drop` keys removed (its checkpoint unchanged)."""
+    tel = run / Q.TELEMETRY_NAME
+    rows = [json.loads(line) for line in tel.read_text(encoding="utf-8").splitlines()]
+    for r in rows:
+        if r.get("event") == "epoch_end" and r["epoch"] == epoch:
+            r.update(fields)
+            for k in drop:
+                r.pop(k)
     tel.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
 
 
@@ -417,6 +434,52 @@ def test_records(cache: Path | None) -> None:
         torch.backends.quantized.engine = engine
     check("d4_convert_epoch_qconfig_changed_stop", rc == 1 and "[qconfig_changed]" in res
           and (ev_q / A.CONVERTED_DIR / A.epoch_names(1)["stop"]).is_file(), res)
+    # G2 (Q2-G; AM-21 items 1(c), 2(a), 2(c)): the state flag eNN.pt stores must equal its epoch_end row's, in type and
+    # value, and its state_finite item 1(a) re-applied at conversion. A key missing from either, or a mismatch, is
+    # refused [checkpoint_state_flag] before anything is written, for both purposes. One clone, one deviation an
+    # epoch; e08 comes last, the one epoch a mutation could convert (and trace) in this process.
+    sf = clone_run(run, TMP / "run_records_state_flag")
+    s6 = state_of(run, 6)
+    p_key = next(k for k, v in s6.items() if k.endswith(".weight") and v.dtype == torch.float32 and v.dim() == 4)
+    del s6
+
+    def nan_param(st: dict) -> None:
+        st[p_key].fill_(float("nan"))
+    flagged = {"state_finite": False, "state_nonfinite": True}
+    rewrite_payload(sf, 1, state_nonfinite=True)                     # its row: false
+    rewrite_payload(sf, 2, drop=A.STATE_FLAG_KEYS)
+    rewrite_end_row(sf, 3, drop=("state_nonfinite",))
+    rewrite_end_row(sf, 4, state_finite=False)                       # eNN.pt: true, as item 1(a) reads its state
+    rewrite_payload(sf, 5, nonfinite_since_step=7)                   # its row: null
+    rewrite_checkpoint(sf, 6, nan_param)                             # stored and row as written: finite
+    rewrite_checkpoint(sf, 7, nan_param)
+    rewrite_payload(sf, 7, nonfinite_since_step=10.0, **flagged)     # its row: the int 10
+    rewrite_end_row(sf, 7, nonfinite_since_step=10, **flagged)
+    rewrite_payload(sf, 8, nonfinite_since_step=8, **flagged)        # a finite state flagged non-finite, both places
+    rewrite_end_row(sf, 8, nonfinite_since_step=8, **flagged)
+    sfb = [a if a != str(run) else str(sf) for a in base]
+
+    def flag_refused(name: str, epoch: int, purpose: str = "record") -> None:
+        ev_sf = TMP / f"ev_{name}"
+        refused(name, ["convert-epoch", "--eval-dir", str(ev_sf), *[a if a != "record" else purpose for a in sfb],
+                       "--epoch", str(epoch)], "checkpoint_state_flag", absent=ev_sf)
+    flag_refused("d4_convert_epoch_state_nonfinite_unlike_its_row_refused", 1)
+    flag_refused("d4_convert_epoch_without_state_flag_refused", 2)
+    flag_refused("d4_convert_epoch_row_without_state_flag_refused", 3)
+    flag_refused("d4_convert_epoch_state_finite_unlike_its_row_refused", 4)
+    flag_refused("d4_convert_epoch_since_step_unlike_its_row_refused", 5)
+    flag_refused("d4_convert_epoch_nonfinite_state_stored_finite_refused", 6)
+    flag_refused("d4_convert_epoch_state_flag_of_another_type_refused", 7)
+    flag_refused("d4_convert_epoch_timing_state_flag_refused", 1, purpose="timing")
+    # convert surfaces its worker's refusal and spends the eval directory (P26): qat_epoch_eval.py is unchanged
+    ev_sfc = TMP / "ev_state_flag_convert"
+    rc, res = qee(["convert", "--eval-dir", str(ev_sfc), *sfb, "--expect-telemetry-sha256",
+                   Q.sha256_file(sf / Q.TELEMETRY_NAME)])
+    check("d4_convert_state_flag_refusal_spends_the_eval_dir",
+          rc == 2 and res.startswith("RESULT: REFUSED -- e01 worker exited 2 (failed): RESULT: REFUSED "
+                                     "[checkpoint_state_flag]")
+          and (ev_sfc / QEE.CONVERT_STOP).is_file() and not (ev_sfc / A.CONVERTED_DIR).exists(), res)
+    flag_refused("d4_convert_epoch_finite_state_stored_nonfinite_refused", 8)
     # P26: a worker that fails spends the eval directory: convert_STOP.json, the RESULT word of its exit code
     ev_w = TMP / "ev_worker_refused"
     rc, res = qee(["convert", "--eval-dir", str(ev_w), *wid, "--expect-telemetry-sha256",

@@ -21,7 +21,8 @@ reading of a skipped baseline, the signalled run's FAIL and its jobs without a v
 selection and the cleanup of a refused one, its run of the jobs, the selection's two guards, and the self-check's
 jobs watching this harness and ending with the process they watch (a zombie, or reaped). Q2-G: M124-M129 undo the
 epoch checkpoint's state flag (the epoch end's reading and first finding recorded before eNN.pt is written, and each
-of its three keys; AM-21 items 1(b), 1(c)).
+of its three keys; AM-21 items 1(b), 1(c)), and M130-M134 undo conversion's check of that flag against the epoch_end
+row and item 1(a) re-applied, for both purposes (checkpoint_state_flag; items 2(a), 2(c)).
 
 The explicit paths of SHADOW_PATHS are copied into a temporary shadow of the repository and committed there
 (one fixed commit, so the trainer records a git_head as in the checkout); the repository itself is never
@@ -1254,6 +1255,27 @@ MUTATIONS = [
     M("M129", "eNN.pt's state_nonfinite is always false", QAT,
       '"state_nonfinite": nonfinite_since_step is not None,', '"state_nonfinite": False,',
       runner("nan"), "d1_checkpoint_state_flag_nonfinite_step10", "d1_checkpoint_state_flag_nonfinite_step27"),
+    # Q2-G, G2 (AM-21 items 1(c), 2(a), 2(c)): conversion refuses a checkpoint whose state flag is missing, or differs
+    # from its epoch_end row or from item 1(a) re-applied, for both purposes (checkpoint_state_flag)
+    M("M130", "the stored state flag is not compared with its epoch_end row", ART,
+      "    differ = [k for k in STATE_FLAG_KEYS if not _same(payload[k], end[k])]\n", "    differ = []\n",
+      records(), "d4_convert_epoch_state_nonfinite_unlike_its_row_refused",
+      "d4_convert_epoch_state_finite_unlike_its_row_refused", "d4_convert_epoch_since_step_unlike_its_row_refused",
+      "d4_convert_state_flag_refusal_spends_the_eval_dir"),
+    M("M131", "a state flag missing from the checkpoint or its epoch_end row is read anyway (a KeyError, no refusal)",
+      ART, "    if missing:\n", "    if False:\n", records(), "d4_convert_epoch_without_state_flag_refused",
+      "d4_convert_epoch_row_without_state_flag_refused"),
+    M("M132", "the stored state_finite is not compared with item 1(a) re-applied at conversion", ART,
+      '    if not _same(payload["state_finite"], finite):\n', "    if False:\n", records(),
+      "d4_convert_epoch_nonfinite_state_stored_finite_refused",
+      "d4_convert_epoch_finite_state_stored_nonfinite_refused"),
+    M("M133", "the state flag is compared by value only (10.0 == 10, 1 == True)", ART,
+      "    return type(a) is type(b) and a == b\n", "    return a == b\n", records(),
+      "d4_convert_epoch_state_flag_of_another_type_refused"),
+    MM("M134", "the state-flag checks are skipped for --purpose timing", ART,
+       [("    if row_flag:\n", '    if row_flag and purpose == "record":\n'),
+        ("    if pred_flag:\n", '    if pred_flag and purpose == "record":\n')],
+       records(), "d4_convert_epoch_timing_state_flag_refused"),
 ]
 
 # ------------------------------------------------------------------ the refusal table (P36)
