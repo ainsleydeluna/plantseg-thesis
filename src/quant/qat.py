@@ -18,11 +18,14 @@ Recipe (AM-4a item 1)
 Seeding (AM-4a item 4, L-AM1q): set_seed(--seed), before CUDA is initialised; both loaders are E1's
 build_dataloader calls with seed=--seed.
 
-Per epoch, in this order: the epoch's steps; epoch_ckpts/eNN.pt written atomically (the pre-convert
-QAT state, in the x86 sidecar schema) and hashed; the fake-quant VAL bracket (every FakeQuantize's
-observer flag snapshotted, all disabled, train_e1.validate, the snapshot restored), so a VAL image
-never moves a range; the state is asserted unchanged; the `val` row, then the `epoch_end` row. The
-epoch-15 `epoch_end` row is the AM-19 completion record.
+Per epoch, in this order: the epoch's steps; the state predicate read on the state the checkpoint will
+hold, and a first non-finite finding recorded (AM-21 item 1(b)); epoch_ckpts/eNN.pt written atomically
+(the pre-convert QAT state, in the x86 sidecar schema, carrying that reading as its state flag:
+state_finite, state_nonfinite and nonfinite_since_step, item 1(c)) and hashed; the fake-quant VAL
+bracket (every FakeQuantize's observer flag snapshotted, all disabled, train_e1.validate, the snapshot
+restored), so a VAL image never moves a range; the state is asserted unchanged; the `val` row, then the
+`epoch_end` row, whose three flag values are the checkpoint's. The epoch-15 `epoch_end` row is the AM-19
+completion record.
 
 Non-finite states (AM-21 item 1). There is no divergence rule. A non-finite loss or gradient norm
 is recorded. The state predicate (`state_predicate`, item 1(a)) is evaluated after such a step,
@@ -708,8 +711,15 @@ def cpu_state(model: nn.Module) -> dict:
 
 def save_epoch_checkpoint(out_dir: Path, *, stage_name: str, source_stage: str, epoch: int, step: int,
                           state: dict, state_sha256: str, seed: int, clip_norm: float, run_id: str,
-                          source_sha256: str) -> tuple[Path, str, int]:
-    """eNN.pt, written atomically (same-directory .tmp + os.replace), in the x86 sidecar schema."""
+                          source_sha256: str, state_finite: bool | None = None,
+                          nonfinite_since_step: int | None = None) -> tuple[Path, str, int]:
+    """eNN.pt, written atomically (same-directory .tmp + os.replace), in the x86 sidecar schema.
+
+    It carries the state flag (AM-21 item 1(c)), the values its epoch_end row records: state_finite, item 1(a)'s
+    predicate read on this state before the write; state_nonfinite and nonfinite_since_step, the run's first finding
+    so far, this reading included. A caller that passes no reading stores state_finite None, which conversion
+    refuses (src/quant/qat_artifacts.py, checkpoint_state_flag).
+    """
     d = Path(out_dir) / EPOCH_DIR
     d.mkdir(parents=True, exist_ok=True)
     path = d / f"e{epoch:02d}.pt"
@@ -721,6 +731,8 @@ def save_epoch_checkpoint(out_dir: Path, *, stage_name: str, source_stage: str, 
                "training_quant_backend": QUANT_BACKEND, "source_stage": source_stage,
                "source_checkpoint_sha256": source_sha256, "seed": seed, "clip_norm": clip_norm,
                "run_id": run_id, "state_sha256": state_sha256,
+               "state_finite": state_finite, "state_nonfinite": nonfinite_since_step is not None,
+               "nonfinite_since_step": nonfinite_since_step,
                "purpose": ("pre-convert QAT state of one epoch, converted and scored after training "
                            "(AM-4a item 2); never an accuracy, robustness, size or deployment artifact")}
     tmp = path.with_name(path.name + ".tmp")
@@ -1004,16 +1016,17 @@ def run_qat(*, stage: str, mode: str, model: nn.Module, source_meta: dict, out_d
             if max_steps is not None and step >= max_steps and ep["steps"] == 0:
                 break
 
-            # the epoch checkpoint, written before the VAL bracket, and the state it holds
+            # the state the epoch checkpoint holds: item 1(a) read on it and a first finding recorded (AM-21 item
+            # 1(b)), then the checkpoint written before the VAL bracket, carrying that state flag (item 1(c))
             state = cpu_state(prepared)
             state_sha = state_digest(state)
-            ck_path, ck_sha, ck_bytes = save_epoch_checkpoint(
-                out, stage_name=st["name"], source_stage=st["source_stage"], epoch=epoch, step=step,
-                state=state, state_sha256=state_sha, seed=seed, clip_norm=clip_norm, run_id=run_id,
-                source_sha256=source_meta["sha256"])
             finite, fails = state_predicate(state, kinds, never)
             if not finite and nonfinite_since is None:
                 _mark_nonfinite(step, fails)
+            ck_path, ck_sha, ck_bytes = save_epoch_checkpoint(
+                out, stage_name=st["name"], source_stage=st["source_stage"], epoch=epoch, step=step,
+                state=state, state_sha256=state_sha, seed=seed, clip_norm=clip_norm, run_id=run_id,
+                source_sha256=source_meta["sha256"], state_finite=bool(finite), nonfinite_since_step=nonfinite_since)
             # the VAL bracket: observers off for the pass, their snapshot restored after it
             if hooks is not None:
                 hooks.before_val(epoch, prepared)

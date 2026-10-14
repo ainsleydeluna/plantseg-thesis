@@ -19,7 +19,9 @@ install of the stop handlers (and each of the four signals alone), the reentrant
 job's group (one still starting included), the skip of the queued baselines and edits, the gate on new jobs, the
 reading of a skipped baseline, the signalled run's FAIL and its jobs without a verdict, main()'s self-check, its
 selection and the cleanup of a refused one, its run of the jobs, the selection's two guards, and the self-check's
-jobs watching this harness and ending with the process they watch (a zombie, or reaped).
+jobs watching this harness and ending with the process they watch (a zombie, or reaped). Q2-G: M124-M129 undo the
+epoch checkpoint's state flag (the epoch end's reading and first finding recorded before eNN.pt is written, and each
+of its three keys; AM-21 items 1(b), 1(c)).
 
 The explicit paths of SHADOW_PATHS are copied into a temporary shadow of the repository and committed there
 (one fixed commit, so the trainer records a git_head as in the checkout); the repository itself is never
@@ -628,6 +630,16 @@ _OUT_LOOK = ("    try:\n        out = check_output_dir(value, create=False)\n   
              "        return str(e)\n    if out.exists() and (not out.is_dir() or any(out.iterdir())):\n"
              "        return f\"--out-dir {out} exists and is not an empty directory; "
              "a run starts in a fresh directory\"\n")
+# Q2-G, G1: the epoch end's first finding, the state flag the trainer passes to save_epoch_checkpoint, and the three
+# keys eNN.pt stores (src/quant/qat.py)
+_EPOCH_END_MARK = ("            if not finite and nonfinite_since is None:\n"
+                   "                _mark_nonfinite(step, fails)\n")
+_CK_SAVE = "            ck_path, ck_sha, ck_bytes = save_epoch_checkpoint(\n"
+_CK_FLAG_ARGS = ('                source_sha256=source_meta["sha256"], state_finite=bool(finite), '
+                 "nonfinite_since_step=nonfinite_since)\n")
+_CK_PAYLOAD_FLAG = ('               "state_finite": state_finite, '
+                    '"state_nonfinite": nonfinite_since_step is not None,\n'
+                    '               "nonfinite_since_step": nonfinite_since_step,\n')
 
 
 def M(mid: str, what: str, file: str, old: str, new: str, run: tuple, *kills: str) -> dict:
@@ -1222,6 +1234,26 @@ MUTATIONS = [
     M("M123", "the output so far is dropped when a process outside the group holds the pipe", SQM,
       "                out = _text(e.stdout)\n", "                out = \"\"\n", SELF,
       "a_job_whose_child_leaves_its_group_is_bounded"),
+    # Q2-G, G1 (AM-21 items 1(b), 1(c)): the epoch end reads item 1(a) on the checkpoint's state and records a first
+    # finding before it writes eNN.pt, which carries that state flag; the epoch_end row holds the same three values
+    MM("M124", "the epoch end's first finding is recorded after eNN.pt is written, so that checkpoint lacks it", QAT,
+       [(_EPOCH_END_MARK + _CK_SAVE, _CK_SAVE), (_CK_FLAG_ARGS, _CK_FLAG_ARGS + _EPOCH_END_MARK)],
+       runner("nan"), "d1_checkpoint_carries_the_epoch_end_first_finding"),
+    M("M125", "eNN.pt is written without the epoch end's reading (state_finite None)", QAT,
+      _CK_FLAG_ARGS, _CK_FLAG_ARGS.replace("state_finite=bool(finite), ", ""),
+      runner("d1"), "d1_checkpoint_stores_its_epoch_end_state_flag"),
+    M("M126", "eNN.pt is written without the run's first finding (nonfinite_since_step None)", QAT,
+      _CK_FLAG_ARGS, _CK_FLAG_ARGS.replace(", nonfinite_since_step=nonfinite_since", ""),
+      runner("nan"), "d1_checkpoint_state_flag_nonfinite_step10", "d1_checkpoint_state_flag_nonfinite_step27",
+      "d1_checkpoint_carries_the_epoch_end_first_finding"),
+    M("M127", "eNN.pt's state_finite is the run's sticky flag, not the epoch end's own reading", QAT,
+      _CK_FLAG_ARGS, _CK_FLAG_ARGS.replace("state_finite=bool(finite)", "state_finite=nonfinite_since is None"),
+      runner("nan"), "d1_checkpoint_state_finite_is_its_own_reading"),
+    M("M128", "eNN.pt carries no state flag", QAT, _CK_PAYLOAD_FLAG, "",
+      runner("d1"), "d1_checkpoint_stores_its_epoch_end_state_flag"),
+    M("M129", "eNN.pt's state_nonfinite is always false", QAT,
+      '"state_nonfinite": nonfinite_since_step is not None,', '"state_nonfinite": False,',
+      runner("nan"), "d1_checkpoint_state_flag_nonfinite_step10", "d1_checkpoint_state_flag_nonfinite_step27"),
 ]
 
 # ------------------------------------------------------------------ the refusal table (P36)

@@ -6,7 +6,8 @@ drop_last: 2 steps per epoch, T_max 30, BN statistics frozen after step 20 and e
 step 24) and 8 VAL images. Three trainings go through the trainer's own step, VAL bracket and
 checkpoint code: a clean one at max_norm 0.1 (below the fixture's gradient norm, so every step clips),
 and two with a real NaN injected into the loss, once at step 10 (observers on) and once at step 27
-(observers off). The launch gates are exercised one refusal at a time, G1's name checks by half and by
+(observers off). Each epoch checkpoint's state flag is read back and compared with its epoch_end row
+(AM-21 item 1(c)). The launch gates are exercised one refusal at a time, G1's name checks by half and by
 place, with nothing named "test" created. No dataset, no checkpoint, no download; every file goes to a
 temp directory outside the repository.
 
@@ -58,6 +59,7 @@ SECTIONS = ("d1", "nan", "gates", "isolation", "profile")
 SKIP_ADD_NEVER_OBSERVED = [f"features.{i}.skip_add.activation_post_process" for i in (11, 13, 2, 4, 7)]
 EXPECTED_CENSUS = {"FixedQParamsObserver": 9, "MovingAverageMinMaxObserver": 110,
                    "MovingAveragePerChannelMinMaxObserver": 65}
+FLAG_KEYS = ("state_finite", "state_nonfinite", "nonfinite_since_step")   # eNN.pt's state flag (AM-21 item 1(c))
 results: list[tuple[str, bool, str]] = []
 
 
@@ -154,6 +156,26 @@ def strict_rows(path: Path) -> tuple[list[dict], bool]:
             strict = False
             rows.append(json.loads(line))
     return rows, strict
+
+
+def typed_flag(d: dict) -> tuple:
+    """The state flag a checkpoint or an epoch_end row holds, as (type, value) per key: the bool True is not 1."""
+    return tuple((type(d[k]).__name__, d[k]) if k in d else ("missing", None) for k in FLAG_KEYS)
+
+
+def state_flag(finite: bool, since: int | None) -> tuple:
+    """The flag of an epoch whose end reads its state `finite`, the run's first finding then being `since`."""
+    return typed_flag({"state_finite": finite, "state_nonfinite": since is not None, "nonfinite_since_step": since})
+
+
+def checkpoint_flags(out: Path) -> dict:
+    """{epoch: the state flag its eNN.pt stores}, read back from every epoch checkpoint the run wrote."""
+    flags = {}
+    for e in range(1, Q.EPOCHS + 1):
+        p = out / Q.EPOCH_DIR / f"e{e:02d}.pt"
+        if p.is_file():
+            flags[e] = typed_flag(torch.load(p, map_location="cpu", weights_only=True))
+    return flags
 
 
 def run_case(name: str, *, clip: float, device: str, nan_at=()) -> dict:
@@ -269,6 +291,11 @@ def test_d1(device: str) -> dict:
           len(flags) == 15 and all(flags[e]["observer_enabled"] == ([1] if e <= 12 else [0]) for e in flags)
           and all(flags[e]["fake_quant_enabled"] == [1] for e in flags),
           "observer_enabled 1 in e01-e12, 0 in e13-e15; fake_quant_enabled 1 throughout")
+    stored = checkpoint_flags(c["out"])
+    check("d1_checkpoint_stores_its_epoch_end_state_flag",
+          len(ends) == 15 and stored == {e: state_flag(True, None) for e in range(1, 16)}
+          and all(stored.get(r["epoch"]) == typed_flag(r) for r in ends),
+          f"e01 stores {stored.get(1)}; its epoch_end row {typed_flag(ends[0]) if ends else None}")
     check("d1_checkpoint_written_before_val",
           len(rec.ckpt_before_val) == 15 and all(rec.ckpt_before_val.values()), "eNN.pt exists when VAL starts")
     vals = rows_of(c, "val")
@@ -376,6 +403,12 @@ def test_nonfinite(device: str, clean: dict | None) -> None:
             check("d1_step_errors_recorded_in_nonfinite_state",
                   bool(errs) and all(r["step"] > k and r.get("state_nonfinite") is True for r in errs),
                   f"{len(errs)} step_error rows (a raising forward once the state is non-finite)")
+        stored = checkpoint_flags(c["out"])
+        check(f"d1_checkpoint_state_flag_nonfinite_step{k}",
+              len(ends) == 15 and stored == {e: state_flag(e < first_bad, k if e >= first_bad else None)
+                                             for e in range(1, 16)}
+              and all(stored.get(r["epoch"]) == typed_flag(r) for r in ends),
+              f"e{first_bad - 1:02d} stores {stored.get(first_bad - 1)}, e{first_bad:02d} {stored.get(first_bad)}")
         shutil.rmtree(c["out"], ignore_errors=True)
     # a VAL pass that raises once the state is non-finite: recorded, the run goes on, in train mode (P12)
     import src.training.train_e1 as te1
@@ -449,7 +482,7 @@ def test_nonfinite(device: str, clean: dict | None) -> None:
                 raise RuntimeError("an injected raise in a VAL pass")
             return real_validate(model, *a, **k)
         out = TMP / name
-        c = {"out": out, "error": None, "rows": [], "summary": None}
+        c = {"out": out, "error": None, "rows": [], "summary": None, "ck_flags": {}}
         with patched(te1, "validate", validate_raising):
             try:
                 c["summary"] = Q.run_qat(stage="e5", mode="smoke", model=student(), source_meta=SOURCE, out_dir=out,
@@ -460,6 +493,7 @@ def test_nonfinite(device: str, clean: dict | None) -> None:
                 c["error"] = f"{type(e).__name__}: {e}"
         if (out / Q.TELEMETRY_NAME).is_file():
             c["rows"], _ = strict_rows(out / Q.TELEMETRY_NAME)
+        c["ck_flags"] = checkpoint_flags(out)                    # a checkpoint written before an abort included
         shutil.rmtree(out, ignore_errors=True)
         return c
 
@@ -483,6 +517,12 @@ def test_nonfinite(device: str, clean: dict | None) -> None:
     c = raise_case("d1_val_raises_repaired", Raiser(repair_epoch=6), nan_at=(10,), val_raise_call=7)
     check("d1_val_raise_after_repair_aborts", aborted_at(c, step=14, epoch=7, flagged_at=10)
           and [r["epoch"] for r in rows_of(c, "epoch_end")] == list(range(1, 7)), last_row(c))
+    # e07.pt, written before the VAL pass that raised, stores the epoch end's own reading of the repaired state
+    # (finite) beside the run's first finding (step 10): state_finite is that reading, never the sticky flag
+    check("d1_checkpoint_state_finite_is_its_own_reading",
+          c["ck_flags"].get(6) == state_flag(False, 10) and c["ck_flags"].get(7) == state_flag(True, 10)
+          and 7 not in {r["epoch"] for r in rows_of(c, "epoch_end")},
+          f"e06 stores {c['ck_flags'].get(6)}, e07 {c['ck_flags'].get(7)}")
 
     def completed_nonfinite(c: dict, *, first_found: int) -> tuple[bool, str]:
         marks = [r.get("nonfinite_since_step") for r in c["rows"] if r.get("event") == "state_nonfinite"]
@@ -516,6 +556,11 @@ def test_nonfinite(device: str, clean: dict | None) -> None:
     check("d1_epoch_end_alone_finds_a_nonfinite_state",
           ok and [r.get("state_finite") for r in ends] == [True] * 4 + [False] * 11
           and not rows_of(c, "step_error") and not any(r.get("nonfinite") for r in rows_of(c, "train")), detail)
+    # the epoch end records its first finding before it writes eNN.pt, so e05 already carries it (AM-21 item 1(c))
+    check("d1_checkpoint_carries_the_epoch_end_first_finding",
+          c["ck_flags"] == {e: state_flag(e <= 4, 10 if e >= 5 else None) for e in range(1, 16)}
+          and all(c["ck_flags"].get(r["epoch"]) == typed_flag(r) for r in ends),
+          f"e05 stores {c['ck_flags'].get(5)}; its epoch_end row {typed_flag(ends[4]) if len(ends) > 4 else None}")
 
 
 # ---------------------------------------------------------------- launch gates, one refusal at a time
