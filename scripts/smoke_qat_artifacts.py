@@ -58,8 +58,8 @@ from src.quant import qat as Q  # noqa: E402
 from src.quant import qat_artifacts as A  # noqa: E402
 from src.quant import qat_select as S  # noqa: E402
 from src.quant.prepare import convert_model  # noqa: E402
-from src.quant.ptq import (graph_census, output_parity, runtime_census, synthetic_parity_inputs,  # noqa: E402
-                           torchscript_bytes, weight_scheme_report)
+from src.quant.ptq import (graph_census, output_parity, runtime_census, student_traced_in_process,  # noqa: E402
+                           synthetic_parity_inputs, torchscript_bytes, weight_scheme_report)
 from src.quant.qconfig import select_qnnpack_backend  # noqa: E402
 
 results: list[tuple[str, bool, str]] = []
@@ -436,8 +436,10 @@ def test_records(cache: Path | None) -> None:
           and (ev_q / A.CONVERTED_DIR / A.epoch_names(1)["stop"]).is_file(), res)
     # G2 (Q2-G; AM-21 items 1(c), 2(a), 2(c)): the state flag eNN.pt stores must equal its epoch_end row's, in type and
     # value, and its state_finite item 1(a) re-applied at conversion. A key missing from either, or a mismatch, is
-    # refused [checkpoint_state_flag] before anything is written, for both purposes. One clone, one deviation an
-    # epoch; e08 comes last, the one epoch a mutation could convert (and trace) in this process.
+    # refused [checkpoint_state_flag] before anything is written, for both purposes; a non-finite checkpoint whose
+    # flag agrees is still recorded "not convertible". One clone, one deviation an epoch. At baseline no case below
+    # traces the student; once a mutation lets one convert here, every later case runs in a fresh process, so each
+    # verdict is the case's own (and not the fresh-process guard's).
     sf = clone_run(run, TMP / "run_records_state_flag")
     s6 = state_of(run, 6)
     p_key = next(k for k, v in s6.items() if k.endswith(".weight") and v.dtype == torch.float32 and v.dim() == 4)
@@ -457,12 +459,20 @@ def test_records(cache: Path | None) -> None:
     rewrite_end_row(sf, 7, nonfinite_since_step=10, **flagged)
     rewrite_payload(sf, 8, nonfinite_since_step=8, **flagged)        # a finite state flagged non-finite, both places
     rewrite_end_row(sf, 8, nonfinite_since_step=8, **flagged)
+    rewrite_checkpoint(sf, 9, nan_param)                             # a non-finite state flagged so, both places
+    rewrite_payload(sf, 9, nonfinite_since_step=9, **flagged)
+    rewrite_end_row(sf, 9, nonfinite_since_step=9, **flagged)
     sfb = [a if a != str(run) else str(sf) for a in base]
+
+    def convert_epoch_of(ev_sf: Path, epoch: int, purpose: str) -> tuple[int, str]:
+        argv = ["convert-epoch", "--eval-dir", str(ev_sf), *[a if a != "record" else purpose for a in sfb],
+                "--epoch", str(epoch)]
+        return lane_cli("qat_epoch_eval.py", *argv) if student_traced_in_process() else qee(argv)
 
     def flag_refused(name: str, epoch: int, purpose: str = "record") -> None:
         ev_sf = TMP / f"ev_{name}"
-        refused(name, ["convert-epoch", "--eval-dir", str(ev_sf), *[a if a != "record" else purpose for a in sfb],
-                       "--epoch", str(epoch)], "checkpoint_state_flag", absent=ev_sf)
+        rc, res = convert_epoch_of(ev_sf, epoch, purpose)
+        check(name, rc == 2 and "[checkpoint_state_flag]" in res and not ev_sf.exists(), res)
     flag_refused("d4_convert_epoch_state_nonfinite_unlike_its_row_refused", 1)
     flag_refused("d4_convert_epoch_without_state_flag_refused", 2)
     flag_refused("d4_convert_epoch_row_without_state_flag_refused", 3)
@@ -471,6 +481,14 @@ def test_records(cache: Path | None) -> None:
     flag_refused("d4_convert_epoch_nonfinite_state_stored_finite_refused", 6)
     flag_refused("d4_convert_epoch_state_flag_of_another_type_refused", 7)
     flag_refused("d4_convert_epoch_timing_state_flag_refused", 1, purpose="timing")
+    flag_refused("d4_convert_epoch_timing_nonfinite_state_stored_finite_refused", 6, purpose="timing")
+    ev_nc = TMP / "ev_state_flag_agrees"
+    rc, res = convert_epoch_of(ev_nc, 9, "record")
+    nc = ev_nc / A.CONVERTED_DIR / A.epoch_names(9)["not_convertible"]
+    ncd = json.loads(nc.read_text(encoding="utf-8")) if nc.is_file() else {}
+    check("d4_convert_epoch_agreeing_nonfinite_state_not_convertible",
+          rc == 0 and res == "RESULT: QAT EPOCH 09 NOT CONVERTIBLE" and ncd.get("status") == "not convertible"
+          and ncd.get("rule") == A.NOT_CONVERTIBLE_RULE, res)
     # convert surfaces its worker's refusal and spends the eval directory (P26): qat_epoch_eval.py is unchanged
     ev_sfc = TMP / "ev_state_flag_convert"
     rc, res = qee(["convert", "--eval-dir", str(ev_sfc), *sfb, "--expect-telemetry-sha256",
