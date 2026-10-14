@@ -1,0 +1,158 @@
+{
+  "format": "alpha_selection/1",
+  "rule": "AM-16 item 2 / DL-27",
+  "amendments": [
+    "AM-16 item 2",
+    "AM-7a"
+  ],
+  "rules_file": {
+    "path": "configs/sweep_rules.json",
+    "sha256": "ebfff9cc606be613a4011cb0cc0dea9bb90789704a144ac514ea056970eef661"
+  },
+  "band_file": {
+    "path": "reports/derived/dl27_band.json",
+    "sha256": "3f33ab525037e9744b21b9abc19b60190f58f7832e3006783d759ec23ddf6ee4"
+  },
+  "lambda_selection_file": {
+    "path": "reports/derived/lambda_selection.json",
+    "sha256": "719eaa0ae2379633786a545aff087d385b16a6c503cfa445ba456784f2592145",
+    "lambda": 0.5
+  },
+  "candidates": [
+    {
+      "alpha": 25.0,
+      "run_id": "e3_s42_lambda0.5_alpha25_80k_a1",
+      "best_val": 0.36337557435035706,
+      "ckpt_sha256": "4baa5bad682995091b66c67fb2d2ce467b3f139e02cc5a5cc62c243fe00f1a0d",
+      "checkpoint_present": true
+    },
+    {
+      "alpha": 50.0,
+      "run_id": "e3_s42_lambda0.5_alpha50_80k_a1",
+      "best_val": 0.323774516582489,
+      "ckpt_sha256": "b891406c5e734a48fece00fce8d3f978bb2bc762833b604214cf3f0df5afaea6",
+      "checkpoint_present": true
+    },
+    {
+      "alpha": 100.0,
+      "run_id": "e3_s42_lambda0.5_alpha100_80k_a1",
+      "best_val": 0.31717488169670105,
+      "ckpt_sha256": "f7201e5a5042e27d420545f0a0075d29686d5102c927bb74bb27a13dc48a328f",
+      "checkpoint_present": true
+    }
+  ],
+  "s": 0.011045744504733232,
+  "band": 0.015621041685101825,
+  "rule_trace": [
+    "band: s = 0.011045744504733232 (sample SD, n=3, E1 seeds 42-44 = [0.36314016580581665, 0.34126096963882446, 0.3548465073108673]); sqrt(2)*s = 0.015621041685101825; band = max(0.005, sqrt(2)*s) = 0.015621041685101825",
+    "best alpha-candidate value = 0.36337557435035706; tie band = 0.015621041685101825 (inclusive: best - value <= band, decimal on the recorded values)",
+    "alpha=25 run=e3_s42_lambda0.5_alpha25_80k_a1 best_val=0.36337557435035706 gap=0E-17 -> tied",
+    "alpha=50 run=e3_s42_lambda0.5_alpha50_80k_a1 best_val=0.323774516582489 gap=0.03960105776786806 -> outside the band",
+    "alpha=100 run=e3_s42_lambda0.5_alpha100_80k_a1 best_val=0.31717488169670105 gap=0.04620069265365601 -> outside the band",
+    "a single candidate is within the band -> alpha = 25",
+    "boundary winner: True (grid_end; grid ends [25, 100], finished set [25.0, 50.0, 100.0]); the grid is not extended",
+    "winner run e3_s42_lambda0.5_alpha25_80k_a1 is E3 seed 42 (an existing run; checkpoint sha256 4baa5bad682995091b66c67fb2d2ce467b3f139e02cc5a5cc62c243fe00f1a0d)"
+  ],
+  "winner": {
+    "alpha": 25.0,
+    "run_id": "e3_s42_lambda0.5_alpha25_80k_a1",
+    "best_val": 0.36337557435035706,
+    "ckpt_sha256": "4baa5bad682995091b66c67fb2d2ce467b3f139e02cc5a5cc62c243fe00f1a0d",
+    "checkpoint_present": true
+  },
+  "tie": false,
+  "tied": [
+    25.0
+  ],
+  "boundary": true,
+  "boundary_kind": "grid_end",
+  "winner_is": "E3 seed 42",
+  "excluded_am7a": [],
+  "n_finished": 3,
+  "n_diverged": 0,
+  "lambda_logit": 0.5,
+  "inputs": [
+    {
+      "run_dir": "/runs/e3_s42_lambda0.5_alpha25_80k_a1",
+      "checkpoint": "e3_student_best_iter76000.pt",
+      "best_json_sha256": "859207d0c12afddc05a79e9468c5a02854c0772c7c7c64931bb0eb2f85a1a77e",
+      "run_meta_sha256": "ab73e8279bbb2796b4deb5973c9e10f59192254f2c6ada2a3e9bab48a2edd6a3"
+    },
+    {
+      "run_dir": "/runs/e3_s42_lambda0.5_alpha50_80k_a1",
+      "checkpoint": "e3_student_best_iter56000.pt",
+      "best_json_sha256": "4c21864a2932778e7cf140219ccca4b37cedd4a916641f3177f45c3b537a1f51",
+      "run_meta_sha256": "1100da860be7c0e52bd9e609f65299c7af1ae525c41aca8d159e3cd0f3b42e13"
+    },
+    {
+      "run_dir": "/runs/e3_s42_lambda0.5_alpha100_80k_a1",
+      "checkpoint": "e3_student_best_iter80000.pt",
+      "best_json_sha256": "b933ff8d149ef6c342dbfbabcefb9b4e8fc9997216a37a03466b53dad041bd66",
+      "run_meta_sha256": "b1bc6f5681a51ac9def2f20fd7f65a897e48e3b03a347ef40b2a8c970ae24165"
+    }
+  ],
+  "generated_utc": "2026-10-14T04:38:38Z",
+  "script": {
+    "path": "scripts/select_alpha.py",
+    "sha256": "fefdeb76e429b01e79fadd41684556ef0dfdc9353ed8e19c9c179558c111865b"
+  },
+  "schedule": {
+    "in_force": "T",
+    "file": "configs/kd_schedule.json",
+    "file_sha256": "cfc9c56ce80b1bd9204878148c9fc697455e37158e0f39119910e48a577cae1b",
+    "decision_log_entry": "DL-70",
+    "calendar_date": "2026-10-22",
+    "decision_date": null,
+    "cutoff_utc": null,
+    "alpha_cutoff_basis": null
+  },
+  "launch_log": {
+    "path": "reports/kd_launch_log.jsonl",
+    "sha256": "3b612cf6a1bea9035217b294114f15fa897873eb80d637fa995aecda558ba377",
+    "lines": 20
+  },
+  "decision_record": null,
+  "decision_record_corrects": null,
+  "n_cut": 0,
+  "cut_am19": [],
+  "stopped_early_unexplained": [],
+  "edge_removed": [],
+  "directories": {
+    "25": [
+      "e3_s42_lambda0.5_alpha25_80k_a1"
+    ],
+    "50": [
+      "e3_s42_lambda0.5_alpha50_80k_a1"
+    ],
+    "100": [
+      "e3_s42_lambda0.5_alpha100_80k_a1"
+    ]
+  },
+  "code": {
+    "head": "2b6000e8fe94b4be16b4d3b75afdf5fa3a53b1a3",
+    "pin": "8487551ca67bd50ffbe911d1f3e93244841cbc9f",
+    "sweep_select_sha256": "8a32479cc1426a1cf0676d163bc503af1982683c6fcb77ebfec4bf5908f2e3cf"
+  },
+  "inputs_last_timestamp_utc": 1791897104.4602075,
+  "shortfall_disclosure": null,
+  "clock": {
+    "e3_s42_lambda0.5_alpha50_80k_a1": {
+      "clock_backsteps": 0,
+      "max_backstep_seconds": 0.0
+    },
+    "e3_s42_lambda0.5_alpha25_80k_a1": {
+      "clock_backsteps": 0,
+      "max_backstep_seconds": 0.0
+    },
+    "e3_s42_lambda0.5_alpha100_80k_a1": {
+      "clock_backsteps": 0,
+      "max_backstep_seconds": 0.0
+    }
+  },
+  "on_course": {
+    "25": null,
+    "50": null,
+    "100": null
+  },
+  "on_course_repeat": {}
+}
