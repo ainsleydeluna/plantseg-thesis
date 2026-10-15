@@ -2,8 +2,9 @@
 """Lane 8 on synthetic data: scripts/run_ptq.py, src/quant/ptq.py and INT8 TorchScript loading.
 
 No PlantSeg data, no real checkpoint, no GPU. A random-weight E1-schema student, a synthetic dataset in
-a temp dir outside the repository (140 TRAIN, 846 VAL, 3 TEST tiny image/mask pairs) and calibration
-lists built by scripts/build_calibration_lists.py stand in for the real inputs.
+a temp dir outside the repository (140 TRAIN and 846 VAL tiny image/mask pairs; no TEST folder is ever
+created, SL-1) and calibration lists built by scripts/build_calibration_lists.py stand in for the real
+inputs. The repository's git status must be the same after the run as before it.
 
   1 gates        every refusal exits 2 before anything is written: flags, pins, output inside the
                  repository, VAL/TEST data paths, wrong source stage, a malformed list, a list id
@@ -43,11 +44,12 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
 from scripts.synthetic_ptq_fixtures import (make_e1_checkpoint, make_e3_checkpoint,  # noqa: E402
-                                            make_tree, safe_tmpdir)
+                                            make_tree, repo_state, safe_tmpdir, state_verdict)
 
+STATE_BEFORE = repo_state(REPO)                       # the repository as the run found it (repository_untouched)
 BASE = safe_tmpdir("smoke_run_ptq_")
 ROOT = BASE / "data"
-SPLITS = make_tree(ROOT, n_train=140, n_val=846, n_test=3, seed=2)
+SPLITS = make_tree(ROOT, n_train=140, n_val=846, seed=2)    # images/test and annotations/test: never created
 os.environ["PLANTSEG_DATA_ROOT"] = str(ROOT)          # before configs/data.py is imported
 
 import torch  # noqa: E402
@@ -205,8 +207,7 @@ def test_gates() -> None:
     ]
     under_val = BASE / "val" / "data"
     make_tree(under_val, n_train=130, seed=6)
-    latest = BASE / "latest"
-    make_tree(latest, n_train=130, seed=7)
+    latest = BASE / "latest"                # contains "test": never created (SL-1); refused by path before any probe
     cases += [("data_root_under_val", ptq_argv(out, root=under_val)),
               ("data_root_naming_test", ptq_argv(out, root=latest))]
     short = write_list_variant("short.json", lambda d: d["selected_ids"].pop())
@@ -565,8 +566,9 @@ def test_val_tools() -> None:
     shutil.copy(BASE / "foreign.json", bad / "ptq_calibration_seed42.json")
     rc, log = cli(val_checks, ["lists", "--list-dir", str(bad)])
     check("a_list_touching_val_is_a_stop", rc == 1, last(log))
-    check("repository_untouched", not (REPO / "ptq_smoke_out").exists()
-          and not (REPO / "configs" / "calibration").exists())
+    verdict = state_verdict(STATE_BEFORE, repo_state(REPO))
+    check("repository_untouched", verdict == "unchanged" and not (REPO / "ptq_smoke_out").exists(),
+          f"the repository's git status: {verdict}")
 
 
 def main() -> int:

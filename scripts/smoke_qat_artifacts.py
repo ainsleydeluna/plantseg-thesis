@@ -1,0 +1,1207 @@
+#!/usr/bin/env python3
+"""d4 (lane 6, L-AM4 + L-AM1q): QAT epochs converted to the INT8 artifacts of record, then scored.
+
+A confidently trained synthetic source (scripts/synthetic_qat_fixtures.py) runs the QAT trainer for 15
+epochs in mode "smoke", as E5 and as E6. scripts/qat_epoch_eval.py converts every epoch in fresh
+processes; one epoch is converted twice more to show the bytes reproduce. The evaluator scores the
+converted epochs through a driver that stubs only its git calls, with VAL rows capped. A run made
+non-finite at step 10 shows the not-convertible path, and an injected parity failure the STOP path.
+
+Non-finite runs end to end (nonfinite, AM-21): pilot runs made non-finite at steps 10, 22 and 27 (before,
+between and after the two freezes) get their record conversion; select_clip rejects each against a clean
+pilot run and finds no winner against another non-finite pilot. Non-pilot runs made non-finite at the same
+steps are converted, scored and selected without their non-finite epochs; a run non-finite from its first
+step has no convertible epoch, and select_qat_epoch refuses it and writes nothing.
+
+Checks the identity and provenance of record, bitwise TorchScript / state_dict / eager parity read from
+disk, per-channel INT8 weights, no float region, the fresh-process guard, the refusal of a checkpoint whose
+state flag is missing or disagrees with its epoch_end row or with item 1(a) re-applied (AM-21 items 1(c),
+2(a); records section), the evaluator accepting the
+provenance, and the fake-quant vs converted agreement on a confident fixture (with two negative controls
+that must disagree). No PlantSeg data, no checkpoint of record; temp files outside the repository.
+
+Ends with one RESULT line; exit 0 only when every check passes.
+"""
+from __future__ import annotations
+
+import argparse
+import contextlib
+import io
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+sys.dont_write_bytecode = True
+REPO = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO))
+
+from scripts.synthetic_qat_fixtures import (color_task, confident_student, evaluator_driver,  # noqa: E402
+                                            make_qat_run, make_tree, safe_tmpdir)
+
+TMP = safe_tmpdir("smoke_qat_artifacts_")
+ROOT = TMP / "data"
+make_tree(ROOT, n_train=16, n_val=846, seed=3)              # no TEST split
+os.environ["PLANTSEG_DATA_ROOT"] = str(ROOT)                 # before configs/data.py is imported
+
+import torch  # noqa: E402
+
+import scripts.qat_epoch_eval as QEE  # noqa: E402
+import scripts.select_clip as SC  # noqa: E402
+import scripts.select_qat_epoch as SE  # noqa: E402
+from src.eval.model_loading import load_int8_torchscript, rebuild_int8_from_state_dict  # noqa: E402
+from src.eval.stage_artifacts import validate_int8_artifact  # noqa: E402
+from src.quant import qat as Q  # noqa: E402
+from src.quant import qat_artifacts as A  # noqa: E402
+from src.quant import qat_select as S  # noqa: E402
+from src.quant.prepare import convert_model  # noqa: E402
+from src.quant.ptq import (graph_census, output_parity, runtime_census, student_traced_in_process,  # noqa: E402
+                           synthetic_parity_inputs, torchscript_bytes, weight_scheme_report)
+from src.quant.qconfig import select_qnnpack_backend  # noqa: E402
+
+results: list[tuple[str, bool, str]] = []
+SECTIONS = ("units", "records", "e5", "e6", "nan", "nonfinite", "stop", "guard")
+DRIVER = evaluator_driver(TMP / "evaluator_driver.py")
+os.environ["SMOKE_REPO"] = str(REPO)
+HOST = "cloud-smoke"
+
+
+def check(name: str, ok, detail: str = "") -> None:
+    results.append((name, bool(ok), detail))
+
+
+@contextlib.contextmanager
+def patched_attr(obj, name, value):
+    old = getattr(obj, name)
+    setattr(obj, name, value)
+    try:
+        yield
+    finally:
+        setattr(obj, name, old)
+
+
+def qee(argv: list[str]) -> tuple[int, str]:
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = QEE.main(argv)
+    out = buf.getvalue()
+    lines = [ln for ln in out.splitlines() if ln.startswith("RESULT:")]
+    print(out.rstrip())
+    return rc, (lines[-1] if lines else "")
+
+
+def convert(run: Path, ev: Path, purpose: str = "record", epochs=None) -> tuple[int, str]:
+    argv = ["convert", "--run-dir", str(run), "--eval-dir", str(ev), "--purpose", purpose, "--host-label", HOST,
+            "--allow-smoke-inputs"]
+    if purpose == "record":
+        argv += ["--expect-telemetry-sha256", Q.sha256_file(run / Q.TELEMETRY_NAME)]
+    if epochs:
+        argv += ["--epochs", *map(str, epochs)]
+    return qee(argv)
+
+
+def score(run: Path, ev: Path, purpose: str, cap: str | None) -> tuple[int, str]:
+    """The stand-in evaluator, its summaries naming the HEAD the eval records name and an image digest (P23's
+    non-null fields), so select_qat_epoch can take the scored directory (P34)."""
+    old = QEE.EVALUATOR_SCRIPT
+    QEE.EVALUATOR_SCRIPT = str(DRIVER)
+    env_before = {k: os.environ.get(k) for k in ("SMOKE_MAX_SAMPLES", "SMOKE_GIT_HEAD", "PLANTSEG_IMAGE_DIGEST")}
+    if cap:
+        os.environ["SMOKE_MAX_SAMPLES"] = cap
+    os.environ["SMOKE_GIT_HEAD"] = Q.code_identity()["git_head"] or "0" * 40
+    os.environ.setdefault("PLANTSEG_IMAGE_DIGEST", "sha256:" + "6" * 64)
+    try:
+        return qee(["score", "--run-dir", str(run), "--eval-dir", str(ev), "--purpose", purpose,
+                    "--host-label", HOST, "--allow-smoke-inputs"])
+    finally:
+        QEE.EVALUATOR_SCRIPT = old
+        for k, v in env_before.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
+def lane_cli(script: str, *argv: str) -> tuple[int, str]:
+    """A lane script in a fresh process (finalize traces), from the repository root."""
+    p = subprocess.run([sys.executable, "-B", str(REPO / "scripts" / script), *argv], cwd=str(REPO),
+                       capture_output=True, text=True, timeout=2400)
+    lines = [ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")]
+    return p.returncode, (lines[-1] if lines else p.stderr.strip()[-300:])
+
+
+def end_to_end(run: Path, ev: Path) -> tuple[int, str, int, str, dict, dict]:
+    """select_qat_epoch, then finalize, on what convert and score wrote (P34; smoke inputs)."""
+    rc_s, res_s = lane_cli("select_qat_epoch.py", "--run-dir", str(run), "--eval-dir", str(ev),
+                           "--expect-telemetry-sha256", Q.sha256_file(run / Q.TELEMETRY_NAME), "--allow-smoke-inputs")
+    sel = json.loads((ev / QEE.SELECTION_RECORD).read_text()) if rc_s == 0 else {}
+    rc_f, res_f = lane_cli("qat_epoch_eval.py", "finalize", "--run-dir", str(run), "--eval-dir", str(ev),
+                           "--allow-smoke-inputs")
+    fin = json.loads((ev / QEE.FINALIZE_RECORD).read_text()) if rc_f == 0 else {}
+    return rc_s, res_s, rc_f, res_f, sel, fin
+
+
+def as_seed(run: Path, seed: int) -> None:
+    """The trained run relabelled to another seed, payloads and run_meta (its state unchanged): an E5 seed-42
+    run is a U4 pilot run, finalized through select_clip only (d5); d4's end-to-end pass is a non-pilot run."""
+    for e in range(1, Q.EPOCHS + 1):
+        rewrite_payload(run, e, seed=seed)
+    tel = run / Q.TELEMETRY_NAME
+    rows = [json.loads(line) for line in tel.read_text(encoding="utf-8").splitlines()]
+    rows[0]["seed"] = seed
+    tel.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+
+
+def projection_source_code(model) -> str | None:
+    """An E3 parent whose student state carries a CWD projection key: the E6 source load refuses it (P34)."""
+    from src.quant.checkpoint import CWD_PROJECTION_KEY
+    from src.quant.stages import resolve_quant_stage
+    d = TMP / "e3_parent_projection"
+    d.mkdir()
+    state = {k: v.detach().clone() for k, v in model.state_dict().items()}
+    state["cwd_projection.weight"] = torch.zeros(320, 160, 1, 1)
+    ck = d / "e3_student_best_iter80000.pt"
+    torch.save({"stage": "E3", "num_classes": Q.NUM_CLASSES, "model_state_dict": state,
+                CWD_PROJECTION_KEY: {"weight": torch.zeros(320, 160, 1, 1)}}, ck)
+    (d / "best.json").write_text(json.dumps({"best_ckpt": str(ck), "best_val_miou_all_class": 0.31}),
+                                 encoding="utf-8")
+    (d / "e3_run_meta.jsonl").write_text(json.dumps({"event": "run_meta", "stage": "E3", "mode": "real", "seed": 42,
+                                                     "lambda_logit": 1.0, "alpha_cwd": 50.0}) + "\n", encoding="utf-8")
+    (d / "e3_telemetry.jsonl").write_text(json.dumps({"event": "run_end", "iter": 80000, "checks_passed": True})
+                                          + "\n", encoding="utf-8")
+    e6 = resolve_quant_stage("e6")
+    try:
+        Q.load_source(e6, Q.resolve_parent(e6, d, Q.sha256_file(ck), 42))
+        return None
+    except Q.QATRefused as e:
+        return e.code
+
+
+def state_of(run: Path, epoch: int) -> dict:
+    return torch.load(run / Q.EPOCH_DIR / f"e{epoch:02d}.pt", map_location="cpu", weights_only=True)["model_state_dict"]
+
+
+def converted_without(state: dict, drop: set[str]):
+    """A converted student built from the state with `drop` left at the fresh prepared values."""
+    from src.quant.x86_latency import copy_qat_state_by_name
+    m = A.prepared_skeleton()
+    copy_qat_state_by_name(m, {k: v for k, v in state.items() if k not in drop})
+    return convert_model(m)
+
+
+def test_units() -> None:
+    """The state predicate, the by-name copy and its key-set comparison, without training or converting."""
+    prepared = A.prepared_skeleton().train()
+    with torch.no_grad():
+        prepared(torch.randn(2, 3, 64, 64, generator=torch.Generator().manual_seed(1)))   # observers populated
+    never = Q.never_observed_modules(prepared)
+    kinds = Q.state_kinds(prepared)
+    state = Q.cpu_state(prepared)
+    pred = lambda st: Q.state_predicate(st, kinds, never)[0]              # noqa: E731
+    check("d4_predicate_accepts_an_observed_state", pred(state) and len(never) == 5, f"never observed: {never}")
+    bn = next(k for k, v in kinds.items() if v == "bn_buffer" and k.endswith("running_var"))
+    obs_max = next(k for k, v in kinds.items() if v == "observer_max")
+    obs_min = obs_max[: -len("max_val")] + "min_val"
+
+    def edited(key, fn):
+        st = dict(state)
+        st[key] = fn(st[key].clone())
+        return st
+    check("d4_predicate_flags_nonfinite_bn_with_finite_params",
+          not pred(edited(bn, lambda t: t.index_fill_(0, torch.tensor([0]), float("inf")))), bn)
+    check("d4_predicate_flags_nonfinite_observer",
+          not pred(edited(obs_max, lambda t: t.fill_(float("nan")))), obs_max)
+    check("d4_predicate_flags_inverted_observer_range",
+          not pred({**state, obs_min: state[obs_max].clone() + 1.0}), obs_min)
+    never_key = f"{never[0]}.activation_post_process.min_val"
+    check("d4_predicate_allows_unobserved_only_where_never_observed",
+          float(state[never_key]) == float("inf") and not pred({
+              **state, "quant.activation_post_process.activation_post_process.min_val": torch.tensor(float("inf")),
+              "quant.activation_post_process.activation_post_process.max_val": torch.tensor(float("-inf"))}),
+          never_key)
+    report = A.load_state_by_name(A.prepared_skeleton(), state)
+    check("d4_copy_exact_with_alias_keys", report == {"entries": 1593, "copied": 1575, "alias_keys": 18,
+                                                      "equal_entries": 1593}, str(report))
+    for name, st in (("d4_key_set_missing_key_refused", {k: v for k, v in state.items() if k != bn}),
+                     ("d4_key_set_extra_key_refused", {**state, "head.extra.weight": torch.zeros(1)})):
+        try:
+            A.load_state_by_name(A.prepared_skeleton(), st)
+            got = None
+        except Q.QATStop as e:
+            got = e.code
+        check(name, got == "state_key_mismatch", str(got))
+    import src.quant.x86_latency as x86_mod
+    real_copy = x86_mod.copy_qat_state_by_name
+    with patched_attr(x86_mod, "copy_qat_state_by_name", lambda m, st: (real_copy(m, st)[0], [])):
+        try:
+            A.load_state_by_name(A.prepared_skeleton(), state)
+            got = None
+        except Q.QATStop as e:
+            got = e.code
+    check("d4_alias_mismatch_stops", got == "state_alias_mismatch", str(got))
+    nan_t = torch.tensor([float("nan"), 1.0])
+    check("d4_bytes_equal_is_bitwise", A.bytes_equal(nan_t, nan_t.clone()) and not torch.equal(nan_t, nan_t.clone())
+          and not A.bytes_equal(nan_t, torch.tensor([float("nan"), 2.0])))
+
+
+def clone_run(src: Path, dst: Path) -> Path:
+    """A copy of a run (the checkpoints copied, so one may be rewritten)."""
+    shutil.copytree(src, dst)
+    return dst
+
+
+def rewrite_checkpoint(run: Path, epoch: int, edit) -> None:
+    """Rewrite eNN.pt with `edit(state)` applied and record its new sha256 in the run's epoch_end row."""
+    p = run / Q.EPOCH_DIR / f"e{epoch:02d}.pt"
+    payload = torch.load(p, map_location="cpu", weights_only=True)
+    edit(payload["model_state_dict"])
+    torch.save(payload, p)
+    tel = run / Q.TELEMETRY_NAME
+    rows = [json.loads(line) for line in tel.read_text(encoding="utf-8").splitlines()]
+    for r in rows:
+        if r.get("event") == "epoch_end" and r["epoch"] == epoch:
+            r["checkpoint_sha256"] = Q.sha256_file(p)
+    tel.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+
+
+def rewrite_payload(run: Path, epoch: int, *, drop: tuple = (), **fields) -> None:
+    """Rewrite eNN.pt's payload fields (not its state), the `drop` keys removed, and record its new sha256 in the
+    run's epoch_end row."""
+    p = run / Q.EPOCH_DIR / f"e{epoch:02d}.pt"
+    payload = torch.load(p, map_location="cpu", weights_only=True)
+    payload.update(fields)
+    for k in drop:
+        payload.pop(k)
+    torch.save(payload, p)
+    tel = run / Q.TELEMETRY_NAME
+    rows = [json.loads(line) for line in tel.read_text(encoding="utf-8").splitlines()]
+    for r in rows:
+        if r.get("event") == "epoch_end" and r["epoch"] == epoch:
+            r["checkpoint_sha256"] = Q.sha256_file(p)
+    tel.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+
+
+def rewrite_end_row(run: Path, epoch: int, *, drop: tuple = (), **fields) -> None:
+    """The epoch's epoch_end row with `fields` set and the `drop` keys removed (its checkpoint unchanged)."""
+    tel = run / Q.TELEMETRY_NAME
+    rows = [json.loads(line) for line in tel.read_text(encoding="utf-8").splitlines()]
+    for r in rows:
+        if r.get("event") == "epoch_end" and r["epoch"] == epoch:
+            r.update(fields)
+            for k in drop:
+                r.pop(k)
+    tel.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+
+
+def rewrite_run_meta(run: Path, **fields) -> str:
+    """The run's run_meta row with `fields` replaced; the telemetry's new sha256."""
+    tel = run / Q.TELEMETRY_NAME
+    rows = [json.loads(line) for line in tel.read_text(encoding="utf-8").splitlines()]
+    rows[0].update(fields)
+    tel.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+    return Q.sha256_file(tel)
+
+
+def fake_convert_record(run: Path, ev: Path, *, purpose: str = "record", epochs=range(1, 16), **edit) -> None:
+    """A qat_convert.json as `convert` writes it (no conversion): score's own checks run on it."""
+    rec = A.read_run_record(run)
+    ev.mkdir(parents=True)
+    doc = {"format": QEE.CONVERT_FORMAT, "run_dir": rec["run_dir"], "run_id": rec["run_id"],
+           "stage": rec["run_meta"]["stage"], "telemetry_sha256": rec["telemetry_sha256"], "purpose": purpose,
+           "host_label": HOST, "cpu_model": Q.cpu_model(), "git_head": None, "smoke_inputs": True,
+           "outcomes": [{"epoch": e, "status": "converted"} for e in epochs], **edit}
+    (ev / QEE.CONVERT_RECORD).write_text(json.dumps(doc), encoding="utf-8")
+
+
+def test_records(cache: Path | None) -> None:
+    """convert's and score's own refusals (P24, P26) and the freeze cross-check STOP (P16): nothing converts."""
+    run = TMP / "run_records"
+    if cache is not None and (cache / "READY").is_file():
+        clone_run(cache / "run_records", run)
+    else:
+        torch.manual_seed(0)
+        from src.models.student import build_student
+        make_qat_run(run, model=build_student(pretrained=False).eval(), stage="e5", clip=1.0)
+        if cache is not None:
+            cache.mkdir(parents=True, exist_ok=True)
+            clone_run(run, cache / "run_records")
+            (cache / "READY").write_text("raw smoke run\n", encoding="utf-8")
+    sha = Q.sha256_file(run / Q.TELEMETRY_NAME)
+    base = ["--run-dir", str(run), "--purpose", "record", "--host-label", HOST, "--allow-smoke-inputs"]
+
+    def refused(name: str, argv: list[str], code: str, rc_want: int = 2, absent: Path | None = None) -> None:
+        rc, res = qee(argv)
+        check(name, rc == rc_want and f"[{code}]" in res and (absent is None or not absent.exists()), res)
+
+    ev = TMP / "ev_records"
+    refused("d4_convert_record_requires_telemetry_sha", ["convert", "--eval-dir", str(ev), *base],
+            "expect_telemetry_sha256_required", absent=ev)
+    refused("d4_convert_record_takes_no_epochs",
+            ["convert", "--eval-dir", str(ev), *base, "--expect-telemetry-sha256", sha, "--epochs", "3"],
+            "epochs_with_record", absent=ev)
+    refused("d4_convert_epochs_out_of_range",
+            ["convert", "--eval-dir", str(ev), *[a if a != "record" else "timing" for a in base], "--epochs", "16"],
+            "epochs_range", absent=ev)
+    refused("d4_convert_telemetry_sha_mismatch",
+            ["convert", "--eval-dir", str(ev), *base, "--expect-telemetry-sha256", "f" * 64],
+            "telemetry_sha256_mismatch", absent=ev)
+    refused("d4_convert_smoke_run_refused",
+            ["convert", "--eval-dir", str(ev), *[a for a in base if a != "--allow-smoke-inputs"],
+             "--expect-telemetry-sha256", sha], "run_not_real", absent=ev)
+    refused("d4_convert_test_path_refused",
+            ["convert", "--eval-dir", str(TMP / "latest_ev"), *base, "--expect-telemetry-sha256", sha],
+            "eval_dir_test_path", absent=TMP / "latest_ev")
+    used = TMP / "ev_used"
+    used.mkdir()
+    (used / "note.txt").write_text("used", encoding="utf-8")
+    refused("d4_convert_eval_dir_not_fresh",
+            ["convert", "--eval-dir", str(used), *base, "--expect-telemetry-sha256", sha], "eval_dir_not_fresh")
+    inc = clone_run(run, TMP / "run_records_incomplete")
+    lines = (inc / Q.TELEMETRY_NAME).read_text(encoding="utf-8").splitlines()[:-1]
+    (inc / Q.TELEMETRY_NAME).write_text("\n".join(lines) + "\n", encoding="utf-8")
+    refused("d4_convert_incomplete_run_exit_3",
+            ["convert", "--eval-dir", str(ev), *[a if a != str(run) else str(inc) for a in base],
+             "--expect-telemetry-sha256", Q.sha256_file(inc / Q.TELEMETRY_NAME)], "run_incomplete", 3, absent=ev)
+    # P16: a BN statistic that moved after the epoch-11 freeze stops the conversion before any epoch converts
+    moved = clone_run(run, TMP / "run_records_bn_moved")
+    bn_key = next(k for k in state_of(run, 12) if k.endswith("running_mean"))
+    rewrite_checkpoint(moved, 12, lambda st: st[bn_key].add_(1.0))
+    ev_m = TMP / "ev_bn_moved"
+    rc, res = qee(["convert", "--eval-dir", str(ev_m), *[a if a != str(run) else str(moved) for a in base],
+                   "--expect-telemetry-sha256", Q.sha256_file(moved / Q.TELEMETRY_NAME)])
+    stop = ev_m / QEE.CONVERT_STOP
+    check("d4_convert_stops_when_a_freeze_did_not_take",
+          rc == 1 and "[freeze_cross_check]" in res and stop.is_file() and not (ev_m / A.CONVERTED_DIR).exists()
+          and "bn e12" in json.dumps(json.loads(stop.read_text()).get("freeze_cross_check", {})), res)
+    # convert-epoch checks the record before anything converts (P15 step 2; P24's first link)
+    ev_x = TMP / "ev_convert_epoch"
+    refused("d4_convert_epoch_unknown_epoch_refused",
+            ["convert-epoch", "--eval-dir", str(ev_x), *base, "--epoch", "16"], "epoch_unknown", absent=ev_x)
+    refused("d4_convert_epoch_telemetry_sha_mismatch",
+            ["convert-epoch", "--eval-dir", str(ev_x), *base, "--epoch", "1", "--expect-telemetry-sha256", "f" * 64],
+            "telemetry_sha256_mismatch", absent=ev_x)
+    changed = clone_run(run, TMP / "run_records_ck_changed")
+    ck3 = changed / Q.EPOCH_DIR / "e03.pt"
+    ck3.write_bytes(ck3.read_bytes() + b"\0")
+    refused("d4_convert_epoch_checkpoint_changed_refused",
+            ["convert-epoch", "--eval-dir", str(ev_x), *[a if a != str(run) else str(changed) for a in base],
+             "--epoch", "3"], "checkpoint_sha256_mismatch", absent=ev_x)
+    # P16's other half: an observer buffer that moved after the epoch-13 freeze stops the conversion
+    obs_moved = clone_run(run, TMP / "run_records_obs_moved")
+    s14 = state_of(run, 14)
+    _bn, obs_keys = A.freeze_key_sets(A.prepared_skeleton())
+    obs_key = next(k for k in obs_keys if k.endswith("activation_post_process.max_val") and s14[k].numel() == 1
+                   and bool(torch.isfinite(s14[k]).all()))
+    rewrite_checkpoint(obs_moved, 14, lambda st: st[obs_key].add_(1.0))
+    ev_o = TMP / "ev_obs_moved"
+    rc, res = qee(["convert", "--eval-dir", str(ev_o), *[a if a != str(run) else str(obs_moved) for a in base],
+                   "--expect-telemetry-sha256", Q.sha256_file(obs_moved / Q.TELEMETRY_NAME)])
+    stop_o = ev_o / QEE.CONVERT_STOP
+    check("d4_convert_stops_when_an_observer_moved_after_its_freeze",
+          rc == 1 and "[freeze_cross_check]" in res and stop_o.is_file() and not (ev_o / A.CONVERTED_DIR).exists()
+          and "obs e14" in json.dumps(json.loads(stop_o.read_text()).get("freeze_cross_check", {})), res)
+    # P15: the worker's own checks, before anything is traced (convert-epoch in this process)
+    wrong_id = clone_run(run, TMP / "run_records_other_id")
+    rewrite_payload(wrong_id, 1, run_id="another_run")
+    wid = [a if a != str(run) else str(wrong_id) for a in base]
+    refused("d4_convert_epoch_identity_refused", ["convert-epoch", "--eval-dir", str(TMP / "ev_wrong_id"), *wid,
+                                                   "--epoch", "1"], "checkpoint_identity", absent=TMP / "ev_wrong_id")
+    flags13 = clone_run(run, TMP / "run_records_flags13")
+    rewrite_checkpoint(flags13, 13, lambda st: [v.fill_(1) for k, v in st.items() if k.endswith(".observer_enabled")])
+    ev_f = TMP / "ev_flags13"
+    rc, res = qee(["convert-epoch", "--eval-dir", str(ev_f), *[a if a != str(run) else str(flags13) for a in base],
+                   "--epoch", "13"])
+    check("d4_convert_epoch_stored_flags_stop", rc == 1 and "[stored_flags]" in res
+          and (ev_f / A.CONVERTED_DIR / A.epoch_names(13)["stop"]).is_file(), res)
+    dtype5 = clone_run(run, TMP / "run_records_dtype5")
+    w_key = next(k for k in state_of(run, 5) if k.endswith(".weight") and state_of(run, 5)[k].dtype == torch.float32)
+    rewrite_checkpoint(dtype5, 5, lambda st: st.update({w_key: st[w_key].double()}))
+    ev_d = TMP / "ev_dtype5"
+    rc, res = qee(["convert-epoch", "--eval-dir", str(ev_d), *[a if a != str(run) else str(dtype5) for a in base],
+                   "--epoch", "5"])
+    check("d4_convert_epoch_copy_dtype_stop", rc == 1 and "[state_copy_mismatch]" in res, res)
+    qc = clone_run(run, TMP / "run_records_qconfig")
+    rewrite_run_meta(qc, qconfig={**(A.read_run_record(run)["run_meta"].get("qconfig") or {}), "fingerprint": "0" * 64})
+    ev_q = TMP / "ev_qconfig"
+    engine = torch.backends.quantized.engine               # convert-epoch selects QNNPACK in this process
+    try:
+        rc, res = qee(["convert-epoch", "--eval-dir", str(ev_q), *[a if a != str(run) else str(qc) for a in base],
+                       "--epoch", "1"])
+    finally:
+        torch.backends.quantized.engine = engine
+    check("d4_convert_epoch_qconfig_changed_stop", rc == 1 and "[qconfig_changed]" in res
+          and (ev_q / A.CONVERTED_DIR / A.epoch_names(1)["stop"]).is_file(), res)
+    # G2 (Q2-G; AM-21 items 1(c), 2(a), 2(c)): the state flag eNN.pt stores must equal its epoch_end row's, in type and
+    # value, and its state_finite item 1(a) re-applied at conversion. A key missing from either, or a mismatch, is
+    # refused [checkpoint_state_flag] before anything is written, for both purposes; a non-finite checkpoint whose
+    # flag agrees is still recorded "not convertible". One clone, one deviation an epoch. At baseline no case below
+    # traces the student; once a mutation lets one convert here, every later case runs in a fresh process, so each
+    # verdict is the case's own (and not the fresh-process guard's).
+    sf = clone_run(run, TMP / "run_records_state_flag")
+    s6 = state_of(run, 6)
+    p_key = next(k for k, v in s6.items() if k.endswith(".weight") and v.dtype == torch.float32 and v.dim() == 4)
+    del s6
+
+    def nan_param(st: dict) -> None:
+        st[p_key].fill_(float("nan"))
+    flagged = {"state_finite": False, "state_nonfinite": True}
+    rewrite_payload(sf, 1, state_nonfinite=True)                     # its row: false
+    rewrite_payload(sf, 2, drop=A.STATE_FLAG_KEYS)
+    rewrite_end_row(sf, 3, drop=("state_nonfinite",))
+    rewrite_end_row(sf, 4, state_finite=False)                       # eNN.pt: true, as item 1(a) reads its state
+    rewrite_payload(sf, 5, nonfinite_since_step=7)                   # its row: null
+    rewrite_checkpoint(sf, 6, nan_param)                             # stored and row as written: finite
+    rewrite_checkpoint(sf, 7, nan_param)
+    rewrite_payload(sf, 7, nonfinite_since_step=10.0, **flagged)     # its row: the int 10
+    rewrite_end_row(sf, 7, nonfinite_since_step=10, **flagged)
+    rewrite_payload(sf, 8, nonfinite_since_step=8, **flagged)        # a finite state flagged non-finite, both places
+    rewrite_end_row(sf, 8, nonfinite_since_step=8, **flagged)
+    rewrite_checkpoint(sf, 9, nan_param)                             # a non-finite state flagged so, both places
+    rewrite_payload(sf, 9, nonfinite_since_step=9, **flagged)
+    rewrite_end_row(sf, 9, nonfinite_since_step=9, **flagged)
+    sfb = [a if a != str(run) else str(sf) for a in base]
+
+    def convert_epoch_of(ev_sf: Path, epoch: int, purpose: str) -> tuple[int, str]:
+        argv = ["convert-epoch", "--eval-dir", str(ev_sf), *[a if a != "record" else purpose for a in sfb],
+                "--epoch", str(epoch)]
+        return lane_cli("qat_epoch_eval.py", *argv) if student_traced_in_process() else qee(argv)
+
+    def flag_refused(name: str, epoch: int, purpose: str = "record") -> None:
+        ev_sf = TMP / f"ev_{name}"
+        rc, res = convert_epoch_of(ev_sf, epoch, purpose)
+        check(name, rc == 2 and "[checkpoint_state_flag]" in res and not ev_sf.exists(), res)
+    flag_refused("d4_convert_epoch_state_nonfinite_unlike_its_row_refused", 1)
+    flag_refused("d4_convert_epoch_without_state_flag_refused", 2)
+    flag_refused("d4_convert_epoch_row_without_state_flag_refused", 3)
+    flag_refused("d4_convert_epoch_state_finite_unlike_its_row_refused", 4)
+    flag_refused("d4_convert_epoch_since_step_unlike_its_row_refused", 5)
+    flag_refused("d4_convert_epoch_nonfinite_state_stored_finite_refused", 6)
+    flag_refused("d4_convert_epoch_state_flag_of_another_type_refused", 7)
+    flag_refused("d4_convert_epoch_timing_state_flag_refused", 1, purpose="timing")
+    flag_refused("d4_convert_epoch_timing_nonfinite_state_stored_finite_refused", 6, purpose="timing")
+    ev_nc = TMP / "ev_state_flag_agrees"
+    rc, res = convert_epoch_of(ev_nc, 9, "record")
+    nc = ev_nc / A.CONVERTED_DIR / A.epoch_names(9)["not_convertible"]
+    ncd = json.loads(nc.read_text(encoding="utf-8")) if nc.is_file() else {}
+    check("d4_convert_epoch_agreeing_nonfinite_state_not_convertible",
+          rc == 0 and res == "RESULT: QAT EPOCH 09 NOT CONVERTIBLE" and ncd.get("status") == "not convertible"
+          and ncd.get("rule") == A.NOT_CONVERTIBLE_RULE, res)
+    # convert surfaces its worker's refusal and spends the eval directory (P26): qat_epoch_eval.py is unchanged
+    ev_sfc = TMP / "ev_state_flag_convert"
+    rc, res = qee(["convert", "--eval-dir", str(ev_sfc), *sfb, "--expect-telemetry-sha256",
+                   Q.sha256_file(sf / Q.TELEMETRY_NAME)])
+    check("d4_convert_state_flag_refusal_spends_the_eval_dir",
+          rc == 2 and res.startswith("RESULT: REFUSED -- e01 worker exited 2 (failed): RESULT: REFUSED "
+                                     "[checkpoint_state_flag]")
+          and (ev_sfc / QEE.CONVERT_STOP).is_file() and not (ev_sfc / A.CONVERTED_DIR).exists(), res)
+    flag_refused("d4_convert_epoch_finite_state_stored_nonfinite_refused", 8)
+    # P26: a worker that fails spends the eval directory: convert_STOP.json, the RESULT word of its exit code
+    ev_w = TMP / "ev_worker_refused"
+    rc, res = qee(["convert", "--eval-dir", str(ev_w), *wid, "--expect-telemetry-sha256",
+                   Q.sha256_file(wrong_id / Q.TELEMETRY_NAME)])
+    rc2, res2 = qee(["convert", "--eval-dir", str(ev_w), *wid, "--expect-telemetry-sha256",
+                     Q.sha256_file(wrong_id / Q.TELEMETRY_NAME)])
+    check("d4_convert_worker_refusal_spends_the_eval_dir",
+          rc == 2 and res.startswith("RESULT: REFUSED -- e01 worker exited 2") and (ev_w / QEE.CONVERT_STOP).is_file()
+          and rc2 == 2 and "[eval_dir_not_fresh]" in res2, f"{res} | {res2}")
+    # score refuses on the records alone (no evaluator runs)
+    sbase = ["score", *[a for a in base]]
+
+    def score_refused(name: str, ev_dir: Path, code: str, rc_want: int = 2, extra=(), purpose="record") -> None:
+        argv = [a if a != "record" else purpose for a in sbase] + ["--eval-dir", str(ev_dir), *extra]
+        rc, res = qee(argv)
+        check(name, rc == rc_want and f"[{code}]" in res and not (ev_dir / A.SCORES_DIR).exists(), res)
+
+    empty = TMP / "ev_score_empty"
+    empty.mkdir()
+    score_refused("d4_score_without_convert_record_exit_3", empty, "convert_record_missing", 3)
+    other = TMP / "ev_score_other_run"
+    fake_convert_record(run, other, telemetry_sha256="0" * 64)
+    score_refused("d4_score_convert_record_of_another_run", other, "convert_record_mismatch")
+    timing = TMP / "ev_score_timing"
+    fake_convert_record(run, timing, purpose="timing", epochs=[15])
+    score_refused("d4_score_purpose_mismatch", timing, "purpose_mismatch")
+    score_refused("d4_score_unconverted_epoch_refused", timing, "epoch_not_converted", extra=("--epochs", "14"),
+                  purpose="timing")
+    part = TMP / "ev_score_partial"
+    fake_convert_record(run, part, epochs=range(1, 15))
+    score_refused("d4_score_record_needs_all_15_epochs", part, "convert_record_epochs")
+    score_refused("d4_score_record_takes_no_epochs", part, "epochs_with_record", extra=("--epochs", "3"))
+    stopped = TMP / "ev_score_stopped"
+    fake_convert_record(run, stopped)
+    (stopped / A.CONVERTED_DIR).mkdir()
+    (stopped / A.CONVERTED_DIR / A.epoch_names(5)["stop"]).write_text("{}", encoding="utf-8")
+    score_refused("d4_score_refuses_a_stop_file", stopped, "stop_present")
+    busy = TMP / "ev_score_busy"
+    fake_convert_record(run, busy)
+    (busy / A.SCORES_DIR / "e01").mkdir(parents=True)
+    rc, res = qee([a for a in sbase] + ["--eval-dir", str(busy)])
+    check("d4_score_scores_dir_not_fresh", rc == 2 and "[scores_not_fresh]" in res, res)
+    done = TMP / "ev_score_done"
+    fake_convert_record(run, done)
+    (done / QEE.EVAL_RECORD).write_text("{}", encoding="utf-8")
+    score_refused("d4_score_runs_once", done, "output_exists")
+    # P26: only a score pass creates scores/; an evaluator that fails spends the eval directory (score_STOP.json)
+    empty_scores = TMP / "ev_score_empty_scores"
+    fake_convert_record(run, empty_scores)
+    (empty_scores / A.SCORES_DIR).mkdir()
+    rc, res = qee([*sbase, "--eval-dir", str(empty_scores)])
+    check("d4_score_refuses_an_empty_scores_dir", rc == 2 and "[scores_not_fresh]" in res, res)
+    failing_evaluator = TMP / "failing_evaluator.py"
+    failing_evaluator.write_text("import sys\nsys.exit(1)\n", encoding="utf-8")
+    failing = TMP / "ev_score_failing"
+    fake_convert_record(run, failing)
+    with patched_attr(QEE, "EVALUATOR_SCRIPT", str(failing_evaluator)):
+        rc, res = qee([*sbase, "--eval-dir", str(failing)])
+        rc2, res2 = qee([*sbase, "--eval-dir", str(failing)])
+    check("d4_score_failure_spends_the_eval_dir", rc == 3 and (failing / QEE.SCORE_STOP).is_file()
+          and rc2 == 2 and "[stop_present]" in res2, f"{res} | {res2}")
+
+
+# ---------------------------------------------------------------- non-finite runs, end to end (AM-21)
+# d1's NaN injection (the loss multiplied by NaN) at its positions: before the BN freeze (step 10), between the
+# BN and observer freezes (step 22) and after the observer freeze (step 27). Each run is a real 15-epoch run of
+# the trainer; every conversion, score pass and selection is the lane's own command on its records.
+NF_POSITIONS = ((10, "before the BN freeze"), (22, "between the BN and observer freezes"),
+                (27, "after the observer freeze"))
+PILOT_META = {"u4_pilot": True, "clip_source": "u4_pilot"}             # one of the two U4 pilot runs
+NON_PILOT_META = {"u4_pilot": False, "clip_source": "clip_selection"}  # any other run, bound at launch
+NF_DIGEST = "sha256:" + "6" * 64                                       # the pilot runs record a non-null digest
+NF_CASES: list[tuple[str, object]] = []                                # (name, fn): one named check each
+NF: dict = {"cache": None, "src": None, "runs": {}, "evals": {}, "memo": {}, "n": 0}
+
+
+def nf_source():
+    if NF["src"] is None:
+        NF["src"] = confident_student(seed=0)
+    return NF["src"]
+
+
+def _link_or_copy(src, dst) -> None:
+    try:
+        os.link(src, dst)
+    except OSError:
+        shutil.copy2(src, dst)
+
+
+def nf_cache_get(kind: str, name: str, dst: Path) -> bool:
+    """A run or eval directory kept under --cache-dir, hard-linked into `dst` (nothing writes through a link)."""
+    src = NF["cache"] / kind / name if NF["cache"] is not None else None
+    if src is None or not src.is_dir():
+        return False
+    shutil.copytree(src, dst, copy_function=_link_or_copy)
+    return True
+
+
+def nf_cache_put(kind: str, name: str, src: Path) -> None:
+    """Keep `src` under --cache-dir once: copied to a temporary name and renamed, so of two runs keeping the same
+    entry at once the first wins and the other copy is dropped."""
+    root = NF["cache"]
+    if root is None or (root / kind / name).exists():
+        return
+    (root / kind).mkdir(parents=True, exist_ok=True)
+    tmp = root / kind / f".{name}.{os.getpid()}"
+    shutil.copytree(src, tmp, copy_function=_link_or_copy)
+    try:
+        os.rename(tmp, root / kind / name)
+    except OSError:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def nf_run(name: str, *, seed: int, clip: float, nan_at=(), meta: dict) -> dict:
+    """A 15-epoch E5 run of src/quant/qat.py in mode "smoke" and what its record says."""
+    if name in NF["runs"]:
+        return NF["runs"][name]
+    run, error = TMP / name, None
+    if not nf_cache_get("runs", name, run):
+        try:
+            make_qat_run(run, model=nf_source(), stage="e5", seed=seed, clip=clip, nan_at=nan_at, extra_meta=meta)
+        except Exception as e:                                   # noqa: BLE001 -- reported by the run's cases
+            error = f"{type(e).__name__}: {e}"
+        else:
+            nf_cache_put("runs", name, run)
+    tel = run / Q.TELEMETRY_NAME
+    rows = [json.loads(x) for x in tel.read_text(encoding="utf-8").splitlines() if x] if tel.is_file() else []
+    ends = [r for r in rows if r.get("event") == "epoch_end"]
+    last = rows[-1] if rows else {}
+    bad = [r["epoch"] for r in ends if r.get("state_finite") is False]
+    info = {"name": name, "run": run, "error": error, "rows": rows, "last": last,
+            "complete": error is None and last.get("event") == "epoch_end" and last.get("epoch") == Q.EPOCHS
+            and last.get("run_complete") is True,
+            "nonfinite_epochs": bad, "first_bad": bad[0] if bad else None,
+            "run_id": rows[0].get("run_id") if rows else None,
+            "telemetry_sha256": Q.sha256_file(tel) if tel.is_file() else None}
+    NF["runs"][name] = info
+    return info
+
+
+def nf_incomplete(info: dict) -> str:
+    """What happened instead of a completed run: the exit code scripts/run_e5.py gives it, and the last row."""
+    err = info["error"] or ""
+    code = (Q.EXIT_STOP if err.startswith("QATStop") else Q.EXIT_REFUSED if err.startswith("QATRefused")
+            else Q.EXIT_ABORTED if info["rows"] else Q.EXIT_ERROR)
+    last = {k: info["last"][k] for k in ("event", "epoch", "step", "code", "cause", "run_complete")
+            if k in info["last"]}
+    return f"{info['name']} did not complete: exit {code} ({err or 'no exception'}); last row {last}"
+
+
+def nf_eval(name: str, info: dict, *, scored: bool) -> tuple[Path | None, str]:
+    """The run's record conversion (and its record score pass when `scored`) in a fresh eval directory: copied
+    from --cache-dir, or made here and kept there before any selection writes into it."""
+    NF["n"] += 1
+    ev = TMP / f"ev_nf_{name}_{NF['n']}"
+    if not info["complete"]:
+        return None, nf_incomplete(info)
+    if nf_cache_get("evals", name, ev):
+        return ev, "record passes from the cache"
+    rc, res = convert(info["run"], ev)
+    passes = [res]
+    if rc == 0 and scored:
+        rc, res = score(info["run"], ev, "record", cap="1")
+        passes.append(res)
+    if rc != 0:
+        return None, " | ".join(passes)
+    nf_cache_put("evals", name, ev)
+    return ev, " | ".join(passes)
+
+
+def nf_cli(module, argv: list[str]) -> tuple[int, str, list[str]]:
+    """A lane CLI's main() in this process (select_clip and select_qat_epoch neither trace nor convert): its exit
+    code, its RESULT line (prefixed "RESULT NOT LAST:" when another line follows it) and its REPORT lines."""
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = module.main(argv)
+    out = [ln for ln in buf.getvalue().splitlines() if ln.strip()]
+    lines = [ln for ln in out if ln.startswith("RESULT:")]
+    res = lines[-1] if lines else buf.getvalue()[-300:]
+    return rc, (res if lines and out[-1] == lines[-1] else f"RESULT NOT LAST: {res}"), \
+        [ln for ln in out if ln.startswith("REPORT:")]
+
+
+def nf_select_epoch(info: dict, ev: Path) -> tuple[int, str]:
+    return nf_cli(SE, ["--run-dir", str(info["run"]), "--eval-dir", str(ev), "--expect-telemetry-sha256",
+                       info["telemetry_sha256"], "--allow-smoke-inputs"])[:2]
+
+
+def nf_select_clip(pairs, out: Path) -> tuple[int, str, list[str]]:
+    """select_clip on two (run, eval directory) pairs, each with its telemetry sha256 as the pod records it."""
+    argv = []
+    for info, ev in pairs:
+        argv += ["--candidate", str(info["run"]), str(ev), "--expect-telemetry-sha256", info["telemetry_sha256"]]
+    return nf_cli(SC, argv + ["--out", str(out), "--allow-smoke-inputs"])
+
+
+def nf_pilot(k: int) -> dict:
+    return nf_run(f"pilot_nan{k}", seed=42, clip=1.0, nan_at=(k,), meta=PILOT_META)
+
+
+def nf_pilot_scored(k: int) -> tuple[dict, Path | None, str]:
+    """The step-k pilot run, rejected, still converted and scored (AM-21 item 3(d)): from the cache or made here."""
+    info, key = nf_pilot(k), f"pilot_nan{k}_scored"
+    if key not in NF["evals"]:
+        NF["evals"][key] = nf_eval(key, info, scored=True)
+    return (info, *NF["evals"][key])
+
+
+def nf_clean_selected() -> tuple[dict, Path | None, str]:
+    """The clean pilot run (clip 5.0): converted, scored and its epoch selected."""
+    if "clean" not in NF["memo"]:
+        info = nf_run("pilot_clean_clip5", seed=42, clip=5.0, meta=PILOT_META)
+        ev, how = nf_eval("pilot_clean_clip5", info, scored=True)
+        if ev is not None:
+            rc, res = nf_select_epoch(info, ev)
+            how += f" | {res}"
+            ev = ev if rc == 0 else None
+        NF["memo"]["clean"] = (info, ev, how)
+    return NF["memo"]["clean"]
+
+
+def nf_dead_clip5() -> tuple[dict, Path | None, str]:
+    """The other pilot clip (5.0) made non-finite at step 1, rejected, still converted and scored (item 3(d))."""
+    if "dead5" not in NF["memo"]:
+        info = nf_run("pilot_nan1_clip5", seed=42, clip=5.0, nan_at=(1,), meta=PILOT_META)
+        NF["memo"]["dead5"] = (info, *nf_eval("pilot_nan1_clip5_scored", info, scored=True))
+    return NF["memo"]["dead5"]
+
+
+def _nf_record_convert(k: int):
+    def run():
+        name = f"nf_step{k}_record_convert_exit_0"
+        info = nf_pilot(k)
+        if not info["complete"]:
+            check(name, False, nf_incomplete(info))
+            return
+        ev = TMP / f"ev_nf_pilot_nan{k}_record"
+        rc, res = convert(info["run"], ev)                     # never from the cache: the pass is the subject
+        conv = json.loads((ev / QEE.CONVERT_RECORD).read_text()) if (ev / QEE.CONVERT_RECORD).is_file() else {}
+        bad, fb = info["nonfinite_epochs"], info["first_bad"]
+        want = ["not convertible" if e in bad else "converted" for e in range(1, Q.EPOCHS + 1)]
+        line = (f"RESULT: CONVERTED {Q.EPOCHS - len(bad)}/{Q.EPOCHS} (record; not convertible: "
+                + " ".join(f"e{e:02d}" for e in bad) + ")")
+        check(name, rc == 0 and res == line and conv.get("run_id") == info["run_id"]
+              and conv.get("telemetry_sha256") == info["telemetry_sha256"] and conv.get("purpose") == "record"
+              and (conv.get("freeze_cross_check") or {}).get("ok") is True
+              and [o.get("status") for o in conv.get("outcomes", [])] == want
+              and fb == (k - 1) // 2 + 1 and bad == list(range(fb, Q.EPOCHS + 1)),
+              f"{res}; {QEE.CONVERT_RECORD} {'written' if conv else 'absent'}, non-finite from e{fb}")
+    return run
+
+
+def _nf_epoch_excludes(k: int):
+    def run():
+        name = f"nf_step{k}_select_qat_epoch_excludes_nonfinite"
+        info = nf_run(f"s43_nan{k}", seed=43, clip=1.0, nan_at=(k,), meta=NON_PILOT_META)
+        ev, how = nf_eval(f"s43_nan{k}", info, scored=True)
+        if ev is None:
+            check(name, False, how)
+            return
+        rc, res = nf_select_epoch(info, ev)
+        sel = json.loads((ev / QEE.SELECTION_RECORD).read_text()) if rc == 0 else {}
+        excl = list(range(info["first_bad"], Q.EPOCHS + 1))
+        tail = " ".join(f"e{e:02d}" for e in excl)
+        check(name, rc == 0 and sel.get("excluded_epochs") == excl and sel.get("seed") == 43
+              and (sel.get("winner") or {}).get("epoch", Q.EPOCHS + 1) < info["first_bad"]
+              and all(f"e{e:02d} {A.NOT_CONVERTIBLE_RULE}; not scanned" in sel.get("rule_trace", []) for e in excl)
+              and res.startswith("RESULT: SELECTED epoch ")
+              and res.endswith(f"(E5, seed 43, clip 1.0; excluded: {tail})"), res)
+    return run
+
+
+def nf_no_convertible_epoch() -> None:
+    name = "nf_no_convertible_epoch_exit_2_nothing_written"
+    info = nf_run("s43_nan1", seed=43, clip=1.0, nan_at=(1,), meta=NON_PILOT_META)
+    ev, how = nf_eval("s43_nan1", info, scored=True)
+    if ev is None:
+        check(name, False, how)
+        return
+    rc, res = nf_select_epoch(info, ev)
+    check(name, rc == 2 and "[no_convertible_epoch]" in res and S.NO_MODEL_ENTRY in res
+          and not (ev / QEE.SELECTION_RECORD).exists()
+          and info["nonfinite_epochs"] == list(range(1, Q.EPOCHS + 1)), f"exit {rc}: {res} ({how})")
+
+
+def _scored_epochs(info: dict) -> list[str]:
+    """The epochs a rejected pilot run's score pass scores: those before its first non-finite checkpoint."""
+    return [f"e{e:02d}" for e in range(1, info["first_bad"] or Q.EPOCHS + 1)]
+
+
+def _nf_clip_rejects(k: int):
+    def run():
+        name = f"nf_step{k}_select_clip_rejects_nonfinite"
+        info, ev, how = nf_pilot_scored(k)
+        clean, ev_c, how_c = nf_clean_selected()
+        if ev is None or ev_c is None:
+            check(name, False, f"{how} | {how_c}")
+            return
+        out = TMP / f"clip_nf_step{k}_vs_clean.json"
+        rc, res, rep = nf_select_clip([(info, ev), (clean, ev_c)], out)
+        d = json.loads(out.read_text()) if rc == 0 and out.is_file() else {}
+        w, lo = d.get("winner") or {}, d.get("loser") or {}
+        recs = lo.get("records") or {}
+        check(name, rc == 0 and w.get("clip_norm") == 5.0 and w.get("run_id") == clean["run_id"]
+              and w.get("rejected") is False and lo.get("clip_norm") == 1.0 and lo.get("run_id") == info["run_id"]
+              and lo.get("rejected") is True and f"clip 1.0: {S.REJECTED_NONFINITE}" in d.get("rule_trace", [])
+              and res == f"RESULT: CLIP SELECTED 5.0 (tie false; clip 1.0 {S.REJECTED_NONFINITE})"
+              # AM-21 item 3(d): the rejected run converted and scored, its scores reported, selecting nothing
+              and (recs.get("conversion") or {}).get("state") == "present"
+              and (recs.get("scoring") or {}).get("state") == "present"
+              and sorted((recs.get("scoring") or {}).get("scores") or {}) == _scored_epochs(info)
+              and len(rep) == 1 and rep[0].startswith(f"REPORT: clip 1.0 {S.REJECTED_NONFINITE}")
+              and f"first found at step {k}" in rep[0]
+              and "conversion present" in rep[0] and "scoring present" in rep[0], f"{res} | {rep}")
+    return run
+
+
+def _nf_both_rejected(k: int):
+    def run():
+        name = f"nf_step{k}_both_nonfinite_no_winner_exit_2"
+        info, ev, how = nf_pilot_scored(k)
+        dead, ev_d, how_d = nf_dead_clip5()
+        if ev is None or ev_d is None:
+            check(name, False, f"{how} | {how_d}")
+            return
+        out = TMP / f"clip_nf_step{k}_both.json"
+        rc, res, rep = nf_select_clip([(info, ev), (dead, ev_d)], out)
+        check(name, rc == 2 and res.startswith("RESULT: REFUSED [no_winner]") and S.NO_WINNER in res
+              and not out.exists()
+              # AM-21 item 3(d): both rejected runs converted and scored, each one's records reported
+              and len(rep) == 2 and rep[0].startswith("REPORT: clip 1.0 ") and rep[1].startswith("REPORT: clip 5.0 ")
+              and all("conversion present" in x and "scoring present" in x for x in rep)
+              and "no epoch scored" in rep[1], f"{res} | {rep}")
+    return run
+
+
+def nf_rejected_without_conversion_record() -> None:
+    """Ruling Q2-F/1: the step-10 pilot run's eval directory copied without its qat_convert.json: the record is
+    reported missing, never required, and the clean run still wins."""
+    name = "nf_rejected_run_without_conversion_record_other_wins"
+    info, ev, how = nf_pilot_scored(10)
+    clean, ev_c, how_c = nf_clean_selected()
+    if ev is None or ev_c is None:
+        check(name, False, f"{how} | {how_c}")
+        return
+    ev2 = TMP / "ev_nf_pilot_nan10_without_conversion_record"
+    shutil.copytree(ev, ev2, copy_function=_link_or_copy, ignore=shutil.ignore_patterns(QEE.CONVERT_RECORD))
+    out = TMP / "clip_nf_step10_without_conversion_record.json"
+    rc, res, rep = nf_select_clip([(info, ev2), (clean, ev_c)], out)
+    d = json.loads(out.read_text()) if rc == 0 and out.is_file() else {}
+    recs = (d.get("loser") or {}).get("records") or {}
+    check(name, rc == 0 and (d.get("winner") or {}).get("clip_norm") == 5.0
+          and res == f"RESULT: CLIP SELECTED 5.0 (tie false; clip 1.0 {S.REJECTED_NONFINITE})"
+          and (recs.get("conversion") or {}).get("state") == "missing"
+          and (recs.get("scoring") or {}).get("state") == "present"
+          and len(rep) == 1 and "conversion missing" in rep[0] and "scoring present" in rep[0], f"{res} | {rep}")
+
+
+# (a) converts each pilot run, the conversion being its subject; (b) and (c) convert and score the rejected runs
+# themselves (AM-21 item 3(d)), and with --cache-dir their eval directories are kept for the processes that run
+# them alone (scripts/smoke_qat_mutations.py runs (a), (d) and (b)-(c) as three jobs).
+NF_CASES += [(f"nf_step{k}_record_convert_exit_0", _nf_record_convert(k)) for k, _ in NF_POSITIONS]
+NF_CASES += [(f"nf_step{k}_select_qat_epoch_excludes_nonfinite", _nf_epoch_excludes(k)) for k, _ in NF_POSITIONS]
+NF_CASES += [("nf_no_convertible_epoch_exit_2_nothing_written", nf_no_convertible_epoch)]
+NF_CASES += [(f"nf_step{k}_select_clip_rejects_nonfinite", _nf_clip_rejects(k)) for k, _ in NF_POSITIONS]
+NF_CASES += [(f"nf_step{k}_both_nonfinite_no_winner_exit_2", _nf_both_rejected(k)) for k, _ in NF_POSITIONS]
+NF_CASES += [("nf_rejected_run_without_conversion_record_other_wins", nf_rejected_without_conversion_record)]
+
+
+def test_nonfinite(cache: Path | None, only: list[str]) -> None:
+    """Every nonfinite case in order, or the --only ones; the pilot runs record PLANTSEG_IMAGE_DIGEST (P27)."""
+    NF["cache"] = cache
+    old = os.environ.get("PLANTSEG_IMAGE_DIGEST")
+    os.environ["PLANTSEG_IMAGE_DIGEST"] = NF_DIGEST
+    try:
+        for name, fn in NF_CASES:
+            if only and name not in only:
+                continue
+            before = len(results)
+            try:
+                fn()
+            except Exception as e:                               # noqa: BLE001 -- the case fails, the smoke goes on
+                check(name, False, f"the case raised {type(e).__name__}: {e}")
+            if len(results) == before:
+                check(name, False, "the case reported no check")
+    finally:
+        if old is None:
+            os.environ.pop("PLANTSEG_IMAGE_DIGEST", None)
+        else:
+            os.environ["PLANTSEG_IMAGE_DIGEST"] = old
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--sections", default=",".join(SECTIONS))
+    ap.add_argument("--only", default=None, help="comma-separated nonfinite case names (smoke_qat_mutations.py)")
+    ap.add_argument("--cache-dir", default=None, help="keep (or reuse) the records section's trained run, and the "
+                                                      "nonfinite section's runs and record passes, here")
+    args = ap.parse_args()
+    want = set(args.sections.split(","))
+    only = [n for n in (args.only or "").split(",") if n]
+    ran: set[str] = set()
+    if want - set(SECTIONS) or set(only) - {n for n, _ in NF_CASES}:
+        print(f"RESULT: ERROR unknown sections {sorted(want - set(SECTIONS))} "
+              f"or cases {sorted(set(only) - {n for n, _ in NF_CASES})}")
+        return 4
+    if only:
+        want = {"nonfinite"}
+    t_all = time.time()
+    print("=" * 78)
+    print("QAT ARTIFACTS SMOKE (d4) — confident synthetic source; convert in fresh processes; score capped")
+    print(f"torch {torch.__version__} | sections {sorted(want)} | temp {TMP}")
+    print("=" * 78)
+    if "units" in want:
+        ran.add("units")
+        test_units()
+    if "records" in want:
+        ran.add("records")
+        test_records(Path(args.cache_dir) if args.cache_dir else None)
+    src = r5 = r6 = None
+    if want & {"e5", "e6", "nan", "stop", "guard"}:
+        t0 = time.time()
+        src = NF["src"] = confident_student(seed=0)
+        print(f"[source] confident FP32 student in {time.time() - t0:.0f}s")
+    for stage, need in (("e5", {"e5", "stop", "guard"}), ("e6", {"e6"})):
+        if want & need:
+            t0 = time.time()
+            run = TMP / f"run_{stage}"
+            make_qat_run(run, model=src, stage=stage)
+            if stage == "e5":
+                as_seed(run, 43)
+            print(f"[train] {stage}: 15 epochs in {time.time() - t0:.0f}s")
+            r5, r6 = (run, r6) if stage == "e5" else (r5, run)
+    names = A.epoch_names(15)
+
+    if "e5" in want:
+        ran.add("e5")
+        rec5 = A.read_run_record(r5)
+        sha15 = rec5["ends"][15]["checkpoint_sha256"]
+        # ---------------- convert E5 (record), then e15 twice more in fresh processes (bytes reproduce)
+        ev5 = TMP / "eval_e5"
+        t0 = time.time()
+        rc, res = convert(r5, ev5)
+        conv = json.loads((ev5 / QEE.CONVERT_RECORD).read_text()) if (ev5 / QEE.CONVERT_RECORD).is_file() else {}
+        check("convert_e5_all_15_epochs", rc == 0 and res == "RESULT: CONVERTED 15/15 (record)"
+              and [o["status"] for o in conv.get("outcomes", [])] == ["converted"] * 15
+              and conv.get("freeze_cross_check", {}).get("ok") is True, f"{res} ({time.time() - t0:.0f}s)")
+        names = A.epoch_names(15)
+        cdir = ev5 / A.CONVERTED_DIR
+        shas = {}
+        for label in ("b", "c"):
+            ev = TMP / f"eval_e5_e15_{label}"
+            rc_t, res_t = convert(r5, ev, purpose="timing", epochs=[15])
+            shas[label] = tuple(Q.sha256_file(ev / A.CONVERTED_DIR / names[k])
+                                if (ev / A.CONVERTED_DIR / names[k]).is_file()
+                                else None for k in ("torchscript", "state_dict"))
+        rec_shas = tuple(Q.sha256_file(cdir / names[k]) if (cdir / names[k]).is_file() else None
+                         for k in ("torchscript", "state_dict"))
+        check("d4_reconversion_bytes_reproduce", None not in rec_shas and shas["b"] == shas["c"] == rec_shas,
+              f"TorchScript {rec_shas[0] and rec_shas[0][:12]}, state_dict {rec_shas[1] and rec_shas[1][:12]}; "
+              "three fresh processes")
+
+        # ---------------- identity and provenance of record (e15)
+        ident = A.read_ts_identity(cdir / names["torchscript"]) if (cdir / names["torchscript"]).is_file() else {}
+        check("d4_identity_keys_exact",
+              tuple(sorted(ident)) == tuple(sorted(A.IDENTITY_KEYS)) and ident.get("quantization") == "qat"
+              and ident.get("engine") == "qnnpack" and ident.get("artifact_role") == "accuracy"
+              and ident.get("schema") == "plantseg-int8-torchscript/1.0.0" and ident.get("num_classes") == 116
+              and ident.get("stage") == "E5" and ident.get("qat_checkpoint_sha256") == sha15
+              and ident.get("epoch") == 15
+              and ident.get("run_id") == rec5["run_id"] and ident.get("state_dict_companion") == names["state_dict"],
+              str(sorted(ident)))
+        prov_p = cdir / names["run_meta"]
+        prov = json.loads(prov_p.read_text()) if prov_p.is_file() else {}
+        need = {"stage": "E5", "source_stage": "E1", "quantization_method": "qat", "random_init": False,
+                "num_classes": 116, "backend": "qnnpack", "artifact_format": "torchscript", "epoch": 15,
+                "run_id": rec5["run_id"], "qat_checkpoint_sha256": sha15, "purpose": "record", "host_label": HOST,
+                "converted_artifact": names["torchscript"]}
+        wrong = {k: prov.get(k) for k, v in need.items() if prov.get(k) != v}
+        check("d4_provenance_fields", not wrong and prov.get("converted_artifact_sha256") == rec_shas[0]
+              and (prov.get("state_dict_artifact") or {}).get("sha256") == rec_shas[1]
+              and all(k in prov for k in ("verification", "code", "environment", "cpu_model", "git_head")),
+              f"wrong {wrong}")
+        try:
+            resolved = validate_int8_artifact("E5", prov_p)
+            ok = resolved["artifact_sha256"] == rec_shas[0]
+        except Exception as e:                                   # noqa: BLE001
+            ok, resolved = False, {"error": str(e)}
+        check("evaluator_accepts_qat_provenance", ok, str(resolved.get("error", "")))
+
+        # ---------------- round trip from disk, the eager model, weights and census (e15)
+        select_qnnpack_backend()
+        s15 = state_of(r5, 15)
+        ts, _ = load_int8_torchscript(cdir / names["torchscript"], stage="E5", method="qat", engine="qnnpack")
+        sd = rebuild_int8_from_state_dict(cdir / names["state_dict"], stage="E5", method="qat")
+        eager = convert_model(A.fake_quant_model(s15))
+        par_ts_sd = output_parity({"torchscript": ts, "state_dict": sd}, synthetic_parity_inputs(),
+                                  [("torchscript", "state_dict")])
+        par_eager = output_parity({"eager": eager, "torchscript": ts}, synthetic_parity_inputs(),
+                                  [("eager", "torchscript")])
+        check("d4_torchscript_equals_state_dict_bitwise", par_ts_sd["all_equal"], json.dumps(par_ts_sd["pairs"])[:160])
+        check("d4_eager_equals_torchscript", par_eager["all_equal"], json.dumps(par_eager["pairs"])[:160])
+        w_ts, w_e = weight_scheme_report(ts), weight_scheme_report(eager)
+        check("d4_weights_per_channel_int8", w_ts["ok"] and w_e["ok"],
+              f"{w_ts['per_channel_int8']}/{w_ts['quantized_convs']} in the TorchScript file")
+        g, c = graph_census(ts), runtime_census(eager, torch.zeros(1, 3, 512, 512))
+        check("d4_no_float_region", g["ok"] and c["ok"], f"graph ok {g['ok']}, runtime census ok {c['ok']}")
+
+        # ---------------- fake-quant vs converted agreement on the confident fixture (e15)
+        fq = A.fake_quant_model(s15)
+        lsb = A.head_lsb(fq)
+        x, y = color_task(8, 128, seed=99, band=8)               # valid: 8 px or more from a cell border
+        inputs = [x[i:i + 1] for i in range(8)]
+        valid = [y[i:i + 1] != 255 for i in range(8)]
+        agr = A.argmax_agreement(fq, ts, inputs, lsb, valid_masks=valid)
+        skel = A.prepared_skeleton()
+        bn_keys, _obs_keys = A.freeze_key_sets(skel)
+        fq_prefixes = tuple(f"{n}." for n, _ in Q.fake_quant_modules(skel))
+        fq_keys = {k for k in s15 if k.startswith(fq_prefixes)}     # every fake-quant buffer, flags included
+        ctl_obs = A.argmax_agreement(fq, converted_without(s15, fq_keys), inputs, lsb, valid_masks=valid)
+        ctl_bn = A.argmax_agreement(fq, converted_without(s15, set(bn_keys)), inputs, lsb, valid_masks=valid)
+        print(f"[agreement] LSB {lsb:.6g}: overall {agr['agreement']}, confident fraction {agr['confident_fraction']}, "
+              f"confident agreement {agr['confident_agreement']}, max |diff| {agr['max_logit_diff_lsb']:.2f} LSB, "
+              f"p99.9 {agr['p999_logit_diff_lsb']:.2f} LSB")
+        print(f"[agreement] by margin band: {json.dumps(agr['by_margin_band'])}")
+        print(f"[agreement] controls: observers not carried {ctl_obs['agreement']}, "
+              f"BN not carried {ctl_bn['agreement']}")
+        x0, y0 = color_task(8, 128, seed=99, band=0)               # every pixel valid: reported, not checked
+        agr0 = A.argmax_agreement(fq, ts, [x0[i:i + 1] for i in range(8)], lsb,
+                                  valid_masks=[y0[i:i + 1] != 255 for i in range(8)])
+        print(f"[agreement] band 0 (every pixel valid): overall {agr0['agreement']}, confident fraction "
+              f"{agr0['confident_fraction']}, confident agreement {agr0['confident_agreement']}, max |diff| "
+              f"{agr0['max_logit_diff_lsb']:.2f} LSB, p99.9 {agr0['p999_logit_diff_lsb']:.2f} LSB")
+        check("d4_confident_pixels_agree", agr["confident_pixels"] > 0 and agr["confident_agreement"] == 1.0,
+              f"margin >= 8 LSB: {agr['confident_pixels']} pixels, agreement {agr['confident_agreement']}")
+        check("d4_fixture_confident", (agr["confident_fraction"] or 0) >= 0.90,
+              f"{agr['confident_fraction']} of valid pixels have margin >= 8 LSB"
+              + ("" if (agr["confident_fraction"] or 0) >= 0.90 else " -- fixture not confident"))
+        check("d4_argmax_agreement_ge_99pct", (agr["agreement"] or 0) >= 0.99, f"{agr['agreement']}")
+        check("d4_control_observers_not_carried_below_50pct",
+              ctl_obs["agreement"] is not None and ctl_obs["agreement"] < 0.5, f"{ctl_obs['agreement']}")
+        check("d4_control_bn_not_carried_below_50pct",
+              ctl_bn["agreement"] is not None and ctl_bn["agreement"] < 0.5, f"{ctl_bn['agreement']}")
+
+        # ---------------- score E5 (record, every epoch; VAL rows capped by the driver)
+        t0 = time.time()
+        rc, res = score(r5, ev5, "record", cap="2")
+        ev_doc = json.loads((ev5 / QEE.EVAL_RECORD).read_text()) if (ev5 / QEE.EVAL_RECORD).is_file() else {}
+        rows = ev_doc.get("epochs", [])
+        s_ok = len(rows) == 15 and all(r["status"] == "scored" for r in rows)
+        summ = {}
+        if s_ok:
+            summ = json.loads((ev5 / rows[-1]["summary"]["path"]).read_text())
+        from src.eval.artifacts import verify_artifact
+        try:
+            verified = all(verify_artifact(ev5 / r["score_dir"]) is not None for r in rows) if s_ok else False
+        except Exception as e:                                   # noqa: BLE001
+            verified = False
+            res += f" verify_artifact: {e}"
+        run_ids_ok = s_ok and all(r["run_id"] == f"{rec5['run_id']}_e{r['epoch']:02d}_{r['checkpoint_sha256'][:12]}"
+                                  for r in rows)
+        check("evaluate_model_scores_e5_val",
+              rc == 0 and res == "RESULT: SCORED 15/15 (record)" and s_ok and verified and run_ids_ok
+              and summ.get("dataset", {}).get("split") == "val"
+              and summ["run"]["precision"] == "int8_qat" and summ["run"]["quant_backend"] == "qnnpack"
+              and summ["run"]["checkpoint_sha256"] == rec_shas[0] and summ["run"]["run_id"] == rows[-1]["run_id"],
+              f"{res} ({time.time() - t0:.0f}s)")
+        cmd = rows[-1]["evaluator_command"] if s_ok else []
+        of_record = ["--stage", "E5", "--model-role", "student", "--precision", "int8_qat", "--split", "val",
+                     "--protocol", "canvas", "--artifact-status", "provisional", "--device", "cpu", "--batch-size", "1"]
+        check("score_runs_the_evaluator_flags_of_record",
+              all(cmd[cmd.index(a) + 1] == b for a, b in zip(of_record[0::2], of_record[1::2]) if a in cmd)
+              and all(a in cmd for a in of_record[0::2]) and "--threads" not in cmd
+              and all(isinstance(r.get("torch_num_threads"), int) and isinstance(r.get("affinity_cpus"), int)
+                      for r in rows)
+              and ev_doc.get("threads_note", "").endswith("QNNPACK's thread pool keeps its default"),
+              " ".join(cmd[1:]) if cmd else "")
+        ev_t = TMP / "eval_e5_e15_b"
+        rc_t, res_t = score(r5, ev_t, "timing", cap=None)
+        trows = json.loads((ev_t / QEE.EVAL_RECORD).read_text())["epochs"] if (ev_t / QEE.EVAL_RECORD).is_file() else []
+        tsum = json.loads((ev_t / trows[0]["summary"]["path"]).read_text()) if trows else {}
+        check("timing_purpose_is_smoke_status_64_rows",
+              rc_t == 0 and res_t == "RESULT: SCORED 1/1 (timing, 64 samples)" and len(trows) == 1
+              and tsum.get("dataset", {}).get("actual_rows") == 64
+              and tsum.get("run", {}).get("artifact_status") == "smoke"
+              and "--max-samples" in trows[0]["evaluator_command"], res_t)
+        # ---------------- the end-to-end pass (P34): select and finalize what convert and score wrote
+        rc_s, res_s, rc_f, res_f, sel5, fin5 = end_to_end(r5, ev5)
+        w5 = sel5.get("winner") or {}
+        check("d4_e5_end_to_end_select_and_finalize",
+              rc_s == 0 and res_s.startswith("RESULT: SELECTED epoch ") and "(E5, seed 43, clip 1.0" in res_s
+              and rc_f == 0 and res_f == f"RESULT: FINALIZED (E5, seed 43, epoch {w5.get('epoch', 0):02d})"
+              and (fin5.get("artifact_of_record") or {}).get("torchscript") == w5.get("artifact_of_record"),
+              f"{res_s} | {res_f}")
+
+    if "e6" in want:
+        ran.add("e6")
+        # ---------------- E6 end to end: provenance projection-free
+        ev6 = TMP / "eval_e6"
+        rc6, res6 = convert(r6, ev6)
+        p6 = ev6 / A.CONVERTED_DIR / names["run_meta"]
+        prov6 = json.loads(p6.read_text()) if p6.is_file() else {}
+        try:
+            ok6 = validate_int8_artifact("E6", p6)["provenance"]["cwd_projection_loaded"] is False
+        except Exception:                                         # noqa: BLE001
+            ok6 = False
+        check("d4_e6_converts_projection_free", rc6 == 0 and prov6.get("source_stage") == "E3"
+              and prov6.get("cwd_projection_loaded") is False and ok6, res6)
+        rc6s, res6s = score(r6, ev6, "record", cap="1")
+        check("d4_e6_scores", rc6s == 0, res6s)
+        rc_s, res_s, rc_f, res_f, sel6, fin6 = end_to_end(r6, ev6)
+        w6 = sel6.get("winner") or {}
+        check("d4_e6_end_to_end_select_and_finalize",
+              rc_s == 0 and res_s.startswith("RESULT: SELECTED epoch ") and "(E6, seed 42, clip 1.0" in res_s
+              and rc_f == 0 and res_f == f"RESULT: FINALIZED (E6, seed 42, epoch {w6.get('epoch', 0):02d})"
+              and (fin6.get("artifact_of_record") or {}).get("torchscript") == w6.get("artifact_of_record"),
+              f"{res_s} | {res_f}")
+        code6 = projection_source_code(src)
+        check("d4_e6_projection_source_refused", code6 == "source_invalid", f"[{code6}]")
+
+    if "nan" in want:
+        ran.add("nan")
+        # ---------------- a non-finite run: epochs from the bad one on are recorded, never converted
+        rn = TMP / "run_e5_nan"
+        make_qat_run(rn, model=src, stage="e5", nan_at=(10,))
+        evn = TMP / "eval_e5_nan"
+        rcn, resn = convert(rn, evn)
+        convn = json.loads((evn / QEE.CONVERT_RECORD).read_text()) if (evn / QEE.CONVERT_RECORD).is_file() else {}
+        statuses = [o["status"] for o in convn.get("outcomes", [])]
+        nc = evn / A.CONVERTED_DIR / A.epoch_names(5)["not_convertible"]
+        ncd = json.loads(nc.read_text()) if nc.is_file() else {}
+        check("d4_not_convertible_recorded",
+              rcn == 0 and resn == ("RESULT: CONVERTED 4/15 (record; not convertible: "
+                                    + " ".join(f"e{e:02d}" for e in range(5, 16)) + ")")
+              and statuses == ["converted"] * 4 + ["not convertible"] * 11
+              and ncd.get("status") == "not convertible" and ncd.get("rule") == A.NOT_CONVERTIBLE_RULE
+              and ncd.get("qat_checkpoint_sha256") == A.read_run_record(rn)["ends"][5]["checkpoint_sha256"]
+              and ncd.get("failing"), f"{resn}; {statuses.count('not convertible')} not convertible")
+        rcns, resns = score(rn, evn, "record", cap="1")
+        nrows = json.loads((evn / QEE.EVAL_RECORD).read_text())["epochs"] if (evn / QEE.EVAL_RECORD).is_file() else []
+        check("d4_not_convertible_excluded_from_scoring",
+              rcns == 0 and [r["status"] for r in nrows] == ["scored"] * 4 + ["excluded"] * 11
+              and all(r.get("rule") == A.NOT_CONVERTIBLE_RULE for r in nrows[4:]), resns)
+
+    if "nonfinite" in want:
+        ran.add("nonfinite")
+        t0 = time.time()
+        test_nonfinite(Path(args.cache_dir) / "nonfinite" if args.cache_dir else None, only)
+        print(f"[nonfinite] {len(only) or len(NF_CASES)} cases in {time.time() - t0:.0f}s")
+
+    if "stop" in want:
+        ran.add("stop")
+        # ---------------- an injected parity failure: a STOP file, no provenance, the eval dir spent
+        stop_driver = TMP / "stop_driver.py"
+        stop_driver.write_text(
+            "import sys\nsys.dont_write_bytecode = True\nsys.path.insert(0, %r)\n"
+            "import src.quant.ptq as ptq\nreal = ptq.output_parity\n"
+            "def failing(models, inputs, pairs):\n    r = real(models, inputs, pairs)\n"
+            "    r['all_equal'] = False\n    return r\n"
+            "ptq.output_parity = failing\n"
+            "from scripts.qat_epoch_eval import main\nraise SystemExit(main(sys.argv[1:]))\n" % str(REPO),
+            encoding="utf-8")
+        old = QEE.SCRIPT
+        QEE.SCRIPT = stop_driver
+        try:
+            evs = TMP / "eval_e5_stop"
+            rcs, ress = convert(r5, evs, purpose="timing", epochs=[15])
+        finally:
+            QEE.SCRIPT = old
+        sname = A.epoch_names(15)
+        stop = evs / A.CONVERTED_DIR / sname["stop"]
+        check("d4_stop_writes_stop_file_and_no_provenance",
+              rcs == 1 and stop.is_file() and not (evs / A.CONVERTED_DIR / sname["run_meta"]).exists()
+              and json.loads(stop.read_text()).get("code") == "parity_mismatch", ress)
+        rcs2, ress2 = score(r5, evs, "timing", cap=None)
+        check("d4_score_refuses_spent_eval_dir", rcs2 == 2 and "[stop_present]" in ress2, ress2)
+        used = TMP / "eval_used"
+        used.mkdir()
+        (used / "note.txt").write_text("used", encoding="utf-8")
+        rc_again, res_again = convert(r5, used)
+        check("d4_eval_dir_never_reused", rc_again == 2 and "[eval_dir_not_fresh]" in res_again, res_again)
+
+    if "guard" in want:
+        ran.add("guard")
+        # ---------------- the fresh-process guard (this process traces now; nothing in-process converts after)
+        select_qnnpack_backend()
+        torchscript_bytes(convert_model(A.prepared_skeleton().eval()), {"schema": "smoke"})
+        try:
+            A.convert_epoch(r5, TMP / "eval_guard", 15, purpose="timing", host_label=HOST, allow_smoke_inputs=True)
+            guard = "not refused"
+        except Q.QATRefused as e:
+            guard = e.code
+        check("d4_fresh_process_guard", guard == "fresh_process_required" and not (TMP / "eval_guard").exists(), guard)
+
+    check("all_requested_sections_ran", ran == want, f"ran {sorted(ran)} of {sorted(want)}")
+    print("\n[CHECKS]")
+    for name, ok, detail in results:
+        print(f"  {name:48}: {'PASS' if ok else 'FAIL'}{('  ' + detail) if detail else ''}")
+    passed = sum(1 for _, ok, _ in results if ok)
+    shutil.rmtree(TMP, ignore_errors=True)
+    print(f"\n[time] {time.time() - t_all:.0f}s")
+    print(f"RESULT: {'PASS' if passed == len(results) else 'FAIL'} ({passed}/{len(results)})")
+    return 0 if passed == len(results) else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

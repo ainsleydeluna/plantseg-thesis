@@ -6,7 +6,7 @@ Proves the surface is internally coherent and honestly labelled:
   * the two gradient-clipping decisions are SEPARATE and clipping-only; the distillation one is
     withdrawn by AM-7 (E1-E3 unclipped: the E2/E3 gate refuses any value, lane L-AM7 carried out by
     L-KD-HARDEN) and kept as a readable record, the QAT one is still unresolved;
-  * early stopping cannot fire before the quantization schedule has executed;
+  * the QAT budget is 15 fixed epochs with epoch-boundary freezes and no early stopping (AM-4/AM-4a);
   * official launches still refuse every unresolved value, and no selection path can see TEST.
 
 Nothing here relaxes a gate.
@@ -22,8 +22,8 @@ sys.path.insert(0, str(REPO))
 from configs.distill import DISTILL  # noqa: E402
 from configs.e1_student import E1_STUDENT  # noqa: E402
 from configs.quant import QUANT  # noqa: E402
-from src.quant.prepare import BN_FREEZE_PCT_RANGE, qat_grad_clip_gate_error  # noqa: E402
-from src.quant.runner import EarlyStopper  # noqa: E402
+from src.quant.prepare import qat_freeze_steps, qat_grad_clip_gate_error  # noqa: E402
+from src.quant import qat as QAT_TRAINER  # noqa: E402
 from src.training.train_distill import grad_clip_gate_error  # noqa: E402
 
 results: list[tuple[str, bool, str]] = []
@@ -39,9 +39,8 @@ def check(name: str, ok: bool, detail: str = "") -> None:
 # ---------------------------------------------------------------- 1. locked QAT controls
 def test_locked_qat_controls() -> None:
     check("qat_controls_locked", QAT_RUN["status"] == "LOCKED", QAT_RUN["status"])
-    for key, expected in (("batch_size_physical", 16), ("weight_decay", 1e-4), ("max_epochs", 15),
-                          ("early_stop_patience", 3), ("bn_freeze_pct", 0.65),
-                          ("observer_freeze_pct", 0.70)):
+    for key, expected in (("batch_size_physical", 16), ("weight_decay", 1e-4), ("epochs", 15),
+                          ("bn_freeze_epoch", 10), ("obs_freeze_epoch", 12)):
         check(f"locked_{key}", QAT_RUN.get(key) == expected, str(QAT_RUN.get(key)))
     check("controls_identical_for_e5_e6", tuple(QAT_RUN["shared_by"]) == ("E5", "E6"),
           str(QAT_RUN["shared_by"]))
@@ -58,49 +57,33 @@ def test_locked_qat_controls() -> None:
           and not any("accum" in str(k).lower() and QAT_RUN[k] for k in QAT_RUN),
           "observers and BatchNorm are batch-sensitive, so accumulation is not equivalent")
 
-    lo, hi = BN_FREEZE_PCT_RANGE
-    check("bn_freeze_inside_registered_window", lo <= QAT_RUN["bn_freeze_pct"] <= hi, f"[{lo}, {hi}]")
     check("bn_freeze_precedes_observer_freeze",
-          QAT_RUN["bn_freeze_pct"] < QAT_RUN["observer_freeze_pct"],
-          f"{QAT_RUN['bn_freeze_pct']} < {QAT_RUN['observer_freeze_pct']}")
-    check("freeze_points_are_step_fractions",
-          "round(total_iters * pct)" in QAT_RUN["freeze_rounding"]
-          and "observer >= bn" in QAT_RUN["freeze_rounding"],
-          QAT_RUN["freeze_rounding"])
+          QAT_RUN["bn_freeze_epoch"] < QAT_RUN["obs_freeze_epoch"],
+          f"{QAT_RUN['bn_freeze_epoch']} < {QAT_RUN['obs_freeze_epoch']}")
+    check("freeze_points_are_epoch_boundaries",
+          qat_freeze_steps(335) == (3350, 4020) and "epoch boundaries" in QAT_RUN["freeze_rule"],
+          QAT_RUN["freeze_rule"])
+    check("trainer_constants_equal_config", QAT_TRAINER.config_pins_error() is None,
+          "src/quant/qat.py refuses a configs/quant.py that differs from AM-4a")
     check("fake_quant_from_first_step", QAT_RUN["fake_quant_start"] == "step 0")
 
 
-# ---------------------------------------------------------------- 2. early-stop safety
+# ---------------------------------------------------------------- 2. no early stopping (AM-4)
 def test_early_stop_after_observer_freeze() -> None:
-    check("early_stop_eligibility_registered",
-          QAT_RUN["early_stop_eligible_after"] == "observer_freeze")
-
-    # patience must NOT accrue while ineligible, even across a long plateau
-    s = EarlyStopper(QAT_RUN["early_stop_patience"])
-    s.update(0.50, 1, stop_eligible=True)                       # establish a best
-    for step in range(2, 12):
-        s.update(0.10, step, stop_eligible=False)               # plateau before observer freeze
-    check("patience_does_not_accrue_before_observer_freeze",
-          s.num_bad == 0 and s.triggered is False,
-          f"{10} non-improving validations ignored while ineligible")
-
-    # once eligible, exactly `patience` non-improvements trigger it
-    for step in range(12, 12 + QAT_RUN["early_stop_patience"]):
-        s.update(0.10, step, stop_eligible=True)
-    check("patience_accrues_once_eligible", s.triggered is True,
-          f"triggered after {QAT_RUN['early_stop_patience']} non-improvements")
-
-    # best-checkpoint tracking still works while ineligible
-    s2 = EarlyStopper(3)
-    improved = s2.update(0.80, 5, stop_eligible=False)
-    check("best_checkpoint_tracked_while_ineligible",
-          improved is True and s2.best == 0.80 and s2.triggered is False,
-          "selection is unaffected by eligibility")
-
-    # the runner wires eligibility to the observer-freeze step
-    src = (REPO / "src/quant/runner.py").read_text(encoding="utf-8")
-    check("runner_gates_early_stop_on_observer_freeze",
-          "stop_eligible=it >= obs_freeze_at" in src, "wired in the QAT loop")
+    """AM-4 removed early stopping: the section keeps its name and checks that none exists."""
+    keys = list(QUANT["qat"]) + list(QAT_RUN)
+    check("no_early_stop_controls_registered",
+          not any("early_stop" in k or "patience" in k or "max_epochs" in k for k in keys),
+          "15 fixed epochs; the epoch is selected after training")
+    check("qat_epochs_fixed_at_15",
+          QUANT["qat"]["epochs"] == QAT_RUN["epochs"] == QAT_TRAINER.EPOCHS == 15)
+    check("selection_on_converted_val",
+          "converted" in QUANT["qat"]["checkpoint_selection"]
+          and "VAL" in QUANT["qat"]["checkpoint_selection"], QUANT["qat"]["checkpoint_selection"])
+    src = (REPO / "src/quant/qat.py").read_text(encoding="utf-8")
+    check("trainer_runs_every_epoch",
+          "for epoch in range(1, EPOCHS + 1):" in src and "EarlyStopper" not in src and "patience" not in src,
+          "no early-stop path in src/quant/qat.py")
 
 
 # ---------------------------------------------------------------- 3. two separate clipping decisions
@@ -173,10 +156,9 @@ def test_pilot_budgets() -> None:
           DISTILL_PILOT["pilot_val_interval"] > 0
           and DISTILL_PILOT["pilot_budget_iters"] % DISTILL_PILOT["pilot_val_interval"] == 0,
           f"{DISTILL_PILOT['pilot_budget_iters'] // DISTILL_PILOT['pilot_val_interval']} checks")
-    check("qat_pilot_budget_shortened",
-          QAT_PILOT["pilot_budget_epochs"] < QAT_PILOT["official_max_epochs"]
-          and QAT_PILOT["official_max_epochs"] == QAT_RUN["max_epochs"],
-          f"{QAT_PILOT['pilot_budget_epochs']} vs {QAT_PILOT['official_max_epochs']} epochs")
+    check("qat_pilot_budget_full_15_epochs",
+          QAT_PILOT["pilot_budget_epochs"] == QAT_PILOT["official_epochs"] == QAT_RUN["epochs"] == 15,
+          f"{QAT_PILOT['pilot_budget_epochs']} vs {QAT_PILOT['official_epochs']} epochs (AM-4a item 3)")
     check("distillation_record_lambda_at_grid_centre",
           DISTILL_PILOT["lambda_logit_during_pilot"] == 1.0
           and 1 in DISTILL["logit_kd"]["lambda_logit_sweep_grid"],
@@ -206,17 +188,27 @@ def test_gates_still_refuse() -> None:
         check(f"qat_primitive_accepts_candidate_{candidate}",
               qat_grad_clip_gate_error(candidate) is None, str(candidate))
 
-    # every QAT control is still demanded explicitly
-    from src.quant.runner import unresolved_qat_values
+    # every real E5/E6 launch passes src/quant/qat.py's gates: AM-4a pins the recipe, the clip binds to U4
+    from src.quant.stages import resolve_quant_stage
+    e5 = resolve_quant_stage("e5")
 
-    class Empty:
-        grad_clip_norm = batch_size = weight_decay = epochs = None
-        early_stop_patience = bn_freeze_pct = observer_freeze_pct = None
+    def refused(argv: list[str]) -> str | None:
+        try:
+            QAT_TRAINER.real_run_gates(QAT_TRAINER.build_parser(e5).parse_args(argv), e5)
+        except QAT_TRAINER.QATRefused as e:
+            return e.code
+        return None
 
-    missing = unresolved_qat_values(Empty())
-    for flag in ("--grad-clip-norm", "--batch-size", "--weight-decay", "--epochs",
-                 "--early-stop-patience", "--bn-freeze-pct", "--observer-freeze-pct"):
-        check(f"gate_still_requires_{flag.strip('-')}", any(flag in m for m in missing), flag)
+    launch = ["--real-run", "--confirm-real-run", "--expect-head", "0" * 40, "--seed", "42",
+              "--num-workers", "12"]
+    check("gate_requires_expect_head", refused(["--real-run", "--confirm-real-run"]) == "expect_head_format")
+    check("gate_still_requires_grad_clip_norm", refused(launch) == "grad_clip_norm_invalid")
+    check("gate_requires_u4_candidate", refused(launch + ["--grad-clip-norm", "2.0"]) == "grad_clip_norm_not_candidate")
+    check("gate_binds_e5_seed42_to_u4_pilot", refused(launch + ["--grad-clip-norm", "1.0"]) == "u4_pilot_required")
+    flags = {a.option_strings[0] for a in QAT_TRAINER.build_parser(e5)._actions if a.option_strings}
+    check("gate_takes_no_recipe_flag",
+          not flags & {"--epochs", "--batch-size", "--weight-decay", "--bn-freeze-pct", "--observer-freeze-pct",
+                       "--early-stop-patience", "--lr", "--momentum"}, str(sorted(flags)))
     check("no_clip_value_written_into_configs",
           E1_STUDENT["grad_clip_max_norm"] is None
           and QAT_RUN["grad_clip"] == "PILOT_REQUIRED"

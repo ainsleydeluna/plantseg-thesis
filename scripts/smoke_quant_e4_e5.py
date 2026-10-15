@@ -23,8 +23,8 @@ import torch  # noqa: E402
 import torch.nn as nn  # noqa: E402
 
 from src.models.student import build_student  # noqa: E402
-from src.quant import (BN_FREEZE_PCT_RANGE, CALIBRATION_COUNT, CalibrationIndexError,  # noqa: E402
-                       QuantPreparationError, SourceCheckpointInvalid, bn_freeze_iteration,
+from src.quant import (CALIBRATION_COUNT, CalibrationIndexError,  # noqa: E402
+                       QuantPreparationError, SourceCheckpointInvalid, qat_freeze_steps,
                        build_calibration_index, calibrate, convert_model, describe_qconfig,
                        disable_observers, freeze_bn_stats, load_calibration_index,
                        load_e1_source_checkpoint, prepare_ptq, prepare_qat_model, ptq_qconfig,
@@ -240,10 +240,11 @@ def test_qat_path() -> None:
         y_qat = prepared(X)
     check("qat_model_outputs_116ch", tuple(y_qat.shape) == (1, NC, 64, 64), str(tuple(y_qat.shape)))
 
-    check("bn_freeze_iteration_in_locked_range",
-          bn_freeze_iteration(1000, 0.65) == 650 and bn_freeze_iteration(1000, 0.70) == 700)
-    expect_raises("bn_freeze_pct_outside_range_rejected", QuantPreparationError,
-                  bn_freeze_iteration, 1000, 0.5)
+    check("qat_freeze_steps_at_epoch_boundaries",
+          qat_freeze_steps(335) == (3350, 4020) and qat_freeze_steps(2) == (20, 24),
+          "AM-4a item 1: BN after epoch 10, observers after epoch 12")
+    expect_raises("qat_freeze_steps_rejects_observer_before_bn", QuantPreparationError,
+                  qat_freeze_steps, 335, 12, 10)
     check("qat_grad_clip_gate_requires_explicit_value",
           qat_grad_clip_gate_error(None) is not None
           and qat_grad_clip_gate_error(0) is not None

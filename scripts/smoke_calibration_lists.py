@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Lane 8 d1 on synthetic data: scripts/build_calibration_lists.py. No PlantSeg data, no GPU.
 
-A synthetic dataset (150 TRAIN, 20 VAL and 20 TEST tiny image/mask pairs) is built in a temp dir
-outside the repository. The builder must draw the four lists by the AM-10 procedure exactly
+A synthetic dataset (150 TRAIN and 20 VAL tiny image/mask pairs, and 20 TEST stems whose folders are
+never created, SL-1) is built in a temp dir outside the repository. The builder must draw the four
+lists by the AM-10 procedure exactly
 (random.Random(seed).sample(sorted(train_ids), 128), = src/quant/calibration.py), record the TRAIN
 split-list hash under the L-AM17-STRATA definition, write deterministic bytes, pass its own --check,
 keep the seed-42 list acceptable to the committed E4/E7 validator while that validator refuses the
@@ -28,8 +29,9 @@ sys.dont_write_bytecode = True
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
-from scripts.synthetic_ptq_fixtures import make_tree, safe_tmpdir  # noqa: E402
+from scripts.synthetic_ptq_fixtures import make_tree, repo_state, safe_tmpdir, state_verdict  # noqa: E402
 
+STATE_BEFORE = repo_state(REPO)                  # the repository as the run found it
 BASE = safe_tmpdir("smoke_calib_lists_")
 ROOT = BASE / "data"
 SPLITS = make_tree(ROOT, n_train=150, n_val=20, n_test=20, seed=1)
@@ -198,7 +200,7 @@ def test_refusals() -> None:
 
     refused("refuses_wrong_train_count", ["--data-root", str(ROOT), "--out-dir", str(BASE / "o1")],
             BASE / "o1")
-    latest = fresh_tree("latest_copy")            # contains "test": refused as scripts/build_train_strata.py
+    latest = BASE / "latest_copy"                 # contains "test": never created (SL-1), refused by path first
     refused("refuses_a_test_path", ["--data-root", str(latest), "--out-dir", str(BASE / "o2"),
                                     "--expected-images", "130"], BASE / "o2")
     under_val = BASE / "val" / "data"
@@ -226,7 +228,8 @@ def test_refusals() -> None:
     after = {p.name: p.read_bytes() for p in (BASE / "lists_a").iterdir()}
     check("refuses_to_overwrite", rc == 2 and before == after)
     check("refusals_never_touched_val_or_test", not eval_split_touched(AUDIT["paths"]))
-    check("nothing_written_in_the_repository", not (REPO / "configs" / "calibration").exists())
+    verdict = state_verdict(STATE_BEFORE, repo_state(REPO))
+    check("nothing_written_in_the_repository", verdict == "unchanged", f"the repository's git status: {verdict}")
 
 
 def main() -> int:

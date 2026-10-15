@@ -7,7 +7,11 @@ Nothing here trains, calibrates on real data, downloads, or writes into the git 
 """
 from __future__ import annotations
 
+import contextlib
+import hashlib
+import io
 import json
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -25,8 +29,8 @@ from scripts.create_ptq_calibration_index import main as make_index  # noqa: E40
 from src.distill.export import CWD_PROJECTION_KEY  # noqa: E402
 from src.models.student import build_student  # noqa: E402
 from src.quant import build_calibration_index, save_calibration_index  # noqa: E402
-from src.quant.runner import (EarlyStopper, QuantRunError, check_backend,  # noqa: E402
-                              check_output_dir, check_source, unresolved_qat_values)
+from src.quant.runner import (QuantRunError, check_backend, check_output_dir,  # noqa: E402
+                              check_source)
 from src.quant.stages import resolve_quant_stage  # noqa: E402
 from src.seeds import set_seed  # noqa: E402
 
@@ -67,14 +71,13 @@ def write(name: str, payload) -> Path:
     return p
 
 
-class _Args:
-    def __init__(self, **kw):
-        d = dict(batch_size=None, weight_decay=None, grad_clip_norm=None,
-                 bn_freeze_pct=None, observer_freeze_pct=None, epochs=None,
-                 early_stop_patience=None)
-        d.update(kw)
-        for k, v in d.items():
-            setattr(self, k, v)
+def refusal(fn, argv: list[str]) -> tuple[int, str]:
+    """Run a QAT entry point; return its exit code and the code in its `RESULT: REFUSED [code]` line."""
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = run(fn, argv)
+    m = re.search(r"RESULT: REFUSED \[([a-z0-9_]+)\]", buf.getvalue())
+    return rc, (m.group(1) if m else buf.getvalue().strip()[-160:])
 
 
 # ---------------------------------------------------------------- fixtures
@@ -146,107 +149,92 @@ def test_common_gates() -> None:
           not any("cwd" in k for k in m6.state_dict()), "separate projection field never loaded")
 
 
-# ---------------------------------------------------------------- 4. QAT unresolved values
-def test_qat_unresolved_values() -> None:
-    missing = unresolved_qat_values(_Args())
-    check("qat_lists_every_unresolved_value", len(missing) == 7, f"{len(missing)} values")
-    joined = " ".join(missing)
-    for flag in ("--grad-clip-norm", "--batch-size", "--weight-decay", "--bn-freeze-pct",
-                 "--observer-freeze-pct", "--epochs", "--early-stop-patience"):
-        check(f"qat_requires{flag}", flag in joined)
-    # 8/9 approximate epoch budget and ungoverned patience are real-run decisions, not defaults
-    check("qat_epochs_not_defaulted_from_epochs_approx",
-          any("--epochs" in m and "epochs_approx" in m for m in missing),
-          "'~15' is guidance; the runner will not silently adopt it for a real run")
-    check("qat_patience_required_when_ungoverned",
-          any("--early-stop-patience" in m for m in missing))
-    # weight decay: any finite value >= 0 is accepted, including exactly 0
-    ok0 = _Args(batch_size=8, weight_decay=0.0, grad_clip_norm=1.0, bn_freeze_pct=0.68,
-                observer_freeze_pct=0.72, epochs=15, early_stop_patience=3)
-    check("qat_accepts_zero_weight_decay", unresolved_qat_values(ok0) == [])
-    bad_wd = _Args(batch_size=8, weight_decay=float("nan"), grad_clip_norm=1.0,
-                   bn_freeze_pct=0.68, observer_freeze_pct=0.72, epochs=15, early_stop_patience=3)
-    check("qat_rejects_non_finite_weight_decay",
-          any("--weight-decay" in m for m in unresolved_qat_values(bad_wd)))
-    check("qat_rejects_bn_pct_outside_locked_range",
-          any("bn-freeze-pct" in m for m in unresolved_qat_values(
-              _Args(batch_size=8, weight_decay=0.0, grad_clip_norm=1.0, bn_freeze_pct=0.5,
-                    observer_freeze_pct=0.8))))
-    check("qat_requires_observer_freeze_after_bn",
-          any("observer-freeze-pct" in m for m in unresolved_qat_values(
-              _Args(batch_size=8, weight_decay=0.0, grad_clip_norm=1.0, bn_freeze_pct=0.68,
-                    observer_freeze_pct=0.60))))
-    check("qat_accepts_fully_specified_launch",
-          unresolved_qat_values(_Args(batch_size=8, weight_decay=0.0, grad_clip_norm=1.0,
-                                      bn_freeze_pct=0.68, observer_freeze_pct=0.72,
-                                      epochs=15, early_stop_patience=3)) == [])
-    for label, fn, ck in (("e5", run_e5, E1_CKPT), ("e6", run_e6, E3_CKPT)):
-        rc = run(fn, ["--real-run", "--confirm-real-run", "--source-ckpt", str(ck),
-                      "--out-dir", str(TMP / f"out_{label}")])
-        check(f"{label}_real_run_blocked_without_qat_values", rc == 2, f"exit {rc}")
+# ---------------------------------------------------------------- 4. QAT real-run gates (src/quant/qat.py)
+HEAD40 = "0" * 40
 
 
-# ---------------------------------------------------------------- 5. calibration binding
-def _drive(scores: list[float], patience: int) -> dict:
-    """Replay a synthetic validation-mIoU sequence through the real EarlyStopper."""
-    st = EarlyStopper(patience)
-    best_state_at, seen = None, 0
-    for i, s in enumerate(scores, start=1):
-        seen = i
-        if st.update(s, i):
-            best_state_at = i
-        if st.should_stop:
-            break
-    return {"seen": seen, "best": st.best, "best_step": st.best_step, "saved_at": best_state_at,
-            "triggered": st.triggered, "num_bad": st.num_bad}
+def test_qat_real_run_gates() -> None:
+    base = ["--real-run", "--confirm-real-run"]
+    head = base + ["--expect-head", HEAD40]
+    s42 = head + ["--seed", "42", "--num-workers", "12"]
+    cases = [
+        ("e5_refuses_without_expect_head", run_e5, base, "expect_head_format"),
+        ("e5_refuses_seed_outside_42_43_44", run_e5, head + ["--seed", "7", "--num-workers", "12"], "seed"),
+        ("e5_refuses_without_num_workers", run_e5, head + ["--seed", "42"], "num_workers"),
+        ("e5_refuses_without_clip", run_e5, s42, "grad_clip_norm_invalid"),
+        ("e5_refuses_clip_outside_candidates", run_e5, s42 + ["--grad-clip-norm", "2.0"],
+         "grad_clip_norm_not_candidate"),
+        ("e5_s42_requires_u4_pilot", run_e5, s42 + ["--grad-clip-norm", "1.0"], "u4_pilot_required"),
+        ("e5_s43_refuses_u4_pilot", run_e5,
+         head + ["--seed", "43", "--num-workers", "12", "--grad-clip-norm", "1.0", "--u4-pilot"],
+         "u4_pilot_not_e5_s42"),
+        ("e5_s43_requires_clip_selection", run_e5,
+         head + ["--seed", "43", "--num-workers", "12", "--grad-clip-norm", "5.0"], "clip_selection_required"),
+        ("e5_refuses_selection_flags", run_e5,
+         s42 + ["--grad-clip-norm", "1.0", "--u4-pilot", "--lambda-selection", "x.json"],
+         "selection_not_applicable"),
+        ("e5_refuses_out_dir_inside_repo", run_e5,
+         s42 + ["--grad-clip-norm", "1.0", "--u4-pilot", "--out-dir", str(REPO / "qat_runs")], "out_dir"),
+    ]
+    sel = TMP / "clip_selection.json"
+    sel.write_text(json.dumps({"format": "qat_clip_selection/1", "winner": {"clip_norm": 1.0}}),
+                   encoding="utf-8")
+    sel_sha = hashlib.sha256(sel.read_bytes()).hexdigest()
+    e6 = head + ["--seed", "42", "--num-workers", "12", "--grad-clip-norm", "1.0",
+                 "--clip-selection", str(sel), "--clip-selection-sha256", sel_sha]
+    cases += [
+        ("e6_s42_refuses_u4_pilot", run_e6, head + ["--seed", "42", "--num-workers", "12",
+                                                     "--grad-clip-norm", "1.0", "--u4-pilot"],
+         "u4_pilot_not_e5_s42"),
+        ("e6_refuses_clip_selection_sha_mismatch", run_e6,
+         e6[:-1] + ["f" * 64], "clip_selection_sha256_mismatch"),
+        ("e6_refuses_clip_unequal_to_winner", run_e6,
+         [a if a != "1.0" else "5.0" for a in e6], "clip_selection_winner_mismatch"),
+        ("e6_requires_lambda_selection", run_e6, e6, "lambda_selection_missing"),
+    ]
+    for name, fn, argv, want in cases:
+        rc, code = refusal(fn, argv)
+        check(name, rc == 2 and code == want, f"exit {rc} [{code}]")
+    out = TMP / "qat_out_absent"
+    rc, code = refusal(run_e5, s42 + ["--grad-clip-norm", "1.0", "--u4-pilot", "--out-dir", str(out)])
+    if not torch.cuda.is_available():
+        check("e5_refuses_without_cuda", rc == 2 and code == "cuda_required", f"exit {rc} [{code}]")
+    else:
+        check("e5_refuses_without_cuda", rc == 2, f"CUDA present; refused later at [{code}]")
+    check("qat_refusals_write_nothing", not out.exists() and not (REPO / "qat_runs").exists())
+    # AM-4a pins every recipe value: no launch flag can set one
+    for flag in ("--epochs", "--batch-size", "--weight-decay", "--bn-freeze-pct", "--observer-freeze-pct",
+                 "--early-stop-patience", "--lr", "--momentum"):
+        with contextlib.redirect_stderr(io.StringIO()):
+            rc = run(run_e5, s42 + ["--grad-clip-norm", "1.0", "--u4-pilot", flag, "1"])
+        check(f"qat_has_no_flag_{flag.strip('-').replace('-', '_')}", rc == 2, f"exit {rc} (argparse refuses it)")
 
 
-def test_early_stopping() -> None:
-    # 1 improvement resets patience; 2 plateau increments it
-    st = EarlyStopper(3)
-    st.update(0.10, 1); st.update(0.20, 2)
-    check("es_improvement_resets_patience", st.num_bad == 0 and st.best_step == 2)
-    st.update(0.20, 3)
-    check("es_plateau_increments_patience", st.num_bad == 1 and not st.should_stop,
-          "equal score is NOT an improvement (no min-delta is governed)")
-    st.update(0.19, 4)
-    check("es_regression_increments_patience", st.num_bad == 2 and not st.should_stop)
-    st.update(0.30, 5)
-    check("es_improvement_resets_counter_again", st.num_bad == 0 and st.best_step == 5)
-
-    # 3 stops at exactly the patience boundary
-    r = _drive([0.1, 0.2, 0.2, 0.2, 0.2, 0.9], patience=3)
-    check("es_stops_at_exact_patience_boundary",
-          r["triggered"] and r["seen"] == 5 and r["num_bad"] == 3,
-          f"stopped after {r['seen']} validations with {r['num_bad']} bad")
-    # 4 best checkpoint is the best score, not the last one seen
-    check("es_keeps_best_not_last",
-          r["best"] == 0.2 and r["best_step"] == 2 and r["saved_at"] == 2,
-          f"best={r['best']} at step {r['best_step']}")
-    r2 = _drive([0.1, 0.2, 0.3, 0.4], patience=2)
-    check("es_runs_to_completion_when_improving",
-          not r2["triggered"] and r2["seen"] == 4 and r2["best_step"] == 4)
-
-    # 10 invalid patience refused
-    for bad in (0, -1, None):
-        try:
-            EarlyStopper(bad)
-            check(f"es_rejects_patience_{bad}", False, "no error")
-        except QuantRunError as e:
-            check(f"es_rejects_patience_{bad}", e.code == "early_stop_patience_invalid")
-
-    # 6 E5 and E6 share one implementation
+# ---------------------------------------------------------------- 5. no early stopping (AM-4)
+def test_no_early_stopping() -> None:
     import inspect
+    from configs.quant import QUANT
+    from src.quant import qat as _qat
     from src.quant import runner as _runner
-    src = inspect.getsource(_runner.run_qat)
-    check("es_shared_by_e5_and_e6",
-          src.count("EarlyStopper(") == 1 and resolve_quant_stage("e5")["method"]
-          == resolve_quant_stage("e6")["method"] == "qat",
-          "one run_qat serves both stages")
-    # 7 the QAT path never builds a TEST loader
-    check("es_qat_never_builds_test_loader",
-          'build_dataloader("test"' not in src and "'test'" not in src,
-          "train + val only")
+    check("runner_holds_no_qat_loop",
+          not any(hasattr(_runner, n) for n in ("EarlyStopper", "run_qat", "unresolved_qat_values")),
+          "src/quant/qat.py is the one QAT trainer")
+    pat = re.compile(r"patience|EarlyStopper|early_stop")
+    hits = [f"{f}:{i}" for f in ("src/quant/runner.py", "src/quant/qat.py", "configs/quant.py",
+                                 "scripts/run_e5.py", "scripts/run_e6.py")
+            for i, line in enumerate((REPO / f).read_text(encoding="utf-8").splitlines(), 1) if pat.search(line)]
+    check("qat_no_patience_path", not hits, str(hits[:5]))
+    check("qat_fixed_fifteen_epochs",
+          _qat.EPOCHS == QUANT["qat"]["epochs"] == QUANT["qat_real_run"]["epochs"] == 15)
+    codes = [refusal(fn, ["--real-run"]) for fn in (run_e5, run_e6)]
+    check("qat_shared_by_e5_and_e6",
+          codes == [(2, "confirm_real_run_flag")] * 2
+          and resolve_quant_stage("e5")["method"] == resolve_quant_stage("e6")["method"] == "qat",
+          f"both entry points reach src.quant.qat.main through src.quant.runner.main: {codes}")
+    src = inspect.getsource(_qat.build_qat_loaders)
+    check("qat_never_builds_test_loader",
+          'build_dataloader("train"' in src and 'build_dataloader("val"' in src
+          and '"test"' not in src and "'test'" not in src, "train + val only")
 
 
 def test_calibration_binding() -> None:
@@ -310,7 +298,7 @@ def main() -> int:
     print(f"torch {torch.__version__} | temp {TMP}")
     print("=" * 78)
     for fn in (test_authorization, test_stage_pinning, test_common_gates,
-               test_qat_unresolved_values, test_early_stopping, test_calibration_binding,
+               test_qat_real_run_gates, test_no_early_stopping, test_calibration_binding,
                test_index_creator_and_backend):
         print(f"\n--- {fn.__name__} ---")
         fn()

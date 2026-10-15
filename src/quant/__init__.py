@@ -14,10 +14,10 @@ from .checkpoint import (SourceCheckpointInvalid, load_e1_source_checkpoint,
 from .stages import (QUANT_STAGES, SHARED_CALIBRATION_STAGES, QuantStageError,
                      load_source_for_stage, prepare_for_stage, require_shared_calibration_index,
                      resolve_quant_stage)
-from .prepare import (BN_FREEZE_PCT_RANGE, QuantPreparationError, bn_freeze_iteration, calibrate,
-                      convert_model, disable_observers, enable_observers, freeze_bn_stats,
-                      prepare_ptq, prepare_qat_model, qat_grad_clip_gate_error,
-                      quantization_coverage, try_converted_forward)
+from .prepare import (QuantPreparationError, calibrate, convert_model, disable_observers,
+                      enable_observers, freeze_bn_stats, prepare_ptq, prepare_qat_model,
+                      qat_freeze_steps, qat_grad_clip_gate_error, quantization_coverage,
+                      try_converted_forward, unfused_batchnorm)
 from .qconfig import (QUANT_BACKEND, X86_ACT_REDUCE_RANGE, X86_BACKENDS, QuantBackendUnavailable,
                       describe_qconfig, ptq_qconfig, qat_qconfig, select_qnnpack_backend,
                       select_x86_backend, x86_ptq_qconfig, x86_qat_qconfig)
@@ -48,7 +48,7 @@ __all__ = [
     "CalibrationIndexError", "build_calibration_index", "verify_calibration_index",
     "save_calibration_index", "load_calibration_index",
     "QuantPreparationError", "prepare_ptq", "calibrate", "prepare_qat_model", "convert_model",
-    "freeze_bn_stats", "disable_observers", "enable_observers", "bn_freeze_iteration",
-    "qat_grad_clip_gate_error", "BN_FREEZE_PCT_RANGE",
+    "freeze_bn_stats", "disable_observers", "enable_observers", "qat_freeze_steps",
+    "unfused_batchnorm", "qat_grad_clip_gate_error",
     "quantization_coverage", "try_converted_forward",
 ]
