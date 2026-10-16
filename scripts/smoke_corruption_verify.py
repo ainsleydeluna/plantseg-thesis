@@ -12,6 +12,8 @@ TEST refusals run on never-created paths before any read, under a zero-call trac
           pinned stack (a copy re-sealed as provisional)
   V19-V24 a malformed EXIF orientation; strict-JSON manifests; the registered
           cell set; the data-root gate; a 1.0.0 manifest
+  V25-V26 item paths by index (LCC1, LCC3): an entry not at its index path; a verified cache's
+          item paths and created names (S2's zqmarker stem)
   M       mutations, each killed by its named case (a case that raised is no kill)
 
 Run:  python -B scripts/smoke_corruption_verify.py
@@ -41,9 +43,10 @@ from PIL import Image  # noqa: E402
 import scripts.verify_corruption_cache as VC  # noqa: E402
 import src.corruption_cache as cc  # noqa: E402
 import src.corruption_source as cs  # noqa: E402
-from scripts.smoke_corruption_generator import (DIGEST, SPECIALS, SUBSET,  # noqa: E402
+from scripts.smoke_corruption_generator import (DIGEST, MARKER, SPECIALS, SUBSET,  # noqa: E402
                                                 _fake_surface_isolation, env, make_val_root,
-                                                malformed_orientation_jpeg)
+                                                malformed_orientation_jpeg, names_holding,
+                                                path_problems)
 
 CASES: dict = {}
 results: list[tuple[str, bool, str]] = []
@@ -459,6 +462,40 @@ def v24():
     return code == "manifest_schema", str(code)
 
 
+# ---------------------------------------------------------------- V25-V26. item paths by index
+@case("V25")
+def v25():
+    """A re-sealed manifest whose first entry names its stem path, not its index path ->
+    item_path_mismatch, before any source or item is read, and no record (LCC1). The stem path
+    is a string only: no such file is created."""
+    root = fresh_copy("v25")
+
+    def stem(m):
+        e = m["entries"][0]
+        e["cache_relative_path"] = f"{e['corruption_id']}/s{e['severity']}/{e['image_id']}.npy"
+    forge(root, stem)
+    with tracer() as calls:
+        code = verify_code(verify_argv(root))
+    reads = [c for c in calls if c[0] != "manifest"]
+    return (code == "item_path_mismatch" and not reads
+            and not records(root)), f"code={code}, reads={len(reads)}"
+
+
+@case("V26")
+def v26():
+    """The verifier reads every item at its index path: a fresh copy verifies, its entries sit at
+    <corruption>/s<severity>/<manifest_index, 5 digits>.npy with the item files exactly those, and
+    no created name holds S2's zqmarker stem, 'test' or ':' (LCC1, LCC3)."""
+    root = fresh_copy("v26")
+    rc, _, err = verify_main(verify_argv(root))
+    m = json.loads((root / cc.MANIFEST_NAME).read_text(encoding="utf-8"))
+    bad = path_problems(root, m)
+    held = names_holding(root, MARKER, "test", ":")
+    marked = any(MARKER in s["image_id"] for s in m["sources"])
+    return (rc == 0 and marked and not bad and not held and len(records(root)) == 1), \
+        f"rc={rc} marked={marked} paths={bad[:2]} names={held[:2]} {err.strip()[-60:]}"
+
+
 # ---------------------------------------------------------------- M. mutations
 def noop(*a, **k):
     return None
@@ -514,6 +551,8 @@ def mutations():
     mutant("M-manifest parsed leniently", ["V20"], (cc, "_strict_json", json.loads))
     mutant("M-cell set not checked (LC13)", ["V22"], (VC, "cell_set_problems", lambda m: []))
     mutant("M-data-root gate skipped (LC4)", ["V23"], (cs, "check_split_surface", noop))
+    mutant("M-item_path_mismatch (entry paths trusted, LCC1)", ["V25"],
+           (cc, "require_item_paths", noop))
     mutant("M-rounding int(x + 0.5) in the reader (S2 M2)", ["V2"],
            (cs, "resized_size", lambda w, h: (512, max(1, int(h * 512 / w + 0.5))) if w >= h
             else (max(1, int(w * 512 / h + 0.5)), 512)))
@@ -544,6 +583,8 @@ LABELS = {
     "V22": "V22 a re-sealed manifest without the fog_s5 cell -> cell_digest_mismatch (LC13)",
     "V23": "V23 a VAL root reporting a TEST surface -> test_split_present, nothing read (LC4)",
     "V24": "V24 a 1.0.0 manifest -> manifest_schema",
+    "V25": "V25 a re-sealed entry at its stem path, not its index path -> item_path_mismatch",
+    "V26": "V26 a verified cache: every item at its index path; no created name holds the marker",
 }
 
 

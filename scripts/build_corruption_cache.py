@@ -28,9 +28,8 @@ names (no "test" in the absolute cache root, journal or repair paths; LC6); the 
 corr_cache_tday; --confirm-test-split; split and status; --max-images; the expected pin's presence
 and format; the vendored runtime; the pinned stack; the image digest; the severity-5 evidence gate;
 git and the governed paths; the pin; the cache location; the cache root's state (LC5); the data
-root (the M11 isolation check for val, images/test alone for test); the listing (its count, then
-its stems: no "test" in any case, no TL section 2 character). Then the cache is generated, or
-resumed from its journal, and its manifest written last.
+root (the M11 isolation check for val, images/test alone for test); the listing (its count).
+Then the cache is generated, or resumed from its journal, and its manifest written last.
 
 Exit 0: done. Exit 2: refused. Exit 3: a STOP code (nondeterministic_item, repair_digest_mismatch).
 """

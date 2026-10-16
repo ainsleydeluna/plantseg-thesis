@@ -9,13 +9,15 @@ image is read, under a zero-call tracer. torch and src.data stay out of sys.modu
 
   G  source reader       H  grid           D  determinism        R  resume
   P  pin                 I  index          T  torch-free
+  N  item paths by index (LCC1, LCC3): the path rule, no stem in any created name, resume and
+     repair by index
   L  LC4 split surfaces, LC5 manifest_exists, LC7 the 32-px floor, LC8 repair
   X  every other refusal code of the generator, each reached with every earlier gate passing,
      and the CLI's run-flag, cache-dir, stack and location gates (X29-X32)
   M  mutations: each refusal gate disabled, and the plan's eight, each killed by its named case;
      a case that raised is no kill (its checks never ran)
-Names that would contain "test" are only strings: never-created paths, a patched listing (X26)
-or a patched working directory (X28).
+Names that would contain "test" are only strings: never-created paths or a patched working
+directory (X28). One VAL stem holds the marker "zqmarker" (MARKER); no created name may (N2).
 
 Run:  python -B scripts/smoke_corruption_generator.py
 """
@@ -28,6 +30,7 @@ import io
 import itertools
 import json
 import os
+import re
 import shutil
 import struct
 import subprocess
@@ -119,12 +122,16 @@ SUFFIXES = {7: ".JPG", 9: ".jpeg", 11: ".JPEG"}
 #: case-folded order ('B' before 'a'), at the indices the p.name listing gives them.
 NAMES = {800: "syn_val_00800-a.jpg", 801: "syn_val_00800.jpg",
          810: "syn_val_00810B.jpg", 811: "syn_val_00810a.jpg"}
+#: LCC3(b): a marker one VAL stem holds and no created file or folder name may.
+MARKER = "zqmarker"
+#: The --max-images 6 image whose stem holds the marker (its p.name position stays 141).
+MARKED = {141: f"syn_val_00141_{MARKER}.jpg"}
 
 
 def make_val_root(root: Path) -> Path:
     """A TRAIN/VAL-only root: 5,367 TRAIN and 846 VAL names (masks empty: they are only counted),
-    VAL images real JPEGs, the six SPECIALS at the --max-images 6 indices, the NAMES after them, a
-    stray non-image."""
+    VAL images real JPEGs, the six SPECIALS at the --max-images 6 indices (one stem holding the
+    MARKER), the NAMES after them, a stray non-image."""
     for split, n in (("train", 5367), ("val", 846)):
         (root / "images" / split).mkdir(parents=True)
         (root / "annotations" / split).mkdir(parents=True)
@@ -134,7 +141,7 @@ def make_val_root(root: Path) -> Path:
         (root / "images" / "train" / f"syn_train_{i:05d}.jpg").touch()
     rs = np.random.RandomState(20261016)
     for i in range(846):
-        name = NAMES.get(i, f"syn_val_{i:05d}{SUFFIXES.get(i, '.jpg')}")
+        name = NAMES.get(i) or MARKED.get(i) or f"syn_val_{i:05d}{SUFFIXES.get(i, '.jpg')}"
         if i in SPECIALS:
             (w, h), mode, orient, _ = SPECIALS[i]
             _jpeg(root / "images" / "val" / name, (rs.rand(h, w, 3) * 255).astype(np.uint8),
@@ -717,7 +724,7 @@ def p5():
                 "seed_policy_id": "plantseg-corruption-v1", "master_seed": 42,
                 "cache_schema": "plantseg-corruption-cache/2.0.0",
                 "storage": {"format": "npy", "dtype": "uint8", "layout": "HxWx3",
-                            "relative_path": "<corruption>/s<severity>/<image_id>.npy"}}
+                            "relative_path": "<corruption>/s<severity>/<manifest_index:05d>.npy"}}
         if pin["schema"] != "plantseg-corruption-generator-pin/1.0.0":
             bad.append(f"{split} schema")
         if pin["script"]["path"] != "scripts/build_corruption_cache.py":
@@ -759,6 +766,142 @@ def i2():
 def i3():
     return code_of(cc.load_cached, S["caches"] / "d1a", S["m1"], "syn_val_99999", "fog", 1) == \
         "cache_entry_missing", "unknown key refused"
+
+
+# ---------------------------------------------------------------- N. item paths by index (LCC1)
+#: LCC3(a), written out here (not read back from src.corruption_cache).
+ITEM_PATH = re.compile(r"[a-z_]+/s[1-5]/\d{5}\.npy")
+
+
+def index_path(corruption_id, severity, manifest_index) -> str:
+    """The LCC1 rule as the smoke states it: five decimal digits, zero-padded."""
+    return f"{corruption_id}/s{severity}/{manifest_index:05d}.npy"
+
+
+def item_files(root: Path) -> list:
+    """Every item file under a cache root (journal, verification and repair excluded)."""
+    out = []
+    for c in root.iterdir():
+        if c.is_dir() and c.name not in (cc.JOURNAL_DIR, "verification", "repair"):
+            out += [p.relative_to(root).as_posix() for s in c.iterdir() for p in s.iterdir()]
+    return sorted(out)
+
+
+def path_problems(root: Path, manifest: dict) -> list:
+    """LCC3(a): entry paths that do not match ITEM_PATH or are not the entry's corruption,
+    severity and source manifest_index; and item files on disk that are not those paths."""
+    index_of = {s["image_id"]: s["manifest_index"] for s in manifest["sources"]}
+    bad = [e["cache_relative_path"] for e in manifest["entries"]
+           if not ITEM_PATH.fullmatch(e["cache_relative_path"])
+           or e["cache_relative_path"] != index_path(e["corruption_id"], e["severity"],
+                                                     index_of[e["image_id"]])]
+    paths, files = sorted(e["cache_relative_path"] for e in manifest["entries"]), item_files(root)
+    if files != paths:
+        bad.append(f"{len(files)} item files on disk, {len(paths)} entry paths, "
+                   f"e.g. {sorted(set(files) ^ set(paths))[:2]}")
+    return bad
+
+
+def names_holding(root: Path, *needles) -> list:
+    """Created file and folder names under root that hold any needle (case-folded)."""
+    return sorted(Path(d, n).relative_to(root).as_posix() for d, dirs, files in os.walk(root)
+                  for n in dirs + files if any(x in n.lower() for x in needles))
+
+
+def _pair(seed):
+    rng = np.random.RandomState(seed)
+    return {f"b_{MARKER}_img": rng.randint(0, 256, (36, 48, 3), dtype=np.uint8),
+            "a_img": rng.randint(0, 256, (40, 32, 3), dtype=np.uint8)}
+
+
+@case("N1")
+def n1():
+    """LCC3(a): every item path is <corruption>/s<severity>/<manifest_index, 5 digits>.npy, and
+    the item files are exactly those paths: a CLI cache and an in-memory one."""
+    root = S["caches"] / f"n1_{next(_SEQ)}"
+    rc, _, err = quiet_main(smoke_argv(root))
+    if rc != 0:
+        return False, err.strip()[-120:]
+    m = json.loads((root / cc.MANIFEST_NAME).read_text(encoding="utf-8"))
+    mem = S["caches"] / f"n1_mem_{next(_SEQ)}"
+    mm = cc.generate(mem, _pair(5), corruptions=("fog", "brightness"), severities=(1, 5),
+                     split="val")
+    bad = path_problems(root, m) + path_problems(mem, mm)
+    return (not bad and len(m["entries"]) == 144 and len(mm["entries"]) == 8), \
+        str(bad[:3]) if bad else f"144 + 8 items, e.g. {m['entries'][0]['cache_relative_path']}"
+
+
+@case("N2")
+def n2():
+    """LCC3(b): the stem holding MARKER names no created file or folder after generation (a crash),
+    resume and repair, nor in an in-memory cache; no created name holds 'test' or ':' (LCC6)."""
+    root = S["caches"] / f"n2_{next(_SEQ)}"
+    crash_then(root, 30)
+    seen = {"generation": names_holding(root, MARKER, "test", ":")}
+    if seen["generation"]:
+        return False, f"after generation: {seen['generation'][:2]}"
+    m = library_build(root, resume=True)
+    seen["resume"] = names_holding(root, MARKER, "test", ":")
+    marked = [s["image_id"] for s in m["sources"] if MARKER in s["image_id"]]
+    if not marked:
+        return False, "no source stem holds the marker"
+    e = next(x for x in m["entries"]
+             if x["image_id"] == marked[0] and x["corruption_id"] == "fog" and x["severity"] == 3)
+    path = root / e["cache_relative_path"]
+    np.save(path, (np.load(path) + 9).astype(np.uint8), allow_pickle=False)
+    report = S["work"] / "fault_n2.txt"
+    report.write_text("cache_file_hash_mismatch at scoring\n", encoding="utf-8")
+    rc, _, err = safe_main(_repair_argv(root, e, report))
+    seen["repair"] = names_holding(root, MARKER, "test", ":")
+    mem = S["caches"] / f"n2_mem_{next(_SEQ)}"
+    cc.generate(mem, _pair(6), corruptions=("fog",), severities=(1,), split="val")
+    seen["in-memory"] = names_holding(mem, MARKER, "test", ":")
+    held = "; ".join(f"{k}: {v[:2]}" for k, v in seen.items() if v)
+    return (rc == 0 and not held), \
+        f"rc={rc} {held or 'no created name holds the marker, test or :'} {err.strip()[-60:]}"
+
+
+@case("N3")
+def n3():
+    """LCC3(c): resume finds journalled items at their index paths: after a crash at 50 items,
+    each journalled path is the index rule's, the resume keeps all 50 and regenerates none, and
+    the checksum is the uninterrupted one."""
+    root = S["caches"] / f"n3_{next(_SEQ)}"
+    crash_then(root, 50)
+    j = cc.read_journal(root)
+    index_of = {i: r["manifest_index"] for i, r in j["sources"].items()}
+    at_index = all(e["cache_relative_path"] == index_path(e["corruption_id"], e["severity"],
+                                                          index_of[e["image_id"]])
+                   for e in j["items"].values())
+    m = library_build(root, resume=True)
+    items = m["generation"]["items"]
+    return (at_index and len(j["items"]) == 50
+            and items == {"generated": 94, "regenerated": 0, "kept": 50}
+            and m["canonical_manifest_sha256"] == S["m1"]["canonical_manifest_sha256"]), \
+        f"{items}, journalled at their index paths: {at_index}"
+
+
+@case("N4")
+def n4():
+    """LCC3(c): repair finds its item at the index path: the marked source's tampered fog s3 item
+    is replaced there and verifies again; no created name holds the marker."""
+    root, m = _repair_root()
+    marked = next((s for s in m["sources"] if MARKER in s["image_id"]), None)
+    if marked is None:
+        return False, "no source stem holds the marker"
+    e = next(x for x in m["entries"]
+             if x["image_id"] == marked["image_id"] and x["corruption_id"] == "fog"
+             and x["severity"] == 3)
+    path = root / index_path("fog", 3, marked["manifest_index"])
+    np.save(path, (np.load(path) + 9).astype(np.uint8), allow_pickle=False)
+    report = S["work"] / "fault_n4.txt"
+    report.write_text("cache_file_hash_mismatch at scoring\n", encoding="utf-8")
+    rc, _, err = safe_main(_repair_argv(root, e, report))
+    restored = hashlib.sha256(path.read_bytes()).hexdigest() == e["cached_file_sha256"]
+    held = names_holding(root, MARKER)
+    return (rc == 0 and restored and not held
+            and e["cache_relative_path"] == index_path("fog", 3, marked["manifest_index"])), \
+        f"rc={rc} restored at the index path: {restored}; marker names: {held[:2]}"
 
 
 # ---------------------------------------------------------------- T. torch-free
@@ -1276,30 +1419,6 @@ def x25():
               ctx=patched(B, "verify_vendor_integrity", broken))
 
 
-def _listing_with(replace: dict):
-    """The real VAL listing with some names replaced by never-created paths: nothing is created
-    and nothing named 'test' exists; the names gate sees only strings."""
-    real = cs.split_files
-
-    def files(img_dir):
-        out = real(img_dir)
-        for i, name in replace.items():
-            out[i] = Path(img_dir) / name
-        return out
-    return patched(cs, "split_files", files)
-
-
-@case("X26")
-def x26():
-    """A stem holding 'test' in any case, or a TL section 2 character -> source_name_forbidden."""
-    out = []
-    for name in ("syn_val_00001_LaTeSt.jpg", "syn_val:00001.jpg"):
-        root = never(f"x26_{next(_SEQ)}")
-        ok, d = _x("source_name_forbidden", smoke_argv(root), ctx=_listing_with({1: name}))
-        out.append((ok and not root.exists(), d))
-    return all(ok for ok, _ in out), "; ".join(d for _, d in out)
-
-
 @case("X28")
 def x28():
     """A relative --cache-dir is tested as the absolute path it names: under a working directory
@@ -1416,6 +1535,40 @@ def _decode_unguarded(raw, name):
                 ImageOps.exif_transpose(im).convert("RGB"))
 
 
+_REAL_WRITE_ENTRY = cc.write_entry
+
+
+def _stem_path(corruption_id, severity, image_id) -> str:
+    """The C3 rule, which LCC1 replaced: the item named by its source's stem."""
+    return f"{corruption_id}/s{int(severity)}/{image_id}.npy"
+
+
+def _width4(corruption_id, severity, manifest_index):
+    """A mutant rule: the index in four digits."""
+    return f"{corruption_id}/s{severity}/{manifest_index:04d}.npy"
+
+
+def _stem_writer(cache_root, image_id, manifest_index, corruption_id, severity, array, seed):
+    """A mutant writer: each item moved to, and recorded at, its stem path."""
+    e = _REAL_WRITE_ENTRY(cache_root, image_id, manifest_index, corruption_id, severity, array,
+                          seed)
+    rel = _stem_path(corruption_id, severity, image_id)
+    os.replace(Path(cache_root) / e["cache_relative_path"], Path(cache_root) / rel)
+    return {**e, "cache_relative_path": rel}
+
+
+def _resume_at_stem(root, prior, rel):
+    """A mutant resume: a journalled item looked up at its stem path."""
+    return prior is not None and cc.item_verifies(
+        root, {**prior, "cache_relative_path": _stem_path(prior["corruption_id"],
+                                                          prior["severity"], prior["image_id"])})
+
+
+def _repair_at_stem(cache_root, record, corruption_id, severity):
+    """A mutant repair: the item to replace looked up at its stem path."""
+    return Path(cache_root) / _stem_path(corruption_id, severity, record["image_id"])
+
+
 def mutations():
     real_load_roles, real_canon = cc.load_roles, cc.canonical_manifest_sha256
     real_full_grid, real_corrupt = cc.full_grid, cc.corrupt_source
@@ -1473,7 +1626,6 @@ def mutations():
            (cs, "orientation_value", lambda v: None if v is None else int(v)))
     mutant("M-read_bytes outside source_unreadable", ["G10"],
            (cs, "_read_bytes", lambda p: Path(p).read_bytes()))
-    mutant("M-source_name_forbidden", ["X26"], (cs, "forbidden_names", lambda sources: []))
     mutant("M-relative cache dir tested as typed (LC6)", ["X28"],
            (cc, "refuse_test_named", _typed_name_test))
     mutant("M-pinned stack gate skipped in the CLI", ["X29"], (B, "gate_environment", noop))
@@ -1490,6 +1642,11 @@ def mutations():
     mutant("M-pin names the KD image", ["P5"],
            (cc, "STUDENT_IMAGE_DIGEST",
             "sha256:cb413304e2445e5c8ac3786f7a370f2ed05a07d11843b11687bb9eb23dc32c2b"))
+    # LCC3: item paths by index
+    mutant("M-index width 4 (LCC3a)", ["N1"], (cc, "item_relative_path", _width4))
+    mutant("M-item path built from the stem (LCC3b)", ["N2"], (cc, "write_entry", _stem_writer))
+    mutant("M-resume reading the stem path (LCC3c)", ["N3"], (cc, "resume_keeps", _resume_at_stem))
+    mutant("M-repair reading the stem path (LCC3c)", ["N4"], (cc, "repair_target", _repair_at_stem))
 
     # the plan's eight
     def by_enumeration(pixels, image_id, corruption_id, severity, *, lift_floor):
@@ -1557,6 +1714,10 @@ LABELS = {
     "I1": "I1 the index equals a linear scan",
     "I2": "I2 index build < 1 s for 37,464 entries; 10,000 lookups < 0.1 s",
     "I3": "I3 an unknown key -> cache_entry_missing",
+    "N1": "N1 every item at <corruption>/s<severity>/<manifest_index, 5 digits>.npy (LCC1, LCC3a)",
+    "N2": "N2 no created name holds the zqmarker stem, 'test' or ':' (LCC3b, LCC6)",
+    "N3": "N3 resume keeps the 50 journalled items at their index paths, none regenerated (LCC3c)",
+    "N4": "N4 repair replaces the marked source's item at its index path (LCC3c)",
     "T1": "T1 torch and src.data absent before; no generator module imports them",
     "T2": "T2 torch and src.data absent after",
     "L4a": "L4a VAL root never created -> data_root_missing from isolation, zero reads (LC4)",
@@ -1597,7 +1758,6 @@ LABELS = {
     "X23": "X23 a regenerated item with other digests -> nondeterministic_item (STOP)",
     "X24": "X24 --repair with another split -> repair_split_mismatch",
     "X25": "X25 vendored numerics changed -> vendor_checksum_mismatch",
-    "X26": "X26 a stem holding 'test' or ':' -> source_name_forbidden, nothing read (TL section 2)",
     "X28": "X28 a relative cache dir under a 'TeSt' working dir -> cache_root_test_named (LC6)",
     "X29": "X29 an unpinned stack (numpy 2.0.0) -> official_dependency_version_mismatch",
     "X30": "X30 a cache root inside the repository -> cache_inside_repo, nothing created",

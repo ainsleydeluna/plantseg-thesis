@@ -25,11 +25,22 @@ imports the torch dataloader, which on the Anaconda development box makes scikit
 asserts torch is absent from `sys.modules` before and after the corruption/cache work.
 
 MANIFEST plantseg-corruption-cache/2.0.0 (L-CORR; the TL interface sections 3-6). One root holds
-the manifest `corruption_cache_manifest.json`, the items `<corruption>/s<severity>/<image_id>.npy`,
-the generation journal `journal/entries.jsonl` with one `journal/run_<UTC>.json` per invocation,
-verification records `verification/<UTC>.json` and repair records `repair/<UTC>.json`. Only the
-manifest is a contract file. It is written once, atomically, after every expected item has
-verified, so a crashed run leaves no manifest and no consumer can read a partial cache.
+the manifest `corruption_cache_manifest.json`, the items
+`<corruption>/s<severity>/<manifest_index:05d>.npy`, the generation journal `journal/entries.jsonl`
+with one `journal/run_<UTC>.json` per invocation, verification records `verification/<UTC>.json`
+and repair records `repair/<UTC>.json`. Only the manifest is a contract file. It is written once,
+atomically, after every expected item has verified, so a crashed run leaves no manifest and no
+consumer can read a partial cache.
+
+ITEM PATHS COME FROM THE INDEX, NEVER FROM A STEM (LCC1). An item's path is
+<corruption>/s<severity>/<manifest_index>.npy, its source's manifest_index written as five decimal
+digits (f"{i:05d}"; VAL has 846 sources and TEST 1,561). item_relative_path is the one rule: the
+in-memory generate() and the workers write through it (write_entry), resume and repair find their
+items through it (resume_keeps, repair_target), and load_manifest, which the verifier, repair and
+every consumer call, refuses an entry that is not at its index path (item_path_mismatch). Each
+entry's `cache_relative_path` names its file. `image_id` stays in entries, sources and records as
+data only, so no created file or folder name derives from a stem, and no stem can bring "test" or
+a character the TL interface section 2 forbids into a created path.
 
   canonical_manifest_sha256 = sha256 of canonical_json_bytes(the manifest without
                               canonical_manifest_sha256, versions and generation)
@@ -100,7 +111,7 @@ STUDENT_IMAGE_DIGEST = "sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52
 GOVERNED_PATHSPEC = ("src", "configs", "scripts", "requirements*", "docs/EVALUATION_CONTRACT.md",
                      "docs/IMPLEMENTATION_CONTRACT.md")
 STORAGE = {"format": "npy", "dtype": "uint8", "layout": "HxWx3",
-           "relative_path": "<corruption>/s<severity>/<image_id>.npy"}
+           "relative_path": "<corruption>/s<severity>/<manifest_index:05d>.npy"}
 _HEX40 = re.compile(r"[0-9a-f]{40}")
 _HEX64 = re.compile(r"[0-9a-f]{64}")
 
@@ -419,19 +430,21 @@ def full_grid(roles: corruption_roles.Roles) -> list[tuple[str, int]]:
 
 
 # ---------------------------------------------------------------- items
-def relative_path(image_id: str, corruption_id: str, severity: int) -> str:
-    return f"{corruption_id}/s{severity}/{image_id}.npy"
+def item_relative_path(corruption_id: str, severity: int, manifest_index: int) -> str:
+    """LCC1, the one item-path rule: the source's manifest_index in five digits, never its stem."""
+    return f"{corruption_id}/s{severity}/{manifest_index:05d}.npy"
 
 
-def write_entry(cache_root: Path, image_id: str, corruption_id: str, severity: int,
-                array: np.ndarray, seed: int) -> dict:
-    """Persist one corrupted array losslessly and atomically; return its manifest entry.
+def write_entry(cache_root: Path, image_id: str, manifest_index: int, corruption_id: str,
+                severity: int, array: np.ndarray, seed: int) -> dict:
+    """Persist one corrupted array losslessly and atomically at its index path; return its
+    manifest entry (`image_id` is recorded as data, never used in the path).
 
     Both digests are computed from the final file, after the move into place.
     """
     if array.dtype != np.uint8 or array.ndim != 3 or array.shape[2] != 3:
         _fail("entry_not_uint8_rgb", f"cache entries are uint8 H*W*3; got {array.dtype}/{array.shape}")
-    rel = relative_path(image_id, corruption_id, severity)
+    rel = item_relative_path(corruption_id, severity, manifest_index)
     path = Path(cache_root) / rel
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f".{path.name}.tmp-{os.getpid()}")
@@ -600,7 +613,8 @@ def generate(cache_root: Path, images: dict[str, np.ndarray], *,
         for corruption_id, severity in grid:
             arr, seed = corrupt_source(src.pixels, image_id, corruption_id, severity,
                                        lift_floor=lift)
-            entries.append(write_entry(cache_root, image_id, corruption_id, severity, arr, seed))
+            entries.append(write_entry(cache_root, image_id, index, corruption_id, severity, arr,
+                                       seed))
     if expected_images is not None and len(images) != expected_images:
         _fail("image_count_mismatch",
               f"expected {expected_images} source images, got {len(images)}")
@@ -724,6 +738,13 @@ def same_digests(entry: dict, prior: dict) -> bool:
         (prior["cached_file_sha256"], prior["corrupted_pixel_sha256"])
 
 
+def resume_keeps(root: Path, prior: dict | None, rel: str) -> bool:
+    """Resume finds a journalled item at its index path (LCC1): it is kept only when its journal
+    line names that path and the file there verifies against the journalled digests."""
+    return (prior is not None and prior.get("cache_relative_path") == rel
+            and item_verifies(root, prior))
+
+
 def _image_task(task: dict) -> dict:
     """Read one source, then keep, generate or regenerate its items. Runs in-process or in a
     spawned worker; the parent alone writes the journal."""
@@ -744,12 +765,14 @@ def _image_task(task: dict) -> dict:
     out = []
     for corruption_id, severity in task["grid"]:
         prior = task["prior_items"].get(f"{corruption_id}/{severity}")
-        if prior is not None and item_verifies(root, prior):
+        if resume_keeps(root, prior, item_relative_path(corruption_id, severity,
+                                                        src.manifest_index)):
             out.append(("kept", prior))
             continue
         arr, seed = corrupt_source(si.pixels, src.image_id, corruption_id, severity,
                                    lift_floor=lift)
-        entry = write_entry(root, src.image_id, corruption_id, severity, arr, seed)
+        entry = write_entry(root, src.image_id, src.manifest_index, corruption_id, severity, arr,
+                            seed)
         if prior is not None:
             if not same_digests(entry, prior):
                 _fail("nondeterministic_item",
@@ -908,6 +931,28 @@ def _strict_json(text: str):
     return json.loads(text, parse_constant=constant, parse_float=finite, object_pairs_hook=unique)
 
 
+def item_path_problems(manifest: dict) -> list:
+    """LCC1: the entries whose cache_relative_path is not item_relative_path(corruption, severity,
+    the manifest_index of the source with its image_id), or whose source has no five-digit index."""
+    index_of = {s.get("image_id"): s.get("manifest_index") for s in manifest.get("sources") or []}
+    bad = []
+    for e in manifest.get("entries") or []:
+        i = index_of.get(e.get("image_id"))
+        if type(i) is not int or not 0 <= i < 10 ** 5 or e.get("cache_relative_path") != \
+                item_relative_path(e.get("corruption_id"), e.get("severity"), i):
+            bad.append(e.get("cache_relative_path"))
+    return bad
+
+
+def require_item_paths(manifest: dict) -> None:
+    bad = item_path_problems(manifest)
+    if bad:
+        _fail("item_path_mismatch",
+              f"{len(bad)} entr{'y is' if len(bad) == 1 else 'ies are'} not at "
+              f"{STORAGE['relative_path']} (item paths come from manifest_index, never from a "
+              f"stem): {bad[:3]}")
+
+
 def load_manifest(cache_root: Path) -> dict:
     path = Path(cache_root) / MANIFEST_NAME
     if not path.is_file():
@@ -930,6 +975,7 @@ def load_manifest(cache_root: Path) -> dict:
     if recorded != compute_runtime_sha256():
         _fail("vendor_checksum_mismatch",
               "cache was generated by a different vendored corruption implementation")
+    require_item_paths(manifest)
     return manifest
 
 
@@ -1003,11 +1049,18 @@ def require_repair_source(manifest: dict, record: dict) -> None:
               "was regenerated")
 
 
+def repair_target(cache_root: Path, record: dict, corruption_id: str, severity: int) -> Path:
+    """LC8, LCC1: the file a repair replaces, found by the recorded source's manifest_index."""
+    return Path(cache_root) / item_relative_path(corruption_id, int(severity),
+                                                 record["manifest_index"])
+
+
 def repair_item(cache_root, source: Source, corruption_id: str, severity: int, *,
                 fault_report) -> dict:
     """Regenerate ONE item of a cache whose manifest verifies, from the source it records; keep it
-    only if both recorded digests match. The manifest is never rewritten; repair/<UTC>.json sits
-    outside the checksum and is written before the item is replaced.
+    only if both recorded digests match, at its index path (repair_target). The manifest is never
+    rewritten; repair/<UTC>.json sits outside the checksum and is written before the item is
+    replaced.
     """
     root = Path(cache_root)
     report = Path(fault_report)
@@ -1045,7 +1098,7 @@ def repair_item(cache_root, source: Source, corruption_id: str, severity: int, *
               "outcome": "repaired" if match else "repair_digest_mismatch"}
     _write_atomic(rdir / f"{stamp}.json", canonical_json_bytes(record) + b"\n")
     if match:
-        os.replace(candidate, root / entry["cache_relative_path"])
+        os.replace(candidate, repair_target(root, si.record, corruption_id, severity))
     else:
         _fail("repair_digest_mismatch",
               f"STOP: the regenerated {source.image_id} {corruption_id} s{severity} differs from "
