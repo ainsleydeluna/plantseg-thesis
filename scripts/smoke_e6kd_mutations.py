@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Lane L-AM3, B-1: the mutation smoke of the AM-3 trigger. MT1-MT14 and the refusal table of
+"""Lane L-AM3, B-1: the mutation smoke of the AM-3 trigger. MT1-MT19 and the refusal table of
 src/quant/e6kd_trigger.py, each killed by a named check of scripts/smoke_e6kd_trigger.py.
 
 Q2's harness, scripts/smoke_qat_mutations.py, runs it unchanged:
@@ -208,7 +208,7 @@ KILLS = dict([
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--only", default=None, help="comma-separated job ids (MT1, ..., or file:function:code#k)")
-    ap.add_argument("--no-refusals", action="store_true", help="MT1-MT14 only")
+    ap.add_argument("--no-refusals", action="store_true", help="MT1-MT19 only")
     ap.add_argument("--workers", type=int, default=2, help="shadows edited and run in parallel")
     ap.add_argument("--keep-shadow", action="store_true")
     ap.add_argument("--self-check", action="store_true",
@@ -239,7 +239,7 @@ def main() -> int:
             shutil.rmtree(root, ignore_errors=True)
         raise
     print("=" * 78)
-    print("E6-KD TRIGGER MUTATION SMOKE (lane L-AM3, B-1) -- MT1-MT14 and the refusal table, each killed by a named "
+    print("E6-KD TRIGGER MUTATION SMOKE (lane L-AM3, B-1) -- MT1-MT19 and the refusal table, each killed by a named "
           "check")
     print(f"{len(jobs)} edits | {len(SHADOW_PATHS)} shadow files x {len(shadows)} at {head} | temp {root}")
     print("=" * 78)
