@@ -12,8 +12,8 @@ TEST refusals run on never-created paths before any read, under a zero-call trac
           pinned stack (a copy re-sealed as provisional)
   V19-V24 a malformed EXIF orientation; strict-JSON manifests; the registered
           cell set; the data-root gate; a 1.0.0 manifest
-  V25-V26 item paths by index (LCC1, LCC3): an entry not at its index path; a verified cache's
-          item paths and created names (S2's zqmarker stem)
+  V25-V27 item paths by index (LCC1, LCC3): an entry not at its index path; a verified cache's
+          item paths and created names (S2's zqmarker stem); the five-digit integer index guard
   M       mutations, each killed by its named case (a case that raised is no kill)
 
 Run:  python -B scripts/smoke_corruption_verify.py
@@ -496,6 +496,35 @@ def v26():
         f"rc={rc} marked={marked} paths={bad[:2]} names={held[:2]} {err.strip()[-60:]}"
 
 
+@case("V27")
+def v27():
+    """The five-digit integer index guard (DL-24 C4-N2): a re-sealed manifest whose source has
+    manifest_index 100000 (its entries at the six-digit paths), an entry whose image_id no source
+    holds, or a source whose manifest_index is the string "141" -> item_path_mismatch each, before
+    any source or item is read, and no record (LCC1)."""
+    def six_digits(m):
+        s = m["sources"][0]
+        s["manifest_index"] = 100000
+        for e in m["entries"]:
+            if e["image_id"] == s["image_id"]:
+                e["cache_relative_path"] = f"{e['corruption_id']}/s{e['severity']}/100000.npy"
+
+    def no_source(m):
+        m["entries"][0]["image_id"] = "syn_val_unlisted"
+
+    def text_index(m):
+        s = m["sources"][1]
+        s["manifest_index"] = str(s["manifest_index"])
+    out = []
+    for fn in (six_digits, no_source, text_index):
+        root = fresh_copy("v27")
+        forge(root, fn)
+        with tracer() as calls:
+            code = verify_code(verify_argv(root))
+        out.append((code, len([c for c in calls if c[0] != "manifest"]), len(records(root))))
+    return all(o == ("item_path_mismatch", 0, 0) for o in out), str(out)
+
+
 # ---------------------------------------------------------------- M. mutations
 def noop(*a, **k):
     return None
@@ -512,6 +541,14 @@ def mutant(label, targets, *patches):
     why = "; ".join(f"{t}: {d[:90]}" for t, (_, d) in outcomes.items())
     print(f"MUTANT {label} {'killed' if killed else 'SURVIVED'} by {', '.join(targets)} [{why}]")
     results.append((f"{label} killed by {', '.join(targets)}", killed, why))
+
+
+def _paths_without_index_guard(manifest):
+    """A mutant check: the path comparison alone, without the five-digit integer index guard."""
+    index_of = {s.get("image_id"): s.get("manifest_index") for s in manifest.get("sources") or []}
+    return [e.get("cache_relative_path") for e in manifest.get("entries") or []
+            if e.get("cache_relative_path") != cc.item_relative_path(
+                e.get("corruption_id"), e.get("severity"), index_of.get(e.get("image_id")))]
 
 
 def mutations():
@@ -553,6 +590,8 @@ def mutations():
     mutant("M-data-root gate skipped (LC4)", ["V23"], (cs, "check_split_surface", noop))
     mutant("M-item_path_mismatch (entry paths trusted, LCC1)", ["V25"],
            (cc, "require_item_paths", noop))
+    mutant("M-index guard dropped (path comparison only, C4-N2)", ["V27"],
+           (cc, "item_path_problems", _paths_without_index_guard))
     mutant("M-rounding int(x + 0.5) in the reader (S2 M2)", ["V2"],
            (cs, "resized_size", lambda w, h: (512, max(1, int(h * 512 / w + 0.5))) if w >= h
             else (max(1, int(w * 512 / h + 0.5)), 512)))
@@ -585,6 +624,7 @@ LABELS = {
     "V24": "V24 a 1.0.0 manifest -> manifest_schema",
     "V25": "V25 a re-sealed entry at its stem path, not its index path -> item_path_mismatch",
     "V26": "V26 a verified cache: every item at its index path; no created name holds the marker",
+    "V27": "V27 index 100000, no source, or a text index -> item_path_mismatch, nothing read",
 }
 
 

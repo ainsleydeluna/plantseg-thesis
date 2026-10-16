@@ -709,7 +709,8 @@ PIN_LIBRARY_VERSIONS = {"python": "3.11", "numpy": "1.26.4", "pillow": "12.3.0",
 
 @case("P5")
 def p5():
-    """Every nested pin field, for val and for test, is TL section 3's value."""
+    """Every nested pin field, for val and for test, is TL section 3's value, with
+    storage.relative_path as LCC1 restates it (item paths by manifest_index)."""
     proto = hashlib.sha256((S["repo"] / "configs" / "corruption_protocol.json").read_bytes())
     bad = []
     for split, n in (("val", 846), ("test", 1561)):
@@ -1710,7 +1711,7 @@ LABELS = {
     "P2": "P2 pin_sha256 recomputes; the manifest embeds the pin",
     "P3": "P3 the script blob and commit equal git's",
     "P4": "P4 --print-pin from dirty governed paths -> governed_paths_dirty, no pin printed",
-    "P5": "P5 every nested pin field (val and test) is TL section 3's value",
+    "P5": "P5 every nested pin field (val and test) is TL section 3's value (storage per LCC1)",
     "I1": "I1 the index equals a linear scan",
     "I2": "I2 index build < 1 s for 37,464 entries; 10,000 lookups < 0.1 s",
     "I3": "I3 an unknown key -> cache_entry_missing",
