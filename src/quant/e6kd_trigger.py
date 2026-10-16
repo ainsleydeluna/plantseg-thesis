@@ -581,10 +581,13 @@ def decide(inp: TriggerInputs, *, repo_root: Path = REPO) -> dict:
 
 
 def result_line(doc: dict) -> str:
+    """decide's RESULT line. A record made from smoke inputs says so (DL-24 R-F2): it is never the trigger of record,
+    and the launch gate refuses it (trigger_smoke_inputs)."""
+    smoke = " (smoke inputs, not a record)" if doc.get("smoke_inputs") is not False else ""
     tail = f"(E3 {doc['e3_val']!r}, E6 {doc['e6_val']!r}; seed {doc['seed']})"
     if doc["triggered"]:
-        return f"RESULT: TRIGGERED -- drop {doc['drop_pp']} pp > {doc['threshold_decimal']} pp {tail}"
-    return f"RESULT: NOT TRIGGERED -- drop {doc['drop_pp']} pp <= {doc['threshold_decimal']} pp {tail}"
+        return f"RESULT: TRIGGERED{smoke} -- drop {doc['drop_pp']} pp > {doc['threshold_decimal']} pp {tail}"
+    return f"RESULT: NOT TRIGGERED{smoke} -- drop {doc['drop_pp']} pp <= {doc['threshold_decimal']} pp {tail}"
 
 
 # ------------------------------------------------------------------ B-2's launch gate

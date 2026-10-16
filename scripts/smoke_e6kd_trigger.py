@@ -957,6 +957,19 @@ def d1_threshold_rule_recorded():
 
 
 @case("d1")
+def d1_result_line_marks_smoke_inputs():
+    code, doc, _ = d1_100()
+    tail = "drop 1.00 pp <= 1.0 pp (E3 0.4, E6 0.39; seed 42)"
+    record = T.result_line(doc) if doc else ""
+    smoke = T.result_line({**doc, "smoke_inputs": True}) if doc else ""
+    fired = T.result_line({**doc, "smoke_inputs": True, "triggered": True}) if doc else ""
+    check("d1_result_line_marks_smoke_inputs", code is None and record == f"RESULT: NOT TRIGGERED -- {tail}"
+          and smoke == f"RESULT: NOT TRIGGERED (smoke inputs, not a record) -- {tail}"
+          and fired == "RESULT: TRIGGERED (smoke inputs, not a record) -- drop 1.00 pp > 1.0 pp (E3 0.4, E6 0.39; "
+                       "seed 42)", f"[{code}] {record!r} / {smoke!r}")
+
+
+@case("d1")
 def d1_e3_value_is_the_evaluator_score_not_best_json():
     code, doc, _ = decided("dec_best", e3=0.4001)
     check("d1_e3_value_is_the_evaluator_score_not_best_json", code is None and doc.get("e3_val") == 0.4001
@@ -1164,7 +1177,8 @@ def score_then_decide_end_to_end():
     s3_p = fx["tdir"] / T.SCORE_DIRS["e3"] / "summary.json"
     e3 = json.loads(s3_p.read_text(encoding="utf-8"))["dataset_level"]["all_class_miou"] if s3_p.is_file() else None
     dec = T.drop_decision(doc["e3_val"], doc["e6_val"]) if doc else {}
-    word = "RESULT: TRIGGERED -- " if dec.get("triggered") else "RESULT: NOT TRIGGERED -- "
+    word = ("RESULT: TRIGGERED (smoke inputs, not a record) -- " if dec.get("triggered")
+            else "RESULT: NOT TRIGGERED (smoke inputs, not a record) -- ")
     check("score_then_decide_end_to_end", fx["rc_s"] == 0 and fx["res_s"] == "RESULT: SCORED 2/2 (smoke inputs)"
           and fx["rc_d"] == 0 and fx["res_d"].startswith(word) and doc.get("e6_val") == fx["e6_value"]
           and doc.get("e3_val") == e3 and doc.get("triggered") is dec.get("triggered")

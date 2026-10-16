@@ -99,6 +99,11 @@ MUTATIONS = [
       '    now = {"git_head": ident["git_head"], "code_files_sha256": ident["code_files_sha256"],\n',
       '    now = {"git_head": ident["git_head"],\n',
       case("refuses_code_changed_since_score"), "refuses_code_changed_since_score"),
+    # DL-24 R-F2: a record made from smoke inputs says so on decide's RESULT line
+    M("MT16", "decide's RESULT line no longer marks smoke inputs", TRG,
+      '    smoke = " (smoke inputs, not a record)" if doc.get("smoke_inputs") is not False else ""\n',
+      '    smoke = ""\n',
+      case("d1_result_line_marks_smoke_inputs"), "d1_result_line_marks_smoke_inputs"),
 ]
 
 # the refusal table: every refusal and incomplete site of the module, each with the case that reaches it
