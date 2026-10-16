@@ -104,6 +104,19 @@ MUTATIONS = [
       '    smoke = " (smoke inputs, not a record)" if doc.get("smoke_inputs") is not False else ""\n',
       '    smoke = ""\n',
       case("d1_result_line_marks_smoke_inputs"), "d1_result_line_marks_smoke_inputs"),
+    # DL-24 S-F2: conditions of the summary gates that no case varied alone
+    M("MT17", "the summaries' governed_paths_clean unchecked", TRG,
+      '            "run.governed_paths_clean": ev["governed_paths_clean"], "run.stage": stage, '
+      '"run.model_role": "student",\n',
+      '            "run.stage": stage, "run.model_role": "student",\n',
+      case("refuses_summary_governed_paths_dirty"), "refuses_summary_governed_paths_dirty"),
+    M("MT18", "a summary scored at another commit than trigger_eval.json's accepted", TRG,
+      '        if _get(s, "run.repo_commit") != tev.get("git_head"):\n', "        if False:\n",
+      case("refuses_summaries_scored_at_another_commit"), "refuses_summaries_scored_at_another_commit"),
+    M("MT19", "the sum of per_class.gt_support unchecked", TRG,
+      '        if not isinstance(gt, list) or sum(gt) != ev["gt_support_sum"]:\n',
+      "        if not isinstance(gt, list):\n",
+      case("refuses_summary_gt_support_sum"), "refuses_summary_gt_support_sum"),
 ]
 
 # the refusal table: every refusal and incomplete site of the module, each with the case that reaches it
@@ -112,7 +125,15 @@ SUMMARY_CASES = ("refuses_e3_summary_not_val", "refuses_e6_summary_not_val", "re
                  "refuses_e6_summary_not_int8_qat_qnnpack", "refuses_summary_not_cpu", "refuses_summary_not_canvas",
                  "refuses_summary_batch_not_1", "refuses_rows_not_846_for_record",
                  "refuses_e6_summary_not_the_winner_artifact", "refuses_e3_summary_not_the_checkpoint",
-                 "refuses_summary_not_the_student_image")
+                 "refuses_summary_not_the_student_image", "refuses_summary_governed_paths_dirty",
+                 "refuses_summary_not_provisional", "refuses_summary_workers_not_0",
+                 "refuses_summary_run_id_not_the_trigger_run", "refuses_summary_stage_mismatch",
+                 "refuses_summary_role_not_student", "refuses_summary_random_init",
+                 "refuses_e3_summary_backend_not_null", "refuses_e6_summary_not_int8_qat",
+                 "refuses_summary_gt_support_sum", "refuses_summaries_scored_at_another_commit")
+SAME_CASES = ("refuses_summaries_not_same_code_path", "refuses_summaries_differ_in_metric_code",
+              "refuses_summaries_differ_in_split_manifest", "refuses_summaries_differ_in_class_map",
+              "refuses_summaries_differ_in_torch", "refuses_summaries_differ_in_metric_protocol")
 
 
 def K(func: str, code: str, *checks: str, k: int = 0) -> tuple:
@@ -160,7 +181,7 @@ KILLS = dict([
     K("decide", "summary_artifact_invalid", "refuses_summary_artifact_invalid"),
     K("decide", "summary_sha256_mismatch", "refuses_summary_sha256_mismatch"),
     K("decide", "summary_values", *SUMMARY_CASES),
-    K("decide", "summaries_not_same_code_path", "refuses_summaries_not_same_code_path"),
+    K("decide", "summaries_not_same_code_path", *SAME_CASES),
     K("decide", "score_invalid", "refuses_score_invalid"),
     K("decide", "e6_rescore_differs", "refuses_e6_rescore_differs"),
     # B-2's launch gate
