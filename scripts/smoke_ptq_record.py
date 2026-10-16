@@ -984,6 +984,31 @@ def case_s5_e3_rule() -> None:
             "parent_payload")
 
 
+def case_s5_unreadable() -> None:
+    """DL-24 A-1: an input a gate cannot read refuses (bound_input_unreadable, exit 2), never a traceback."""
+    d, s = variant_e3(E3_S43, 43)
+    tel = d / "e3_telemetry.jsonl"
+    rows = tel.read_text(encoding="utf-8").splitlines(keepends=True)
+    tel.write_text("".join(rows[:-1]) + '{"event": "train", "iter": 2\n' + rows[-1], encoding="utf-8")
+    refused("refuses_e7_parent_torn_telemetry_line", argv("E7", seed=43, source_run_dir=d, expect_source_sha256=s),
+            "bound_input_unreadable")
+    d, _s = variant_e1("e1_ckpt_unloadable")
+    (d / CK1).write_bytes(b"not a checkpoint\n")
+    refused("refuses_e4_parent_checkpoint_unloadable",
+            argv(source_run_dir=d, expect_source_sha256=sha_file(d / CK1)), "bound_input_unreadable")
+    empty = BASE / "path_without_git"                   # G2 runs git first: a PATH without it
+    empty.mkdir(exist_ok=True)
+    saved = os.environ.get("PATH")
+    try:
+        refused("refuses_without_git_binary", argv(), "bound_input_unreadable",
+                env=lambda: os.environ.__setitem__("PATH", str(empty)))
+    finally:
+        if saved is None:
+            os.environ.pop("PATH", None)
+        else:
+            os.environ["PATH"] = saved
+
+
 def case_s5_replicate() -> None:
     recs = s8_records()
     refused("refuses_replicate_not_a_record",
@@ -1336,6 +1361,7 @@ CASES = [
     ("s5_parent", "s5", case_s5_parent),
     ("s5_e1_rule", "s5", case_s5_e1_rule),
     ("s5_e3_rule", "s5", case_s5_e3_rule),
+    ("s5_unreadable", "s5", case_s5_unreadable),
     ("s5_replicate", "s5", case_s5_replicate),
     ("s5_stops", "s5", case_s5_stops),
     ("s5_order", "s5", case_s5_order),

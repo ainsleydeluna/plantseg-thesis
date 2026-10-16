@@ -33,6 +33,8 @@ opened before G8:
   G10 E7 <- E3: qat.e6_parent_binding; parent_not_of_record; parent_teacher_not_of_record;
       parent_checkpoint_not_selected (seed 42); parent_launch_log; parent_payload
   G11 --replicate-of: replicate_mismatch
+  An input a gate cannot read (a torn telemetry line, an unloadable checkpoint, no git binary) refuses as
+  bound_input_unreadable: the gates only read, so it is a refusal, never a traceback.
 A reused Q2 refusal keeps its code; its message is led by the stage and the parent rule (ruling R9). Then the
 core runs, and <stage>_ptq_record.json (format ptq_record/1) is created exclusively, last, after the run
 provenance: STOP identity_changed when the code, the source or the list the run recorded differ from the gates'
@@ -65,8 +67,11 @@ REPLICABLE_ROLES = (ROLE_OF_RECORD, ROLE_SENSITIVITY)
 SEEDS = (42, 43, 44)                                # AM-1; AM-17 item 9: E4 and E7 at every seed
 SCRIPT_REL = "scripts/run_ptq.py"
 MODULE_REL = "src/quant/ptq_record.py"
-# The code the bound path runs beyond src/quant/ptq.py's CODE_PATHS: its sha256 goes into the record, and its
-# cleanliness at HEAD is a gate (G5). configs/e1_student.py holds the 80,000-iteration horizon the parent rules read.
+# The files the bound path adds to src/quant/ptq.py's CODE_PATHS, hand-picked as CODE_PATHS is (not every file the
+# run imports): this module; stages.py, qat.py, sweep_select.py and isolation.py, whose functions the gates call;
+# preflight_distill.py, the teacher of record's values (ruling R17), and preflight_e1_trainval.py, which it loads
+# at import; configs/e1_student.py, the 80,000-iteration horizon the parent rules read. Their sha256s go into the
+# record, and their cleanliness at HEAD is a gate (G5).
 RECORD_EXTRA_CODE_PATHS = (MODULE_REL, "src/quant/stages.py", "src/quant/qat.py", "src/training/sweep_select.py",
                            "src/data/isolation.py", "scripts/preflight_distill.py",
                            "scripts/preflight_e1_trainval.py", "configs/e1_student.py")
@@ -411,9 +416,16 @@ def bound_gates(args, doc: dict, list_sha256: str) -> dict:
 
 def run_bound(args, doc: dict, list_sha256: str, *, log=print) -> tuple[dict, dict, Path, str]:
     """The gates, src.quant.ptq.run_ptq on the parent's checkpoint, then the record. Returns (run provenance,
-    record, record path, record sha256); raises PTQRefused (exit 2) or PTQStop (exit 1)."""
+    record, record path, record sha256); raises PTQRefused (exit 2) or PTQStop (exit 1). The gates only read, so
+    any other error one of them raises is an input it cannot read: refused as bound_input_unreadable."""
     from src.quant import ptq as _ptq
-    g = bound_gates(args, doc, list_sha256)
+    try:
+        g = bound_gates(args, doc, list_sha256)
+    except (_ptq.PTQRefused, _ptq.PTQStop):
+        raise
+    except Exception as e:                      # noqa: BLE001 -- before the core: nothing was written (exit 2)
+        raise _as_refusal("bound_input_unreadable", f"a gate could not read its input ({type(e).__name__}: {e}); "
+                                                    "the gates only read, so nothing was written") from e
     prov = _ptq.run_ptq(stage=g["stage"]["name"], source_ckpt=g["parent"]["checkpoint_path"],
                         expect_source_sha256=args.expect_source_sha256, calibration_list=args.calibration_list,
                         expect_list_checksum=args.expect_list_checksum, data_root=args.data_root,

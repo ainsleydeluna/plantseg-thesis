@@ -337,6 +337,12 @@ MUTATIONS = [
       '"summary_sha256": None,', "s9_range", "range_written"),
     M("LQ77", RANGE, "the disease-only range dropped (R13)", '"disease_only_miou": span("disease_only_miou"),', "",
       "s9_range", "range_written"),
+    # ---- the DL-24 fixes: an unreadable gate input (A-1)
+    M("LQ78", RECORD, "an input a gate cannot read escapes as a traceback (DL-24 A-1)",
+      "    except Exception as e:                      # noqa: BLE001 -- before the core: nothing was written (exit 2)\n",
+      "    except ArithmeticError as e:                # noqa: BLE001 -- before the core: nothing was written (exit 2)\n",
+      "s5_unreadable", "refuses_e7_parent_torn_telemetry_line", "refuses_e4_parent_checkpoint_unloadable",
+      "refuses_without_git_binary"),
 ]
 
 results: list[tuple[str, bool, str]] = []
