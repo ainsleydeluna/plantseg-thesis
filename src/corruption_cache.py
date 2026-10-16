@@ -52,9 +52,11 @@ major.minor). A smoke cache may be built on any stack and claims nothing.
 
 from __future__ import annotations
 
+import concurrent.futures
 import datetime as _dt
 import hashlib
 import json
+import math
 import multiprocessing
 import os
 import platform
@@ -62,6 +64,7 @@ import re
 import subprocess
 import sys
 from collections import OrderedDict
+from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 
 import numpy as np
@@ -294,12 +297,14 @@ def require_official_dependency_environment(actual: dict | None = None) -> dict:
 # ---------------------------------------------------------------- names (TL interface section 2)
 def refuse_test_named(**paths) -> None:
     """LC6: refuse a cache root, journal path or output path whose string contains "test" in any
-    case. A string test only, run before any filesystem call."""
+    case. A string test only, run before any filesystem call; a relative path is tested as the
+    absolute path it names (os.path.abspath: the working directory, never the path itself)."""
     for label, p in paths.items():
-        if p is not None and "test" in str(p).lower():
+        if p is not None and "test" in os.path.abspath(str(p)).lower():
             _fail("cache_root_test_named",
-                  f"the {label.replace('_', ' ')} {str(p)!r} contains 'test': no path this lane "
-                  f"creates may (the TEST cache root's last component is {TDAY_CACHE_ROOT_NAME!r})")
+                  f"the {label.replace('_', ' ')} {os.path.abspath(str(p))!r} contains 'test': no "
+                  f"path this lane creates may (the TEST cache root's last component is "
+                  f"{TDAY_CACHE_ROOT_NAME!r})")
 
 
 # ---------------------------------------------------------------- git, pin and protocol
@@ -620,6 +625,29 @@ def _journal_append(path: Path, record: dict) -> None:
         os.fsync(f.fileno())
 
 
+def end_torn_line(path: Path) -> bool:
+    """A crash mid-write leaves a last line without its newline: end it, so the next record
+    starts a line of its own (the torn line stays, ignored and counted). True if it was torn."""
+    with open(path, "rb+") as f:
+        f.seek(0, os.SEEK_END)
+        if f.tell() == 0:
+            return False
+        f.seek(-1, os.SEEK_END)
+        if f.read(1) == b"\n":
+            return False
+        f.write(b"\n")
+        f.flush()
+        os.fsync(f.fileno())
+    return True
+
+
+def require_journal_header(journal: dict) -> None:
+    if journal["header"] is None:
+        _fail("resume_journal_invalid",
+              "the journal holds no complete header (a crash before it was written): nothing "
+              "usable was journalled, so there is nothing to resume; start again in an empty root")
+
+
 def read_journal(cache_root) -> dict:
     """The journal's header, run lines, sources by image_id and items by (image_id, cell).
 
@@ -699,6 +727,8 @@ def same_digests(entry: dict, prior: dict) -> bool:
 def _image_task(task: dict) -> dict:
     """Read one source, then keep, generate or regenerate its items. Runs in-process or in a
     spawned worker; the parent alone writes the journal."""
+    if task.get("_die") and multiprocessing.parent_process() is not None:
+        os._exit(70)                     # smoke hook (S2 X33): a worker killed outright
     src = Source(task["manifest_index"], task["image_id"], Path(task["path"]))
     try:
         si = read_source(src)
@@ -731,11 +761,38 @@ def _image_task(task: dict) -> dict:
     return {"record": si.record, "prior_source": prior_source is not None, "items": out}
 
 
+def worker_died(e: BaseException):
+    _fail("worker_died",
+          f"a generator worker died outright ({type(e).__name__}: {e}); every journalled item is "
+          "kept and --resume continues the run")
+
+
+def run_workers(tasks: list[dict], workers: int, consume) -> None:
+    """Spawned workers, results consumed as they complete. A refusal raised in a worker keeps its
+    code; a worker that dies outright (the OOM killer, SIGKILL) ends the run as worker_died, where
+    multiprocessing.Pool would wait forever for the lost task."""
+    ctx = multiprocessing.get_context("spawn")
+    with concurrent.futures.ProcessPoolExecutor(max_workers=int(workers), mp_context=ctx) as ex:
+        futures = [ex.submit(_image_task, t) for t in tasks]
+        try:
+            for fut in concurrent.futures.as_completed(futures):
+                consume(fut.result())
+        except BrokenProcessPool as e:
+            for f in futures:
+                f.cancel()
+            worker_died(e)
+        except BaseException:
+            for f in futures:
+                f.cancel()
+            raise
+
+
 def build_cache(cache_root, sources: list[Source], *, split: str, status: str, pin: dict,
                 expected_images, workers: int = 1, resume: bool = False, repo_root=REPO,
                 provenance: dict | None = None, _fail_after_items: int | None = None,
-                _reverse: bool = False) -> dict:
-    """Generate (or resume) a real cache from source files. The CLI runs every gate first."""
+                _reverse: bool = False, _kill_worker_at: int | None = None) -> dict:
+    """Generate (or resume) a real cache from source files. The CLI runs every gate first.
+    The underscored arguments are smoke hooks (a crash, the source order, a worker killed)."""
     root = Path(cache_root)
     refuse_test_named(cache_root=root, journal_path=journal_path(root))
     require_status(status)
@@ -749,10 +806,12 @@ def build_cache(cache_root, sources: list[Source], *, split: str, status: str, p
     jpath = journal_path(root)
     if resume:
         journal = read_journal(root)
+        require_journal_header(journal)
         if not journal_matches(journal["header"], pin=pin, cells=cells, split=split,
                                status=status):
             _fail("resume_pin_mismatch",
                   "the journal was written under another pin, split, status or cell set")
+        end_torn_line(jpath)                         # after every refusal, before the first append
     else:
         jpath.parent.mkdir(parents=True, exist_ok=True)
         journal = {"header": None, "runs": [], "sources": {}, "items": {}, "ignored": 0}
@@ -795,14 +854,13 @@ def build_cache(cache_root, sources: list[Source], *, split: str, status: str, p
             if _fail_after_items is not None and appended >= _fail_after_items:
                 raise RuntimeError(f"simulated crash after {appended} journalled items")
 
+    if _kill_worker_at is not None:
+        tasks[_kill_worker_at]["_die"] = True
     if workers <= 1:
         for task in tasks:
             consume(_image_task(task))
     else:
-        ctx = multiprocessing.get_context("spawn")
-        with ctx.Pool(processes=int(workers)) as pool:
-            for result in pool.imap_unordered(_image_task, tasks):
-                consume(result)
+        run_workers(tasks, workers, consume)
 
     expected_entries = len(sources) * len(grid)
     if len(entries) != expected_entries:            # internal invariant, not a refusal
@@ -828,12 +886,34 @@ def build_cache(cache_root, sources: list[Source], *, split: str, status: str, p
 
 
 # ---------------------------------------------------------------- consumption
+def _strict_json(text: str):
+    """Strict JSON, as corruption_roles.load reads the protocol: no NaN or Infinity, no
+    duplicate key (the file's sha256 would cover both copies, the parse only the last)."""
+    def constant(x):
+        raise ValueError(f"non-finite JSON constant {x!r}")
+
+    def finite(s):
+        x = float(s)
+        if not math.isfinite(x):
+            raise ValueError(f"non-finite JSON number {s!r}")
+        return x
+
+    def unique(pairs):
+        out = {}
+        for k, v in pairs:
+            if k in out:
+                raise ValueError(f"duplicate JSON key {k!r}")
+            out[k] = v
+        return out
+    return json.loads(text, parse_constant=constant, parse_float=finite, object_pairs_hook=unique)
+
+
 def load_manifest(cache_root: Path) -> dict:
     path = Path(cache_root) / MANIFEST_NAME
     if not path.is_file():
         _fail("manifest_missing", f"cache manifest not found: {path}")
     try:
-        manifest = json.loads(path.read_text(encoding="utf-8"))
+        manifest = _strict_json(path.read_text(encoding="utf-8"))
     except ValueError as e:
         _fail("manifest_schema", f"cache manifest is not strict JSON: {e}")
     if not isinstance(manifest, dict) or manifest.get("schema") != CACHE_SCHEMA:
@@ -845,7 +925,8 @@ def load_manifest(cache_root: Path) -> dict:
         _fail("seed_policy_mismatch",
               f"cache was built under seed policy {manifest.get('seed_policy_id')!r}, "
               f"this build uses {SEED_POLICY_ID!r}")
-    recorded = manifest.get("vendor", {}).get("patched_vendor_runtime_sha256")
+    vendor = manifest.get("vendor")
+    recorded = vendor.get("patched_vendor_runtime_sha256") if isinstance(vendor, dict) else None
     if recorded != compute_runtime_sha256():
         _fail("vendor_checksum_mismatch",
               "cache was generated by a different vendored corruption implementation")
@@ -913,10 +994,20 @@ def repair_matches(file_sha: str, pixel_sha: str, seed: int, entry: dict) -> boo
             and pixel_sha == entry["corrupted_pixel_sha256"] and int(seed) == entry["item_seed"])
 
 
+def require_repair_source(manifest: dict, record: dict) -> None:
+    """A repair reads the source the cache records, or nothing is regenerated."""
+    recorded = cache_index(manifest).sources.get(record["image_id"])
+    if not same_source(recorded, record):
+        _fail("repair_source_mismatch",
+              f"{record['image_id']}: the source differs from the one the cache records; nothing "
+              "was regenerated")
+
+
 def repair_item(cache_root, source: Source, corruption_id: str, severity: int, *,
                 fault_report) -> dict:
-    """Regenerate ONE item of a cache whose manifest verifies; keep it only if both recorded
-    digests match. The manifest is never rewritten; repair/<UTC>.json sits outside the checksum.
+    """Regenerate ONE item of a cache whose manifest verifies, from the source it records; keep it
+    only if both recorded digests match. The manifest is never rewritten; repair/<UTC>.json sits
+    outside the checksum and is written before the item is replaced.
     """
     root = Path(cache_root)
     report = Path(fault_report)
@@ -930,6 +1021,7 @@ def repair_item(cache_root, source: Source, corruption_id: str, severity: int, *
         si = read_source(source)
     except CorruptionSourceError as e:
         _fail(e.code, str(e))
+    require_repair_source(manifest, si.record)
     arr, seed = corrupt_source(si.pixels, source.image_id, corruption_id, int(severity),
                                lift_floor=floor_lifted(si.record))
     stamp = utc_stamp()
@@ -951,12 +1043,12 @@ def repair_item(cache_root, source: Source, corruption_id: str, severity: int, *
               "regenerated": {"cached_file_sha256": file_sha, "corrupted_pixel_sha256": pixel_sha},
               "canonical_manifest_sha256": manifest["canonical_manifest_sha256"],
               "outcome": "repaired" if match else "repair_digest_mismatch"}
+    _write_atomic(rdir / f"{stamp}.json", canonical_json_bytes(record) + b"\n")
     if match:
         os.replace(candidate, root / entry["cache_relative_path"])
-    _write_atomic(rdir / f"{stamp}.json", canonical_json_bytes(record) + b"\n")
-    if not match:
+    else:
         _fail("repair_digest_mismatch",
               f"STOP: the regenerated {source.image_id} {corruption_id} s{severity} differs from "
-              "its recorded digests; the item was not replaced "
-              f"(record {rdir / (stamp + '.json')})")
+              f"its recorded digests; the item was not replaced (record {rdir / (stamp + '.json')}"
+              f"; the regenerated candidate is kept at {candidate})")
     return record

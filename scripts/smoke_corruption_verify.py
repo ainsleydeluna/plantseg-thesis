@@ -8,7 +8,11 @@ src/data/transforms.core_preprocess. No file or folder this smoke creates has "t
 TEST refusals run on never-created paths before any read, under a zero-call tracer.
 
   V1-V8   the plan's cases           V9-V15  every other refusal code of the verifier
-  M       mutations, each killed by its named case
+  V16-V18 LC2: an official or provisional cache is verified only in the student image on the
+          pinned stack (a copy re-sealed as provisional)
+  V19-V24 a malformed EXIF orientation; strict-JSON manifests; the registered
+          cell set; the data-root gate; a 1.0.0 manifest
+  M       mutations, each killed by its named case (a case that raised is no kill)
 
 Run:  python -B scripts/smoke_corruption_verify.py
 """
@@ -37,7 +41,9 @@ from PIL import Image  # noqa: E402
 import scripts.verify_corruption_cache as VC  # noqa: E402
 import src.corruption_cache as cc  # noqa: E402
 import src.corruption_source as cs  # noqa: E402
-from scripts.smoke_corruption_generator import SPECIALS, SUBSET, make_val_root  # noqa: E402
+from scripts.smoke_corruption_generator import (DIGEST, SPECIALS, SUBSET,  # noqa: E402
+                                                _fake_surface_isolation, env, make_val_root,
+                                                malformed_orientation_jpeg)
 
 CASES: dict = {}
 results: list[tuple[str, bool, str]] = []
@@ -340,17 +346,132 @@ def v15():
     return code == "cache_entry_corrupt", str(code)
 
 
+# ---------------------------------------------------------------- V16-V18. LC2's environment
+def fresh_copy(tag: str) -> Path:
+    """A copy of the capped cache without the copied verification record."""
+    root = copy_cache(tag)
+    for r in records(root):
+        r.unlink()
+    return root
+
+
+def provisional_copy(tag: str) -> Path:
+    """A copy of the capped cache re-sealed as provisional, with no verification record."""
+    root = fresh_copy(tag)
+    forge(root, lambda m: m.__setitem__("status", "provisional"))
+    return root
+
+
+def _env_refusal(tag, code, *ctx):
+    root = provisional_copy(tag)
+    with contextlib.ExitStack() as stack:
+        for c in ctx:
+            stack.enter_context(c)
+        calls = stack.enter_context(tracer())
+        got = verify_code(verify_argv(root))
+    reads = [c for c in calls if c[0] != "manifest"]
+    return (got == code and not reads and not records(root)), f"code={got}, reads={len(reads)}"
+
+
+@case("V16")
+def v16():
+    return _env_refusal("v16", "image_digest_mismatch", env(PLANTSEG_IMAGE_DIGEST=None))
+
+
+@case("V17")
+def v17():
+    fake = {**cc.runtime_versions(), "numpy": "2.0.0"}
+    return _env_refusal("v17", "official_dependency_version_mismatch", env(**DIGEST),
+                        patched(cc, "runtime_versions", lambda: fake))
+
+
+@case("V18")
+def v18():
+    root = provisional_copy("v18")
+    with env(**DIGEST):
+        rc, _, err = verify_main(verify_argv(root))
+    recs = records(root)
+    rec = json.loads(recs[0].read_text(encoding="utf-8")) if rc == 0 and len(recs) == 1 else {}
+    return (rc == 0 and rec.get("status") == "provisional"
+            and rec.get("image_digest") == cc.STUDENT_IMAGE_DIGEST
+            and rec.get("versions", {}).get("pillow") == cc.OFFICIAL_PILLOW), \
+        f"rc={rc} {err.strip()[-90:]}"
+
+
+@case("V19")
+def v19():
+    """The torch-free reader equals the real core_preprocess on a malformed (UNDEFINED) EXIF
+    orientation, which neither applies; it is recorded by its repr."""
+    arr = (np.arange(48 * 40 * 3) % 253).astype(np.uint8).reshape(48, 40, 3)
+    p = malformed_orientation_jpeg(S["work"] / "orient_undefined.jpg", arr, typ=7)
+    si = cs.read_source(cs.Source(0, "orient_undefined", p))
+    window = VC.core_window(p.read_bytes())[0]
+    return (np.array_equal(si.pixels, window)
+            and si.record["exif_orientation"] == repr(b"\x06")), str(si.pixels.shape)
+
+
+@case("V20")
+def v20():
+    """load_manifest reads strict JSON: a duplicate key, NaN or 1e999 -> manifest_schema."""
+    codes = []
+    for insert in ('"split":"val",', '"zz_nan":NaN,', '"zz_big":1e999,'):
+        root = copy_cache("v20")
+        p = root / cc.MANIFEST_NAME
+        text = p.read_text(encoding="utf-8")
+        p.write_text("{" + insert + text.lstrip()[1:], encoding="utf-8")
+        codes.append(verify_code(verify_argv(root)))
+    return codes == ["manifest_schema"] * 3, str(codes)
+
+
+@case("V22")
+def v22():
+    """A re-sealed manifest without the fog_s5 cell and its entries -> cell_digest_mismatch: the
+    cells must be the registered 24 (LC13), as the pin lists them."""
+    root = fresh_copy("v22")
+
+    def drop(m):
+        m["cells"] = [c for c in m["cells"] if c["cell_id"] != "fog_s5"]
+        m["entries"] = [e for e in m["entries"]
+                        if not (e["corruption_id"] == "fog" and e["severity"] == 5)]
+    forge(root, drop)
+    code = verify_code(verify_argv(root))
+    return code == "cell_digest_mismatch" and not records(root), str(code)
+
+
+@case("V23")
+def v23():
+    """The data-root gate runs before any listing or read: a VAL root reporting a TEST surface
+    (S2's isolation stub; nothing is created) -> test_split_present."""
+    root = fresh_copy("v23")
+    with tracer() as calls, patched(cs, "load_isolation", _fake_surface_isolation):
+        code = verify_code(verify_argv(root))
+    reads = [c for c in calls if c[0] != "manifest"]
+    return (code == "test_split_present" and not reads
+            and not records(root)), f"code={code}, reads={len(reads)}"
+
+
+@case("V24")
+def v24():
+    """A 1.0.0 manifest -> manifest_schema (TL section 4)."""
+    root = fresh_copy("v24")
+    forge(root, lambda m: m.__setitem__("schema", "plantseg-corruption-cache/1.0.0"))
+    code = verify_code(verify_argv(root))
+    return code == "manifest_schema", str(code)
+
+
 # ---------------------------------------------------------------- M. mutations
 def noop(*a, **k):
     return None
 
 
 def mutant(label, targets, *patches):
+    """Killed only when every named case fails by its own checks: a case that raised is not a
+    kill, because its checks never ran."""
     with contextlib.ExitStack() as stack:
         for obj, attr, value in patches:
             stack.enter_context(patched(obj, attr, value))
         outcomes = {t: run(t) for t in targets}
-    killed = not any(ok for ok, _ in outcomes.values())
+    killed = all(not ok and not d.startswith("raised ") for ok, d in outcomes.values())
     why = "; ".join(f"{t}: {d[:90]}" for t, (_, d) in outcomes.items())
     print(f"MUTANT {label} {'killed' if killed else 'SURVIVED'} by {', '.join(targets)} [{why}]")
     results.append((f"{label} killed by {', '.join(targets)}", killed, why))
@@ -388,6 +509,11 @@ def mutations():
     mutant("M-cache_root_test_named", ["V14"], (cc, "refuse_test_named", noop))
     mutant("M-cache_entry_corrupt (item shape vs source)", ["V15"],
            (VC, "check_item_shape", noop))
+    mutant("M-verified outside the student image (LC2)", ["V16", "V17"],
+           (VC, "gate_environment", noop))
+    mutant("M-manifest parsed leniently", ["V20"], (cc, "_strict_json", json.loads))
+    mutant("M-cell set not checked (LC13)", ["V22"], (VC, "cell_set_problems", lambda m: []))
+    mutant("M-data-root gate skipped (LC4)", ["V23"], (cs, "check_split_surface", noop))
     mutant("M-rounding int(x + 0.5) in the reader (S2 M2)", ["V2"],
            (cs, "resized_size", lambda w, h: (512, max(1, int(h * 512 / w + 0.5))) if w >= h
             else (max(1, int(w * 512 / h + 0.5)), 512)))
@@ -410,6 +536,14 @@ LABELS = {
     "V13": "V13 an embedded pin whose sha does not recompute -> pin_invalid",
     "V14": "V14 a cache root containing 'test' -> cache_root_test_named, nothing read (LC6)",
     "V15": "V15 an item whose shape is not its source's -> cache_entry_corrupt",
+    "V16": "V16 a provisional cache outside the student image -> image_digest_mismatch (LC2)",
+    "V17": "V17 a provisional cache on an unpinned stack -> official_dependency_version_mismatch",
+    "V18": "V18 the same provisional cache verifies in the student image on the pinned stack",
+    "V19": "V19 reader == core_preprocess on a malformed (UNDEFINED) EXIF orientation",
+    "V20": "V20 a manifest with a duplicate key, NaN or 1e999 -> manifest_schema",
+    "V22": "V22 a re-sealed manifest without the fog_s5 cell -> cell_digest_mismatch (LC13)",
+    "V23": "V23 a VAL root reporting a TEST surface -> test_split_present, nothing read (LC4)",
+    "V24": "V24 a 1.0.0 manifest -> manifest_schema",
 }
 
 

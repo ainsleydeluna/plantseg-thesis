@@ -5,7 +5,7 @@ Torch-free: src.corruption_cache, src.corruption_source, src.corruption_roles an
 imagecorruptions. The cache is generated and verified in the student image b80b645d on the session
 host (TL-1); nothing here chooses a device or reads a model (LC2).
 
-  --print-pin --split {val,test}                      print the generator pin; reads no data
+  --print-pin --split {val,test}      print the generator pin; reads no data; clean governed paths
   --real-run --confirm-real-run --split val --cache-status {smoke,provisional}
       --data-root R --cache-dir C [--expected-pin-sha256 P] [--max-images N] [--workers N]
       [--resume]
@@ -14,6 +14,8 @@ host (TL-1); nothing here chooses a device or reads a model (LC2).
       [--resume]
   --real-run --confirm-real-run --repair IMAGE_ID CORRUPTION SEVERITY --fault-report F
       --split S [--confirm-test-split] --data-root R --cache-dir C
+      (an official or provisional cache: the generator's stack, image, governed-path and pin
+      gates, against the cache's own pin; the source must be the recorded one)
 
 Split and status go together: test is official and official is test; val is provisional or smoke;
 --max-images (a deterministic subset) is smoke only. An official or provisional cache needs
@@ -22,12 +24,13 @@ naming the student image, clean governed paths, and the pin recomputed at this c
 expected one.
 
 Every gate refuses by code before anything is written, in this order: the run flags; --cache-dir;
-names (no "test" in the cache root, journal or repair paths; LC6); the TEST root's name
+names (no "test" in the absolute cache root, journal or repair paths; LC6); the TEST root's name
 corr_cache_tday; --confirm-test-split; split and status; --max-images; the expected pin's presence
 and format; the vendored runtime; the pinned stack; the image digest; the severity-5 evidence gate;
 git and the governed paths; the pin; the cache location; the cache root's state (LC5); the data
-root (the M11 isolation check for val, images/test alone for test); the listing. Then the cache is
-generated, or resumed from its journal, and its manifest written last.
+root (the M11 isolation check for val, images/test alone for test); the listing (its count, then
+its stems: no "test" in any case, no TL section 2 character). Then the cache is generated, or
+resumed from its journal, and its manifest written last.
 
 Exit 0: done. Exit 2: refused. Exit 3: a STOP code (nondeterministic_item, repair_digest_mismatch).
 """
@@ -244,6 +247,26 @@ def gate_repair_split(args, manifest: dict) -> None:
                 f"the cache holds split {manifest.get('split')!r}, --split is {args.split!r}")
 
 
+def gate_repair_pinned(args, manifest: dict, repo_root) -> None:
+    """LC8, TL-1: an official or provisional item is regenerated where its cache was made: the
+    pinned stack, the student image, clean governed paths and the cache's own pin. A different
+    environment is refused here, before any regeneration, so repair_digest_mismatch stays the STOP
+    for true nondeterminism."""
+    status = manifest.get("status")
+    if status not in PINNED_STATUSES:
+        return
+    probe = argparse.Namespace(cache_status=status)
+    gate_environment(probe)
+    gate_image_digest(probe)
+    gate_governed(probe, repo_root)
+    pin = cc.build_pin(manifest["split"], repo_root=repo_root)
+    recorded = (manifest.get("pin") or {}).get("pin_sha256")
+    if not pin_matches(pin, recorded):
+        _refuse("pin_mismatch",
+                f"the pin at this commit is {pin['pin_sha256']}; the cache was generated under "
+                f"{recorded}, and an item is repaired only by the generator that made it")
+
+
 def repair_cmd(args, repo_root) -> dict:
     gate_cache_dir(args)
     gate_names(args)
@@ -252,6 +275,7 @@ def repair_cmd(args, repo_root) -> dict:
     cc.require_fault_report(Path(args.fault_report) if args.fault_report else Path(""))
     manifest = cc.load_manifest(args.cache_dir)
     gate_repair_split(args, manifest)
+    gate_repair_pinned(args, manifest, repo_root)
     gate_data_root(args)
     image_id, corruption, severity = args.repair
     by_id = {s.image_id: s for s in cs.list_split(args.data_root, args.split)}
@@ -261,9 +285,16 @@ def repair_cmd(args, repo_root) -> dict:
                           fault_report=args.fault_report)
 
 
+def gate_print_pin_clean(repo_root) -> None:
+    """The pin names HEAD and hashes the working-tree script and protocol, so it is printed only
+    from clean governed paths: a pin printed from edited files would never match at its commit."""
+    cc.require_governed_clean(repo_root)
+
+
 def print_pin(args, repo_root) -> int:
     try:
         gate_vendor(args)
+        gate_print_pin_clean(repo_root)
         pin = cc.build_pin(args.split, repo_root=repo_root)
     except (CorruptionCacheError, CorruptionSourceError) as e:
         print(f"PIN REFUSED [{e.code}]: {e}", file=sys.stderr)

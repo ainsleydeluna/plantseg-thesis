@@ -10,8 +10,12 @@ image is read, under a zero-call tracer. torch and src.data stay out of sys.modu
   G  source reader       H  grid           D  determinism        R  resume
   P  pin                 I  index          T  torch-free
   L  LC4 split surfaces, LC5 manifest_exists, LC7 the 32-px floor, LC8 repair
-  X  every other refusal code of the generator, each reached with every earlier gate passing
-  M  mutations: each refusal gate disabled, and the plan's eight, each killed by its named case
+  X  every other refusal code of the generator, each reached with every earlier gate passing,
+     and the CLI's run-flag, cache-dir, stack and location gates (X29-X32)
+  M  mutations: each refusal gate disabled, and the plan's eight, each killed by its named case;
+     a case that raised is no kill (its checks never ran)
+Names that would contain "test" are only strings: never-created paths, a patched listing (X26)
+or a patched working directory (X28).
 
 Run:  python -B scripts/smoke_corruption_generator.py
 """
@@ -25,6 +29,7 @@ import itertools
 import json
 import os
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -110,11 +115,16 @@ SPECIALS = {0: ((80, 1024), "RGB", 6, (40, 512)),       # EXIF 6: displayed 1024
             564: ((1024, 63), "RGB", None, (32, 512)),  # 31.5 -> 32: at the floor
             705: ((65, 1024), "RGB", 8, (32, 512))}     # EXIF 8: 1024 x 65, 32.5 -> 32 (half-even)
 SUFFIXES = {7: ".JPG", 9: ".jpeg", 11: ".JPEG"}
+#: Names whose p.name order differs from their stem order ('-' sorts before '.') and from the
+#: case-folded order ('B' before 'a'), at the indices the p.name listing gives them.
+NAMES = {800: "syn_val_00800-a.jpg", 801: "syn_val_00800.jpg",
+         810: "syn_val_00810B.jpg", 811: "syn_val_00810a.jpg"}
 
 
 def make_val_root(root: Path) -> Path:
     """A TRAIN/VAL-only root: 5,367 TRAIN and 846 VAL names (masks empty: they are only counted),
-    VAL images real JPEGs, the six SPECIALS at the --max-images 6 indices, a stray non-image."""
+    VAL images real JPEGs, the six SPECIALS at the --max-images 6 indices, the NAMES after them, a
+    stray non-image."""
     for split, n in (("train", 5367), ("val", 846)):
         (root / "images" / split).mkdir(parents=True)
         (root / "annotations" / split).mkdir(parents=True)
@@ -124,7 +134,7 @@ def make_val_root(root: Path) -> Path:
         (root / "images" / "train" / f"syn_train_{i:05d}.jpg").touch()
     rs = np.random.RandomState(20261016)
     for i in range(846):
-        name = f"syn_val_{i:05d}{SUFFIXES.get(i, '.jpg')}"
+        name = NAMES.get(i, f"syn_val_{i:05d}{SUFFIXES.get(i, '.jpg')}")
         if i in SPECIALS:
             (w, h), mode, orient, _ = SPECIALS[i]
             _jpeg(root / "images" / "val" / name, (rs.rand(h, w, 3) * 255).astype(np.uint8),
@@ -220,6 +230,14 @@ def quiet_main(argv, repo_root=None) -> tuple[int, str, str]:
     return rc, out.getvalue(), err.getvalue()
 
 
+def safe_main(argv, repo_root=None) -> tuple:
+    """quiet_main, with an escaping exception reported as (None, '', 'raised ...')."""
+    try:
+        return quiet_main(argv, repo_root)
+    except Exception as e:                                   # noqa: BLE001
+        return None, "", f"raised {type(e).__name__}: {e}"
+
+
 def never(name: str) -> Path:
     """A path under the work dir that no case creates."""
     return S["work"] / "never_created" / name
@@ -292,7 +310,10 @@ def g1():
     return (len(srcs) == 846 and [s.image_id for s in srcs] == [p.stem for p in names]
             and [s.manifest_index for s in srcs] == list(range(846))
             and {srcs[i].path.suffix for i in SUFFIXES} == set(SUFFIXES.values())
-            and "readme" not in {s.image_id for s in srcs}), f"{len(srcs)} sources by p.name"
+            and all(srcs[i].path.name == n for i, n in NAMES.items())
+            and "readme" not in {s.image_id for s in srcs}), \
+        f"{len(srcs)} sources by p.name; at 800/801/810/811: " \
+        f"{[srcs[i].image_id for i in NAMES]}"
 
 
 @case("G2")
@@ -361,6 +382,40 @@ def g8():
                and si.record["resized_pixel_sha256"] == hashlib.sha256(si.pixels.tobytes())
                .hexdigest())
     return ok, "file and resized-pixel digests recompute for the six"
+
+
+def malformed_orientation_jpeg(path: Path, arr: np.ndarray, typ: int = 1) -> Path:
+    """A JPEG whose EXIF orientation entry has TIFF type BYTE (1) or UNDEFINED (7): Pillow reads
+    it back as bytes, and ImageOps.exif_transpose does not apply it."""
+    ifd = (struct.pack("<H", 1) + struct.pack("<HHI", cs.EXIF_ORIENTATION, typ, 1)
+           + b"\x06\x00\x00\x00" + struct.pack("<I", 0))
+    Image.fromarray(arr).save(path, format="JPEG", quality=95,
+                              exif=b"Exif\x00\x00II*\x00" + struct.pack("<I", 8) + ifd)
+    return path
+
+
+@case("G9")
+def g9():
+    """A malformed (BYTE) EXIF orientation is recorded by its repr and not applied."""
+    arr = (np.arange(20 * 30 * 3) % 251).astype(np.uint8).reshape(20, 30, 3)
+    p = malformed_orientation_jpeg(S["work"] / "orient_byte.jpg", arr)
+    try:
+        si = cs.read_source(cs.Source(0, "orient_byte", p))
+    except Exception as e:                                   # noqa: BLE001
+        return False, f"the reader failed on it: {type(e).__name__}: {e}"
+    with Image.open(p) as im:
+        plain = np.asarray(im.convert("RGB").resize(cs.resized_size(*im.size), Image.BILINEAR))
+    return (si.record["exif_orientation"] == repr(b"\x06") and si.pixels.shape == (341, 512, 3)
+            and np.array_equal(si.pixels, plain)), str(si.record["exif_orientation"])
+
+
+@case("G10")
+def g10():
+    """A source that cannot be read (here a directory) -> source_unreadable, not an OSError."""
+    d = S["work"] / "unreadable_dir.jpg"
+    d.mkdir(exist_ok=True)
+    return code_of(cs.read_source, cs.Source(0, "unreadable_dir", d)) == "source_unreadable", \
+        "a directory in place of a file"
 
 
 # ---------------------------------------------------------------- H. grid
@@ -439,6 +494,25 @@ def h8():
             and {"versions", "generation"} <= set(m)), "versions and generation outside"
 
 
+@case("H10")
+def h10():
+    """LC12: the manifest records severity 5 as pending; a smoke or provisional grid may hold
+    severity-5 items while it is pending, an official grid may not."""
+    dp = S["m1"]["dependency_pins"]
+    grid = cc.full_grid(cc.load_roles(S["repo"]))
+    got = {s: code_of(cc.require_severity5_validated, s, grid)
+           for s in ("smoke", "provisional", "official")}
+    return (dp["severity5_reference_status"] == "pending"
+            and dp["severity5_reference_validated"] is False
+            and got == {"smoke": None, "provisional": None,
+                        "official": "severity5_reference_unvalidated"}), str(got)
+
+
+def _severity5_refused_beyond_official(status, grid):
+    if status != "smoke" and not cc.SEVERITY5_REFERENCE_VALIDATED and any(s == 5 for _, s in grid):
+        raise cc.CorruptionCacheError("severity5_reference_unvalidated", status)
+
+
 # ---------------------------------------------------------------- D. determinism
 @case("D1")
 def d1():
@@ -486,6 +560,17 @@ def d5():
             and before[2:] == after[2:]), "global RNG state restored"
 
 
+@case("D6")
+def d6():
+    """Entries (and so each cell digest) follow manifest_index, never the image_id's own order
+    (TL section 4): b_img is source 0 and a_img source 1."""
+    sources = [{"image_id": "b_img", "manifest_index": 0},
+               {"image_id": "a_img", "manifest_index": 1}]
+    entries = [{"image_id": i, "corruption_id": "fog", "severity": 1} for i in ("a_img", "b_img")]
+    order = [e["image_id"] for e in cc.sorted_entries(entries, sources)]
+    return order == ["b_img", "a_img"], str(order)
+
+
 # ---------------------------------------------------------------- R. resume
 @case("R1")
 def r1():
@@ -520,9 +605,11 @@ def r4():
     np.save(path, (np.load(path) + 1).astype(np.uint8), allow_pickle=False)
     m = library_build(root, resume=True)
     items = m["generation"]["items"]
-    arr = cc.load_cached(root, m, victim["image_id"], victim["corruption_id"], victim["severity"])
-    return (items == {"generated": 94, "regenerated": 1, "kept": 49} and arr.dtype == np.uint8
-            and m["canonical_manifest_sha256"] == S["m1"]["canonical_manifest_sha256"]), str(items)
+    loaded = code_of(cc.load_cached, root, m, victim["image_id"], victim["corruption_id"],
+                     victim["severity"])
+    return (items == {"generated": 94, "regenerated": 1, "kept": 49} and loaded is None
+            and m["canonical_manifest_sha256"] == S["m1"]["canonical_manifest_sha256"]), \
+        f"{items}, load={loaded}"
 
 
 @case("R5")
@@ -533,6 +620,37 @@ def r5():
     code = code_of(cc.build_cache, root, capped_sources(), split="val", status="smoke", pin=other,
                    expected_images=None, resume=True, repo_root=S["repo"])
     return code == "resume_pin_mismatch", str(code)
+
+
+@case("R6")
+def r6():
+    """A journal line torn mid-write: the resume ends it before its own first record, so after a
+    second crash and resume all three invocations are recorded; the checksum is the
+    uninterrupted one."""
+    root = S["caches"] / f"r6_{next(_SEQ)}"
+    crash_then(root, 20)
+    jp = cc.journal_path(root)
+    jp.write_bytes(jp.read_bytes()[:-25])                # the last item line, torn
+    try:
+        library_build(root, resume=True, _fail_after_items=20)
+    except RuntimeError:
+        pass
+    m = library_build(root, resume=True)
+    inv = m["generation"]["invocations"]
+    return (len(inv) == 3 and [r["resume"] for r in inv] == [False, True, True]
+            and m["canonical_manifest_sha256"] == S["m1"]["canonical_manifest_sha256"]), \
+        f"invocations={len(inv)}"
+
+
+@case("R7")
+def r7():
+    """A journal without a complete header (a crash while it was written) ->
+    resume_journal_invalid, not 'another pin'."""
+    root = S["caches"] / f"r7_{next(_SEQ)}"
+    (root / cc.JOURNAL_DIR).mkdir(parents=True)
+    cc.journal_path(root).write_bytes(b'{"kind":"header","journal_sch')
+    code = code_of(library_build, root, resume=True)
+    return code == "resume_journal_invalid", str(code)
 
 
 # ---------------------------------------------------------------- P. pin
@@ -564,6 +682,52 @@ def p3():
     head = _git(S["repo"], "rev-parse", "HEAD").strip()
     pin = S["pin_val"]
     return (pin["script"]["git_blob"] == blob and pin["commit"] == head), blob[:12]
+
+
+@case("P4")
+def p4():
+    """--print-pin from dirty governed paths prints no pin: governed_paths_dirty, rc 2."""
+    with tracer() as calls:
+        rc, out, err = quiet_main(["--print-pin", "--split", "test"], repo_root=S["repo_dirty"])
+    return (rc == 2 and "[governed_paths_dirty]" in err and not out.strip()
+            and not calls), f"rc={rc} {err.strip()[-80:]}"
+
+
+#: TL section 3's fixed pin values, written out (not read back from src.corruption_cache).
+PIN_LIBRARY_VERSIONS = {"python": "3.11", "numpy": "1.26.4", "pillow": "12.3.0",
+                        "scikit_image": "0.23.2",
+                        "image_digest": "sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c"
+                                        "1be01698866aaf"}
+
+
+@case("P5")
+def p5():
+    """Every nested pin field, for val and for test, is TL section 3's value."""
+    proto = hashlib.sha256((S["repo"] / "configs" / "corruption_protocol.json").read_bytes())
+    bad = []
+    for split, n in (("val", 846), ("test", 1561)):
+        pin = cc.build_pin(split, repo_root=S["repo"])
+        want = {"split": split, "expected_images": n,
+                "protocol": {"path": "configs/corruption_protocol.json",
+                             "sha256": proto.hexdigest(),
+                             "schema_version": "plantseg-corruptions/2.0.0"},
+                "cells": list(R.CELL_IDS), "source_resize": "core_preprocess/1.0.0 image path",
+                "vendor_runtime_sha256":
+                    "caad653555d6d4098c5b6c11d8e821f3c3a86eaf56cbeaca1603fc7d9237e90e",
+                "seed_policy_id": "plantseg-corruption-v1", "master_seed": 42,
+                "cache_schema": "plantseg-corruption-cache/2.0.0",
+                "storage": {"format": "npy", "dtype": "uint8", "layout": "HxWx3",
+                            "relative_path": "<corruption>/s<severity>/<image_id>.npy"}}
+        if pin["schema"] != "plantseg-corruption-generator-pin/1.0.0":
+            bad.append(f"{split} schema")
+        if pin["script"]["path"] != "scripts/build_corruption_cache.py":
+            bad.append(f"{split} script")
+        if pin["library_versions"] != PIN_LIBRARY_VERSIONS:
+            bad.append(f"{split} library_versions")
+        if pin["parameters"] != want:
+            bad.append(f"{split} parameters "
+                       f"{sorted(k for k in want if pin['parameters'].get(k) != want[k])}")
+    return not bad, str(bad or "val and test pins carry TL section 3's values")
 
 
 # ---------------------------------------------------------------- I. index
@@ -673,8 +837,8 @@ def l4d():
         try:
             B.generate_cmd(args, S["repo"])
             code, msg = None, ""
-        except (cc.CorruptionCacheError, cs.CorruptionSourceError) as e:
-            code, msg = e.code, str(e)
+        except Exception as e:                               # noqa: BLE001
+            code, msg = getattr(e, "code", type(e).__name__), str(e)
     return (code == "split_dir_missing" and msg.endswith(str(root / "images" / "test"))
             and not calls and not (root / "images").exists()), f"code={code}, reads={len(calls)}"
 
@@ -707,6 +871,20 @@ def _repair_root():
     return root, cc.load_manifest(root)
 
 
+def _repair_records(root) -> list:
+    d = root / "repair"
+    return sorted(p for p in d.iterdir() if p.suffix == ".json") if d.is_dir() else []
+
+
+_REAL_WRITE_ATOMIC = cc._write_atomic
+
+
+def _no_repair_record(p, data):
+    """A mutant atomic writer that silently drops the repair record."""
+    if Path(p).parent.name != "repair":
+        _REAL_WRITE_ATOMIC(p, data)
+
+
 def _repair_argv(root, entry, report):
     return ["--real-run", "--confirm-real-run", "--split", "val", "--data-root", str(S["data"]),
             "--cache-dir", str(root), "--repair", entry["image_id"], entry["corruption_id"],
@@ -722,11 +900,16 @@ def l8a():
     report = S["work"] / "fault_l8a.txt"
     report.write_text("cache_file_hash_mismatch at scoring\n", encoding="utf-8")
     before = (root / cc.MANIFEST_NAME).read_bytes()
-    rc, out, err = quiet_main(_repair_argv(root, e, report))
+    rc, out, err = safe_main(_repair_argv(root, e, report))
     rec = json.loads(out) if rc == 0 else {}
-    arr = cc.load_cached(root, m, e["image_id"], "fog", 5)
-    return (rc == 0 and rec.get("outcome") == "repaired" and arr.dtype == np.uint8
-            and (root / cc.MANIFEST_NAME).read_bytes() == before), f"rc={rc} {err.strip()[-80:]}"
+    loaded = code_of(cc.load_cached, root, m, e["image_id"], "fog", 5)
+    recs = _repair_records(root)
+    disk = json.loads(recs[0].read_text(encoding="utf-8")) if len(recs) == 1 else {}
+    return (rc == 0 and rec.get("outcome") == "repaired" and loaded is None and disk == rec
+            and disk.get("fault_report", {}).get("sha256")
+            == hashlib.sha256(report.read_bytes()).hexdigest()
+            and (root / cc.MANIFEST_NAME).read_bytes() == before), \
+        f"rc={rc} records={len(recs)} {err.strip()[-80:]}"
 
 
 @case("L8b")
@@ -743,16 +926,111 @@ def l8b():
     before = (root / e["cache_relative_path"]).read_bytes()
     with patched(cc, "corrupt_source", drifted):
         rc, _, err = quiet_main(_repair_argv(root, e, report))
+    recs = _repair_records(root)
+    disk = json.loads(recs[0].read_text(encoding="utf-8")) if len(recs) == 1 else {}
+    kept = [p for p in (root / "repair").iterdir() if p.name.endswith(".candidate.npy")]
     return (rc == 3 and "[repair_digest_mismatch]" in err
-            and (root / e["cache_relative_path"]).read_bytes() == before), f"rc={rc}"
+            and disk.get("outcome") == "repair_digest_mismatch"
+            and len(kept) == 1 and str(kept[0]) in err
+            and (root / e["cache_relative_path"]).read_bytes() == before), \
+        f"rc={rc} records={len(recs)} candidates={len(kept)}"
 
 
 @case("L8c")
 def l8c():
     root = S["caches"] / "d1a"
     e = S["m1"]["entries"][0]
-    rc, _, err = quiet_main(_repair_argv(root, e, never("fault_report.txt")))
-    return rc == 2 and "[repair_fault_report_missing]" in err, f"rc={rc}"
+    rc, _, err = safe_main(_repair_argv(root, e, never("fault_report.txt")))
+    return rc == 2 and "[repair_fault_report_missing]" in err, f"rc={rc} {err.strip()[-80:]}"
+
+
+def _reseal(root, **fields):
+    m = json.loads((root / cc.MANIFEST_NAME).read_text(encoding="utf-8"))
+    m.update(fields)
+    m["canonical_manifest_sha256"] = cc.canonical_manifest_sha256(m)
+    (root / cc.MANIFEST_NAME).write_bytes(cc.manifest_bytes(m))
+    return cc.load_manifest(root)
+
+
+def _tampered(tag, corruption, severity, *, provisional=False):
+    """A fresh capped cache (re-sealed as provisional if asked), one item tampered, a report."""
+    root, m = _repair_root()
+    if provisional:
+        m = _reseal(root, status="provisional")
+    e = next(x for x in m["entries"]
+             if x["corruption_id"] == corruption and x["severity"] == severity)
+    path = root / e["cache_relative_path"]
+    np.save(path, (np.load(path) + 5).astype(np.uint8), allow_pickle=False)
+    report = S["work"] / f"fault_{tag}.txt"
+    report.write_text("cache_file_hash_mismatch at scoring\n", encoding="utf-8")
+    return root, e, report, path.read_bytes()
+
+
+def _untouched(root, e, before):
+    return ((root / e["cache_relative_path"]).read_bytes() == before
+            and not (root / "repair").exists())
+
+
+@case("L8d")
+def l8d():
+    """A provisional item is repaired only in the student image: no digest -> image_digest_mismatch
+    before any regeneration; the item stays as found and no record is written."""
+    root, e, report, before = _tampered("l8d", "jpeg_compression", 3, provisional=True)
+    with env(PLANTSEG_IMAGE_DIGEST=None):
+        rc, _, err = quiet_main(_repair_argv(root, e, report))
+    return (rc == 2 and "[image_digest_mismatch]" in err
+            and _untouched(root, e, before)), f"rc={rc} {err.strip()[-80:]}"
+
+
+@case("L8e")
+def l8e():
+    """... and only by the generator that made it: the pin at another commit -> pin_mismatch."""
+    root, e, report, before = _tampered("l8e", "jpeg_compression", 3, provisional=True)
+    if "repo_l8e" not in S:
+        dated = "2001-01-01 00:00:00 +0000"
+        with env(GIT_AUTHOR_DATE=dated, GIT_COMMITTER_DATE=dated):
+            S["repo_l8e"] = make_fixture_repo(S["work"] / "repo_l8e")
+    with env(**DIGEST):
+        rc, _, err = quiet_main(_repair_argv(root, e, report), repo_root=S["repo_l8e"])
+    return (rc == 2 and "[pin_mismatch]" in err
+            and _untouched(root, e, before)), f"rc={rc} {err.strip()[-80:]}"
+
+
+@case("L8f")
+def l8f():
+    """A source changed since generation -> repair_source_mismatch before any regeneration
+    (simulated: the read record is altered; nothing on disk changes)."""
+    root, e, report, before = _tampered("l8f", "fog", 2)
+    real = cc.read_source
+
+    def changed(src):
+        si = real(src)
+        return cs.SourceImage({**si.record, "source_file_sha256": "0" * 64}, si.pixels)
+    with patched(cc, "read_source", changed):
+        rc, _, err = quiet_main(_repair_argv(root, e, report))
+    return (rc == 2 and "[repair_source_mismatch]" in err
+            and _untouched(root, e, before)), f"rc={rc} {err.strip()[-80:]}"
+
+
+@case("L8g")
+def l8g():
+    """The repair record is written before the item is replaced: when it cannot be written, the
+    tampered item stays as found."""
+    root, e, report, before = _tampered("l8g", "motion_blur", 4)
+    real = cc._write_atomic
+
+    def failing(p, data):
+        if Path(p).parent.name == "repair":
+            raise OSError("simulated: the repair record cannot be written")
+        return real(p, data)
+    raised = None
+    with patched(cc, "_write_atomic", failing):
+        try:
+            quiet_main(_repair_argv(root, e, report))
+        except OSError as ex:
+            raised = str(ex)
+    return (raised is not None
+            and (root / e["cache_relative_path"]).read_bytes() == before), f"raised={raised}"
 
 
 # ---------------------------------------------------------------- X. refusal codes
@@ -763,11 +1041,44 @@ def _x(code, argv, *, ctx=None, repo_root=None):
     return got == code and not reads, f"code={got}, reads={len(reads)}"
 
 
+#: Every generator gate after the LC6 name test; X01 requires that none of them runs.
+LATER_GATES = ("gate_tday_root", "gate_test_confirm", "gate_test_official", "gate_official_test",
+               "gate_max_images", "gate_expected_pin_present", "gate_expected_pin_format",
+               "gate_vendor", "gate_environment", "gate_image_digest", "gate_severity5",
+               "gate_governed", "gate_pin", "gate_cache_location", "gate_cache_state",
+               "gate_data_root", "gate_listing")
+
+
 @case("X01")
 def x01():
+    """A cache root containing 'test' -> cache_root_test_named, before any other gate runs (LC6:
+    a string test before any filesystem call)."""
     root = S["work"] / "x01_parent_never" / "Corr_TeSt_root"
-    ok, d = _x("cache_root_test_named", smoke_argv(root, data_root=never("val_root_x01")))
-    return ok and not root.parent.exists(), d
+    later = []
+
+    def spy(name, fn):
+        def wrapper(*a, **k):
+            later.append(name)
+            return fn(*a, **k)
+        return wrapper
+    with contextlib.ExitStack() as stack:
+        for name in LATER_GATES:
+            stack.enter_context(patched(B, name, spy(name, getattr(B, name))))
+        ok, d = _x("cache_root_test_named", smoke_argv(root, data_root=never("val_root_x01")))
+    return ok and not later and not root.parent.exists(), f"{d}, later gates run: {later}"
+
+
+def _names_late(args, repo_root):
+    """A mutant generate_cmd: the LC6 name test moved after the cache-state gate."""
+    B.gate_cache_dir(args)
+    for name in LATER_GATES[:LATER_GATES.index("gate_cache_state") + 1]:
+        gate = getattr(B, name)
+        if name in ("gate_severity5", "gate_governed", "gate_pin", "gate_cache_location"):
+            gate(args, repo_root)
+        else:
+            gate(args)
+    B.gate_names(args)
+    raise AssertionError("the name test did not refuse")
 
 
 @case("X02")
@@ -965,17 +1276,109 @@ def x25():
               ctx=patched(B, "verify_vendor_integrity", broken))
 
 
+def _listing_with(replace: dict):
+    """The real VAL listing with some names replaced by never-created paths: nothing is created
+    and nothing named 'test' exists; the names gate sees only strings."""
+    real = cs.split_files
+
+    def files(img_dir):
+        out = real(img_dir)
+        for i, name in replace.items():
+            out[i] = Path(img_dir) / name
+        return out
+    return patched(cs, "split_files", files)
+
+
+@case("X26")
+def x26():
+    """A stem holding 'test' in any case, or a TL section 2 character -> source_name_forbidden."""
+    out = []
+    for name in ("syn_val_00001_LaTeSt.jpg", "syn_val:00001.jpg"):
+        root = never(f"x26_{next(_SEQ)}")
+        ok, d = _x("source_name_forbidden", smoke_argv(root), ctx=_listing_with({1: name}))
+        out.append((ok and not root.exists(), d))
+    return all(ok for ok, _ in out), "; ".join(d for _, d in out)
+
+
+@case("X28")
+def x28():
+    """A relative --cache-dir is tested as the absolute path it names: under a working directory
+    holding 'TeSt' (never created; os.getcwd patched) -> cache_root_test_named."""
+    base = str(never("Cwd_TeSt_base"))
+    ok, d = _x("cache_root_test_named",
+               smoke_argv("corr_cache_rel_x28", data_root=never("val_root_x28")),
+               ctx=patched(os, "getcwd", lambda: base))
+    return ok and not Path(base).exists(), d
+
+
+@case("X29")
+def x29():
+    """The CLI's pinned-stack gate: numpy 2.0.0 -> official_dependency_version_mismatch."""
+    fake = {**cc.runtime_versions(), "numpy": "2.0.0"}
+    return _x("official_dependency_version_mismatch", provisional_argv(never("x29")),
+              ctx=patched(cc, "runtime_versions", lambda: fake))
+
+
+@case("X30")
+def x30():
+    """A cache root inside the repository -> cache_inside_repo; nothing is created there."""
+    if "repo_x30" not in S:
+        S["repo_x30"] = make_fixture_repo(S["work"] / "repo_x30")
+    repo = S["repo_x30"]
+    root = repo / "corr_cache_inside"
+    ok, d = _x("cache_inside_repo", smoke_argv(root, data_root=never("val_root_x30")),
+               repo_root=repo)
+    return ok and not root.exists(), d
+
+
+@case("X31")
+def x31():
+    """Without --confirm-real-run nothing runs: rc 2, REFUSING, nothing read or created."""
+    root = never("x31")
+    argv = [a for a in smoke_argv(root) if a != "--confirm-real-run"]
+    with tracer() as calls:
+        rc, _, err = quiet_main(argv)
+    return rc == 2 and "REFUSING" in err and not calls and not root.exists(), f"rc={rc}"
+
+
+@case("X32")
+def x32():
+    """No --cache-dir -> cache_dir_unset, the first gate."""
+    argv = smoke_argv("unused")
+    i = argv.index("--cache-dir")
+    del argv[i:i + 2]
+    return _x("cache_dir_unset", argv)
+
+
+@case("X33")
+def x33():
+    """A worker killed outright (2 workers, os._exit in one task) -> worker_died, no hang; the
+    journalled items are kept and a resume completes with the uninterrupted checksum."""
+    root = S["caches"] / f"x33_{next(_SEQ)}"
+    code = code_of(library_build, root, workers=2, _kill_worker_at=3)
+    if code != "worker_died":
+        return False, f"code={code}"
+    m = library_build(root, resume=True)
+    return m["canonical_manifest_sha256"] == S["m1"]["canonical_manifest_sha256"], "resumed"
+
+
+def _reraise(e):
+    raise e
+
+
 # ---------------------------------------------------------------- M. mutations
 def noop(*a, **k):
     return None
 
 
 def mutant(label, targets, *patches):
+    """Killed only when every named case fails by its own checks: a case that raised is not a
+    kill, because its checks never ran."""
     with contextlib.ExitStack() as stack:
         for obj, attr, value in patches:
             stack.enter_context(patched(obj, attr, value))
         outcomes = {t: run(t) for t in targets}
-    killed = not any(ok for ok, _ in outcomes.values())
+    killed = all(not ok and not d.startswith("raised ") for ok, d in outcomes.values())
     why = "; ".join(f"{t}: {d[:90]}" for t, (_, d) in outcomes.items())
     print(f"MUTANT {label} {'killed' if killed else 'SURVIVED'} by {', '.join(targets)} [{why}]")
     results.append((f"{label} killed by {', '.join(targets)}", killed, why))
@@ -984,6 +1387,26 @@ def mutant(label, targets, *patches):
 def _subset_without_guard(n_total, n_samples):
     step = n_total // n_samples
     return [i * step for i in range(n_samples)]
+
+
+def _sorted_by(key):
+    """A mutant split listing sorted by another key."""
+    def files(img_dir):
+        return sorted((p for p in Path(img_dir).iterdir()
+                       if p.is_file() and p.suffix.lower() in cs.IMAGE_SUFFIXES), key=key)
+    return files
+
+
+def _entries_by_image_id(entries, sources):
+    rank = {c: i for i, c in enumerate(V.CORRUPTION_IDS)}
+    return sorted(entries, key=lambda e: (rank[e["corruption_id"]], e["severity"], e["image_id"]))
+
+
+def _typed_name_test(**paths):
+    """refuse_test_named as it was: the path string as typed, never its absolute form."""
+    for label, p in paths.items():
+        if p is not None and "test" in str(p).lower():
+            raise cc.CorruptionCacheError("cache_root_test_named", f"{label} {p}")
 
 
 def _decode_unguarded(raw, name):
@@ -1038,6 +1461,35 @@ def mutations():
     mutant("M-vendor_checksum_mismatch", ["X25"], (B, "gate_vendor", noop))
     mutant("M-repair_fault_report_missing", ["L8c"], (cc, "require_fault_report", noop))
     mutant("M-repair_digest_mismatch", ["L8b"], (cc, "repair_matches", lambda *a: True))
+    mutant("M-repair outside its environment or commit (LC8)", ["L8d", "L8e"],
+           (B, "gate_repair_pinned", noop))
+    mutant("M-repair_source_mismatch", ["L8f"], (cc, "require_repair_source", noop))
+    mutant("M-repair record not written (LC8)", ["L8a"], (cc, "_write_atomic", _no_repair_record))
+    mutant("M-listing sorted by stem", ["G1"], (cs, "split_files", _sorted_by(lambda p: p.stem)))
+    mutant("M-listing sorted case-folded", ["G1"],
+           (cs, "split_files", _sorted_by(lambda p: p.name.lower())))
+    mutant("M-entries ordered by image_id", ["D6"], (cc, "sorted_entries", _entries_by_image_id))
+    mutant("M-orientation coerced with int()", ["G9"],
+           (cs, "orientation_value", lambda v: None if v is None else int(v)))
+    mutant("M-read_bytes outside source_unreadable", ["G10"],
+           (cs, "_read_bytes", lambda p: Path(p).read_bytes()))
+    mutant("M-source_name_forbidden", ["X26"], (cs, "forbidden_names", lambda sources: []))
+    mutant("M-relative cache dir tested as typed (LC6)", ["X28"],
+           (cc, "refuse_test_named", _typed_name_test))
+    mutant("M-pinned stack gate skipped in the CLI", ["X29"], (B, "gate_environment", noop))
+    mutant("M-cache_inside_repo", ["X30"], (B, "gate_cache_location", noop))
+    mutant("M-pin printed from dirty paths", ["P4"], (B, "gate_print_pin_clean", noop))
+    mutant("M-cache_dir_unset", ["X32"], (B, "gate_cache_dir", noop))
+    mutant("M-torn journal line not ended", ["R6"], (cc, "end_torn_line", lambda path: False))
+    mutant("M-resume_journal_invalid", ["R7"], (cc, "require_journal_header", noop))
+    mutant("M-worker_died", ["X33"], (cc, "worker_died", _reraise))
+    mutant("M-provisional severity 5 refused too (LC12)", ["H10"],
+           (cc, "require_severity5_validated", _severity5_refused_beyond_official))
+    mutant("M-name test after the filesystem gates (LC6)", ["X01"],
+           (B, "generate_cmd", _names_late))
+    mutant("M-pin names the KD image", ["P5"],
+           (cc, "STUDENT_IMAGE_DIGEST",
+            "sha256:cb413304e2445e5c8ac3786f7a370f2ed05a07d11843b11687bb9eb23dc32c2b"))
 
     # the plan's eight
     def by_enumeration(pixels, image_id, corruption_id, severity, *, lift_floor):
@@ -1059,6 +1511,7 @@ def mutations():
     bent = {**dict(V.SEVERITIES_BY_CORRUPTION), "gaussian_noise": (1, 2, 3, 4, 5)}
     mutant("M8 gaussian_noise s5", ["H3"],
            (cc, "full_grid", lambda roles: real_full_grid(roles) + [("gaussian_noise", 5)]),
+           (R, "cell_id", lambda c, s: f"{c}_s{s}"),      # past the id refusal: H3's checks decide
            (V, "SEVERITIES_BY_CORRUPTION", bent), (V, "EXCLUDED_CELLS", ()))
     assert cc.canonical_manifest_sha256 is real_canon
 
@@ -1072,6 +1525,8 @@ LABELS = {
     "G6": "G6 the size rule rounds half to even (61 -> 30, 63 -> 32, 65 -> 32)",
     "G7": "G7 PIL BILINEAR, as core_preprocess",
     "G8": "G8 the source digests recompute",
+    "G9": "G9 a malformed (BYTE) EXIF orientation is recorded by its repr and not applied",
+    "G10": "G10 an unreadable source (a directory) -> source_unreadable",
     "H1": "H1 24 cells per image in protocol order",
     "H2": "H2 6 images x 24 = 144 entries, each once",
     "H3": "H3 no gaussian_noise s5 item",
@@ -1080,19 +1535,25 @@ LABELS = {
     "H6": "H6 every entry verifies",
     "H7": "H7 cell digests and the inferential digest recompute",
     "H8": "H8 the checksum recomputes and excludes versions and generation",
+    "H10": "H10 LC12: severity 5 recorded pending; smoke/provisional may hold it, official not",
     "D1": "D1 two runs, one checksum",
     "D2": "D2 workers 1 and 3, one checksum",
     "D3": "D3 reversed source order, one checksum",
     "D4": "D4 an injected runtime record leaves the checksum unchanged",
     "D5": "D5 NumPy's global RNG is unchanged",
+    "D6": "D6 entries follow manifest_index, not the image_id's own order",
     "R1": "R1 a crash after 50 items leaves no manifest and 50 journalled items",
     "R2": "R2 the resume keeps 50 and generates 94, regenerating none",
     "R3": "R3 the resumed cache has the uninterrupted checksum",
     "R4": "R4 an item tampered before the resume is regenerated, same checksum",
     "R5": "R5 a resume under another pin -> resume_pin_mismatch",
+    "R6": "R6 a journal line torn mid-write is ended; every invocation is recorded",
+    "R7": "R7 a journal without a complete header -> resume_journal_invalid",
     "P1": "P1 --print-pin reads no data and has the four fields plus pin_sha256",
     "P2": "P2 pin_sha256 recomputes; the manifest embeds the pin",
     "P3": "P3 the script blob and commit equal git's",
+    "P4": "P4 --print-pin from dirty governed paths -> governed_paths_dirty, no pin printed",
+    "P5": "P5 every nested pin field (val and test) is TL section 3's value",
     "I1": "I1 the index equals a linear scan",
     "I2": "I2 index build < 1 s for 37,464 entries; 10,000 lookups < 0.1 s",
     "I3": "I3 an unknown key -> cache_entry_missing",
@@ -1107,6 +1568,10 @@ LABELS = {
     "L8a": "L8a --repair regenerates a tampered item whose digests match (LC8)",
     "L8b": "L8b --repair with drifted bytes -> repair_digest_mismatch, item kept (LC8)",
     "L8c": "L8c --repair without its fault report -> repair_fault_report_missing (LC8)",
+    "L8d": "L8d a provisional repair without the student image -> image_digest_mismatch (LC8)",
+    "L8e": "L8e a provisional repair at another commit -> pin_mismatch, nothing regenerated (LC8)",
+    "L8f": "L8f a source changed since generation -> repair_source_mismatch (LC8)",
+    "L8g": "L8g the repair record is written before the item is replaced (LC8)",
     "X01": "X01 a cache root containing 'test' in any case -> cache_root_test_named (LC6)",
     "X02": "X02 a TEST root not named corr_cache_tday -> tday_cache_root_required (LC6)",
     "X03": "X03 --split test without --confirm-test-split -> test_split_unconfirmed",
@@ -1132,6 +1597,13 @@ LABELS = {
     "X23": "X23 a regenerated item with other digests -> nondeterministic_item (STOP)",
     "X24": "X24 --repair with another split -> repair_split_mismatch",
     "X25": "X25 vendored numerics changed -> vendor_checksum_mismatch",
+    "X26": "X26 a stem holding 'test' or ':' -> source_name_forbidden, nothing read (TL section 2)",
+    "X28": "X28 a relative cache dir under a 'TeSt' working dir -> cache_root_test_named (LC6)",
+    "X29": "X29 an unpinned stack (numpy 2.0.0) -> official_dependency_version_mismatch",
+    "X30": "X30 a cache root inside the repository -> cache_inside_repo, nothing created",
+    "X31": "X31 without --confirm-real-run -> rc 2, nothing read or created",
+    "X32": "X32 no --cache-dir -> cache_dir_unset",
+    "X33": "X33 a worker killed outright -> worker_died, no hang; a resume completes",
 }
 
 

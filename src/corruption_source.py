@@ -13,6 +13,10 @@ images/<split> whose suffix is .jpg or .jpeg in any case, sorted by the file nam
 extension (`p.name`), at the count locked in configs/data.py SPLIT_SIZES. manifest_index is the
 position in that list.
 
+Item paths are <corruption>/s<severity>/<image_id>.npy, so a stem becomes part of a created path.
+The listing is refused before any image is read when a stem holds "test" in any case or a character
+TL interface section 2 forbids inside a component (source_name_forbidden).
+
 Split surfaces (M11):
   * val: src/data/isolation.py is loaded BY FILE PATH (never through the src.data package, which
     imports torch) and assert_trainval_only_root runs on the data root before any image is read;
@@ -37,6 +41,7 @@ IMAGE_SUFFIXES = (".jpg", ".jpeg")
 EXIF_ORIENTATION = 0x0112
 SOURCE_RESIZE = "core_preprocess/1.0.0 image path"
 SPLITS = ("val", "test")
+FORBIDDEN_NAME_CHARS = ':<>"/\\|?*'      # TL interface section 2, never inside a created component
 
 
 class CorruptionSourceError(RuntimeError):
@@ -125,15 +130,36 @@ class Source:
     path: Path
 
 
+def split_files(img_dir: Path) -> list[Path]:
+    """The image files of one split directory, sorted by the file name (`p.name`)."""
+    return sorted((p for p in Path(img_dir).iterdir()
+                   if p.is_file() and p.suffix.lower() in IMAGE_SUFFIXES), key=lambda p: p.name)
+
+
+def forbidden_names(sources) -> list[str]:
+    """Stems that would put "test" (any case) or a forbidden character into a created path."""
+    return [s.image_id for s in sources
+            if "test" in s.image_id.lower() or set(s.image_id) & set(FORBIDDEN_NAME_CHARS)]
+
+
+def require_source_names(sources) -> None:
+    bad = forbidden_names(sources)
+    if bad:
+        _fail("source_name_forbidden",
+              f"{len(bad)} stem(s) would name a created item path with 'test' or one of "
+              f"{FORBIDDEN_NAME_CHARS!r} (TL section 2): {bad[:5]}")
+
+
 def list_split(data_root, split: str) -> list[Source]:
     """The split's sources in manifest order. Call check_split_surface first."""
     require_split(split)
     img_dir = Path(data_root) / "images" / split
     require_split_dir(img_dir)
-    files = sorted((p for p in img_dir.iterdir()
-                    if p.is_file() and p.suffix.lower() in IMAGE_SUFFIXES), key=lambda p: p.name)
+    files = split_files(img_dir)
     require_split_count(len(files), split)
-    return [Source(i, p.stem, p) for i, p in enumerate(files)]
+    sources = [Source(i, p.stem, p) for i, p in enumerate(files)]
+    require_source_names(sources)
+    return sources
 
 
 def deterministic_subset(n_total: int, n_samples: int) -> list[int]:
@@ -169,16 +195,31 @@ def _decode(raw: bytes, name: str):
     return orientation, mode, size, rgb
 
 
+def _read_bytes(path: Path) -> bytes:
+    try:
+        return Path(path).read_bytes()
+    except OSError as e:
+        _fail("source_unreadable", f"{Path(path).name}: {type(e).__name__}: {e}")
+
+
+def orientation_value(v):
+    """The EXIF orientation as recorded: an int as is, anything else (a malformed BYTE, ASCII or
+    UNDEFINED entry, which ImageOps.exif_transpose does not apply) by its repr, never coerced."""
+    if v is None or (isinstance(v, int) and not isinstance(v, bool)):
+        return v
+    return repr(v)
+
+
 def read_source(src: Source) -> SourceImage:
     """Read one source file and resize it as core_preprocess's image path does."""
-    raw = Path(src.path).read_bytes()
+    raw = _read_bytes(src.path)
     orientation, mode, (w, h), rgb = _decode(raw, Path(src.path).name)
     nw, nh = resized_size(*rgb.size)
     pixels = np.ascontiguousarray(np.asarray(rgb.resize((nw, nh), Image.BILINEAR),
                                              dtype=np.uint8))
     record = {"manifest_index": int(src.manifest_index), "image_id": src.image_id,
               "file_name": Path(src.path).name, "source_file_sha256": _sha256(raw),
-              "exif_orientation": None if orientation is None else int(orientation),
+              "exif_orientation": orientation_value(orientation),
               "source_mode": mode, "original_size": [int(w), int(h)],
               "resized_shape": [int(pixels.shape[0]), int(pixels.shape[1])],
               "resized_pixel_sha256": _sha256(pixels.tobytes())}
@@ -196,8 +237,9 @@ def array_source(manifest_index: int, image_id: str, pixels: np.ndarray) -> Sour
     return SourceImage(record, arr)
 
 
-__all__ = ["CorruptionSourceError", "IMAGE_SUFFIXES", "SIZE", "SOURCE_RESIZE", "SPLITS", "Source",
-           "SourceImage", "array_source", "check_split_surface", "deterministic_subset",
-           "list_split", "load_isolation", "read_source", "require_data_root", "require_split",
-           "run_isolation",
-           "require_split_count", "require_split_dir", "resized_size", "split_sizes"]
+__all__ = ["CorruptionSourceError", "FORBIDDEN_NAME_CHARS", "IMAGE_SUFFIXES", "SIZE",
+           "SOURCE_RESIZE", "SPLITS", "Source", "SourceImage", "array_source",
+           "check_split_surface", "deterministic_subset", "forbidden_names",
+           "list_split", "load_isolation", "orientation_value", "read_source", "require_data_root",
+           "require_source_names", "require_split", "require_split_count", "require_split_dir",
+           "resized_size", "run_isolation", "split_files", "split_sizes"]

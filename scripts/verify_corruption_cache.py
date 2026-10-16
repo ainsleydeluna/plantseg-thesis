@@ -11,12 +11,13 @@ items are re-hashed here, never regenerated.
 
 Checks, in order, each a refusal by code: names (LC6: the cache root and the record directory);
 --confirm-test-split for test, before any read; the manifest (schema 2.0.0, canonical checksum,
-seed policy, vendored runtime); the manifest's split; the data root (the M11 isolation check for
-val, images/test alone for test); the sources against the split listing (each recorded
+seed policy, vendored runtime); the manifest's split; for an official or provisional cache, the
+student image (PLANTSEG_IMAGE_DIGEST) and the pinned stack (LC2); the data root (the M11 isolation
+check for val, images/test alone for test); the sources against the split listing (each recorded
 manifest_index and file name, and all of them for a full cache); each source file's sha256; its
 core_preprocess window (shape, pixel sha256, mean-colour padding outside it); every item (file
-sha256, dtype, its source's resized shape, pixel sha256); the cell digests, the inferential digest
-and the pin's own sha256.
+sha256, dtype, its source's resized shape, pixel sha256); the cell digests, the registered 24-cell
+set (also the pin's cells), the inferential digest and the pin's own sha256.
 
 On success it writes verification/<UTC>.json (outside the checksum) and prints the four recorded
 values of the TL interface section 5, one per line, each labelled:
@@ -50,6 +51,7 @@ from src.data.transforms import IMAGENET_MEAN_8BIT, MASK_IGNORE, core_preprocess
 
 VERIFICATION_SCHEMA = "plantseg-corruption-verification/1.0.0"
 RECORD_DIR = "verification"
+PINNED_STATUSES = ("official", "provisional")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -82,6 +84,19 @@ def gate_split(args, manifest: dict) -> None:
     if split != args.split or manifest.get("dataset", {}).get("split") != args.split:
         _refuse("split_mismatch",
                 f"the cache holds split {split!r}, --split is {args.split!r}")
+
+
+def gate_environment(manifest: dict) -> None:
+    """LC2, TL-1: an official or provisional cache is verified in the student image on the pinned
+    stack, as it was generated (the window check runs Pillow's BILINEAR). Before any data read."""
+    if manifest.get("status") not in PINNED_STATUSES:
+        return
+    got = os.environ.get("PLANTSEG_IMAGE_DIGEST")
+    if got != cc.STUDENT_IMAGE_DIGEST:
+        _refuse("image_digest_mismatch",
+                f"PLANTSEG_IMAGE_DIGEST is {got!r}; a {manifest['status']} cache is verified in "
+                f"the student image {cc.STUDENT_IMAGE_DIGEST}")
+    cc.require_official_dependency_environment()
 
 
 def gate_sources(args, manifest: dict) -> dict:
@@ -150,6 +165,17 @@ def check_items(cache_root, manifest: dict) -> int:
     return len(manifest["entries"])
 
 
+def cell_set_problems(manifest: dict) -> list:
+    """LC13, TL section 6: the cells are the registered 24 in protocol order, and the embedded
+    pin's cells are the same list."""
+    ids = [c.get("cell_id") for c in manifest["cells"]]
+    out = [] if ids == list(corruption_roles.CELL_IDS) else ["the registered cell set"]
+    pin = manifest.get("pin")
+    if pin is not None and (pin.get("parameters") or {}).get("cells") != ids:
+        out.append("the pin's cells")
+    return out
+
+
 def check_cells(manifest: dict) -> None:
     sources = manifest["sources"]
     index_of = {s["image_id"]: s["manifest_index"] for s in sources}
@@ -169,6 +195,7 @@ def check_cells(manifest: dict) -> None:
             problems.append(cell["cell_id"])
     if len(manifest["entries"]) != len(sources) * len(manifest["cells"]):
         problems.append("entries != sources x cells")
+    problems.extend(cell_set_problems(manifest))
     inferential = [c["cell_sha256"] for c in manifest["cells"]
                    if c["role"] == corruption_roles.ROLE_INFERENTIAL]
     inferential_sha = cc._sha256_bytes(cc.canonical_json_bytes(inferential))
@@ -190,6 +217,7 @@ def verify(args) -> dict:
     root = Path(args.cache_dir)
     manifest = cc.load_manifest(root)
     gate_split(args, manifest)
+    gate_environment(manifest)
     cs.check_split_surface(args.data_root, args.split)
     by_id = gate_sources(args, manifest)
     for record in manifest["sources"]:
@@ -208,6 +236,7 @@ def verify(args) -> dict:
                          "cells": len(manifest["cells"])},
               "pin_sha256": (manifest.get("pin") or {}).get("pin_sha256"),
               "python": sys.version.split()[0], "torch": torch.__version__,
+              "versions": cc.runtime_versions(),
               "image_digest": os.environ.get("PLANTSEG_IMAGE_DIGEST")}
     data = cc.canonical_json_bytes(record) + b"\n"
     rdir = root / RECORD_DIR
