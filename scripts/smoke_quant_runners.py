@@ -282,11 +282,16 @@ def test_index_creator_and_backend() -> None:
         check("real_run_refuses_without_qnnpack", check_backend() == "qnnpack", "qnnpack present")
         check("local_backend_is_not_official", True, "qnnpack available")
 
-    # end-to-end: a fully specified E4 launch still stops at the backend gate on this box
-    rc = run(run_e4, ["--real-run", "--confirm-real-run", "--source-ckpt", str(E1_CKPT),
-                      "--out-dir", str(TMP / "out_e4"), "--calibration-index", str(E4_INDEX_PATH),
-                      "--data-root", str(TMP)])
-    check("e4_full_launch_stops_at_backend_gate", rc == 2, f"exit {rc}")
+    # end-to-end: a fully specified E4 or E7 launch is refused whatever its flags (ruling Q1-R2, L-CKPT-GUARD
+    # Q-part); scripts/run_ptq.py makes the PTQ of record
+    for label, fn, src, pin in (("e4", run_e4, E1_CKPT, []),
+                                ("e7", run_e7, E3_CKPT, ["--calibration-sha256", E4_INDEX["checksum_sha256"]])):
+        out = TMP / f"out_{label}"
+        rc, code = refusal(fn, ["--real-run", "--confirm-real-run", "--source-ckpt", str(src),
+                                "--out-dir", str(out), "--calibration-index", str(E4_INDEX_PATH),
+                                "--data-root", str(TMP), *pin])
+        check(f"{label}_full_launch_refused_old_runner",
+              rc == 2 and code == "old_runner_real_run" and not out.exists(), f"exit {rc} [{code}]")
     check("no_artifact_written_on_refusal",
           not list((TMP / "out_e4").glob("*_int8_student.pt")) if (TMP / "out_e4").exists() else True)
     check("no_test_split_touched", True, "no dataloader was constructed on any refused path")
