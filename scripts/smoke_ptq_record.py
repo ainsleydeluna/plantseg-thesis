@@ -8,10 +8,10 @@ records repository (git: the four lists, the λ and α selections and the KD lau
 synthetic E1 and E3 run directories stand in for the real inputs. ptq_record.RECORDS_ROOT points at the records
 repository and src.quant.ptq.code_provenance answers a fixed identity (a clean checkout at a known commit), in this
 process and in each driver process; the identity cases change that answer. The real PTQ core runs, each in its own
-process, for E4 s42, E7 s42 and the E4 d3 replicate; every other bound case runs a stub core that writes small
-fake artifacts and the run-provenance fields the record reads. No TEST folder is ever created (SL-1): a TEST
-surface exists only through os.path.lexists, patched for one path and restored. The repository's git status is
-the same after the run as before it.
+process, for E4 s42, E7 s42, the E4 d3 replicate and s10's unbound run; every other bound case runs a stub core
+that writes small fake artifacts and the run-provenance fields the record reads. No TEST folder is ever created
+(SL-1): a TEST surface exists only through os.path.lexists, patched for one path and restored. The repository's
+git status is the same after the run as before it.
 
   s0 fixtures     the TRAIN tree, the registered lists, the committed records
   s1 old runners  run_e4.py and run_e7.py refuse every run (ruling Q1-R2)
@@ -25,7 +25,8 @@ the same after the run as before it.
   s7 sensitivity  stub core: lists 43-45 at seed 42 make calibration_sensitivity records
   s8 official     int8_official_error on stub records; scripts/evaluate_model.py calls only it
   s9 range        scripts/ptq_calibration_range.py: written, and each refusal
-  s10 hygiene     the unbound path never imports the record module; no test-named path; repository untouched
+  s10 hygiene     an unbound run, start to finish (the real core), never imports the record module; no test-named
+                  path; repository untouched
 
     python -B scripts/smoke_ptq_record.py [--sections s0,s5] [--only CASE,CASE] [--cache-dir DIR]
 """
@@ -66,6 +67,17 @@ CK1, CK3 = "e1_student_best_iter80000.pt", "e3_student_best_iter80000.pt"
 LAMBDA_REL, ALPHA_REL = "reports/derived/lambda_selection.json", "reports/derived/alpha_selection.json"
 OTHER_SEL_REL, UNTRACKED_SEL_REL = "reports/derived/other_selection.json", "reports/derived/untracked_selection.json"
 LOG_REL = "reports/kd_launch_log.jsonl"
+# DL-24 D-3: one E3 s43 attempt per field of R8's set; its launch and launched lines differ from run_meta in that
+# field alone ({launch line override}, {launched line override}); a changed stage, seed, horizon, lambda or alpha
+# starts its own attempt group (attempt 1), the others continue the s43 group
+OTHER_COMMIT = "3" * 40
+LOG_FIELD_LINES = {"git_head": ({"code_pin": OTHER_COMMIT}, {"git_head": OTHER_COMMIT}),
+                   "code_pin": ({"code_pin": OTHER_COMMIT}, {}),
+                   "records_commit": ({}, {"records_commit": OTHER_COMMIT}),
+                   "swept_key": ({"sweep": "alpha_cwd", "value": 10.0}, {}), "stage": ({"stage": "E2"}, {}),
+                   "seed": ({"seed": 44}, {}), "horizon": ({"horizon": 160000}, {}),
+                   "lambda_logit": ({"lambda_logit": 1.0}, {}), "alpha_cwd": ({"alpha_cwd": 10.0}, {})}
+E3_S43_FIELD = {f: f"e3_s43_lambda0.5_alpha25_80k_{f}" for f in LOG_FIELD_LINES}
 CLEAN = {"type": "clean", "name": None, "severity": None}
 SECTIONS = ("s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10")
 
@@ -311,6 +323,12 @@ def setup(cache: Path | None) -> None:
                  launch_line(E3_S43_A3, 43, attempt=3), launched_line(E3_S43_A3, m43, WALL[43] + 60.0),
                  launch_line(E3_S43_A4, 43, attempt=4), launched_line(E3_S43_A4, m43, WALL[43]),
                  {"event": "stopped", "run_id": E3_S43_A4, "report": {"path": "reports/stop.md", "sha256": "0" * 64}}]
+    n = 4                                               # E3_S43, A2, A3 and A4: attempts 1-4 of the s43 group
+    for f, (line_over, launched_over) in LOG_FIELD_LINES.items():
+        regroup = bool({"stage", "seed", "horizon", "lambda_logit", "alpha_cwd"} & set(line_over))
+        n += 0 if regroup else 1
+        log_lines += [{**launch_line(E3_S43_FIELD[f], 43, attempt=1 if regroup else n), **line_over},
+                      {**launched_line(E3_S43_FIELD[f], m43, WALL[43]), **launched_over}]
     (R / LOG_REL).write_bytes("".join(json.dumps(x) + "\n" for x in log_lines).encode("utf-8"))
     tracked = [f"configs/calibration/ptq_calibration_seed{s}.json" for s in (42, 43, 44, 45)] + [
         LAMBDA_REL, ALPHA_REL, OTHER_SEL_REL, LOG_REL]
@@ -833,8 +851,10 @@ def case_s5_flags() -> None:
     refused("refuses_expect_head_format", argv(expect_head="abc"), "expect_head_format")
     refused("refuses_e4_selection_flags", argv(lambda_selection=LAMBDA_REL), "selection_not_applicable")
     av = argv()
-    rc, _log = run_main(av + ["--arm", "E7-L"])
-    check("refuses_arm_flag", rc == 2 and not out_of(av).exists(), f"exit {rc} (argparse refuses the flag)")
+    with bound_env():                                   # every gate would pass: only argparse can refuse (DL-24 D-1)
+        rc, log = run_main(av + ["--arm", "E7-L"])
+    check("refuses_arm_flag", rc == 2 and "unrecognized arguments: --arm" in log and not out_of(av).exists(),
+          f"exit {rc}: {last_result(log)}")
 
 
 def case_s5_out_dir() -> None:
@@ -924,6 +944,8 @@ def case_s5_e1_rule() -> None:
     refused("refuses_e4_parent_160k", argv(source_run_dir=d, expect_source_sha256=s), "parent_horizon")
     d, s = variant_e1("e1_horizon_160k", poly_horizon=160000)
     refused("refuses_e4_parent_poly_horizon_160k", argv(source_run_dir=d, expect_source_sha256=s), "parent_horizon")
+    d, s = variant_e1("e1_160k_no_horizon", max_iters=160000, poly_horizon=None)     # max_iters alone (DL-24 D-2)
+    refused("refuses_e4_parent_max_iters_160k", argv(source_run_dir=d, expect_source_sha256=s), "parent_horizon")
     d, s = variant_e1("e1_no_horizon", poly_horizon=None)
     rc, log, rec = written(argv(source_run_dir=d, expect_source_sha256=s))
     check("accepts_e4_parent_without_poly_horizon", rc == 0 and rec.get("parent", {}).get("poly_horizon") is None
@@ -968,11 +990,24 @@ def case_s5_e3_rule() -> None:
             "parent_teacher_not_of_record")
     refused("refuses_e7_parent_teacher_mock", e7_variant(E3_S43, meta=e3_meta(43, teacher_mock=True)),
             "parent_teacher_not_of_record")
+    # DL-24 D-6: each condition of parent_not_of_record and parent_teacher_not_of_record, alone
+    for key, over in (("arm", {"arm": "E3-R1"}), ("descriptive", {"descriptive": True}),
+                      ("parent_of_e4_e7", {"parent_of_e4_e7": False}), ("max_iters", {"max_iters": 160000}),
+                      ("poly_horizon", {"poly_horizon": 160000}),
+                      ("target_construction", {"target_construction": {"K": 2, "views": 2}})):
+        refused(f"refuses_e7_parent_not_of_record_{key}", e7_variant(E3_S43, meta=e3_meta(43, **over)),
+                "parent_not_of_record")
+    for key, tp in (("builder", teacher_provenance(builder="another_builder")),
+                    ("expected_sha256", teacher_provenance(expected_sha256="0" * 64)), ("not_an_object", None)):
+        refused(f"refuses_e7_parent_teacher_{key}", e7_variant(E3_S43, meta=e3_meta(43, teacher_provenance=tp)),
+                "parent_teacher_not_of_record")
     refused("refuses_e7_s43_not_launched", e7_variant(E3_S43_A2), "parent_launch_log")
     refused("refuses_e7_s43_run_meta_not_launched", e7_variant(E3_S43, meta=e3_meta(43, note="another run_meta")),
             "parent_launch_log")
     refused("refuses_e7_s43_launch_line_fields", e7_variant(E3_S43_A3), "parent_launch_log")
     refused("refuses_e7_s43_stopped_line", e7_variant(E3_S43_A4), "parent_launch_log")
+    for f in LOG_FIELD_LINES:                           # DL-24 D-3: each field of R8's set, alone
+        refused(f"refuses_e7_s43_launch_field_{f}", e7_variant(E3_S43_FIELD[f]), "parent_launch_log")
     log = FX["records"] / LOG_REL
     with edited(log, log.read_bytes() + log.read_bytes().splitlines(keepends=True)[0]):
         refused("refuses_e7_launch_log_uncommitted", argv("E7", seed=43), "parent_launch_log")
@@ -982,6 +1017,8 @@ def case_s5_e3_rule() -> None:
             "parent_payload")
     refused("refuses_e7_payload_best_mismatch", e7_variant(E3_S43, payload=e3_payload(best_val_miou_all_class=0.3)),
             "parent_payload")
+    refused("refuses_e7_payload_target_construction_key",                   # DL-24 D-6
+            e7_variant(E3_S43, payload=e3_payload(target_construction={"K": 2, "views": 2})), "parent_payload")
 
 
 def case_s5_unreadable() -> None:
@@ -1145,6 +1182,25 @@ def case_s8_gate() -> None:
     (other / "e4_ptq_record.json").write_text(json.dumps(rec), encoding="utf-8")
     err = official("E4", other / meta4)
     check("official_refuses_record_of_another_run", "[ptq_record_mismatch]" in str(err), str(err)[:120])
+    # DL-24 D-6: the TorchScript and list-checksum comparisons, each alone (the record re-hashes, so it names
+    # another existing file)
+    named = copy_run(recs["e4"], "record_names_another_file")
+    (named / "e4_other_artifact.pt").write_bytes(b"another TorchScript file")
+    rec = json.loads((named / "e4_ptq_record.json").read_text(encoding="utf-8"))
+    other_ts = named / "e4_other_artifact.pt"
+    rec["artifacts"]["torchscript"] = {"path": other_ts.name, "sha256": sha_file(other_ts),
+                                       "bytes": other_ts.stat().st_size}
+    (named / "e4_ptq_record.json").write_text(json.dumps(rec), encoding="utf-8")
+    err = official("E4", named / meta4)
+    check("official_refuses_record_of_another_torchscript", "[ptq_record_mismatch]" in str(err)
+          and "['torchscript'] differ" in str(err), str(err)[:120])
+    listed = copy_run(recs["e4"], "record_of_another_list")
+    rec = json.loads((listed / "e4_ptq_record.json").read_text(encoding="utf-8"))
+    rec["calibration"]["checksum_sha256"] = "0" * 64
+    (listed / "e4_ptq_record.json").write_text(json.dumps(rec), encoding="utf-8")
+    err = official("E4", listed / meta4)
+    check("official_refuses_record_of_another_list", "[ptq_record_mismatch]" in str(err)
+          and "['list checksum'] differ" in str(err), str(err)[:120])
     alt = copy_run(recs["e4"], "another_provenance")
     m = json.loads((alt / meta4).read_text(encoding="utf-8"))
     m["created_utc"] = "2026-10-02T00:00:00Z"
@@ -1347,12 +1403,15 @@ def case_s10() -> None:
         p = subprocess.run([sys.executable, "-B", "-c", IMPORT_PROBE, str(REPO), *av], capture_output=True, text=True,
                            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
         return (p.stdout.strip().splitlines() or [p.stderr.strip()[-120:]])[-1]
-    inside = REPO / "ptq_record_smoke_probe" / "e4_s42_cal42_a1"
+    # DL-24 D-4: the unbound run goes start to finish (the real core, its own process), and never loads the module
+    out_u = fresh_out("e4_unbound_probe")
     unbound = probe(["--real-run", "--confirm-real-run", "--stage", "E4", "--source-ckpt", str(FX["e1_s42"] / CK1),
                      "--expect-source-sha256", FX["e1_sha"], "--calibration-list", str(FX["smoke_list"]),
-                     "--expect-list-checksum", checksum(42), "--data-root", str(FX["root"]), "--out-dir", str(inside)])
+                     "--expect-list-checksum", checksum(42), "--data-root", str(FX["root"]), "--out-dir", str(out_u)])
+    inside = REPO / "ptq_record_smoke_probe" / "e4_s42_cal42_a1"
     bound = probe(argv(out=inside))
-    check("unbound_run_never_imports_record_module", unbound == "RC=2 LOADED=False" and bound == "RC=2 LOADED=True"
+    check("unbound_run_never_imports_record_module", unbound == "RC=0 LOADED=False" and bound == "RC=2 LOADED=True"
+          and (out_u / "e4_ptq_run_meta.json").is_file() and not (out_u / "e4_ptq_record.json").exists()
           and not inside.exists(), f"unbound {unbound}; bound {bound}")
     named = []
     for top in [BASE] + ([FX["cache"]] if FX.get("cache") else []):
