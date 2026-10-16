@@ -187,6 +187,58 @@ def int8_official_calibration_error(resolved: dict, repo_root: str | Path | None
     return None if err is None else f"refusing an official {resolved['spec']['stage']} score: {err}"
 
 
+def int8_official_error(resolved: dict, repo_root: str | Path | None = None) -> str | None:
+    """PRE-RUN: may this INT8 artifact be scored as the OFFICIAL E4-E7? None when it may.
+
+    The one function an official INT8 path calls (LQP, ruling R2): int8_official_calibration_error's
+    refusal first (the committed AM-10 list of record), then the PTQ record gate's (ruling Q1-R2,
+    L-CKPT-GUARD Q-part). QAT artifacts (E5, E6) pass the record gate.
+    """
+    return int8_official_calibration_error(resolved, repo_root) or _ptq_record_error(resolved)
+
+
+def _ptq_record_error(resolved: dict) -> str | None:
+    """The record gate: an official E4/E7 is scripts/run_ptq.py's TorchScript artifact whose directory holds its
+    <stage>_ptq_record.json (src/quant/ptq_record.py, imported here only) of role of_record, written by the run
+    that wrote this run provenance. legacy_ptq_artifact: a src/quant/runner.py state_dict PTQ artifact;
+    ptq_record_missing: no record (an E7-X or E7-flip arm directory holds e7_arm_record.json and none);
+    ptq_record_invalid; ptq_record_role: calibration_sensitivity or d3_replicate; ptq_record_mismatch: the
+    stage, the run provenance, the TorchScript artifact, the source checkpoint or the list checksum differ.
+    """
+    spec, prov = resolved["spec"], resolved["provenance"]
+    if spec["method"] != "ptq":
+        return None
+    stage = spec["stage"]
+    lead = f"refusing an official {stage} score: "
+    if prov.get("artifact_format", "state_dict") != "torchscript":
+        return (lead + "[legacy_ptq_artifact] a src/quant/runner.py state_dict PTQ artifact makes no "
+                f"{stage} of record (ruling Q1-R2); the PTQ of record is scripts/run_ptq.py's TorchScript artifact")
+    from src.quant.ptq import artifact_names
+    from src.quant.ptq_record import RECORD_NAME, ROLE_OF_RECORD, read_record
+    run_dir = Path(resolved["artifact_path"]).parent
+    path = run_dir / RECORD_NAME.format(key=stage.lower())
+    if not path.is_file():
+        return (lead + f"[ptq_record_missing] {path} is absent: an official {stage} is made by scripts/run_ptq.py's "
+                "bound path, which writes its PTQ record last")
+    try:
+        record, _ = read_record(path)
+        run_meta = json.loads((run_dir / artifact_names(stage.lower())["run_meta"]).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        return lead + f"[ptq_record_invalid] {path}: {e}"
+    if record["role"] != ROLE_OF_RECORD:
+        return (lead + f"[ptq_record_role] {path} has role {record['role']!r}; only a PTQ record of role "
+                f"{ROLE_OF_RECORD!r} is official (calibration-sensitivity runs and d3 replicates are descriptive)")
+    differ = [k for k, ok in (
+        ("stage", record["stage"] == stage), ("run provenance", run_meta == prov),
+        ("torchscript", record["artifacts"]["torchscript"]["sha256"] == resolved["artifact_sha256"]),
+        ("source checkpoint", record["parent"].get("checkpoint_sha256") == prov.get("source_checkpoint_sha256")),
+        ("list checksum", record["calibration"].get("checksum_sha256")
+         == (prov.get("calibration") or {}).get("checksum_sha256"))) if not ok]
+    if differ:
+        return lead + f"[ptq_record_mismatch] {path} is not this run's record: {differ} differ"
+    return None
+
+
 # ------------------------------------------------------------------ FP32 (E1-E3, A, F, G)
 def validate_fp32_artifact(stage: str, checkpoint_path: str | Path) -> dict:
     """Validate an E1, E2, E3, A, F or G FP32 checkpoint. Uses the existing checkpoint contract.
