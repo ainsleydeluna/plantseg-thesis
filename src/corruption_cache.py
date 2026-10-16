@@ -35,8 +35,9 @@ from pathlib import Path
 
 import numpy as np
 
-from src.vendor.imagecorruptions import (CORRUPTION_IDS, GENERATED_SEVERITIES, MASTER_SEED,
-                                         SEED_POLICY_ID, apply_corruption, item_seed)
+from src import corruption_roles
+from src.vendor.imagecorruptions import (CORRUPTION_IDS, MASTER_SEED, SEED_POLICY_ID,
+                                         SEVERITIES_BY_CORRUPTION, apply_corruption, item_seed)
 from src.vendor.imagecorruptions.provenance import as_dict as vendor_provenance
 from src.vendor.imagecorruptions.provenance import compute_runtime_sha256
 
@@ -44,6 +45,7 @@ CACHE_SCHEMA = "plantseg-corruption-cache/1.0.0"
 OFFICIAL_SPLIT = "test"
 OFFICIAL_EXPECTED_IMAGES = 1561          # checked only when the REAL cache is built
 MANIFEST_NAME = "corruption_cache_manifest.json"
+CACHE_STATUSES = ("smoke", "provisional", "official")
 
 # ---------------------------------------------------------------- official dependency pins
 # The corrupted BYTES depend on these three libraries, so reproducibility needs exact versions:
@@ -95,6 +97,14 @@ VALIDATION_EVIDENCE = {
 VALIDATION_SCOPE = "corruption_dependency_closure_only"
 FULL_EXPERIMENT_ENVIRONMENT_VALIDATED = False
 
+# SEVERITY 5 (L-AM16-SEV). The 40/40 evidence above covers severities 1-4. Severity 5 of the four
+# non-noise corruptions (AM-16 item 6) joins the reference grid in
+# scripts/smoke_corruption_vendor.py (56 cases), and that grid is evidence of record only when run
+# in the student image (local block L1). Until the L1 evidence commit sets this True and extends
+# VALIDATION_EVIDENCE, an official cache refuses severity-5 items; smoke and provisional caches may
+# hold them, and their manifests record the status "pending".
+SEVERITY5_REFERENCE_VALIDATED = False
+
 # The corruption RUNTIME closure imports exactly these third-party modules (AST-verified in
 # scripts/smoke_corruption_vendor.py). scikit-image's own transitive dependencies are not corruption
 # imports, and cv2/scipy are NOT in this closure.
@@ -143,6 +153,8 @@ def official_dependency_pins() -> dict:
         "validation_scope": VALIDATION_SCOPE,
         "full_experiment_environment_validated": FULL_EXPERIMENT_ENVIRONMENT_VALIDATED,
         "validation_evidence": dict(VALIDATION_EVIDENCE),
+        "severity5_reference_validated": SEVERITY5_REFERENCE_VALIDATED,
+        "severity5_reference_status": "validated" if SEVERITY5_REFERENCE_VALIDATED else "pending",
     }
 
 
@@ -213,31 +225,68 @@ def write_entry(cache_root: Path, image_id: str, corruption_id: str, severity: i
     }
 
 
+def protocol_severity_sets() -> dict[str, tuple[int, ...]]:
+    """Each corruption's scored severities from configs/corruption_protocol.json (torch-free
+    loader), refused unless they equal the vendored dispatch's `SEVERITIES_BY_CORRUPTION`."""
+    try:
+        roles = corruption_roles.load()
+    except corruption_roles.CorruptionRolesError as e:
+        _fail("protocol_invalid", str(e))
+    sets = roles.severities_by_corruption
+    vendor = {c: tuple(SEVERITIES_BY_CORRUPTION.get(c, ())) for c in CORRUPTION_IDS}
+    if tuple(roles.order) != tuple(CORRUPTION_IDS) or sets != vendor:
+        _fail("protocol_vendor_disagree",
+              f"the protocol scores {sets} but the vendored dispatch generates {vendor}")
+    return sets
+
+
 def generate(cache_root: Path, images: dict[str, np.ndarray], *,
-             corruptions=CORRUPTION_IDS, severities=GENERATED_SEVERITIES,
-             split: str = OFFICIAL_SPLIT, expected_images: int | None = None) -> dict:
-    """Build the cache grid for the supplied RESIZED uint8 images. Severity 5 is never generated."""
-    if any(s not in GENERATED_SEVERITIES for s in severities):
-        _fail("severity_not_generated", f"only severities {GENERATED_SEVERITIES} are generated")
+             corruptions=CORRUPTION_IDS, severities=None,
+             split: str = OFFICIAL_SPLIT, expected_images: int | None = None,
+             status: str = "smoke") -> dict:
+    """Build the cache grid for the supplied RESIZED uint8 images.
+
+    `severities=None` builds every scored severity of each corruption, as the protocol sets them
+    (1-5 for the four non-noise corruptions, 1-4 for gaussian_noise); an explicit tuple applies to
+    every listed corruption and must lie in each one's scored set. gaussian_noise at severity 5 is
+    never generated. An official cache refuses severity-5 items until
+    SEVERITY5_REFERENCE_VALIDATED.
+    """
+    if status not in CACHE_STATUSES:
+        _fail("unknown_status", f"cache status must be one of {CACHE_STATUSES}, got {status!r}")
     unknown = [c for c in corruptions if c not in CORRUPTION_IDS]
     if unknown:
         _fail("unknown_corruption", f"unregistered corruptions: {unknown}")
+    scored = protocol_severity_sets()
+    grid = []
+    for corruption_id in corruptions:
+        wanted = scored[corruption_id] if severities is None else tuple(severities)
+        refused = [s for s in wanted if s not in scored[corruption_id]]
+        if refused:
+            _fail("severity_not_generated",
+                  f"{corruption_id} is generated only at severities {scored[corruption_id]}; "
+                  f"refused {refused}")
+        grid.extend((corruption_id, int(s)) for s in wanted)
+    if status == "official" and not SEVERITY5_REFERENCE_VALIDATED and any(s == 5 for _, s in grid):
+        _fail("severity5_reference_unvalidated",
+              "an official cache may not hold severity-5 items until the severity-5 reference "
+              "grid is validated in the student image (local block L1); the status is pending")
 
     cache_root = Path(cache_root)
     entries = []
     for image_id in sorted(images):                     # canonical order
-        for corruption_id in corruptions:
-            for severity in severities:
-                arr, seed = apply_corruption(images[image_id], corruption_id, severity,
-                                             image_id=image_id)
-                entries.append(write_entry(cache_root, image_id, corruption_id, severity,
-                                           arr, seed))
+        for corruption_id, severity in grid:
+            arr, seed = apply_corruption(images[image_id], corruption_id, severity,
+                                         image_id=image_id)
+            entries.append(write_entry(cache_root, image_id, corruption_id, severity, arr, seed))
 
     manifest = {
-        "schema": CACHE_SCHEMA, "dataset": "PlantSeg", "split": split,
+        "schema": CACHE_SCHEMA, "dataset": "PlantSeg", "split": split, "status": status,
         "official_expected_images": OFFICIAL_EXPECTED_IMAGES,
         "source_image_count": len(images),
-        "corruption_order": list(corruptions), "severities": list(severities),
+        "corruption_order": list(corruptions),
+        "severities": sorted({s for _, s in grid}),
+        "severities_by_corruption": {c: [s for cc, s in grid if cc == c] for c in corruptions},
         "seed_policy_id": SEED_POLICY_ID, "master_seed": MASTER_SEED,
         "vendor": vendor_provenance(), "versions": runtime_versions(),
         "dependency_pins": official_dependency_pins(),

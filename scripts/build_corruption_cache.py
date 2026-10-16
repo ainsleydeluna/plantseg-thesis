@@ -26,7 +26,7 @@ if str(REPO) not in sys.path:
 from src.corruption_cache import (MANIFEST_NAME, OFFICIAL_EXPECTED_IMAGES,  # noqa: E402
                                   CorruptionCacheError, generate, official_dependency_pins,
                                   require_official_dependency_environment, runtime_versions)
-from src.vendor.imagecorruptions import CORRUPTION_IDS, GENERATED_SEVERITIES  # noqa: E402
+from src.vendor.imagecorruptions import CORRUPTION_IDS, SEVERITIES_BY_CORRUPTION  # noqa: E402
 from src.vendor.imagecorruptions.provenance import verify_vendor_integrity  # noqa: E402
 
 
@@ -59,7 +59,8 @@ def main(argv=None) -> int:
         return 2
 
     print(json.dumps({"grid": {"corruptions": list(CORRUPTION_IDS),
-                               "severities": list(GENERATED_SEVERITIES),
+                               "severities_by_corruption": {
+                                   c: list(SEVERITIES_BY_CORRUPTION[c]) for c in CORRUPTION_IDS},
                                "expected_images": OFFICIAL_EXPECTED_IMAGES,
                                "manifest": MANIFEST_NAME},
                       "dependency_pins": official_dependency_pins(),

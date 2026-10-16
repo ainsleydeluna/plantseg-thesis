@@ -12,8 +12,9 @@ Contract math (IMPLEMENTATION_CONTRACT lines 338-341, 370):
   * RPD     = (mIoU_clean - mIoU_C) / mIoU_clean * 100      -- descriptive only
   * rCD     = Kamann-style, descriptive only, E1 is the internal reference (rCD(E1) = 1),
               and the TEACHER is excluded
-  * severity 4 is a descriptive degradation trajectory only -- never in mIoU-C, RPD, rCD or
-    inference; severity 5 is never produced
+  * severity 4 (all five corruptions) and severity 5 (motion_blur, jpeg_compression, brightness
+    and fog; AM-16 item 6) are descriptive degradation trajectories only -- never in mIoU-C, RPD,
+    rCD or inference; gaussian_noise at severity 5 is never produced
   * the only inferential robustness pairing is E1 vs E6 on per-image mIoU-C
 
 TWO CORRUPTION PATHS, DELIBERATELY DISTINCT. The implementation is now vendored (pinned
@@ -79,9 +80,11 @@ def registered_corruptions() -> tuple[str, ...]:
 def validate_condition(name: str, severity: int, *, official: bool) -> dict:
     """Validate a corruption/severity request and return the artifact `condition` payload.
 
-    Severity roles follow the frozen protocol: 1-3 inferential, 4 descriptive-only, 5 never
-    produced. An `official` artifact may carry 1-3 (inferential) or 4 (descriptive-only); 5 is
-    refused outright for any status.
+    Severity roles follow the frozen protocol, per corruption (plantseg-corruptions/2.0.0): 1-3
+    inferential for all five; 4 descriptive-only for all five; 5 descriptive-only for motion_blur,
+    jpeg_compression, brightness and fog (AM-16 item 6) and never produced for gaussian_noise.
+    An `official` artifact may carry any of the 24 scored cells; (gaussian_noise, 5) is refused
+    outright for any status.
     """
     p = protocol()
     ids = tuple(e.id for e in p.entries)
@@ -89,13 +92,14 @@ def validate_condition(name: str, severity: int, *, official: bool) -> dict:
         _fail("unknown_corruption",
               f"corruption {name!r} is not in the frozen vocabulary {ids}. Aliases such as "
               "'brightness_variation' or 'motion-blur' are rejected.")
-    if severity in p.excluded_severities:
+    role = p.severity_role(name, severity)
+    if role == "excluded":
         _fail("severity_excluded",
-              f"severity {severity} is never produced by the official study pipeline")
-    if severity not in tuple(p.inferential_severities) + tuple(p.descriptive_only_severities):
+              f"{name} at severity {severity} is never produced by the official study pipeline "
+              "(AM-16 item 6 adds severity 5 only for the four non-noise corruptions)")
+    if role is None:
         _fail("severity_unknown", f"severity {severity} is not a registered severity")
-    return {"type": "corruption", "name": name, "severity": int(severity),
-            "role": ("inferential" if p.is_inferential_severity(severity) else "descriptive_only"),
+    return {"type": "corruption", "name": name, "severity": int(severity), "role": role,
             "official_allowed": bool(official)}
 
 

@@ -177,7 +177,9 @@ def test_refusals() -> None:
            root, "brightness", 2, split="test", official=False)
     expect("wrong_severity_rejected", CorruptionCacheError, resolve_corruption_cache,
            root, "fog", 3, split="test", official=False)
-    expect("severity_5_rejected", RobustnessError, load_severity_5, root, man)
+    expect("gaussian_noise_s5_rejected", RobustnessError, load_gaussian_noise_s5, root, man)
+    expect("fog_s5_cell_absent_rejected", CorruptionCacheError, resolve_corruption_cache,
+           root, "fog", 5, split="test", official=False)
     expect("split_mismatch_rejected", CorruptionCacheError, resolve_corruption_cache,
            root, "fog", 2, split="val", official=False)
     expect("missing_cache_root_rejected", CorruptionCacheError, resolve_corruption_cache,
@@ -199,9 +201,10 @@ def test_refusals() -> None:
            root, "fog", 2, split="test", official=True)
 
 
-def load_severity_5(root, man):
-    """Severity 5 is never produced; the vocabulary gate must refuse before any cache lookup."""
-    return cached_image_loader(root, man, "fog", 5)("leaf_000")
+def load_gaussian_noise_s5(root, man):
+    """gaussian_noise at severity 5 is never produced (AM-16 item 6); the vocabulary gate must
+    refuse before any cache lookup."""
+    return cached_image_loader(root, man, "gaussian_noise", 5)("leaf_000")
 
 
 # ---------------------------------------------------------------- 4. CLI surface
