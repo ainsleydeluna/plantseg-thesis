@@ -684,3 +684,98 @@ The docs session enters these after the merge; nothing below is written by this 
   seed-42 list; no subset was selected or scored on VAL." / "Before its record was written, each PTQ artifact passed
   the per-channel INT8 weight, float-region and TorchScript-to-state_dict parity checks on the 128 calibration images;
   two runs from the same checkpoint and list gave bitwise-identical artifacts (d3)."
+
+## 11. C14: the P34 re-pin
+
+Follow-up GO LQP-C14 (Fri 16 Oct 2026, Manila): Phase B checked PASS, with one fix before the merge. P34 in
+scripts/smoke_teacher_diag_drift.py pins sha256(inspect.getsource(scripts.evaluate_model.run)) so that any change to
+run() fails there first and a person checks D2's mirror (scripts/teacher_d2_calibration.py). The pin dated from
+60c1417, and C7 changed run(), so P34 failed at e37e339. The fix is one code commit, C14, plus this section and one
+push. §1-§10 stand as written at FINAL `d38495f`. Every file:line in this section is read at C14 (MEASURED: `git grep
+-n -F` at `389f73c`). scripts/evaluate_model.py, scripts/teacher_d2_calibration.py, src/eval/teacher_diag.py and
+src/eval/stage_artifacts.py are identical at e37e339 and C14 (`git diff --stat` empty).
+
+### 11.1 The commit
+
+- **C14 = `389f73cc6fb949ef51e6dc3a32a9a8f95eecb0be`**, "LQP C14: P34 re-pinned at e37e339 after R2's one call in
+  run()'s INT8 official branch". Its parent is `e37e3394eb198342956ab6e936fcb08cba422cea`, on refs/heads/lane/lqp
+  (MEASURED). `git show --stat` lists scripts/smoke_teacher_diag_drift.py only, 3 insertions and 1 deletion, and
+  `%(trailers)` is empty. The commit changes EVALUATE_MODEL_RUN_SHA256 and its comment, now `# at e37e339` (:34), and
+  adds one sentence to P34's docstring paragraph (:8-9): "Re-pinned by lane LQP (C14) after ruling R2's one call in
+  run()'s INT8 official branch, outside the part D2 mirrors (teacher_d2_calibration.py :105-258)." Nothing else
+  changes.
+- STEP 1's base (MEASURED): HEAD `e37e3394eb198342956ab6e936fcb08cba422cea` on refs/heads/lane/lqp, the scoped
+  `git status --porcelain=v1` empty, and `git ls-remote --heads origin lane/lqp` at the same SHA.
+- smoke_teacher_diag_drift is not among §2's runs (REPOSITORY-PROVEN), so the stale pin first showed at the Phase B
+  check (INFERRED).
+
+### 11.2 D2's mirror of run(), and where R2's hunk lies (STEP 2)
+
+D2 says its pass is run()'s teacher path, "call for call and in the same order", with one difference: the
+`batch_forward` hook (:5-8). The mirror is pinned to run() at 60c1417, K-part's R6 included (:10-13).
+REPOSITORY-PROVEN at C14:
+
+| run()'s teacher path: scripts/evaluate_model.py (run :227-365) | D2 `_run` (:98-265): scripts/teacher_d2_calibration.py |
+|---|---|
+| :243 `validate_cli_args(args)`. For the teacher: fp32 only (:120-122); R6, the sha256 required and format-checked (:212-221) | :105 `td.check_teacher_flags(args)`, "as validate_cli_args" (:11-12). :104 `td.check_common_flags` checks the DIAG flags only (src/eval/teacher_diag.py:276) |
+| :247 `load_class_map()` | :150 |
+| :249-253 the source indices (`deterministic_subset`) | :122-124 |
+| :274-281 `validate_teacher_artifact(args.checkpoint, expected_sha256=...)`: the hash, then the parse (src/eval/stage_artifacts.py:324, :330) | :132 `td.verify_teacher_inputs`: the sha256 is compared and nothing is unpickled (teacher_diag.py:409-410). Then :172 `td.load_teacher` → teacher_diag.py:469 `validate_teacher_artifact(inputs.ckpt, expected_sha256=inputs.sha256)` |
+| :289-291 the run id | :151 |
+| :294 `build_expected_manifest_for` | :152 |
+| :296-313 `prepare_artifact_request` | :153-164 (RunMeta precision "fp32", :157) |
+| :315 `validate_artifact_request` | :165 |
+| :320-322 `cpu_only`, `determinism_required`, and `apply_eval_determinism` when required | :168 `determinism_required("teacher", "fp32", "cpu")`, False; :182 `cpu_only=True` |
+| :328 `build_protocol_adapter(protocol, ...)` (the protocol at :244) | :169 `build_protocol_adapter(CANVAS, "val", ...)` |
+| :332-336 `load_teacher_model(resolved, ..., expected_sha256=...)` | :172 `td.load_teacher("evaluator", ...)` → teacher_diag.py:478 |
+| :352-354 `resolve_model_device`, `ModelDeviceForward`, `build_eval_loader` | :182-183, :187 |
+| :355-358 `evaluate_capturing_warnings(..., **protocol_forward_kwargs(protocol, fwd))` | :188-191 `..., batch_forward=hook`, the hook built at :184-186: the one declared difference (:5-8) |
+| :359-360 `check_post_eval` | :192 |
+| :361-364 `build_eval_runtime_record` | :193-196 |
+| :365 `return write_artifact(...)` | :258 `write_artifact(...)`. D2 then calls `verify_artifact` (:259); run() does not |
+
+- **The part D2 mirrors** is D2 :105-258, the range P34's new sentence cites. On run()'s side it is the teacher path
+  through :243-365. That path excludes the INT8 branch (:258-273), the student branches (:282-287, :337-348) and
+  the `counters` hooks (:326-327, :330-331).
+- **R2's hunk lies OUTSIDE it.** The hunk comes from C7 `d65aa90`, and it is the only change to run() since the pin.
+  No commit touched scripts/evaluate_model.py from 60c1417, an ancestor of O, to O. `git diff 2b3b556 e37e339 --
+  scripts/evaluate_model.py` is this one hunk. It is evaluate_model.py :264-270, the body of
+  `if args.artifact_status == "official":` (:263) inside `if args.precision in INT8_PRECISIONS:` (:258-273). The
+  teacher path takes the chain's `elif args.model_role == "teacher":` (:274), and validate_cli_args refuses a teacher
+  whose precision is not fp32 (:120-122). No teacher evaluation can enter the INT8 branch. D2 is not edited.
+- **Two calls sit at other positions in D2 than in run() (note only).** First, D2 reads the class map after the inputs
+  (:150), where run() reads it first (:247). Second, D2 parses the checkpoint inside `td.load_teacher`, after the
+  adapter is built (:169, :172). run() parses at :278, before any dataset exists. D2 does compare the sha256 earlier,
+  at :132. Both positions predate this lane: D2 and teacher_diag.py are unchanged from O to C14. Neither changes a
+  score. This lane does not act on either.
+
+### 11.3 The old and the new pin
+
+- **Old:** `d1c809d4ad588d6efffd7fd98a1240fa22ade18d729ec6f187963125de97de2a`, set at 60c1417 by `c7d4706`
+  (L-TEACHER-DIAG P41 4/7).
+- **New:** `b031d3aea7545039dae0aaa98eae809e8ad2cb64af8963da8d94c334115fc4f0`, measured at e37e339 (STEP 3) with the
+  lane venv's python (3.11.17), from the checkout:
+  ```
+  python -B -c "import hashlib, inspect, scripts.evaluate_model as em; print(hashlib.sha256(inspect.getsource(em.run).encode('utf-8')).hexdigest())"
+  ```
+  It equals the GO's value, and it equals the `got` of P34's failure at e37e339 (§11.4).
+- **Cross-check (MEASURED, scratchpad only).** `$SCR/c14/run_source_sha.py` applies `inspect.getblock` from the
+  `def run(` line, as `inspect.getsource` does, to `git show` copies of scripts/evaluate_model.py, importing nothing
+  from them. At O it gives `d1c809d4…`, the old pin (138 lines from :227). At e37e339 it gives `b031d3ae…` (139
+  lines). So run() at O matched the old pin, and the hunk's 6 lines out and 7 in are the whole difference.
+
+### 11.4 RESULT lines
+
+MEASURED. Each smoke ran alone with the venv's python `-B`, `PYTHONDONTWRITEBYTECODE=1` and PYTHONPATH unset, from
+the checkout. Logs are in `$SCR/c14/`.
+
+| Smoke | HEAD | UTC (2026-10-16) | rc, RESULT |
+|---|---|---|---|
+| smoke_teacher_diag_drift | e37e339, before C14 | 14:57:26-14:57:46 | 1, `RESULT: FAIL (7/8)`. Only P34 fails (`got b031d3aea7545039dae0aaa98eae809e8ad2cb64af8963da8d94c334115fc4f0`); P6, P7, P6/P7, P1 and the three R1 checks PASS |
+| smoke_teacher_diag_drift | C14 `389f73c` | 15:06:13-15:06:17 | 0, `RESULT: PASS (8/8)` |
+| smoke_frozen_blobs | C14 `389f73c` | 15:06:24-15:06:24 | 0, `RESULT: FROZEN BLOBS OK (10/10)` |
+
+### 11.5 Record proposed (it comes with the merge; this lane writes none)
+
+- DL row: "P34 re-pinned at 389f73c (LQP, after R2); D2's mirror unchanged". The docs session enters it at the merge,
+  beside §10's records.
