@@ -343,6 +343,17 @@ MUTATIONS = [
       "    except ArithmeticError as e:                # noqa: BLE001 -- before the core: nothing was written (exit 2)\n",
       "s5_unreadable", "refuses_e7_parent_torn_telemetry_line", "refuses_e4_parent_checkpoint_unloadable",
       "refuses_without_git_binary"),
+    # ---- the range reporter's input checks (B-1)
+    M("LQ79", RANGE, "a summary's run, dataset and dataset_level not checked to be objects (DL-24 B-1)",
+      '        run, ds, dl = (_typed(summary[k], dict, k) for k in ("run", "dataset", "dataset_level"))\n',
+      '        run, ds, dl = (summary[k] for k in ("run", "dataset", "dataset_level"))\n', "s9_range",
+      "range_refuses_dataset_level_null"),
+    M("LQ80", RANGE, "a summary's row counts not checked to be integers (DL-24 B-1)",
+      '"expected_rows": _typed(ds["expected_rows"], int, "dataset.expected_rows"),',
+      '"expected_rows": ds["expected_rows"],', "s9_range", "range_refuses_rows_not_integer"),
+    M("LQ81", RANGE, "a record's list seed read leniently (DL-24 B-1)",
+      '"list_seed": _typed(rec["calibration"]["seed"], int, "calibration.seed"),',
+      '"list_seed": rec["calibration"].get("seed"),', "s9_range", "range_refuses_record_without_list_seed"),
 ]
 
 results: list[tuple[str, bool, str]] = []

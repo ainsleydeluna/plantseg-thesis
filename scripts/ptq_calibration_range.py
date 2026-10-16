@@ -15,7 +15,8 @@ calibration sets. The official E4/E7 models keep the AM-10 list." Each pair is o
 summary.json of that record's artifact on clean TEST in the canvas protocol. It refuses (exit 2, nothing
 written), in this order:
   output_dir_inside_repo   --out-dir is inside the repository (checked first, before any input is read)
-  range_input_invalid  a record that is not an intact ptq_record/1, or a summary without the keys read here
+  range_input_invalid  a record that is not an intact ptq_record/1, or a record or summary without a field read
+                       here or with one of the wrong type
   range_stage          a record's stage or a summary's run.stage differs from --stage
   range_lists          the lists are not seeds 42, 43, 44 and 45 once each, the seed-42 record's role is not
                        of_record or another's is not calibration_sensitivity
@@ -73,18 +74,31 @@ def _finite(x) -> bool:
     return isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x)
 
 
+def _typed(value, kind: type, what: str):
+    if not isinstance(value, kind) or isinstance(value, bool):
+        raise TypeError(f"{what} is {type(value).__name__}, not {kind.__name__}")
+    return value
+
+
 def read_pair(record_path, summary_path) -> dict:
+    """One record and its summary: every summary field and nested record field compute() reads, each of the type
+    it needs (read_record has checked the record's top-level keys); anything else refuses as range_input_invalid."""
     from src.quant.ptq_record import read_record
     try:
         rec, rec_sha = read_record(record_path)
         raw = Path(summary_path).read_bytes()
         summary = json.loads(raw.decode("utf-8"))
-        run, ds, dl = summary["run"], summary["dataset"], summary["dataset_level"]
+        run, ds, dl = (_typed(summary[k], dict, k) for k in ("run", "dataset", "dataset_level"))
         fields = {"stage": run["stage"], "artifact_status": run["artifact_status"],
                   "checkpoint_sha256": run["checkpoint_sha256"], "split": ds["split"],
                   "condition": ds["condition"], "protocol": ds["preprocess_protocol"],
-                  "expected_rows": ds["expected_rows"], "actual_rows": ds["actual_rows"],
-                  "all_class_miou": dl.get("all_class_miou"), "disease_only_miou": dl.get("disease_only_miou")}
+                  "expected_rows": _typed(ds["expected_rows"], int, "dataset.expected_rows"),
+                  "actual_rows": _typed(ds["actual_rows"], int, "dataset.actual_rows"),
+                  "all_class_miou": dl.get("all_class_miou"), "disease_only_miou": dl.get("disease_only_miou"),
+                  "list_seed": _typed(rec["calibration"]["seed"], int, "calibration.seed"),
+                  "list_checksum": _typed(rec["calibration"]["checksum_sha256"], str, "calibration.checksum_sha256"),
+                  "parent_sha256": _typed(rec["parent"]["checkpoint_sha256"], str, "parent.checkpoint_sha256"),
+                  "torchscript_sha256": rec["artifacts"]["torchscript"]["sha256"]}
     except (OSError, ValueError, KeyError, TypeError) as e:
         raise RangeRefused("range_input_invalid", f"{record_path} / {summary_path}: {type(e).__name__}: {e}") from e
     return {"record": rec, "record_path": str(Path(record_path).resolve()), "record_sha256": rec_sha,
@@ -99,21 +113,20 @@ def compute(stage: str, pairs: list) -> dict:
     wrong = [p["record_path"] for p in rows if p["record"]["stage"] != stage or p["stage"] != stage]
     if wrong:
         _refuse("range_stage", f"--stage {stage}: a record or summary of another stage: {wrong}")
-    seeds = sorted(p["record"]["calibration"]["seed"] for p in rows)
-    roles = [(p["record"]["calibration"]["seed"], p["record"]["role"]) for p in rows]
+    seeds = sorted(p["list_seed"] for p in rows)
+    roles = [(p["list_seed"], p["record"]["role"]) for p in rows]
     if seeds != list(LIST_SEEDS) or any(r != (ROLE_OF_RECORD if s == SEED else ROLE_SENSITIVITY) for s, r in roles):
         _refuse("range_lists", f"the four records are lists {seeds} with roles {roles}; the range needs lists "
                                f"{list(LIST_SEEDS)} once each, seed {SEED} of_record and the others "
                                f"{ROLE_SENSITIVITY}")
-    parents = {p["record"]["parent"]["checkpoint_sha256"] for p in rows}
+    parents = {p["parent_sha256"] for p in rows}
     if len(parents) != 1 or any(p["record"]["seed"] != SEED for p in rows):
         _refuse("range_parent", f"the records name {len(parents)} parent checkpoints or a seed other than {SEED}: "
                                 "the four calibration sets quantize one seed-42 parent")
-    foreign = [p["summary_path"] for p in rows
-               if p["checkpoint_sha256"] != p["record"]["artifacts"]["torchscript"]["sha256"]]
+    foreign = [p["summary_path"] for p in rows if p["checkpoint_sha256"] != p["torchscript_sha256"]]
     if foreign:
         _refuse("range_artifact", f"summaries of another artifact than their record's TorchScript file: {foreign}")
-    status = [(p["record"]["calibration"]["seed"], p["artifact_status"]) for p in rows
+    status = [(p["list_seed"], p["artifact_status"]) for p in rows
               if p["artifact_status"] != ("official" if p["record"]["role"] == ROLE_OF_RECORD else "provisional")]
     if status:
         _refuse("range_status", f"artifact_status {status}: the list of record's score is official, the "
@@ -129,9 +142,8 @@ def compute(stage: str, pairs: list) -> dict:
                                                          and _finite(p["disease_only_miou"]))]
     if nonfinite:
         _refuse("range_metric", f"{METRIC} or {ALONGSIDE} absent or not finite in {nonfinite}")
-    rows.sort(key=lambda p: p["record"]["calibration"]["seed"])
-    per = [{"list_seed": p["record"]["calibration"]["seed"],
-            "checksum_sha256": p["record"]["calibration"]["checksum_sha256"], "role": p["record"]["role"],
+    rows.sort(key=lambda p: p["list_seed"])
+    per = [{"list_seed": p["list_seed"], "checksum_sha256": p["list_checksum"], "role": p["record"]["role"],
             "artifact_status": p["artifact_status"], "record": p["record_path"],
             "record_sha256": p["record_sha256"], "summary": p["summary_path"], "summary_sha256": p["summary_sha256"],
             "torchscript_sha256": p["checkpoint_sha256"], "all_class_miou": p["all_class_miou"],

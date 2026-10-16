@@ -1282,6 +1282,21 @@ def case_s9() -> None:
     range_refused("range_refuses_input_invalid",
                   pairs[:3] + [(pairs[3][0], summary(recs[45], 45, "no_split", dataset__split=None))],
                   "range_input_invalid")
+    # DL-24 B-1: a field of the wrong type, or a record field read_record does not check, refuses too
+    null_dl = summary(recs[45], 45, "dataset_level_null")
+    doc_null = json.loads(null_dl.read_text(encoding="utf-8"))
+    doc_null["dataset_level"] = None
+    null_dl.write_text(json.dumps(doc_null), encoding="utf-8")
+    range_refused("range_refuses_dataset_level_null", pairs[:3] + [(pairs[3][0], null_dl)], "range_input_invalid")
+    range_refused("range_refuses_rows_not_integer",
+                  pairs[:3] + [(pairs[3][0], summary(recs[45], 45, "rows_list", dataset__expected_rows=[1561]))],
+                  "range_input_invalid")
+    no_seed = copy_run(recs[45], "s9_record_without_list_seed")
+    rec45 = json.loads((no_seed / "e4_ptq_record.json").read_text(encoding="utf-8"))
+    rec45["calibration"].pop("seed")
+    (no_seed / "e4_ptq_record.json").write_text(json.dumps(rec45), encoding="utf-8")
+    range_refused("range_refuses_record_without_list_seed", pairs[:3] + [(no_seed / "e4_ptq_record.json", pairs[3][1])],
+                  "range_input_invalid")
     range_refused("range_refuses_stage", pairs[:3] + [(pairs[3][0], summary(recs[45], 45, "stage_e7", run__stage="E7"))],
                   "range_stage")
     range_refused("range_refuses_duplicate_list", [pairs[0], pairs[0], pairs[1], pairs[2]], "range_lists")
