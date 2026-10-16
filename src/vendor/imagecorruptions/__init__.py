@@ -85,7 +85,14 @@ def numpy_seed(seed: int):
         np.random.set_state(state)
 
 
-def validate_request(image: np.ndarray, corruption_id: str, severity: int) -> None:
+def validate_request(image: np.ndarray, corruption_id: str, severity: int, *,
+                     lift_floor: bool = False) -> None:
+    """Refuse a request upstream's corrupt() would refuse, plus the excluded cell.
+
+    `lift_floor` lifts upstream's 32-px floor for this one image (L-CORR, LC7): the cache generator
+    sets it only for an image whose resized short side is below the floor, and records that
+    image_id in the manifest's `floor_lifted`. Every other check still applies.
+    """
     if corruption_id not in _DISPATCH:
         raise CorruptionInputError(
             f"unknown corruption {corruption_id!r}; the frozen vocabulary is {CORRUPTION_IDS} "
@@ -104,7 +111,7 @@ def validate_request(image: np.ndarray, corruption_id: str, severity: int) -> No
             f"{getattr(image, 'dtype', type(image).__name__)}")
     if image.ndim != 3 or image.shape[2] != 3:
         raise CorruptionInputError(f"expected H*W*3 RGB, got {getattr(image, 'shape', None)}")
-    if min(image.shape[:2]) < MIN_SIDE:
+    if not lift_floor and min(image.shape[:2]) < MIN_SIDE:
         raise CorruptionInputError(
             f"upstream requires both sides >= {MIN_SIDE}px, got {image.shape[:2]}")
 
@@ -125,14 +132,16 @@ def _canonicalise(out, shape) -> np.ndarray:
 
 
 def apply_corruption(image: np.ndarray, corruption_id: str, severity: int, *,
-                     image_id: str, verify_integrity: bool = True) -> tuple[np.ndarray, int]:
+                     image_id: str, verify_integrity: bool = True,
+                     lift_floor: bool = False) -> tuple[np.ndarray, int]:
     """Apply one registered corruption deterministically. Returns `(uint8 array, item_seed)`.
 
-    The mask is never passed in and therefore can never be altered here.
+    The mask is never passed in and therefore can never be altered here. `lift_floor`: see
+    validate_request.
     """
     if verify_integrity:
         verify_vendor_integrity()
-    validate_request(image, corruption_id, severity)
+    validate_request(image, corruption_id, severity, lift_floor=lift_floor)
     seed = item_seed(image_id, corruption_id, severity)
     # Upstream `corrupt()` feeds every corruption a PIL Image (`Image.fromarray(image)`); mirror
     # that exactly so the vendored numerics see their expected input type.
