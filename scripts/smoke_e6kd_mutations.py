@@ -94,6 +94,11 @@ MUTATIONS = [
     M("MT14", "the SL-1 name check made after a probe of the path (is_dir)", TRG,
       "        if Q.names_test(value):\n", "        if Path(value).is_dir() or Q.names_test(value):\n",
       case("g1_forbidden_names_refused_before_any_probe"), "g1_forbidden_names_refused_before_any_probe"),
+    # DL-24 F1: decide binds the code files to score's
+    M("MT15", "decide no longer compares its code files with score's", TRG,
+      '    now = {"git_head": ident["git_head"], "code_files_sha256": ident["code_files_sha256"],\n',
+      '    now = {"git_head": ident["git_head"],\n',
+      case("refuses_code_changed_since_score"), "refuses_code_changed_since_score"),
 ]
 
 # the refusal table: every refusal and incomplete site of the module, each with the case that reaches it
@@ -144,7 +149,7 @@ KILLS = dict([
     # decide
     K("decide", "trigger_eval_format", "refuses_trigger_eval_format"),
     K("decide", "trigger_eval_smoke_inputs", "smoke_inputs_refused_for_record"),
-    K("decide", "trigger_eval_mismatch", "refuses_eval_dir_mixed_commit"),
+    K("decide", "trigger_eval_mismatch", "refuses_eval_dir_mixed_commit", "refuses_code_changed_since_score"),
     K("decide", "evaluator_command_not_literal", "refuses_evaluator_command_not_literal"),
     K("decide", "scores_dir_contents", "refuses_scores_dir_contents"),
     K("decide", "summary_artifact_invalid", "refuses_summary_artifact_invalid"),

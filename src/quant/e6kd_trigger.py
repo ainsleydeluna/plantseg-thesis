@@ -5,12 +5,12 @@
              TorchScript artifact of the epoch that E6 seed 42's selection names (block B), each scored by
              scripts/evaluate_model.py on VAL with the canvas protocol, on the CPU at batch size 1. A failed
              command writes trigger_STOP.json, which spends the trigger eval dir. trigger_eval.json records both.
-    decide   every input checked again, then the two summaries: each verified from disk and checked against the
-             evaluator values of record, on one code path and one device. E6's re-score must equal the
-             selection's value: a difference is refused (e6_rescore_differs), a STOP for diagnosis and a ruling,
-             never a choice between versions (AM-21 item 2(c)). The drop is computed in decimal on the recorded
-             values (Decimal(repr(x)), the convention of IC:271), and the trigger fires only when it is strictly
-             greater than 1.0 percentage point. e6kd_trigger.json (format e6kd_trigger/1) is written once; it is
+    decide   every input checked again, at the commit, with the code files, on the host and from the inputs that score
+             used; then the two summaries: each verified from disk and checked against the evaluator values of record,
+             on one code path and one device. E6's re-score must equal the selection's value: a difference is
+             refused (e6_rescore_differs), a STOP for diagnosis and a ruling, never a choice between versions (AM-21
+             item 2(c)). The drop is computed in decimal on the recorded values (Decimal(repr(x)), the convention of
+             IC:271), and the trigger fires only when it is strictly greater than 1.0 percentage point. e6kd_trigger.json (format e6kd_trigger/1) is written once; it is
              deterministic and carries no wall-clock time or date (the dates go into the decision-log row).
     read_trigger_record, trigger_binding
              B-2's launch gate: E6-KD launches only from a committed e6kd_trigger.json with triggered true (lane 7,
@@ -100,10 +100,13 @@ SAME_CODE_PATH_KEYS = ("run.repo_commit", "run.metric_impl_sha256", "dataset.spl
 NON_NULL_KEYS = ("run.repo_commit", "run.eval_runtime.image_digest")
 THREADS_NOTE = ("no --threads and no thread environment variable: torch_num_threads is the evaluator's own record "
                 "(summary eval_runtime), as in block B (scripts/qat_epoch_eval.py)")
-# the code whose sha256 every record carries (src/quant/ptq.py code_provenance)
+# the code whose sha256 every record carries (src/quant/ptq.py code_provenance), decide's own code among it: decide
+# requires these files unchanged since score, and the recomputation of block B's selection runs prepare.py, qconfig.py
+# and the student
 TRIGGER_CODE_PATHS = (
     "src/quant/e6kd_trigger.py", "scripts/e6kd_trigger.py", "src/quant/qat.py", "src/quant/qat_artifacts.py",
     "src/quant/qat_select.py", "src/quant/stages.py", "src/quant/runner.py", "src/quant/ptq.py",
+    "src/quant/prepare.py", "src/quant/qconfig.py", "src/models/student.py",
     "configs/qat_selection_rules.json", "configs/quant.py", "configs/data.py", "src/data/isolation.py",
     "scripts/evaluate_model.py", "src/eval/artifacts.py", "src/eval/stage_artifacts.py", "src/eval/model_loading.py",
     "src/eval/metrics.py",
@@ -465,13 +468,14 @@ def decide(inp: TriggerInputs, *, repo_root: Path = REPO) -> dict:
     if tev.get("smoke_inputs") is not smoke:
         _refuse("trigger_eval_smoke_inputs", f"{TRIGGER_EVAL_RECORD} was scored with smoke inputs "
                                              f"{tev.get('smoke_inputs')!r}; this decision has {smoke}")
-    ident = code_identity()
-    now = {"git_head": ident["git_head"], "host_label": inp.host_label, "cpu_model": Q.cpu_model(),
-           "inputs": recorded_inputs(ctx)}
+    ident = code_identity()                               # the code deciding is the code that scored (DL-24 F1)
+    now = {"git_head": ident["git_head"], "code_files_sha256": ident["code_files_sha256"],
+           "code_clean_at_head": ident["code_clean_at_head"], "host_label": inp.host_label,
+           "cpu_model": Q.cpu_model(), "inputs": recorded_inputs(ctx)}
     differ = sorted(k for k, v in now.items() if json.dumps(tev.get(k), sort_keys=True) != json.dumps(v, sort_keys=True))
     if differ:
-        _refuse("trigger_eval_mismatch", f"{TRIGGER_EVAL_RECORD} differs from this decision in {differ}: one commit, "
-                                         "one host and the same inputs score and decide")
+        _refuse("trigger_eval_mismatch", f"{TRIGGER_EVAL_RECORD} differs from this decision in {differ}: one commit "
+                                         "and the same code files, one host and the same inputs score and decide")
     cmds = commands(ctx)
     sc = tev["scores"]
     for which in ("e3", "e6"):
@@ -569,9 +573,9 @@ def decide(inp: TriggerInputs, *, repo_root: Path = REPO) -> dict:
                           "alpha": {"path": alpha["path"], "sha256": alpha["sha256"], "winner": alpha["winner"]}},
            "same_code_path": same, "input_sha256s": inputs,
            "trigger_eval": {"path": TRIGGER_EVAL_RECORD, "sha256": sha_ev},
-           "git_head": tev.get("git_head"), "code_clean_at_head": tev.get("code_clean_at_head"),
-           "code_files_sha256": tev.get("code_files_sha256"), "host_label": tev.get("host_label"),
-           "cpu_model": tev.get("cpu_model"), "smoke_inputs": smoke, "rule_trace": trace}
+           "git_head": ident["git_head"], "code_clean_at_head": ident["code_clean_at_head"],
+           "code_files_sha256": ident["code_files_sha256"], "host_label": inp.host_label,
+           "cpu_model": now["cpu_model"], "smoke_inputs": smoke, "rule_trace": trace}
     write_exclusive({out: A.json_bytes(doc)})
     return doc
 

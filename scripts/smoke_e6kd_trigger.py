@@ -844,6 +844,10 @@ def _other_head(doc):
     doc["git_head"] = "b" * 40
 
 
+def _other_code(doc):                                    # score ran other code at the same commit (DL-24 F1)
+    doc["code_files_sha256"]["src/quant/e6kd_trigger.py"] = "0" * 64
+
+
 def _batch16(doc):
     cmd = doc["scores"]["e3"]["evaluator_command"]
     cmd[cmd.index("--batch-size") + 1] = "16"
@@ -866,6 +870,7 @@ for _i, (_name, _kw, _want) in enumerate([
     ("refuses_trigger_eval_format", dict(edit_doc=_fmt), "trigger_eval_format"),
     ("smoke_inputs_refused_for_record", dict(edit_doc=_smoke_flag), "trigger_eval_smoke_inputs"),
     ("refuses_eval_dir_mixed_commit", dict(edit_doc=_other_head), "trigger_eval_mismatch"),
+    ("refuses_code_changed_since_score", dict(edit_doc=_other_code), "trigger_eval_mismatch"),
     ("refuses_evaluator_command_not_literal", dict(edit_doc=_batch16), "evaluator_command_not_literal"),
     ("refuses_scores_dir_contents", dict(after=_extra_score_dir), "scores_dir_contents"),
     ("refuses_summary_artifact_invalid", dict(after=_manifest_broken), "summary_artifact_invalid"),
