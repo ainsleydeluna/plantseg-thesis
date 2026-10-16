@@ -16,10 +16,13 @@ E5/E6 QAT is src/quant/qat.py's (AM-4/AM-4a, lanes L-AM4 + L-AM1q): `main` hands
 `src.quant.qat.main` before any PTQ argument is parsed; scripts/run_e5.py and run_e6.py reach it through
 `main`.
 
-SAFETY MODEL — the guards below (output directory, source checkpoint, QNNPACK backend, shared
-calibration index, TRAIN calibration images, run provenance) are reused by src/quant/ptq.py, qat.py
-and qat_artifacts.py. Each one validates hard: random initialization is impossible, every stage loads
-a validated source checkpoint, and nothing here downloads, substitutes a model, or falls back silently.
+SAFETY MODEL — each guard below validates hard: random initialization is impossible, every stage loads a
+validated source checkpoint, and nothing here downloads, substitutes a model, or falls back silently. Their
+users: check_output_dir — src/quant/ptq.py, ptq_record.py and qat.py, scripts/ptq_calibration_range.py and
+create_ptq_calibration_index.py; check_source — ptq.py and qat.py; CalibrationDataset (the TRAIN calibration
+images) — ptq.py; build_run_provenance — ptq.py and qat_artifacts.py. check_backend and check_calibration (the
+legacy E4/E7 calibration index) are kept for scripts/smoke_quant_runners.py only: the PTQ of record selects
+QNNPACK in src/quant/ptq.py and pins its list through ptq.load_calibration_list (--expect-list-checksum).
 """
 
 from __future__ import annotations
