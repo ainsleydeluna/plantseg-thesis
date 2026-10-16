@@ -647,7 +647,9 @@ def refusal_case(section: str, name: str, fn, want: str) -> None:
 # ---- inputs: steps 1-8, in order (score unless said otherwise)
 @case("inputs")
 def g1_forbidden_names_refused_before_any_probe():
-    base = inputs(TMP / "g1_trigger", out=TMP / "g1_record.json")
+    # DL-24 S-F5: a later gate fails too (e6_selection_sha256_mismatch, step 7), so that with the name check removed
+    # (the mutation harness's edit) no gate lets score create the forbidden-named directory
+    base = dataclasses.replace(inputs(TMP / "g1_trigger", out=TMP / "g1_record.json"), e6_selection_sha256="f" * 64)
     bad = TMP / "nowhere_latest_dir"                     # never created; its name holds the token SL-1 forbids
     seen_all, codes = [], {}
     for field in ("e3_run_dir", "e6_run_dir", "e6_eval_dir", "trigger_eval_dir"):
