@@ -22,7 +22,9 @@ condition of the multi-condition refusals (R3's horizon, R8's launch-log fields,
 and payload conditions, R2's record comparisons), each killed by a case that fails that condition alone.
 
 SIGTERM, SIGINT, SIGHUP or SIGQUIT to the harness kills every live job's group, starts nothing after it and ends the
-run FAIL; run it detached with setsid and an outer timeout that keeps TERM (timeout -k 60 ...).
+run FAIL; run it detached with setsid and an outer timeout that keeps TERM (timeout -k 60 ...). A job that cannot
+run, or whose restoration cannot be checked, still returns its shadow and is a verdict; a self-check of that runs
+first in every mode (self_check_a_failed_restore_check_returns_the_slot).
 
     python -B scripts/smoke_ptq_record_mutations.py [--only ID,ID] [--workers N] [--check-edits]
 
@@ -225,7 +227,7 @@ MUTATIONS = [
     M("LQ37", RECORD, "G10 the launch-log fields not compared (R8)",
       '    if bad:\n        _refuse("parent_launch_log"', '    if False:\n        _refuse("parent_launch_log"',
       "s5_e3_rule", "refuses_e7_s43_launch_line_fields"),
-    M("LQ38", RECORD, "G10 launch_time_utc dropped from the field set (R8, sweep_select.py:1810)",
+    M("LQ38", RECORD, "G10 launch_time_utc dropped from the field set (R8, sweep_select.py:1815)",
       '("alpha_cwd", meta.get("alpha_cwd"), line["alpha_cwd"]),\n               ("launch_time_utc", meta.get('
       '"wall_clock"), ld["launch_time_utc"])]', '("alpha_cwd", meta.get("alpha_cwd"), line["alpha_cwd"])]',
       "s5_e3_rule", "refuses_e7_s43_launch_line_fields"),
@@ -537,6 +539,66 @@ def edited(text: str, m: dict) -> str:
     return out
 
 
+def run_job(m: dict, shadows: list, free: queue.Queue, cache: Path, verdicts: dict) -> None:
+    """One edit in a free shadow: its case run, the file restored byte for byte. The shadow's slot always goes back
+    to `free`: a job that cannot run, or whose restoration cannot be checked, is a verdict (not killed, or NOT
+    RESTORED), never a blocked worker (DL-24 D-5)."""
+    if STOP.is_set():
+        return
+    i = free.get()
+    statuses, res, secs, restored = {}, "not run", 0.0, False
+    try:
+        sh = shadows[i]
+        f = sh / m["rel"]
+        original = f.read_bytes()
+        try:
+            f.write_text(edited(original.decode("utf-8"), m), encoding="utf-8")
+            statuses, res, secs = run_case(sh, cache, m["case"])
+        except Exception as e:                              # noqa: BLE001 -- a job that cannot run is a verdict
+            res = f"the job raised {type(e).__name__}: {e}"
+        finally:
+            f.write_bytes(original)
+            restored = f.read_bytes() == original and shadow_status(sh) == ""
+    except Exception as e:                                  # noqa: BLE001 -- the restoration could not be checked
+        restored = False
+        res += f"; restoring raised {type(e).__name__}: {e}"
+    finally:
+        free.put(i)
+    killed = [k for k in m["kills"] if statuses.get(k) == "FAIL"]
+    verdicts[m["id"]] = (bool(killed) and restored, f"{m['case']}: killed by {killed or 'nothing'}; {res} "
+                                                     f"({secs:.0f}s)" + ("" if restored else " NOT RESTORED"))
+    print(f"[edit] {m['id']} {m['what']}: {verdicts[m['id']][1]}", flush=True)
+
+
+def self_check_slot_release() -> None:
+    """DL-24 D-5, run in every mode: a job whose restoration check raises (git failing) still restores its file,
+    returns its slot and records a NOT RESTORED verdict. A scratch file; run_case and shadow_status stood in for."""
+    g = globals()
+    saved = (g["run_case"], g["shadow_status"])
+    tmp = safe_tmpdir("lqp_selfcheck_")
+    (tmp / "edited.py").write_text("x = 1\n", encoding="utf-8")
+    m = {"id": "SELF", "rel": "edited.py", "what": "the self-check's edit", "old": "x = 1", "new": "x = 2",
+         "case": "none", "kills": ["k"]}
+    free: queue.Queue = queue.Queue()
+    free.put(0)
+    verdicts: dict = {}
+
+    def failing_status(_shadow):
+        raise subprocess.CalledProcessError(128, ["git", "status"])
+    g["run_case"] = lambda _shadow, _cache, _case: ({"k": "FAIL"}, "RESULT: FAIL (0/1)", 0.0)
+    g["shadow_status"] = failing_status
+    try:
+        run_job(m, [tmp], free, tmp, verdicts)
+        ok, detail = verdicts.get("SELF", (True, "no verdict"))
+        ok = (not ok and "NOT RESTORED" in detail and free.qsize() == 1
+              and (tmp / "edited.py").read_text(encoding="utf-8") == "x = 1\n")
+    except Exception as e:                                  # noqa: BLE001
+        ok, detail = False, f"the job raised {type(e).__name__}: {e}"
+    finally:
+        g["run_case"], g["shadow_status"] = saved
+    check("self_check_a_failed_restore_check_returns_the_slot", ok, detail[:160])
+
+
 def select(only: str | None) -> list[dict]:
     if not only:
         return list(MUTATIONS)
@@ -566,6 +628,7 @@ def main() -> int:
         except (ValueError, SyntaxError, OSError) as e:
             ok, detail = False, str(e)
         check(f"{m['id']}_edit_applies", ok, detail)
+    self_check_slot_release()
     if args.check_edits or not all(ok for _, ok, _ in results):
         return report(time.time())
     t0 = time.time()
@@ -591,29 +654,8 @@ def main() -> int:
     for i in range(len(shadows)):
         free.put(i)
     verdicts: dict[str, tuple[bool, str]] = {}
-
-    def job(m: dict) -> None:
-        if STOP.is_set():
-            return
-        i = free.get()
-        sh = shadows[i]
-        f = sh / m["rel"]
-        original = f.read_bytes()
-        statuses, res, secs = {}, "not run", 0.0
-        try:
-            f.write_text(edited(original.decode("utf-8"), m), encoding="utf-8")
-            statuses, res, secs = run_case(sh, cache, m["case"])
-        finally:
-            f.write_bytes(original)
-            restored = f.read_bytes() == original and shadow_status(sh) == ""
-            free.put(i)
-        killed = [k for k in m["kills"] if statuses.get(k) == "FAIL"]
-        verdicts[m["id"]] = (bool(killed) and restored, f"{m['case']}: killed by {killed or 'nothing'}; {res} "
-                                                         f"({secs:.0f}s)" + ("" if restored else " NOT RESTORED"))
-        print(f"[edit] {m['id']} {m['what']}: {verdicts[m['id']][1]}", flush=True)
-
     with ThreadPoolExecutor(max_workers=len(shadows)) as pool:
-        list(pool.map(job, jobs))
+        list(pool.map(lambda m: run_job(m, shadows, free, cache, verdicts), jobs))
     for m in jobs:
         ok, detail = verdicts.get(m["id"], (False, "no verdict (stopped)"))
         check(f"{m['id']}_killed", ok, f"{m['what']} -> {detail}")
