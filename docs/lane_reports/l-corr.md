@@ -855,3 +855,350 @@ Phase B:
      - The changed smokes give some in-memory synthetic caches the manifest field `split: "test"`. That is data only: item paths are `<corruption>/s<severity>/<image_id>.npy` under folders such as `cache` and `pins_cache` (REPOSITORY-PROVEN, src/corruption_cache.py:422).
      - These four GO-named pre-existing smokes do create them, inside their temporary folders.
    - This needs a ruling from the orchestrator: an exemption for these four, or a fixture rename in the lanes that own them.
+
+## Part 1b (C4)
+
+**Session:** L-CORR-B1c ("item paths by index"), on lane/l-corr, in the cloud, on 16 Oct 2026 (Manila).
+
+**GO:** one follow-up code commit, C4; this section; one push.
+- The rulings are LCC1–LCC6. LCC4a was added mid-session in answer to my scope question about the builder's docstring.
+- The rules of L-CORR-B1 stand.
+- The orchestrator checked Part 1 and passed it.
+- The open items of Part 1 §12 are ruled: item 2 by this GO; item 3 to L-CORR-B2's B-3; item 1(a) to B-5; item 1(b) to the orchestrator's docs commit; item 4 is pending with Ice.
+
+Every file:line below is REPOSITORY-PROVEN at C4b, the last code commit. The evidence labels are Part 1's.
+
+### 1b.1 Commits and the scoped diff
+
+| | commit | parent | paths | content |
+|---|---|---|---|---|
+| R | a508359f3af6c699818fc5e146bafeeddfb92560 | C3 | 1 | Part 1, the base of this GO |
+| C4 | dea11ee65ab2b07f7d333f998f52fff5a242fb59 | R | 5 | LCC1–LCC4a: item paths by index; the stem gate removed |
+| C4b | 305bf3a60c4d3e3da5714ce7486372fb71ca527e | C4 | 2 | DL-24 finding C4-N2: S3 V27 and its mutant; S2 P5's wording |
+| R2 | this commit | C4b | 1 | this section |
+
+**STEP 1 (MEASURED, 14:34:52Z).**
+- HEAD was a508359f… on refs/heads/lane/l-corr, and the scoped porcelain was empty.
+- `git ls-remote --heads origin lane/l-corr lane/l-corr-eval` printed only lane/l-corr at a508359f…
+- The sdist's sha256 was 044e173f…084d. The venv is Part 1's (Python 3.11.17).
+
+**Commits.**
+- No commit carries a trailer (MEASURED over a508359..C4b).
+- C4b is the last code commit; STEP 4 ran on it.
+- One push, at the end of this GO, with `refs/heads/lane/l-corr:refs/heads/lane/l-corr`.
+
+**The scoped `git diff --stat a508359` (MEASURED).**
+- It ran at C4b with the scoped status clean, so it equals a508359..C4b.
+- After R2 the same command also lists this report.
+
+```
+ scripts/build_corruption_cache.py     |   5 +-
+ scripts/smoke_corruption_generator.py | 229 +++++++++++++++++++++++++++++-----
+ scripts/smoke_corruption_verify.py    |  85 ++++++++++++-
+ src/corruption_cache.py               |  89 ++++++++++---
+ src/corruption_source.py              |  34 ++---
+ 5 files changed, 361 insertions(+), 81 deletions(-)
+```
+
+**What did not change.**
+- All five changed paths are on LCC4's list.
+- `git ls-tree` gives identical blobs at a508359 and C4b (MEASURED) for:
+  - scripts/verify_corruption_cache.py, scripts/smoke_corruption_vendor.py, scripts/smoke_eval_robustness.py and scripts/smoke_evaluate_corruptions.py;
+  - scripts/evaluate_corruptions.py and scripts/evaluate_model.py (LCC5);
+  - src/stats/robustness.py (3fb16de2).
+- src/eval/corrupted.py and scripts/run_corruption_grid.py exist at neither commit.
+- The verifier needed no edit, because it reads item paths through `load_manifest` (§1b.2).
+- No line in the three consumer smokes asserts the stem form of a path: each reads `cache_relative_path` from the manifest (vendor :384 and :407, eval_robustness :163, evaluate_corruptions :155). So LCC4's allowance for those smokes was not used, and their counts are unchanged.
+
+### 1b.2 The rule, and every place that writes or reads an item path
+
+**The rule (LCC1).**
+- An item's path is `<corruption>/s<severity>/<manifest_index:05d>.npy`.
+- `item_relative_path`, src/corruption_cache.py:433–435, is the one function.
+- STORAGE (:114) states the rule. It feeds the manifest's `storage` block and the pin's `parameters.storage.relative_path` (§1b.5).
+- The module docstring (:35–43) explains it.
+- `image_id` stays in entries, sources and records as data only.
+
+**Writers.**
+- `write_entry` (:438) builds the path at :447 and records it as the entry's `cache_relative_path`.
+- The in-memory `generate()` calls it at :616 with the enumerate index, which is the index its source record carries.
+- The workers' `_image_task` calls it at :774 with `src.manifest_index`. Spawned workers run the same `_image_task` (:799).
+
+**Resume.**
+- `resume_keeps` (:741) is called at :768 with `item_relative_path(corruption, severity, src.manifest_index)`.
+- A journalled item is kept only when its journal line names that path and the file there verifies. Anything else is regenerated at the index path and compared with the journalled digests.
+
+**Repair.**
+- `repair_target` (:1052) finds the item from the recorded source's `manifest_index`. `require_repair_source` has already proven that the record it reads equals the recorded one, index included.
+- `repair_item` (:1058) loads the manifest (:1068), so the rule is checked first, and replaces the item at `repair_target` (:1101).
+- The builder's `repair_cmd` loads the manifest at scripts/build_corruption_cache.py:275.
+
+**Readers.**
+- `load_manifest` (:956) ends with `require_item_paths` (:978), which calls `item_path_problems` (:934). For each entry, the index is taken from the source holding its image_id, must be an int with 0 ≤ i < 10⁵, and the entry's path must equal `item_relative_path`. Otherwise `item_path_mismatch` is raised (:950; new).
+- The verifier loads the manifest at scripts/verify_corruption_cache.py:218, before its split, environment and data-root gates and before any read.
+  - `check_items` then reads each item through `load_cached` (:163).
+  - The path in `check_item_shape`'s message (:156) is the entry's validated path.
+- `load_cached` (:1011) opens the entry's `cache_relative_path` (:1019). So does `item_verifies` (:469), which resume uses after its path check.
+- Consumers read through the same functions, and neither file changed:
+  - scripts/evaluate_corruptions.py:105 (`load_manifest`);
+  - path B of src/eval/robustness.py (`load_cached_corruption` :152 → `load_cached` :162).
+
+**The listing.** src/corruption_source.py:148 returns `Source(i, p.stem, p)` and refuses no stem. Its docstring (:16–21) says why.
+
+**Unchanged (MEASURED and REPOSITORY-PROVEN).**
+- Item bytes; the .npy header holds no name.
+- The seed policy: `item_seed` is keyed by image_id (src/vendor/imagecorruptions/__init__.py:71).
+- Every item's `cached_file_sha256` and `corrupted_pixel_sha256`.
+- The manifest's entry order: `sorted_entries` (:504) sorts by `manifest_index`.
+
+**Changed (DL-24 C4-N1).**
+- Each entry's `cache_relative_path`.
+- Because `cell_digest` (:500) hashes whole entries, all 24 `cell_sha256` values change, and so do `inferential_cells_sha256`, `canonical_manifest_sha256` and `pin_sha256`.
+- `manifest_file_sha256` and the verification record's digest already differ between any two builds or runs (`generation`, `utc`).
+- A 2.0.0 cache built before C4 carries stem paths, and `load_manifest` now refuses it as `item_path_mismatch`. No cache of record exists.
+
+### 1b.3 LCC2 and LCC4a: what was removed, and every docstring edit
+
+**LCC2.**
+- src/corruption_source.py lost `FORBIDDEN_NAME_CHARS`, `forbidden_names`, `require_source_names` (the code `source_name_forbidden`) and their `__all__` entries.
+- `list_split` refuses no stem, whatever it holds (:148). The module docstring (:16–21) says why.
+- Every LC6 check stays, unchanged:
+  - `refuse_test_named` (src/corruption_cache.py:309) on the cache root, the journal, the record paths and the fault report, run by the builder's `gate_names` (scripts/build_corruption_cache.py:90) and the verifier's (scripts/verify_corruption_cache.py:71);
+  - `gate_tday_root` for corr_cache_tday (scripts/build_corruption_cache.py:100);
+  - the split directories: `require_split_dir` (src/corruption_source.py:83) and `check_split_surface` (:112).
+
+**LCC4a's edits.**
+1. scripts/build_corruption_cache.py:31. "the listing (its count, then its stems: no "test" in any case, no TL section 2 character)" became "the listing (its count)". Nothing else in the builder changed: the diff is that one sentence, 2 lines added and 3 removed.
+2. src/corruption_source.py:16–21. The docstring paragraph that described the gate is rewritten; this is also LCC2's "say why".
+3. scripts/smoke_corruption_generator.py:19–20. S2's docstring no longer cites "a patched listing (X26)". X26's own docstring and label went with the case.
+
+A `git grep` of the lane's files (MEASURED) finds no other docstring or help text that describes the gate. No argparse help mentions stems.
+
+**Not edited under the rulings.** The verifier's check list (scripts/verify_corruption_cache.py:12–14) and scripts/evaluate_corruptions.py (:96–97, :105) do not name `item_path_mismatch` (DL-24 C4-N3; open item 1b-1).
+
+### 1b.4 Results: STEP 4 on C4b, each smoke alone (MEASURED, 15:32:42Z to 15:34:02Z)
+
+**How they ran.** As in Part 1 §2: `python -B scripts/<smoke>.py` from the checkout, with PYTHONDONTWRITEBYTECODE=1, TMPDIR in the session scratchpad, PLANTSEG_UPSTREAM_SDIST naming the sdist, and PLANTSEG_DATA_ROOT and PLANTSEG_IMAGE_DIGEST unset.
+
+| smoke | STEP 8 at C3 | STEP 4 at C4b | exit, time |
+|---|---|---|---|
+| S1 smoke_am16_severity | PASS (31/31) | PASS (31/31) | 0, 3s |
+| S2 smoke_corruption_generator | PASS (148/148) | PASS (154/154) | 0, 54s |
+| S3 smoke_corruption_verify | PASS (40/40) | PASS (45/45) | 0, 12s |
+| smoke_corruption_protocol | CORRUPTION VOCABULARY FROZEN (33/33) | CORRUPTION VOCABULARY FROZEN (33/33) | 0, 3s |
+| smoke_corruption_vendor | PASS (102/102) | PASS (102/102) | 0, 3s |
+| smoke_eval_robustness | PASS (61/61) | PASS (61/61) | 0, 2s |
+| smoke_evaluate_corruptions | PASS (26/26) | PASS (26/26) | 0, 3s |
+| smoke_frozen_blobs | FROZEN BLOBS OK (10/10) | FROZEN BLOBS OK (10/10) | 0, 0s |
+
+- After the runs, the scoped status's sha256 was e3b0c442…b855: empty.
+- The five unchanged smokes kept the same check names as at STEP 8 (diffed log against log). S1 kept its 5 mutations, all killed.
+
+**S2: 148 → 154, from 87 cases and 61 mutants to 90 and 64.**
+- Added: N1–N4 and the four mutants in the table below.
+- Removed (LCC3): X26 ("a stem holding 'test' or ':' -> source_name_forbidden") and its mutant M-source_name_forbidden, both of which tested the removed gate.
+- Relabelled, count-neutral: P5 now states the storage value `<corruption>/s<severity>/<manifest_index:05d>.npy` (S2:728), as LCC1 restates TL section 3. The label change is C4b's.
+- **Fixture.** VAL image 141, one of the six that `--max-images 6` selects, is named syn_val_00141_zqmarker.jpg (MARKER S2:126, MARKED S2:128). Its p.name position stays 141, so every S2 and S3 cache holds a stem with the marker.
+- **N1** (S2:818; LCC3(a)). On a capped CLI cache and on an in-memory cache:
+  - every entry path matches `[a-z_]+/s[1-5]/\d{5}\.npy` (ITEM_PATH, S2:774, written in the smoke rather than read from the code);
+  - each path equals its entry's corruption, severity and source manifest_index (`index_path`, S2:777);
+  - the item files on disk are exactly the entry paths (`item_files` S2:782, `path_problems` S2:791);
+  - the two caches hold 144 and 8 items.
+- **N2** (S2:835; LCC3(b), LCC6).
+  - The cache root is walked three times: after a crash at 30 items, after the resume, and after a CLI repair (rc 0) of the marked source's fog s3 item.
+  - An in-memory cache with a marked stem is walked too.
+  - No created file or folder name holds "zqmarker", "test" or ":" (`names_holding`, S2:806).
+  - The case fails if no source holds the marker.
+- **N3** (S2:865; LCC3(c), resume). After a crash at 50 items, every journalled path is the index path. The resume keeps all 50, regenerates none and generates 94, and the checksum is the uninterrupted one.
+- **N4** (S2:885; LCC3(c), repair). The marked source's fog s3 item is tampered at its index path. `--repair` replaces it there (rc 0; its sha256 equals the recorded one), and no created name holds the marker.
+
+**S3: 40 → 45, from 23 cases and 17 mutants to 26 and 19.**
+- **V25** (S3:466). A re-sealed manifest whose first entry names its stem path is refused as `item_path_mismatch`, with zero listing or window reads and no record. The stem path is only a string; nothing is created there.
+- **V26** (S3:484). A fresh copy of the capped cache verifies: rc 0, one record. Every entry is at its index path, the item files are exactly those paths, and no created name holds the marker, "test" or ":".
+- **V27** (S3:499; C4b, DL-24 C4-N2). Three re-sealed manifests, each refused as `item_path_mismatch` with zero reads and no record:
+  - source 0 at manifest_index 100000, with its 24 entries at six-digit paths;
+  - an entry whose image_id no source holds;
+  - source 141's manifest_index written as the text "141".
+
+**The new mutations** (MEASURED from the STEP 4 logs; each killed by its named case's own check, and none of them raised):
+
+| smoke | mutation (registry line) | patched | killed by | the case's failing check |
+|---|---|---|---|---|
+| S2 | M-index width 4 (LCC3a) (S2:1647) | `item_relative_path` writes `{i:04d}` (`_width4`, S2:1547) | N1 | `['motion_blur/s1/0000.npy', 'motion_blur/s1/0141.npy', 'motion_blur/s1/0282.npy']` |
+| S2 | M-item path built from the stem (LCC3b) (S2:1648) | `write_entry` moves each item to `<corruption>/s<severity>/<stem>.npy` (`_stem_writer`, S2:1552) | N2 | after generation: `['brightness/s1/syn_val_00141_zqmarker.npy', …]` |
+| S2 | M-resume reading the stem path (LCC3c) (S2:1649) | `resume_keeps` looks at the stem path (`_resume_at_stem`, S2:1561) | N3 | `{'generated': 94, 'regenerated': 50, 'kept': 0}` |
+| S2 | M-repair reading the stem path (LCC3c) (S2:1650) | `repair_target` returns the stem path (`_repair_at_stem`, S2:1568) | N4 | rc=0, restored at the index path: False; marker names `['fog/s3/syn_val_00141_zqmarker.npy']` |
+| S3 | M-item_path_mismatch (entry paths trusted, LCC1) (S3:591) | `require_item_paths` a no-op | V25 | code=cache_file_missing, reads=7 |
+| S3 | M-index guard dropped (path comparison only, C4-N2) (S3:593) | `item_path_problems` without the integer and range guard (S3:546) | V27 | `[('sources_mismatch', 1, 0), ('TypeError', 0, 0), ('ValueError', 0, 0)]` |
+
+- Removed: S2's M-source_name_forbidden, which X26 killed until C3.
+- Mutation totals at C4b: S1 5, S2 64, S3 19, with 0 survived.
+
+**Refusal codes (REPOSITORY-PROVEN; Part 1's AST inventory, re-run at C4b).**
+- Still 69 codes at 83 raise sites.
+- Added: `item_path_mismatch` (src/corruption_cache.py:950). Its cases are S3 V25 and V27. Its mutations, M-item_path_mismatch and M-index guard dropped, are killed by those cases.
+- Removed: `source_name_forbidden`, which was raised at src/corruption_source.py:148 at C3.
+
+### 1b.5 The generator pin at C4b (`--print-pin --split val`; MEASURED)
+
+**The run.**
+- HEAD C4b, with the governed paths clean. Started 2026-10-16T15:34:41Z.
+- Command: `PYTHONDONTWRITEBYTECODE=1 <venv>/bin/python -B scripts/build_corruption_cache.py --print-pin --split val`.
+- Exit 0. Nothing on stderr. 1,869 B of output.
+
+**pin_sha256 = `47be6231c7c86b12f12f7845aad2575d494ce10781bebda0186f2b5bbfe00373`**
+
+```json
+{
+  "commit": "305bf3a60c4d3e3da5714ce7486372fb71ca527e",
+  "library_versions": {
+    "image_digest": "sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf",
+    "numpy": "1.26.4",
+    "pillow": "12.3.0",
+    "python": "3.11",
+    "scikit_image": "0.23.2"
+  },
+  "parameters": {
+    "cache_schema": "plantseg-corruption-cache/2.0.0",
+    "cells": [
+      "motion_blur_s1",
+      "motion_blur_s2",
+      "motion_blur_s3",
+      "motion_blur_s4",
+      "motion_blur_s5",
+      "gaussian_noise_s1",
+      "gaussian_noise_s2",
+      "gaussian_noise_s3",
+      "gaussian_noise_s4",
+      "jpeg_compression_s1",
+      "jpeg_compression_s2",
+      "jpeg_compression_s3",
+      "jpeg_compression_s4",
+      "jpeg_compression_s5",
+      "brightness_s1",
+      "brightness_s2",
+      "brightness_s3",
+      "brightness_s4",
+      "brightness_s5",
+      "fog_s1",
+      "fog_s2",
+      "fog_s3",
+      "fog_s4",
+      "fog_s5"
+    ],
+    "expected_images": 846,
+    "master_seed": 42,
+    "protocol": {
+      "path": "configs/corruption_protocol.json",
+      "schema_version": "plantseg-corruptions/2.0.0",
+      "sha256": "13860bd19ba0ae6b9c2a568749a6b1f9fbe76711a6d9bdc9e20559727f43c446"
+    },
+    "seed_policy_id": "plantseg-corruption-v1",
+    "source_resize": "core_preprocess/1.0.0 image path",
+    "split": "val",
+    "storage": {
+      "dtype": "uint8",
+      "format": "npy",
+      "layout": "HxWx3",
+      "relative_path": "<corruption>/s<severity>/<manifest_index:05d>.npy"
+    },
+    "vendor_runtime_sha256": "caad653555d6d4098c5b6c11d8e821f3c3a86eaf56cbeaca1603fc7d9237e90e"
+  },
+  "pin_sha256": "47be6231c7c86b12f12f7845aad2575d494ce10781bebda0186f2b5bbfe00373",
+  "schema": "plantseg-corruption-generator-pin/1.0.0",
+  "script": {
+    "git_blob": "f1811d037fc33baccb4580e3aafd98e3c5287e31",
+    "path": "scripts/build_corruption_cache.py"
+  }
+}
+```
+
+**Against C3's pin (Part 1 §5; MEASURED field by field).**
+- Besides `pin_sha256` itself, three fields differ: `commit`; `script.git_blob`, because LCC4a changed the builder; and `parameters.storage.relative_path`, which now states LCC1's rule.
+- Every other field is equal.
+- As in §5, the pin names its commit. R2 changes `commit` again, and L2 prints the pin at M1.
+
+### 1b.6 DL-24 R1-01, R3B2-01 and R4-01, resolved by the index rule
+
+**Part 1.** §8's R1-01 (minor: "item paths embed the stem; no TL§2 name check"), R3B2-01 (major) and R4-01 (major: "item names from stems vs TL§2") stood, and C3 fixed them with the stem gate `source_name_forbidden`.
+
+**Since C4.**
+- They are resolved at the root. No created path embeds a stem (LCC1), so neither "test" nor a TL§2 character in a stem can reach a created path, and the gate is gone (LCC2).
+- The evidence:
+  - S2 N1: every item path is index-only;
+  - S2 N2: no created name holds a marked stem after generation, resume or repair;
+  - S3 V26: a verified cache's paths and created names.
+
+**Open item 2 of Part 1 §12 is closed by C4.** A TEST stem can no longer refuse the TEST cache or appear in a path, and the pin's storage rule is index-based before TMAN freezes the pin.
+
+### 1b.7 The L2 draft: the lines that change (Part 1 §7)
+
+**Step 1.** The rule is unchanged: P is printed at M1. Its value changes with C4, through the storage rule and the builder's blob.
+
+**Item paths.**
+- A cache's items are `/cache/corr_cache_val_a/<corruption>/s<severity>/00000.npy` to `…/00845.npy`, and likewise under `_b`.
+- Item bytes and the 128-byte .npy header are unchanged, so the disk figures of §7 stand.
+
+**The stems paragraph is replaced by:**
+- "Stems are data only (LCC2). No VAL stem can refuse the run, whatever it holds, and no item path holds a stem: every item is `<corruption>/s<severity>/<manifest_index:05d>.npy` (LCC1)."
+- "Step 7 may count, as data, the stems that hold "test", ":" or another TL§2 character, and any two stems that are equal (C4-N4; open item 1b-2)."
+
+**The line "If step 2 refuses this way, L2 stops there: open item 2." is deleted.**
+
+**The Names line becomes:** "every root, record and item path is free of "test" and ":" (corr_cache_val_a and _b; journal/, verification/, repair/; items 00000.npy–00845.npy)."
+
+**Expected values.**
+- Unchanged: `"items": 20304`, 846 sources and 24 cells.
+- `canonical_manifest_sha256` and `inferential_cells_sha256` differ from any build before C4 (C4-N1). Runs A and B must still match each other.
+
+### 1b.8 The DL-24 verification workflow (STEP 3)
+
+**Method.**
+- One read-only workflow, `lcorr-b1c-dl24-review` (run wf_48f9ba13-bcd): one reviewer, then one adversarial verifier. Both were of type `Plan`, which has no edit or write tools. Two agents in all.
+- The scope was `git diff a508359 HEAD` with the scoped pathspec, at HEAD = C4.
+- The prompts carried the hard limits:
+  - reads by exact path of 12 named files, and Grep on those files only, with the test-path glob;
+  - Bash only for the exact scoped diff command and `git show <base>:<file>`, never piped;
+  - no docs/, no test-named path, no .claude/;
+  - no listing, no web fetch, nothing run, nothing written.
+- The verifier marked a finding refuted when the code did not substantiate it, when no real caller or input reached it, or when it restated a ruling without harm.
+
+**Before and after (MEASURED).**
+- Before (15:01:18Z) and after (15:30:03Z): HEAD dea11ee6…, an empty scoped porcelain (sha256 e3b0c442…), and the same sha256 for 21 files: `BEFORE == AFTER`.
+
+**Breaches.**
+- Neither agent reported a breach.
+- Both disclosed that the harness saved two large command outputs under .claude/ by itself, and that they did not open them.
+
+**Findings: 4, all notes, all standing, none refuted.**
+
+| finding | claim (short) | verdict | resolution |
+|---|---|---|---|
+| C4-N1 | Not only pin_sha256 and the canonical digest change: the 24 cell digests and the inferential digest change too. | stands (high) | Recorded in §1b.2; no code. The verifier corrected the claim: the manifest-file and record digests differ between any two runs anyway. |
+| C4-N2 | No case reaches the guard on the integer and five-digit index in `item_path_problems`, so a mutant without it survives. | stands (high) | C4b: S3 V27, and the mutant "M-index guard dropped", which V27 kills. |
+| C4-N3 | The verifier's docstring check list (:12–14) and scripts/evaluate_corruptions.py (:96–97, :105) omit `item_path_mismatch`. | stands (medium). The robustness.py part was refuted: `load_cached` never calls `load_manifest`. | The rulings bar these edits (LCC4, LCC5): open item 1b-1. |
+| C4-N4 | Two files with one stem (x.jpg and x.JPG) build, and every load then refuses them as `item_path_mismatch`. | stands (low): it predates C4, and C4 makes it fail closed earlier than the verifier did at C3 | Recorded as a data precondition: open item 1b-2. |
+
+### 1b.9 SL-1 and slips
+
+**SL-1 (MEASURED).** No line was added after 2026-10-16T12:51:03Z. The log holds the 26 lines of §9, checked again just before this commit.
+
+**Slips.**
+- **S-B14** (B1's STEP 9; found while writing this section). After writing this report into docs/, I read it back there: its first five lines (`head -n 5`), a byte comparison with its scratchpad source (`cmp`), and its `sha256sum`. These reads used neither the GO's docs form nor its list of docs files. Only my own new file was read. Here, Part 1b was appended with `cat >>` and checked with `git diff` on that one path.
+- **S-B15** (this session; command form, as S-B13). I searched named code files with shell `grep` where the GO's forms are `git grep` with the exclude or the Grep tool:
+  - scripts/build_corruption_cache.py and scripts/verify_corruption_cache.py while inspecting at the start;
+  - src/corruption_cache.py for `__all__`.
+
+  I also ran `awk` length filters over the changed files. Every target was named and none was test-named; nothing in docs/ was searched. The scratchpad's anchor and inventory scripts read named files in Python too.
+- **The builder clause.** I asked once whether to edit it, and ruling LCC4a answered. No other place in the builder changed.
+- **The worker restart.** The session's worker restarted at about 14:49Z, before any edit. The state was re-checked and nothing was lost.
+- **The stop hook.** After C4 it asked for a push. I reported that once and did not push; the GO's one push is STEP 6.
+
+### 1b.10 Open items
+
+1. **C4-N3.** Two texts that list `load_manifest`'s refusals do not name `item_path_mismatch`:
+   - scripts/verify_corruption_cache.py:12–14. LCC4 limits verifier edits to places that build or print an item path.
+   - scripts/evaluate_corruptions.py:96–97 and :105. LCC5 freezes the file; B-3 can add the code when it rewrites it.
+2. **C4-N4.** Unique stems within a split are a data precondition. Two files whose names differ only in the suffix's case share a stem. Such a split builds, and every load then refuses it as `item_path_mismatch`; it fails closed, never silently.
+   - L2's step 7 can count equal stems.
+   - A dedicated refusal would need a ruling, since it touches LCC2's "a stem is data only".
