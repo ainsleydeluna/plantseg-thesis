@@ -50,8 +50,9 @@ from scripts.synthetic_qat_fixtures import (confident_student, evaluator_driver,
 TMP = safe_tmpdir("smoke_e6kd_trigger_")
 ROOT = TMP / "data"
 make_tree(ROOT, n_train=5367, n_val=846, seed=5)            # the locked counts (configs/data.py); no TEST surface
+DIGEST = "sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf"   # the student image (LB7)
 os.environ["PLANTSEG_DATA_ROOT"] = str(ROOT)                 # before configs/data.py is first imported
-os.environ["PLANTSEG_IMAGE_DIGEST"] = "sha256:" + "6" * 64   # the evaluator records a non-null image digest
+os.environ["PLANTSEG_IMAGE_DIGEST"] = DIGEST                 # as the docker lines set it; the evaluator records it
 os.environ["SMOKE_REPO"] = str(REPO)
 
 import numpy as np  # noqa: E402
@@ -70,7 +71,6 @@ results: list[tuple[str, bool, str]] = []
 SECTIONS = ("inputs", "outputs", "d1", "artifacts", "gate", "e2e")
 HOST = "cloud-smoke"
 GT_SUM = 159_279_104
-DIGEST = "sha256:" + "6" * 64
 METRIC = "b" * 64
 E3_RUN_ID = "e3_s42_lambda0.5_alpha25_80k_a1"
 E3_CKPT = "e3_student_best_iter76000.pt"
@@ -339,6 +339,7 @@ def fx_repo() -> dict:
 
 
 def selection_record(rel: str, what: str) -> dict:
+    fx_repo()                                           # a case run alone (--only) builds the repository here
     fmt = Q.LAMBDA_SELECTION_FORMAT if what == "lambda" else Q.ALPHA_SELECTION_FORMAT
     return Q.read_tracked_selection(rel, sha_file(SELREPO / rel), fmt, what, SELREPO)
 
@@ -680,6 +681,14 @@ refusal_case("inputs", "refuses_host_label_empty",
 
 
 @case("inputs")
+def refuses_image_not_of_record():
+    with patched_env(PLANTSEG_IMAGE_DIGEST="sha256:" + "7" * 64):
+        got = score_code(inputs(TMP / "image_trigger"))
+    check("refuses_image_not_of_record", got == "image_not_of_record" and DIGEST == Q.IMAGE_DIGEST_OF_RECORD,
+          f"[{got}]")
+
+
+@case("inputs")
 def refuses_trigger_eval_dir_inside_repo():
     target = REPO / "trigger_eval_scratch"               # never created
     got = score_code(inputs(target))
@@ -853,7 +862,7 @@ def _manifest_broken(tdir: Path):
         fh.write("{}\n")
 
 
-for _name, _kw, _want in [
+for _i, (_name, _kw, _want) in enumerate([
     ("refuses_trigger_eval_format", dict(edit_doc=_fmt), "trigger_eval_format"),
     ("smoke_inputs_refused_for_record", dict(edit_doc=_smoke_flag), "trigger_eval_smoke_inputs"),
     ("refuses_eval_dir_mixed_commit", dict(edit_doc=_other_head), "trigger_eval_mismatch"),
@@ -861,8 +870,9 @@ for _name, _kw, _want in [
     ("refuses_scores_dir_contents", dict(after=_extra_score_dir), "scores_dir_contents"),
     ("refuses_summary_artifact_invalid", dict(after=_manifest_broken), "summary_artifact_invalid"),
     ("refuses_summary_sha256_mismatch", dict(edit_doc=_summary_sha), "summary_sha256_mismatch"),
-]:
-    refusal_case("outputs", _name, functools.partial(lambda n, kw: decided(f"o_{n}", **kw)[0], _name, _kw), _want)
+]):
+    # LB2: the trigger eval dir is named by its index in this list, never after its check
+    refusal_case("outputs", _name, functools.partial(lambda i, kw: decided(f"out_{i:02d}", **kw)[0], _i, _kw), _want)
 
 
 @case("outputs")
@@ -890,14 +900,14 @@ def refusal_writes_nothing():
 # ---- d1: the decision (decimal on the recorded values, strictly greater than 1.0 pp)
 @case("d1")
 def d1_drop_1_01_triggered():
-    code, doc, _ = decided("d1_101", e3=0.4001)
+    code, doc, _ = decided("dec_101", e3=0.4001)
     check("d1_drop_1_01_triggered", code is None and doc.get("triggered") is True and doc.get("drop_pp") == "1.0100",
           f"[{code}] triggered {doc.get('triggered')} drop_pp {doc.get('drop_pp')}")
 
 
 @functools.cache
 def d1_100() -> tuple:
-    return decided("d1_100", e3=0.40)
+    return decided("dec_100", e3=0.40)
 
 
 @case("d1")
@@ -909,14 +919,14 @@ def d1_drop_1_00_not_triggered():
 
 @case("d1")
 def d1_drop_0_50_not_triggered():
-    code, doc, _ = decided("d1_050", e3=0.395)
+    code, doc, _ = decided("dec_050", e3=0.395)
     check("d1_drop_0_50_not_triggered", code is None and doc.get("triggered") is False
           and doc.get("drop_pp") == "0.500", f"[{code}] triggered {doc.get('triggered')} drop_pp {doc.get('drop_pp')}")
 
 
 @case("d1")
 def d1_negative_drop_not_triggered():
-    code, doc, _ = decided("d1_neg", e3=0.38)
+    code, doc, _ = decided("dec_neg", e3=0.38)
     check("d1_negative_drop_not_triggered", code is None and doc.get("triggered") is False
           and doc.get("drop_pp") == "-1.00", f"[{code}] triggered {doc.get('triggered')} drop_pp {doc.get('drop_pp')}")
 
@@ -943,7 +953,7 @@ def d1_threshold_rule_recorded():
 
 @case("d1")
 def d1_e3_value_is_the_evaluator_score_not_best_json():
-    code, doc, _ = decided("d1_best", e3=0.4001)
+    code, doc, _ = decided("dec_best", e3=0.4001)
     check("d1_e3_value_is_the_evaluator_score_not_best_json", code is None and doc.get("e3_val") == 0.4001
           and (doc.get("e3") or {}).get("best_json_value_not_used") == E3_BEST,
           f"[{code}] e3_val {doc.get('e3_val')}")
@@ -991,7 +1001,7 @@ def decide_twice_identical_bytes():
 
 
 # ---- artifacts: the two summaries against the evaluator values of record
-for _name, _kw, _want in [
+for _i, (_name, _kw, _want) in enumerate([
     ("refuses_e3_summary_not_val", dict(s3={"split": "train"}), "summary_values"),
     ("refuses_e6_summary_not_val", dict(s6={"split": "train"}), "summary_values"),
     ("refuses_e3_summary_not_fp32", dict(s3={"precision": "int8_qat"}), "summary_values"),
@@ -1005,8 +1015,11 @@ for _name, _kw, _want in [
     ("refuses_e3_summary_not_the_checkpoint", dict(s3={"ck_sha": "9" * 64}), "summary_values"),
     ("refuses_e6_rescore_differs", dict(e6=0.3899), "e6_rescore_differs"),
     ("refuses_score_invalid", dict(s3={"value": 1.5}), "score_invalid"),
-]:
-    refusal_case("artifacts", _name, functools.partial(lambda n, kw: decided(f"a_{n}", **kw)[0], _name, _kw), _want)
+    ("refuses_summary_not_the_student_image", dict(s3={"digest": "sha256:" + "7" * 64}), "summary_values"),
+]):
+    # LB2: the trigger eval dir is named by its index in this list, never after its check
+    refusal_case("artifacts", _name, functools.partial(lambda i, kw: decided(f"art_{i:02d}", **kw)[0], _i, _kw),
+                 _want)
 
 
 # ---- gate: B-2's launch gate (read_trigger_record, trigger_binding)

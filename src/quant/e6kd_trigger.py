@@ -20,7 +20,8 @@
 The inputs, in the order they are checked; each failure is a named refusal and nothing is written:
   1. the names (SL-1): every directory flag, and decide's --out, on the given string and then on its resolved form
      (src/quant/qat.py names_test), before any filesystem call;
-  2. the five sha256 flags (64 lowercase hex) and the host label;
+  2. the five sha256 flags (64 lowercase hex), the host label, and the image of record: PLANTSEG_IMAGE_DIGEST names
+     the student image b80b645d (LB7), the image of E6's block B;
   3. the trigger eval dir: for score new or empty, outside the repository; for decide no STOP file and its
      trigger_eval.json present; and decide's --out, new and outside the repository;
   4. the λ and α selections: repo-relative, tracked and unchanged at HEAD, each with its pinned sha256
@@ -37,8 +38,9 @@ The inputs, in the order they are checked; each failure is a named refusal and n
      incomplete;
   8. the data root: TRAIN and VAL only (src/data/isolation.py).
 
-The smokes alone pass allow_smoke_inputs: it accepts a smoke-mode E6 run and capped evaluator rows, and it is recorded
-in every output; a trigger record that carries it is refused at launch (trigger_smoke_inputs).
+The smokes alone pass allow_smoke_inputs: it accepts a smoke-mode E6 run, capped evaluator rows and an image other than
+the student image, and it is recorded in every output; a trigger record that carries it is refused at launch
+(trigger_smoke_inputs).
 """
 
 from __future__ import annotations
@@ -216,6 +218,10 @@ def check_inputs(inp: TriggerInputs, *, purpose: str, repo_root: Path = REPO) ->
             _refuse("sha256_format", f"{flag} must be 64 lowercase hex characters, got {value!r}")
     if not inp.host_label or not str(inp.host_label).strip():
         _refuse("host_label", "--host-label is required (the host that scores, recorded in every output)")
+    image = (os.environ.get("PLANTSEG_IMAGE_DIGEST") or "").strip()
+    if image != Q.IMAGE_DIGEST_OF_RECORD and not smoke:
+        _refuse("image_not_of_record", f"PLANTSEG_IMAGE_DIGEST is {image or None!r}; the trigger runs in the student "
+                                       f"image {Q.IMAGE_DIGEST_OF_RECORD} (LB7), the image of E6's block B")
     # 3. the trigger eval dir and decide's --out
     from .runner import QuantRunError, check_output_dir
     if purpose == "score":
@@ -423,6 +429,9 @@ def summary_problems(s: dict, *, stage: str, precision: str, backend, checkpoint
             "run.eval_runtime.num_workers": ev["eval_runtime"]["num_workers"]}
     bad = [f"{k} = {_get(s, k)!r}, expected {v!r}" for k, v in want.items()
            if _get(s, k) != v or type(_get(s, k)) is not type(v)]
+    if not smoke and _get(s, "run.eval_runtime.image_digest") != Q.IMAGE_DIGEST_OF_RECORD:
+        bad.append(f"run.eval_runtime.image_digest = {_get(s, 'run.eval_runtime.image_digest')!r}, expected the "
+                   f"student image {Q.IMAGE_DIGEST_OF_RECORD} (LB7)")
     exp, act = _get(s, "dataset.expected_rows"), _get(s, "dataset.actual_rows")
     fwd = _get(s, "run.eval_runtime.forward_batches")
     if not smoke:
