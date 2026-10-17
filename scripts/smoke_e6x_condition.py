@@ -574,7 +574,8 @@ def _r_missing_pdl():
 @case("r_no_command", "missing_flags")
 def _r_no_cmd():
     rc, text = run_cli([])
-    return rc == 2 and result_of(text).startswith("RESULT: REFUSED [missing_flags]"), result_of(text)
+    return (rc == 2 and result_of(text).startswith("RESULT: REFUSED [missing_flags] -- a command is required")), \
+        result_of(text)
 
 
 @case("r_forbidden_path_run_dir", "forbidden_path")
@@ -630,8 +631,8 @@ def _r_out_arm():
 def _r_out_exists():
     out = write(new_out(), b"kept\n")
     rc, text = run_cli(record_argv(FX["run_yes"], out))
-    return (rc == 2 and result_of(text).startswith("RESULT: REFUSED [out_exists]") and out.read_bytes() == b"kept\n"
-            and len(list(out.parent.iterdir())) == 1), result_of(text)
+    return (rc == 2 and result_of(text).startswith(f"RESULT: REFUSED [out_exists] -- {out} exists: a condition record")
+            and out.read_bytes() == b"kept\n" and len(list(out.parent.iterdir())) == 1), result_of(text)
 
 
 @case("r_out_parent_missing", "out_parent_missing")
@@ -1101,11 +1102,20 @@ def _d_format_keys():
 @case("d_condition_format_nan", "condition_format")
 def _d_format_nan():
     data, rec, s = written_record()
-    rec["value"]["best_val_miou_all_class"] = float("nan")
+    rec["run_end"]["best_val_miou_all_class"] = float("nan")       # outside the value block: the strict parse
     path, s2 = record_file(rec)
     rc, text = print_dl(path, s2)
     return rc == 2 and result_of(text).startswith("RESULT: REFUSED [condition_format]") and b"NaN" in path.read_bytes(), \
         result_of(text)
+
+
+@case("d_condition_format_value", "condition_format")
+def _d_format_value():
+    data, rec, s = written_record()
+    rec["value"].update(best_val_miou_all_class=1.5, repr="1.5")    # strict JSON, outside [0, 1] (AQ4)
+    path, s2 = record_file(rec)
+    rc, text = print_dl(path, s2)
+    return rc == 2 and result_of(text).startswith("RESULT: REFUSED [condition_format]"), result_of(text)
 
 
 @case("d_condition_format_threshold", "condition_format")
@@ -1133,6 +1143,12 @@ def _d_void_no():
     path, s2 = record_file(rec)
     rc, text = print_dl(path, s2)
     return rc == 2 and result_of(text).startswith("RESULT: REFUSED [condition_void]"), result_of(text)
+
+
+@case("d_read_record_file_forbidden_path", "condition_forbidden_path")
+def _d_rf_forbid():
+    return api_refusal("condition_forbidden_path", C.read_record_file, FX["work"] / "latest_records" / "x.json",
+                       "0" * 64)
 
 
 @case("d_read_condition_sha256_format", "condition_sha256_format")
