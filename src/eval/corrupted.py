@@ -64,6 +64,8 @@ CORRUPTED_SPLITS = ("val", "test")
 #: Out-dir names (TL interface section 2): TEST `tday_corr_<file_id>_<cell id>` and
 #: `tday_clean_<file_id>`; a VAL rehearsal uses the same forms with the prefix `val`.
 OUT_PREFIX = {"test": "tday", "val": "val"}
+#: TL interface section 2: characters no created path holds inside a component.
+FORBIDDEN_NAME_CHARS = frozenset(':<>"\\|?*')
 
 
 def corrupted_dir_name(split: str, file_id: str, cell_id: str) -> str:
@@ -72,6 +74,27 @@ def corrupted_dir_name(split: str, file_id: str, cell_id: str) -> str:
 
 def clean_dir_name(split: str, file_id: str) -> str:
     return f"{OUT_PREFIX[split]}_clean_{file_id}"
+
+
+def path_text_problem(text: str) -> str | None:
+    """TL section 2 over one path string: "test" in any case anywhere, or a forbidden character
+    inside any component. A string check only."""
+    if "test" in text.lower():
+        return f"{text!r} holds 'test'"
+    bad = sorted({ch for part in Path(text).parts for ch in part} & FORBIDDEN_NAME_CHARS)
+    return f"{text!r} holds {''.join(bad)!r}" if bad else None
+
+
+def created_path_problem(path) -> str | None:
+    """TL section 2 for a path a run will create, with any missing parents: the path as given and
+    made absolute is checked as a string before any filesystem call, then its resolved form (a
+    symlink may lead elsewhere). Returns the reason, or None."""
+    raw = str(path)
+    for text in (raw, os.path.abspath(raw)):
+        problem = path_text_problem(text)
+        if problem:
+            return problem
+    return path_text_problem(os.path.realpath(raw))
 
 
 class CorruptedEvalError(RuntimeError):
@@ -284,17 +307,30 @@ def record_bytes(record: dict) -> bytes:
 
 
 def write_cell_record(path, record: dict) -> Path:
-    """Atomic: temporary sibling, fsync, os.replace. An existing record is refused."""
+    """Atomic: temporary sibling, fsync, os.replace. An existing record is refused, and a failed
+    write removes its own temporary file before the error propagates."""
     path = Path(path)
     if path.exists():
         _fail("record_exists", f"refusing to overwrite the cell record {path}")
     tmp = path.with_name(f".{path.name}.tmp-{os.getpid()}")
-    with open(tmp, "wb") as f:
-        f.write(record_bytes(record))
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp, path)
+    try:
+        with open(tmp, "wb") as f:
+            f.write(record_bytes(record))
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        _discard_tmp(tmp)
+        raise
     return path
+
+
+def _discard_tmp(tmp: Path) -> None:
+    """Remove this writer's own temporary file after a failed write (never another file)."""
+    try:
+        tmp.unlink()
+    except FileNotFoundError:
+        pass
 
 
 def read_cell_record(path) -> dict:
@@ -326,8 +362,9 @@ def verify_cell_record(out_dir, record: dict) -> None:
 
 
 __all__ = ["ARTIFACT_FOUR_FILES", "CACHE_KEYS", "CELL_RECORD_KEYS", "CELL_RECORD_SCHEMA", "CacheCell",
-           "CorruptedEvalError", "EVALUATOR_SCRIPT", "OUT_PREFIX", "PlantSegCorruptedEvalDataset",
-           "RECORD_SUFFIX", "artifact_file_hashes", "build_cell_record", "clean_dir_name",
-           "corrupted_canvas", "corrupted_dir_name", "read_cell_record", "record_bytes",
+           "CorruptedEvalError", "EVALUATOR_SCRIPT", "FORBIDDEN_NAME_CHARS", "OUT_PREFIX",
+           "PlantSegCorruptedEvalDataset", "RECORD_SUFFIX", "artifact_file_hashes",
+           "build_cell_record", "clean_dir_name", "corrupted_canvas", "corrupted_dir_name",
+           "created_path_problem", "path_text_problem", "read_cell_record", "record_bytes",
            "record_path", "sha256_file", "utc_iso", "verify_cell_record", "window",
            "write_cell_record"]

@@ -31,20 +31,30 @@ Identity and threads (LE2; rulings TL-6, IF-T1; the codes are LEFF's for evaluat
                                    run.eval_runtime.torch_num_threads must equal T before anything
                                    is written
 Under R (--split test with --artifact-status official) H, T, and for INT8 H2, are required. The
-teacher also keeps --teacher-ckpt-sha256 (DL-59), and under R H must equal it.
+teacher also keeps --teacher-ckpt-sha256 (DL-59), and under R H must equal it. A coded refusal is
+printed on stderr exactly as `[code] message`; an uncoded one (the clean runner's copied texts) is
+printed after its exception type.
 
 Guards (plan section 2.5): G1 --split test needs --confirm-test-split, checked before any path is
 read (the split defaults to val); G2 test refuses smoke; G3 test refuses --max-samples; G5 official:
-split test, 1,561 rows, an official pinned cache of 1,561 sources whose canonical checksum equals
---expected-cache-sha256, a matching verification record, clean governed paths, eval_runtime; G6
+split test, 1,561 rows (enforced by the split listing's locked count, the dataset's count guard and
+the cache's full-source check; official_launch_error is handed the constant), an official pinned
+cache of 1,561 sources whose canonical checksum equals --expected-cache-sha256, a matching
+verification record, clean governed paths, eval_runtime; G6
 provisional: a provisional or official pinned cache, --expected-cache-sha256 and a matching
 verification record; G7 an existing out-dir or record is refused; G8 an out-dir inside the
 repository is refused (inputs are never copied in, LE14); G9 the cache's split (from its pin) must
 be the requested split; G10 the protocol file must be the one the cache was generated under; G11
-the canvas protocol only. Stages A, F and G are refused by name before any file is read, and
-precision qat_fakequant_off (AM-4's clean-only score, lane L-FQOFF) is refused by name (LE15).
+the canvas protocol only. The out-dir follows TL section 2 (no "test" in any case, none of
+:<>"\\|?* in any component), checked as a string before any filesystem call and again resolved.
+Stages A, F and G are refused by name before any file is read, and precision qat_fakequant_off
+(AM-4's clean-only score, lane L-FQOFF) is refused by name (LE15). The teacher's NMF stream must
+be M4-V with seed 42 and draw once per row (LE11; `nmf_stream_mismatch`, `nmf_draws_mismatch`).
 
-Exit 0: the artifact and its record were written. Exit 2: refused; nothing was written.
+Exit 0: the artifact and its record were written. Exit 2: refused. Nothing was written, except when
+the cell record's write fails after the artifact: the artifact is then left without its record,
+which the grid runner STOPs on (`cell_left_partial_output`) and a restart refuses
+(`artifact_without_record`).
 """
 from __future__ import annotations
 
@@ -65,8 +75,8 @@ from src.corruption_cache import (MANIFEST_NAME, CorruptionCacheError, _strict_j
                                   load_manifest, protocol_block)
 from src.distill.teacher import sha256_format_error  # noqa: E402
 from src.eval.corrupted import (CacheCell, CorruptedEvalError,  # noqa: E402
-                                PlantSegCorruptedEvalDataset, build_cell_record, record_path,
-                                utc_iso, write_cell_record)
+                                PlantSegCorruptedEvalDataset, build_cell_record,
+                                created_path_problem, record_path, utc_iso, write_cell_record)
 from src.eval.robustness import (RobustnessError, load_cached_corruption,  # noqa: E402
                                  registered_corruptions, validate_condition)
 from src.eval.stage_artifacts import (OFFICIAL_ROWS, OFFICIAL_SPLIT,  # noqa: E402
@@ -82,7 +92,8 @@ EXPECTED_SPLIT_ROWS = {"val": 846, "test": 1561}
 PINNED_STATUSES = ("official", "provisional")
 CANVAS = "canvas"
 _HEX64 = re.compile(r"[0-9a-f]{64}")
-_INVALID_NAME_CHARS = set(':<>"/\\|?*')
+#: The teacher's stream under M4-V (src/distill/nmf_stream.py: M4_NMF_SEED; LE11).
+M4V_POLICY, M4V_SEED = "M4-V", 42
 
 
 class CorruptionCliError(RuntimeError):
@@ -323,11 +334,12 @@ def apply_threads(args):
 def check_outputs(out_dir_arg):
     """G7, G8 and the TL section 2 name rule, before any input is read. Returns (out_dir, record)."""
     raw = os.path.abspath(str(out_dir_arg))
-    name = os.path.basename(raw)
-    if "test" in raw.lower() or not name or set(name) & _INVALID_NAME_CHARS:
+    problem = created_path_problem(out_dir_arg) or (None if os.path.basename(raw) else
+                                                    f"{raw!r} names no directory")
+    if problem:
         _refuse("out_dir_name_invalid",
-                f"the out-dir {raw!r} holds 'test' or a character the TL interface section 2 "
-                "forbids; no created path may")
+                f"the out-dir {problem}; TL interface section 2 forbids 'test' in any case and "
+                ":<>\"\\|?* in any component of a created path")
     out_dir = Path(raw).resolve()
     if REPO == out_dir or REPO in out_dir.parents:
         _refuse("out_dir_inside_repo", "artifacts are never written inside the repository")
@@ -403,26 +415,37 @@ def resolve_corruption_cache(cache_root, corruption: str, severity: int, *, spli
     generated under the current protocol file (G10).
     """
     status = artifact_status or ("official" if official else "smoke")
-    cache = CorruptionCacheError
     root = Path(cache_root).resolve()
     if not root.is_dir():
-        _refuse("cache_root_missing", f"corruption cache not found: {root}", cache)
+        _refuse("cache_root_missing", f"corruption cache not found: {root}", CorruptionCacheError)
 
     manifest = load_manifest(root)   # schema, checksum, seed policy, vendor SHA, item paths
+    check_cache_request(manifest, [(corruption, severity)], split=split, status=status,
+                        expected_sha256=expected_sha256)
+    return manifest
 
+
+def check_cache_request(manifest: dict, cells, *, split: str, status: str,
+                        expected_sha256: str | None = None) -> None:
+    """The request-level gates on a loaded manifest, for every (corruption, severity) in `cells`,
+    in this order: G9 the split (from the pin); coverage per cell; G5 completeness for an official
+    run; G5 and G6 the status, the pin and the expected checksum; G10 the protocol file. The grid
+    runner calls it once at start for every planned cell (scripts/run_corruption_grid.py)."""
+    cache = CorruptionCacheError
     held = cache_split(manifest)
     if held != split:
         _refuse("cache_split_mismatch", f"cache was built for split {held!r}, evaluating "
                                         f"{split!r}", cache)
-    wanted = None
-    try:
-        wanted = corruption_roles.cell_id(corruption, severity)
-    except corruption_roles.CorruptionRolesError as e:
-        _refuse("cache_cell_absent", str(e), cache)
-    cells = [c.get("cell_id") for c in manifest.get("cells") or []]
-    if wanted not in cells:
-        _refuse("cache_cell_absent", f"the cache holds no cell {wanted!r}; its cells are {cells}",
-                cache)
+    have = [c.get("cell_id") for c in manifest.get("cells") or []]
+    for corruption, severity in cells:
+        wanted = None
+        try:
+            wanted = corruption_roles.cell_id(corruption, severity)
+        except corruption_roles.CorruptionRolesError as e:
+            _refuse("cache_cell_absent", str(e), cache)
+        if wanted not in have:
+            _refuse("cache_cell_absent", f"the cache holds no cell {wanted!r}; its cells are "
+                                         f"{have}", cache)
     if status == "official" and manifest.get("source_image_count") != OFFICIAL_ROWS:
         _refuse("cache_incomplete_for_official",
                 f"an official robustness run requires the full cached test split "
@@ -450,7 +473,6 @@ def resolve_corruption_cache(cache_root, corruption: str, severity: int, *, spli
         _refuse("protocol_changed_since_generation",
                 f"the cache was generated under protocol {manifest.get('protocol')}, the current "
                 f"file is {current}", cache)
-    return manifest
 
 
 def check_verification_record(cache_root, manifest: dict, record, *, artifact_status: str):
@@ -526,16 +548,21 @@ def cached_image_loader(cache_root, manifest: dict, corruption: str, severity: i
     return _load
 
 
+def refusal_line(e: Exception) -> str:
+    """LE2: a coded refusal prints exactly `[code] message`; an uncoded one keeps its type."""
+    code, text = getattr(e, "code", None), str(e)
+    if isinstance(code, str):
+        return text if text.startswith(f"[{code}] ") else f"[{code}] {text}"
+    return f"{type(e).__name__}: {text}"
+
+
 def main(argv=None) -> int:
     started = utc_iso()
     args = build_parser().parse_args(argv)
     try:
         out = run(args, started_utc=started)
     except Exception as e:                                # noqa: BLE001 -- reported, not swallowed
-        code, text = getattr(e, "code", None), str(e)
-        if isinstance(code, str) and not text.startswith(f"[{code}]"):
-            text = f"[{code}] {text}"
-        print(f"{type(e).__name__}: {text}", file=sys.stderr)
+        print(refusal_line(e), file=sys.stderr)
         return 2
     summary = json.loads((Path(out) / "summary.json").read_text(encoding="utf-8"))
     am5 = summary.get("am5") or {}
@@ -563,7 +590,7 @@ def run(args, *, teacher_builder=None, counters=None, started_utc=None) -> Path:
                                    deterministic_subset, load_class_map)
     from src.eval.artifacts import (prepare_artifact_request, validate_artifact_request,
                                     write_artifact)
-    from src.eval.eval_runtime import (EVAL_NUM_WORKERS, EvalRuntimeError, ModelDeviceForward,
+    from src.eval.eval_runtime import (EVAL_NUM_WORKERS, ModelDeviceForward,
                                        apply_eval_determinism, build_eval_runtime_record,
                                        check_post_eval, determinism_required,
                                        evaluate_capturing_warnings, resolve_model_device)
@@ -670,10 +697,9 @@ def run(args, *, teacher_builder=None, counters=None, started_utc=None) -> Path:
     else:
         model, ck_info = load_student_checkpoint(args.checkpoint, map_location=args.device)
         if ck_info.sha256 != ckpt_sha:
-            raise EvalRuntimeError(
-                "checkpoint_changed_after_validation",
-                f"checkpoint bytes changed between validation ({ckpt_sha}) and load "
-                f"({ck_info.sha256})")
+            _refuse("checkpoint_changed_after_validation",
+                    f"checkpoint bytes changed between validation ({ckpt_sha}) and load "
+                    f"({ck_info.sha256})", CorruptedEvalError)
 
     model_device = resolve_model_device(args.device, cpu_only=cpu_only)
     fwd = ModelDeviceForward(model_device)
@@ -697,8 +723,13 @@ def run(args, *, teacher_builder=None, counters=None, started_utc=None) -> Path:
     if is_teacher:
         nmf = model.teacher.nmf_stream_state()
         if nmf is not None:
-            print(f"M4-V NMF stream: {nmf['draws']} draws for {rows} rows "
+            print(f"NMF stream {nmf['policy']}: {nmf['draws']} draws for {rows} rows "
                   f"(seed {nmf['seed']}, state {nmf['state_sha256'][:16]})")
+            if (nmf["policy"], nmf["seed"]) != (M4V_POLICY, M4V_SEED):
+                _refuse("nmf_stream_mismatch",
+                        f"the teacher's NMF stream is {nmf['policy']} with seed {nmf['seed']}; "
+                        f"scoring is {M4V_POLICY} with seed {M4V_SEED}; nothing was written",
+                        CorruptedEvalError)
             if nmf["draws"] != rows:
                 _refuse("nmf_draws_mismatch",
                         f"the teacher drew {nmf['draws']} NMF bases for {rows} rows; M4-V draws "
@@ -719,9 +750,10 @@ def run(args, *, teacher_builder=None, counters=None, started_utc=None) -> Path:
     return out
 
 
-__all__ = ["CorruptionCliError", "STAGES", "build_parser", "cache_split", "cached_image_loader",
-           "check_cache_sources", "check_outputs", "check_verification_record", "main",
-           "registered_corruptions", "resolve_corruption_cache", "run", "validate_args"]
+__all__ = ["CorruptionCliError", "M4V_POLICY", "M4V_SEED", "STAGES", "build_parser", "cache_split",
+           "cached_image_loader", "check_cache_request", "check_cache_sources", "check_outputs",
+           "check_verification_record", "main", "refusal_line", "registered_corruptions",
+           "resolve_corruption_cache", "run", "validate_args"]
 
 
 if __name__ == "__main__":
