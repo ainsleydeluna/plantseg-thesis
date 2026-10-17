@@ -505,7 +505,8 @@ def _w_print():
     s = sha(data)
     rc2, text2 = print_dl(out, s)
     ok = (rc == 0 and rc2 == 0 and dl_of(text2) == dl_of(text) != ""
-          and result_of(text2) == f"RESULT: DL TEXT (E6-R1, verdict yes, record {s[:12]})")
+          and result_of(text2) == f"RESULT: DL TEXT (E6-R1, verdict yes, record {s[:12]}; read from the file at "
+                                  "--record)")
     return ok, result_of(text2)
 
 
@@ -566,6 +567,18 @@ def _deadline_before_midnight(t: float):
 MIDNIGHT = datetime(2026, 10, 19, 16, 0, 0, tzinfo=timezone.utc).timestamp()       # 2026-10-20 00:00 Manila
 case("w_deadline_fraction_before_manila_midnight")(_deadline_before_midnight(MIDNIGHT - 1 + 0.999))
 case("w_deadline_last_float_before_manila_midnight")(_deadline_before_midnight(math.nextafter(MIDNIGHT, 0.0)))
+
+
+@case("w_print_dl_committed_copy")
+def _w_print_committed():
+    rc, text, out, data = record_ok()
+    s = sha(data)
+    root = make_records(files={COND_REL: data})              # Ice's byte-equal copy, committed (AQ2)
+    rc2, text2 = run_cli(["print-dl", "--record", COND_REL, "--record-sha256", s], root)
+    ok = (rc == 0 and rc2 == 0 and dl_of(text2) == dl_of(text) != ""
+          and result_of(text2) == f"RESULT: DL TEXT (E6-R1, verdict yes, record {s[:12]}; read from the committed copy "
+                                  "at HEAD)")
+    return ok, result_of(text2)
 
 
 @case("w_read_condition_accepts")
@@ -1314,6 +1327,23 @@ def _d_rc_sha():
     data, rec, s = written_record()
     root = make_records(files={COND_REL: data})
     return api_refusal("condition_sha256_mismatch", C.read_condition, COND_REL, "0" * 64, repo_root=root)
+
+
+@case("d_print_dl_committed_other_record", "condition_sha256_mismatch")
+def _d_pdl_other():
+    data_a, _, s_a = written_record()                         # printed from one record, another one committed
+    data_b, _, _ = written_record(FX["run_no"])
+    rc, text = run_cli(["print-dl", "--record", COND_REL, "--record-sha256", s_a],
+                       make_records(files={COND_REL: data_b}))
+    return rc == 2 and result_of(text).startswith("RESULT: REFUSED [condition_sha256_mismatch]"), result_of(text)
+
+
+@case("d_print_dl_path_not_of_record", "condition_path_not_of_record")
+def _d_pdl_path():
+    data, rec, s = written_record()
+    other = "reports/arms/e6x_condition_R1_copy.json"         # committed and byte-equal, at another path
+    rc, text = run_cli(["print-dl", "--record", other, "--record-sha256", s], make_records(files={other: data}))
+    return rc == 2 and result_of(text).startswith("RESULT: REFUSED [condition_path_not_of_record]"), result_of(text)
 
 
 # ================================================================== h_: hygiene (run last)

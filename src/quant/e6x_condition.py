@@ -697,3 +697,15 @@ def read_condition(rel_path, expect_sha256, repo_root=None) -> tuple[dict, str]:
     if sha != expect_sha256:
         _refuse("condition_sha256_mismatch", f"{rel.as_posix()} has sha256 {sha}, expected {expect_sha256}")
     return parse_record(data), sha
+
+
+def read_committed_record(rel_path, expect_sha256) -> tuple[dict, str]:
+    """print-dl on the committed copy (a repo-relative --record): read_condition (tracked and unchanged at HEAD, the
+    expected sha256), at the path of record for its arm, which the decision-log text names (AQ2)."""
+    rec, sha = read_condition(rel_path, expect_sha256)
+    want = RECORD_REL.format(arm=rec["arm"])
+    if Path(str(rel_path)).as_posix() != want:
+        _refuse("condition_path_not_of_record", f"{rel_path!r} is not {want}, the path where {rec['stage']}'s "
+                                                "condition record is committed (AQ2) and that its decision-log text "
+                                                "names")
+    return rec, sha

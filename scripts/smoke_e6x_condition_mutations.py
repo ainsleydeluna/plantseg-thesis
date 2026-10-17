@@ -285,7 +285,12 @@ RAW = [
     ("C", "read_condition", [("    if head != data:", "    if False:")],
      ("d_read_condition_changed_since_head",), "the unchanged-since-HEAD check removed"),
     ("C", "read_condition", [("    if sha != expect_sha256:", "    if False:")],
-     ("d_read_condition_sha256_mismatch",), "read_condition's sha256 not compared"),
+     ("d_read_condition_sha256_mismatch", "d_print_dl_committed_other_record"), "read_condition's sha256 not compared"),
+    ("CLI", "cmd_print_dl", [("    if Path(args.record).is_absolute():", "    if True:")],
+     ("w_print_dl_committed_copy", "d_print_dl_committed_other_record"),
+     "print-dl reads a repo-relative --record as a file, not as the committed copy"),
+    ("C", "read_committed_record", [("    if Path(str(rel_path)).as_posix() != want:", "    if False:")],
+     ("d_print_dl_path_not_of_record",), "the committed copy's path not checked"),
     # ---- the order of the gates (the plan §4.2: the forbidden-name check before any file call)
     ("C", "record_condition", [("    check_names(args, RECORD_PATH_FLAGS)", "    pass"),
                                ("    meta, meta_data = run_meta_row(d)\n",

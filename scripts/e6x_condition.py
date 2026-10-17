@@ -10,7 +10,9 @@
       and RESULT: E6-<X> CONDITION yes|no.
   python -B scripts/e6x_condition.py print-dl --record PATH --record-sha256 HEX
       The same decision-log text, from a record and its expected sha256 (the record re-checked, its verdict
-      recomputed from its value).
+      recomputed from its value). A repo-relative PATH is the committed copy, read through read_condition (tracked
+      and unchanged at HEAD) at reports/arms/e6x_condition_<X>.json; an absolute PATH (the record at --out, before
+      it is committed) is read as a file. RESULT names which.
 
 Exit: 0 written (yes or no) or printed; 1 STOP; 2 refused; 3 E3-X incomplete (no run_end); 4 error. Nothing is
 written but the record, last. The gates, the record and the readers: src/quant/e6x_condition.py.
@@ -59,10 +61,15 @@ def cmd_record(args) -> int:
 def cmd_print_dl(args) -> int:
     C.check_flags(args, C.PRINT_FLAGS)
     C.check_names(args, ("record",))
-    rec, sha = C.read_record_file(args.record, args.record_sha256)
+    if Path(args.record).is_absolute():
+        rec, sha = C.read_record_file(args.record, args.record_sha256)
+        source = "the file at --record"
+    else:
+        rec, sha = C.read_committed_record(args.record, args.record_sha256)
+        source = "the committed copy at HEAD"
     print(DL_HEADER)
     print(C.dl_text(rec, sha))
-    print(f"RESULT: DL TEXT ({rec['stage']}, verdict {rec['verdict']}, record {sha[:12]})")
+    print(f"RESULT: DL TEXT ({rec['stage']}, verdict {rec['verdict']}, record {sha[:12]}; read from {source})")
     return C.EXIT_WRITTEN
 
 
