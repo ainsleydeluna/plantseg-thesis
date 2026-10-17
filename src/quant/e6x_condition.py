@@ -55,8 +55,9 @@ The gates of `record`, in order. Each refusal exits 2 (RESULT: REFUSED [<code>])
        run_end's best and best_ckpt equal best.json's
                           best_json_format, value_invalid, checkpoint_missing, payload_mismatch, run_end_mismatch
   G10  reports/kd_launch_log.jsonl at HEAD (sweep_select.load_launch_log and its codes): the run's launch and launched
-       lines and no stopped line; PL-14's fields (sweep_select.check_run_against_log :1809-1815) with the arm's run
-       stage for stage, and sweep null                                       launch_log (the field named)
+       lines, no stopped line, and no later launch line of its group (the last attempt: AM-8a's repeat replaces the
+       run it repeats); PL-14's fields (sweep_select.check_run_against_log :1809-1815) with the arm's run stage for
+       stage, and sweep null                                                 launch_log (the field named)
 Then the verdict, and the record written exclusively and read back (a difference: exit 1, STOP [write_mismatch]).
 """
 
@@ -449,6 +450,13 @@ def best_checkpoint(d: Path, spec, end: dict) -> dict:
 
 
 # ------------------------------------------------------------------ G10: the launch log at HEAD
+def _launch_group(line: dict) -> tuple:
+    """The attempts of one grid point share stage, seed, horizon, lambda_logit and alpha_cwd (sweep_select.LaunchLog's
+    attempt rule)."""
+    num = (lambda x: None if x is None else float(x))  # noqa: E731
+    return line["stage"], line["seed"], line["horizon"], num(line["lambda_logit"]), num(line["alpha_cwd"])
+
+
 def launch_binding(root: Path, d: Path, m: dict, meta_data: bytes, spec) -> dict:
     """G10: the run's lines in the committed KD launch log (PL-13/PL-14), with the arm's run stage for stage."""
     try:
@@ -463,6 +471,11 @@ def launch_binding(root: Path, d: Path, m: dict, meta_data: bytes, spec) -> dict
         _refuse("launch_log", f"launched: {SS.LAUNCH_LOG_REL} at HEAD has no launched line for {rid}")
     if rid in log.stopped:
         _refuse("launch_log", f"stopped: {SS.LAUNCH_LOG_REL} names {rid} stopped, which no complete run is")
+    later = [r for r in log.order[log.order.index(rid) + 1:] if _launch_group(log.launch[r]) == _launch_group(line)]
+    if later:
+        _refuse("launch_log", f"attempt: {rid} is attempt {line['attempt']} of its grid point, and {later[0]} was "
+                              "launched after it: a repeat replaces the run it repeats (AM-8a), so this run is not "
+                              f"{spec.run_stage} of record")
     fields = (
         ("run_meta_sha256", Q.sha256_bytes(meta_data), ld["run_meta_sha256"]),
         ("git_head", m.get("git_head"), ld["git_head"]),

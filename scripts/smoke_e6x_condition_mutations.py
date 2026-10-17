@@ -222,6 +222,10 @@ RAW = [
      ("r_launch_log_launched",), "the launched-line check removed"),
     ("C", "launch_binding", [("    if rid in log.stopped:", "    if False:")],
      ("r_launch_log_stopped",), "the stopped-line check removed"),
+    ("C", "launch_binding", [("    if later:", "    if False:")],
+     ("r_launch_log_attempt",), "the last-attempt check removed"),
+    ("C", "_launch_group", [('line["stage"], line["seed"]', 'line["seed"]')],
+     ("w_yes_written",), "the stage left out of a launch line's group (E3-R2's later line then replaces E3-R1)"),
     *[("C", "launch_binding", _skip(k, SAME_META), (f"r_launch_log_{k}",), f"PL-14's {k} not compared")
       for k in LOG_KEYS],
     # ---- the record, its deadline and its decision-log text (AQ3, AQ7)

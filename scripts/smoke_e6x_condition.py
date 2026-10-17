@@ -1042,6 +1042,15 @@ def _r_log_stopped():
     return refusal("launch_log", records=root, field="stopped:")
 
 
+@case("r_launch_log_attempt", "launch_log")
+def _r_log_attempt():
+    rid2 = FX["run_id"]["R1"][:-1] + "2"                     # the same grid point's attempt 2, launched after it
+    again = launch_line("R1", run_id=rid2, attempt=2, ckpt_dir=f"/workspace/kd_runs/{rid2}",
+                        am8a_report={"path": "reports/am8a_e3-r1.md", "sha256": "0" * 64})
+    root = make_records(files={SS.LAUNCH_LOG_REL: jl(base_log(extra=[again]))})
+    return refusal("launch_log", records=root, field="attempt:")
+
+
 LOG_FIELD_CASES = {
     "run_meta_sha256": ({}, {"run_meta_sha256": "0" * 64}),
     "git_head": ({"code_pin": "c" * 40}, {"git_head": "c" * 40}),       # code_pin agrees: git_head alone differs
