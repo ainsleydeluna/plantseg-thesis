@@ -1,0 +1,81 @@
+{
+  "format": "arm_go_rule/1",
+  "arm": "R1",
+  "verdict": "go",
+  "rule": {
+    "val_gate": 0.38576993346214294,
+    "val_floor": 0.37576993346214294,
+    "reproduction_tolerance": 1e-05,
+    "text": "VAL_X > val_gate, or VAL_X >= val_floor and ECE_X < ECE_B (AM-18 item 5)"
+  },
+  "values": {
+    "val_x": 0.38849374651908875,
+    "ece_x": 0.051708213712213985,
+    "ece_b": 0.06987759559974,
+    "ece_item1b": 0.06987759559974,
+    "control_all_class_miou": 0.38576993346214294,
+    "control_reproduced": true,
+    "reprs": {
+      "val_x": "0.38849374651908875",
+      "ece_x": "0.051708213712213985",
+      "ece_b": "0.06987759559974",
+      "control_all_class_miou": "0.38576993346214294"
+    }
+  },
+  "conditions": {
+    "val_x_gt_val_gate": true,
+    "val_x_ge_val_floor": true,
+    "ece_x_lt_ece_b": true
+  },
+  "checkpoint": {
+    "name": "iter_20000.pth",
+    "sha256": "1535c2895ed68faad70e581783c51ae32d8bbc99c387763b4bac562853bd7ea3",
+    "bytes": 446306945
+  },
+  "teacher_record": {
+    "path": "reports/arms/arm_teacher_record_R1.json",
+    "sha256": "6933fbe0632fac79962695b1e2c31e9480973b6bb44dee9cd8e522826fe940d5"
+  },
+  "inputs": {
+    "arm_output": {
+      "path": "/in/arm/teacher_d2_arm-R1_20261016T055955Z.json",
+      "sha256": "620a54d1d4a657c4e8e8793dec0458e5ee35b43f14934f83cc182b6cc2e89d6c"
+    },
+    "control_output": {
+      "path": "/in/ctl/teacher_d2_control_20261016T053906Z.json",
+      "sha256": "2cfba110a80febc972e60664b655f17a5189af60d1265f0bca47276902c2f1bb"
+    },
+    "item1b_output": {
+      "path": "/in/item1b/teacher_d2_20261006T232849Z.json",
+      "sha256": "11388e5f96c1ab483c8e90b6734d2b24be63f7e294127131aece7a0bc8ca668e",
+      "row": {
+        "dl": "DL-92",
+        "head": "2b3b55651e8092fd7fff6e786b73d971096deb17",
+        "row_sha256": "9cadce137c985bfd4240a119de5e2be69cd9803f159705dd1a5d9ac94c6d8010"
+      }
+    }
+  },
+  "session": {
+    "hosts": {
+      "item1b": "13th Gen Intel(R) Core(TM) i7-1360P",
+      "control": "13th Gen Intel(R) Core(TM) i7-1360P",
+      "arm": "13th Gen Intel(R) Core(TM) i7-1360P"
+    },
+    "hostnames": {
+      "item1b": "0841566e3104",
+      "control": "ba86945a7b7a",
+      "arm": "a003d8d80456"
+    },
+    "host_fault": null,
+    "commit": "e38f4c34760583d54b2fe1ff608ce122ac1f0cb4",
+    "control_end_utc": "2026-10-16T05:59:48Z",
+    "arm_start_utc": "2026-10-16T05:59:55Z",
+    "void_session": null
+  },
+  "writer": {
+    "script_rel": "scripts/arm_go_rule.py",
+    "script_sha256": "b3f0879477c553bd1aaf8790d151093bae4ddced02a327e34c74ae4d59b86e1c",
+    "commit": "2b3b55651e8092fd7fff6e786b73d971096deb17"
+  },
+  "generated_utc": "2026-10-16T06:54:28Z"
+}
