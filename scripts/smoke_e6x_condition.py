@@ -551,6 +551,23 @@ def _w_dl_after():
     return ok, str(dd)
 
 
+def _deadline_before_midnight(t: float):
+    def fn():
+        rc, text, out, data = record_ok(run_with_end(wall_clock_end=t))
+        dd = json.loads(data)["dl_deadline"] if data else {}
+        ok = (rc == 0 and dd["run_end_wall_clock_end"] == t
+              and (dd["run_end_utc"], dd["run_end_manila_date"], dd["enter_by_manila_date"], dd["enter_by_end_utc"])
+              == ("2026-10-19T15:59:59Z", "2026-10-19", "2026-10-20", "2026-10-20T16:00:00Z")
+              and "by the end of 2026-10-20 (Asia/Manila)" in dl_of(text))
+        return ok, str(dd)
+    return fn
+
+
+MIDNIGHT = datetime(2026, 10, 19, 16, 0, 0, tzinfo=timezone.utc).timestamp()       # 2026-10-20 00:00 Manila
+case("w_deadline_fraction_before_manila_midnight")(_deadline_before_midnight(MIDNIGHT - 1 + 0.999))
+case("w_deadline_last_float_before_manila_midnight")(_deadline_before_midnight(math.nextafter(MIDNIGHT, 0.0)))
+
+
 @case("w_read_condition_accepts")
 def _w_read():
     data, rec, s = written_record()

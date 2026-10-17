@@ -484,8 +484,10 @@ def launch_binding(root: Path, d: Path, m: dict, meta_data: bytes, spec) -> dict
 
 # ------------------------------------------------------------------ the record
 def deadline(wall_clock_end: float) -> dict:
-    """AQ7: the entry deadline from run_end's time, never a clock: the end of the Manila day after run_end's."""
-    end = datetime.fromtimestamp(wall_clock_end, timezone.utc)
+    """AQ7: the entry deadline from run_end's time, never a clock: the end of the Manila day after run_end's. The time
+    is taken in whole seconds, floored: datetime.fromtimestamp rounds to the microsecond, which would date the last
+    half microsecond before Manila midnight to the next day (DL-24 NUM-3)."""
+    end = datetime.fromtimestamp(math.floor(wall_clock_end), timezone.utc)
     day = end.astimezone(SS.MANILA).date()
     enter_by = day + timedelta(days=1)
     closes = datetime.combine(enter_by + timedelta(days=1), day_start(0, 0), tzinfo=SS.MANILA)
