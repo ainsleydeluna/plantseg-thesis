@@ -140,6 +140,12 @@ RAW = [
      ("r_selection_format_winner_lambda",), "the λ winner's lambda not checked"),
     ("C", "selections", [("    if not (isinstance(best, float) and repr(best) == THRESHOLD):", "    if False:")],
      ("r_threshold_mismatch",), "the threshold not checked against the α winner"),
+    ("C", "amendment_on_record", [("    if THRESHOLD not in section:", "    if False:")],
+     ("r_amendment_not_committed",), "AM-23's commit not checked"),
+    ("C", "amendment_on_record", [("Q._git_head_bytes(root, PREREG_REL)", "(root / PREREG_REL).read_bytes()")],
+     ("r_amendment_uncommitted",), "the amendments file read from the working tree, not at HEAD"),
+    ("C", "amendment_on_record", [("else text[m.start():end]", "else text[m.start():]")],
+     ("r_amendment_without_threshold",), "the AM-23 section not bounded by the next heading"),
     # ---- G6
     ("C", "teacher_record", [(TEACHER_READ, WORKING_TREE_READ)],
      ("r_teacher_record_uncommitted", "r_teacher_record_missing"),

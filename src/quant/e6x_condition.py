@@ -36,8 +36,10 @@ The gates of `record`, in order. Each refusal exits 2 (RESULT: REFUSED [<code>])
        path is clean at it   expect_head_format, code_identity_unavailable, expect_head_mismatch, code_not_clean
   G4   the arm: the one registered kd_arm/1 entry (kd_arms.load_arms) whose arm teacher is X   arm_spec, arm_unknown
   G5   the λ and α selections of record, tracked and unchanged at HEAD with their sha256 (qat.read_tracked_selection
-       and its codes), with finite winner values; the α winner's best_val is THRESHOLD
-                          selection_not_of_record, selection_format, threshold_mismatch
+       and its codes), with finite winner values; the α winner's best_val is THRESHOLD; AM-23 committed at HEAD (in
+       force from its commit): docs/PREREGISTRATION_AMENDMENTS.md holds an AM-23 section carrying THRESHOLD
+       (scripts/preflight_distill.py's am7a_not_on_record pattern, MG-1)
+                          selection_not_of_record, selection_format, threshold_mismatch, amendment_not_committed
   G6   reports/arms/arm_teacher_record_<X>.json committed at HEAD: arm_teacher_record/1, arm X, status complete, a
        selected checkpoint sha256   teacher_record_missing, teacher_record_uncommitted, teacher_record_invalid
   G7   the run directory: absolute, outside the repository, named <arm>_s42_<...>, holding e3_run_meta.jsonl,
@@ -106,6 +108,8 @@ ALPHA_SELECTION_REL = "reports/derived/alpha_selection.json"
 TEACHER_RECORD_REL = "reports/arms/arm_teacher_record_{arm}.json"
 TEACHER_RECORD_FORMAT = "arm_teacher_record/1"
 RECORD_REL = "reports/arms/e6x_condition_{arm}.json"      # the committed copy, committed alone (AQ2)
+PREREG_REL = "docs/PREREGISTRATION_AMENDMENTS.md"
+AM23_HEADING_RE = re.compile(r"(?m)^## AM-23(?![0-9A-Za-z])")
 OUT_NAME = "e6x_condition_{arm}.json"
 META_NAME, TELEMETRY_NAME, BEST_JSON_NAME = "e3_run_meta.jsonl", "e3_telemetry.jsonl", "best.json"
 ARM_RE = re.compile(r"R[0-9]+")
@@ -275,6 +279,19 @@ def selections(args, root: Path) -> tuple[dict, dict]:
     if not (isinstance(best, float) and repr(best) == THRESHOLD):
         _refuse("threshold_mismatch", f"the α winner's best_val is {best!r}; AM-23 item 3(b)'s value is {THRESHOLD}")
     return lam, alpha
+
+
+def amendment_on_record(root: Path) -> None:
+    """G5: AM-23 is committed at HEAD, so in force (DL-24 PROV-1): docs/PREREGISTRATION_AMENDMENTS.md at HEAD holds an
+    AM-23 section that carries THRESHOLD (scripts/preflight_distill.py's am7a_not_on_record pattern, MG-1)."""
+    data = Q._git_head_bytes(root, PREREG_REL)
+    text = "" if data is None else data.decode("utf-8", "replace")
+    m = AM23_HEADING_RE.search(text)
+    end = -1 if m is None else text.find("\n## ", m.end())
+    section = "" if m is None else text[m.start():] if end < 0 else text[m.start():end]
+    if THRESHOLD not in section:
+        _refuse("amendment_not_committed", f"{PREREG_REL} at HEAD has no AM-23 section carrying {THRESHOLD}: AM-23 is "
+                                           "in force only from its commit, so no condition is recorded before it")
 
 
 def teacher_record(arm: str, root: Path) -> dict:
@@ -601,6 +618,7 @@ def record_condition(args) -> tuple[dict, str, Path, str]:
     spec = arm_spec(args.arm)                                                       # G4
     root = records_root()
     lam, alpha = selections(args, root)                                             # G5
+    amendment_on_record(root)
     teacher = teacher_record(args.arm, root)                                        # G6
     d = run_dir(args.run_dir, spec)                                                 # G7
     meta, meta_data = run_meta_row(d)

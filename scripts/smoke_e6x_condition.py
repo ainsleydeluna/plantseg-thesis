@@ -71,6 +71,9 @@ ARMS = ("R1", "R2")
 REAL_RECORDS = (C.LAMBDA_SELECTION_REL, C.ALPHA_SELECTION_REL, C.TEACHER_RECORD_REL.format(arm="R1"),
                 C.TEACHER_RECORD_REL.format(arm="R2"))
 COND_REL = C.RECORD_REL.format(arm="R1")
+PREREG_TEXT = ("# Preregistration amendments (synthetic)\n\n## AM-22 — synthetic\n\nItem 1.\n\n## AM-23 — synthetic\n\n"
+               "3(b) E6-X runs only if E3-X is complete and the best VAL all-class mIoU that its best.json records is "
+               f"greater than E3 seed 42's, {C.THRESHOLD}.\n")
 IDENT = {"commit": FAKE_HEAD, "clean": True}
 FX: dict = {"n": 0}
 CASES: dict = {}
@@ -229,12 +232,14 @@ def base_log(r1_launch=None, r1_launched=None, extra=()) -> list:
 
 
 def make_records(*, files=None, drop=(), after=None, untracked=None) -> Path:
-    """A records repository: the real selections and teacher records, the synthetic launch log; `files` replaces
+    """A records repository: the real selections and teacher records, the synthetic launch log and amendments file
+    (an AM-23 section carrying the threshold); `files` replaces
     or adds files before the one commit, `drop` leaves files out, `after` rewrites committed files after it and
     `untracked` adds files after it without committing them."""
     root = new_dir("records")
     content = {rel: (REPO / rel).read_bytes() for rel in REAL_RECORDS}
     content[SS.LAUNCH_LOG_REL] = jl(base_log())
+    content[C.PREREG_REL] = PREREG_TEXT.encode("utf-8")       # a synthetic amendments file with an AM-23 section
     content.update(files or {})
     for rel in drop:
         content.pop(rel, None)
@@ -790,6 +795,25 @@ def _r_threshold():
     doc = alpha_doc(best_val=0.36)
     root = make_records(files={C.ALPHA_SELECTION_REL: doc})
     return refusal("threshold_mismatch", records=root, flags={"--alpha-selection-sha256": sha(doc)})
+
+
+@case("r_amendment_not_committed", "amendment_not_committed")
+def _r_amendment_missing():
+    return refusal("amendment_not_committed", records=make_records(drop=(C.PREREG_REL,)))
+
+
+@case("r_amendment_uncommitted", "amendment_not_committed")
+def _r_amendment_uncommitted():
+    root = make_records(files={C.PREREG_REL: b"# Preregistration amendments (synthetic)\n"},
+                        after={C.PREREG_REL: PREREG_TEXT.encode("utf-8")})      # AM-23 only in the working tree
+    return refusal("amendment_not_committed", records=root)
+
+
+@case("r_amendment_without_threshold", "amendment_not_committed")
+def _r_amendment_section():
+    text = ("## AM-23 — synthetic\n\n3(b) greater than E3 seed 42's value.\n\n## AM-24 — synthetic\n\n"
+            f"{C.THRESHOLD} appears in the next section only.\n")
+    return refusal("amendment_not_committed", records=make_records(files={C.PREREG_REL: text.encode("utf-8")}))
 
 
 # ---- G6
