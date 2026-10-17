@@ -208,7 +208,8 @@ def write_jsonl(path: Path, rows: list, torn: bytes = b"") -> Path:
 def kd_run(root: Path, run_id: str, *, stage_key: str = "e2", end: str | None = "2026-10-20T10:00:00Z",
            checks: bool = True, abort: dict | None = None, iters: int = 3) -> Path:
     """A KD run directory: run_meta and telemetry with train rows (loss, iter_seconds), VAL rows with scores and,
-    when `end`, a run_end record whose best_val is a score; or an abort record."""
+    when `end`, a run_end record whose best_val is a score; or an abort record (its non-finite detail values as
+    strings, as train_distill.record_number writes them, :817-823)."""
     d = Path(root) / run_id
     t0 = utc("2026-10-10T00:00:00Z")
     rows = [{"event": "train", "iter": i, "loss": 2.0 / i, "grad_norm": 1.5, "iter_seconds": 0.7 + 0.01 * i,
@@ -216,7 +217,7 @@ def kd_run(root: Path, run_id: str, *, stage_key: str = "e2", end: str | None = 
     rows.append({"event": "val", "iter": iters, "all_class_miou": 0.31, "wall_clock": t0 + iters + 0.5})
     if abort:
         abort = dict(abort)
-        rows.append({"event": "run_abort", "iter": iters, "detail": {"loss": float("nan")},
+        rows.append({"event": "run_abort", "iter": iters, "detail": {"loss": "nan", "grad_norm": None},
                      "wall_clock": utc(abort.pop("at", "2026-10-15T00:00:00Z")), **abort})
     elif end:
         rows.append({"event": "run_end", "iter": iters, "best_val_miou_all_class": 0.31, "best_ckpt": "iter_3.pth",

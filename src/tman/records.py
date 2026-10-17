@@ -54,7 +54,8 @@ REF = {"path": True, "sha256": True}
 # run_meta :1009-1049 with launch_fields :703-731)
 KD_ROWS = {"run_end": {"event": True, "iter": True, "best_ckpt": True, "checks_passed": True,
                        "wall_clock_start": True, "wall_clock_end": True},
-           "run_abort": {"event": True, "iter": True, "rule": True, "cause": True, "wall_clock": True},
+           "run_abort": {"event": True, "iter": True, "rule": True, "cause": True, "wall_clock": True,
+                         "input_finite": True, "teacher_finite": True},
            "train": {"event": True, "iter": True, "wall_clock": True, "iter_seconds": True},
            "val": {"event": True, "iter": True, "wall_clock": True}}
 KD_RUN_META = {"event": True, "stage": True, "mode": True, "seed": True, "max_iters": True, "wall_clock": True,
@@ -75,8 +76,9 @@ QAT_ROWS = {"run_meta": {"event": True, "wall_clock": True, "mode": True, "stage
                           "run_complete": True},
             "state_nonfinite": {"event": True, "wall_clock": True, "epoch": True, "step": True,
                                 "nonfinite_since_step": True},
-            "run_stop": {"event": True, "wall_clock": True, "epoch": True, "step": True},
-            "run_abort": {"event": True, "wall_clock": True, "epoch": True, "step": True}}
+            "run_stop": {"event": True, "wall_clock": True, "epoch": True, "step": True, "code": True},
+            "run_abort": {"event": True, "wall_clock": True, "epoch": True, "step": True, "cause": True,
+                          "exception_type": True}}
 # the flags an epoch checkpoint stores (qat.py:712-742; qat_artifacts.py:52 STATE_FLAG_KEYS)
 QAT_CHECKPOINT = {"stage": True, "epoch": True, "step": True, "seed": True, "run_id": True, "state_sha256": True,
                   "source_checkpoint_sha256": True, "state_finite": True, "state_nonfinite": True,
