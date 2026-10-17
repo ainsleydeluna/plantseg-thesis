@@ -1095,6 +1095,33 @@ def _r_out_race():
             and out.read_bytes() == b"kept\n"), result_of(text)
 
 
+@case("s_write_failed", "write_failed")
+def _s_write_failed():
+    out = new_out()
+
+    def full_disk(path, mode="r", *a, **k):
+        fh = open(path, mode, *a, **k)                        # the exclusive create succeeds, the write fails
+
+        class Full:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                fh.close()
+                return False
+
+            def write(self, data):
+                raise OSError(28, "No space left on device")
+        return Full()
+    C.open = full_disk                                        # the module's open (a global), restored below
+    try:
+        rc, text = run_cli(record_argv(FX["run_yes"], out))
+    finally:
+        del C.open
+    return (rc == 1 and result_of(text).startswith(f"RESULT: STOP [write_failed] -- {out} was created but not completed")
+            and out.is_file() and out.stat().st_size == 0), result_of(text)
+
+
 @case("s_write_mismatch", "write_mismatch")
 def _s_write():
     out = new_out()

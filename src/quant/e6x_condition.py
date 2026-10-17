@@ -58,7 +58,8 @@ The gates of `record`, in order. Each refusal exits 2 (RESULT: REFUSED [<code>])
        lines, no stopped line, and no later launch line of its group (the last attempt: AM-8a's repeat replaces the
        run it repeats); PL-14's fields (sweep_select.check_run_against_log :1809-1815) with the arm's run stage for
        stage, and sweep null                                                 launch_log (the field named)
-Then the verdict, and the record written exclusively and read back (a difference: exit 1, STOP [write_mismatch]).
+Then the verdict, and the record written exclusively and read back. Once the file exists, a failure is exit 1,
+STOP [write_failed], and a read-back that differs is STOP [write_mismatch]: the file at --out is then not a record.
 """
 
 from __future__ import annotations
@@ -549,13 +550,20 @@ def _read_back(path: Path) -> bytes:
 
 
 def write_record(out: Path, data: bytes) -> None:
-    """Created exclusively ("xb") and read back; a record that does not read back as written is a STOP."""
+    """Created exclusively ("xb") and read back. Once the file exists, a failure (a full disk, an I/O error) or a
+    read-back that differs is a STOP (exit 1): the file at --out is then not a record."""
     try:
-        with open(out, "xb") as fh:
-            fh.write(data)
+        fh = open(out, "xb")
     except FileExistsError:
         _refuse("out_exists", f"{out} appeared after G2 and before the write; nothing was written")
-    if _read_back(out) != data:
+    try:
+        with fh:
+            fh.write(data)
+        back = _read_back(out)
+    except Exception as e:  # noqa: BLE001 -- the file exists: any failure leaves it incomplete
+        raise ConditionStop("write_failed", f"{out} was created but not completed ({type(e).__name__}: {e}); it is "
+                                            "not a record: remove it, then run record again") from e
+    if back != data:
         raise ConditionStop("write_mismatch", f"{out} does not read back as written; the record is not usable")
 
 

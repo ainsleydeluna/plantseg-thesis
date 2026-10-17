@@ -110,7 +110,7 @@ RAW = [
      "G2's existence check removed (the write's exclusive create still refuses, later)"),
     ("C", "check_out", [("    if not out.parent.is_dir():", "    if False:")],
      ("r_out_parent_missing",), "--out's folder check removed"),
-    ("C", "write_record", [('with open(out, "xb") as fh:', 'with open(out, "wb") as fh:')],
+    ("C", "write_record", [('    fh = open(out, "xb")', '    fh = open(out, "wb")')],
      ("r_out_created_before_write",), "the exclusive create made an overwrite"),
     # ---- G3 (AQ5)
     ("C", "tool_identity", [("    if not _HEX40.fullmatch(expect_head):", "    if False:")],
@@ -247,8 +247,12 @@ RAW = [
      ("w_dl_text_one_line_aq3",), "the record's sha256 left out of the decision-log text"),
     ("C", "dl_text", [(DL_GUARD, "    if False:"), ('); best VAL all-class mIoU "', ') | best VAL all-class mIoU "')],
      ("w_dl_text_one_line_aq3",), "a '|' in the decision-log text, its guard removed"),
-    ("C", "write_record", [("    if _read_back(out) != data:", "    if False:")],
+    ("C", "write_record", [("    if back != data:", "    if False:")],
      ("s_write_mismatch",), "the read-back check removed"),
+    ("C", "write_record",
+     [("    except Exception as e:  # noqa: BLE001 -- the file exists: any failure leaves it incomplete",
+       "    except KeyError as e:  # noqa: BLE001 -- the file exists: any failure leaves it incomplete")],
+     ("s_write_failed",), "a failure after the create not caught"),
     # ---- the readers (print-dl's read_record_file; B-2's read_condition)
     ("C", "parse_record", [('    if verdict(x) != rec["verdict"]:', "    if False:")],
      ("d_condition_void_yes", "d_condition_void_no"), "the void check removed"),
