@@ -8,7 +8,8 @@ inputs. The repository's git status must be the same after the run as before it.
 
   1 gates        every refusal exits 2 before anything is written: flags, pins, output inside the
                  repository, VAL/TEST data paths, wrong source stage, a malformed list, a list id
-                 outside TRAIN; AM-10: calibrate() and run_e4.py refuse a batch other than 1
+                 outside TRAIN; AM-10: calibrate() refuses a batch other than 1; run_e4.py refuses
+                 every real run (ruling Q1-R2)
   2 run          a full E4 run (its own process, as scripts/run_ptq.py always runs): the TorchScript
                  artifact of record, its state_dict and the x86 copy, six verification checks, the
                  calibration record; an audit hook shows VAL/TEST never opened or listed
@@ -235,10 +236,13 @@ def test_gates() -> None:
     except QuantPreparationError as e:
         check("calibrate_refuses_batch_of_2", "AM-10" in str(e))
     check("calibrate_accepts_batch_of_1", calibrate(prepared, [torch.randn(1, 3, 64, 64)]) == 1)
-    rc, log = cli(run_e4, ["--real-run", "--confirm-real-run", "--batch-size", "2", "--source-ckpt", str(E1),
+    # ruling Q1-R2 (L-CKPT-GUARD Q-part): run_e4.py refuses every real run, whatever its flags; AM-10's batch
+    # rule stays covered by calibrate_refuses_batch_of_2 above
+    rc, log = cli(run_e4, ["--real-run", "--confirm-real-run", "--source-ckpt", str(E1),
                            "--out-dir", str(BASE / "e4_legacy"), "--calibration-index", str(list_path()),
                            "--data-root", str(ROOT)])
-    check("run_e4_refuses_batch_of_2", rc == 2 and "AM-10" in log and not (BASE / "e4_legacy").exists(),
+    check("run_e4_refuses_every_real_run",
+          rc == 2 and "RESULT: REFUSED [old_runner_real_run]" in log and not (BASE / "e4_legacy").exists(),
           last(log))
 
 

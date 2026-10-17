@@ -790,6 +790,9 @@ def run_ptq(*, stage: str, source_ckpt, expect_source_sha256: str, calibration_l
     present = [n for n in names.values() if (out / n).exists()]
     if present:
         raise PTQRefused("output_exists", f"{out} already holds {present}; a PTQ run never overwrites")
+    if out.exists() and (not out.is_dir() or any(out.iterdir())):
+        raise PTQRefused("out_dir_not_empty", f"--out-dir {out} exists and is not an empty directory; a PTQ run "
+                                              "starts in a fresh directory (L-CKPT-GUARD Q-part)")
     if data_root is None:
         raise PTQRefused("data_root_unset", "--data-root is required (the TRAIN images of the list)")
     refuse_eval_split_dir(data_root, "data root")

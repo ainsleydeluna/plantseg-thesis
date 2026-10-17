@@ -1,4 +1,4 @@
-"""Shared execution core for the four quantization stages. Validates hard, then runs.
+"""Shared entry for the four quantization stages, and the guards the PTQ and QAT cores reuse.
 
     E4 : E1 FP32 checkpoint -> PTQ        E6 : E3 projection-free student -> QAT
     E5 : E1 FP32 checkpoint -> QAT        E7 : E3 projection-free student -> PTQ
@@ -6,21 +6,28 @@
 `scripts/run_e4.py` … `run_e7.py` are thin wrappers that PIN their stage: the stage is not a CLI
 flag, so `run_e4.py` can never be turned into E7.
 
-SAFETY MODEL — a real run requires `--real-run` AND `--confirm-real-run`, and every cheap
-precondition is proven before any expensive work: source provenance, structural validity, 116
-classes, an out-of-repo output directory (via E1's own guard), the QNNPACK backend, and — for
-PTQ — the exact shared calibration artifact. Random initialization is impossible: every stage loads
-a validated source checkpoint. Nothing here downloads, substitutes a model, or falls back silently.
+E4 and E7 (ruling Q1-R2, L-CKPT-GUARD Q-part): `main` refuses every E4 or E7 run once its arguments are
+parsed, whatever the flags (`old_runner_real_run`, exit 2), before anything is read, loaded or written. The
+PTQ of record is made by `scripts/run_ptq.py`: src/quant/ptq.py's core (L-AM10) on the committed calibration
+list of record, bound to its E1 or E3 parent by src/quant/ptq_record.py, which writes
+`<stage>_ptq_record.json`. This module has no PTQ path of its own.
 
 E5/E6 QAT is src/quant/qat.py's (AM-4/AM-4a, lanes L-AM4 + L-AM1q): `main` hands those two stages to
 `src.quant.qat.main` before any PTQ argument is parsed; scripts/run_e5.py and run_e6.py reach it through
 `main`.
+
+SAFETY MODEL — each guard below validates hard: random initialization is impossible, every stage loads a
+validated source checkpoint, and nothing here downloads, substitutes a model, or falls back silently. Their
+users: check_output_dir — src/quant/ptq.py, ptq_record.py and qat.py, scripts/ptq_calibration_range.py and
+create_ptq_calibration_index.py; check_source — ptq.py and qat.py; CalibrationDataset (the TRAIN calibration
+images) — ptq.py; build_run_provenance — ptq.py and qat_artifacts.py. check_backend and check_calibration (the
+legacy E4/E7 calibration index) are kept for scripts/smoke_quant_runners.py only: the PTQ of record selects
+QNNPACK in src/quant/ptq.py and pins its list through ptq.load_calibration_list (--expect-list-checksum).
 """
 
 from __future__ import annotations
 
 import hashlib
-import json
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -35,11 +42,8 @@ from configs.quant import QUANT                                     # noqa: E402
 from src.training.train_e1 import _assert_outside_repo              # noqa: E402  (reuse, unmodified)
 from .calibration import CalibrationIndexError                      # noqa: E402
 from .checkpoint import SourceCheckpointInvalid                     # noqa: E402
-from .prepare import (CALIBRATION_BATCH_SIZE, calibrate, convert_model,  # noqa: E402
-                      quantization_coverage, try_converted_forward)
-from .qconfig import (QUANT_BACKEND, QuantBackendUnavailable, describe_qconfig, ptq_qconfig,  # noqa: E402
-                      qat_qconfig, select_qnnpack_backend)
-from .stages import (load_source_for_stage, prepare_for_stage, require_shared_calibration_index,  # noqa: E402
+from .qconfig import QUANT_BACKEND, QuantBackendUnavailable, select_qnnpack_backend  # noqa: E402
+from .stages import (load_source_for_stage, require_shared_calibration_index,  # noqa: E402
                      resolve_quant_stage)
 
 NUM_CLASSES = 116
@@ -166,12 +170,6 @@ class CalibrationDataset(torch.utils.data.Dataset):
         return self._finalize(img_np, mask_np)
 
 
-def build_calibration_loader(root: Path, ids: list[str], batch_size: int, num_workers: int = 0):
-    ds = CalibrationDataset(root, ids)
-    return torch.utils.data.DataLoader(ds, batch_size=batch_size, shuffle=False,
-                                       num_workers=num_workers, drop_last=False)
-
-
 # ------------------------------------------------------------------ provenance
 def build_run_provenance(*, stage: dict, source_meta: dict, method: str, qconfig_summary: dict,
                          calibration: dict | None, training: dict | None,
@@ -205,46 +203,6 @@ def build_run_provenance(*, stage: dict, source_meta: dict, method: str, qconfig
     return prov
 
 
-def _qconfig_summary(method: str) -> dict:
-    d = describe_qconfig(ptq_qconfig() if method == "ptq" else qat_qconfig())
-    flat = {k: {kk: str(vv) for kk, vv in v.items()} for k, v in d.items()}
-    fingerprint = hashlib.sha256(
-        json.dumps(flat, sort_keys=True).encode("utf-8")).hexdigest()[:16]
-    return {"activation": flat["activation"], "weight": flat["weight"], "fingerprint": fingerprint}
-
-
-# ------------------------------------------------------------------ PTQ execution
-def run_ptq(stage: dict, args, model, source_meta: dict, out_dir: Path, backend: str) -> dict:
-    index = check_calibration(stage, args.calibration_index, args.calibration_sha256)
-    data_root = Path(args.data_root) if args.data_root else None
-    if data_root is None or not data_root.is_dir():
-        raise QuantRunError("data_root_missing",
-                            "--data-root must resolve to the PlantSeg root so the frozen "
-                            "calibration identifiers can be read (TRAIN only)")
-    prepared = prepare_for_stage(stage["key"], model, select_backend=False)
-    # AM-10: one image per mini-batch; main() has already refused any other --batch-size.
-    loader = build_calibration_loader(data_root, index["selected_ids"], CALIBRATION_BATCH_SIZE)
-    n = calibrate(prepared, (img for img, _ in loader))
-    converted = convert_model(prepared)
-    coverage = quantization_coverage(converted)
-    fwd = try_converted_forward(converted, torch.randn(1, 3, 512, 512))
-    if not fwd["ok"]:
-        raise QuantRunError("converted_forward_failed",
-                            f"converted {stage['name']} model does not run: {fwd['error']}")
-    path = out_dir / f"{stage['key']}_int8_student.pt"
-    torch.save({"stage": stage["name"], "quantization": "ptq", "num_classes": NUM_CLASSES,
-                "model": converted.state_dict()}, path)
-    return build_run_provenance(
-        stage=stage, source_meta=source_meta, method="ptq",
-        qconfig_summary=_qconfig_summary("ptq"),
-        calibration={"index_path": str(Path(args.calibration_index).resolve()),
-                     "checksum_sha256": index["checksum_sha256"], "count": index["count"],
-                     "seed": index["seed"], "split": index["split"],
-                     "shared_by": index["shared_by"], "batches_seen": n,
-                     "preprocessing": PTQ["calibration_preprocessing"], "augmentation": False},
-        training=None, converted_path=path, coverage=coverage, forward=fwd, backend=backend)
-
-
 # ------------------------------------------------------------------ CLI
 def add_common_args(p):
     p.add_argument("--real-run", action="store_true")
@@ -269,32 +227,10 @@ def main(argv, stage_key: str) -> int:
         return qat_main(argv, stage_key)
     parser = add_common_args(argparse.ArgumentParser(
         description=f"{stage['name']}: {stage['objective']} (stage is PINNED, not selectable)"))
-    args = parser.parse_args(argv)
-
-    if not args.real_run:
-        print(f"REFUSING: {stage['name']} requires --real-run --confirm-real-run. Nothing was "
-              "read, loaded or written.", file=sys.stderr)
-        return 2
-    if not args.confirm_real_run:
-        print(f"REFUSING: --real-run requires --confirm-real-run for {stage['name']}.",
-              file=sys.stderr)
-        return 2
-    if stage["method"] == "ptq" and args.batch_size not in (None, CALIBRATION_BATCH_SIZE):
-        print(f"REFUSING: {stage['name']} calibrates one image per mini-batch (AM-10); "
-              f"--batch-size {args.batch_size} is refused. Nothing was read, loaded or written.",
-              file=sys.stderr)
-        return 2
-    try:
-        out_dir = check_output_dir(args.out_dir, create=True)
-        model, _, source_meta = check_source(stage, args.source_ckpt)
-        backend = check_backend()
-        prov = run_ptq(stage, args, model, source_meta, out_dir, backend)
-    except QuantRunError as e:
-        print(f"{stage['name']} PREFLIGHT/RUN FAILED [{e.code}]: {e}", file=sys.stderr)
-        return 2
-
-    (out_dir / f"{stage['key']}_run_provenance.json").write_text(
-        json.dumps(prov, indent=2), encoding="utf-8")
-    print(json.dumps(prov, indent=2))
-    print(f"\n{stage['name']} COMPLETE — artifact and provenance written to {out_dir}")
-    return 0
+    parser.parse_args(argv)
+    # Ruling Q1-R2 (L-CKPT-GUARD Q-part): no E4 or E7 of record comes from this entry point, whatever the flags.
+    print(f"RESULT: REFUSED [old_runner_real_run] -- scripts/run_{stage['key']}.py makes no {stage['name']} of "
+          "record (ruling Q1-R2, L-CKPT-GUARD Q-part): E4 and E7 are made by scripts/run_ptq.py, which binds the "
+          f"run to its E1 or E3 parent and writes {stage['key']}_ptq_record.json. Nothing was read, loaded or "
+          "written.")
+    return 2
