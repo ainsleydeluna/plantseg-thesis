@@ -1252,6 +1252,55 @@ def _d_format_value():
     return rc == 2 and result_of(text).startswith("RESULT: REFUSED [condition_format]"), result_of(text)
 
 
+FORMAT_CASES = {                                              # one parse_record clause each (DL-24 GATE-3, SMK-5)
+    "format": [("format", "e6x_condition/2")],
+    "repr": [("value.repr", "0.37")],
+    "verdict": [("verdict", "maybe")],
+    "arm": [("arm", "X1"), ("stage", "E6-X1"), ("parent_run_stage", "E3-X1"),
+            ("run_id", "e3-x1_s42_lambda0.5_alpha25_80k_a1")],
+    "stage": [("stage", "E6-R2")],
+    "parent": [("parent_run_stage", "E3-R2")],
+    "seed": [("seed", 43)],
+    "run_id": [("run_id", "e3-r2_s42_lambda0.5_alpha25_80k_a1")],
+    "checkpoint": [("checkpoint.file", "model.pt")],
+    "sha256_best_json": [("best_json.sha256", "pending")],
+    "sha256_checkpoint": [("checkpoint.sha256", "0" * 63)],
+    "commit": [("tool.commit", "abc")],
+    "deadline_utc": [("dl_deadline.run_end_utc", "2026-10-22 06:20:00")],
+    "deadline_manila": [("dl_deadline.run_end_manila_date", "22 Oct 2026")],
+    "deadline_day": [("dl_deadline.enter_by_manila_date", "tomorrow")],
+}
+
+
+def _format_case(changes):
+    def fn():
+        data, rec, s = written_record()
+        for dotted, value in changes:
+            *parents, last = dotted.split(".")
+            node = rec
+            for p in parents:
+                node = node[p]
+            node[last] = value
+        path, s2 = record_file(rec)
+        rc, text = print_dl(path, s2)
+        return rc == 2 and result_of(text).startswith("RESULT: REFUSED [condition_format]"), result_of(text)
+    return fn
+
+
+for _key, _changes in FORMAT_CASES.items():
+    case(f"d_condition_format_{_key}", "condition_format")(_format_case(_changes))
+
+
+@case("d_condition_format_duplicate_key", "condition_format")
+def _d_format_duplicate():
+    data, rec, s = written_record()
+    dup = data.replace(b'\n  "verdict": "yes"\n', b'\n  "verdict": "no",\n  "verdict": "yes"\n')
+    path = write(new_dir("rec") / "e6x_condition_R1.json", dup)
+    rc, text = print_dl(path, sha(dup))
+    return (dup != data and rc == 2 and result_of(text).startswith("RESULT: REFUSED [condition_format]")), \
+        result_of(text)
+
+
 @case("d_condition_format_threshold", "condition_format")
 def _d_format_threshold():
     data, rec, s = written_record()

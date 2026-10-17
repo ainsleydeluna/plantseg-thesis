@@ -113,6 +113,8 @@ CKPT_RE = re.compile(r"e3_student_best_iter[0-9]+\.pt")
 RUN_TAIL_RE = re.compile(r"[A-Za-z0-9._-]+")
 _HEX40 = re.compile(r"[0-9a-f]{40}")
 _HEX64 = re.compile(r"[0-9a-f]{64}")
+_ISO_DAY = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
+_ISO_UTC = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z")
 # AQ5: the module, the script and every repository file whose code or data decides a gate or the verdict: qat.py
 # (names_test, read_tracked_selection), runner.py and train_e1.py (check_output_dir and the _assert_outside_repo it
 # calls), ptq.py (code_provenance), sweep_select.py (HeadSource, load_launch_log, _same) and kd_arms.py (load_arms),
@@ -629,8 +631,11 @@ def _no_constant(name):
 
 def parse_record(data: bytes) -> dict:
     """An intact e6x_condition/1 from its bytes: strict JSON (no NaN, Infinity or repeated key), exactly RECORD_KEYS,
-    the pinned threshold, a comparable value whose repr it records, the arm's names, and its verdict the one that
-    verdict() gives its value; a record whose verdict disagrees is void (AM-23 item 3(b))."""
+    the pinned threshold, a comparable value whose repr it records, the arm's names, seed 42, the run_id of the arm's
+    run, the sha256 and commit forms, the deadline's ISO dates, and its verdict the one that verdict() gives its
+    value; a record whose verdict disagrees is void (AM-23 item 3(b)). B-2's gate checks the rest itself: the
+    committed path, that the run_id and the sha256 of best.json and the checkpoint are its parent's, and the RECORDED
+    decision-log row (AQ3)."""
     try:
         rec = json.loads(data.decode("utf-8"), object_pairs_hook=_strict_pairs, parse_constant=_no_constant)
     except ValueError as e:
@@ -638,20 +643,25 @@ def parse_record(data: bytes) -> dict:
     if not isinstance(rec, dict) or sorted(rec) != sorted(RECORD_KEYS) or rec["format"] != FORMAT:
         _refuse("condition_format", f"not a {FORMAT} record with exactly its keys")
     try:
-        x, arm, v = rec["value"]["best_val_miou_all_class"], rec["arm"], rec["value"]["repr"]
+        x, arm, v, dd = rec["value"]["best_val_miou_all_class"], rec["arm"], rec["value"]["repr"], rec["dl_deadline"]
+        prefix = f"e3-{arm.lower()}_s{SEED}_"
         ok = (value_error(x) is None and v == repr(x) and rec["threshold"]["repr"] == THRESHOLD
               and rec["verdict"] in ("yes", "no") and ARM_RE.fullmatch(arm) is not None
               and rec["stage"] == "E6-" + arm and rec["parent_run_stage"] == "E3-" + arm
-              and RUN_TAIL_RE.fullmatch(rec["run_id"]) is not None
+              and type(rec["seed"]) is int and rec["seed"] == SEED
+              and rec["run_id"].startswith(prefix) and RUN_TAIL_RE.fullmatch(rec["run_id"][len(prefix):]) is not None
               and CKPT_RE.fullmatch(rec["checkpoint"]["file"]) is not None
+              and _HEX64.fullmatch(rec["best_json"]["sha256"]) is not None
+              and _HEX64.fullmatch(rec["checkpoint"]["sha256"]) is not None
               and _HEX40.fullmatch(rec["tool"]["commit"]) is not None
-              and all(isinstance(rec["dl_deadline"][k], str)
-                      for k in ("run_end_utc", "run_end_manila_date", "enter_by_manila_date")))
-    except (KeyError, TypeError):
+              and _ISO_UTC.fullmatch(dd["run_end_utc"]) is not None
+              and _ISO_DAY.fullmatch(dd["run_end_manila_date"]) is not None
+              and _ISO_DAY.fullmatch(dd["enter_by_manila_date"]) is not None)
+    except (KeyError, TypeError, AttributeError):
         ok = False
     if not ok:
         _refuse("condition_format", f"a {FORMAT} field is missing or malformed (value, threshold, verdict, arm, "
-                                    "run_id, checkpoint, tool commit or deadline)")
+                                    "seed, run_id, checkpoint, a sha256, the tool commit or the deadline)")
     if verdict(x) != rec["verdict"]:
         _refuse("condition_void", f"the record's verdict {rec['verdict']!r} disagrees with its value {v} against "
                                   f"{THRESHOLD}: void (AM-23 item 3(b)); a corrected entry is a new record")
