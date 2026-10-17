@@ -11,6 +11,7 @@ image is read, under a zero-call tracer. torch and src.data stay out of sys.modu
   P  pin                 I  index          T  torch-free
   N  item paths by index (LCC1, LCC3): the path rule, no stem in any created name, resume and
      repair by index
+  K2 the 1.0.0 `severities` key removed from the manifest; the top-level split kept (LE3a)
   L  LC4 split surfaces, LC5 manifest_exists, LC7 the 32-px floor, LC8 repair
   X  every other refusal code of the generator, each reached with every earlier gate passing,
      and the CLI's run-flag, cache-dir, stack and location gates (X29-X32)
@@ -905,6 +906,21 @@ def n4():
         f"rc={rc} restored at the index path: {restored}; marker names: {held[:2]}"
 
 
+@case("K2")
+def k2():
+    """LE3, LE3a (K2): the manifest no longer carries the 1.0.0 grid-wide `severities`; a consumer
+    reads coverage per cell (cells[].cell_id). The top-level `split` stays (the verifier and the
+    builder read it) and equals dataset.split and, for a CLI cache, the pin's parameters.split."""
+    m = S["m1"]
+    mm = cc.generate(S["caches"] / f"k2_mem_{next(_SEQ)}", _pair(7), corruptions=("fog",),
+                     severities=(1, 5), split="val")
+    held = [k for k in ("severities",) if k in m or k in mm]
+    return (not held and m["split"] == m["dataset"]["split"] == m["pin"]["parameters"]["split"]
+            and mm["split"] == mm["dataset"]["split"] == "val"
+            and [c["cell_id"] for c in mm["cells"]] == ["fog_s1", "fog_s5"]), \
+        f"keys held: {held}; cells {[c['cell_id'] for c in mm['cells']]}"
+
+
 # ---------------------------------------------------------------- T. torch-free
 def _imports(path: Path) -> set[str]:
     names = set()
@@ -1648,6 +1664,15 @@ def mutations():
     mutant("M-item path built from the stem (LCC3b)", ["N2"], (cc, "write_entry", _stem_writer))
     mutant("M-resume reading the stem path (LCC3c)", ["N3"], (cc, "resume_keeps", _resume_at_stem))
     mutant("M-repair reading the stem path (LCC3c)", ["N4"], (cc, "repair_target", _repair_at_stem))
+    # LE3a: the 1.0.0 `severities` key is gone from the manifest
+    real_assemble = cc.assemble_manifest
+
+    def with_severities(**kw):
+        m = real_assemble(**kw)
+        m["severities"] = sorted({s for _, s in kw["grid"]})
+        m["canonical_manifest_sha256"] = cc.canonical_manifest_sha256(m)
+        return m
+    mutant("M-K2 severities kept (LE3a)", ["K2"], (cc, "assemble_manifest", with_severities))
 
     # the plan's eight
     def by_enumeration(pixels, image_id, corruption_id, severity, *, lift_floor):
@@ -1719,6 +1744,7 @@ LABELS = {
     "N2": "N2 no created name holds the zqmarker stem, 'test' or ':' (LCC3b, LCC6)",
     "N3": "N3 resume keeps the 50 journalled items at their index paths, none regenerated (LCC3c)",
     "N4": "N4 repair replaces the marked source's item at its index path (LCC3c)",
+    "K2": "K2 no 1.0.0 `severities` key; the top-level split stays, equal to the pin's (LE3, LE3a)",
     "T1": "T1 torch and src.data absent before; no generator module imports them",
     "T2": "T2 torch and src.data absent after",
     "L4a": "L4a VAL root never created -> data_root_missing from isolation, zero reads (LC4)",

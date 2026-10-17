@@ -105,9 +105,12 @@ def test_runner_architecture() -> None:
     check("mask_never_enters_cache_path",
           "mask" not in RUNNER_CODE.lower(),
           "ground truth never reaches corruption/cache code")
-    check("no_plantseg_dataset_access",
-          all(t not in RUNNER_CODE for t in ("PlantSegEvalDataset", "build_eval_loader",
-                                             "build_dataloader", "PLANTSEG_DATA_ROOT")))
+    check("runner_dataset_only_corrupted_wrapper",
+          "PlantSegCorruptedEvalDataset" in RUNNER_CODE
+          and all(t not in RUNNER_CODE for t in ("PlantSegEvalDataset", "PlantSegDataset(",
+                                                 "build_protocol_adapter", "build_dataloader",
+                                                 "PLANTSEG_DATA_ROOT")),
+          "the completed runner builds the corrupted wrapper, and no other dataset")
     builder_src = (REPO / "scripts/build_corruption_cache.py").read_text(encoding="utf-8")
     builder = code_only(builder_src)
     check("direct_generation_still_owned_by_builder",
@@ -199,6 +202,23 @@ def test_refusals() -> None:
     # an official run demands the full cached test split
     expect("official_requires_complete_cache", CorruptionCacheError, resolve_corruption_cache,
            root, "fog", 2, split="test", official=True)
+
+    # ... and names the cache it expects: a pinned, complete, official cache (forged, re-sealed)
+    # is still refused without --expected-cache-sha256 (G5)
+    root3 = TMP / "cache_official_forged"
+    build_cache(root3)
+    forged = json.loads((root3 / cache.MANIFEST_NAME).read_text(encoding="utf-8"))
+    forged.update(status="official", source_image_count=1561,
+                  pin={"parameters": {"split": "test"}})
+    forged["canonical_manifest_sha256"] = cache.canonical_manifest_sha256(forged)
+    (root3 / cache.MANIFEST_NAME).write_text(json.dumps(forged, indent=2, sort_keys=True),
+                                             encoding="utf-8")
+    try:
+        resolve_corruption_cache(root3, "fog", 2, split="test", official=True)
+        check("official_requires_expected_checksum", False, "no exception raised")
+    except CorruptionCacheError as e:
+        check("official_requires_expected_checksum", e.code == "expected_cache_sha256_required",
+              e.code)
 
 
 def load_gaussian_noise_s5(root, man):
