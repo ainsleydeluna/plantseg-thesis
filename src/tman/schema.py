@@ -349,7 +349,7 @@ ENTRY_FIELDS: dict[str, dict] = {
     "listed_run": {**_RUN, "checkpoint": nullable(CHECKPOINT), "reason": "str"},
     "derived": {"method": ("enum", ("ptq", "qat_selection")), "parent": "slot", "inputs": ("map", "any"),
                 "hashed": nullable(("map", "any")), "evaluator_stage": "str", "ptq_record": nullable(REF)},
-    "not_run": {"reason": ("enum", NOT_RUN_REASONS), "parent": "slot", "parent_record": REF},
+    "not_run": {"reason": ("enum", NOT_RUN_REASONS), "parent": "slot", "parent_record": REF, "entry": REF},
     "non_finite": {**_RUN, "telemetry_sha256": "sha256", "refusal_text": ("enum", (NO_MODEL_ENTRY,))},
     "cut": {"entry": REF, "cut_date": "day", "rule": "str", "comparator": "?slot"},
     "superseded": {"run_id": "str", "superseding_dl": "dl"},
