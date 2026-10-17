@@ -138,7 +138,7 @@ WRITE_CALLS = ("write_bytes", "write_text", "mkdir", "makedirs", "unlink", "rmdi
 def lane_python() -> dict:
     import ast
     from src.tman import manifest as M
-    return {rel: ast.parse((REPO / rel).read_text(encoding="utf-8")) for rel in M.LANE_CODE_FILES
+    return {rel: ast.parse((M.CODE_ROOT / rel).read_text(encoding="utf-8")) for rel in M.LANE_CODE_FILES
             if rel.endswith(".py")}
 
 
@@ -221,6 +221,43 @@ def case_evaluator_closure_never_reads_a_test_named_module():
           and not M.hash_only("src/stats/artifact.py"))
 
 
+def post_freeze_ptq_append(w, out: Path, base: list) -> None:
+    """The append command for a PTQ model of record made after the freeze (TB19 Q9; A2): with --ptq-record, its
+    intact ptq_record stands in for the isolation record; without, refused. Lane LQP's reader is the world's
+    stand-in for the calls (records.ptq_record_reader patched and restored)."""
+    import json
+    from src.tman import records as R
+    S = w.S
+    rel = "E4_s43_list42/E4_s43_list42_ptq_record.json"
+    data = S.json_file_bytes(w.ptq_docs[rel])
+    (w.runs / rel).write_bytes(data)
+    d = json.loads(w.data)
+    e = next(x for x in d["body"]["entries"] if x["slot"] == "E4:s43:list42")
+    (out / "hashed_post.json").write_bytes(S.json_file_bytes(dict(e["hashed"], appended="append",
+                                                                  made_utc="2026-11-04T10:00:00Z")))
+    e.update(hashed=None, ptq_record=None)
+    (out / "m_inputs_post.json").write_bytes(S.json_file_bytes(d))
+    argv = base + ["append", "--manifest", str(out / "m_inputs_post.json"), "--slot", "E4:s43:list42", "--hashed",
+                   str(out / "hashed_post.json"), "--runs", str(w.runs)]
+    got = []
+    saved = R.ptq_record_reader
+    try:
+        R.ptq_record_reader = lambda: w.reader()
+        for n, extra in ((1, ["--ptq-record", rel]), (2, [])):
+            folder = out / f"post{n}"
+            folder.mkdir()
+            got.append((_cli(argv + ["--out", str(folder)] + extra), folder))
+    finally:
+        R.ptq_record_reader = saved
+    (rc, txt), folder = got[0]
+    made = json.loads((folder / "tday_manifest.json").read_bytes())["appends"] if rc == 0 else []
+    check("cli_post_freeze_ptq_append_with_its_record_TB19_Q9", rc == 0 and [a["ptq_record"] for a in made] == [
+        {"path": rel, "sha256": S.sha256_bytes(data)}], txt.strip()[-200:])
+    (rc, txt), folder = got[1]
+    check("cli_post_freeze_ptq_append_without_its_record_refused_A2", rc == 2 and "ptq_record_invalid" in txt
+          and not (folder / "tday_manifest.json").exists(), txt.strip()[-200:])
+
+
 def _cli(argv) -> tuple[int, str]:
     import contextlib
     import scripts.tday_manifest as CLI
@@ -300,6 +337,7 @@ def case_cli_outputs():
         appended = json.loads((dirs["append"] / "tday_manifest.json").read_bytes())
         check("cli_append_writes_the_append_with_its_ptq_record_key", [a["slot"] for a in appended["appends"]]
               == ["E4:s42:list43"] and appended["appends"][0]["ptq_record"] is None)
+        post_freeze_ptq_append(w, out, base)
         inside = [("out_in_the_repository_at_root", w.repo / "reports"),
                   ("out_in_this_checkout", REPO / "nonexistent_tman_out")]
         for name, p in inside:

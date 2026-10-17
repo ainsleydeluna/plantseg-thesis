@@ -158,7 +158,7 @@ def outputs(w) -> dict:
 # ======================================================================================================= cases
 def lane_python() -> list[Path]:
     from src.tman import manifest as M
-    return [REPO / rel for rel in M.LANE_CODE_FILES if rel.endswith(".py")]
+    return [M.CODE_ROOT / rel for rel in M.LANE_CODE_FILES if rel.endswith(".py")]       # the code as loaded
 
 
 def code_literals(path: Path) -> list[str]:

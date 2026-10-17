@@ -280,6 +280,7 @@ def case_unlock_gates():
         f.write_bytes(saved)
     hash_only_branch(u)
     records_outside_e_history(u)
+    session_checkout_not_e(u)
     expect_gate(u, "unlock_after_the_test_deadline_TB14", "session_after_deadline", unlock_entry=None,
                 now=FX.utc("2026-11-08T16:00:00Z"), detail="after the TEST deadline 2026-11-08")
     code, _, _ = u.run("unlock", unlock_entry=None, now=FX.utc("2026-11-08T15:59:59Z"))
@@ -311,6 +312,18 @@ def hash_only_branch(u: Unlock) -> None:
     finally:
         f.write_bytes(saved)
         M.hash_only = saved_fn
+
+
+def session_checkout_not_e(u: Unlock) -> None:
+    """TB16: the session checkout S is E; a checkout of the records commit is refused."""
+    from src.tman import records as R
+    w = u.w
+    other = FX.scratch_dir("tmanwt")
+    other.rmdir()
+    FX.git(w.repo, "worktree", "add", "-q", "--detach", str(other), FX.git(w.repo, "rev-parse", "HEAD"))
+    folder, head = u.export()
+    expect_gate(u, "session_checkout_not_e_TB16", "evaluator_commit_invalid",
+                records=R.Records.at_records_commit(folder, head, root=other), repo_root=other, detail="TB16: S = E")
 
 
 def records_outside_e_history(u: Unlock) -> None:
