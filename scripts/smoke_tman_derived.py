@@ -65,6 +65,7 @@ def hashed(method: str = "ptq", appended: str = "freeze", made: str = "2026-11-0
          "isolation": None, "appended": appended}
     if method == "qat_selection":
         h["evaluations"] = [{"dir": "eval_e6_s42", "fault_report": None}]
+        h["selected_checkpoint"] = {"path": "e6_s42_15ep/epoch_ckpts/e12.pt", "sha256": "c" * 64}
     h.update(kw)
     return h
 
@@ -250,10 +251,11 @@ def case_appends():
     from src.tman import schedule as D
     fz = D.cutoff_instant(FREEZE)
     frozen = derived("E4:s43:list42", "E1:s43:80k")
-    before = {"slot": "E4:s43:list42", "hashed": hashed(appended="append")}
+    before = {"slot": "E4:s43:list42", "hashed": hashed(appended="append"), "ptq_record": None}
     check("append_made_before_the_freeze", not M.append_errors(before, frozen, fz))
     after = {"slot": "E4:s43:list42", "hashed": hashed(appended="append", made="2026-11-04T10:00:00Z",
-                                                       isolation={"path": "iso.json", "sha256": "a" * 64})}
+                                                       isolation={"path": "iso.json", "sha256": "a" * 64}),
+             "ptq_record": None}
     prov = {"calibration": {"data_root": "/workspace/trainval_root"}}
     check("append_after_the_freeze_with_isolation_xi", not M.append_errors(
         after, frozen, fz, isolation=iso("/workspace/trainval_root"), provenance=prov))
@@ -269,23 +271,49 @@ def case_appends():
         dict(after, hashed=dict(after["hashed"], isolation=None)), frozen, fz, ptq_record_ok=True))
     qfrozen = derived("E6:s43:sel", "E6:s43:15ep", "qat_selection")
     qafter = {"slot": "E6:s43:sel", "hashed": hashed("qat_selection", appended="append", made="2026-11-04T10:00:00Z",
-                                                     isolation={"path": "iso.json", "sha256": "a" * 64})}
+                                                     isolation={"path": "iso.json", "sha256": "a" * 64}),
+               "ptq_record": None}
     check("qat_after_the_freeze_with_isolation", not M.append_errors(qafter, qfrozen, fz,
                                                                       isolation=iso("/somewhere")))
     check("qat_after_the_freeze_record_does_not_stand_in", bool(M.append_errors(
         dict(qafter, hashed=dict(qafter["hashed"], isolation=None)), qfrozen, fz, ptq_record_ok=True)))
+    check("isolation_root_not_compared_without_provenance", not M.append_errors(
+        after, frozen, fz, isolation=iso("/workspace/other"), provenance=None))
+    check("append_without_its_ptq_record_key_refused", bool(M.append_errors(
+        {"slot": "E4:s43:list42", "hashed": hashed(appended="append")}, frozen, fz)))
+    c, root = catalogue(), FX.scratch_dir()
+    read, sha = FX.ptq_reader_stub(FX.ptq_record_doc())
+    by_slot = {"E1:s42:80k": run("scored_run", "E1:s42:80k", "1" * 64)}
+    f42 = derived("E4:s42:list42", "E1:s42:80k")
+    a42 = {"slot": "E4:s42:list42", "hashed": hashed(appended="append", made="2026-11-04T10:00:00Z"),
+           "ptq_record": {"path": "e4/r.json", "sha256": sha}}
+    check("append_ptq_record_intact_stands_in_TB19_Q9", M.append_ptq_record(
+        a42, f42, c, by_slot, "3" * 64, runs_root=root, reader=read) == ([], True))
+    check("append_ptq_record_cited_not_read_without_runs", M.append_ptq_record(
+        a42, f42, c, by_slot, "3" * 64, runs_root=None) == ([], True))
+    errs, ok = M.append_ptq_record(dict(a42, ptq_record=None), f42, c, by_slot, "3" * 64, runs_root=root, reader=read)
+    check("append_of_record_without_ptq_record_refused_A2", bool(errs) and not ok)
+    errs, ok = M.append_ptq_record(dict(a42, hashed=dict(a42["hashed"], artifact_sha256="0" * 64)), f42, c, by_slot,
+                                   "3" * 64, runs_root=root, reader=read)
+    check("append_ptq_record_of_another_artifact_refused", bool(errs) and not ok)
+    check("qat_append_has_no_ptq_record_stand_in", M.append_ptq_record(
+        qafter, qfrozen, c, by_slot, "3" * 64, runs_root=root, reader=read) == ([], False))
+    check("appended_entry_takes_the_append_s_hashed_and_record", M.appended_entry(a42, f42) == dict(
+        f42, hashed=a42["hashed"], ptq_record=a42["ptq_record"]))
     check("append_unrelated_slot_refused", bool(M.append_errors(dict(before, slot="E4:s44:list42"), None, fz)))
     check("append_to_a_hashed_entry_refused", bool(M.append_errors(before, dict(frozen, hashed=hashed()), fz)))
     check("append_to_a_run_refused", bool(M.append_errors(before, run("scored_run", "E4:s43:list42"), fz)))
     check("append_digest_not_of_record_refused", bool(M.append_errors(
-        {"slot": "E4:s43:list42", "hashed": hashed(appended="append", image_digest="sha256:" + "0" * 64)}, frozen, fz)))
+        {"slot": "E4:s43:list42", "hashed": hashed(appended="append", image_digest="sha256:" + "0" * 64),
+         "ptq_record": None}, frozen, fz)))
     check("append_digest_other_than_declared_refused", bool(M.append_errors(
         before, dict(frozen, inputs=ptq_inputs(image_digest=FX_STUDENT)), fz)))
     check("append_marked_freeze_refused", bool(M.append_errors(
-        {"slot": "E4:s43:list42", "hashed": hashed(appended="freeze")}, frozen, fz)))
+        {"slot": "E4:s43:list42", "hashed": hashed(appended="freeze"), "ptq_record": None}, frozen, fz)))
     check("append_with_inputs_refused", bool(M.append_errors(dict(before, inputs=ptq_inputs()), frozen, fz)))
     check("append_incomplete_hashed_refused", bool(M.append_errors(
-        {"slot": "E4:s43:list42", "hashed": {k: v for k, v in hashed(appended="append").items() if k != "record"}},
+        {"slot": "E4:s43:list42", "hashed": {k: v for k, v in hashed(appended="append").items() if k != "record"},
+         "ptq_record": None},
         frozen, fz)))
     a, b = [before], [before, after]
     check("appends_grow", M.appends_prefix_error(a, b) is None)

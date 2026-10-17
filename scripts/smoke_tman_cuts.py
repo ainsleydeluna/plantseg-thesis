@@ -309,7 +309,8 @@ def case_printers_and_committed_files():
     check("printer_row_names_path_and_sha", rel in row and sha in row and "| DL-<next> | RECORDED (2026-11-03) |"
           in row)
     session = E.make_entry("unlock", [], "2026-11-04", {"manifest": {"path": S.MANIFEST_REL, "sha256": "1" * 64,
-                                                                     "body_sha256": "2" * 64},
+                                                                     "body_sha256": "2" * 64,
+                                                                     "appends_sha256": "4" * 64},
                                                         "lanes": {"path": S.LANES_REL, "sha256": "3" * 64},
                                                         "freeze_record": dict(REF)},
                            amendment="AM-17 item 9", script="scripts/tday_manifest.py", commit=None)

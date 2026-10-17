@@ -23,9 +23,12 @@ Neither carries a value before the unlock record (M11; test_value_before_unlock)
 """
 from __future__ import annotations
 
+import ast
 import importlib
 import re
 from pathlib import Path
+
+from src.training import sweep_select as ss
 
 from . import records as R
 from . import schedule as D
@@ -41,9 +44,11 @@ QAT_INPUTS = {"run_slot": "slot", "telemetry_sha256": "sha256", "scripts_commit"
 HASHED = {"artifact_sha256": "sha256", "state_dict_sha256": "sha256", "x86_copy_sha256": "sha256",
           "provenance": S.REF, "record": S.REF, "made_utc": "utc", "image_digest": "str",
           "isolation": S.nullable(S.REF), "appended": ("enum", ("freeze", "append"))}
-# AM-21 item 2(c): a second evaluation directory of a QAT run needs its fault report
-HASHED_QAT = {**HASHED, "evaluations": ("list", ("obj", {"dir": "str", "fault_report": S.nullable(S.REF)}))}
-APPEND = {"slot": "slot", "hashed": ("map", "any")}
+# AM-21 item 2(c): a second evaluation directory of a QAT run needs its fault report; the selected epoch's
+# checkpoint is the fq_off row's source (TB5; IF§8)
+HASHED_QAT = {**HASHED, "evaluations": ("list", ("obj", {"dir": "str", "fault_report": S.nullable(S.REF)})),
+              "selected_checkpoint": S.REF}
+APPEND = {"slot": "slot", "hashed": ("map", "any"), "ptq_record": S.nullable(S.REF)}    # A2: the made entry's
 QAT_RULES_REL = "configs/qat_selection_rules.json"
 COMPLETE_KINDS = ("scored_run", "default_candidate", "arm_teacher", "listed_run")     # a complete run: a model
 MODEL_OF_RECORD_ROLES = ("family", "per_seed")                                       # A2: these carry ptq_record
@@ -203,8 +208,9 @@ def append_errors(append: dict, frozen: dict | None, freeze_utc: int, *, isolati
     """append_invalid: an append names a derived entry listed by inputs at the freeze, gives every hashed field of its
     method with an image digest of record equal to the declared one, and, when made after the freeze, cites an
     isolation record of the same root and digest made before it (decision (xi)) -- an intact ptq_record of record
-    stands in for a PTQ artifact (TB19 Q9). `isolation` is the projected isolation record; `provenance` the
-    artifact's projected PTQ provenance."""
+    stands in for a PTQ artifact (TB19 Q9; `append_ptq_record`). `isolation` is the projected isolation record;
+    `provenance` the artifact's projected PTQ provenance (None when --runs is not given: the root is not compared;
+    freeze, unlock and session modes always read it)."""
     errs = S.field_errors(append, APPEND, "append")
     if errs:
         return errs
@@ -226,10 +232,54 @@ def append_errors(append: dict, frozen: dict | None, freeze_utc: int, *, isolati
         if h["isolation"] is None or not iso:
             errs.append(f"append {slot}: made after the freeze without an isolation record (decision (xi))")
         elif iso.get("image_digest") != h["image_digest"] or not iso.get("utc") \
-                or D.parse_utc_any(iso["utc"]) >= made or (frozen["method"] == "ptq" and iso.get("root") != root):
+                or D.parse_utc_any(iso["utc"]) >= made \
+                or (frozen["method"] == "ptq" and provenance is not None and iso.get("root") != root):
             errs.append(f"append {slot}: its isolation record is not of the same root ({iso.get('root')} vs {root}) "
                         f"and digest, made before it")
     return errs
+
+
+def appended_entry(append: dict, frozen: dict) -> dict:
+    """The by-inputs entry as its append makes it: the append's hashed form and ptq_record (A2)."""
+    return dict(frozen, hashed=append["hashed"], ptq_record=append["ptq_record"])
+
+
+def appendable(append, frozen: dict | None) -> bool:
+    """A well-formed append of a derived entry listed by inputs at the freeze (append_invalid refuses the rest)."""
+    return isinstance(append, dict) and not S.field_errors(append, APPEND, "append") \
+        and isinstance(append["hashed"], dict) and frozen is not None and frozen["kind"] == "derived" \
+        and frozen["hashed"] is None
+
+
+def append_ptq_record(append: dict, frozen: dict, cat, by_slot: dict, checksum_sha256: str, *, runs_root,
+                      reader=None) -> tuple[list[str], bool]:
+    """A PTQ append's ptq_record, checked as the made entry's (ptq_record_invalid, A2): (errors, whether it stands
+    in for the isolation record, TB19 Q9 -- cited and intact when read under --runs; without --runs the record is
+    not read, and freeze, unlock and session modes always read it)."""
+    if frozen["method"] != "ptq":
+        return [], False
+    errs = ptq_record_errors(appended_entry(append, frozen), cat, by_slot.get(frozen["parent"]), checksum_sha256,
+                             runs_root=runs_root, reader=reader)
+    return errs, not errs and append["ptq_record"] is not None
+
+
+def append_reads(append: dict, frozen: dict, records: R.Records, runs_root=None) -> tuple[list, dict | None,
+                                                                                            dict | None]:
+    """The records an append cites, read and checked against its hashes: its isolation record (committed) and,
+    under --runs, a PTQ artifact's provenance (its calibration data_root); (errors, projected isolation, projected
+    provenance)."""
+    h, slot, iso, prov = append["hashed"], append["slot"], None, None
+    if isinstance(h.get("isolation"), dict):
+        data = records.read(h["isolation"]["path"])
+        if S.sha256_bytes(data) != h["isolation"]["sha256"]:
+            return [f"append {slot}: its isolation record is not the cited one"], None, None
+        iso = read_isolation(data, h["isolation"]["path"])
+    if runs_root is not None and frozen["method"] == "ptq":                # unreadable: append_invalid
+        prov, psha = R.read_json_file(Path(runs_root) / h["provenance"]["path"], R.PTQ_PROVENANCE,
+                                      code="append_invalid")
+        if psha != h["provenance"]["sha256"]:
+            return [f"append {slot}: its provenance is not the cited one"], None, None
+    return [], iso, prov
 
 
 def appends_prefix_error(previous: list, current: list) -> str | None:
@@ -389,3 +439,276 @@ def cells_for(scopes, registered=None) -> list[str]:
                 ("corrupted_sev45" in scopes and sev not in INFERENTIAL_SEVERITIES):
             out.append(c)
     return out
+
+
+# ------------------------------------------------------------------------------- the body's records (§1.2-§1.8)
+# decision (x) and IF§10: the evaluator's roots (L-CORR's three are absent until it merges) and its data files
+EVALUATOR_ROOTS = ("scripts/evaluate_model.py", "scripts/evaluate_corruptions.py", "scripts/profile_efficiency.py",
+                   "scripts/build_corruption_cache.py", "scripts/verify_corruption_cache.py",
+                   "scripts/run_corruption_grid.py", "scripts/report_robustness.py")
+EVALUATOR_DATA = ("configs/plantseg_class_map.json", "configs/corruption_protocol.json",
+                  "configs/teacher/segnext_mscan-b_1xb16-adamw-40k_plantseg116-512x512.py")
+REFERENCE_FILES = {"mde_entry": ("reports/derived/mde_entry_20261009T034825Z.json", "DL-99"),
+                   "strata": ("reports/strata/train_strata_v1.json", "DL-63")}
+TRAINVAL_HASH_LIST = {"path": "train_val_image_hashes.tsv", "dl": "DL-91", "rows": 6213,       # kept outside the repo
+                      "sha256": "62e5ba9d38e1de1111f59ee46d5cc8ff23d8253c546cde9fa13c11a03233837c"}
+TEACHER_OF_RECORD = {"path": "iter_24000.pth", "dl": "DL-88", "bytes": 335_949_080,          # preflight_distill :93-95
+                     "sha256": "8c0e649a1457782c99e02a3c81867c3b5aa55d924b697cc859455e6022179c4e"}
+EXPECTED_ROWS_CITES = ("reports/dataset_report.md:30", "src/eval/stage_artifacts.py:30")
+LANE_CODE_FILES = ("src/tman/__init__.py", "src/tman/schema.py", "src/tman/records.py", "src/tman/completion.py",
+                   "src/tman/schedule.py", "src/tman/entries.py", "src/tman/manifest.py", "src/tman/validate.py",
+                   "scripts/tday_manifest.py", "configs/tday_catalogue.json")
+
+
+def hash_only(rel: str) -> bool:
+    """A repository path holding "test" (any case): the lane never reads or parses it; it is recorded by the blob id
+    git's tree gives and compared at the session by its whole-file sha256, the one operation the project's rules
+    allow on such a path (src/stats/tests.py is in the evaluator's closure through src/stats/__init__.py)."""
+    return "test" in rel.lower()
+
+
+def evaluator_files(src: ss.HeadSource, commit: str) -> dict:
+    """The evaluator file set at `commit` (decision (x); IF§10): its roots present there, their import closure over
+    src/, scripts/ and configs/ (absolute, relative and function-level imports, with the packages they pass
+    through), and its data files; {path: blob id}. A hash-only module is in the set but not parsed: its own imports
+    are not followed."""
+    out, todo = {}, [r for r in EVALUATOR_ROOTS + EVALUATOR_DATA if src.blob_at(commit, r)]
+    while todo:
+        rel = todo.pop()
+        if rel in out:
+            continue
+        out[rel] = src.blob_at(commit, rel)
+        if not rel.endswith(".py") or hash_only(rel):
+            continue
+        try:
+            tree = ast.parse(src.show(commit, rel).decode("utf-8"))
+        except (SyntaxError, UnicodeDecodeError, AttributeError):
+            continue
+        pkg = rel.rsplit("/", 1)[0].replace("/", ".")
+        for node in ast.walk(tree):
+            mods = []
+            if isinstance(node, ast.Import):
+                mods = [a.name for a in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                base = node.module or ""
+                if node.level:
+                    parts = pkg.split(".")
+                    base = ".".join(parts[:len(parts) - node.level + 1] + ([base] if base else []))
+                mods = [base] + [f"{base}.{a.name}" for a in node.names]
+            for m in mods:
+                parts = m.split(".")
+                if parts[0] not in ("src", "scripts", "configs"):
+                    continue
+                for i in range(1, len(parts) + 1):
+                    stem = "/".join(parts[:i])
+                    for cand in (f"{stem}.py", f"{stem}/__init__.py"):
+                        if src.blob_at(commit, cand) and cand not in out:
+                            todo.append(cand)
+    return dict(sorted(out.items()))
+
+
+def calibration_index(records: R.Records) -> dict:
+    """The calibration index of record (§1.6; DL-10) from the committed lists."""
+    def one(seed):
+        rel = f"configs/calibration/ptq_calibration_seed{seed}.json"
+        doc, sha = records.json(rel, {"checksum_sha256": True, "role": True, "seed": True, "split_list_sha256": True},
+                                code="calibration_index_mismatch")
+        return {"path": rel, "file_sha256": sha, "checksum_sha256": doc.get("checksum_sha256"), "role": doc.get("role")}
+    of_record = one(42)
+    split = records.json(of_record["path"], {"split_list_sha256": True}, code="calibration_index_mismatch")[0]
+    return {"of_record": of_record, "sensitivity": {str(s): one(s) for s in (43, 44, 45)},
+            "split_list_sha256": split.get("split_list_sha256"), "dl": "DL-10"}
+
+
+def references(records: R.Records) -> dict:
+    """The references of record (§1.8): the MDE entry and the strata file by committed sha256, the TRAIN/VAL hash
+    list and the teacher of record by their recorded values."""
+    out = {}
+    for k, (rel, dl) in REFERENCE_FILES.items():
+        out[k] = {"path": rel, "sha256": S.sha256_bytes(records.read(rel)), "dl": dl}
+    out["trainval_hash_list"] = dict(TRAINVAL_HASH_LIST)
+    out["teacher_of_record"] = dict(TEACHER_OF_RECORD)
+    return out
+
+
+# ------------------------------------------------------------------------------------------------ the builder
+SCORED_KINDS = ("scored_run", "default_candidate", "arm_teacher", "derived")      # the kinds that carry a scope
+SOURCES_SPEC = {"evaluator_commit": "?commit", "execution_context": S.nullable(("map", "any")),
+                "generator_pins": ("obj", {"corrupted_cache": S.nullable(("map", "any")),
+                                           "image_hasher": S.nullable(("map", "any"))}),
+                "trigger": S.nullable(("obj", {"path": "str", "sha256": "sha256", "triggered": "bool"})),
+                "freeze_entries": ("obj", {"delay": "?str", "new_freeze": "?str"}),
+                "entries": ("map", ("map", "any"))}
+CODE_ROOT = Path(__file__).resolve().parents[2]
+
+
+def lane_code() -> dict:
+    """The lane's code as the builder runs it (the code_provenance pattern, src/quant/ptq.py:724-733)."""
+    return {"commit": ss.HeadSource(CODE_ROOT).head() or None,
+            "files_sha256": {rel: S.sha256_bytes((CODE_ROOT / rel).read_bytes()) for rel in LANE_CODE_FILES
+                             if (CODE_ROOT / rel).is_file()}}
+
+
+def entry_ref(records: R.Records, rel: str) -> dict:
+    data = records.read(rel)
+    return {"doc": S.strict_json(data, rel, code="entry_field"), "path": rel, "sha256": S.sha256_bytes(data)}
+
+
+def build_entries(cat, given: dict, runs_root=None) -> list:
+    """The body's entries in catalogue order: the catalogue's fields of each given slot, its scope (IF§9's required
+    set for a kind that is scored; a pair's corrupted scope when both runs of the seed have a model, TB2), the given
+    kind fields, and, with the run directories, the completion block and telemetry sha256 read from them."""
+    from . import completion as C
+    kinds = {k: v.get("kind") for k, v in given.items()}
+
+    def pair(seed):
+        return kinds.get(f"E1:s{seed}:80k") == "scored_run" and kinds.get(f"E6:s{seed}:sel") == "derived"
+    out = []
+    for slot, s in cat.slots.items():
+        if slot not in given:
+            continue
+        g = given[slot]
+        e = {"slot": slot, "kind": g.get("kind"), "class": s["class"], "stage": s["stage"], "seed": s["seed"],
+             "catalogue": cat.entry_block(slot), "dl_rows": list(g.get("dl_rows", [])), "scope": [],
+             "role": list(s["roles"])}
+        if g.get("kind") in SCORED_KINDS:
+            req, _ = S.scope_rule(s, pair(s["seed"]) if s["scope_class"] == "pair_s4344" else None)
+            e["scope"] = [sc for sc in S.SCOPES if sc in req]
+        e.update({k: v for k, v in g.items() if k not in S.ENTRY_COMMON})
+        if runs_root is not None and g.get("kind") in COMPLETE_KINDS + ("non_finite",) and e.get("run_id"):
+            S.refuse_test_path(e["run_id"])
+            st = C.run_state(s, Path(runs_root) / e["run_id"])
+            if st.completion is not None:
+                e["completion"] = st.completion.as_entry()
+            if g.get("kind") == "non_finite":
+                e["telemetry_sha256"] = st.telemetry_sha256
+        out.append(e)
+    return out
+
+
+def build_manifest(records: R.Records, cat, sources: dict, *, runs_root=None) -> dict:
+    """A draft tday_manifest/1 from the committed records and the sources file (plan §1.2): the builder fills what
+    the records give and copies the rest; the validator checks both."""
+    errs = S.field_errors(sources, SOURCES_SPEC, "sources")
+    if errs:
+        raise S.TmanRefused("manifest_format", "; ".join(errs[:4]))
+    src = records.src
+    fe = sources["freeze_entries"]
+    delays = [entry_ref(records, fe["delay"])] if fe["delay"] else []
+    news = [entry_ref(records, fe["new_freeze"])] if fe["new_freeze"] else []
+    freeze = D.freeze_instant(D.schedule_block(src), delays=delays, news=news)
+    e = sources["evaluator_commit"]
+    pins = sources["generator_pins"]
+    body = {"calibration_index": calibration_index(records),
+            "entries": build_entries(cat, sources["entries"], runs_root),
+            "evaluator": {"commit": e, "files": evaluator_files(src, e) if e else {}},
+            "execution_context": sources["execution_context"],
+            "expected_rows": {"value": S.EXPECTED_ROWS, "cites": list(EXPECTED_ROWS_CITES)},
+            "generator_pins": {k: {"pin": pins[k], "value": None} for k in ("corrupted_cache", "image_hasher")},
+            "lane_code": lane_code(), "references": references(records), "schedule": freeze.as_block(),
+            "trigger": sources["trigger"]}
+    return {"format": S.MANIFEST_FORMAT, "body": body, "appends": [], "session": None}
+
+
+# ------------------------------------------------------------------------------- the inventory export (IF§8)
+def telemetry_name(slot: dict) -> str | None:
+    """A run slot's training telemetry file (none for a teacher: its mmengine logs are not one)."""
+    from . import completion as C
+    k = slot["record_kind"]
+    if k == "kd_run_end":
+        return C.kd_telemetry_name(slot["stage"])
+    return {"e1_val_result": C.E1_TELEMETRY, "qat_epoch15": C.QAT_TELEMETRY}.get(k)
+
+
+def inventory_rows(body: dict, appends: list, cat, registered=None) -> list:
+    """IF§8's model rows with IF§11.1's four fields: one per scored model and precision (a selected QAT model also
+    has its qat_fakequant_off row, TB5), unique by (slot, precision); source.sha256, and for INT8 the converted
+    artifact's (TB17); the cells its corrupted scopes ask for; a derived model listed by inputs only has no row."""
+    by_slot = {e["slot"]: e for e in body["entries"]}
+    hashed_by = {a["slot"]: a["hashed"] for a in appends}
+    rows = []
+    for e in body["entries"]:
+        if e["kind"] not in SCORED_KINDS or not e["scope"]:
+            continue
+        s = cat.slots[e["slot"]]
+        base = {"file_id": s["file_id"], "slot": e["slot"], "stage": s["evaluator_stage"],
+                "model_role": s["model_role"], "seed": None if s["model_role"] == "teacher" else s["seed"],
+                "entry_kind": e["kind"], "role": list(e["role"])}
+        cells = cells_for(set(e["scope"]), registered)
+        if e["kind"] != "derived":
+            ck = e["checkpoint"]
+            rows.append({**base, "precision": s["precision"],
+                         "source": {"kind": "checkpoint", "path": f"{e['run_id']}/{ck['name']}",
+                                    "sha256": ck["sha256"]},
+                         "converted_artifact_sha256": None, "cells": cells, "training_run_id": e["run_id"]})
+            continue
+        h = e["hashed"] or hashed_by.get(e["slot"])
+        if h is None:
+            continue
+        run_id = (by_slot.get(e["parent"]) or {}).get("run_id")
+        rows.append({**base, "precision": s["precision"], "source": {"kind": "provenance", **h["provenance"]},
+                     "converted_artifact_sha256": h["artifact_sha256"], "cells": cells, "training_run_id": run_id})
+        if "fq_off" in e["scope"]:
+            rows.append({**base, "precision": "qat_fakequant_off",
+                         "source": {"kind": "checkpoint", **h["selected_checkpoint"]},
+                         "converted_artifact_sha256": None, "cells": [], "training_run_id": run_id})
+    return rows
+
+
+def inventory_entries(body: dict, cat, records: R.Records, runs_root=None, appends=()) -> list:
+    """IF§11.2's entries, one per catalogue slot (kind null without an entry; an appended derived entry as its append
+    makes it), and IF§11.3's export-only telemetry: per attempt {run_id, path relative to the input root, sha256 of
+    its bytes, never parsed}; a copy-back hash that differs, or names a file that is absent, is refused
+    (completion_source_mismatch)."""
+    by_slot = {e["slot"]: e for e in body["entries"]}
+    appended = {a["slot"]: a for a in appends}
+    out = []
+    for slot, s in cat.slots.items():
+        e = by_slot.get(slot)
+        if e is None:
+            out.append({"slot": slot, "kind": None, "class": s["class"], "stage": s["stage"], "seed": s["seed"],
+                        "catalogue": cat.entry_block(slot), "role": list(s["roles"])})
+            continue
+        item = appended_entry(appended[slot], e) if slot in appended else dict(e)
+        name = telemetry_name(s)
+        run_ids, recorded = [], None
+        if e["kind"] in ("scored_run", "default_candidate", "listed_run", "non_finite"):
+            run_ids = [a["run_id"] for a in e["attempts"]]
+            recorded = e["telemetry_sha256"] if e["kind"] == "non_finite" else (
+                e["completion"]["sha256"] if e["completion"]["record"] == name else None)
+        elif e["kind"] == "diverged":
+            run_ids, recorded = [e["run_id"]], e["telemetry_sha256"]
+        elif e["kind"] == "aborted":
+            run_ids = list(e["run_ids"])
+        elif e["kind"] == "cut":
+            run_ids = list(S.strict_json(records.read(e["entry"]["path"]), e["entry"]["path"],
+                                         code="entry_field").get("run_ids") or [])
+        if name and run_ids and runs_root is not None:
+            tel = []
+            for rid in run_ids:
+                S.refuse_test_path(rid)
+                f = Path(runs_root) / rid / name
+                if f.is_file():
+                    tel.append({"run_id": rid, "path": f"{rid}/{name}", "sha256": S.sha256_bytes(f.read_bytes())})
+            last = tel[-1] if tel and tel[-1]["run_id"] == run_ids[-1] else None
+            if recorded is not None and (last is None or last["sha256"] != recorded):
+                raise S.TmanRefused("completion_source_mismatch", f"{slot}: {run_ids[-1]}/{name} is absent or its "
+                                                                  "sha256 is not its record's")
+            item["telemetry"] = tel
+        out.append(item)
+    return out
+
+
+def build_inventory(doc: dict, manifest_bytes: bytes, records: R.Records, cat, *, runs_root=None, registered=None,
+                    freeze_dl: str | None = None) -> dict:
+    """tday-inventory/1 (IF§8; IF§11 v2): manifest_sha256 is the body's canonical sha256 (the freeze record's
+    body_sha256), manifest_file_sha256 the manifest file's; dedup null and binding unbound until B-3."""
+    body = doc["body"]
+    msha = S.canonical_sha256(body)
+    return {"schema": S.INVENTORY_FORMAT, "evaluator_commit": body["evaluator"]["commit"],
+            "execution_context": body["execution_context"], "manifest_sha256": msha,
+            "manifest_file_sha256": S.sha256_bytes(manifest_bytes),
+            "models": inventory_rows(body, doc["appends"], cat, registered),
+            "entries": inventory_entries(body, cat, records, runs_root, doc["appends"]), "dedup": None,
+            "freeze": {"dl_row": freeze_dl, "manifest_sha256": msha} if freeze_dl else None,
+            "binding": {"state": "unbound", "path": None, "sha256": None}}

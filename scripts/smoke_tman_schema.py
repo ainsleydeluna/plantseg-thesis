@@ -152,9 +152,10 @@ def dl_table(rows: dict) -> str:
 
 
 # --------------------------------------------------------------------------------------- score sentinel (vi)
-SCORE_KEY_RE = re.compile(r"(best_val|miou|^value$|^values$|fake_quant|^loss$|grad_norm|rule_trace|^tied|band|"
-                          r"^ece|val_x|ece_x|ece_b|all_class|disease_only|per_class|^ce$|^dice$|accuracy|^conditions$)",
-                          re.I)
+# value(s) is not a score key here: every value(s) a TMAN reader keeps is a grid value (records.DECISION_RECORD,
+# the one allowlist that keeps it; smoke_tman_noscore pins that), and the projection drops it everywhere else
+SCORE_KEY_RE = re.compile(r"(best_val|miou|fake_quant|^loss$|grad_norm|rule_trace|^tied|band|^ece|val_x|ece_x|"
+                          r"ece_b|all_class|disease_only|per_class|^ce$|^dice$|accuracy|^conditions$)", re.I)
 
 
 class SentinelDict(dict):

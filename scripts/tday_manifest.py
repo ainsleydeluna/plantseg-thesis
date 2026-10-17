@@ -1,0 +1,367 @@
+#!/usr/bin/env python3
+"""The TEST-day manifest's command line (lane TMAN, B-1, C5; plan §0 and decision (xvii)).
+
+Commands:
+  build             a draft manifest from the committed records and a sources file (plan §1.2), validated in draft
+                    mode, written as tday_manifest.json into --out
+  validate          the validator (src/tman/validate.py) in mode draft, freeze, unlock or session
+  entry KIND        an entry file (tday_entry/1) checked, written into --out, and its decision-log row printed
+  arithmetic        AM-19 item 3(b)'s arithmetic for a run (scripts/preflight_arms.py's cut_arithmetic, reused); with
+                    --out, the cut entry it implies when the run does not fit
+  append            a derived artifact's hashed form appended to the manifest, written into --out
+  isolation-record  src/data/isolation.assert_trainval_only_root on --data-root, written as tday_isolation/1
+  inventory         the inventory export tday-inventory/1 (IF§8; IF§11 v2), written into --out and read back
+
+Every output is a new file created exclusively in --out, a folder outside the repository; no command writes in the
+repository, and none reads TEST data. Records are read at HEAD of the repository at --root (default: this
+checkout). Exit codes follow the select scripts (src/training/sweep_select.py:203): 0 pass or written, 2 refused,
+3 incomplete (draft), 4 error.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+import time
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[1]
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
+
+from src.tman import completion as C  # noqa: E402
+from src.tman import entries as E  # noqa: E402
+from src.tman import manifest as M  # noqa: E402
+from src.tman import records as R  # noqa: E402
+from src.tman import schedule as D  # noqa: E402
+from src.tman import schema as S  # noqa: E402
+from src.tman import validate as V  # noqa: E402
+
+SCRIPT_REL = "scripts/tday_manifest.py"
+
+
+# --------------------------------------------------------------------------------------------- helpers
+def out_folder(path, root=None) -> Path:
+    """--out: an existing folder outside the repository at --root and this checkout, free of "test"."""
+    S.refuse_test_path(path)
+    p = Path(path).resolve()
+    for repo in {REPO.resolve(), Path(root or REPO).resolve()}:
+        if p == repo or repo in p.parents:
+            raise S.TmanRefused("test_path", f"--out {p} is inside the repository: outputs are written outside it")
+    if not p.is_dir():
+        raise S.TmanRefused("manifest_format", f"--out {p} is not an existing folder")
+    return p
+
+
+def write_new(folder: Path, name: str, data: bytes) -> Path:
+    err = S.created_name_error(name)
+    if err:
+        raise S.TmanRefused("test_path", f"refusing to create {name}: {err}")
+    out = folder / name
+    try:
+        with open(out, "xb") as fh:
+            fh.write(data)
+    except FileExistsError:
+        raise S.TmanRefused("entry_file_rewritten", f"{out} exists: outputs are created once") from None
+    return out
+
+
+def read_json(path, code: str):
+    S.refuse_test_path(path)
+    p = Path(path)
+    return S.strict_json(p.read_bytes(), str(p), code=code)
+
+
+def records_at(args) -> R.Records:
+    return R.Records.at_head(args.root)
+
+
+def catalogue(records: R.Records):
+    return S.load_catalogue(records.read(S.CATALOGUE_REL))
+
+
+def registered(args):
+    return None if args.registered_cells is None else list(read_json(args.registered_cells, "generator_cells_mismatch"))
+
+
+def print_result(res: V.Result) -> int:
+    for line in res.missing + res.reports:
+        print(line)
+    state = "MISSING" if res.missing else "PASS"
+    print(f"{state}: mode {res.mode}; {len(res.passed)} gates passed")
+    return res.exit_code
+
+
+# ------------------------------------------------------------------------------------------------- build
+def cmd_build(args) -> int:
+    records = records_at(args)
+    cat = catalogue(records)
+    sources = read_json(args.sources, "manifest_format")
+    doc = M.build_manifest(records, cat, sources, runs_root=args.runs)
+    data = S.json_file_bytes(doc)
+    out = write_new(out_folder(args.out, args.root), "tday_manifest.json", data)
+    print(f"WROTE {out} sha256 {S.sha256_bytes(data)} body_sha256 {S.canonical_sha256(doc['body'])}")
+    res = V.validate(V.Ctx(mode="draft", manifest_bytes=data, manifest_path=str(out), records=records,
+                           registered_cells=registered(args)))
+    return print_result(res)
+
+
+# ---------------------------------------------------------------------------------------------- validate
+def cmd_validate(args) -> int:
+    """Draft and freeze read the records at HEAD of --root; unlock and session run at the session checkout S = E
+    (--root) and read the records from --records, a folder written from --records-commit (PL-28; TB16)."""
+    S.refuse_test_path(args.manifest)
+    data = Path(args.manifest).read_bytes()
+    if (args.records is None) != (args.records_commit is None):
+        raise S.TmanRefused("record_uncommitted", "--records and --records-commit go together (PL-28)")
+    if args.mode in ("unlock", "session") and args.records is None:
+        raise S.TmanRefused("record_uncommitted", f"{args.mode} mode reads the records from --records at "
+                                                  "--records-commit; --root is the session checkout S = E (TB16)")
+    if args.records is not None:
+        S.refuse_test_path(args.records)
+        if not S.COMMIT_RE.fullmatch(args.records_commit):
+            raise S.TmanRefused("record_uncommitted", f"--records-commit {args.records_commit!r} is not 40 hex")
+        records = R.Records.at_records_commit(args.records, args.records_commit, root=args.root)
+    else:
+        records = records_at(args)
+    rel = records.src.rel(args.manifest)
+    res = V.validate(V.Ctx(mode=args.mode, manifest_bytes=data, manifest_path=rel or str(args.manifest),
+                           records=records, runs_root=args.runs, freeze_record=args.freeze_record,
+                           unlock_entry=args.unlock_entry, registered_cells=registered(args), now=time.time()))
+    return print_result(res)
+
+
+# ------------------------------------------------------------------------------------------------- entry
+def cmd_entry(args) -> int:
+    records = records_at(args)
+    cat = catalogue(records)
+    fields = read_json(args.fields, "entry_field")
+    doc = E.make_entry(args.kind, args.slot or [], args.date, fields, amendment=args.amendment, script=SCRIPT_REL,
+                       commit=records.src.head() or None)
+    freeze = D.freeze_instant(D.schedule_block(records.src))
+    if args.kind == "cut":
+        ctx = printer_cut_context(records, cat, freeze, doc, args.runs)
+        E.check_cut(doc, ctx)
+    elif args.kind == "not_run":
+        if not args.manifest:
+            raise S.TmanRefused("not_run_without_parent_record", "a not-run entry reads its parent's manifest entry "
+                                                                 "(--manifest)")
+        body = read_json(args.manifest, "manifest_unreadable")["body"]
+        parent = next((e for e in body["entries"] if e["slot"] == doc["parent"]), None)
+        errs = E.not_run_entry_errors(doc, cat, parent)
+        if errs:
+            raise S.TmanRefused("not_run_without_parent_record", "; ".join(errs))
+    elif args.kind in ("freeze_delay", "new_freeze"):
+        if args.kind == "freeze_delay":
+            delays, news = [{"doc": doc, "path": "(printed)", "sha256": "0" * 64}], []
+        else:
+            delays, news = [M.entry_ref(records, doc["delay_entry"]["path"])], [{"doc": doc, "path": "(printed)",
+                                                                                 "sha256": "0" * 64}]
+        D.freeze_instant(D.schedule_block(records.src), delays=delays, news=news)
+    path, rel, sha = E.write_entry(doc, out_folder(args.out, args.root), nn=args.nn, records=records)
+    print(f"WROTE {path} sha256 {sha}")
+    print("DECISION-LOG ROW (the orchestrator assigns the ID; commit the file at its path with it):")
+    print(E.dl_row(doc, rel, sha, args.summary))
+    return S.EXIT_PASS
+
+
+def printer_cut_context(records: R.Records, cat, freeze, doc: dict, runs) -> E.CutContext:
+    """The cut printer's context from the records: the registry, the decision records, the launch log and the cut
+    runs' own statuses under --runs (other slots: not read)."""
+    from src.training import kd_arms
+    from src.training import sweep_select as ss
+    log = records.launch_log(code="completion_record_invalid") if records.has(ss.LAUNCH_LOG_REL) else None
+    recs = {k: records.json(rel, R.DECISION_RECORD, code="decision_date_cut_mismatch")[0]
+            for k, rel in ss.DECISION_RECORD_REL.items() if records.has(rel)}
+
+    def status(slot):
+        if runs is None or slot not in doc["slots"] or not doc["run_ids"]:
+            return None
+        rid = doc["run_ids"][-1]
+        S.refuse_test_path(rid)
+        d = Path(runs) / rid
+        return C.status_at(C.run_state(cat.slots[slot], d), freeze.original_utc) if d.is_dir() else None
+
+    def condition(ref):
+        if not ref:
+            return None
+        got = M.entry_ref(records, ref["path"])
+        return got["doc"].get("verdict") if got["sha256"] == ref["sha256"] and got["doc"].get("kind") == "condition" \
+            else None
+    return E.CutContext(cat, freeze, registry={s.run_stage: s for s in kd_arms.load_arms().values()},
+                        decision_records=recs, launched=set(log.launched) if log else set(),
+                        stopped=set(log.stopped) if log else set(), status=status, condition=condition)
+
+
+# -------------------------------------------------------------------------------------------- arithmetic
+def cmd_arithmetic(args) -> int:
+    records = records_at(args)
+    cat = catalogue(records)
+    if args.slot not in cat.slots:
+        raise S.TmanRefused("slot_unknown", f"{args.slot} is not a catalogue slot")
+    figures = []
+    for rid in args.reference_telemetry or []:
+        if args.runs is None:
+            raise S.TmanRefused("cut_arithmetic_invalid", "--reference-telemetry reads --runs")
+        figures.append(E.reference_telemetry(Path(args.runs), rid, args.reference_kind, args.reference_stage))
+    if args.reference_smoke:
+        figures.append(E.reference_smoke(Path(args.reference_smoke), args.smoke_key))
+    sch = D.schedule_block(records.src)
+    now = time.time() if args.now is None else D.parse_utc_any(args.now)
+    a = E.cut_arithmetic(args.iterations, figures, sch["in_force"], now)
+    print(a["text"])
+    if a["cut"] and args.out:
+        doc = E.make_entry("cut", [args.slot], D.manila_day(now), {
+            "rule": "arithmetic", "reason": "it does not fit before the original freeze date", "launched": False,
+            "run_ids": [], "since": None, "arithmetic": a, "telemetry": [], "comparator": None, "results_known": [],
+            "cut_order_position": None, "rule_record": None}, amendment="AM-19 item 3(b)", script=SCRIPT_REL,
+            commit=records.src.head() or None)
+        E.check_cut(doc, printer_cut_context(records, cat, D.freeze_instant(sch), doc, None))
+        path, rel, sha = E.write_entry(doc, out_folder(args.out, args.root), records=records)
+        print(f"WROTE {path} sha256 {sha}")
+        print(E.dl_row(doc, rel, sha, "cut before its launch by AM-19 item 3(b)'s arithmetic."))
+    return S.EXIT_PASS
+
+
+# ------------------------------------------------------------------------------------------------ append
+def cmd_append(args) -> int:
+    """The validator's append checks (ptq_record_invalid, then append_invalid) on the one new append."""
+    S.refuse_test_path(args.manifest)
+    data = Path(args.manifest).read_bytes()
+    doc = S.strict_json(data, args.manifest, code="manifest_unreadable")
+    records = records_at(args)
+    cat = catalogue(records)
+    freeze = D.freeze_instant(D.schedule_block(records.src))
+    rec = None
+    if args.ptq_record:
+        if args.runs is None:
+            raise S.TmanRefused("ptq_record_invalid", "--ptq-record is a path under --runs")
+        S.refuse_test_path(args.ptq_record)
+        rec = {"path": args.ptq_record, "sha256": S.sha256_bytes((Path(args.runs) / args.ptq_record).read_bytes())}
+    append = {"slot": args.slot, "hashed": read_json(args.hashed, "append_invalid"), "ptq_record": rec}
+    by_slot = {e["slot"]: e for e in doc["body"]["entries"]}
+    frozen = by_slot.get(args.slot)
+    errs = M.append_errors(append, frozen, freeze.original_utc, ptq_record_ok=True)
+    if errs:
+        raise S.TmanRefused("append_invalid", "; ".join(errs))
+    checksum = ((doc["body"].get("calibration_index") or {}).get("of_record") or {}).get("checksum_sha256")
+    perrs, ok = M.append_ptq_record(append, frozen, cat, by_slot, checksum, runs_root=args.runs)
+    if perrs:
+        raise S.TmanRefused("ptq_record_invalid", "; ".join(perrs))
+    errs, iso, prov = M.append_reads(append, frozen, records, args.runs)
+    errs = errs or M.append_errors(append, frozen, freeze.original_utc, isolation=iso, provenance=prov,
+                                   ptq_record_ok=ok)
+    if errs:
+        raise S.TmanRefused("append_invalid", "; ".join(errs))
+    new = dict(doc, appends=doc["appends"] + [append])
+    out = write_new(out_folder(args.out, args.root), "tday_manifest.json", S.json_file_bytes(new))
+    print(f"WROTE {out} sha256 {S.sha256_bytes(out.read_bytes())} ({len(new['appends'])} appends)")
+    return S.EXIT_PASS
+
+
+# -------------------------------------------------------------------------------------- isolation record
+def cmd_isolation(args) -> int:
+    now = time.time()
+    rec = M.isolation_record(args.data_root, utc=C.utc_text(int(now)),
+                             image_digest=(os.environ.get("PLANTSEG_IMAGE_DIGEST", "").strip() or None))
+    data = S.json_file_bytes(rec)
+    name = f"tday_isolation_{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime(now))}.json"
+    out = write_new(out_folder(args.out, args.root), name, data)
+    print(f"WROTE {out} sha256 {S.sha256_bytes(data)}")
+    return S.EXIT_PASS
+
+
+# --------------------------------------------------------------------------------------------- inventory
+def cmd_inventory(args) -> int:
+    S.refuse_test_path(args.manifest)
+    data = Path(args.manifest).read_bytes()
+    doc = S.strict_json(data, args.manifest, code="manifest_unreadable")
+    records = records_at(args)
+    inv = M.build_inventory(doc, data, records, catalogue(records), runs_root=args.runs, registered=registered(args),
+                            freeze_dl=args.freeze_dl)
+    out = write_new(out_folder(args.out, args.root), "tday_inventory.json", S.json_file_bytes(inv))
+    V.read_inventory(out)
+    print(f"WROTE {out} sha256 {S.sha256_bytes(out.read_bytes())} ({len(inv['models'])} model rows, "
+          f"{len(inv['entries'])} entries)")
+    return S.EXIT_PASS
+
+
+# ------------------------------------------------------------------------------------------------- main
+def parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="tday_manifest.py", description=__doc__.split("\n")[0])
+    p.add_argument("--root", default=str(REPO), help="the repository whose HEAD holds the records")
+    sub = p.add_subparsers(dest="cmd", required=True)
+    b = sub.add_parser("build")
+    b.add_argument("--sources", required=True)
+    b.add_argument("--out", required=True)
+    b.add_argument("--runs")
+    b.add_argument("--registered-cells")
+    v = sub.add_parser("validate")
+    v.add_argument("--manifest", required=True)
+    v.add_argument("--mode", required=True, choices=V.MODES)
+    v.add_argument("--runs")
+    v.add_argument("--freeze-record")
+    v.add_argument("--unlock-entry")
+    v.add_argument("--registered-cells")
+    v.add_argument("--records", help="unlock, session: the records folder written from --records-commit")
+    v.add_argument("--records-commit")
+    e = sub.add_parser("entry")
+    e.add_argument("kind", choices=sorted(E.ENTRY_FILE_FIELDS))
+    e.add_argument("--slot", action="append")
+    e.add_argument("--date", required=True)
+    e.add_argument("--fields", required=True)
+    e.add_argument("--amendment", required=True)
+    e.add_argument("--summary", required=True)
+    e.add_argument("--out", required=True)
+    e.add_argument("--nn", type=int, default=1)
+    e.add_argument("--runs")
+    e.add_argument("--manifest")
+    a = sub.add_parser("arithmetic")
+    a.add_argument("--slot", required=True)
+    a.add_argument("--iterations", type=int, required=True)
+    a.add_argument("--reference-telemetry", action="append")
+    a.add_argument("--reference-kind", default="kd_run_end")
+    a.add_argument("--reference-stage", default="")
+    a.add_argument("--reference-smoke")
+    a.add_argument("--smoke-key", default="e3")
+    a.add_argument("--runs")
+    a.add_argument("--now")
+    a.add_argument("--out")
+    ap = sub.add_parser("append")
+    ap.add_argument("--manifest", required=True)
+    ap.add_argument("--slot", required=True)
+    ap.add_argument("--hashed", required=True)
+    ap.add_argument("--out", required=True)
+    ap.add_argument("--runs")
+    ap.add_argument("--ptq-record", help="the made model's ptq_record/1, a path under --runs (A2)")
+    i = sub.add_parser("isolation-record")
+    i.add_argument("--data-root", required=True)
+    i.add_argument("--out", required=True)
+    n = sub.add_parser("inventory")
+    n.add_argument("--manifest", required=True)
+    n.add_argument("--out", required=True)
+    n.add_argument("--runs")
+    n.add_argument("--registered-cells")
+    n.add_argument("--freeze-dl")
+    return p
+
+
+COMMANDS = {"build": cmd_build, "validate": cmd_validate, "entry": cmd_entry, "arithmetic": cmd_arithmetic,
+            "append": cmd_append, "isolation-record": cmd_isolation, "inventory": cmd_inventory}
+
+
+def main(argv=None) -> int:
+    args = parser().parse_args(argv)
+    try:
+        return COMMANDS[args.cmd](args)
+    except S.TmanRefused as e:
+        print(e.line())
+        return S.EXIT_REFUSED
+    except Exception as e:  # noqa: BLE001 -- an unexpected error is exit 4, never a pass
+        print(f"ERROR -- {type(e).__name__}: {e}")
+        return S.EXIT_ERROR
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

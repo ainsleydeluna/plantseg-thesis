@@ -1,0 +1,309 @@
+#!/usr/bin/env python3
+"""Smoke for decision (vi), no check reads a score (plan §4 (vi); lane TMAN, B-1, C5).
+
+1. The static scan: the lane's code (src/tman/*.py and scripts/tday_manifest.py) holds no score-key literal outside
+   its docstrings; the one allowlist that keeps a value(s) key is records.DECISION_RECORD, whose value is a grid
+   value; the lane references no function of src/training/sweep_select.py that reads a score.
+2. The sentinel: the readers' JSON objects raise on a score key (scripts/smoke_tman_schema.SentinelDict) while the
+   world is built and every mode runs -- draft, freeze, unlock and session -- with the builder, the inventory
+   export, the cut-entry check and the arithmetic printer; a sweep decision record with scores beside its grid
+   values is read too.
+3. The mutation test: every score field of the fixtures -- the KD, E1 and QAT telemetry rows, the E1 and teacher
+   logs' scores, the selection files, the ptq_record's parent score -- set to random finite values, to "nan" (as
+   the trainers write a non-finite value) or deleted: every verdict, the arithmetic and the manifest and inventory
+   bytes stay identical, up to the sha256 of the files the mutation changed. Removing a record changes the verdict.
+
+Synthetic inputs only, under the system temp dir (removed at the end); TEST is never read.
+
+Run:  python -B scripts/smoke_tman_noscore.py
+"""
+from __future__ import annotations
+
+import sys
+
+sys.dont_write_bytecode = True
+
+import ast  # noqa: E402
+import json  # noqa: E402
+import os  # noqa: E402
+import random  # noqa: E402
+import re  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
+REPO = Path(__file__).resolve().parents[1]
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
+
+import scripts.smoke_tman_pins as PINS  # noqa: E402
+import scripts.smoke_tman_schema as FX  # noqa: E402  (the TMAN fixture library)
+import scripts.smoke_tman_validate as VW  # noqa: E402  (the fixture world)
+
+check = FX.check
+SCORE = FX.SCORE_KEY_RE
+SCORE_TEXT_RE = re.compile(r"(?P<key>[A-Za-z_]*(?:miou|loss)[A-Za-z_]*)(?P<sep>=|: )"
+                           r"(?P<num>-?[0-9.]+(?:[eE]-?\d+)?|nan)", re.I)
+SELECTION_RELS = ("reports/derived/lambda_selection.json", "reports/derived/alpha_selection.json")
+NOW = "2026-10-21T00:00:00Z"
+
+
+# ================================================================================================ helpers
+def mutate_obj(o, mode: str, rng: random.Random):
+    """`o` (parsed JSON) with every score key's value set to a random finite number, to "nan", or deleted."""
+    if isinstance(o, dict):
+        out = {}
+        for k, v in o.items():
+            if isinstance(k, str) and SCORE.search(k):
+                if mode != "deleted":
+                    out[k] = rng.uniform(-5.0, 5.0) if mode == "finite" else "nan"
+            else:
+                out[k] = mutate_obj(v, mode, rng)
+        return out
+    if isinstance(o, list):
+        return [mutate_obj(x, mode, rng) for x in o]
+    return o
+
+
+def mutate_text(text: str, mode: str, rng: random.Random) -> str:
+    def sub(m):
+        if mode == "deleted":
+            return ""
+        return m["key"] + m["sep"] + (f"{rng.uniform(0.0, 1.0):.6f}" if mode == "finite" else "nan")
+    return SCORE_TEXT_RE.sub(sub, text)
+
+
+def run_files(w) -> list[str]:
+    """The world's run files that hold scores, by name (no directory is listed)."""
+    from src.tman import completion as C
+    out = []
+    for slot, e in w.entries.items():
+        rid = e.get("run_id")
+        kind = w.cat.slots[slot]["record_kind"]
+        if not rid:
+            continue
+        if kind == "kd_run_end":
+            out.append(f"{rid}/{C.kd_telemetry_name(w.cat.slots[slot]['stage'])}")
+        elif kind == "e1_val_result":
+            out += [f"{rid}/{C.E1_TELEMETRY}", f"{rid}/{C.E1_LOG}"]
+        elif kind == "qat_epoch15":
+            out.append(f"{rid}/{C.QAT_TELEMETRY}")
+        elif kind == "teacher_m12":
+            out.append(f"{rid}/20261012_010203/20261012_010203.log")
+    return out
+
+
+def replace_all(o, mapping: dict):
+    if isinstance(o, dict):
+        return {k: replace_all(v, mapping) for k, v in o.items()}
+    if isinstance(o, list):
+        return [replace_all(v, mapping) for v in o]
+    return mapping.get(o, o) if isinstance(o, str) else o
+
+
+def mutate_world(w, mode: str, seed: int) -> dict:
+    """Mutate every score field of the world's run files, selection files and ptq_records; the sources then cite
+    the changed files' sha256. Returns {new sha256: old sha256} of every file changed."""
+    S, rng, shas = w.S, random.Random(seed), {}
+    for rel in run_files(w):
+        p = w.runs / rel
+        old = p.read_bytes()
+        if rel.endswith(".jsonl"):
+            new = b"".join(json.dumps(mutate_obj(json.loads(x), mode, rng)).encode() + b"\n"
+                           for x in old.split(b"\n") if x.strip())
+        else:
+            new = mutate_text(old.decode("utf-8"), mode, rng).encode("utf-8")
+        if new != old:
+            p.write_bytes(new)
+            shas[S.sha256_bytes(new)] = S.sha256_bytes(old)
+    files = {}
+    for rel in SELECTION_RELS:
+        old = (w.repo / rel).read_bytes()
+        files[rel] = S.json_file_bytes(mutate_obj(json.loads(old), mode, rng))
+        shas[S.sha256_bytes(files[rel])] = S.sha256_bytes(old)
+    w.commit(files, f"scores mutated ({mode})")
+    for rel, doc in list(w.ptq_docs.items()):
+        old = S.json_file_bytes(doc)
+        w.ptq_docs[rel] = mutate_obj(doc, mode, rng)
+        shas[S.sha256_bytes(S.json_file_bytes(w.ptq_docs[rel]))] = S.sha256_bytes(old)
+    w.sources = replace_all(w.sources, {old: new for new, old in shas.items()})
+    return shas
+
+
+def normalised(data: bytes, shas: dict) -> bytes:
+    text = data.decode("utf-8")
+    for new, old in shas.items():
+        text = text.replace(new, old)
+    return text.encode("utf-8")
+
+
+def outputs(w) -> dict:
+    """What the lane prints and decides over the world: the freeze and draft verdicts, the manifest built, the
+    inventory export and the arithmetic of a KD reference run."""
+    from src.tman import entries as E
+    from src.tman import manifest as M
+    S = w.S
+    doc = M.build_manifest(w.records, w.cat, w.sources, runs_root=w.runs)
+    data = S.json_file_bytes(doc)
+    out = {"manifest": data, "hashes": (S.sha256_bytes(data), S.canonical_sha256(doc["body"]))}
+    for mode in ("freeze", "draft"):
+        code, passed, e = w.run(mode, data=data)
+        out[mode] = (code, passed)
+    out["inventory"] = S.json_file_bytes(M.build_inventory(doc, data, w.records, w.cat, runs_root=w.runs,
+                                                           registered=PINS.IF6_CELLS, freeze_dl="DL-300"))
+    ref = E.reference_telemetry(w.runs, "e2_s42_lambda0.5_80k_a1", "kd_run_end", "E2")
+    out["arithmetic"] = S.json_file_bytes(E.cut_arithmetic(80000, [ref], "T", FX.utc(NOW)))
+    return out
+
+
+# ======================================================================================================= cases
+def lane_python() -> list[Path]:
+    from src.tman import manifest as M
+    return [REPO / rel for rel in M.LANE_CODE_FILES if rel.endswith(".py")]
+
+
+def code_literals(path: Path) -> list[str]:
+    """The string literals of a module, docstrings excepted (f-strings' literal parts included)."""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    docs = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) and node.body \
+                and isinstance(node.body[0], ast.Expr) and isinstance(node.body[0].value, ast.Constant):
+            docs.add(id(node.body[0].value))
+    return [n.value for n in ast.walk(tree) if isinstance(n, ast.Constant) and isinstance(n.value, str)
+            and id(n) not in docs]
+
+
+def case_static_scan():
+    from src.tman import records as R
+    files = lane_python()
+    check("static_scan_reads_the_lane_s_nine_modules", len(files) == 9 and all(f.is_file() for f in files),
+          str([f.name for f in files]))
+    hits = {f.name: [s for s in code_literals(f) if SCORE.search(s)] for f in files}
+    check("no_score_key_literal_in_the_lane_s_code", not any(hits.values()), str({k: v for k, v in hits.items() if v}))
+    holders = []
+    for name in dir(R):
+        a = getattr(R, name)
+        if name.isupper() and isinstance(a, dict) and _allow_keys(a) & {"value", "values"}:
+            holders.append(name)
+    check("only_the_decision_record_keeps_a_value_key", holders == ["DECISION_RECORD"], str(holders))
+    sweep = ast.parse((REPO / "src/training/sweep_select.py").read_text(encoding="utf-8"))
+    readers = sorted({fn.name for fn in ast.walk(sweep) if isinstance(fn, ast.FunctionDef)
+                      and any(isinstance(n, ast.Constant) and isinstance(n.value, str) and SCORE.search(n.value)
+                              for n in ast.walk(fn))})
+    used = sorted({n.attr for f in files for n in ast.walk(ast.parse(f.read_text(encoding="utf-8")))
+                   if isinstance(n, ast.Attribute)} & set(readers))
+    check("no_sweep_select_score_reader_is_referenced", "_run_end_ending" in readers and not used,
+          f"readers {len(readers)}; used {used}")
+
+
+def _allow_keys(a) -> set:
+    out = set()
+    if isinstance(a, dict):
+        for k, v in a.items():
+            out.add(k)
+            out |= _allow_keys(v)
+    elif isinstance(a, list) and a:
+        out |= _allow_keys(a[0])
+    return out
+
+
+def case_sentinel():
+    """Every mode, the builder, the export and the printers under the sentinel."""
+    from src.tman import records as R
+    import scripts.smoke_tman_unlock as UL
+    try:
+        FX.with_sentinel(lambda: R.project(R.strict_json(b'{"best_val": 0.3}', "x", code="entry_field"),
+                                           {"best_val": True}))
+        fired = False
+    except AssertionError:
+        fired = True
+    check("sentinel_fires_on_a_reader_of_best_val", fired)
+
+    def run_all():
+        w = VW.World()
+        res = {"freeze": w.run("freeze")[:2], "draft": w.run("draft")[:2]}
+        decision = w.S.json_file_bytes({"format": "sweep_decision_record/1", "sweep": "alpha_cwd",
+                                        "decision_date": "2026-10-22", "values": [
+                                            {"value": v, "status": "finished", "reason": None,
+                                             "directories": [{"best_val": 0.3, "all_class_miou": 0.3}]}
+                                            for v in (25.0, 50.0, 100.0)]})
+        w.commit({"reports/derived/alpha_decision_record.json": decision}, "a decision record with scores")
+        res["freeze_with_a_decision_record"] = w.run("freeze")[:2]
+        res["decision_record"] = w.records.json("reports/derived/alpha_decision_record.json", R.DECISION_RECORD,
+                                                code="decision_date_cut_mismatch")[0]
+        res["outputs"] = outputs(w)
+        u = UL.Unlock()
+        res["unlock"] = u.run("unlock")[:2]
+        res["session"] = u.run("session", u.start_session())[:2]
+        return res
+    try:
+        res = FX.with_sentinel(run_all)
+        err = ""
+    except AssertionError as e:
+        res, err = None, str(e)
+    check("sentinel_quiet_through_every_mode_builder_export_and_printer", res is not None, err)
+    if res is None:
+        return
+    for mode in ("freeze", "draft", "freeze_with_a_decision_record", "unlock", "session"):
+        want = VW.gate_codes(mode.split("_")[0])
+        check(f"sentinel_{mode}_passes", res[mode] == (None, want), str(res[mode][0]))
+    check("decision_record_keeps_grid_values_and_statuses_only", res["decision_record"] == {
+        "decision_date": "2026-10-22", "values": [{"value": v, "status": "finished"} for v in (25.0, 50.0, 100.0)]})
+    check("sentinel_builder_export_and_arithmetic_complete", all(res["outputs"][k] for k in (
+        "manifest", "inventory", "arithmetic")) and res["outputs"]["freeze"] == (None, VW.gate_codes("freeze")))
+
+
+def case_mutation_invariance():
+    for n, mode in enumerate(("finite", "nan", "deleted")):
+        w = VW.World()
+        base = outputs(w)
+        shas = mutate_world(w, mode, seed=1009 + n)
+        after = outputs(w)
+        check(f"mutation_{mode}_changes_the_score_files", len(shas) >= 10, str(len(shas)))
+        check(f"mutation_{mode}_verdicts_identical", (after["freeze"], after["draft"]) == (base["freeze"],
+                                                                                          base["draft"])
+              and base["freeze"] == (None, VW.gate_codes("freeze")), f"{after['freeze'][0]}, {after['draft'][0]}")
+        # the export cites the manifest itself: its file and body sha256 follow the files it cites
+        shas.update(zip(after["hashes"], base["hashes"]))
+        diffs = [k for k in ("manifest", "inventory", "arithmetic") if normalised(after[k], shas) != base[k]]
+        check(f"mutation_{mode}_manifest_inventory_arithmetic_identical_but_hashes", not diffs, str(diffs))
+        if n == 0:
+            check("the_manifest_and_export_cite_the_changed_files", after["manifest"] != base["manifest"]
+                  and after["inventory"] != base["inventory"])
+
+
+def case_removal_changes_the_verdict():
+    w = VW.World()
+    f = w.runs / "e1_s43_80k" / "e1_telemetry.jsonl"
+    saved = f.read_bytes()
+    try:
+        f.unlink()
+        code, _, _ = w.run("freeze")
+    finally:
+        f.write_bytes(saved)
+    check("telemetry_removed_refused", code == "completion_record_invalid", str(code))
+    t = w.repo / "reports/derived/am3_trigger.json"
+    saved = t.read_bytes()
+    try:
+        t.unlink()
+        code, _, _ = w.run("freeze")
+    finally:
+        t.write_bytes(saved)
+    check("trigger_record_removed_refused", code == "record_uncommitted", str(code))
+    check("world_passes_again_after_the_removals", w.run("freeze")[0] is None)
+
+
+def main() -> int:
+    try:
+        return FX.run_cases("TMAN NOSCORE SMOKE (lane TMAN, B-1, C5)",
+                            (case_static_scan, case_sentinel, case_mutation_invariance,
+                             case_removal_changes_the_verdict))
+    finally:
+        from src.tman import manifest as M
+        if VW.REAL_TEACHER is not None:
+            M.TEACHER_OF_RECORD.clear()
+            M.TEACHER_OF_RECORD.update(VW.REAL_TEACHER)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

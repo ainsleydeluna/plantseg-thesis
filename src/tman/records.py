@@ -7,8 +7,9 @@ src/training/sweep_select.py that reads a score is reused (`_run_end_ending` rea
 sweep_select.py:1242-1245); LaunchLog reads launch lines only, whose `value` is a grid value, not a score.
 
 Committed records go through sweep_select's two-source accessor (sweep_select.py:460-623): HeadSource (the working
-tree at HEAD of the repository at a root, byte-equal to its blob) or RecordsSource (a records folder verified by
-blob id against a records commit); the decision log is read at the records ref, as sweep_select reads it (:810). A
+tree at HEAD of the repository at a root, byte-equal to its blob) or RecordsSource (reports/ and the decision log
+from a records folder verified by blob id against a records commit; code and configs at HEAD of the checkout, as
+sweep_select splits them); the decision log is read at the records ref, as sweep_select reads it (:810). A
 path containing "test" is refused as given, before any filesystem call, then as resolved. Run directories are read
 only under an explicit --runs folder. A ptq_record/1 is read only through lane LQP's reader (A2).
 """
@@ -124,6 +125,10 @@ PTQ_PROVENANCE = {"schema": True, "stage": True, "source_stage": True, "source_c
 # the evaluator's runtime record (src/eval/eval_runtime.py:273-294): the execution-context keys of TB1 only
 EVAL_RUNTIME = {"model_device": True, "input_devices": True, "batch_size": True, "num_workers": True,
                 "determinism_policy_applied": True, "torch_num_threads": True, "image_digest": True}
+# a sweep decision record (sweep_select.decision_record_doc, :2471-2484): its decision date and each grid value's
+# status; `value` is the grid value (a launch value, as the launch log's), never a score -- the one allowlist that
+# keeps a value(s) key; reason, directories and on_course are dropped
+DECISION_RECORD = {"decision_date": True, "values": [{"value": True, "status": True}]}
 # the sweep selection files (lambda_selection/1, alpha_selection/1): identity only
 SELECTION = {"format": True,
              "winner": {"lambda": True, "alpha": True, "run_id": True, "ckpt_sha256": True},
@@ -196,7 +201,7 @@ class Records:
     def read(self, rel: str, *, missing: str = "record_uncommitted") -> bytes:
         S.refuse_test_path(rel)
         try:
-            _, data = self.src.read(rel, missing=missing, uncommitted="record_uncommitted", record=True)
+            _, data = self.src.read(rel, missing=missing, uncommitted="record_uncommitted")
         except ss.SelectionRefused as e:
             code = "test_path" if e.code == "test_path" else ("record_uncommitted" if e.code in (
                 "record_uncommitted", "records_mismatch") else missing)
@@ -251,9 +256,10 @@ class Records:
 # ------------------------------------------------------------------------------------------- run directories
 def read_jsonl(path: Path, rows_allow: dict, *, code: str) -> tuple[list[dict], bool, str]:
     """(projected rows, torn last line, file sha256) of a strict-JSON telemetry file. Each row keeps only its
-    event's allowlist; an event without one keeps {"event"} only. A torn last line is reported, not parsed."""
+    event's allowlist; an event without one keeps {"event"} only. A torn last line is reported, not parsed. An
+    unreadable file is refused as `code`."""
     S.refuse_test_path(path)
-    data = Path(path).read_bytes()
+    data = _read_bytes(path, code)
     lines = data.split(b"\n")
     torn = lines[-1] != b""
     if not torn:
@@ -270,8 +276,15 @@ def read_jsonl(path: Path, rows_allow: dict, *, code: str) -> tuple[list[dict], 
 
 def read_json_file(path: Path, allow, *, code: str):
     S.refuse_test_path(path)
-    data = Path(path).read_bytes()
+    data = _read_bytes(path, code)
     return project(strict_json(data, str(path), code=code), allow), S.sha256_bytes(data)
+
+
+def _read_bytes(path, code: str) -> bytes:
+    try:
+        return Path(path).read_bytes()
+    except OSError as e:
+        raise S.TmanRefused(code, f"{path}: unreadable ({type(e).__name__})") from None
 
 
 # ------------------------------------------------------------------------------------- PTQ records (A2; lane LQP)
