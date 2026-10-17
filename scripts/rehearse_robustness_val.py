@@ -27,19 +27,19 @@ atomically to a new directory outside the repository. The outputs are nonofficia
 the pipeline on VAL, never evidence on the robustness contrast.
 
 Refusals, by code, before anything is written: `stand_in_same_as_e1` (the same file_id, or one
-checkpoint for both); `rehearsal_input_refused` (an input the reader, the role or condition checks,
-or the frozen modules refuse); the out-dir codes of src/eval/robustness_report.check_out_dir.
+checkpoint for both); `rehearsal_input_refused` (an input the reader refuses, a role or condition
+that is not the cell's, more than one checkpoint within a model, or the frozen modules' analysis
+errors); the out-dir and writer codes of src/eval/robustness_report (write_dir_atomic).
 
-Exit codes: 0 written and R-G5 holds; 1 written and R-G5 fails; 2 refused.
+Exit codes: 0 written and R-G5 holds; 1 written and R-G5 fails; 2 refused; 4 an unexpected error
+(nothing written).
 """
 from __future__ import annotations
 
 import argparse
 import datetime as _dt
-import hashlib
 import json
 import sys
-import uuid
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -56,7 +56,7 @@ SCHEMA = "plantseg-robustness-rehearsal/1.0.0"
 OUT_NAME, SUMS_NAME = "rehearsal_robustness.json", "SHA256SUMS"
 TOLERANCE = 1e-12
 CELLS = corruption_roles.INFERENTIAL_CELL_IDS
-EXIT_DONE, EXIT_RG5_FAILED, EXIT_REFUSED = 0, 1, 2
+EXIT_DONE, EXIT_RG5_FAILED, EXIT_REFUSED, EXIT_UNEXPECTED = 0, 1, 2, 4
 CODE_FILES = ("scripts/rehearse_robustness_val.py", "src/eval/corrupted.py",
               "src/eval/robustness_report.py", "src/stats/robustness.py", "src/stats/rehearsal.py",
               "src/stats/val_artifacts.py", "src/stats/ingest.py", "src/stats/align.py",
@@ -96,14 +96,28 @@ def load_model(root, file_id: str) -> dict:
             require_role(art, stage="E1", model_role="student", precision="fp32", label=name)
         except ValArtifactError as e:
             _refuse("rehearsal_input_refused", str(e))
-        cond = art.summary["dataset"]["condition"]
-        if cond != RR.expected_condition(label):
-            _refuse("rehearsal_input_refused", f"{name} holds condition {cond}")
+        check_condition(name, label, art)
         arts[label] = art
+    check_one_checkpoint(file_id, arts)
+    return arts
+
+
+def check_condition(name: str, label: str, art) -> None:
+    cond = art.summary["dataset"]["condition"]
+    if cond != RR.expected_condition(label):
+        _refuse("rehearsal_input_refused", f"{name} holds condition {cond}")
+
+
+def check_one_checkpoint(file_id: str, arts: dict) -> None:
     shas = {a.summary["run"]["checkpoint_sha256"] for a in arts.values()}
     if len(shas) != 1:
         _refuse("rehearsal_input_refused", f"{file_id}: its artifacts name {len(shas)} checkpoints")
-    return arts
+
+
+def analysis_errors() -> tuple:
+    """The frozen modules' named analysis errors (src/stats/rehearsal.ANALYSIS_ERRORS): refusals."""
+    from src.stats.rehearsal import ANALYSIS_ERRORS
+    return ANALYSIS_ERRORS
 
 
 def as_stand_in(run):
@@ -143,7 +157,6 @@ def rehearse(root, e1_id: str, stand_in_id: str) -> dict:
     from src.stats.artifact import serialize_a3a
     from src.stats.corruption_protocol import official_corruption_grid
     from src.stats.ingest import Policy
-    from src.stats.rehearsal import ANALYSIS_ERRORS
     from src.stats.robustness import align_miou_c, assemble_miou_c
     from src.stats.tests import run_comparison
     check_pair(e1_id, stand_in_id)
@@ -163,7 +176,7 @@ def rehearse(root, e1_id: str, stand_in_id: str) -> dict:
         pv = align_miou_c(mc_e1, mc_e6, policy=policy)
         result = run_comparison("robustness_e1_e6", pv, baseline_stage="E1", candidate_stage="E6")
         comparison = serialize_a3a(result)
-    except ANALYSIS_ERRORS as e:
+    except analysis_errors() as e:
         _refuse("rehearsal_input_refused", f"the frozen path refused the inputs: "
                                            f"{type(e).__name__}: {e}")
     checks = {"E1": rg5(mc_e1, e1_cells, e1["clean"].run),
@@ -191,16 +204,11 @@ def rehearse(root, e1_id: str, stand_in_id: str) -> dict:
 
 
 def write_outputs(out_dir, doc: dict) -> Path:
-    out = RR.check_out_dir(out_dir)
+    """The JSON and its SHA256SUMS through B-4's atomic writer (re-read before the rename; a
+    failure leaves nothing behind)."""
     payload = (json.dumps(doc, indent=2, sort_keys=True, ensure_ascii=False, allow_nan=False)
                + "\n").encode("utf-8")
-    tmp = out.parent / f".{out.name}.tmp-{uuid.uuid4().hex[:12]}"
-    tmp.mkdir(parents=True)
-    (tmp / OUT_NAME).write_bytes(payload)
-    (tmp / SUMS_NAME).write_bytes(f"{hashlib.sha256(payload).hexdigest()}  {OUT_NAME}\n"
-                                  .encode("utf-8"))
-    tmp.rename(out)
-    return out
+    return RR.write_dir_atomic(out_dir, {OUT_NAME: payload})
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -222,6 +230,9 @@ def main(argv=None) -> int:
     except (RehearsalRefusal, RR.ReportRefusal) as e:
         print(f"{type(e).__name__}: {e}", file=sys.stderr)
         return EXIT_REFUSED
+    except Exception as e:                                   # noqa: BLE001 -- reported, exit 4
+        print(f"unexpected error, nothing written: {type(e).__name__}: {e}", file=sys.stderr)
+        return EXIT_UNEXPECTED
     print(f"rehearsal outputs: {out}")
     for stage in ("E1", "E6"):
         c = doc["r_g5"][stage]

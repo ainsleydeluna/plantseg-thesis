@@ -9,11 +9,14 @@ the policy asked for: OFFICIAL (split test), REHEARSAL (split val) or NONOFFICIA
 
 Every mIoU below is the dataset-level all-class union-present value `pooled_miou_from_totals` of the
 artifact's NPZ totals, in float64 (DL-73, P28). The disease-only pooled value is a secondary column
-of Q1 only. Means are numpy float64 means, nested as each rule names them.
+of Q1 only. Means are numpy float64 means, nested as each rule names them. A null means a cell the
+quantity needs is absent (listed under the model's `missing`) or not scored for that model; the
+rCD nulls carry their reason.
 
   Q1 per cell        m(c, s) for every scored cell of every model
   Q2 per severity    two series (LE6): the four non-noise corruptions at s = 1-5, and all five at
-                     s = 1-4; at each severity, the mean over the series' corruptions
+                     s = 1-4; at each severity, the mean over the series' corruptions, from that
+                     severity's own cells
   Q3 mIoU-C          the mean over the five corruptions of the mean over s = 1-3 (the arithmetic
                      of src/stats/report.dataset_miou_c, P28), for every model holding the 15
                      inferential cells, seeds 43/44 included (LE4)
@@ -22,12 +25,14 @@ of Q1 only. Means are numpy float64 means, nested as each rule names them.
                      by the same sum for E1 at seed 42 (src/eval/robustness.rcd); E1 is 1 exactly.
                      Students at seed 42 only, never the teacher (LE4). When E1's sum is <= 0, the
                      rCD of that corruption is null for every stage, reason
-                     `rcd_reference_nonpositive` (LE7: `rcd_invalid_reference` is caught)
+                     `rcd_reference_nonpositive`, whatever else the stage lacks (LE7;
+                     `rcd_invalid_reference` is caught)
   Q6 rCD mean        the mean of Q5 over the five corruptions, only when all five are defined (LE7)
   Q7 per corruption  each corruption's mean over s = 1-3, with Q5 for the students
-  Q8 Kamann-Rother   the nested average (LE8) of each Q2 series: each corruption's mean over the
-                     series' severities, then equal weight over its corruptions. Within one series
-                     every corruption has the same severities, so the nested and flat means agree
+  Q8 Kamann-Rother   AM-16 item 6's average, nested (LE8): each corruption's mean over its own
+                     severities -- s = 1-5 for the four non-noise corruptions, s = 1-3 for
+                     gaussian_noise -- then equal weight over the five; beside it, each LE6 series'
+                     mean (within a series every corruption has the same severities)
   Q9 provenance      each input's four-file sha256 and record sha256, the one cache checksum, each
                      artifact's runtime tuple and commit, the inventory, and this code's commit
                      and files
@@ -52,23 +57,29 @@ Checks, each refused by code before anything is written:
                  `cache_checksum_mismatch` (one cache across the records, equal to the expected
                  one); `heterogeneous_runtime` (LE1, official: each artifact's runtime tuple and
                  commit equal the export's `execution_context` and `evaluator_commit`)
-  the request    `policy_unknown`, `policy_split_mismatch`; the out-dir: `out_dir_name_invalid`
-                 (any case of "test", refused before any filesystem call), `out_dir_inside_repo`,
-                 `out_dir_exists`
+  the request    `policy_unknown`, `policy_split_mismatch`; for an official report, this code at
+                 the export's evaluator commit (`report_commit_mismatch`) and unmodified there
+                 (`report_code_modified`); the out-dir: `out_dir_name_invalid` (TL section 2: no
+                 "test" in any case and none of :<>"\\|?* in any component, as given and resolved,
+                 the strings checked before any filesystem call), `out_dir_inside_repo` (resolved),
+                 `out_dir_exists`; the writer re-reads what it wrote (`output_verify_failed`)
 
 Outputs: robustness_descriptive.json (strict JSON, sorted keys), robustness_descriptive.md and
-SHA256SUMS, written atomically to a new directory outside the repository. Nothing here is
-inferential: no hypothesis test, no bootstrap, no significance value, and the outputs never enter
-family.json (D22). The JSON states its class space and names no quantity after the rejected
-section 8.7.1 alias (DL-73, LE13). A banner names every non-official input.
+SHA256SUMS, written atomically to a new directory outside the repository; a failed write removes its
+own temporary directory. Nothing here is inferential: no hypothesis test, no bootstrap, no
+significance value, and the outputs never enter family.json (D22). The JSON states its class space
+and names no quantity after the rejected section 8.7.1 alias (DL-73, LE13). A banner names every
+non-official input.
 """
 from __future__ import annotations
 
 import datetime as _dt
 import hashlib
 import json
+import math
 import os
 import re
+import shutil
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -77,8 +88,8 @@ import numpy as np
 
 from .. import corruption_roles
 from .artifacts import ARTIFACT_FILES, MANIFEST_NAME
-from .corrupted import (CorruptedEvalError, clean_dir_name, corrupted_dir_name, read_cell_record,
-                        record_path, verify_cell_record)
+from .corrupted import (CorruptedEvalError, clean_dir_name, corrupted_dir_name,
+                        created_path_problem, read_cell_record, record_path, verify_cell_record)
 from .protocols import CANVAS_PROTOCOL_ID
 from .robustness import RobustnessError, rcd, rpd
 
@@ -93,17 +104,20 @@ NON_NOISE = tuple(c for c in CORRUPTIONS if c != "gaussian_noise")
 INFERENTIAL = corruption_roles.INFERENTIAL_SEVERITIES
 #: Q3's severities (P28; IMPL (f)): mIoU-C, and so RPD, never reads severity 4 or 5.
 MIOU_C_SEVERITIES = INFERENTIAL
-#: LE6: the two series of Q2 and Q8, (name, corruptions, severities).
+#: Q8 (AM-16 item 6, after Kamann & Rother): non-noise over s = 1-5, noise over s = 1-3.
+KR_SEVERITIES = {c: ((1, 2, 3) if c == "gaussian_noise" else (1, 2, 3, 4, 5)) for c in CORRUPTIONS}
+#: LE6: the two series of Q2, (name, corruptions, severities).
 SERIES = (("non_noise_s1_5", NON_NOISE, (1, 2, 3, 4, 5)), ("all_five_s1_4", CORRUPTIONS, (1, 2, 3, 4)))
 #: LE1: the execution-context values every official artifact shares with the export (IF section 1).
 RUNTIME_KEYS = ("model_device", "input_devices", "determinism_policy_applied", "batch_size",
                 "num_workers", "torch_num_threads", "image_digest")
 INT8 = ("int8_ptq", "int8_qat")
-HEX64 = re.compile(r"^[0-9a-f]{64}$")
+HEX64 = re.compile(r"[0-9a-f]{64}")
 CODE_FILES = ("src/eval/robustness_report.py", "scripts/report_robustness.py",
-              "src/eval/robustness.py", "src/eval/corrupted.py", "src/corruption_roles.py",
-              "configs/corruption_protocol.json", "src/stats/ingest.py",
-              "src/stats/noninferiority.py", "src/stats/report.py")
+              "scripts/run_corruption_grid.py", "src/eval/robustness.py", "src/eval/corrupted.py",
+              "src/eval/artifacts.py", "src/eval/protocols.py", "src/corruption_cache.py",
+              "src/corruption_roles.py", "configs/corruption_protocol.json", "src/stats/ingest.py",
+              "src/stats/noninferiority.py", "src/stats/report.py", "src/stats/val_artifacts.py")
 
 
 class ReportRefusal(RuntimeError):
@@ -133,6 +147,12 @@ def _sha256_file(path) -> str:
 def class_space() -> str:
     from ..stats.report import CLASS_SPACE
     return CLASS_SPACE
+
+
+def code_state() -> dict:
+    """{code_commit, code_clean_at_commit, code_files} of the code that writes these outputs."""
+    from ..stats.val_artifacts import code_provenance
+    return code_provenance(CODE_FILES)
 
 
 def ingest_policy(policy: str):
@@ -295,6 +315,22 @@ def runtime_tuple(summary: dict) -> dict:
     return {k: rt.get(k) for k in RUNTIME_KEYS}
 
 
+def runtime_problems(models: list, export: dict) -> list:
+    """LE1: every artifact of every model -- the clean one included -- whose runtime tuple or commit
+    is not the export's execution context and evaluator commit."""
+    ctx, commit = export["execution_context"], export["evaluator_commit"]
+    want = {k: ctx.get(k) for k in RUNTIME_KEYS}
+    out = []
+    for m in models:
+        for label, s in m.summaries.items():
+            got = runtime_tuple(s)
+            if got != want or s["run"].get("repo_commit") != commit:
+                diff = {k: got[k] for k in RUNTIME_KEYS if got[k] != want[k]}
+                out.append(f"{m.dirs[label]}: runtime {diff or 'equal'} at commit "
+                           f"{s['run'].get('repo_commit')}")
+    return out
+
+
 def check_set(models: list, export: dict, policy: str, expected_cache) -> dict:
     """Across every loaded artifact: completeness (official), one split digest, one cache, and
     (LE1, official) one runtime tuple and commit, the export's. Returns Q9's cache block."""
@@ -313,7 +349,7 @@ def check_set(models: list, export: dict, policy: str, expected_cache) -> dict:
         _refuse("expected_cache_sha256_required",
                 "an official set requires --expected-cache-sha256, the recorded canonical "
                 "checksum of the cache (IF section 5)")
-    if expected_cache is not None and not HEX64.match(str(expected_cache)):
+    if expected_cache is not None and not HEX64.fullmatch(str(expected_cache)):
         _refuse("expected_cache_sha256_format",
                 f"--expected-cache-sha256 must be 64 lowercase hex characters, got "
                 f"{expected_cache!r}")
@@ -324,15 +360,12 @@ def check_set(models: list, export: dict, policy: str, expected_cache) -> dict:
                 f"the cell records name the caches {checksums}"
                 + (f"; expected {expected_cache}" if expected_cache is not None else ""))
     if official:
-        ctx, commit = export["execution_context"], export["evaluator_commit"]
-        want = {k: ctx.get(k) for k in RUNTIME_KEYS}
-        for m in models:
-            for label, s in m.summaries.items():
-                got = runtime_tuple(s)
-                if got != want or s["run"].get("repo_commit") != commit:
-                    _refuse("heterogeneous_runtime",
-                            f"{m.dirs[label]}: runtime {got} at commit {s['run'].get('repo_commit')}"
-                            f"; the export's context is {want} at {commit}")
+        problems = runtime_problems(models, export)
+        if problems:
+            _refuse("heterogeneous_runtime",
+                    f"{len(problems)} artifact(s) not at the export's execution context "
+                    f"{dict((k, export['execution_context'].get(k)) for k in RUNTIME_KEYS)} and "
+                    f"commit {export['evaluator_commit']}: {problems[:3]}")
     return {"canonical_manifest_sha256": checksums[0] if checksums else None,
             "expected": expected_cache,
             "verification_record_sha256": sorted({str(r["cache"]["verification_record_sha256"])
@@ -362,25 +395,33 @@ def miou_c(m: dict):
     return _mean(per_corruption)
 
 
-def kamann_rother(m: dict, corruptions, severities) -> float:
-    """Q8 (LE8): each corruption's mean over the severities, then equal weight over corruptions."""
-    return _mean([_mean([m[(c, s)] for s in severities]) for c in corruptions])
+def kamann_rother(m: dict):
+    """Q8 (AM-16 item 6; LE8): each corruption's mean over its own severities (KR_SEVERITIES),
+    then equal weight over the five. None when a cell is missing."""
+    if any((c, s) not in m for c in CORRUPTIONS for s in KR_SEVERITIES[c]):
+        return None
+    return _mean([_mean([m[(c, s)] for s in KR_SEVERITIES[c]]) for c in CORRUPTIONS])
 
 
 def series_values(m: dict) -> tuple[dict, dict]:
-    """Q2 per severity and Q8 for both series (LE6); None where a series' cell is missing."""
-    q2, q8 = {}, {}
+    """Q2 (LE6): per series and severity, the mean over the series' corruptions of that severity's
+    own cells; and each series' mean (nested, equal to flat within a series). None where a cell the
+    value needs is missing."""
+    q2, means = {}, {}
     for name, corruptions, severities in SERIES:
-        have = all((c, s) in m for c in corruptions for s in severities)
-        q2[name] = {str(s): (_mean([m[(c, s)] for c in corruptions]) if have else None)
+        q2[name] = {str(s): (_mean([m[(c, s)] for c in corruptions])
+                             if all((c, s) in m for c in corruptions) else None)
                     for s in severities}
-        q8[name] = kamann_rother(m, corruptions, severities) if have else None
-    return q2, q8
+        have = all((c, s) in m for c in corruptions for s in severities)
+        means[name] = (_mean([_mean([m[(c, s)] for s in severities]) for c in corruptions])
+                       if have else None)
+    return q2, means
 
 
-def degradation(m: dict, m_clean: float, corruption: str):
-    """The sum over s = 1-3 of (D(c, s) - D_clean), D = 1 - m; None when a cell is missing."""
-    if any((corruption, s) not in m for s in INFERENTIAL):
+def degradation(m: dict, m_clean, corruption: str):
+    """The sum over s = 1-3 of (D(c, s) - D_clean), D = 1 - m; None when the clean value or a cell
+    is missing."""
+    if m_clean is None or any((corruption, s) not in m for s in INFERENTIAL):
         return None
     d_clean = 1.0 - m_clean
     total = 0.0
@@ -399,16 +440,27 @@ def in_series(row: dict) -> bool:
     return row["stage"] == "teacher" or row.get("seed") == 42
 
 
-def rcd_table(stage: str, m: dict, m_clean: float, e1) -> tuple[dict, dict]:
-    """Q5 and Q6 for one student against E1 at seed 42, `e1` = (cells, m_clean) or None (LE7)."""
+def reference_defined(ref: float) -> bool:
+    """LE7: E1's summed degradation is a divisor only when positive and finite."""
+    return math.isfinite(ref) and ref > 0
+
+
+def rcd_table(stage: str, m: dict, m_clean, e1) -> tuple[dict, dict]:
+    """Q5 and Q6 for one student against E1 at seed 42, `e1` = (cells, m_clean) or None. LE7's
+    reason comes first: a corruption whose E1 sum is <= 0 is rcd_reference_nonpositive whatever
+    the student lacks."""
     per = {}
     for c in CORRUPTIONS:
         if e1 is None:
             per[c] = {"value": None, "reason": "e1_reference_absent"}
             continue
-        mine, ref = degradation(m, m_clean, c), degradation(e1[0], e1[1], c)
-        if mine is None or ref is None:
-            per[c] = {"value": None, "reason": "cell_missing"}
+        ref = degradation(e1[0], e1[1], c)
+        if ref is not None and not reference_defined(ref):
+            per[c] = {"value": None, "reason": "rcd_reference_nonpositive"}
+            continue
+        mine = degradation(m, m_clean, c)
+        if ref is None or mine is None:
+            per[c] = {"value": None, "reason": "clean_missing" if m_clean is None else "cell_missing"}
             continue
         try:
             per[c] = {"value": rcd(stage, mine, ref), "reason": None}
@@ -459,17 +511,14 @@ def compute(models: list) -> dict:
     for model in models:
         m, m_clean = values[model.key]
         if in_rcd(model.row):
-            if m_clean is None:
-                per = {c: {"value": None, "reason": "clean_missing"} for c in CORRUPTIONS}
-                mean = {"value": None, "reason": "clean_missing"}
-            else:
-                per, mean = rcd_table(model.row["stage"], m, m_clean, e1)
+            per, mean = rcd_table(model.row["stage"], m, m_clean, e1)
             out["q5_rcd"][model.key] = per
             out["q6_rcd_mean"][model.key] = mean
         if in_series(model.row):
-            q2, q8 = series_values(m)
+            q2, means = series_values(m)
             out["q2_per_severity"][model.key] = q2
-            out["q8_kamann_rother"][model.key] = q8
+            out["q8_kamann_rother"][model.key] = {"average": kamann_rother(m),
+                                                  "series_means": means}
             q7 = {c: {"mean_s1_3": (_mean([m[(c, s)] for s in INFERENTIAL])
                                     if all((c, s) in m for s in INFERENTIAL) else None)}
                   for c in CORRUPTIONS}
@@ -491,9 +540,25 @@ def check_request(policy: str, split: str) -> None:
                                          f"not {split!r}")
 
 
+def check_code(code: dict, export: dict) -> None:
+    """An official report is written by this code at the export's evaluator commit (TL-9: the
+    session runs at S = E), unmodified there."""
+    if code.get("code_commit") != export["evaluator_commit"]:
+        _refuse("report_commit_mismatch",
+                f"this checkout is at {code.get('code_commit')}, the export's evaluator_commit is "
+                f"{export['evaluator_commit']}")
+    if code.get("code_clean_at_commit") is not True:
+        _refuse("report_code_modified",
+                f"the report's code files are not unmodified at {code.get('code_commit')} "
+                f"(code_clean_at_commit {code.get('code_clean_at_commit')!r})")
+
+
 def build_report(export: dict, artifacts_root, *, split: str, policy: str,
                  expected_cache: str | None = None, inventory_sha256: str | None = None) -> dict:
     check_request(policy, split)
+    code = code_state()
+    if policy == "official":
+        check_code(code, export)
     rows = [r for r in export["models"] if r["cells"]]
     models = [load_model(Path(artifacts_root), split, r, policy) for r in rows]
     cache = check_set(models, export, policy, expected_cache)
@@ -503,7 +568,6 @@ def build_report(export: dict, artifacts_root, *, split: str, policy: str,
                          if s["run"]["artifact_status"] != "official")
     official = policy == "official" and not nonofficial
     refs = [m.key for m in models if m.row["stage"] == "E1" and m.row.get("seed") == 42]
-    from ..stats.val_artifacts import code_provenance
     banner = None if official else (
         f"NONOFFICIAL - descriptive robustness outputs under policy {policy}; "
         + (f"{len(nonofficial)} non-official input(s), listed under nonofficial_inputs"
@@ -519,6 +583,8 @@ def build_report(export: dict, artifacts_root, *, split: str, policy: str,
                    "(pooled_miou_from_totals, float64; DL-73, P28)"),
         "descriptive_only": ("descriptive only: no hypothesis test, no bootstrap and no "
                              "significance value; never in family.json (D22)"),
+        "kamann_rother": {"severities": {c: list(s) for c, s in KR_SEVERITIES.items()},
+                          "rule": "AM-16 item 6, nested (LE8)"},
         "series": {name: {"corruptions": list(cs), "severities": list(ss)}
                    for name, cs, ss in SERIES},
         "inventory": {"sha256": inventory_sha256, "schema": export.get("schema"),
@@ -541,7 +607,7 @@ def build_report(export: dict, artifacts_root, *, split: str, policy: str,
                           for label in m.summaries},
         } for m in models],
         **quantities,
-        "provenance": {"code": code_provenance(CODE_FILES), "generated_utc": utc_iso()},
+        "provenance": {"code": code, "generated_utc": utc_iso()},
     }
 
 
@@ -584,13 +650,20 @@ def render_markdown(doc: dict) -> str:
               "| model | " + " | ".join(CORRUPTIONS) + " |", "|---" * (len(CORRUPTIONS) + 1) + "|"]
     for k, per in doc["q7_per_corruption"].items():
         lines.append(f"| {k} | " + " | ".join(_fmt(per[c]["mean_s1_3"]) for c in CORRUPTIONS) + " |")
+    lines += ["", "## Q8 the Kamann-Rother average (AM-16 item 6: non-noise s1-5, gaussian_noise "
+                  "s1-3, nested) and the LE6 series means", "",
+              "| model | average | " + " | ".join(name for name, _, _ in SERIES) + " |",
+              "|---" * (len(SERIES) + 2) + "|"]
+    for k, q8 in doc["q8_kamann_rother"].items():
+        lines.append(f"| {k} | {_fmt(q8['average'])} | "
+                     + " | ".join(_fmt(q8["series_means"][name]) for name, _, _ in SERIES) + " |")
     for name, _, severities in SERIES:
-        lines += ["", f"## Q2 per severity and Q8 the Kamann-Rother average: {name}", "",
-                  "| model | " + " | ".join(f"s{s}" for s in severities) + " | average |",
-                  "|---" * (len(severities) + 2) + "|"]
+        lines += ["", f"## Q2 per severity: {name}", "",
+                  "| model | " + " | ".join(f"s{s}" for s in severities) + " |",
+                  "|---" * (len(severities) + 1) + "|"]
         for k, series in doc["q2_per_severity"].items():
             lines.append(f"| {k} | " + " | ".join(_fmt(series[name][str(s)]) for s in severities)
-                         + f" | {_fmt(doc['q8_kamann_rother'][k][name])} |")
+                         + " |")
     lines += ["", "## Q1 per cell: all-class (disease-only)", ""]
     for k, cells in doc["q1_per_cell"].items():
         lines.append(f"- {k}: " + "; ".join(
@@ -607,15 +680,20 @@ def render_markdown(doc: dict) -> str:
     return "\n".join(lines)
 
 
+def inside_repo(path) -> bool:
+    """The path resolved (symlinks followed) is the repository or below it."""
+    p = Path(os.path.realpath(str(path)))
+    return p == REPO or REPO in p.parents
+
+
 def check_out_dir(out_dir) -> Path:
-    """No "test" in the name as given or resolved (checked before any filesystem call), outside the
-    repository, not existing."""
-    raw = str(out_dir)
-    absolute = os.path.abspath(raw)
-    if "test" in raw.lower() or "test" in absolute.lower():
-        _refuse("out_dir_name_invalid", f"the out-dir {raw!r} holds 'test'; no created path may")
-    out = Path(absolute)
-    if out == REPO or REPO in out.parents:
+    """TL section 2 (as given and resolved), outside the repository (resolved), not existing."""
+    problem = created_path_problem(out_dir)
+    if problem:
+        _refuse("out_dir_name_invalid", f"the out-dir {problem}; TL section 2 forbids 'test' in any "
+                                        "case and :<>\"\\|?* in any component of a created path")
+    out = Path(os.path.abspath(str(out_dir)))
+    if inside_repo(out):
         _refuse("out_dir_inside_repo", "the robustness outputs are never written inside the "
                                        "repository")
     if out.exists():
@@ -623,24 +701,52 @@ def check_out_dir(out_dir) -> Path:
     return out
 
 
-def write_outputs(out_dir, doc: dict) -> Path:
-    """Atomic: a temporary sibling holding the two files and SHA256SUMS, then one rename."""
+def _discard_dir(tmp: Path) -> None:
+    """Remove this writer's own temporary directory after a failed write (never another path)."""
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
+def verify_written(tmp: Path, payloads: dict) -> None:
+    """Every file, and SHA256SUMS, reads back as written."""
+    sums = {}
+    for line in (tmp / SUMS_NAME).read_text(encoding="utf-8").splitlines():
+        digest, _, name = line.partition("  ")
+        sums[name] = digest
+    for name, data in payloads.items():
+        want = hashlib.sha256(data).hexdigest()
+        if _sha256_file(tmp / name) != want or sums.get(name) != want:
+            _refuse("output_verify_failed", f"{name} does not read back as written")
+
+
+def write_dir_atomic(out_dir, payloads: dict) -> Path:
+    """The files and their SHA256SUMS in a temporary sibling, re-read, then one rename; a failure
+    removes the temporary sibling and leaves nothing at the out-dir."""
     out = check_out_dir(out_dir)
-    payloads = {JSON_NAME: json_bytes(doc), MD_NAME: render_markdown(doc).encode("utf-8")}
     tmp = out.parent / f".{out.name}.tmp-{uuid.uuid4().hex[:12]}"
     tmp.mkdir(parents=True)
-    for name, data in payloads.items():
-        (tmp / name).write_bytes(data)
-    sums = "".join(f"{hashlib.sha256(payloads[n]).hexdigest()}  {n}\n" for n in sorted(payloads))
-    (tmp / SUMS_NAME).write_bytes(sums.encode("utf-8"))
-    tmp.rename(out)
+    try:
+        for name, data in payloads.items():
+            (tmp / name).write_bytes(data)
+        sums = "".join(f"{hashlib.sha256(payloads[n]).hexdigest()}  {n}\n" for n in sorted(payloads))
+        (tmp / SUMS_NAME).write_bytes(sums.encode("utf-8"))
+        verify_written(tmp, payloads)
+        tmp.rename(out)
+    except BaseException:
+        _discard_dir(tmp)
+        raise
     return out
 
 
-__all__ = ["CODE_FILES", "CORRUPTIONS", "JSON_NAME", "MD_NAME", "NON_NOISE", "POLICIES",
-           "POLICY_SPLIT", "RUNTIME_KEYS", "ReportRefusal", "SCHEMA", "SERIES", "SUMS_NAME",
-           "build_report", "cell_values", "check_out_dir", "check_request", "clean_value",
-           "compute", "degradation",
-           "disease_pooled", "expected_identity", "in_rcd", "in_series", "json_bytes",
-           "kamann_rother", "load_model", "miou_c", "pooled", "rcd_mean", "rcd_table",
-           "render_markdown", "series_values", "write_outputs"]
+def write_outputs(out_dir, doc: dict) -> Path:
+    return write_dir_atomic(out_dir, {JSON_NAME: json_bytes(doc),
+                                      MD_NAME: render_markdown(doc).encode("utf-8")})
+
+
+__all__ = ["CODE_FILES", "CORRUPTIONS", "JSON_NAME", "KR_SEVERITIES", "MD_NAME", "NON_NOISE",
+           "POLICIES", "POLICY_SPLIT", "RUNTIME_KEYS", "ReportRefusal", "SCHEMA", "SERIES",
+           "SUMS_NAME", "build_report", "cell_values", "check_code", "check_out_dir",
+           "check_request", "clean_value", "code_state", "compute", "degradation",
+           "disease_pooled", "expected_identity", "in_rcd", "in_series", "inside_repo",
+           "json_bytes", "kamann_rother", "load_model", "miou_c", "pooled", "rcd_mean",
+           "rcd_table", "reference_defined", "render_markdown", "runtime_problems",
+           "series_values", "verify_written", "write_dir_atomic", "write_outputs"]

@@ -7,23 +7,28 @@ hand-built EvalResult, in a throwaway git repository so that 'official' artifact
 every cell record by src/eval/corrupted.build_cell_record and write_cell_record. Nothing this smoke
 creates has "test" in its name; TEST-named refusals use never-created paths.
   A  smoke policy, split val, 2 images: E1 and E6 (int8_qat) at seed 42 and the teacher on all 24
-     cells, E1 at seed 43 on the 15 inferential cells; hand-set totals (class 0: tp = k of 100;
-     class 1: tp = j of 10), so every value has a closed form, checked with Fractions
+     cells, E1 at seed 43 on the 15 inferential cells, E1 at seed 44 without fog_s3, and E2 at
+     seed 42 without its clean artifact, brightness_s2 and fog_s5; hand-set totals (class 0: tp = k
+     of 100; class 1: tp = j of 10), so every value has a closed form, checked with Fractions
   B  E1b (seed 42) whose brightness cells beat its clean value: E1's degradation <= 0 (LE7)
-  O  official policy, split test: E1 at seed 42, 25 artifacts of 1,561 rows with a 26-key runtime
-     record, at the fixture repository's HEAD
+  O  official policy, split test: E1 at seed 42 and the teacher, 25 artifacts each of 1,561 rows
+     with a 26-key runtime record, at the fixture repository's HEAD; the report's own code state
+     is stubbed to that commit (official_code)
   H  rehearsal: E1 at seed 42 and the stand-in (E1 at seed 44), clean + 15 inferential cells, 846
      rows, provisional, one row without disease ground truth (K_val = 1)
 
-  Q   the quantities Q1-Q9 (plan section 4, LE4, LE6-LE8)
-  V   the checks and refusals (V1-V14; LE1, LE2, LE7)
+  Q   the quantities Q1-Q9 (plan section 4, LE4, LE6-LE8; Q8 is AM-16 item 6's nested average)
+  V   the checks and refusals (V1-V15; LE1, LE2, LE7; the DL-24 findings RE-2 to RE-6, RE-10,
+      SM-5 and SM-6)
   O   the outputs: strict canonical JSON, the md banner and no significance value, SHA256SUMS, the
-      CLI (smoke and official), descriptive code only
-  H   scripts/rehearse_robustness_val.py (R-G5; the stand-in mapping)
+      CLI (smoke and official), descriptive code only, the writer's failure paths (RE-9)
+  H   scripts/rehearse_robustness_val.py (R-G5; the stand-in mapping; its branch refusals, RE-7;
+      exit 4, RE-8)
   RC  the cell-record codes of src/eval/corrupted.py that B-4 reads
-  M   mutations: the plan's five (M1-M5), LE2/LE4/LE7/LE13 (M6-M10), the rehearsal's two, and one
-      per refusal code, each killed by its named case. A case that raised is no kill (its checks
-      never ran); a case that sees an outcome other than its expectation has run its checks.
+  M   mutations: the plan's five (M1-M5), LE2/LE4/LE7/LE13 (M6-M10), the DL-24 defects (M11-M18,
+      the per-key record mutants, MH7-MH10, MO7), the rehearsal's two, and one per refusal code,
+      each killed by its named case. A case that raised is no kill (its checks never ran); a case
+      that sees an outcome other than its expectation has run its checks.
 
 Run:  python -B scripts/smoke_robustness_report.py
 """
@@ -36,6 +41,7 @@ import itertools
 import json
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -84,7 +90,19 @@ CACHE_OTHER = hashlib.sha256(b"s5 another cache").hexdigest()
 INF_SHA = hashlib.sha256(b"s5 inferential cells").hexdigest()
 VREC = hashlib.sha256(b"s5 verification record").hexdigest()
 SHA = {k: hashlib.sha256(f"s5 model {k}".encode()).hexdigest()
-       for k in ("e1s42", "e6src", "e6conv", "tch", "e1s43", "e1b", "e1s44", "e1o", "e1v", "e1s44v")}
+       for k in ("e1s42", "e6src", "e6conv", "tch", "e1s43", "e1b", "e1s44", "e1o", "e1v", "e1s44v",
+                 "e2gap", "tcho", "other")}
+#: The case's own copy of AM-16 item 6's Kamann-Rother severities: non-noise 1-5, noise 1-3.
+KR_EXPECTED = {c: ((1, 2, 3) if c == "gaussian_noise" else (1, 2, 3, 4, 5)) for c in
+               corruption_roles.CANONICAL_IDS}
+#: The code whose provenance the outputs record (RE-5), the case's own list.
+CODE_FILES_EXPECTED = ("src/eval/robustness_report.py", "scripts/report_robustness.py",
+                       "scripts/run_corruption_grid.py", "src/eval/robustness.py",
+                       "src/eval/corrupted.py", "src/eval/artifacts.py", "src/eval/protocols.py",
+                       "src/corruption_cache.py", "src/corruption_roles.py",
+                       "configs/corruption_protocol.json", "src/stats/ingest.py",
+                       "src/stats/noninferiority.py", "src/stats/report.py",
+                       "src/stats/val_artifacts.py")
 CLASS_MAP = ([{"class_id": 0, "name": "", "role": "background_or_non_disease"}]
              + [{"class_id": c, "name": f"syn_{c:03d}", "role": "disease"} for c in range(1, C)])
 CTX = {"model_device": "cpu", "input_devices": ["cpu"], "determinism_policy_applied": False,
@@ -106,8 +124,14 @@ A_MODELS = {
                 threads=1),
     "e1s44": dict(stage="E1", seed=44, sha=SHA["e1s44"], base=87, cells=INF_CELLS,
                   written=tuple(c for c in INF_CELLS if c != "fog_s3"), threads=1),
+    # RE-2 and RE-10: a seed-42 student without its clean artifact, brightness_s2 and fog_s5
+    "e2gap": dict(stage="E2", seed=42, sha=SHA["e2gap"], base=89, cells=CELLS, no_clean=True,
+                  written=tuple(c for c in CELLS if c not in ("brightness_s2", "fog_s5")),
+                  threads=1),
 }
 O_MODEL = dict(stage="E1", seed=42, sha=SHA["e1o"], base=90, cells=CELLS, threads=1)
+O_TEACHER = dict(stage="teacher", seed=None, role="teacher", sha=SHA["tcho"], base=95, cells=CELLS,
+                 threads=1)
 H_MODELS = {"e1v": dict(stage="E1", seed=42, sha=SHA["e1v"], base=90, cells=INF_CELLS, threads=1),
             "e1s44v": dict(stage="E1", seed=44, sha=SHA["e1s44v"], base=84, cells=INF_CELLS,
                            threads=1)}
@@ -395,7 +419,8 @@ def totals_for(spec, label) -> dict:
 def write_model(root: Path, file_id: str, spec: dict, *, ids, split="val", status="smoke",
                 values=None, am5=()) -> None:
     """The clean artifact and every written cell (artifact and record) of one model."""
-    for label in ("clean", *spec.get("written", spec["cells"])):
+    labels = ([] if spec.get("no_clean") else ["clean"]) + list(spec.get("written", spec["cells"]))
+    for label in labels:
         kw = values(file_id, label) if values is not None else {}
         d = write_art(root, dir_name(split, file_id, label), stage=spec["stage"], sha=spec["sha"],
                       label=label, ids=ids, totals=totals_for(spec, label),
@@ -428,16 +453,22 @@ def a_rows(*fids, **over) -> list:
 
 
 def variant(tag: str, src: Path, file_id: str, spec: dict, *, split="val", skip_dirs=(),
-            skip_records=(), substitute=None) -> Path:
-    """A new root with copies of one model's artifacts and records, minus the named ones;
-    `substitute` maps a label to the label whose directory and record are copied in its place."""
-    root = S["work"] / f"v_{tag}"
-    root.mkdir()
+            skip_records=(), substitute=None, link=False, into=None) -> Path:
+    """A new root (or `into`, an existing one) with one model's artifacts and records, minus the
+    named ones; `substitute` maps a label to the label whose directory and record take its place.
+    With `link`, the artifact directories are symlinks to the source's (no data copied)."""
+    root = into if into is not None else S["work"] / f"v_{tag}"
+    root.mkdir(exist_ok=into is not None)
     for label in ("clean", *spec["cells"]):
         if label in skip_dirs:
             continue
         source = (substitute or {}).get(label, label)
-        shutil.copytree(src / dir_name(split, file_id, source), root / dir_name(split, file_id, label))
+        src_dir, dst_dir = src / dir_name(split, file_id, source), root / dir_name(split, file_id,
+                                                                                 label)
+        if link:
+            os.symlink(src_dir, dst_dir, target_is_directory=True)
+        else:
+            shutil.copytree(src_dir, dst_dir)
         if label != "clean" and label not in skip_records:
             shutil.copyfile(CO.record_path(src / dir_name(split, file_id, source)),
                             CO.record_path(root / dir_name(split, file_id, label)))
@@ -474,12 +505,31 @@ def setup(work: Path) -> None:
     o = S["o"] = work / "o_root"
     o.mkdir()
     write_model(o, "e1o", O_MODEL, ids=O_IDS, split="test", status="official")
+    write_model(o, "tcho", O_TEACHER, ids=O_IDS, split="test", status="official")
     S["export_o"] = export([row_for("e1o", O_MODEL)])
+    S["export_o2"] = export([row_for("e1o", O_MODEL), row_for("tcho", O_TEACHER)])
     h = S["h"] = work / "h_root"
     h.mkdir()
     for fid, spec in H_MODELS.items():
         write_model(h, fid, spec, ids=H_IDS, status="provisional", values=h_values, am5=(H_AM5,))
     S["export_h"] = export([row_for(fid, spec) for fid, spec in H_MODELS.items()])
+
+
+@contextlib.contextmanager
+def official_code(commit=None, clean=True):
+    """An official report is written by its code at the export's evaluator commit (RE-6). The
+    fixture's official artifacts are at the throwaway repository's commit, so the report's own code
+    state is stubbed to it (or to `commit`/`clean` for the refusal cases)."""
+    stub = {"code_commit": commit or S["commit"], "code_clean_at_commit": clean,
+            "code_files": {}}
+    with patched(RR, "code_state", lambda: dict(stub)):
+        yield
+
+
+def official(export_doc, root, **kw):
+    with official_code():
+        return outcome(RR.build_report, export_doc, root, split="test", policy="official",
+                       expected_cache=kw.pop("expected_cache", CACHE), **kw)
 
 
 def doc_a(**kw):
@@ -637,18 +687,35 @@ def q7():
     return not bad, f"bad {bad[:3]}"
 
 
+def exact_kr(spec) -> tuple[Fraction, Fraction]:
+    """AM-16 item 6's average, nested (LE8), and the flat mean over the same 23 cells."""
+    m = exact_table(spec)
+    nested = sum(sum(m[(c, s)] for s in KR_EXPECTED[c]) / len(KR_EXPECTED[c]) for c in CORR) / 5
+    cells = [m[(c, s)] for c in CORR for s in KR_EXPECTED[c]]
+    return nested, sum(cells) / len(cells)
+
+
 @case("Q8")
 def q8():
+    """Q8: AM-16 item 6's Kamann-Rother average (non-noise s1-5, gaussian_noise s1-3), nested
+    (LE8) -- in this fixture the nested value differs from the flat 23-cell mean -- and each LE6
+    series' mean beside it."""
     code, doc = doc_a()
     if code != "ok":
         return False, f"build_report: {code}: {doc}"
     bad = []
+    if dict(RR.KR_SEVERITIES) != KR_EXPECTED:
+        bad.append("RR.KR_SEVERITIES is not AM-16 item 6's")
     for fid in ("e1s42", "e6s42", "tch"):
+        nested, flat = exact_kr(A_MODELS[fid])
+        got = doc["q8_kamann_rother"].get(fid, {})
+        if nested == flat or not close(got.get("average"), nested):
+            bad.append((fid, "average", got.get("average"), float(nested), float(flat)))
         _, want = exact_series(A_MODELS[fid])
         for name, _, _ in SERIES_EXPECTED:
-            got = doc["q8_kamann_rother"].get(fid, {}).get(name)
-            if want["nested"][name] != want["flat"][name] or not close(got, want["nested"][name]):
-                bad.append((fid, name, got))
+            mean = (got.get("series_means") or {}).get(name)
+            if want["nested"][name] != want["flat"][name] or not close(mean, want["nested"][name]):
+                bad.append((fid, name, mean))
     if sorted(doc["q8_kamann_rother"]) != ["e1s42", "e6s42", "tch"]:
         bad.append(("models", sorted(doc["q8_kamann_rother"])))
     return not bad, f"E1 {doc['q8_kamann_rother'].get('e1s42')}; bad {bad[:2]}"
@@ -656,14 +723,20 @@ def q8():
 
 @case("Q9a")
 def q9a():
+    # first, an export without E1 at seed 42: no rCD calls rcd() there, so the teacher's absence
+    # from Q5/Q6 is decided by this check alone (SM-2)
+    code2, doc2 = doc_a(export=export(a_rows("e6s42", "tch")))
+    absent2 = code2 == "ok" and "tch" not in doc2["q5_rcd"] and "tch" not in doc2["q6_rcd_mean"]
     code, doc = doc_a()
     if code != "ok":
-        return False, f"build_report: {code}: {doc}"
+        return False, f"build_report: {code}: {doc}; without E1 at seed 42 the teacher is absent " \
+                      f"from Q5/Q6: {absent2}"
     present = (doc["q3_miou_c"].get("tch") is not None and doc["q4_rpd"]["tch"]["value"] is not None
-               and all(v is not None for v in doc["q8_kamann_rother"]["tch"].values()))
+               and doc["q8_kamann_rother"]["tch"]["average"] is not None)
     absent = "tch" not in doc["q5_rcd"] and "tch" not in doc["q6_rcd_mean"] and \
         all("rcd" not in v for v in doc["q7_per_corruption"]["tch"].values())
-    return present and absent, f"teacher in Q3/Q4/Q8 {present}; absent from Q5/Q6 {absent}"
+    return present and absent and absent2, \
+        f"teacher in Q3/Q4/Q8 {present}; absent from Q5/Q6 {absent}, without E1 {absent2}"
 
 
 @case("Q9b")
@@ -684,7 +757,8 @@ def q9b():
                     art["runtime"]["torch_num_threads"] != A_MODELS[m["file_id"]]["threads"]:
                 bad.append((art["dir"], "runtime"))
     code_prov = doc["provenance"]["code"]
-    ok = (not bad and doc["cache"]["canonical_manifest_sha256"] == CACHE
+    ok = (not bad and tuple(RR.CODE_FILES) == CODE_FILES_EXPECTED
+          and doc["cache"]["canonical_manifest_sha256"] == CACHE
           and doc["cache"]["verification_record_sha256"] == [VREC]
           and doc["inventory"]["sha256"] == "0" * 64
           and re.fullmatch(r"[0-9a-f]{40}", str(code_prov["code_commit"])) is not None
@@ -697,10 +771,9 @@ def q9b():
 @case("V1a")
 def v1a():
     root = S.get("v1a_root") or variant("o_missing", S["o"], "e1o", O_MODEL, split="test",
-                                        skip_dirs=("fog_s5",))
+                                        skip_dirs=("fog_s5",), link=True)
     S["v1a_root"] = root
-    return refused(outcome(RR.build_report, S["export_o"], root, split="test", policy="official",
-                           expected_cache=CACHE), "artifact_missing", "e1o:fog_s5")
+    return refused(official(S["export_o"], root), "artifact_missing", "e1o:fog_s5")
 
 
 @case("V1b")
@@ -713,6 +786,40 @@ def v1b():
           and doc["q4_rpd"]["e1s44"] == {"value": None, "reason": "cell_missing"}
           and m["e1s42"]["missing"] == [] and doc["q3_miou_c"]["e1s42"] is not None)
     return ok, f"missing {m['e1s44']['missing']}; Q4 {doc['q4_rpd']['e1s44']}"
+
+
+@case("V1c")
+def v1c():
+    """RE-2: a seed-42 student without its clean artifact, brightness_s2 and fog_s5 (smoke): Q2 at
+    each severity from that severity's own cells, null only where one of them is missing; the series
+    means, the K&R average, mIoU-C and every rCD null with their reasons; nothing refused."""
+    code, doc = doc_a(export=export(a_rows("e1s42", "e2gap")))
+    if code != "ok":
+        return False, f"build_report: {code}: {doc}"
+    spec = A_MODELS["e2gap"]
+    m = exact_table(dict(spec, cells=spec["written"]))
+    q2, bad = doc["q2_per_severity"].get("e2gap", {}), []
+    holes = {}
+    for name, cs, ss in SERIES_EXPECTED:
+        holes[name] = [s for s in ss if not all((c, s) in m for c in cs)]
+        for s in ss:
+            got = q2.get(name, {}).get(str(s), "absent")
+            if s in holes[name]:
+                if got is not None:
+                    bad.append((name, s, got))
+            elif not close(got, sum(m[(c, s)] for c in cs) / len(cs)):
+                bad.append((name, s, got))
+    q8, per = doc["q8_kamann_rother"].get("e2gap"), doc["q5_rcd"].get("e2gap", {})
+    model = {x["file_id"]: x for x in doc["models"]}["e2gap"]
+    ok = (not bad and holes == {"non_noise_s1_5": [2, 5], "all_five_s1_4": [2]}
+          and q8 == {"average": None, "series_means": {"non_noise_s1_5": None,
+                                                       "all_five_s1_4": None}}
+          and doc["q3_miou_c"]["e2gap"] is None
+          and doc["q4_rpd"]["e2gap"] == {"value": None, "reason": "cell_missing"}
+          and all(per.get(c) == {"value": None, "reason": "clean_missing"} for c in CORR)
+          and doc["q6_rcd_mean"]["e2gap"] == {"value": None, "reason": "clean_missing"}
+          and sorted(model["missing"]) == ["brightness_s2", "clean", "fog_s5"])
+    return ok, f"Q2 holes {holes}; bad {bad[:3]}; Q8 {q8}; missing {model['missing']}"
 
 
 @case("V2")
@@ -786,8 +893,8 @@ def v6b():
 
 @case("V6c")
 def v6c():
-    return refused(outcome(RR.build_report, S["export_o"], S["o"], split="test", policy="official",
-                           expected_cache=None), "expected_cache_sha256_required")
+    return refused(official(S["export_o"], S["o"], expected_cache=None),
+                   "expected_cache_sha256_required")
 
 
 @case("V6d")
@@ -820,6 +927,36 @@ def v7():
     return not bad, f"E6 brightness {doc['q5_rcd']['e6s42']['brightness']}; bad {bad[:3]}"
 
 
+@case("V7b")
+def v7b():
+    """RE-10 (LE7): E1's brightness degradation <= 0, and a student lacking its clean artifact and a
+    brightness cell: brightness is rcd_reference_nonpositive (LE7's reason first), the other four
+    clean_missing, the mean null."""
+    code, doc = doc_a(export=export(a_rows("e1b", "e2gap")))
+    if code != "ok":
+        return False, f"build_report: {code}: {doc}"
+    per = doc["q5_rcd"].get("e2gap", {})
+    want = {c: {"value": None,
+                "reason": "rcd_reference_nonpositive" if c == "brightness" else "clean_missing"}
+            for c in CORR}
+    reasons = {c: (per.get(c) or {}).get("reason") for c in CORR}
+    return per == want and doc["q6_rcd_mean"]["e2gap"]["value"] is None, f"reasons {reasons}"
+
+
+@case("V7c")
+def v7c():
+    """LE7: B-4 catches rcd_invalid_reference from src/eval/robustness.rcd(). The early check
+    (reference_defined) is bypassed here, so the same E1 reaches rcd(), whose own refusal must still
+    be recorded as rcd_reference_nonpositive."""
+    with patched(RR, "reference_defined", lambda ref: True):
+        code, doc = doc_a(export=S["export_b"])
+    if code != "ok":
+        return False, f"build_report: {code}: {doc}"
+    null = {"value": None, "reason": "rcd_reference_nonpositive"}
+    got = {fid: doc["q5_rcd"][fid]["brightness"] for fid in ("e1b", "e6s42")}
+    return all(v == null for v in got.values()), f"brightness {got}"
+
+
 @case("V8a")
 def v8a():
     target = REPO / f"s5_never_created_out_{next(_SEQ)}"
@@ -841,26 +978,98 @@ def v8c():
     return ok and not target.exists(), detail
 
 
+@case("V8d")
+def v8d():
+    """RE-3: containment is decided on the resolved path: an out-dir reached through a symlink into
+    the repository is refused and not created. The fixture repository stands in for the project
+    (RR.REPO patched), so no link into the project is made."""
+    stand_in = Path(os.path.realpath(S["repo"]))
+    link = S["work"] / f"repo_link_{next(_SEQ)}"
+    os.symlink(stand_in, link, target_is_directory=True)
+    target = link / f"s5_never_created_out_{next(_SEQ)}"
+    with patched(RR, "REPO", stand_in):
+        got = outcome(RR.check_out_dir, target)
+    ok, detail = refused(got, "out_dir_inside_repo")
+    return ok and not (stand_in / target.name).exists(), detail
+
+
+@case("V8e")
+def v8e():
+    """RE-4 (TL section 2): a forbidden character in the out-dir's own name, or in a parent
+    component, is refused before any filesystem call (out_dir_name_invalid)."""
+    in_name = never("v8e") / "robustness:out"
+    in_parent = S["work"] / "never_created" / f"v8e:{next(_SEQ)}" / "robustness"
+    a = refused(outcome(RR.check_out_dir, in_name), "out_dir_name_invalid", "holds ':'")
+    b = refused(outcome(RR.check_out_dir, in_parent), "out_dir_name_invalid", "holds ':'")
+    made = [p for p in (in_name, in_name.parent, in_parent, in_parent.parent) if p.exists()]
+    return a[0] and b[0] and not made, f"name: {a[1][:70]}; parent: {b[1][:70]}; made {made}"
+
+
+#: SM-5: one official artifact off the export's context in each runtime key in turn.
+OFF_CONTEXT = {"model_device": "cuda:0", "input_devices": ["cuda:0"],
+               "determinism_policy_applied": True, "batch_size": 2, "num_workers": 2,
+               "torch_num_threads": 2, "image_digest": "sha256:" + "d" * 64}
+
+
+def het_root(tag: str, file_id: str, spec: dict, label: str, key: str, *, models=None) -> Path:
+    """An official root (symlinks to the O fixture) where one artifact of `file_id` is rewritten
+    with `key` off the export's context, and recorded."""
+    root = None
+    for fid, sp in (models or [(file_id, spec)]):
+        root = variant(tag, S["o"], fid, sp, split="test", link=True, into=root,
+                       skip_dirs=(label,) if fid == file_id else ())
+    rt = runtime(1)
+    rt[key] = OFF_CONTEXT[key]
+    d = write_art(root, dir_name("test", file_id, label), stage=spec["stage"], sha=spec["sha"],
+                  label=label, ids=O_IDS, totals=totals_for(spec, label),
+                  role=spec.get("role", "student"), status="official", split="test", rt=rt)
+    if label != "clean":
+        write_record(d)
+    return root
+
+
 @case("V9a")
 def v9a():
-    root = S.get("v9_root")
-    if root is None:
-        root = S["v9_root"] = variant("o_het", S["o"], "e1o", O_MODEL, split="test",
-                                      skip_dirs=("fog_s5",))
-        d = write_art(root, dir_name("test", "e1o", "fog_s5"), stage="E1", sha=O_MODEL["sha"],
-                      label="fog_s5", ids=O_IDS, totals=totals_for(O_MODEL, "fog_s5"),
-                      status="official", split="test", rt=runtime(2))
-        write_record(d)
-    return refused(outcome(RR.build_report, S["export_o"], root, split="test", policy="official",
-                           expected_cache=CACHE), "heterogeneous_runtime", "fog_s5",
-                   "'torch_num_threads': 2")
+    """Each of the seven runtime keys (the case's own list) off the export's context on one corrupted
+    artifact -> heterogeneous_runtime, naming that artifact and that key's value."""
+    roots = S.get("v9a_roots") or {k: het_root(f"o_het_{k}", "e1o", O_MODEL, "fog_s5", k)
+                                   for k in OFF_CONTEXT}
+    S["v9a_roots"] = roots
+    got = {k: refused(official(S["export_o"], root), "heterogeneous_runtime",
+                      f"tday_corr_e1o_fog_s5: runtime {{{k!r}: {OFF_CONTEXT[k]!r}}}")
+           for k, root in roots.items()}
+    bad = [k for k, (ok, _) in got.items() if not ok]
+    return not bad and len(got) == 7, f"not refused by key: {bad}; " + \
+        "; ".join(got[k][1][:60] for k in bad[:2])
 
 
 @case("V9b")
 def v9b():
-    return refused(outcome(RR.build_report, export([row_for("e1o", O_MODEL)], commit="0" * 40),
-                           S["o"], split="test", policy="official", expected_cache=CACHE),
-                   "heterogeneous_runtime", "0" * 40)
+    with official_code(commit="0" * 40):
+        got = outcome(RR.build_report, export([row_for("e1o", O_MODEL)], commit="0" * 40),
+                      S["o"], split="test", policy="official", expected_cache=CACHE)
+    return refused(got, "heterogeneous_runtime", "0" * 40)
+
+
+@case("V9f")
+def v9f():
+    """The CLEAN artifact off the export's context -> heterogeneous_runtime (LE1: each model's 25
+    artifacts)."""
+    root = S.get("v9f_root") or het_root("o_het_clean", "e1o", O_MODEL, "clean",
+                                         "torch_num_threads")
+    S["v9f_root"] = root
+    return refused(official(S["export_o"], root), "heterogeneous_runtime", "tday_clean_e1o")
+
+
+@case("V9g")
+def v9g():
+    """A second official model (the teacher) with one artifact off the context, the first model
+    clean -> heterogeneous_runtime naming the teacher's artifact (LE1: every stage)."""
+    root = S.get("v9g_root") or het_root("o_het_teacher", "tcho", O_TEACHER, "fog_s2",
+                                         "torch_num_threads",
+                                         models=[("e1o", O_MODEL), ("tcho", O_TEACHER)])
+    S["v9g_root"] = root
+    return refused(official(S["export_o2"], root), "heterogeneous_runtime", "tday_corr_tcho_fog_s2")
 
 
 @case("V9c")
@@ -891,8 +1100,7 @@ def v9d():
 
 @case("V9e")
 def v9e():
-    code, doc = outcome(RR.build_report, S["export_o"], S["o"], split="test", policy="official",
-                        expected_cache=CACHE)
+    code, doc = official(S["export_o"], S["o"])
     if code != "ok":
         return False, f"build_report: {code}: {doc}"
     rts = [a["runtime"] for a in doc["models"][0]["artifacts"].values()]
@@ -954,6 +1162,27 @@ def v14():
                    "'test'")
 
 
+@case("V15a")
+def v15a():
+    """RE-6: an official report is written by its code at the export's evaluator commit."""
+    with official_code(commit="1" * 40):
+        got = outcome(RR.build_report, S["export_o"], S["o"], split="test", policy="official",
+                      expected_cache=CACHE)
+    return refused(got, "report_commit_mismatch", "1" * 40, S["commit"])
+
+
+@case("V15b")
+def v15b():
+    """RE-6: ... and its code files unmodified at that commit (False: modified; None: no Git)."""
+    got = {}
+    for clean in (False, None):
+        with official_code(clean=clean):
+            got[clean] = refused(outcome(RR.build_report, S["export_o"], S["o"], split="test",
+                                         policy="official", expected_cache=CACHE),
+                                 "report_code_modified", f"code_clean_at_commit {clean!r}")
+    return all(ok for ok, _ in got.values()), "; ".join(d[:80] for _, d in got.values())
+
+
 def record_variant(tag: str, mutate=None, raw: bytes | None = None) -> Path:
     root = variant(tag, S["a"], "e1s42", A_MODELS["e1s42"], skip_records=("fog_s2",))
     d = root / dir_name("val", "e1s42", "fog_s2")
@@ -992,6 +1221,27 @@ def v13d():
 def v13e():
     return v13_run("v13e_root", "recfiles", ("[record_artifact_mismatch]",),
                    mutate=lambda r: r["artifact_sha256"].update({"summary.json": "0" * 64}))
+
+
+#: SM-6: one record key off its run in turn (case name -> the key check_record names, the change).
+V13_KEYS = {
+    "V13f": ("evaluator_commit", lambda r: r.update(evaluator_commit="1" * 40)),
+    "V13g": ("cache.split", lambda r: r["cache"].update(split="train")),
+    "V13h": ("counts", lambda r: r.update(items_verified=r["items_verified"] - 1)),
+    "V13i": ("role", lambda r: r.update(role=corruption_roles.ROLE_DESCRIPTIVE_ONLY)),
+    "V13j": ("stage", lambda r: r.update(stage="E2")),
+    "V13k": ("condition", lambda r: r.update(condition={**r["condition"], "severity": 3})),
+}
+
+
+def v13_key(name: str):
+    key, change = V13_KEYS[name]
+    return v13_run(f"{name.lower()}_root", f"rec_{name.lower()}", (f"disagrees on ['{key}']",),
+                   mutate=change)
+
+
+for _name in V13_KEYS:
+    case(_name)(lambda _n=_name: v13_key(_n))
 
 
 # ---------------------------------------------------------------- RC: corrupted.py's record codes
@@ -1120,9 +1370,10 @@ def o4():
 def o5():
     inv = write_inventory(f"cli_o_{next(_SEQ)}", S["export_o"])
     out = fresh("cli_o")
-    code, rc, stdout, stderr = cli(RP.main, ["--inventory", inv, "--artifacts-root", S["o"],
-                                             "--policy", "official", "--split", "test", "--out",
-                                             out, "--expected-cache-sha256", CACHE])
+    with official_code():
+        code, rc, stdout, stderr = cli(RP.main, ["--inventory", inv, "--artifacts-root", S["o"],
+                                                 "--policy", "official", "--split", "test",
+                                                 "--out", out, "--expected-cache-sha256", CACHE])
     doc = json.loads((out / RR.JSON_NAME).read_text(encoding="utf-8")) if out.exists() else {}
     md = (out / RR.MD_NAME).read_text(encoding="utf-8") if out.exists() else ""
     ok = (code == "ok" and rc == 0 and doc.get("status") == "official"
@@ -1137,6 +1388,41 @@ def o6():
     banned = [t for t in ("run_comparison", "wilcoxon", "holm", "bootstrap_", "dataset_miou_c_delta",
                           "copyfile", "copytree") if t in code]
     return not banned, f"inferential or copying tokens in the code: {banned}"
+
+
+def own_parent(tag: str) -> Path:
+    """A new folder that holds only the case's out-dir, so any leftover is the case's own."""
+    parent = S["work"] / f"{tag}_{next(_SEQ)}"
+    parent.mkdir()
+    return parent
+
+
+@case("O7")
+def o7():
+    """RE-9: a write that fails after its temporary directory exists (here the read-back raises)
+    removes that directory and leaves nothing at the out-dir."""
+    _, doc = written_a()
+    parent = own_parent("o7")
+
+    def failing(tmp, payloads):
+        raise OSError("injected: the read-back failed")
+    with patched(RR, "verify_written", failing):
+        got = outcome(RR.write_outputs, parent / "robustness", doc)
+    left = sorted(os.listdir(parent))
+    return got[0] == "OSError" and not left, f"outcome {got[0]}; left in the parent {left}"
+
+
+@case("O8")
+def o8():
+    """RE-9: a file that does not read back as written is refused (output_verify_failed); the
+    temporary directory is removed and nothing is left at the out-dir."""
+    _, doc = written_a()
+    parent = own_parent("o8")
+    with patched(RR, "_sha256_file", lambda path: "0" * 64):
+        got = outcome(RR.write_outputs, parent / "robustness", doc)
+    ok, detail = refused(got, "output_verify_failed", RR.JSON_NAME)
+    left = sorted(os.listdir(parent))
+    return ok and not left, f"{detail}; left in the parent {left}"
 
 
 # ---------------------------------------------------------------- H: the rehearsal script
@@ -1246,6 +1532,65 @@ def h6():
         f"rc {rc}: {stderr.strip()[:100]}"
 
 
+def h_variant(tag: str, **e1_kw) -> Path:
+    """E1 (fixture H) linked through variant(**e1_kw), and the stand-in, so that a guard a mutant
+    removes lets the run go on to the frozen path."""
+    root = variant(tag, S["h"], "e1v", H_MODELS["e1v"], link=True, **e1_kw)
+    variant(tag, S["h"], "e1s44v", H_MODELS["e1s44v"], link=True, into=root)
+    return root
+
+
+@case("H7")
+def h7():
+    """RE-7: a model whose artifacts name two checkpoints is refused (rehearsal_input_refused)."""
+    root = S.get("h7_root")
+    if root is None:
+        label, spec = INF_CELLS[-1], H_MODELS["e1v"]
+        root = S["h7_root"] = h_variant("h_ckpt", skip_dirs=(label,))
+        write_art(root, dir_name("val", "e1v", label), stage="E1", sha="f" * 64, label=label,
+                  ids=H_IDS, totals=totals_for(spec, label), status="provisional", am5=(H_AM5,),
+                  rt=runtime(1), **h_values("e1v", label))
+    code, rc, _, stderr, out, _ = rehearse(root)
+    ok = rc == 2 and "[rehearsal_input_refused] e1v: its artifacts name 2 checkpoints" in stderr
+    return ok and not out.exists(), f"rc {rc}: {stderr.strip()[:140]}"
+
+
+@case("H8")
+def h8():
+    """RE-7: a cell directory holding another cell's artifact is refused (rehearsal_input_refused)."""
+    root = S.get("h8_root") or h_variant("h_cond", substitute={"fog_s1": "fog_s2"})
+    S["h8_root"] = root
+    code, rc, _, stderr, out, _ = rehearse(root)
+    ok = rc == 2 and "[rehearsal_input_refused] val_corr_e1v_fog_s1 holds condition" in stderr
+    return ok and not out.exists(), f"rc {rc}: {stderr.strip()[:140]}"
+
+
+@case("H9")
+def h9():
+    """RE-7: an analysis error of the frozen path is a refusal, exit 2, nothing written. Here the
+    stand-in's artifacts exclude one more AM-5 image than E1's, so align_miou_c's image sets differ."""
+    root = S.get("h9_root")
+    if root is None:
+        root = S["h9_root"] = variant("h_am5", S["h"], "e1v", H_MODELS["e1v"], link=True)
+        write_model(root, "e1s44w", H_MODELS["e1s44v"], ids=H_IDS, status="provisional",
+                    values=lambda fid, label: h_values("e1s44v", label), am5=(H_AM5, H_IDS[-2]))
+    code, rc, _, stderr, out, _ = rehearse(root, stand_in="e1s44w")
+    ok = (rc == 2 and "[rehearsal_input_refused] the frozen path refused the inputs: "
+                      "AlignmentError" in stderr)
+    return ok and not out.exists(), f"rc {rc}: {stderr.strip()[:160]}"
+
+
+@case("H10")
+def h10():
+    """RE-8: an unexpected error (not a refusal) exits 4 with nothing written, never 1 (R-G5's)."""
+    def broken(*a, **k):
+        raise KeyError("injected")
+    with patched(RH, "rehearse", broken):
+        code, rc, _, stderr, out, _ = rehearse(S["h"])
+    ok = code == "ok" and rc == 4 and "unexpected error, nothing written: KeyError" in stderr
+    return ok and not out.exists(), f"rc {rc}: {stderr.strip()[:120]}"
+
+
 LABELS = {
     "Q1": "Q1 per cell: the all-class pooled values and the disease-only column equal their closed "
           "forms for every cell of E1 and E6 (seed 42), the teacher and E1 seed 43",
@@ -1260,12 +1605,17 @@ LABELS = {
     "Q6": "Q6 the rCD mean over the five corruptions",
     "Q7": "Q7 per corruption: the mean over severities 1-3 for the teacher and the seed-42 students; "
           "rCD for the students only",
-    "Q8": "Q8 Kamann-Rother for both series: nested (LE8) and, within a series, equal to the flat mean",
-    "Q9a": "Q9 the teacher is in Q3, Q4 and Q8 and absent from Q5 and Q6",
+    "Q8": "Q8 AM-16 item 6's Kamann-Rother average, nested (LE8; in this fixture it differs from the "
+          "flat 23-cell mean), and each LE6 series' mean beside it; RR.KR_SEVERITIES is AM-16's",
+    "Q9a": "Q9 the teacher is in Q3, Q4 and Q8 and absent from Q5 and Q6, also on an export without E1 "
+           "at seed 42",
     "Q9b": "Q9 provenance: each input's four-file sha256, record sha256, runtime tuple and commit, one "
-           "cache checksum, the inventory and the code provenance",
+           "cache checksum, the inventory, and the code provenance over the case's own file list",
     "V1a": "V1 a missing cell in an official set is refused (artifact_missing)",
     "V1b": "V1 a missing cell in a smoke set is reported; the quantities that need it are null",
+    "V1c": "V1 (RE-2) a smoke set with a seed-42 student lacking two cells and its clean artifact: Q2 "
+           "at each severity from its own cells; the series means, the K&R average, mIoU-C and rCD "
+           "null with their reasons; nothing refused",
     "V2": "V2 a duplicate: a cell directory holding another cell's artifact is refused "
           "(condition_mismatch); a cell listed twice is refused by the inventory reader",
     "V3": "V3 split digests differ across the inputs (split_digest_mismatch)",
@@ -1277,14 +1627,26 @@ LABELS = {
     "V6d": "V6 a malformed --expected-cache-sha256 is refused (expected_cache_sha256_format)",
     "V7": "V7 (LE7) E1's degradation <= 0 for brightness: that rCD is null with reason "
           "rcd_reference_nonpositive for every stage, the others defined, the mean null",
+    "V7b": "V7 (LE7, RE-10) the same E1 and a student lacking its clean artifact and a brightness "
+           "cell: brightness is rcd_reference_nonpositive (LE7's reason first), the others "
+           "clean_missing",
+    "V7c": "V7 (LE7) with the early check bypassed, rcd()'s own rcd_invalid_reference is caught and "
+           "recorded as rcd_reference_nonpositive",
     "V8a": "V8 an out-dir inside the repository is refused and not created (out_dir_inside_repo)",
     "V8b": "V8 an existing out-dir is refused (out_dir_exists)",
     "V8c": "V8 an out-dir holding 'test' in any case is refused before any filesystem call "
            "(out_dir_name_invalid)",
-    "V9a": "V9 (LE1) one official artifact whose runtime tuple differs from the export's context is "
-           "refused (heterogeneous_runtime)",
+    "V8d": "V8 (RE-3) an out-dir reached through a symlink into the repository is refused on its "
+           "resolved path and not created (out_dir_inside_repo)",
+    "V8e": "V8 (RE-4) a forbidden character in the out-dir's name or in a parent component is refused "
+           "before any filesystem call (out_dir_name_invalid)",
+    "V9a": "V9 (LE1) one official corrupted artifact off the export's context in each of the seven "
+           "runtime keys in turn is refused, naming the artifact and the value (heterogeneous_runtime)",
     "V9b": "V9 (LE1) official artifacts at a commit other than the export's evaluator_commit are "
            "refused (heterogeneous_runtime)",
+    "V9f": "V9 (LE1) the clean artifact off the export's context is refused (heterogeneous_runtime)",
+    "V9g": "V9 (LE1) a second official model (the teacher) with one artifact off the context, the "
+           "first model at it, is refused, naming the teacher's artifact (heterogeneous_runtime)",
     "V9c": "V9 (LE2) identity: INT8 is compared with converted_artifact_sha256, fp32 with "
            "source.sha256 (checkpoint_identity_mismatch otherwise)",
     "V9d": "V9 (LE1) a non-official set with differing runtime tuples is accepted and the values "
@@ -1303,7 +1665,21 @@ LABELS = {
     "V13d": "V13 a record with other keys is refused, naming record_schema (record_mismatch)",
     "V13e": "V13 a record whose file hashes differ is refused, naming record_artifact_mismatch "
             "(record_mismatch)",
+    "V13f": "V13 (SM-6) a record naming another evaluator commit is refused, naming the key "
+            "(record_mismatch)",
+    "V13g": "V13 (SM-6) a record naming another cache split is refused, naming the key "
+            "(record_mismatch)",
+    "V13h": "V13 (SM-6) a record whose verified counts differ from the rows is refused, naming the "
+            "key (record_mismatch)",
+    "V13i": "V13 (SM-6) a record naming another role is refused, naming the key (record_mismatch)",
+    "V13j": "V13 (SM-6) a record naming another stage is refused, naming the key (record_mismatch)",
+    "V13k": "V13 (SM-6) a record naming another condition is refused, naming the key "
+            "(record_mismatch)",
     "V14": "V14 an artifact of another split than the policy's is refused (artifact_split_mismatch)",
+    "V15a": "V15 (RE-6) an official report from code not at the export's evaluator commit is refused "
+            "(report_commit_mismatch)",
+    "V15b": "V15 (RE-6) an official report whose code is modified at that commit, or whose state "
+            "Git cannot tell, is refused (report_code_modified)",
     "RC1": "RC read_cell_record refuses a record that is not strict JSON (record_unreadable)",
     "RC2": "RC read_cell_record refuses another schema or other keys (record_schema)",
     "RC3": "RC verify_cell_record refuses changed files or another directory "
@@ -1318,6 +1694,10 @@ LABELS = {
     "O5": "O5 the CLI writes official outputs from an official set (scopes checked): status official, "
           "no banner",
     "O6": "O6 robustness_report.py holds no inferential call, no alias and no copying",
+    "O7": "O7 (RE-9) a write failing after its temporary directory exists removes it; nothing at the "
+          "out-dir",
+    "O8": "O8 (RE-9) a file that does not read back as written is refused (output_verify_failed); "
+          "nothing left behind",
     "H1": "H1 the frozen path runs on 846-row REHEARSAL artifacts: R-G5 (n = 846 - K_val, nested = "
           "flat within 1e-12), the comparison serialised, SHA256SUMS",
     "H2": "H2 a TEST-split input is refused (rehearsal_input_refused)",
@@ -1325,21 +1705,89 @@ LABELS = {
     "H4": "H4 the stand-in mapping is recorded (E1 seed 44 relabelled to E6)",
     "H5": "H5 one model on both sides is refused, by file_id or by checkpoint (stand_in_same_as_e1)",
     "H6": "H6 a rehearsal out-dir inside the repository is refused",
+    "H7": "H7 (RE-7) a model whose artifacts name two checkpoints is refused, the stand-in present "
+          "(rehearsal_input_refused)",
+    "H8": "H8 (RE-7) a cell directory holding another cell's artifact is refused "
+          "(rehearsal_input_refused)",
+    "H9": "H9 (RE-7) an analysis error of the frozen path (two AM-5 sets) is a refusal with exit 2 "
+          "(rehearsal_input_refused)",
+    "H10": "H10 (RE-8) an unexpected error exits 4 with nothing written",
 }
+
+
+# ---------------------------------------------------------------- M: the mutants' replacements
+def flat_kr(m):
+    """RE-1's defect: the flat mean of AM-16's 23 cells instead of the nested average."""
+    keys = [(c, s) for c in CORR for s in KR_EXPECTED[c]]
+    return None if any(k not in m for k in keys) else RR._mean([m[k] for k in keys])
+
+
+def c7_series_values(m):
+    """RE-2's defect (C7's rule): a series with any missing cell is null at every severity."""
+    q2, means = {}, {}
+    for name, cs, ss in RR.SERIES:
+        have = all((c, s) in m for c in cs for s in ss)
+        q2[name] = {str(s): (RR._mean([m[(c, s)] for c in cs]) if have else None) for s in ss}
+        means[name] = RR._mean([RR._mean([m[(c, s)] for s in ss]) for c in cs]) if have else None
+    return q2, means
+
+
+def lexical_inside_repo(path) -> bool:
+    """RE-3's defect: containment on the absolute path as written, symlinks not followed."""
+    p = Path(os.path.abspath(str(path)))
+    return p == RR.REPO or RR.REPO in p.parents
+
+
+def basename_problem(path):
+    """RE-4's defect: TL section 2 applied to the last component only."""
+    name = Path(str(path)).name
+    if "test" in name.lower():
+        return f"{name!r} holds 'test'"
+    bad = sorted(set(name) & CO.FORBIDDEN_NAME_CHARS)
+    return f"{name!r} holds {''.join(bad)!r}" if bad else None
+
+
+#: Per V13 key, the repair that makes check_record pass on that key alone: a mutant built from it
+#: is check_record without that comparison.
+RECORD_REPAIR = {
+    "evaluator_commit": lambda rec, s, split, label: rec.update(
+        evaluator_commit=s["run"]["repo_commit"]),
+    "cache.split": lambda rec, s, split, label: rec["cache"].update(split=split),
+    "counts": lambda rec, s, split, label: rec.update(
+        items_verified=s["dataset"]["actual_rows"],
+        source_digests_verified=s["dataset"]["actual_rows"]),
+    "role": lambda rec, s, split, label: rec.update(role=RR.cell_role(label)),
+    "stage": lambda rec, s, split, label: rec.update(stage=s["run"]["stage"]),
+    "condition": lambda rec, s, split, label: rec.update(condition=s["dataset"]["condition"]),
+}
+
+
+def record_key_unchecked(key: str):
+    real = RR.check_record
+
+    def check_record(model, label, summary, split):
+        saved = model.records[label]
+        repaired = json.loads(json.dumps(saved))
+        RECORD_REPAIR[key](repaired, summary, split, label)
+        model.records[label] = repaired
+        try:
+            return real(model, label, summary, split)
+        finally:
+            model.records[label] = saved
+    return (RR, "check_record", check_record)
 
 
 def mutations() -> None:
     mutant("M1 severity 4 in mIoU-C", ["Q3"], (RR, "MIOU_C_SEVERITIES", (1, 2, 3, 4)))
     mutant("M2 teacher in rCD", ["Q9a"],
            (RR, "in_rcd", lambda row: row.get("seed") == 42 or row["stage"] == "teacher"))
-    mutant("M3 flat K&R over all the model's cells", ["Q8"],
-           (RR, "kamann_rother", lambda m, cs, ss: RR._mean(list(m.values()))))
+    mutant("M3 K&R as the flat mean of its 23 cells (RE-1)", ["Q8"], (RR, "kamann_rother", flat_kr))
     mutant("M4 RPD from a per-image mean", ["Q4"],
            (RR, "clean_value",
             lambda run_: float(np.mean([r.all_class_miou for r in run_.records]))))
     mutant("M5 gaussian_noise in the s1-5 series", ["Q2"],
            (RR, "SERIES", ((RR.SERIES[0][0], CORR, (1, 2, 3, 4, 5)), RR.SERIES[1])))
-    mutant("M6 E1's reference guard removed (LE7)", ["V7"],
+    mutant("M6 rcd()'s reference guard removed: the caught rcd_invalid_reference (LE7)", ["V7c"],
            (RR, "rcd", lambda stage, a, b: float(a / b)))
     mutant("M7 rCD mean over the defined corruptions (LE7)", ["V7"],
            (RR, "rcd_mean", lambda per: {"value": RR._mean([v["value"] for v in per.values()
@@ -1351,6 +1799,29 @@ def mutations() -> None:
     mutant("M9 INT8 identity from source.sha256 (LE2)", ["V9c"],
            (RR, "expected_identity", lambda row: row["source"]["sha256"]))
     mutant("M10 class space not stated (LE13)", ["O1"], (RR, "class_space", lambda: "disease-only"))
+    mutant("M11 Q2 null at every severity of a series with a gap (RE-2)", ["V1c"],
+           (RR, "series_values", c7_series_values))
+    mutant("M12 LE7's reason only after the student's own gaps (RE-10)", ["V7b"],
+           (RR, "reference_defined", lambda ref: True))
+    mutant("M13 containment decided on the lexical path (RE-3)", ["V8d"],
+           (RR, "inside_repo", lexical_inside_repo))
+    mutant("M14 TL section 2 on the basename only (RE-4)", ["V8e"],
+           (RR, "created_path_problem", basename_problem))
+    mutant("M15 the grid runner left out of the code provenance (RE-5)", ["Q9b"],
+           (RR, "CODE_FILES", tuple(f for f in RR.CODE_FILES
+                                    if f != "scripts/run_corruption_grid.py")))
+    mutant("M16 one runtime key compared (LE1)", ["V9a"], (RR, "RUNTIME_KEYS", ("torch_num_threads",)))
+    real_problems = RR.runtime_problems
+    mutant("M17 the clean artifact's runtime not compared (LE1)", ["V9f"],
+           (RR, "runtime_problems", lambda models, export_doc: real_problems(
+               [RR.ModelInputs(row=m.row, dirs=m.dirs,
+                               summaries={k: v for k, v in m.summaries.items() if k != "clean"})
+                for m in models], export_doc)))
+    mutant("M18 the first model's runtime only (LE1)", ["V9g"],
+           (RR, "runtime_problems", lambda models, export_doc: real_problems(models[:1],
+                                                                              export_doc)))
+    for name, (key, _) in V13_KEYS.items():
+        mutant(f"M-record {key} not compared (SM-6)", [name], record_key_unchecked(key))
 
     def flat14(cells):
         per = {}
@@ -1360,6 +1831,15 @@ def mutations() -> None:
         return {k: float(np.mean(v)) for k, v in per.items()}
     mutant("MH1 R-G5's flat mean over 14 cells", ["H1"], (RH, "flat_means", flat14))
     mutant("MH4 the stand-in not relabelled", ["H1", "H4"], (RH, "as_stand_in", lambda run_: run_))
+    mutant("MH7 the one-checkpoint guard removed (RE-7)", ["H7"],
+           (RH, "check_one_checkpoint", lambda file_id, arts: None))
+    mutant("MH8 the condition guard removed (RE-7)", ["H8"],
+           (RH, "check_condition", lambda name, label, art: None))
+    mutant("MH9 the frozen path's analysis errors not caught (RE-7)", ["H9"],
+           (RH, "analysis_errors", lambda: ()))
+    mutant("MH10 an unexpected error exits 1 (RE-8)", ["H10"], (RH, "EXIT_UNEXPECTED", 1))
+    mutant("MO7 a failed write keeps its temporary directory (RE-9)", ["O7", "O8"],
+           (RR, "_discard_dir", lambda tmp: None))
     for code, targets in (
             ("artifact_split_mismatch", ["V14"]),
             ("condition_mismatch", ["V2"]), ("non_canvas_input", ["V4"]),
@@ -1369,9 +1849,11 @@ def mutations() -> None:
             ("expected_cache_sha256_required", ["V6c"]),
             ("expected_cache_sha256_format", ["V6d"]),
             ("cache_checksum_mismatch", ["V6a", "V6b"]),
-            ("heterogeneous_runtime", ["V9a", "V9b"]), ("policy_unknown", ["V10a"]),
-            ("policy_split_mismatch", ["V10b"]), ("out_dir_name_invalid", ["V8c"]),
-            ("out_dir_inside_repo", ["V8a"]), ("out_dir_exists", ["V8b"])):
+            ("heterogeneous_runtime", ["V9a", "V9b", "V9f", "V9g"]), ("policy_unknown", ["V10a"]),
+            ("policy_split_mismatch", ["V10b"]), ("out_dir_name_invalid", ["V8c", "V8e"]),
+            ("out_dir_inside_repo", ["V8a", "V8d"]), ("out_dir_exists", ["V8b"]),
+            ("report_commit_mismatch", ["V15a"]), ("report_code_modified", ["V15b"]),
+            ("output_verify_failed", ["O8"])):
         mutant(f"M-{code}", targets, skip(RR, "_refuse", code))
     for code, targets in (("stand_in_same_as_e1", ["H5"]),
                           ("rehearsal_input_refused", ["H2", "H3"])):
@@ -1382,12 +1864,14 @@ def mutations() -> None:
 
 
 def make_work() -> Path:
-    for _ in range(20):
-        work = Path(tempfile.mkdtemp(prefix="robustness_report_"))
-        if "test" not in str(work).lower():
-            return work
-        os.rmdir(work)
-    raise AssertionError("no temporary folder free of 'test'")
+    """The work folder, named before it is created (RU-15): the temporary root is checked for 'test'
+    first, and the name's random part is hex, which cannot spell it."""
+    base = Path(tempfile.gettempdir())
+    if "test" in str(base).lower():
+        raise AssertionError(f"the temporary root {base} holds 'test'; set TMPDIR elsewhere")
+    work = base / f"robustness_report_{secrets.token_hex(6)}"
+    work.mkdir(mode=0o700)
+    return work
 
 
 def main() -> int:
