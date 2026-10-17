@@ -10,7 +10,9 @@ this process, restored after each case; the AQ5 cases run the real code_provenan
 this checkout's TOOL_CODE_PATHS files (ptq.REPO pointed at it, restored). Every refusal is reached with every earlier
 gate passing and checked as: exit, code (and field), nothing created. No created file or folder name contains "test"
 or ":"; a forbidden-name case uses a never-created path; an audit hook records any open of a path under the work dir
-or the repository whose name contains "test". The repository's git status and HEAD are the same after the run.
+or the repository whose name contains "test". The repository's HEAD and scoped git status (the project's form over
+".", ignored files included) are the same after the run as before its fixtures; the run writes no bytecode and works
+from a folder of its work dir, so a relative path never names the repository.
 
   w_  written records: the verdict at, above and below the threshold, the record's fields, determinism, the
       decision-log text (AQ3), the deadline (AQ7), the readers accepting it
@@ -43,6 +45,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
+sys.dont_write_bytecode = True    # no __pycache__ in the repository, with or without -B
 
 import torch  # noqa: E402
 
@@ -124,9 +127,10 @@ def git(repo: Path, *args: str) -> str:
 
 
 def repo_status() -> tuple:
-    """The repository as this smoke may touch it: HEAD and the status of the folders it reads (explicit paths)."""
+    """The repository: HEAD and its scoped status (the project's form over ".", ignored files included)."""
     return (git(REPO, "rev-parse", "HEAD").strip(),
-            git(REPO, "status", "--porcelain=v1", "--", "src", "scripts", "configs", "reports", ":(exclude,icase)*test*"))
+            git(REPO, "status", "--porcelain=v1", "--ignored", "--", ".", ":(exclude)docs/reference/reference.pdf",
+                ":(exclude)docs/reference", ":(exclude,icase)*test*"))
 
 
 # ------------------------------------------------------------------ fixtures
@@ -174,7 +178,7 @@ def payload(arm: str, value, /, **over):
 
 
 def make_run(arm: str = "R1", value=VALUE_YES, *, name=None, meta=None, meta_bytes=None, tel=None, tel_bytes=None,
-             best=None, pay=None, ckpt_bytes=None, skip=()) -> Path:
+             best=None, best_bytes=None, pay=None, ckpt_bytes=None, skip=()) -> Path:
     """A synthetic E3-X run directory: e3_run_meta.jsonl, e3_telemetry.jsonl, best.json and the checkpoint."""
     rid = FX["run_id"][arm]
     d = new_dir("run") / (name or rid)
@@ -182,9 +186,9 @@ def make_run(arm: str = "R1", value=VALUE_YES, *, name=None, meta=None, meta_byt
     files = {C.META_NAME: meta_bytes if meta_bytes is not None else jl([meta if meta is not None else meta_row(arm)]),
              C.TELEMETRY_NAME: tel_bytes if tel_bytes is not None else jl(tel if tel is not None
                                                                            else tel_rows(arm, value)),
-             C.BEST_JSON_NAME: json.dumps(best if best is not None else
-                                          {"best_ckpt": f"/workspace/kd_runs/{rid}/{CKPT_NAME}",
-                                           "best_val_miou_all_class": value}, indent=2).encode("utf-8")}
+             C.BEST_JSON_NAME: best_bytes if best_bytes is not None else
+             json.dumps(best if best is not None else {"best_ckpt": f"/workspace/kd_runs/{rid}/{CKPT_NAME}",
+                                                       "best_val_miou_all_class": value}, indent=2).encode("utf-8")}
     for n, data in files.items():
         if n not in skip:
             write(d / n, data)
@@ -260,6 +264,7 @@ def code_repo(*, after=None, untracked=None) -> Path:
 
 def setup(work: Path) -> None:
     """The shared fixtures: the arm specs, the records repository and the three run directories."""
+    FX["status0"] = repo_status()
     FX["work"] = work
     arms = K.load_arms()
     FX["spec"] = {x: next(s for s in arms.values() if s.teacher == "arm" and s.arm_teacher == x) for x in ARMS}
@@ -274,7 +279,6 @@ def setup(work: Path) -> None:
     FX["run_yes"] = make_run("R1", VALUE_YES)
     FX["run_no"] = make_run("R1", VALUE_NO)
     FX["run_r2"] = make_run("R2", VALUE_R2)
-    FX["status0"] = repo_status()
 
 
 # ------------------------------------------------------------------ running the tool in-process
@@ -373,9 +377,16 @@ def alpha_doc(**winner_over) -> bytes:
     return json.dumps(doc, indent=2).encode("utf-8")
 
 
-def teacher_doc(arm: str = "R1", **over) -> bytes:
+def lambda_doc(**winner_over) -> bytes:
+    doc = json.loads((REPO / C.LAMBDA_SELECTION_REL).read_text(encoding="utf-8"))
+    doc["winner"].update(winner_over)
+    return json.dumps(doc, indent=2).encode("utf-8")
+
+
+def teacher_doc(arm: str = "R1", /, ckpt=None, **over) -> bytes:
     doc = json.loads((REPO / C.TEACHER_RECORD_REL.format(arm=arm)).read_text(encoding="utf-8"))
     doc.update(over)
+    doc["selection"]["checkpoint"].update(ckpt or {})
     return json.dumps(doc, indent=2).encode("utf-8")
 
 
@@ -562,7 +573,7 @@ def _w_sub():
 # ---- G0, G1
 @case("r_missing_flags", "missing_flags")
 def _r_missing():
-    return refusal("missing_flags", flags={"--out": None})
+    return refusal("missing_flags", flags={"--out": None}, field="--out:")
 
 
 @case("r_missing_flags_print_dl", "missing_flags")
@@ -596,6 +607,12 @@ def _r_forbid_out():
 def _r_forbid_sel():
     return refusal("forbidden_path", flags={"--lambda-selection": "reports/derived/latest_lambda_selection.json"},
                    field="--lambda-selection")
+
+
+@case("r_forbidden_path_selection_alpha", "forbidden_path")
+def _r_forbid_sel_alpha():
+    return refusal("forbidden_path", flags={"--alpha-selection": "reports/derived/latest_alpha_selection.json"},
+                   field="--alpha-selection")
 
 
 @case("r_forbidden_path_print_dl", "forbidden_path")
@@ -633,6 +650,14 @@ def _r_out_exists():
     rc, text = run_cli(record_argv(FX["run_yes"], out))
     return (rc == 2 and result_of(text).startswith(f"RESULT: REFUSED [out_exists] -- {out} exists: a condition record")
             and out.read_bytes() == b"kept\n" and len(list(out.parent.iterdir())) == 1), result_of(text)
+
+
+@case("r_out_exists_incomplete_run", "out_exists")
+def _r_out_exists_incomplete():
+    out = write(new_out(), b"kept\n")              # G2 refuses before G8 would find E3-X incomplete (exit 3)
+    rc, text = run_cli(record_argv(make_run(tel=tel_rows("R1", VALUE_YES)[:-1]), out))
+    return (rc == 2 and result_of(text).startswith("RESULT: REFUSED [out_exists]") and out.read_bytes() == b"kept\n"), \
+        result_of(text)
 
 
 @case("r_out_parent_missing", "out_parent_missing")
@@ -686,7 +711,16 @@ def _r_arm_unknown():
 # ---- G5
 @case("r_selection_not_of_record", "selection_not_of_record")
 def _r_sel_record():
-    return refusal("selection_not_of_record", flags={"--alpha-selection": "reports/derived/alpha_selection_copy.json"})
+    copy = "reports/derived/alpha_selection_copy.json"        # a committed byte copy: only the path is not of record
+    root = make_records(files={copy: (REPO / C.ALPHA_SELECTION_REL).read_bytes()})
+    return refusal("selection_not_of_record", records=root, flags={"--alpha-selection": copy})
+
+
+@case("r_selection_not_of_record_lambda", "selection_not_of_record")
+def _r_sel_record_lambda():
+    copy = "reports/derived/lambda_selection_copy.json"
+    root = make_records(files={copy: (REPO / C.LAMBDA_SELECTION_REL).read_bytes()})
+    return refusal("selection_not_of_record", records=root, flags={"--lambda-selection": copy})
 
 
 @case("r_selection_sha256_mismatch")
@@ -714,6 +748,13 @@ def _r_sel_winner():
     return refusal("selection_format", records=root, flags={"--alpha-selection-sha256": sha(doc)})
 
 
+@case("r_selection_format_winner_lambda", "selection_format")
+def _r_sel_winner_lambda():
+    doc = lambda_doc(**{"lambda": None})
+    root = make_records(files={C.LAMBDA_SELECTION_REL: doc})
+    return refusal("selection_format", records=root, flags={"--lambda-selection-sha256": sha(doc)})
+
+
 @case("r_threshold_mismatch", "threshold_mismatch")
 def _r_threshold():
     doc = alpha_doc(best_val=0.36)
@@ -737,6 +778,13 @@ def _r_teacher_uncommitted():
 def _r_teacher_invalid():
     rel = C.TEACHER_RECORD_REL.format(arm="R1")
     return refusal("teacher_record_invalid", records=make_records(files={rel: teacher_doc(status="running")}))
+
+
+for _key, _over in (("format", {"format": "arm_teacher_record/2"}), ("arm", {"arm": "R2"}),
+                    ("sha256", {"ckpt": {"sha256": "abc"}})):
+    case(f"r_teacher_record_invalid_{_key}", "teacher_record_invalid")(
+        lambda _over=_over: refusal("teacher_record_invalid", records=make_records(
+            files={C.TEACHER_RECORD_REL.format(arm="R1"): teacher_doc("R1", **_over)})))
 
 
 # ---- G7
@@ -763,6 +811,16 @@ def _r_run_missing():
 @case("r_run_meta_rows", "run_meta_rows")
 def _r_meta_rows():
     return refusal("run_meta_rows", make_run(meta_bytes=jl([meta_row("R1"), meta_row("R1")])))
+
+
+@case("r_run_meta_rows_torn", "run_meta_rows")
+def _r_meta_rows_torn():
+    return refusal("run_meta_rows", make_run(meta_bytes=jl([meta_row("R1")]) + b'{"event": "run_me'))
+
+
+@case("r_run_meta_rows_event", "run_meta_rows")
+def _r_meta_rows_event():
+    return refusal("run_meta_rows", make_run(meta=meta_row("R1", event="run_end")))
 
 
 RUN_META_BAD = {"mode": "dry", "stage": "E2", "seed": 43, "arm": "E3-R2", "descriptive": False, "parent_of_e4_e7": True,
@@ -833,12 +891,22 @@ def _r_end_iter():
     return refusal("run_end_format", run_with_end(iter=79999))
 
 
+@case("r_run_end_format_iter_float", "run_end_format")
+def _r_end_iter_float():
+    return refusal("run_end_format", run_with_end(iter=80000.0))
+
+
 @case("r_run_end_format_clock", "run_end_format")
 def _r_end_clock():
     return refusal("run_end_format", run_with_end(wall_clock_end="2026-10-19T08:00:00Z"))
 
 
 # ---- G9
+@case("r_best_json_format_parse", "best_json_format")
+def _r_best_parse():
+    return refusal("best_json_format", make_run(best_bytes=b'{"best_ckpt": '))
+
+
 @case("r_best_json_format_keys", "best_json_format")
 def _r_best_keys():
     best = {"best_ckpt": f"/workspace/kd_runs/x/{CKPT_NAME}", "best_val_miou_all_class": VALUE_YES, "extra": 1}
@@ -959,7 +1027,7 @@ def _r_log_stopped():
 
 LOG_FIELD_CASES = {
     "run_meta_sha256": ({}, {"run_meta_sha256": "0" * 64}),
-    "git_head": ({}, {"git_head": "c" * 40}),
+    "git_head": ({"code_pin": "c" * 40}, {"git_head": "c" * 40}),       # code_pin agrees: git_head alone differs
     "code_pin": ({"code_pin": "c" * 40}, {}),
     "records_commit": ({}, {"records_commit": "d" * 40}),
     "stage": ({"stage": "E3-R9"}, {}),
@@ -1288,7 +1356,9 @@ def main(argv=None) -> int:
     work = choose_work_dir(a.work_dir)
     work.mkdir(parents=True)
     (work / "scratch").mkdir()
+    (work / "relative_base").mkdir()
     tempfile.tempdir = str(work / "scratch")
+    os.chdir(work / "relative_base")             # a relative --out or --run-dir resolves here, never in the repository
     AUDIT_BASES[:] = [str(work), str(REPO)]
     sys.addaudithook(audit)
     t0 = time.time()
