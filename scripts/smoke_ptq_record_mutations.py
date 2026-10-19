@@ -9,8 +9,8 @@ becomes `False` or its raise is replaced), and the edited file must still parse.
 shadow in a subprocess, for the one case that holds the killing check (--only), in a session and process group of
 its own (a timeout kills the whole group), and the named check must be reported FAIL there, having PASSED on every
 unmutated shadow in the same run with the same argv. A check the smoke never reports, a timeout included, is not a
-kill. The edited file is restored byte for byte after its run. The TRAIN tree and the two student checkpoints are
-built once into a cache shared by every run (--cache-dir of the smoke).
+kill. The edited file is restored byte for byte after its run. The TRAIN tree and the student checkpoints (s11
+adds E2's) are built once into a cache shared by every run (--cache-dir of the smoke).
 
 The edits (MUTATIONS): the refusals of scripts/run_ptq.py's new gates (G0 source_exactly_one, G1 test_path, G2
 binding_needs_registered_list and the bound routing, the lazy import), src/quant/runner.py's old_runner_real_run,
@@ -18,7 +18,8 @@ src/quant/ptq.py's out_dir_not_empty (C2), each refusal and STOP of src/quant/pt
 record reader, the record fields the lane names (rulings R6, R7), src/eval/stage_artifacts.py's record gate and its
 order (ruling R2), scripts/evaluate_model.py's call, and each refusal of scripts/ptq_calibration_range.py (R13);
 from L-AM23Q B-2, E7-E2's (AM-23 item 2): the new G3 refusals, the λ-only G7, the record's role and read_record's
-coupling, planned_entry's role, role_of_record, the official gate's role, and bind_e2's checks;
+coupling, planned_entry's role, role_of_record, the official gate's role, and bind_e2's checks, each single
+condition of its multi-condition refusals alone (B-2's DL-24, F4-2), as below for the E3 rule;
 from the DL-24 verification, the unreadable-input refusal, the range reporter's input checks, and each single
 condition of the multi-condition refusals (R3's horizon, R8's launch-log fields, the E3 rule's run_meta, teacher
 and payload conditions, R2's record comparisons), each killed by a case that fails that condition alone.
@@ -456,7 +457,8 @@ MUTATIONS = [
       '    if rule.get("role") is not None:                     # E7-E2: its rule\'s role (AQ19)\n'
       '        role = rule["role"]\n', "", "s11_e7_e2_real", "e7_e2_record_role_descriptive"),
     M("LQ114", RECORD, "read_record's role coupling removed (AQ19)",
-      '    if (rec["role"] == ROLE_QUANT_DESCRIPTIVE) != (rec.get("stage") in ROLE_BY_STAGE):\n', "    if False:\n",
+      '    if (rec["role"] == ROLE_QUANT_DESCRIPTIVE) != (isinstance(rec["stage"], str)'
+      ' and rec["stage"] in ROLE_BY_STAGE):\n', "    if False:\n",
       "s11_e7_e2_real", "read_record_refuses_e7_quant_descriptive", "read_record_refuses_e7_e2_of_record"),
     M("LQ115", RECORD, "planned_entry's role fixed at of_record (AQ19)", '"role": role_of_record(stage),',
       '"role": ROLE_OF_RECORD,', "s11_e7_e2_real", "e7_e2_planned_entry_role"),
@@ -486,6 +488,58 @@ MUTATIONS = [
       "refuses_e7_e2_payload_stage"),
     M("LQ124", RECORD, "bind_e2: the selection input not on the record",
       '"selection_input": bound["selection_input"], ', "", "s11_e7_e2_real", "e7_e2_record_parent"),
+    # ---- B-2's DL-24 (5b): each single condition of bind_e2's multi-condition refusals, alone (F4-2), as
+    # LQ94-LQ105 for the E3 rule; read_record's coupling given a stage that is not a string (F4-3)
+    M("LQ125", RECORD, "bind_e2: the parent's arm not checked (DL-24 F4-2)", '("arm", rm.get("arm") is None)',
+      '("arm", True)', "s11_e7_e2_conditions", "refuses_e7_e2_parent_not_of_record_arm"),
+    M("LQ126", RECORD, "bind_e2: descriptive not checked (DL-24 F4-2)",
+      '("descriptive", rm.get("descriptive") is False)', '("descriptive", True)', "s11_e7_e2_refusals",
+      "refuses_e7_e2_parent_not_of_record"),
+    M("LQ127", RECORD, "bind_e2: parent_of_e4_e7 not checked (DL-24 F4-2)",
+      '("parent_of_e4_e7", rm.get("parent_of_e4_e7") is False)', '("parent_of_e4_e7", True)',
+      "s11_e7_e2_conditions", "refuses_e7_e2_parent_not_of_record_parent_of_e4_e7"),
+    M("LQ128", RECORD, "bind_e2: max_iters not checked (DL-24 F4-2)",
+      '("max_iters", _is_int(rm.get("max_iters")) and rm.get("max_iters") == h)', '("max_iters", True)',
+      "s11_e7_e2_conditions", "refuses_e7_e2_parent_not_of_record_max_iters"),
+    M("LQ129", RECORD, "bind_e2: poly_horizon not checked (DL-24 F4-2)",
+      '("poly_horizon", _is_int(rm.get("poly_horizon")) and rm.get("poly_horizon") == h)',
+      '("poly_horizon", True)', "s11_e7_e2_conditions", "refuses_e7_e2_parent_not_of_record_poly_horizon"),
+    M("LQ130", RECORD, "bind_e2: an absent max_iters tolerated (AQ13; DL-24 F4-2)",
+      '("max_iters", _is_int(rm.get("max_iters")) and rm.get("max_iters") == h)',
+      '("max_iters", rm.get("max_iters") in (None, h))', "s11_e7_e2_conditions",
+      "refuses_e7_e2_parent_not_of_record_max_iters_absent"),
+    M("LQ131", RECORD, "bind_e2: an absent poly_horizon tolerated, as bind_e1 does for E1 (R3; AQ13; DL-24 F4-2)",
+      '("poly_horizon", _is_int(rm.get("poly_horizon")) and rm.get("poly_horizon") == h)',
+      '("poly_horizon", rm.get("poly_horizon") in (None, h))', "s11_e7_e2_conditions",
+      "refuses_e7_e2_parent_not_of_record_poly_horizon_absent"),
+    M("LQ132", RECORD, "bind_e2: teacher_mock not checked (DL-24 F4-2)", 'rm.get("teacher_mock") is not False or ',
+      "", "s11_e7_e2_refusals", "refuses_e7_e2_parent_teacher"),
+    M("LQ133", RECORD, "bind_e2: a teacher_provenance that is not an object not refused (DL-24 F4-2)",
+      " or not isinstance(tprov, dict)", "", "s11_e7_e2_conditions", "refuses_e7_e2_parent_teacher_not_an_object"),
+    M("LQ134", RECORD, "bind_e2: the teacher's builder not checked (DL-24 F4-2)",
+      'tprov.get("builder") != pd.TEACHER_BUILDER or ', "", "s11_e7_e2_conditions",
+      "refuses_e7_e2_parent_teacher_builder"),
+    M("LQ135", RECORD, "bind_e2: the teacher's ckpt_sha256 not checked (DL-24 F4-2)",
+      ' or tprov.get("ckpt_sha256") != pd.TEACHER_SHA256', "", "s11_e7_e2_conditions",
+      "refuses_e7_e2_parent_teacher_ckpt_sha256"),
+    M("LQ136", RECORD, "bind_e2: the teacher's expected_sha256 not checked (DL-24 F4-2)",
+      '\n            or tprov.get("expected_sha256") != pd.TEACHER_SHA256)', ")", "s11_e7_e2_conditions",
+      "refuses_e7_e2_parent_teacher_expected_sha256"),
+    M("LQ137", RECORD, "bind_e2: the payload's arm key not checked (DL-24 F4-2)",
+      'for k in ("arm", "target_construction") if k in pay]', 'for k in ("target_construction",) if k in pay]',
+      "s11_e7_e2_conditions", "refuses_e7_e2_payload_arm_key"),
+    M("LQ138", RECORD, "bind_e2: the payload's target_construction key not checked (DL-24 F4-2)",
+      'for k in ("arm", "target_construction") if k in pay]', 'for k in ("arm",) if k in pay]',
+      "s11_e7_e2_conditions", "refuses_e7_e2_payload_target_construction_key"),
+    M("LQ139", RECORD, "bind_e2: the payload's teacher_provenance not compared (DL-24 F4-2)",
+      'if pay.get("teacher_provenance") != tprov else [])', "if False else [])", "s11_e7_e2_conditions",
+      "refuses_e7_e2_payload_teacher_mismatch"),
+    M("LQ140", RECORD, "bind_e2: the payload's best_val not compared (DL-24 F4-2)",
+      'if pay.get("best_val_miou_all_class") != parent["best_val_miou_all_class"] else []))', "if False else []))",
+      "s11_e7_e2_conditions", "refuses_e7_e2_payload_best_mismatch"),
+    M("LQ141", RECORD, "read_record's coupling hashes a stage that is not a string (DL-24 F4-3)",
+      '(isinstance(rec["stage"], str) and rec["stage"] in ROLE_BY_STAGE)', '(rec["stage"] in ROLE_BY_STAGE)',
+      "s11_e7_e2_real", "read_record_refuses_a_stage_not_a_string"),
 ]
 
 results: list[tuple[str, bool, str]] = []

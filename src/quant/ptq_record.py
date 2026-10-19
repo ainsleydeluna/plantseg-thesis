@@ -11,27 +11,33 @@ synthetic list never loads it. The PTQ itself stays src.quant.ptq.run_ptq (L-AM1
         --expect-head COMMIT --data-root ROOT --out-dir /out/e4_sS_cal42_a1 [--threads N] [--replicate-of RECORD]
     E7 adds  --lambda-selection reports/derived/lambda_selection.json --lambda-selection-sha256 SHA256
              --alpha-selection reports/derived/alpha_selection.json --alpha-selection-sha256 SHA256
+    E7-E2 (AM-23 item 2) adds the λ pair only, at --seed 42 on the seed-42 list
 
 Roles: of_record (the seed-42 list, AM-10); calibration_sensitivity (a seed-43/44/45 list at --seed 42, AM-16
-item 5); d3_replicate (--replicate-of: a second run of a record's inputs, L-AM10's d3). Only of_record is ever
-official (src/eval/stage_artifacts.py int8_official_error); the other two are descriptive.
+item 5); d3_replicate (--replicate-of: a second run of a record's inputs, L-AM10's d3); quant_descriptive
+(E7-E2's one record, on the seed-42 list: AM-23 item 2, ruling AQ19). The official gate
+(src/eval/stage_artifacts.py int8_official_error) takes the stage's role of record (role_of_record): of_record
+for E4 and E7, quant_descriptive for E7-E2. Every role but of_record is descriptive.
 
 The gates, in order; each refuses with exit 2 before anything is written, and no image, mask or checkpoint is
 opened before G8:
   G2  the list is configs/calibration/ptq_calibration_seed<S>.json, tracked and byte-equal at HEAD
       (calibration_list_not_committed)
   G3  seed_invalid (42, 43, 44); sensitivity_seed (a sensitivity list at a seed other than 42);
-      source_run_dir_required; expect_head_format; selection_not_applicable (E4)
+      source_run_dir_required; expect_head_format; selection_not_applicable (E4); E7-E2 only:
+      calibration_list_not_of_record (the seed-42 list), am23_seed (seed 42), selection_not_applicable (α)
   G4  out_dir_relative; output_dir_inside_repo; out_dir_name (<stage>_s<seed>_cal<list seed>_a<n>, with _d3
       exactly when --replicate-of is given); out_dir_not_empty
   G5  one identity reader, ptq.code_provenance(RECORD_CODE_PATHS): code_identity_unavailable,
       expect_head_mismatch, code_not_clean; then image_digest_not_of_record (PLANTSEG_IMAGE_DIGEST)
   G6  data_root_has_test (src.data.isolation.assert_no_test_surfaces: existence only, nothing listed)
-  G7  E7: the committed λ and α selections (qat.read_tracked_selection)
+  G7  E7: the committed λ and α selections (qat.read_tracked_selection); E7-E2: the λ selection only
   G8  the parent run directory and its best.json checkpoint (qat.resolve_parent)
   G9  E4 <- E1: parent_horizon, parent_payload
   G10 E7 <- E3: qat.e6_parent_binding; parent_not_of_record; parent_teacher_not_of_record;
       parent_checkpoint_not_selected (seed 42); parent_launch_log; parent_payload
+  G10 E7-E2 <- E2 seed 42 (bind_e2): qat.e2_parent_binding; parent_not_of_record;
+      parent_teacher_not_of_record; parent_launch_log; parent_payload
   G11 --replicate-of: replicate_mismatch
   An input a gate cannot read (a torn telemetry line, an unloadable checkpoint, no git binary) refuses as
   bound_input_unreadable: the gates only read, so it is a refusal, never a traceback.
@@ -593,7 +599,7 @@ def read_record(path, expect_sha256: str | None = None) -> tuple[dict, str]:
         raise RecordInvalid(f"{p} is not a {RECORD_FORMAT} record")
     if rec["role"] not in ROLES or rec["descriptive"] is not (rec["role"] != ROLE_OF_RECORD):
         raise RecordInvalid(f"{p}: role {rec['role']!r}, descriptive {rec['descriptive']!r}")
-    if (rec["role"] == ROLE_QUANT_DESCRIPTIVE) != (rec.get("stage") in ROLE_BY_STAGE):
+    if (rec["role"] == ROLE_QUANT_DESCRIPTIVE) != (isinstance(rec["stage"], str) and rec["stage"] in ROLE_BY_STAGE):
         raise RecordInvalid(f"{p}: role {rec['role']!r} for stage {rec.get('stage')!r}: quant_descriptive is E7-E2's "
                             "role and E7-E2's only (AQ19)")
     try:
@@ -625,8 +631,8 @@ def manifest_entry(record: dict) -> dict:
 
 def planned_entry(stage: str, seed: int, parent_checkpoint_sha256: str, list_file_sha256: str,
                   list_checksum_sha256: str, ptq_commit: str, image_digest: str) -> dict:
-    """An E4/E7 not yet made at the freeze, listed by the same inputs; its qconfig fingerprint is the registered
-    PTQ qconfig's (src/quant/ptq.py qconfig_summary)."""
+    """An E4, E7 or E7-E2 not yet made at the freeze, listed by the same inputs with its stage's role of record;
+    its qconfig fingerprint is the registered PTQ qconfig's (src/quant/ptq.py qconfig_summary)."""
     from src.quant.ptq import ptq_qconfig, qconfig_summary
     return {"status": "planned", "stage": str(stage).upper(), "seed": seed, "role": role_of_record(stage),
             "parent_checkpoint_sha256": parent_checkpoint_sha256, "list_file_sha256": list_file_sha256,

@@ -5,7 +5,7 @@
 No PlantSeg data, no real checkpoint, no GPU, no TEST path. A synthetic TRAIN tree of 5,367 image/mask pairs (the
 count for which scripts/build_calibration_lists.py marks its lists "registered", its :137 and :157), a synthetic
 records repository (git: the four lists, the λ and α selections and the KD launch log, committed once) and
-synthetic E1 and E3 run directories stand in for the real inputs. ptq_record.RECORDS_ROOT points at the records
+synthetic E1, E2 and E3 run directories stand in for the real inputs. ptq_record.RECORDS_ROOT points at the records
 repository and src.quant.ptq.code_provenance answers a fixed identity (a clean checkout at a known commit), in this
 process and in each driver process; the identity cases change that answer. The real PTQ core runs, each in its own
 process, for E4 s42, E7 s42, the E4 d3 replicate, s10's unbound run and s11's E7-E2 s42; every other bound case
@@ -29,7 +29,8 @@ repository's git status is the same after the run as before it.
                   path; repository untouched
   s11 E7-E2       AM-23 item 2 (L-AM23Q B-2), on records repositories of its own: the real core (the record of
                   role quant_descriptive, its parent block, manifest and planned entries, the official gate),
-                  read_record's role coupling, and each refusal of E7-E2's rule (stub core)
+                  read_record's role coupling, each refusal of E7-E2's rule (stub core), and each single
+                  condition of bind_e2's multi-condition refusals, alone (stub core; DL-24 F4-2)
 
     python -B scripts/smoke_ptq_record.py [--sections s0,s5] [--only CASE,CASE] [--cache-dir DIR]
 """
@@ -1584,6 +1585,19 @@ def case_s11_real() -> None:
         except ValueError as e:
             got = str(e)
         check(name, "quant_descriptive is E7-E2's" in got, got[-160:])
+    d = BASE / "s11_copies" / "coupling_stage_not_a_string"           # DL-24 F4-3: RecordInvalid, not TypeError
+    shutil.copytree(out, d)
+    r4 = json.loads((d / "e7-e2_ptq_record.json").read_text(encoding="utf-8"))
+    r4["stage"] = ["E7-E2"]
+    (d / "e7-e2_ptq_record.json").write_text(json.dumps(r4), encoding="utf-8")
+    try:
+        read_record(d / "e7-e2_ptq_record.json")
+        got = "accepted"
+    except ValueError as e:
+        got = str(e)
+    except Exception as e:                                  # noqa: BLE001 -- the defect this check pins
+        got = f"{type(e).__name__}: {e}"
+    check("read_record_refuses_a_stage_not_a_string", "quant_descriptive is E7-E2's" in got, got[-160:])
 
 
 def case_s11_refusals() -> None:
@@ -1623,6 +1637,31 @@ def case_s11_refusals() -> None:
                records=lambda name, r: s11_records(name, r, launch={"code_pin": OTHER_COMMIT}))
     e2_refused("refuses_e7_e2_payload_stage", "parent_payload", "payload",
                payload=e2_payload(stage="E3"))
+
+
+def case_s11_conditions() -> None:
+    """DL-24 F4-2: each single condition of bind_e2's parent_not_of_record, parent_teacher_not_of_record and
+    parent_payload, failed alone with every earlier gate passing, as the E3 rule's in s5 (DL-24 D-6); stub core
+    and no real run. descriptive and teacher_mock alone are s11_e7_e2_refusals' own checks."""
+    for key, over in (("arm", {"arm": "E3-R1"}), ("parent_of_e4_e7", {"parent_of_e4_e7": True}),
+                      ("max_iters", {"max_iters": 160000}), ("poly_horizon", {"poly_horizon": 160000})):
+        e2_refused(f"refuses_e7_e2_parent_not_of_record_{key}", "parent_not_of_record", f"not_of_record_{key}",
+                   meta=e2_meta(**over))
+    for key in ("max_iters", "poly_horizon"):                 # AQ13: strict keys, never tolerated when absent
+        meta = e2_meta()
+        del meta[key]
+        e2_refused(f"refuses_e7_e2_parent_not_of_record_{key}_absent", "parent_not_of_record", f"absent_{key}",
+                   meta=meta)
+    tp_r1 = teacher_provenance(ckpt_sha256="4c54aa1b06e787d93b04ef5469398bb19e34f4660166124d37cff69273eb9f20")
+    for key, tp in (("ckpt_sha256", tp_r1), ("builder", teacher_provenance(builder="another_builder")),
+                    ("expected_sha256", teacher_provenance(expected_sha256="0" * 64)), ("not_an_object", None)):
+        e2_refused(f"refuses_e7_e2_parent_teacher_{key}", "parent_teacher_not_of_record", f"teacher_{key}",
+                   meta=e2_meta(teacher_provenance=tp))
+    for key, over in (("arm_key", {"arm": "E3-R1"}),
+                      ("target_construction_key", {"target_construction": {"K": 2, "views": 2}}),
+                      ("teacher_mismatch", {"teacher_provenance": teacher_provenance(config_path="other.py")}),
+                      ("best_mismatch", {"best_val_miou_all_class": 0.3})):
+        e2_refused(f"refuses_e7_e2_payload_{key}", "parent_payload", f"payload_{key}", payload=e2_payload(**over))
 
 
 # ------------------------------------------------------------------ s10 hygiene
@@ -1687,6 +1726,7 @@ CASES = [
     ("s9_range", "s9", case_s9),
     ("s11_e7_e2_real", "s11", case_s11_real),
     ("s11_e7_e2_refusals", "s11", case_s11_refusals),
+    ("s11_e7_e2_conditions", "s11", case_s11_conditions),
     ("s10_hygiene", "s10", case_s10),
 ]
 

@@ -11,12 +11,13 @@
 
 BOUND PATH (LQP: L-CKPT-GUARD Q-part, L-AM16-CALIB). A run whose calibration list is a registered build
 (artifact_status "registered": the four lists committed in configs/calibration/) is bound to its parent by
-src/quant/ptq_record.py, imported here for that path only: the E1 run of record (E4) or the E3 run of record
-the λ and α selections and the KD launch log name (E7), read from its run directory (--source-run-dir; its
-best.json names the checkpoint), at a clean commit (--expect-head) in the student image, on a data root
-without TEST surfaces. After the run provenance it writes <stage>_ptq_record.json (ptq_record/1; role
-of_record, calibration_sensitivity or d3_replicate), without which a run directory is not of record. The
-legacy runners scripts/run_e4.py and run_e7.py refuse every run (ruling Q1-R2).
+src/quant/ptq_record.py, imported here for that path only: the E1 run of record (E4), the E3 run of record
+the λ and α selections and the KD launch log name (E7), or E2 seed 42, the λ winner (E7-E2, AM-23 item 2),
+read from its run directory (--source-run-dir; its best.json names the checkpoint), at a clean commit
+(--expect-head) in the student image, on a data root without TEST surfaces. After the run provenance it
+writes <stage>_ptq_record.json (ptq_record/1; role of_record, calibration_sensitivity, d3_replicate or, for
+E7-E2, quant_descriptive), without which a run directory is not of record. The legacy runners
+scripts/run_e4.py and run_e7.py refuse every run (ruling Q1-R2).
 
 UNBOUND PATH. A run on a list that is not a registered build (a synthetic list: artifact_status "smoke") takes
 --source-ckpt and refuses every binding flag (binding_needs_registered_list); it is never of record.
@@ -55,7 +56,8 @@ student. The state_dict's sha256 depends on none of this.
 OFFICIAL E4/E7. A run on a sensitivity list (seeds 43-45, AM-16 item 5) or a synthetic list is recorded
 as such (ptq_run_role) and can only be scored descriptively: scripts/evaluate_model.py refuses an
 official score unless the run used the registered seed-42 list committed at
-configs/calibration/ptq_calibration_seed42.json and its directory holds its PTQ record of role of_record.
+configs/calibration/ptq_calibration_seed42.json and its directory holds its PTQ record of its stage's role
+of record: of_record, or quant_descriptive for E7-E2's one record (AM-23 item 2; ruling AQ19).
 
 Exit codes: 0 written / PASS; 1 STOP or compare FAIL (inspect before anything else runs); 2 refused or
 unreadable input (nothing written). Nothing here trains, downloads, uses a GPU or reads VAL or TEST.

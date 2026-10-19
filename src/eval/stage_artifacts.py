@@ -204,12 +204,14 @@ def int8_official_error(resolved: dict, repo_root: str | Path | None = None) -> 
 
 
 def _ptq_record_error(resolved: dict) -> str | None:
-    """The record gate: an official E4/E7 is scripts/run_ptq.py's TorchScript artifact whose directory holds its
-    <stage>_ptq_record.json (src/quant/ptq_record.py, imported here only) of role of_record, written by the run
-    that wrote this run provenance. legacy_ptq_artifact: a src/quant/runner.py state_dict PTQ artifact;
-    ptq_record_missing: no record (an E7-X or E7-flip arm directory holds e7_arm_record.json and none);
-    ptq_record_invalid; ptq_record_role: calibration_sensitivity or d3_replicate; ptq_record_mismatch: the
-    stage, the run provenance, the TorchScript artifact, the source checkpoint or the list checksum differ.
+    """The record gate: an official E4, E7 or E7-E2 is scripts/run_ptq.py's TorchScript artifact whose directory
+    holds its <stage>_ptq_record.json (src/quant/ptq_record.py, imported here only) of the stage's role of record
+    (role_of_record: of_record; quant_descriptive for E7-E2, AM-23 item 2), written by the run that wrote this
+    run provenance. legacy_ptq_artifact: a src/quant/runner.py state_dict PTQ artifact; ptq_record_missing: no
+    record (an E7-X or E7-flip arm directory holds e7_arm_record.json and none); ptq_record_invalid;
+    ptq_record_role: another role (calibration_sensitivity, d3_replicate, or quant_descriptive for E4/E7);
+    ptq_record_mismatch: the stage, the run provenance, the TorchScript artifact, the source checkpoint or the
+    list checksum differ.
     """
     spec, prov = resolved["spec"], resolved["provenance"]
     if spec["method"] != "ptq":
