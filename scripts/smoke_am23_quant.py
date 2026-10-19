@@ -1425,6 +1425,24 @@ def _s7_cwd():
     return "cwd_projection_loaded" in profile("e6-e2", row), "cwd"
 
 
+@case("s7_stops_on_condition_flags_for_e6_e2")
+def _s7_cond_flags():
+    bad = profile("e6-e2", profile_row("e6-e2"), condition_dl="DL-900")
+    return set(bad) == {"condition_flags"}, str(bad)[:200]
+
+
+@case("s7_stops_on_condition_flags_for_e5_and_e6")
+def _s7_cond_flags_q2():
+    got = {}
+    for st in ("E5", "E6"):
+        args = QEE.build_parser().parse_args(
+            ["check-run-meta", "--run-dir", "unused", "--stage", st, "--seed", "42", "--grad-clip-norm", str(CLIP),
+             "--expect-head", HEAD, "--expect-source-sha256", "0" * 64, "--condition-sha256", "0" * 64])
+        got[st] = QEE.profile_mismatches({"stage": st}, args, repo_root=FX["root"]).get("condition_flags")
+    return got == {st: ((None, "0" * 64, None), f"none: {st} takes no E6-X condition (AM-23 item 3(b))")
+                   for st in ("E5", "E6")}, str(got)[:300]
+
+
 @case("s7_stops_on_e6_selections")
 def _s7_e6sel():
     row = profile_row("e6-e2")

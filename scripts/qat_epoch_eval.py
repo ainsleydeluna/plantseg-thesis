@@ -583,6 +583,9 @@ def profile_mismatches(meta: dict, args, *, repo_root: Path = REPO) -> dict:
     elif any(v is not None for v in (args.lambda_selection, args.lambda_selection_sha256, args.alpha_selection,
                                      args.alpha_selection_sha256)) or meta.get("e6_selections") is not None:
         bad["e6_selections"] = (meta.get("e6_selections"), f"none: {stage} takes no λ or α selection")
+    cond = tuple(getattr(args, k, None) for k in ("condition_record", "condition_sha256", "condition_dl"))
+    if stage not in Q.E6X_PARENT_ARM and any(v is not None for v in cond):     # E6-X's flags only (DL-24 D2-01)
+        bad["condition_flags"] = (cond, f"none: {stage} takes no E6-X condition (AM-23 item 3(b))")
     return bad
 
 

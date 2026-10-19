@@ -320,6 +320,10 @@ RAW = [
       ["s5_dl_row_value_with_an_extra_digit", "s5_dl_row_value_with_a_sign",
        "s5_dl_row_sha256_with_an_extra_hex"],
       "AQ3's tokens matched inside a longer number, sign or hex string (DL-24 B1-01)"),
+    F("QEE", "profile_mismatches",
+      [("    if stage not in Q.E6X_PARENT_ARM and any(v is not None for v in cond):", "    if False:")],
+      ["s7_stops_on_condition_flags_for_e6_e2", "s7_stops_on_condition_flags_for_e5_and_e6"],
+      "E6-X's condition flags accepted for another stage (DL-24 D2-01)"),
 ]
 MUTATIONS = [(f"M{i:03d}", *m) for i, m in enumerate(RAW, 1)]
 
