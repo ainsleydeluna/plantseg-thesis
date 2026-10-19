@@ -17,6 +17,8 @@ binding_needs_registered_list and the bound routing, the lazy import), src/quant
 src/quant/ptq.py's out_dir_not_empty (C2), each refusal and STOP of src/quant/ptq_record.py with its Q2 wrapper and
 record reader, the record fields the lane names (rulings R6, R7), src/eval/stage_artifacts.py's record gate and its
 order (ruling R2), scripts/evaluate_model.py's call, and each refusal of scripts/ptq_calibration_range.py (R13);
+from L-AM23Q B-2, E7-E2's (AM-23 item 2): the new G3 refusals, the λ-only G7, the record's role and read_record's
+coupling, planned_entry's role, role_of_record, the official gate's role, and bind_e2's checks;
 from the DL-24 verification, the unreadable-input refusal, the range reporter's input checks, and each single
 condition of the multi-condition refusals (R3's horizon, R8's launch-log fields, the E3 rule's run_meta, teacher
 and payload conditions, R2's record comparisons), each killed by a case that fails that condition alone.
@@ -289,8 +291,8 @@ MUTATIONS = [
       "official_refuses_arm_directory"),
     M("LQ57", GATE, "ptq_record_invalid swallowed", 'return lead + f"[ptq_record_invalid] {path}: {e}"', "return None",
       "s8_gate", "official_refuses_malformed_record", "official_refuses_tampered_artifact"),
-    M("LQ58", GATE, "ptq_record_role removed", '    if record["role"] != ROLE_OF_RECORD:\n', "    if False:\n", "s8_gate",
-      "official_refuses_replicate_record"),
+    M("LQ58", GATE, "ptq_record_role removed", '    if record["role"] != role_of_record(stage):\n', "    if False:\n",
+      "s8_gate", "official_refuses_replicate_record"),
     M("LQ59", GATE, "ptq_record_mismatch removed", "    if differ:\n", "    if False:\n", "s8_gate",
       "official_refuses_record_of_another_run", "official_refuses_another_provenance"),
     M("LQ60", GATE, "the run provenance not compared with the record's", '("run provenance", run_meta == prov),', "",
@@ -439,6 +441,51 @@ MUTATIONS = [
     M("LQ108", GATE, "the record's source checkpoint not compared (R2)",
       '("source checkpoint", record["parent"].get("checkpoint_sha256") == prov.get("source_checkpoint_sha256")),',
       '("source checkpoint", True),', "s8_gate", "official_refuses_record_of_another_run"),
+    # ---- L-AM23Q B-2 C9: E7-E2 (AM-23 item 2; rulings AQ19-AQ21), killed by smoke_ptq_record's s11
+    M("LQ109", RECORD, "G3 calibration_list_not_of_record removed (E7-E2)",
+      '    if rule.get("role") is not None and doc["seed"] != SEED_OF_RECORD:\n', "    if False:\n",
+      "s11_e7_e2_refusals", "refuses_e7_e2_sensitivity_list"),
+    M("LQ110", RECORD, "G3 am23_seed removed (E7-E2)", '    if rule.get("seeds") and args.seed not in rule["seeds"]:\n',
+      "    if False:\n", "s11_e7_e2_refusals", "refuses_e7_e2_seed_43"),
+    M("LQ111", RECORD, "G3 E7-E2's α flags accepted",
+      '    if rule["selections"] == LAMBDA_ONLY and (args.alpha_selection is not None\n',
+      '    if False and (args.alpha_selection is not None\n', "s11_e7_e2_refusals", "refuses_e7_e2_alpha_flags"),
+    M("LQ112", RECORD, "G7 E7-E2 reads the α selection too", '    if rule["selections"] == LAMBDA_ONLY:',
+      "    if False:", "s11_e7_e2_refusals", "refuses_e7_e2_parent_lambda"),
+    M("LQ113", RECORD, "E7-E2's record not given its rule's role (AQ19)",
+      '    if rule.get("role") is not None:                     # E7-E2: its rule\'s role (AQ19)\n'
+      '        role = rule["role"]\n', "", "s11_e7_e2_real", "e7_e2_record_role_descriptive"),
+    M("LQ114", RECORD, "read_record's role coupling removed (AQ19)",
+      '    if (rec["role"] == ROLE_QUANT_DESCRIPTIVE) != (rec.get("stage") in ROLE_BY_STAGE):\n', "    if False:\n",
+      "s11_e7_e2_real", "read_record_refuses_e7_quant_descriptive", "read_record_refuses_e7_e2_of_record"),
+    M("LQ115", RECORD, "planned_entry's role fixed at of_record (AQ19)", '"role": role_of_record(stage),',
+      '"role": ROLE_OF_RECORD,', "s11_e7_e2_real", "e7_e2_planned_entry_role"),
+    M("LQ116", RECORD, "role_of_record gives quant_descriptive to every stage",
+      "    return ROLE_BY_STAGE.get(str(stage).upper(), ROLE_OF_RECORD)\n", "    return ROLE_QUANT_DESCRIPTIVE\n",
+      "s11_e7_e2_real", "e4_e7_planned_entry_unchanged"),
+    M("LQ117", GATE, "the official gate holds every stage to of_record (E7-E2 refused)",
+      '    if record["role"] != role_of_record(stage):\n', '    if record["role"] != "of_record":\n',
+      "s11_e7_e2_real", "e7_e2_record_official"),
+    M("LQ118", RECORD, "bind_e2: E2's binding (qat.e2_parent_binding) skipped",
+      '    bound = _q2(prefix, qat.e2_parent_binding, parent, args.seed, lam, ctx["root"])\n',
+      '    bound = {"selection_input": None}\n', "s11_e7_e2_refusals", "refuses_e7_e2_parent_not_the_winner",
+      "refuses_e7_e2_checkpoint_not_selected", "refuses_e7_e2_selection_input", "refuses_e7_e2_projection_pt"),
+    M("LQ119", RECORD, "bind_e2: parent_not_of_record removed", "    if not_e2:\n", "    if False:\n",
+      "s11_e7_e2_refusals", "refuses_e7_e2_parent_not_of_record"),
+    M("LQ120", RECORD, "bind_e2: parent_teacher_not_of_record removed",
+      '    if (rm.get("teacher_mock") is not False or not isinstance(tprov, dict)\n',
+      '    if False and (rm.get("teacher_mock") is not False or not isinstance(tprov, dict)\n',
+      "s11_e7_e2_refusals", "refuses_e7_e2_parent_teacher"),
+    M("LQ121", RECORD, "bind_e2: the launch log not bound",
+      '    launch = launch_log_binding(parent, rm, ctx["root"], prefix)\n', "    launch = {}\n",
+      "s11_e7_e2_refusals", "refuses_e7_e2_launch_line"),
+    M("LQ122", RECORD, "bind_e2: parent_payload removed", "    if wrong:\n", "    if False:\n", "s11_e7_e2_refusals",
+      "refuses_e7_e2_payload_stage"),
+    M("LQ123", RECORD, "bind_e2: the payload's stage not checked",
+      '([f"stage {pay.get(\'stage\')!r}"] if pay.get("stage") != "E2" else [])', "[]", "s11_e7_e2_refusals",
+      "refuses_e7_e2_payload_stage"),
+    M("LQ124", RECORD, "bind_e2: the selection input not on the record",
+      '"selection_input": bound["selection_input"], ', "", "s11_e7_e2_real", "e7_e2_record_parent"),
 ]
 
 results: list[tuple[str, bool, str]] = []

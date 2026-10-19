@@ -220,7 +220,7 @@ def _ptq_record_error(resolved: dict) -> str | None:
         return (lead + "[legacy_ptq_artifact] a src/quant/runner.py state_dict PTQ artifact makes no "
                 f"{stage} of record (ruling Q1-R2); the PTQ of record is scripts/run_ptq.py's TorchScript artifact")
     from src.quant.ptq import artifact_names
-    from src.quant.ptq_record import RECORD_NAME, ROLE_OF_RECORD, read_record
+    from src.quant.ptq_record import RECORD_NAME, read_record, role_of_record
     run_dir = Path(resolved["artifact_path"]).parent
     path = run_dir / RECORD_NAME.format(key=stage.lower())
     if not path.is_file():
@@ -231,9 +231,10 @@ def _ptq_record_error(resolved: dict) -> str | None:
         run_meta = json.loads((run_dir / artifact_names(stage.lower())["run_meta"]).read_text(encoding="utf-8"))
     except (OSError, ValueError) as e:
         return lead + f"[ptq_record_invalid] {path}: {e}"
-    if record["role"] != ROLE_OF_RECORD:
+    if record["role"] != role_of_record(stage):
         return (lead + f"[ptq_record_role] {path} has role {record['role']!r}; only a PTQ record of role "
-                f"{ROLE_OF_RECORD!r} is official (calibration-sensitivity runs and d3 replicates are descriptive)")
+                f"{role_of_record(stage)!r} is official for {stage} (calibration-sensitivity runs and d3 "
+                "replicates are descriptive)")
     differ = [k for k, ok in (
         ("stage", record["stage"] == stage), ("run provenance", run_meta == prov),
         ("torchscript", record["artifacts"]["torchscript"]["sha256"] == resolved["artifact_sha256"]),

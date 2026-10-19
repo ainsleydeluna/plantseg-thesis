@@ -5,7 +5,8 @@
         --source-run-dir RUN_DIR --expect-source-sha256 SHA256 \\
         --calibration-list configs/calibration/ptq_calibration_seed42.json --expect-list-checksum SHA256 \\
         --expect-head COMMIT --data-root ROOT --out-dir /out/e4_sS_cal42_a1 [--threads N] [--replicate-of RECORD]
-    (E7 adds --lambda-selection, --lambda-selection-sha256, --alpha-selection, --alpha-selection-sha256)
+    (E7 adds --lambda-selection, --lambda-selection-sha256, --alpha-selection, --alpha-selection-sha256;
+    E7-E2, AM-23 item 2, adds the λ pair only: seed 42, the list of record, out-dir /out/e7-e2_s42_cal42_a<n>)
     python -B scripts/run_ptq.py --compare OUT_A/e4_ptq_run_meta.json OUT_B/e4_ptq_run_meta.json
 
 BOUND PATH (LQP: L-CKPT-GUARD Q-part, L-AM16-CALIB). A run whose calibration list is a registered build
@@ -83,7 +84,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="E4/E7 PTQ of record (lane 8, L-AM10; LQP).")
     p.add_argument("--real-run", action="store_true")
     p.add_argument("--confirm-real-run", action="store_true")
-    p.add_argument("--stage", choices=["E4", "E7", "e4", "e7"], default=None)
+    p.add_argument("--stage", choices=["E4", "E7", "e4", "e7", "E7-E2", "e7-e2"], default=None)
     p.add_argument("--source-ckpt", default=None, help="unbound path: E1 checkpoint (E4) or E3 checkpoint (E7)")
     p.add_argument("--source-run-dir", default=None,
                    help="bound path: the E1 (E4) or E3 (E7) run directory of record; its best.json names the "

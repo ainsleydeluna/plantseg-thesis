@@ -8,10 +8,10 @@ records repository (git: the four lists, the λ and α selections and the KD lau
 synthetic E1 and E3 run directories stand in for the real inputs. ptq_record.RECORDS_ROOT points at the records
 repository and src.quant.ptq.code_provenance answers a fixed identity (a clean checkout at a known commit), in this
 process and in each driver process; the identity cases change that answer. The real PTQ core runs, each in its own
-process, for E4 s42, E7 s42, the E4 d3 replicate and s10's unbound run; every other bound case runs a stub core
-that writes small fake artifacts and the run-provenance fields the record reads. No TEST folder is ever created
-(SL-1): a TEST surface exists only through os.path.lexists, patched for one path and restored. The repository's
-git status is the same after the run as before it.
+process, for E4 s42, E7 s42, the E4 d3 replicate, s10's unbound run and s11's E7-E2 s42; every other bound case
+runs a stub core that writes small fake artifacts and the run-provenance fields the record reads. No TEST folder is
+ever created (SL-1): a TEST surface exists only through os.path.lexists, patched for one path and restored. The
+repository's git status is the same after the run as before it.
 
   s0 fixtures     the TRAIN tree, the registered lists, the committed records
   s1 old runners  run_e4.py and run_e7.py refuse every run (ruling Q1-R2)
@@ -27,6 +27,9 @@ git status is the same after the run as before it.
   s9 range        scripts/ptq_calibration_range.py: written, and each refusal
   s10 hygiene     an unbound run, start to finish (the real core), never imports the record module; no test-named
                   path; repository untouched
+  s11 E7-E2       AM-23 item 2 (L-AM23Q B-2), on records repositories of its own: the real core (the record of
+                  role quant_descriptive, its parent block, manifest and planned entries, the official gate),
+                  read_record's role coupling, and each refusal of E7-E2's rule (stub core)
 
     python -B scripts/smoke_ptq_record.py [--sections s0,s5] [--only CASE,CASE] [--cache-dir DIR]
 """
@@ -79,7 +82,7 @@ LOG_FIELD_LINES = {"git_head": ({"code_pin": OTHER_COMMIT}, {"git_head": OTHER_C
                    "lambda_logit": ({"lambda_logit": 1.0}, {}), "alpha_cwd": ({"alpha_cwd": 10.0}, {})}
 E3_S43_FIELD = {f: f"e3_s43_lambda0.5_alpha25_80k_{f}" for f in LOG_FIELD_LINES}
 CLEAN = {"type": "clean", "name": None, "severity": None}
-SECTIONS = ("s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10")
+SECTIONS = ("s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11")
 
 results: list[tuple[str, bool, str]] = []
 FX: dict = {}                             # fixtures, built once per process
@@ -1385,6 +1388,243 @@ def case_s9() -> None:
           and p.read_bytes() == kept, f"exit {rc2} [{code_of(log2)}]")
 
 
+# ------------------------------------------------------------------ s11 E7-E2 (AM-23 item 2; L-AM23Q B-2)
+E2_S42, CK2, E2_BEST = "e2_s42_lambda0.5_80k_a1", "e2_student_best_iter64000.pt", 0.38
+E2_TERMS = {"logit_kd": True, "cwd_feat": False, "cwd_logit": False}
+
+
+def e2_meta(**over) -> dict:
+    """E2 seed 42's run_meta row (8487551 train_distill.py :963-1003, launch_fields :678-699)."""
+    meta = {"event": "run_meta", "mode": "real", "seed": 42, "stage": "E2", "terms": dict(E2_TERMS),
+            "max_iters": 80000, "poly_horizon": 80000, "lambda_logit": LAMBDA, "wall_clock": WALL[42],
+            "git_head": GIT_HEAD, "teacher_provenance": teacher_provenance(), "teacher_mock": False, "arm": None,
+            "descriptive": False, "parent_of_e4_e7": False, "records_commit": RECORDS_COMMIT}
+    meta.update(over)
+    return meta
+
+
+def e2_payload(**over) -> dict:
+    p = {"iter": 64000, "stage": "E2", "model_state_dict": {}, "best_val_miou_all_class": E2_BEST, "num_classes": 116,
+         "teacher_provenance": teacher_provenance(), "terms": dict(E2_TERMS), "lambda_logit": LAMBDA}
+    p.update(over)
+    return p
+
+
+def e2_ckpt_real() -> Path:
+    """A random-weight student checkpoint in E2's schema (load_student_from_e2's input), built once."""
+    import torch
+    parent = FX["cache"] if FX["cache"] is not None else BASE
+    p = parent / "e2_student_v1.pt"
+    marker = parent / "e2_student_v1.done"
+    if marker.is_file() and p.is_file():
+        return p
+    tmp = p.with_name(p.name + f".{os.getpid()}.part")
+    torch.save(e2_payload(model_state_dict=student_state(13)), tmp)
+    os.replace(tmp, p)
+    marker.write_text("1", encoding="utf-8")
+    return p
+
+
+def e2_run(variant: str, *, meta=None, payload=None, real=False, files=None) -> tuple[Path, str]:
+    """An E2 run directory named E2_S42 (the λ winner's run_id) under its own parent folder."""
+    import torch
+    d = BASE / "s11" / "runs" / variant / E2_S42
+    d.mkdir(parents=True)
+    (d / "e2_run_meta.jsonl").write_text(json.dumps(meta if meta is not None else e2_meta()) + "\n",
+                                         encoding="utf-8")
+    tel = [{"event": "train", "iter": 1, "loss": 1.0},
+           {"event": "run_end", "iter": 80000, "best_val_miou_all_class": E2_BEST, "best_ckpt": CK2,
+            "checks_passed": True, "wall_clock_start": WALL[42], "wall_clock_end": WALL[42] + 3600.0}]
+    (d / "e2_telemetry.jsonl").write_text("".join(json.dumps(r) + "\n" for r in tel), encoding="utf-8")
+    (d / "best.json").write_text(json.dumps({"best_ckpt": CK2, "best_val_miou_all_class": E2_BEST}), encoding="utf-8")
+    if real:
+        os.symlink(e2_ckpt_real(), d / CK2)
+    else:
+        torch.save(payload if payload is not None else e2_payload(), d / CK2)
+    for name, data in (files or {}).items():
+        (d / name).write_bytes(data)
+    return d, sha_file(d / CK2)
+
+
+def s11_records(name: str, run: Path, *, winner=None, inputs=None, launch=None, launched=None) -> Path:
+    """A records repository of its own for one E2 parent (the plan's §0.3): the four registered lists, a λ
+    selection whose winner and inputs entry are that run's, and its launch and launched lines; committed once."""
+    root = BASE / "s11" / "records" / name
+    (root / "configs" / "calibration").mkdir(parents=True)
+    for s in (42, 43, 44, 45):
+        (root / "configs" / "calibration" / f"ptq_calibration_seed{s}.json").write_bytes(list_path(s).read_bytes())
+    entry = {"run_dir": f"/runs/{E2_S42}", "checkpoint": CK2, "best_json_sha256": sha_file(run / "best.json"),
+             "run_meta_sha256": sha_file(run / "e2_run_meta.jsonl")}
+    lam = {"format": "lambda_selection/1",
+           "winner": winner or {"lambda": LAMBDA, "run_id": E2_S42, "best_val": E2_BEST,
+                                "ckpt_sha256": sha_file(run / CK2)},
+           "inputs": inputs if inputs is not None else [
+               {"run_dir": "/runs/e2_s42_lambda0.25_80k_a1", "checkpoint": CK2, "best_json_sha256": "1" * 64,
+                "run_meta_sha256": "2" * 64}, entry]}
+    (root / "reports" / "derived").mkdir(parents=True)
+    (root / LAMBDA_REL).write_text(json.dumps(lam, indent=2), encoding="utf-8")
+    rm = sha_file(run / "e2_run_meta.jsonl")
+    lines = [{**launch_line(E2_S42, 42, sweep="lambda_logit", value=LAMBDA), "stage": "E2", "alpha_cwd": None,
+              **(launch or {})},
+             {**launched_line(E2_S42, rm, WALL[42]), **(launched or {})}]
+    (root / LOG_REL).write_bytes("".join(json.dumps(x) + "\n" for x in lines).encode("utf-8"))
+    tracked = [f"configs/calibration/ptq_calibration_seed{s}.json" for s in (42, 43, 44, 45)] + [LAMBDA_REL, LOG_REL]
+    git(root, "init", "-q")
+    git(root, "add", "--", *tracked)
+    git(root, "commit", "-q", "-m", "synthetic E2 records")
+    return root
+
+
+@contextlib.contextmanager
+def records_of(root: Path):
+    """s11's records repository in place of the shared one for one case (bound_env and run_real read
+    FX["records"]); the shared one is restored after."""
+    saved = FX["records"]
+    FX["records"] = root
+    try:
+        yield
+    finally:
+        FX["records"] = saved
+
+
+def argv_e2(root: Path, run: Path, sha: str, *, seed: int = 42, list_seed: int = 42, out=None, **flags) -> list[str]:
+    """A passing E7-E2 command against records repository `root` (argv's form; None drops a flag)."""
+    a = {"--stage": "E7-E2", "--seed": str(seed), "--source-run-dir": str(run), "--expect-source-sha256": sha,
+         "--calibration-list": str(root / "configs" / "calibration" / f"ptq_calibration_seed{list_seed}.json"),
+         "--expect-list-checksum": checksum(list_seed), "--expect-head": FAKE_HEAD, "--data-root": str(FX["root"]),
+         "--out-dir": str(out or fresh_out(f"e7-e2_s{seed}_cal{list_seed}_a1")),
+         "--lambda-selection": LAMBDA_REL, "--lambda-selection-sha256": sha_file(root / LAMBDA_REL)}
+    for k, v in flags.items():
+        flag = "--" + k.replace("_", "-")
+        if v is None:
+            a.pop(flag, None)
+        else:
+            a[flag] = str(v)
+    return ["--real-run", "--confirm-real-run"] + [x for kv in a.items() for x in kv]
+
+
+def s11_fx() -> dict:
+    """The winner run (a real E2 checkpoint), its records repository and one real-core E7-E2 run, made once."""
+    if "s11" not in FX:
+        run, sha = e2_run("winner", real=True)
+        root = s11_records("winner", run)
+        out = BASE / "real" / "e7-e2_s42_cal42_a1"
+        (BASE / "real").mkdir(exist_ok=True)
+        with records_of(root):
+            rc, log, touched = run_real("e7_e2_s42", argv_e2(root, run, sha, out=out))
+        FX["s11"] = {"run": run, "sha": sha, "root": root, "out": out, "rc": rc, "log": log, "touched": touched}
+    return FX["s11"]
+
+
+def e2_refused(name: str, want: str, variant: str, *, meta=None, payload=None, files=None, records=None,
+               **flags) -> None:
+    """A stub-core E7-E2 command refused with `want`, every earlier gate passing: the variant run and a records
+    repository whose λ selection and launch lines are that run's (or `records`, a builder of another)."""
+    run, sha = e2_run(variant, meta=meta, payload=payload, files=files)
+    root = (records or s11_records)(variant, run)
+    with records_of(root):
+        refused(name, argv_e2(root, run, sha, **flags), want)
+
+
+def case_s11_real() -> None:
+    from src.eval.stage_artifacts import int8_official_error, validate_int8_artifact
+    from src.quant.ptq_record import manifest_entry, planned_entry, read_record
+    fx = s11_fx()
+    out, names = fx["out"], FX["names"]("e7-e2")
+    rec_p = out / "e7-e2_ptq_record.json"
+    rec = json.loads(rec_p.read_text(encoding="utf-8")) if rec_p.is_file() else {}
+    check("e7_e2_s42_exit_0", fx["rc"] == 0 and last_result(fx["log"]).startswith(
+        f"RESULT: PTQ RECORD WRITTEN (E7-E2 s42, role quant_descriptive, parent {E2_S42}, record ")
+        and not eval_split_touched(fx["touched"]), last_result(fx["log"]))
+    present = sorted(p.name for p in out.iterdir()) if out.is_dir() else []
+    check("e7_e2_files", present == sorted([names["torchscript"], names["state_dict"], names["x86_copy"],
+                                            names["run_meta"], "e7-e2_ptq_record.json"]), str(present))
+    check("e7_e2_record_role_descriptive", rec.get("role") == "quant_descriptive" and rec.get("descriptive") is True
+          and rec.get("stage") == "E7-E2" and rec.get("seed") == 42 and rec.get("replicate_of") is None,
+          f"{rec.get('role')} {rec.get('descriptive')}")
+    par, root = rec.get("parent", {}), fx["root"]
+    sel = par.get("selections", {})
+    ll = par.get("launch_log", {})
+    check("e7_e2_record_parent", par.get("rule") == "e2_run_of_record/1" and par.get("stage") == "E2"
+          and par.get("run_id") == E2_S42 and par.get("checkpoint_sha256") == fx["sha"]
+          and par.get("lambda_logit") == LAMBDA and par.get("parent_of_e4_e7") is False
+          and list(sel) == ["lambda"] and sel["lambda"].get("sha256") == sha_file(root / LAMBDA_REL)
+          and par.get("selection_input", {}).get("run_meta_sha256") == sha_file(fx["run"] / "e2_run_meta.jsonl")
+          and ll.get("sha256") == sha_file(root / LOG_REL) and ll.get("launch", {}).get("stage") == "E2"
+          and par.get("teacher_arch") == "segnext_mscan-b", str({k: par.get(k) for k in ("rule", "run_id")}))
+    check("e7_e2_manifest_entry", manifest_ok(rec, out) == [] if rec else False, str(rec.get("role")))
+    planned = planned_entry("E7-E2", 42, fx["sha"], sha_file(list_path(42)), checksum(42), FAKE_HEAD, FX["digest"])
+    check("e7_e2_planned_entry_role", planned.get("role") == "quant_descriptive" and planned.get("stage") == "E7-E2",
+          str(planned.get("role")))
+    others = [planned_entry(s, 42, "0" * 64, "1" * 64, "2" * 64, FAKE_HEAD, FX["digest"])["role"] for s in ("E4", "E7")]
+    check("e4_e7_planned_entry_unchanged", others == ["of_record", "of_record"], str(others))
+    err = "not run"
+    try:
+        err = int8_official_error(validate_int8_artifact("E7-E2", out / names["run_meta"]), repo_root=root)
+    except Exception as e:                                  # noqa: BLE001
+        err = f"{type(e).__name__}: {e}"
+    check("e7_e2_record_official", err is None, str(err)[:120])
+    other = BASE / "s11_copies" / "another_parent"
+    shutil.copytree(out, other)
+    r2 = json.loads((other / "e7-e2_ptq_record.json").read_text(encoding="utf-8"))
+    r2["parent"]["checkpoint_sha256"] = "0" * 64
+    (other / "e7-e2_ptq_record.json").write_text(json.dumps(r2), encoding="utf-8")
+    err = official("E7-E2", other / names["run_meta"], repo_root=root)
+    check("e7_e2_official_refuses_record_of_another_run", "[ptq_record_mismatch]" in str(err), str(err)[:120])
+    for name, stage, role in (("read_record_refuses_e7_quant_descriptive", "E7", "quant_descriptive"),
+                              ("read_record_refuses_e7_e2_of_record", "E7-E2", "of_record")):
+        d = BASE / "s11_copies" / f"coupling_{stage.lower()}_{role}"
+        shutil.copytree(out, d)
+        r3 = json.loads((d / "e7-e2_ptq_record.json").read_text(encoding="utf-8"))
+        r3.update(stage=stage, role=role, descriptive=role != "of_record")
+        (d / "e7-e2_ptq_record.json").write_text(json.dumps(r3), encoding="utf-8")
+        try:
+            read_record(d / "e7-e2_ptq_record.json")
+            got = "accepted"
+        except ValueError as e:
+            got = str(e)
+        check(name, "quant_descriptive is E7-E2's" in got, got[-160:])
+
+
+def case_s11_refusals() -> None:
+    fx = s11_fx()
+    root, run, sha = fx["root"], fx["run"], fx["sha"]
+    with records_of(root):
+        refused("refuses_e7_e2_alpha_flags", argv_e2(root, run, sha, alpha_selection=ALPHA_REL,
+                                                     alpha_selection_sha256="0" * 64), "selection_not_applicable")
+        refused("refuses_e7_e2_sensitivity_list", argv_e2(root, run, sha, list_seed=43),
+                "calibration_list_not_of_record")
+        refused("refuses_e7_e2_seed_43", argv_e2(root, run, sha, seed=43), "am23_seed")
+        refused("refuses_e7_e2_out_dir_name", argv_e2(root, run, sha, out=fresh_out("e7_s42_cal42_a1")),
+                "out_dir_name")
+        refused("refuses_e7_e2_replicate",
+                argv_e2(root, run, sha, out=fresh_out("e7-e2_s42_cal42_a1_d3"),
+                        replicate_of=fx["out"] / "e7-e2_ptq_record.json"), "replicate_mismatch")
+    other_winner = "e2_s42_lambda0.5_80k_a2"                # the λ selection names another E2 run
+    e2_refused("refuses_e7_e2_parent_not_the_winner", "parent_run_id_mismatch", "not_winner",
+               records=lambda name, r: s11_records(name, r, winner={"lambda": LAMBDA, "run_id": other_winner,
+                                                                    "ckpt_sha256": sha_file(r / CK2)}))
+    e2_refused("refuses_e7_e2_parent_lambda", "parent_lambda_mismatch", "lambda", meta=e2_meta(lambda_logit=1.0))
+    e2_refused("refuses_e7_e2_checkpoint_not_selected", "parent_checkpoint_not_selected", "checkpoint",
+               records=lambda name, r: s11_records(name, r, winner={"lambda": LAMBDA, "run_id": E2_S42,
+                                                                    "ckpt_sha256": "0" * 64}))
+    e2_refused("refuses_e7_e2_selection_input", "parent_not_selection_input", "input",
+               records=lambda name, r: s11_records(name, r, inputs=[
+                   {"run_dir": f"/runs/{E2_S42}", "checkpoint": CK2, "best_json_sha256": "3" * 64,
+                    "run_meta_sha256": sha_file(r / "e2_run_meta.jsonl")}]))
+    e2_refused("refuses_e7_e2_projection_pt", "parent_projection_present", "projection",
+               files={"projection.pt": b"a projection file"})
+    e2_refused("refuses_e7_e2_parent_stage_e3", "parent_stage_mismatch", "stage_e3", meta=e2_meta(stage="E3"))
+    e2_refused("refuses_e7_e2_parent_not_of_record", "parent_not_of_record", "not_of_record",
+               meta=e2_meta(descriptive=True))
+    e2_refused("refuses_e7_e2_parent_teacher", "parent_teacher_not_of_record", "teacher",
+               meta=e2_meta(teacher_mock=True))
+    e2_refused("refuses_e7_e2_launch_line", "parent_launch_log", "launch",
+               records=lambda name, r: s11_records(name, r, launch={"code_pin": OTHER_COMMIT}))
+    e2_refused("refuses_e7_e2_payload_stage", "parent_payload", "payload",
+               payload=e2_payload(stage="E3"))
+
+
 # ------------------------------------------------------------------ s10 hygiene
 IMPORT_PROBE = r"""
 import sys
@@ -1445,6 +1685,8 @@ CASES = [
     ("s8_e2e", "s8", case_s8_e2e),
     ("s8_source", "s8", case_s8_source),
     ("s9_range", "s9", case_s9),
+    ("s11_e7_e2_real", "s11", case_s11_real),
+    ("s11_e7_e2_refusals", "s11", case_s11_refusals),
     ("s10_hygiene", "s10", case_s10),
 ]
 
