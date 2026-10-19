@@ -49,7 +49,8 @@ RESULTS: list = []
 
 DESC_CASES = ("s5_refuses_not_descriptive",)
 NOT_ARM = ("s5_refuses_not_descriptive", "s5_refuses_parent_of_e4_e7", "s5_refuses_max_iters",
-           "s5_refuses_poly_horizon", "s5_refuses_float_horizon", "s5_refuses_no_target_construction")
+           "s5_refuses_poly_horizon", "s5_refuses_float_max_iters", "s5_refuses_float_poly_horizon",
+           "s5_refuses_no_target_construction")
 
 
 def F(owner, func, pairs, cases, what):
@@ -172,7 +173,7 @@ RAW = [
                                    '("parent_of_e4_e7", True)')],
       ["s5_refuses_parent_of_e4_e7"], "parent_of_e4_e7 not checked"),
     F("Q", "e6x_parent_binding", [('("max_iters", type(meta.get("max_iters")) is int\n', '("max_iters", True\n')],
-      ["s5_refuses_float_horizon"], "max_iters' type not checked"),
+      ["s5_refuses_float_max_iters"], "max_iters' type not checked"),
     F("Q", "e6x_parent_binding", [('                                and meta.get("max_iters") == AM23_HORIZON)',
                                    "                                and True)")],
       ["s5_refuses_max_iters"], "max_iters' value not checked"),
@@ -328,6 +329,18 @@ RAW = [
       [("        if Q.names_test(run_dir) or Q.names_test(Path(run_dir) / Q.TELEMETRY_NAME):",
         "        if Q.names_test(run_dir):")],
       ["s8_rules_path_for_run_opens_no_flagged_telemetry"], "the telemetry file opened unchecked (DL-24 D2-02)"),
+    F("Q", "e6x_parent_binding",
+      [('("poly_horizon", type(meta.get("poly_horizon")) is int\n', '("poly_horizon", True\n')],
+      ["s5_refuses_float_poly_horizon"], "poly_horizon's type not checked (DL-24 D5-01)"),
+    F("Q", "e6x_parent_binding", [('    if args.seed != AM23_SEED or parent.get("seed") != AM23_SEED:',
+                                   "    if args.seed != AM23_SEED:")],
+      ["s5_refuses_s43_parent_dict_at_seed_42"], "the parent's seed not checked (DL-24 D5-02)"),
+    F("Q", "e2_selection", [("    if args.alpha_selection is not None or args.alpha_selection_sha256 is not None:",
+                             "    if args.alpha_selection is not None:")],
+      ["s6_e6_e2_refuses_alpha_sha256_alone"], "--alpha-selection-sha256 alone accepted (DL-24 D5-03)"),
+    F("Q", "e2_selection", [("    if args.alpha_selection is not None or args.alpha_selection_sha256 is not None:",
+                             "    if args.alpha_selection_sha256 is not None:")],
+      ["s6_e6_e2_refuses_alpha_selection_alone"], "--alpha-selection alone accepted (DL-24 D5-03)"),
 ]
 MUTATIONS = [(f"M{i:03d}", *m) for i, m in enumerate(RAW, 1)]
 

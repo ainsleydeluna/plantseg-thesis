@@ -855,6 +855,11 @@ def _s5_seed():
     return refused("am23_seed", e6x_bind, seed=43)
 
 
+@case("s5_refuses_s43_parent_dict_at_seed_42", "am23_seed")
+def _s5_parent_seed():
+    return refused("am23_seed", e6x_bind, parent={**resolve("e6-r1", FX["r1"]), "seed": 43})
+
+
 @case("s5_refuses_e3_r2_run_for_e6_r1", "parent_arm_mismatch")
 def _s5_r2_for_r1():
     return refused("parent_arm_mismatch", e6x_bind, parent=resolve("e6-r1", FX["r2"]))
@@ -889,9 +894,15 @@ def _s5_horizon():
     return refused("parent_not_arm_run", e6x_bind, parent=r1_with_meta(poly_horizon=160000))
 
 
-@case("s5_refuses_float_horizon", "parent_not_arm_run")
-def _s5_float_horizon():
+@case("s5_refuses_float_max_iters", "parent_not_arm_run")
+def _s5_float_max_iters():
     return refused("parent_not_arm_run", e6x_bind, parent=r1_with_meta(max_iters=80000.0))
+
+
+@case("s5_refuses_float_poly_horizon", "parent_not_arm_run")
+def _s5_float_poly_horizon():
+    return refused_msg("parent_not_arm_run", "{'poly_horizon': 80000.0}", e6x_bind,
+                       parent=r1_with_meta(poly_horizon=80000.0))
 
 
 @case("s5_refuses_no_target_construction", "parent_not_arm_run")
@@ -947,7 +958,9 @@ def _s5_missing():
 
 @case("s5_condition_untracked", "condition_not_tracked")
 def _s5_untracked():
-    root = records_repo(records={}, untracked={COND_REL["R1"]: X.record_bytes(FX["rec"]["R1"])})
+    root = records_repo(records={})
+    (root / COND_REL["R1"]).parent.mkdir(parents=True, exist_ok=True)
+    X.write_record(root / COND_REL["R1"], X.record_bytes(FX["rec"]["R1"]))     # B-1's writer (AQ15; DL-24 D5-04)
     return refused("condition_not_tracked", e6x_bind, root=root)
 
 
@@ -1194,6 +1207,17 @@ def _s6_e6():
 def _s6_alpha():
     return refused("selection_not_applicable", gates, "e6-e2",
                    gate_argv("e6-e2", alpha_selection=ALPHA_REL, alpha_selection_sha256=FX["alpha"]["sha256"]))
+
+
+@case("s6_e6_e2_refuses_alpha_selection_alone", "selection_not_applicable")
+def _s6_alpha_file():
+    return refused("selection_not_applicable", gates, "e6-e2", gate_argv("e6-e2", alpha_selection=ALPHA_REL))
+
+
+@case("s6_e6_e2_refuses_alpha_sha256_alone", "selection_not_applicable")
+def _s6_alpha_sha():
+    return refused("selection_not_applicable", gates, "e6-e2",
+                   gate_argv("e6-e2", alpha_selection_sha256=FX["alpha"]["sha256"]))
 
 
 @case("s6_e6_e2_refuses_missing_lambda", "lambda_selection_missing")
