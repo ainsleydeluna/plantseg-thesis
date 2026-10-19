@@ -198,7 +198,7 @@ def build_run_provenance(*, stage: dict, source_meta: dict, method: str, qconfig
                      "torchvision": torchvision.__version__},
         "created_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
-    if stage["source_stage"] == "E3":
+    if stage["source_stage"] in ("E2", "E3"):
         prov["cwd_projection_loaded"] = False
     return prov
 

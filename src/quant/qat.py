@@ -472,7 +472,8 @@ def resolve_parent(stage: dict, run_dir, expect_sha256: str, seed: int, *,
 
     E1 (train_e1): e1_telemetry.jsonl holds exactly one run_meta row (mode, seed; no stage key) and the
     VAL row at its max_iters. E3 (train_distill): e3_run_meta.jsonl holds exactly one run_meta row with
-    stage "E3", and e3_telemetry.jsonl a run_end record with checks_passed and no run_abort row. In both,
+    stage "E3", and e3_telemetry.jsonl a run_end record with checks_passed and no run_abort row; E2
+    (AM-23 items 1, 2 and 4) likewise, with e2_run_meta.jsonl, e2_telemetry.jsonl and stage "E2". In all,
     best.json names a file in the directory whose sha256 equals --expect-source-sha256.
     """
     d = Path(run_dir) if run_dir else None
@@ -504,8 +505,9 @@ def resolve_parent(stage: dict, run_dir, expect_sha256: str, seed: int, *,
 
     if stage["source_stage"] == "E1":
         meta_p = tel_p = d / "e1_telemetry.jsonl"
-    else:
-        meta_p, tel_p = d / "e3_run_meta.jsonl", d / "e3_telemetry.jsonl"
+    else:                                                  # train_distill's e2_ or e3_ files
+        key = stage["source_stage"].lower()
+        meta_p, tel_p = d / f"{key}_run_meta.jsonl", d / f"{key}_telemetry.jsonl"
     for p, what in ((meta_p, "run_meta"), (tel_p, "telemetry")):
         if not p.is_file():
             _refuse("parent_records_missing", f"the parent's {what} file {p.name} is missing")
@@ -521,8 +523,8 @@ def resolve_parent(stage: dict, run_dir, expect_sha256: str, seed: int, *,
     if meta["seed"] != seed:
         _refuse("parent_seed_mismatch", f"the parent ran seed {meta['seed']!r}; --seed is {seed} (AM-1: E5/E6 "
                                         "take the seed of their FP32 parent)")
-    if stage["source_stage"] == "E3":
-        if meta.get("stage") != "E3":
+    if stage["source_stage"] in ("E2", "E3"):
+        if meta.get("stage") != stage["source_stage"]:
             _refuse("parent_stage_mismatch", f"the parent's run_meta row has stage {meta.get('stage')!r}; E6 "
                                              "takes an E3 parent")
         rows, _torn = read_jsonl(tel_p)
@@ -1201,7 +1203,7 @@ def real_run_gates(args, stage: dict, *, repo_root: Path = REPO) -> dict:
 
 
 def load_source(stage: dict, parent: dict):
-    """The parent's best.json checkpoint through the strict E1/E3 loaders (src/quant/checkpoint.py)."""
+    """The parent's best.json checkpoint through the strict E1/E2/E3 loaders (src/quant/checkpoint.py)."""
     from .runner import QuantRunError, check_source
     try:
         model, _ckpt, meta = check_source(stage, parent["checkpoint_path"])
@@ -1209,8 +1211,8 @@ def load_source(stage: dict, parent: dict):
         _refuse(e.code, str(e))
     if meta["sha256"] != parent["checkpoint_sha256"]:
         _refuse("source_changed", "the source checkpoint changed between the gate and the load")
-    if stage["source_stage"] == "E3" and any("cwd" in k.lower() or "projection" in k.lower()
-                                             for k in model.state_dict()):
+    if stage["source_stage"] in ("E2", "E3") and any("cwd" in k.lower() or "projection" in k.lower()
+                                                     for k in model.state_dict()):
         _refuse("source_projection_keys", "the E3 student carries projection keys (AM-4a item 5)")
     return model, meta
 

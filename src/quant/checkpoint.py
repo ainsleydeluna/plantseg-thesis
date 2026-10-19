@@ -16,6 +16,7 @@ The E1 schema comes from `train_e1.py :: save_checkpoint`: keys `iter`, `model_s
 `optimizer_state_dict`, `scheduler_state_dict`, `scheduler`, `best_val_miou_all_class`,
 `num_classes`. The distillation checkpoints add `stage`, which makes an E2/E3 source detectable;
 pre-L-AM17B-FG ones also carried `cwd_projection_state_dict`, which now lives in projection.pt.
+E2's own strict loader, for E6-E2 and E7-E2 (AM-23 items 1, 2 and 4), is `load_e2_source_checkpoint`.
 """
 
 from __future__ import annotations
@@ -200,3 +201,77 @@ def load_student_from_e3(path: str | Path, *, expected_num_classes: int = 116,
     # deployment_student_state re-asserts cleanliness; the separate training-only projection field
     # is deliberately not touched.
     return _build_strict("E3", deployment_student_state(ckpt), path), ckpt
+
+
+# E2's term switches (configs/distill.py DISTILL_STAGES["e2"]): Logit KD only, so no projection exists.
+E2_TERMS = {"logit_kd": True, "cwd_feat": False, "cwd_logit": False}
+
+
+def load_e2_source_checkpoint(path: str | Path, *, expected_num_classes: int = 116,
+                              map_location: str = "cpu") -> dict:
+    """Load and validate an **E2** checkpoint as the E6-E2/E7-E2 source (AM-23 items 1, 2 and 4).
+
+    E2 is Logit KD only: train_distill instantiates no CWD projection for it, so its checkpoint carries
+    none, neither in `model_state_dict` (asserted through `deployment_student_state`, as AM-4a item 5
+    asserts it for E3) nor under the pre-L-AM17B-FG `cwd_projection_state_dict` field. `stage` is required
+    and must be `E2`, and the payload's `terms` must be E2's (the λ sweep's pin writes both into every
+    payload). E3's loader is not shared: it stays as E6 and E7 of record use it.
+    """
+    from src.distill.export import CWDProjectionLeak, deployment_student_state
+
+    p = Path(path)
+    if not p.is_file():
+        _reject(f"E2 source checkpoint not found: {p}")
+    try:
+        ckpt = torch.load(str(p), map_location=map_location, weights_only=False)
+    except Exception as e:  # noqa: BLE001
+        _reject(f"could not read E2 source checkpoint {p}: {type(e).__name__}: {e}")
+    if not isinstance(ckpt, dict):
+        _reject(f"checkpoint {p} holds {type(ckpt).__name__}, expected a dict")
+
+    stage = ckpt.get("stage")
+    if stage is None:
+        _reject(f"checkpoint {p} carries no 'stage' metadata; E6-E2/E7-E2 take the E2 checkpoint only")
+    if str(stage).upper() != "E2":
+        _reject(f"checkpoint {p} is stage {stage!r}; E6-E2/E7-E2 take the E2 checkpoint only")
+
+    if "model_state_dict" not in ckpt:
+        _reject(f"checkpoint {p} has no 'model_state_dict'")
+    if CWD_PROJECTION_KEY in ckpt and ckpt[CWD_PROJECTION_KEY] is not None:
+        _reject(f"checkpoint {p} carries '{CWD_PROJECTION_KEY}'; an E2 checkpoint has no CWD projection")
+    try:
+        state = deployment_student_state(ckpt)      # asserts the projection is NOT in the student
+    except CWDProjectionLeak as e:
+        _reject(f"{e}")
+    if not any(torch.is_tensor(v) for v in state.values()):
+        _reject(f"checkpoint {p} model_state_dict holds no tensors")
+
+    teacher_keys = [k for k in state if k.startswith("teacher.")]
+    if teacher_keys:
+        _reject(f"checkpoint {p} contains teacher state {teacher_keys[:3]} in the student; the frozen "
+                "teacher is never part of a quantized model")
+    quant_keys = [k for k in state
+                  if "activation_post_process" in k or "fake_quant" in k or "_packed_params" in k]
+    if quant_keys:
+        _reject(f"checkpoint {p} already carries quantization state {quant_keys[:3]} — E6-E2/E7-E2 must "
+                "start from the clean FP32 E2 student")
+    non_float = [k for k, v in state.items() if torch.is_tensor(v) and v.dtype in
+                 (torch.qint8, torch.quint8, torch.qint32)]
+    if non_float:
+        _reject(f"checkpoint {p} holds quantized tensors {non_float[:3]} — expected FP32")
+    if ckpt.get("num_classes") is not None and int(ckpt["num_classes"]) != expected_num_classes:
+        _reject(f"checkpoint {p} declares num_classes={ckpt['num_classes']}, expected "
+                f"{expected_num_classes}")
+    if ckpt.get("terms") != E2_TERMS:
+        _reject(f"checkpoint {p} records terms {ckpt.get('terms')!r}; E2's are {E2_TERMS} (Logit KD only)")
+    return ckpt
+
+
+def load_student_from_e2(path: str | Path, *, expected_num_classes: int = 116,
+                         map_location: str = "cpu"):
+    """Validate an E2 checkpoint and load its student into a fresh FP32 model (AM-23 item 4)."""
+    from src.distill.export import deployment_student_state
+
+    ckpt = load_e2_source_checkpoint(path, expected_num_classes=expected_num_classes,
+                                     map_location=map_location)
+    return _build_strict("E2", deployment_student_state(ckpt), path), ckpt
