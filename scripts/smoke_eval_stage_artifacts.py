@@ -77,9 +77,10 @@ def prov(name: str, stage: str, source: str, method: str, art: Path, **over) -> 
 
 # ---------------------------------------------------------------- 1. stage contract
 def test_stage_contract() -> None:
-    check("all_stages_known", sorted(STAGE_ARTIFACTS) == ["A", "E1", "E2", "E3", "E4", "E5", "E6",
-                                                          "E7", "F", "G", "TEACHER"],
-          "seven student stages, the three exploratory arms and the descriptive teacher")
+    check("all_stages_known", sorted(STAGE_ARTIFACTS) == ["A", "E1", "E2", "E3", "E4", "E5", "E6", "E6-E2",
+                                                          "E6-R1", "E6-R2", "E7", "E7-E2", "F", "G", "TEACHER"],
+          "seven student stages, the three exploratory arms, AM-23's four descriptive INT8 stages and the "
+          "descriptive teacher")
     for s, kind, prec in (("E1", "fp32_checkpoint", "fp32"), ("E2", "fp32_checkpoint", "fp32"),
                           ("E3", "fp32_checkpoint", "fp32"), ("A", "fp32_checkpoint", "fp32"),
                           ("F", "fp32_checkpoint", "fp32"), ("G", "fp32_checkpoint", "fp32"),

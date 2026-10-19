@@ -67,9 +67,9 @@ class Counters:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    from src.eval.artifacts import STAGES                # the artifact schema's stages are the choices (AQ25)
     p = argparse.ArgumentParser(description="Stage-neutral PlantSeg evaluation runner.")
-    p.add_argument("--stage", default="E1",
-                   choices=["teacher", "E1", "E2", "E3", "A", "F", "G", "E4", "E5", "E6", "E7"])
+    p.add_argument("--stage", default="E1", choices=list(STAGES))
     p.add_argument("--model-role", default="student", choices=["teacher", "student"])
     p.add_argument("--precision", default="fp32", choices=["fp32", "int8_ptq", "int8_qat"])
     p.add_argument("--split", default="val", choices=["val", "test"])
