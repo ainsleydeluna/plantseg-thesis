@@ -427,6 +427,10 @@ def setup(work: Path) -> None:
             dl_line("DL-904", "RECORDED (synthetic)", t1.replace(v1, "<value>")),
             dl_line("DL-905", "RECORDED (synthetic)", t1.replace(r1["best_json"]["sha256"], "<best.json>")),
             dl_line("DL-906", "RECORDED (synthetic)", t1.replace(r1["checkpoint"]["sha256"], "<checkpoint>")),
+            dl_line("DL-907", "RECORDED (synthetic)", t1.replace(v1, v1 + "1")),
+            dl_line("DL-908", "RECORDED (synthetic)", t1.replace(v1, "-" + v1)),
+            dl_line("DL-909", "RECORDED (synthetic)", t1.replace(r1["best_json"]["sha256"],
+                                                                  r1["best_json"]["sha256"] + "a")),
             dl_line("DL-910", "RECORDED (synthetic)", t2)]
     FX["dl_bytes"] = ("# Decision log (synthetic)\n\n| ID | Status | Entry |\n|---|---|---|\n"
                       + "".join(rows)).encode("utf-8")
@@ -1087,6 +1091,24 @@ def _s5_dl_best():
 @case("s5_dl_row_without_checkpoint_sha256", "condition_dl_row")
 def _s5_dl_ckpt():
     return refused_msg("condition_dl_row", FX["rec"]["R1"]["checkpoint"]["sha256"], e6x_bind, condition_dl="DL-906")
+
+
+@case("s5_dl_row_value_with_an_extra_digit", "condition_dl_row")
+def _s5_dl_value_digit():
+    return refused_msg("condition_dl_row", f"['{FX['rec']['R1']['value']['repr']}']", e6x_bind,
+                       condition_dl="DL-907")
+
+
+@case("s5_dl_row_value_with_a_sign", "condition_dl_row")
+def _s5_dl_value_sign():
+    return refused_msg("condition_dl_row", f"['{FX['rec']['R1']['value']['repr']}']", e6x_bind,
+                       condition_dl="DL-908")
+
+
+@case("s5_dl_row_sha256_with_an_extra_hex", "condition_dl_row")
+def _s5_dl_sha_hex():
+    return refused_msg("condition_dl_row", f"['{FX['rec']['R1']['best_json']['sha256']}']", e6x_bind,
+                       condition_dl="DL-909")
 
 
 @case("s5_dl_row_of_another_record", "condition_dl_row")

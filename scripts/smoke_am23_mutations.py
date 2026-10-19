@@ -314,6 +314,12 @@ RAW = [
       "E6-E2 not projection-free"),
     D("SA", "DESCRIPTIVE_ONLY_STAGES", lambda v: _without(v, "E7-E2"), ["s10_descriptive_only_tuple"],
       "E7-E2 not descriptive-only"),
+    # ---- DL-24's fixes (appended, so the earlier ids stay)
+    F("Q", "condition_dl_row", [("    missing = [n for n in need if not _whole_token(n, row)]",
+                                 "    missing = [n for n in need if n not in row]")],
+      ["s5_dl_row_value_with_an_extra_digit", "s5_dl_row_value_with_a_sign",
+       "s5_dl_row_sha256_with_an_extra_hex"],
+      "AQ3's tokens matched inside a longer number, sign or hex string (DL-24 B1-01)"),
 ]
 MUTATIONS = [(f"M{i:03d}", *m) for i, m in enumerate(RAW, 1)]
 

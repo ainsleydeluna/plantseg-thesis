@@ -743,6 +743,11 @@ def e2_parent_binding(parent: dict, seed: int, lam: dict, repo_root: Path = REPO
             "lambda_selection": {k: lam[k] for k in ("path", "sha256", "winner")}, "selection_input": entry}
 
 
+def _whole_token(token: str, row: str) -> bool:
+    """`token` stands whole in `row`: not inside a longer number, sign or hex string (DL-24 B1-01)."""
+    return re.search(rf"(?<![0-9A-Za-z.+-]){re.escape(token)}(?![0-9A-Za-z])", row) is not None
+
+
 def condition_dl_row(dl_id, stage_name: str, rec: dict, rec_sha256: str, repo_root: Path = REPO) -> str:
     """AQ3: the decision-log row --condition-dl names, in docs/DECISION_LOG.md at HEAD: RECORDED, and carrying the
     record's sha256, "E6-<X> condition (AM-23 item 3(b)): yes", the value's repr, best.json's sha256 and the
@@ -763,7 +768,7 @@ def condition_dl_row(dl_id, stage_name: str, rec: dict, rec_sha256: str, repo_ro
         _refuse("condition_dl_row", f"{dl_id} has status {status!r}, not RECORDED")
     need = (rec_sha256, f"{stage_name} condition (AM-23 item 3(b)): yes", rec["value"]["repr"],
             rec["best_json"]["sha256"], rec["checkpoint"]["sha256"])
-    missing = [n for n in need if n not in row]
+    missing = [n for n in need if not _whole_token(n, row)]
     if missing:
         _refuse("condition_dl_row", f"{dl_id} does not carry {missing} (AQ3)")
     return row
