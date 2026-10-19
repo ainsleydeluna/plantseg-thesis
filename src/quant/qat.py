@@ -842,6 +842,33 @@ def am23_parent_binding(stage: dict, parent: dict, args, sel: tuple, *, repo_roo
     return e6x_parent_binding(stage, parent, args, *sel, repo_root=repo_root)
 
 
+def am23_profile(meta: dict, args, repo_root: Path = REPO) -> dict:
+    """check-run-meta's AM-23 part (scripts/qat_epoch_eval.py profile_mismatches): the parent binding, re-run from the
+    run_meta row's parent and the selections (and E6-X's condition) the check names, equals the am23_parent the run
+    recorded; no E6 selections; the projection flag false. {key: (got, want)}."""
+    stage = resolve_quant_stage(args.stage)
+    bad = {}
+    try:
+        if stage["source_stage"] == "E2":
+            sel = (e2_selection(args, repo_root),)
+        else:
+            sel = (read_tracked_selection(args.lambda_selection, args.lambda_selection_sha256, LAMBDA_SELECTION_FORMAT,
+                                          "lambda", repo_root),
+                   read_tracked_selection(args.alpha_selection, args.alpha_selection_sha256, ALPHA_SELECTION_FORMAT,
+                                          "alpha", repo_root))
+        want = am23_parent_binding(stage, meta.get("parent") or {}, args, sel, repo_root=repo_root)
+        got = meta.get("am23_parent")
+        if json.dumps(got, sort_keys=True) != json.dumps(want, sort_keys=True):
+            bad["am23_parent"] = (got, want)
+    except QATRefused as e:
+        bad["am23_binding"] = (e.code, str(e))
+    if meta.get("e6_selections") is not None:
+        bad["e6_selections"] = (meta.get("e6_selections"), None)
+    if meta.get("cwd_projection_loaded") is not False:
+        bad["cwd_projection_loaded"] = (meta.get("cwd_projection_loaded"), False)
+    return bad
+
+
 def tf32_error(state: dict | None = None) -> str | None:
     state = tf32_state() if state is None else state
     wrong = {k: state.get(k) for k, v in TF32_DEFAULTS.items() if state.get(k) != v}
@@ -1447,7 +1474,7 @@ def main(argv, stage_key: str) -> int:
 __all__ = [
     "BATCH_SIZE", "BN_FREEZE_EPOCH", "CLIP_CANDIDATES", "EPOCHS", "EPOCH_DIR", "LEARNING_RATE", "MOMENTUM",
     "OBS_FREEZE_EPOCH", "QAT_CODE_PATHS", "QATHooks", "QATRefused", "QATStop", "REAL_SEEDS",
-    "REAL_STEPS_PER_EPOCH", "REAL_T_MAX", "TELEMETRY_NAME", "WEIGHT_DECAY", "am23_parent_binding",
+    "REAL_STEPS_PER_EPOCH", "REAL_T_MAX", "TELEMETRY_NAME", "WEIGHT_DECAY", "am23_parent_binding", "am23_profile",
     "batch_sha256", "bn_buffer_digest", "build_parser", "build_qat_loaders", "clip_binding",
     "condition_dl_row", "config_pins_error", "e2_parent_binding", "e2_selection", "e6_parent_binding",
     "e6x_parent_binding", "fake_quant_modules", "flag_summary", "lambda_selection_input", "main", "names_test",

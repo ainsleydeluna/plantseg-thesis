@@ -6,8 +6,10 @@
     convert-epoch   the fresh-process worker `convert` spawns, one epoch per process
     score           --run-dir R --eval-dir E --purpose record|timing --host-label TEXT   [--epochs N ...]   (timing)
     finalize        --run-dir R --eval-dir E   [--clip-selection F [--clip-selection-sha256 H]]   (E5 seed 42)
-    check-run-meta  --run-dir R --stage E5|E6 --seed S --grad-clip-norm C --expect-head P --expect-source-sha256 H
-                    (--u4-pilot | --clip-selection F --clip-selection-sha256 H)   [E6: the λ and α selections]
+    check-run-meta  --run-dir R --stage E5|E6|E6-E2|E6-R1|E6-R2 --seed S --grad-clip-norm C --expect-head P
+                    --expect-source-sha256 H (--u4-pilot | --clip-selection F --clip-selection-sha256 H)
+                    [E6, E6-R1, E6-R2: the λ and α selections; E6-E2: the λ selection; E6-R1, E6-R2:
+                    --condition-record F --condition-sha256 H --condition-dl DL-n (AM-23 item 3(b))]
 
 `convert` checks the run is complete (AM-19) and its telemetry hash, proves the freezes took (BN
 statistics of e11-e15 equal e10's, observer buffers of e13-e15 equal e12's), then converts each epoch in
@@ -98,7 +100,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="smokes only: accept a run in mode 'smoke'; recorded in the output")
     m = sub.add_parser("check-run-meta", help="compare a launched run's run_meta row with the launch of record")
     m.add_argument("--run-dir", required=True)
-    m.add_argument("--stage", required=True, choices=["E5", "E6", "e5", "e6"])
+    m.add_argument("--stage", required=True, choices=["E5", "E6", "e5", "e6", "E6-E2", "E6-R1", "E6-R2", "e6-e2",
+                                                      "e6-r1", "e6-r2"])
     m.add_argument("--seed", type=int, required=True)
     m.add_argument("--grad-clip-norm", type=float, required=True)
     m.add_argument("--expect-head", required=True)
@@ -110,6 +113,9 @@ def build_parser() -> argparse.ArgumentParser:
     m.add_argument("--lambda-selection-sha256", default=None)
     m.add_argument("--alpha-selection", default=None)
     m.add_argument("--alpha-selection-sha256", default=None)
+    m.add_argument("--condition-record", default=None)
+    m.add_argument("--condition-sha256", default=None)
+    m.add_argument("--condition-dl", default=None)
     return ap
 
 
@@ -398,7 +404,7 @@ def cmd_finalize(args) -> int:
     if not sel_p.is_file():
         raise A.QATIncomplete("epoch_selection_missing", f"{sel_p} is missing: run scripts/select_qat_epoch.py first")
     sel = _read_json(sel_p, "epoch_selection_format")
-    _rules, rules_sha = S.load_rules()
+    _rules, rules_sha = S.load_rules(S.rules_path_for_stage(meta.get("stage")))
     if sel.get("format") != S.EPOCH_SELECTION_FORMAT or sel.get("rules_sha256") != rules_sha:
         raise QATRefused("epoch_selection_format", f"{sel_p} is not a {S.EPOCH_SELECTION_FORMAT} file of the "
                                                    "committed rules")
@@ -572,6 +578,8 @@ def profile_mismatches(meta: dict, args, *, repo_root: Path = REPO) -> dict:
             bad["e6_binding"] = (e.code, str(e))
         if meta.get("cwd_projection_loaded") is not False:
             bad["cwd_projection_loaded"] = (meta.get("cwd_projection_loaded"), False)
+    elif stage in Q.AM23_STAGES:                         # E6-E2, E6-R1, E6-R2: the parent binding (AM-23 item 4)
+        bad.update(Q.am23_profile(meta, args, repo_root))
     elif any(v is not None for v in (args.lambda_selection, args.lambda_selection_sha256, args.alpha_selection,
                                      args.alpha_selection_sha256)) or meta.get("e6_selections") is not None:
         bad["e6_selections"] = (meta.get("e6_selections"), f"none: {stage} takes no λ or α selection")
