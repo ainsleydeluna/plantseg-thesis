@@ -1481,6 +1481,16 @@ def _s8_run():
     return got == ("qat_selection_rules_am23.json",) + ("qat_selection_rules.json",) * 4, str(got)
 
 
+@case("s8_rules_path_for_run_opens_no_flagged_telemetry")
+def _s8_run_flagged():
+    d = new_dir("rules_run")
+    write(d / Q.TELEMETRY_NAME, json.dumps({"event": "run_meta", "stage": "E6-E2"}) + "\n")
+    flagged, names_test = str(d / Q.TELEMETRY_NAME), Q.names_test
+    with patched(Q, "names_test", lambda p: str(p) == flagged or names_test(p)):    # as a link to a TEST name
+        got = S.rules_path_for_run(d).name
+    return got == "qat_selection_rules.json", got
+
+
 @case("s8_q2_rules_unchanged")
 def _s8_q2():
     return sha_file(S.RULES_PATH) == Q2_RULES_SHA256 and S.load_rules()[1] == Q2_RULES_SHA256, sha_file(S.RULES_PATH)

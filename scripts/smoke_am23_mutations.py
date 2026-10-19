@@ -324,6 +324,10 @@ RAW = [
       [("    if stage not in Q.E6X_PARENT_ARM and any(v is not None for v in cond):", "    if False:")],
       ["s7_stops_on_condition_flags_for_e6_e2", "s7_stops_on_condition_flags_for_e5_and_e6"],
       "E6-X's condition flags accepted for another stage (DL-24 D2-01)"),
+    F("SEL", "rules_path_for_run",
+      [("        if Q.names_test(run_dir) or Q.names_test(Path(run_dir) / Q.TELEMETRY_NAME):",
+        "        if Q.names_test(run_dir):")],
+      ["s8_rules_path_for_run_opens_no_flagged_telemetry"], "the telemetry file opened unchecked (DL-24 D2-02)"),
 ]
 MUTATIONS = [(f"M{i:03d}", *m) for i, m in enumerate(RAW, 1)]
 

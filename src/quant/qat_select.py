@@ -85,7 +85,7 @@ def rules_path_for_run(run_dir) -> Path:
     """The rules file for a run directory, by its run_meta row's stage. It never raises and opens nothing whose name
     holds TEST: on any doubt it gives Q2's file, so every refusal epoch_selection makes still comes, in its order."""
     try:
-        if Q.names_test(run_dir):
+        if Q.names_test(run_dir) or Q.names_test(Path(run_dir) / Q.TELEMETRY_NAME):    # DL-24 D2-02
             return RULES_PATH
         with open(Path(run_dir) / Q.TELEMETRY_NAME, encoding="utf-8") as fh:
             meta = json.loads(fh.readline())
