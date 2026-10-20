@@ -53,8 +53,10 @@ AM5_RULE = "no_disease_gt"
 
 ARTIFACT_STATUSES = ("official", "provisional", "smoke")
 # AM-23 items 1-5: E6-E2, E7-E2, E6-R1 and E6-R2, descriptive INT8 stages (src/eval/stage_artifacts.py); the field
-# gains values and no field changes, so SCHEMA_VERSION and ARTIFACT_SCHEMA_VERSION stay (as for A, F and G).
-STAGES = ("teacher", "E1", "E2", "E3", "A", "F", "G", "E4", "E5", "E6", "E7", "E6-E2", "E7-E2", "E6-R1", "E6-R2")
+# gains values and no field changes, so SCHEMA_VERSION and ARTIFACT_SCHEMA_VERSION stay (as for A, F and G). AM-3
+# (lane L-AM3, B-2): E6-KD, a descriptive INT8 stage, likewise.
+STAGES = ("teacher", "E1", "E2", "E3", "A", "F", "G", "E4", "E5", "E6", "E7", "E6-E2", "E7-E2", "E6-R1", "E6-R2",
+          "E6-KD")
 MODEL_ROLES = ("teacher", "student")
 PRECISIONS = ("fp32", "int8_ptq", "int8_qat")
 SPLITS = ("val", "test")

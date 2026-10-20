@@ -53,6 +53,9 @@ STAGE_ARTIFACTS: dict[str, dict] = {
     "E7-E2": {"kind": "int8_artifact", "precision": "int8_ptq", "source_stage": "E2", "method": "ptq"},
     "E6-R1": {"kind": "int8_artifact", "precision": "int8_qat", "source_stage": "E3", "method": "qat"},
     "E6-R2": {"kind": "int8_artifact", "precision": "int8_qat", "source_stage": "E3", "method": "qat"},
+    # AM-3 (lane L-AM3, B-2): E6-KD, E6's QAT with the teacher of record and E3's terms at 0.5x; descriptive, never
+    # a comparator. Its conversion records method "qat", as E6's does (src/quant/qat_artifacts.py).
+    "E6-KD": {"kind": "int8_artifact", "precision": "int8_qat", "source_stage": "E3", "method": "qat"},
     # The frozen schema (EVALUATION_CONTRACT 5.x) already admits stage/model_role "teacher" at fp32.
     # The teacher is a DESCRIPTIVE REFERENCE: its clean artifact may legitimately be `official`
     # (nothing in the committed contract forbids that), but it never becomes an inferential
@@ -60,7 +63,7 @@ STAGE_ARTIFACTS: dict[str, dict] = {
     "TEACHER": {"kind": "teacher_checkpoint", "precision": "fp32", "source_stage": None,
                 "method": None},
 }
-PROJECTION_FREE_STAGES = ("E6", "E7", "E6-E2", "E7-E2", "E6-R1", "E6-R2")
+PROJECTION_FREE_STAGES = ("E6", "E7", "E6-E2", "E7-E2", "E6-R1", "E6-R2", "E6-KD")
 # FP32 checkpoints train_distill writes, which record their stage (DL-52): refused when they record none.
 # E1 (train_e1) records none and is not listed.
 STAGE_DECLARING_FP32_STAGES = ("E2", "E3", "A", "F", "G")
@@ -70,7 +73,7 @@ TEACHER_STAGE = "TEACHER"
 STUDENT_ROLE, TEACHER_ROLE = "student", "teacher"
 # Never a comparator in an inferential test. Nothing in the evaluator enforces this; the statistics
 # driver must refuse these stages as comparators.
-DESCRIPTIVE_ONLY_STAGES = ("TEACHER", "A", "F", "G", "E6-E2", "E7-E2", "E6-R1", "E6-R2")
+DESCRIPTIVE_ONLY_STAGES = ("TEACHER", "A", "F", "G", "E6-E2", "E7-E2", "E6-R1", "E6-R2", "E6-KD")
 
 
 class StageArtifactError(RuntimeError):
