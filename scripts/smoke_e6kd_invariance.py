@@ -180,7 +180,6 @@ def main() -> int:
     ap.add_argument("--new", default="HEAD", help="the commit under check (HEAD)")
     a = ap.parse_args()
     t0 = time.time()
-    work = safe_tmpdir("smoke_e6kd_invariance_")
     commits = {}
     try:
         for side, ref in (("old", a.old), ("new", a.new)):
@@ -193,6 +192,7 @@ def main() -> int:
     except RefusedExport as e:
         print(f"RESULT: REFUSED -- {e}")
         return 2
+    work = safe_tmpdir("smoke_e6kd_invariance_")            # after the checks: a refusal writes nothing (DL-24 SM7)
     roots = {side: work / f"export_{side}" for side in commits}
     for side, root in roots.items():
         export_commit(REPO, commits[side], root, paths=(*EXPORT_PATHS, SL1_EXCLUDE))
