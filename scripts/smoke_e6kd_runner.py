@@ -1808,6 +1808,9 @@ GATE_CASES = [
     ("gate_refuses_trigger_e3_mismatch", "trigger_e3_mismatch", lambda: trig("e3_other", ck_sha="0" * 64)),
     ("gate_refuses_trigger_clip_mismatch", "trigger_clip_mismatch",
      lambda: trig("clip_other", e6={"clip_norm": 1.0, "clip_selection_sha256": gfx()["csha"]})),
+    # LB38's other half: the clip of record, another clip_selection.json (DL-24 SM3)
+    ("gate_refuses_trigger_clip_selection_mismatch", "trigger_clip_mismatch",
+     lambda: trig("clip_sha_other", e6={"clip_norm": 5.0, "clip_selection_sha256": "1" * 64})),
     ("gate_refuses_trigger_selection_mismatch", "trigger_selection_mismatch",
      lambda: trig("selection_other", selections={"lambda": {"sha256": "1" * 64}, "alpha": {"sha256": gfx()["asha"]}})),
     # 14: E3's terms and weights (e3_record)
