@@ -14,7 +14,8 @@ list of record, bound to its E1 or E3 parent by src/quant/ptq_record.py, which w
 
 E5/E6 QAT is src/quant/qat.py's (AM-4/AM-4a, lanes L-AM4 + L-AM1q): `main` hands those two stages to
 `src.quant.qat.main` before any PTQ argument is parsed; scripts/run_e5.py and run_e6.py reach it through
-`main`.
+`main`. E6-KD (method "qat_kd"; AM-3, lane L-AM3 B-2) goes to `src.quant.qat_kd.main` the same way, imported inside
+its route only; scripts/run_e6kd.py reaches it through `main`.
 
 SAFETY MODEL — each guard below validates hard: random initialization is impossible, every stage loads a
 validated source checkpoint, and nothing here downloads, substitutes a model, or falls back silently. Their
@@ -225,6 +226,9 @@ def main(argv, stage_key: str) -> int:
     if stage["method"] == "qat":
         from .qat import main as qat_main
         return qat_main(argv, stage_key)
+    if stage["method"] == "qat_kd":                    # E6-KD (lane L-AM3, B-2): imported in its route only (LB25)
+        from .qat_kd import main as qat_kd_main
+        return qat_kd_main(argv, stage_key)
     parser = add_common_args(argparse.ArgumentParser(
         description=f"{stage['name']}: {stage['objective']} (stage is PINNED, not selectable)"))
     parser.parse_args(argv)
