@@ -1806,6 +1806,10 @@ GATE_CASES = [
     ("gate_refuses_parent_not_alpha_winner", "parent_run_id_mismatch", parent_other_name),
     # 13: the trigger's bindings (B-1)
     ("gate_refuses_trigger_e3_mismatch", "trigger_e3_mismatch", lambda: trig("e3_other", ck_sha="0" * 64)),
+    # the run_id half alone: E3's checkpoint of record under another run's name (DL-24 SM8)
+    ("gate_refuses_trigger_e3_run_id_mismatch", "trigger_e3_mismatch",
+     lambda: trig("e3_run_other", e3={"run_id": "e3_s42_lambda0.5_alpha25_80k_a2",
+                                      "checkpoint_sha256": gfx()["ck_sha"]})),
     ("gate_refuses_trigger_clip_mismatch", "trigger_clip_mismatch",
      lambda: trig("clip_other", e6={"clip_norm": 1.0, "clip_selection_sha256": gfx()["csha"]})),
     # LB38's other half: the clip of record, another clip_selection.json (DL-24 SM3)
