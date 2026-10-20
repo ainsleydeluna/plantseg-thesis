@@ -453,7 +453,8 @@ KILLS.update(dict([
     KK(QKD, "teacher_of_record", "teacher_state_dict_mismatch", "gate_refuses_teacher_state_dict_mismatch"),
     KK(QKD, "teacher_of_record", "teacher_stack_missing", "gate_refuses_teacher_stack_missing"),
     KK(QKD, "teacher_of_record", "teacher_identity", "gate_refuses_teacher_identity"),
-    # the trainer's own refusals and STOPs (nothing written before any of them)
+    # the trainer's own refusals and STOPs (nothing written before a refusal or the optimizer STOP; the VAL bracket's
+    # STOP comes after the epoch's checkpoint and writes a run_stop row)
     KK(QKD, "run_qat_kd", "stage_not_qat_kd", "run_refuses_stage_not_qat_kd"),
     KK(QKD, "run_qat_kd", "mode_invalid", "run_refuses_mode"),
     KK(QKD, "run_qat_kd", "real_run_overrides", "run_refuses_loaders_in_real", "run_refuses_hooks_in_real",
