@@ -1512,6 +1512,46 @@ def abort_exception_writes_run_abort():
     check("abort_exception_writes_run_abort", ok, f"{a.get('rule')} {a.get('exception_type')} {r['error']!r}")
 
 
+@case("aborts")
+def abort_exception_record_survives_failed_readings():
+    """DL-24 T1/AC1: after a device fault the finiteness readings themselves raise (a sticky CUDA error); the run_abort
+    record is still written, with those readings null."""
+    def device_fault(_t):
+        raise RuntimeError("CUDA error: device-side assert triggered (smoke)")
+    with patched(KD, "_finite", device_fault):
+        r = run_kd("abort_fault/run", max_steps=2)
+    a = last_abort(r)
+    ok = (isinstance(r["error"], RuntimeError) and "device-side assert" in str(r["error"])
+          and a.get("rule") == KD.EXCEPTION_RULE and a.get("cause") == "exception"
+          and a.get("exception_type") == "RuntimeError" and a.get("input_finite") is None
+          and a.get("teacher_finite") is None and a.get("params_finite") == {"student": None, "projection": None})
+    check("abort_exception_record_survives_failed_readings", ok,
+          f"last row {a.get('event')} {a.get('rule')} input {a.get('input_finite')} params {a.get('params_finite')}; "
+          f"{r['error']!r}"[:300])
+
+
+@case("aborts")
+def abort_generic_reading_failure_is_exception():
+    """DL-24 T1, the guard's bound: a generic abort's readings stay unguarded (abort_cause would read a missing reading
+    as non-finite), so a reading that fails there ends the run on the exception path, whose record is written."""
+    real = KD._finite
+
+    def device_fault(t):
+        if t.dim() == 0:                                    # step 1's scalar checks (loss, sup) read as before
+            return real(t)
+        raise RuntimeError("CUDA error: device-side assert triggered (smoke)")
+    with patched(KD, "_finite", device_fault):
+        r = run_kd("abort_generic_fault/run", inject={"loss_nan": [3]}, max_steps=4)
+    a = last_abort(r)
+    ok = (isinstance(r["error"], RuntimeError) and not isinstance(r["error"], KD.E6KDAborted)
+          and "device-side assert" in str(r["error"]) and a.get("rule") == KD.EXCEPTION_RULE
+          and a.get("cause") == "exception" and a.get("step") == 3 and a.get("input_finite") is None
+          and a.get("params_finite") == {"student": None, "projection": None}
+          and [x["step"] for x in train_rows(r)] == [1, 2, 3])
+    check("abort_generic_reading_failure_is_exception", ok,
+          f"last row {a.get('event')} {a.get('rule')}/{a.get('cause')} step {a.get('step')}; {r['error']!r}"[:300])
+
+
 ABORT_FIELDS = ("event", "wall_clock", "epoch", "step", "rule", "cause", "nonfinite_quantity", "detail", "input_finite",
                 "teacher_finite", "params_finite", "state_finite", "state_failing", "state_nonfinite",
                 "nonfinite_since_step", "abort_kind")

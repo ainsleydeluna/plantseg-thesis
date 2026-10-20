@@ -600,12 +600,24 @@ def run_qat_kd(*, mode: str, model: nn.Module, teacher, projection: nn.Module, w
         tel.write({"event": "state_nonfinite", "wall_clock": time.time(), "epoch": epoch, "step": at_step,
                    "nonfinite_since_step": at_step, "failing": fails})
 
+    def reading(fn, guarded: bool):
+        """One finiteness reading for the run_abort record. On the exception path (guarded) a reading the device
+        cannot answer, after a sticky CUDA fault, is None, so that the record is still written; a generic abort's
+        readings stay unguarded, since abort_cause reads a None as non-finite (DL-24 T1)."""
+        try:
+            return fn()
+        except Exception:                                    # noqa: BLE001 -- a device that cannot answer: None
+            if not guarded:
+                raise
+            return None
+
     def abort_record(rule: str, *, quantity, detail: dict, failed=None, exc: BaseException | None = None) -> dict:
         """The run_abort record (DL-04 (a); LB16), written as the telemetry's last row."""
         img, to = cur["img"], cur["teacher_out"]
-        input_finite = None if img is None else _finite(img)
-        teacher_finite = None if to is None else (_finite(to.logits)
-                                                  and (to.feat_s16 is None or _finite(to.feat_s16)))
+        guarded = rule == EXCEPTION_RULE
+        input_finite = None if img is None else reading(lambda: _finite(img), guarded)
+        teacher_finite = None if to is None else reading(lambda: _finite(to.logits)
+                                                         and (to.feat_s16 is None or _finite(to.feat_s16)), guarded)
         cause = ("exception" if rule == EXCEPTION_RULE else
                  abort_cause(rule, input_finite=bool(input_finite), teacher_finite=bool(teacher_finite)))
         try:
@@ -617,8 +629,9 @@ def run_qat_kd(*, mode: str, model: nn.Module, teacher, projection: nn.Module, w
                   "detail": {k: TD.record_number(detail.get(k)) for k in
                              ("loss", "grad_norm", "grad_norm_student", "grad_norm_projection")},
                   "input_finite": input_finite, "teacher_finite": teacher_finite,
-                  "params_finite": {"student": all(_finite(p) for p in student_params),
-                                    "projection": all(_finite(p) for p in projection_params)},
+                  "params_finite": {"student": reading(lambda: all(_finite(p) for p in student_params), guarded),
+                                    "projection": reading(lambda: all(_finite(p) for p in projection_params),
+                                                          guarded)},
                   "state_finite": state_ok, "state_failing": state_fails[:5],
                   "state_nonfinite": nonfinite_since is not None or state_ok is False,
                   "nonfinite_since_step": nonfinite_since, "abort_kind": ABORT_KIND}
