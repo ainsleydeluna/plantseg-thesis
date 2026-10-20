@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Lane L-AM3, B-1: the mutation smoke of the AM-3 trigger. MT1-MT19 and the refusal table of
 src/quant/e6kd_trigger.py, each killed by a named check of scripts/smoke_e6kd_trigger.py.
-Lane L-AM3, B-2: E6-KD. MK1-MK49 and the refusal tables of src/quant/qat_kd.py and scripts/e6kd_eval.py, each killed
+Lane L-AM3, B-2: E6-KD. MK1-MK53 and the refusal tables of src/quant/qat_kd.py and scripts/e6kd_eval.py, each killed
 by a named check of scripts/smoke_e6kd_runner.py or scripts/smoke_e6kd_selection.py.
 
 Q2's harness, scripts/smoke_qat_mutations.py, runs it unchanged:
@@ -306,6 +306,14 @@ MUTATIONS = [
       "    if Q.names_test(args.teacher_ckpt):\n",
       kcase("sl1_forbidden_expanded_paths_refused_by_check_run_meta"),
       "sl1_forbidden_expanded_paths_refused_by_check_run_meta"),
+    M("MK50", "E-31: a relative teacher path accepted (DL-24 G2)", QKD, "not os.path.isabs(path) or ", "",
+      kcase("gate_refuses_teacher_ckpt_relative"), "gate_refuses_teacher_ckpt_relative"),
+    M("MK51", "E-31: a teacher path inside the repository accepted (DL-24 G2)", QKD, " or pd._under(p, REPO)\n", "\n",
+      kcase("gate_refuses_teacher_ckpt_in_repo"), "gate_refuses_teacher_ckpt_in_repo"),
+    M("MK52", "E-31: the given file name unchecked (DL-24 G2)", QKD, "            or p.name != pd.TEACHER_FILE or ",
+      "            or ", kcase("gate_refuses_teacher_ckpt_given_name"), "gate_refuses_teacher_ckpt_given_name"),
+    M("MK53", "E-31: the resolved file name unchecked (DL-24 G2)", QKD, " or resolved.name != pd.TEACHER_FILE):", "):",
+      kcase("gate_refuses_teacher_ckpt_resolved_name"), "gate_refuses_teacher_ckpt_resolved_name"),
 ]
 
 # the refusal tables: every refusal, STOP and incomplete site of each module, each with the case that reaches it
@@ -419,6 +427,9 @@ KILLS.update(dict([
     KK(QKD, "teacher_of_record", "teacher_forbidden_path", "sl1_forbidden_teacher_refused_before_any_probe"),
     KK(QKD, "teacher_of_record", "teacher_sha256_format", "gate_refuses_teacher_sha256_format"),
     KK(QKD, "teacher_of_record", "teacher_not_of_record", "gate_refuses_teacher_not_of_record"),
+    KK(QKD, "teacher_of_record", "teacher_ckpt_path", "gate_refuses_teacher_ckpt_relative",
+       "gate_refuses_teacher_ckpt_in_repo", "gate_refuses_teacher_ckpt_given_name",
+       "gate_refuses_teacher_ckpt_resolved_name"),
     KK(QKD, "teacher_of_record", "teacher_missing", "gate_refuses_teacher_missing"),
     KK(QKD, "teacher_of_record", "teacher_sha256_mismatch", "gate_refuses_teacher_sha256_mismatch"),
     KK(QKD, "teacher_of_record", "teacher_state_dict_mismatch", "gate_refuses_teacher_state_dict_mismatch"),
@@ -480,7 +491,7 @@ KILLS.update(dict([
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--only", default=None, help="comma-separated job ids (MT1, ..., or file:function:code#k)")
-    ap.add_argument("--no-refusals", action="store_true", help="MT1-MT19 and MK1-MK49 only")
+    ap.add_argument("--no-refusals", action="store_true", help="MT1-MT19 and MK1-MK53 only")
     ap.add_argument("--workers", type=int, default=2, help="shadows edited and run in parallel")
     ap.add_argument("--keep-shadow", action="store_true")
     ap.add_argument("--self-check", action="store_true",
@@ -511,7 +522,7 @@ def main() -> int:
             shutil.rmtree(root, ignore_errors=True)
         raise
     print("=" * 78)
-    print("E6-KD MUTATION SMOKE (lane L-AM3, B-1 and B-2) -- MT1-MT19, MK1-MK49 and the refusal tables, each killed "
+    print("E6-KD MUTATION SMOKE (lane L-AM3, B-1 and B-2) -- MT1-MT19, MK1-MK53 and the refusal tables, each killed "
           "by a named check")
     print(f"{len(jobs)} edits | {len(SHADOW_PATHS)} shadow files x {len(shadows)} at {head} | temp {root}")
     print("=" * 78)

@@ -1702,6 +1702,26 @@ def teacher_other_bytes() -> dict:
     return {"argv": argv_set(base_argv(), "--teacher-ckpt", str(f))}
 
 
+def teacher_symlink(dir_name: str, target: Path, name: str) -> str:
+    """A symlink TMP/<dir_name>/<name> to `target` (made once)."""
+    d = TMP / dir_name
+    d.mkdir(exist_ok=True)
+    link = d / name
+    if not link.is_symlink():
+        os.symlink(target, link)
+    return str(link)
+
+
+def teacher_copy(dir_name: str, name: str) -> Path:
+    """A byte copy of the fixture's teacher file under another name (made once)."""
+    d = TMP / dir_name
+    d.mkdir(exist_ok=True)
+    p = d / name
+    if not p.is_file():
+        shutil.copyfile(gfx()["teacher_file"], p)
+    return p
+
+
 def fingerprint_child(rc: int, doc):
     return lambda argv, tag, timeout, env=None: (rc, doc, "" if rc == 0 else "ModuleNotFoundError: mmseg (smoke)")
 
@@ -1811,7 +1831,17 @@ GATE_CASES = [
     ("gate_refuses_teacher_not_of_record", "teacher_not_of_record",
      lambda: {"argv": argv_set(base_argv(), "--teacher-ckpt-sha256", "e" * 64)}),
     ("gate_refuses_teacher_missing", "teacher_missing",
-     lambda: {"argv": argv_set(base_argv(), "--teacher-ckpt", str(TMP / "teacher" / "absent_iter_24000.pth"))}),
+     lambda: {"argv": argv_set(base_argv(), "--teacher-ckpt", str(TMP / "teacher_absent" / "iter_24000.pth"))}),
+    # E-31's form (DL-88; DL-24 G2), each condition alone: outside the repository, the given name, the resolved name
+    ("gate_refuses_teacher_ckpt_in_repo", "teacher_ckpt_path",
+     lambda: {"argv": argv_set(base_argv(), "--teacher-ckpt", str(REPO / "nowhere_e6kd" / "iter_24000.pth"))}),
+    ("gate_refuses_teacher_ckpt_given_name", "teacher_ckpt_path",
+     lambda: {"argv": argv_set(base_argv(), "--teacher-ckpt",
+                               teacher_symlink("teacher_alias", gfx()["teacher_file"], "other_name.pth"))}),
+    ("gate_refuses_teacher_ckpt_resolved_name", "teacher_ckpt_path",
+     lambda: {"argv": argv_set(base_argv(), "--teacher-ckpt",
+                               teacher_symlink("teacher_link", teacher_copy("teacher_copy", "copy_of_record.pth"),
+                                               "iter_24000.pth"))}),
     ("gate_refuses_teacher_sha256_mismatch", "teacher_sha256_mismatch", teacher_other_bytes),
     ("gate_refuses_teacher_state_dict_mismatch", "teacher_state_dict_mismatch",
      lambda: {"builder": raising(TeacherStateDictMismatch(missing=["decode_head.conv_seg.weight"], source="(smoke)"))}),
@@ -1833,6 +1863,15 @@ def register_gate_case(name: str, want: str, make) -> None:
 
 for _name, _want, _make in GATE_CASES:
     register_gate_case(_name, _want, _make)
+
+
+@case("gates")
+def gate_refuses_teacher_ckpt_relative():
+    """E-31's absolute form alone (DL-24 G2): a relative path that resolves to the fixture's own teacher file."""
+    with contextlib.chdir(TMP):
+        got = gate(argv_set(base_argv(), "--teacher-ckpt", "teacher/iter_24000.pth"))
+    check("gate_refuses_teacher_ckpt_relative", got == "teacher_ckpt_path" and not Path(gfx()["out_new"]).exists(),
+          f"[{got}]")
 
 
 @case("gates")

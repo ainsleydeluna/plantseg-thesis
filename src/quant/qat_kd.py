@@ -356,7 +356,9 @@ def teacher_record(frozen, ckpt: str) -> dict:
 def teacher_of_record(path, expect_sha256, *, builder=None):
     """Gate 16 (DL-88): the teacher file named, its sha256 the teacher of record's, compared before the file is read,
     built from the default teacher config and loaded strictly on the CPU (src/distill/teacher.py
-    load_frozen_teacher), then its identity checked as scripts/preflight_distill.py checks it."""
+    load_frozen_teacher), then its identity checked as scripts/preflight_distill.py checks it. The path has E-31's
+    form, as the KD gate checks it (scripts/preflight_distill.py): absolute, outside the repository and named
+    iter_24000.pth, as given and as resolved (the loader records the resolved path, whose name check-run-meta reads)."""
     pd = preflight_distill()
     if path and (Q.names_test(path) or Q.names_test(Path(path).expanduser())):
         _refuse("teacher_forbidden_path", f"--teacher-ckpt {path!r}: its given, expanded or resolved form holds a name "
@@ -366,8 +368,13 @@ def teacher_of_record(path, expect_sha256, *, builder=None):
     if expect_sha256 != pd.TEACHER_SHA256:
         _refuse("teacher_not_of_record", f"--teacher-ckpt-sha256 {expect_sha256} is not the teacher of record's "
                                          f"{pd.TEACHER_SHA256} (DL-88)")
-    p = Path(path).expanduser() if path else None
-    if p is None or not p.is_file():
+    p = Path(path) if path else None
+    resolved = p.resolve() if p is not None else None
+    if (p is None or not os.path.isabs(path) or pd._under(p, REPO)
+            or p.name != pd.TEACHER_FILE or resolved.name != pd.TEACHER_FILE):
+        _refuse("teacher_ckpt_path", f"--teacher-ckpt {path!r} (resolved {str(resolved)!r}) must be an absolute path "
+                                     f"outside the repository named {pd.TEACHER_FILE} (E-31; DL-88)")
+    if not p.is_file():
         _refuse("teacher_missing", f"--teacher-ckpt {path!r} is not a file (DL-39: the teacher of record in the loop)")
     try:
         frozen = TT.load_frozen_teacher(str(p), builder=builder, config_path=str(TD.DEFAULT_TEACHER_CONFIG),
