@@ -1688,6 +1688,16 @@ def run_meta_changed() -> dict:
     return {"argv": argv, "over": {(Q, "resolve_parent"): resolve}}
 
 
+def parent_with_lines(tag: str, lines: list[str]) -> tuple[Path, str]:
+    """A parent run whose run_meta file holds `lines` ahead of its run_meta row; returns (its folder, the checkpoint's
+    sha256)."""
+    d = TMP / "parents" / tag / PARENT_ID
+    ck_sha, _psha = write_parent(d)
+    f = d / "e3_run_meta.jsonl"
+    f.write_text("".join(ln + "\n" for ln in lines) + f.read_text(encoding="utf-8"), encoding="utf-8")
+    return d, ck_sha
+
+
 def out_used() -> dict:
     d = TMP / "e6kd_out_used"
     d.mkdir(exist_ok=True)
@@ -1872,6 +1882,23 @@ def gate_refuses_teacher_ckpt_relative():
         got = gate(argv_set(base_argv(), "--teacher-ckpt", "teacher/iter_24000.pth"))
     check("gate_refuses_teacher_ckpt_relative", got == "teacher_ckpt_path" and not Path(gfx()["out_new"]).exists(),
           f"[{got}]")
+
+
+@case("gates")
+def gate_e3_record_reads_the_run_meta_row():
+    """DL-24 T3: gate 14 reads the run_meta row resolve_parent read (Q._run_meta_rows: exactly one). Ahead of it the
+    file holds a row of another event that names "run_meta", with E3's terms and other weights, or a torn line that
+    names it; the weights read are the run_meta row's either way."""
+    g = gfx()
+    want = KD.e3_record(Q.resolve_parent(STAGE, g["parent_dir"], g["ck_sha"], 42))["e3_weights"]
+    row = json.loads((g["parent_dir"] / "e3_run_meta.jsonl").read_text(encoding="utf-8"))
+    decoy = json.dumps({**row, "event": "note", "about": "run_meta", "lambda_logit": 9.0, "alpha_cwd": 99.0})
+    got = {}
+    for tag, line in (("meta_decoy", decoy), ("meta_torn", '{"event": "run_meta", "torn')):
+        d, ck_sha = parent_with_lines(tag, [line])
+        got[tag] = KD.e3_record(Q.resolve_parent(STAGE, d, ck_sha, 42))["e3_weights"]
+    check("gate_e3_record_reads_the_run_meta_row", got == {"meta_decoy": want, "meta_torn": want},
+          f"{got}; want {want}")
 
 
 @case("gates")

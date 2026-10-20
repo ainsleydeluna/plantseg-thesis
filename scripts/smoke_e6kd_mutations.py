@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Lane L-AM3, B-1: the mutation smoke of the AM-3 trigger. MT1-MT19 and the refusal table of
 src/quant/e6kd_trigger.py, each killed by a named check of scripts/smoke_e6kd_trigger.py.
-Lane L-AM3, B-2: E6-KD. MK1-MK53 and the refusal tables of src/quant/qat_kd.py and scripts/e6kd_eval.py, each killed
+Lane L-AM3, B-2: E6-KD. MK1-MK55 and the refusal tables of src/quant/qat_kd.py and scripts/e6kd_eval.py, each killed
 by a named check of scripts/smoke_e6kd_runner.py or scripts/smoke_e6kd_selection.py.
 
 Q2's harness, scripts/smoke_qat_mutations.py, runs it unchanged:
@@ -314,6 +314,13 @@ MUTATIONS = [
       "            or ", kcase("gate_refuses_teacher_ckpt_given_name"), "gate_refuses_teacher_ckpt_given_name"),
     M("MK53", "E-31: the resolved file name unchecked (DL-24 G2)", QKD, " or resolved.name != pd.TEACHER_FILE):", "):",
       kcase("gate_refuses_teacher_ckpt_resolved_name"), "gate_refuses_teacher_ckpt_resolved_name"),
+    M("MK54", "gate 14 takes the first row that names run_meta, whatever its event (DL-24 T3)", QKD,
+      '        if row.get("event") == "run_meta":\n            rows.append(row)\n', "        rows.append(row)\n",
+      kcase("gate_e3_record_reads_the_run_meta_row"), "gate_e3_record_reads_the_run_meta_row"),
+    M("MK55", "gate 14 parses a torn line that names run_meta (DL-24 T3)", QKD,
+      "        try:\n            row = json.loads(ln)\n        except json.JSONDecodeError:\n            continue\n",
+      "        row = json.loads(ln)\n",
+      kcase("gate_e3_record_reads_the_run_meta_row"), "gate_e3_record_reads_the_run_meta_row"),
 ]
 
 # the refusal tables: every refusal, STOP and incomplete site of each module, each with the case that reaches it
@@ -491,7 +498,7 @@ KILLS.update(dict([
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--only", default=None, help="comma-separated job ids (MT1, ..., or file:function:code#k)")
-    ap.add_argument("--no-refusals", action="store_true", help="MT1-MT19 and MK1-MK53 only")
+    ap.add_argument("--no-refusals", action="store_true", help="MT1-MT19 and MK1-MK55 only")
     ap.add_argument("--workers", type=int, default=2, help="shadows edited and run in parallel")
     ap.add_argument("--keep-shadow", action="store_true")
     ap.add_argument("--self-check", action="store_true",
@@ -522,7 +529,7 @@ def main() -> int:
             shutil.rmtree(root, ignore_errors=True)
         raise
     print("=" * 78)
-    print("E6-KD MUTATION SMOKE (lane L-AM3, B-1 and B-2) -- MT1-MT19, MK1-MK53 and the refusal tables, each killed "
+    print("E6-KD MUTATION SMOKE (lane L-AM3, B-1 and B-2) -- MT1-MT19, MK1-MK55 and the refusal tables, each killed "
           "by a named check")
     print(f"{len(jobs)} edits | {len(SHADOW_PATHS)} shadow files x {len(shadows)} at {head} | temp {root}")
     print("=" * 78)

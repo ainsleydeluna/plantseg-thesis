@@ -264,6 +264,22 @@ def kd_optimizer_error(rec: dict) -> str | None:
 
 
 # ------------------------------------------------------------------ the launch gates' parts
+def _run_meta_row(raw: bytes) -> dict:
+    """The run_meta row of the bytes resolve_parent hashed, read as Q._run_meta_rows reads that file (exactly one row
+    there): the lines holding '"run_meta"' that decode, the one whose event is run_meta (DL-24 T3)."""
+    rows = []
+    for ln in io.StringIO(raw.decode("utf-8"), newline=None):
+        if '"run_meta"' not in ln:
+            continue
+        try:
+            row = json.loads(ln)
+        except json.JSONDecodeError:
+            continue
+        if row.get("event") == "run_meta":
+            rows.append(row)
+    return rows[0]
+
+
 def e3_record(parent: dict) -> dict:
     """Gate 14: E3's terms and weights from the parent's run_meta row, the file resolve_parent hashed. All three terms
     on; λ and α are the selections' (e6_parent_binding); β, both T and C are configs/distill.py's; the Logit-KD
@@ -273,7 +289,7 @@ def e3_record(parent: dict) -> dict:
     if Q.sha256_bytes(raw) != parent["run_meta_sha256"]:
         _refuse("parent_run_meta_changed", f"{p.name} changed after the parent was read: sha256 "
                                            f"{Q.sha256_bytes(raw)}, read as {parent['run_meta_sha256']}")
-    meta = [json.loads(ln) for ln in raw.decode("utf-8").splitlines() if '"run_meta"' in ln][0]
+    meta = _run_meta_row(raw)
     terms = {t: True for t in TERMS}
     if meta.get("terms") != terms:
         _refuse("parent_terms", f"the parent's run_meta has terms {meta.get('terms')!r}; E6-KD takes E3's instantiated "
