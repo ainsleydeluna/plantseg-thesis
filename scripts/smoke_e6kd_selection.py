@@ -188,6 +188,16 @@ def raw_run(name: str) -> Path:
     return TMP / name
 
 
+def fill_cache() -> None:
+    """--cache-dir: the three raw runs, all at once and before any case, so that jobs started later (the mutation
+    harness's pooled baselines) only clone them (B-1's fill_cache; DL-24 SM2)."""
+    cache = OPTS["cache"]
+    if cache is None or all((cache / name / "READY").is_file() for name in RAW):
+        return
+    for name in RAW:
+        raw_run(name)
+
+
 def relabel(run: Path, *, meta: dict | None = None) -> str:
     """Re-label a smoke run's record mode "real", a launch bound to clip_selection.json (the checkpoints are
     untouched). Returns the new telemetry sha256."""
@@ -845,6 +855,7 @@ def main() -> int:
     print("E6-KD SELECTION SMOKE (lane L-AM3, B-2) -- registration, conversion, scoring and selection, synthetic")
     print(f"{len(todo)} cases | sections {sorted({c[1] for c in todo})} | temp {TMP}")
     print("=" * 78)
+    fill_cache()
     for name, _section, fn in todo:
         before = len(results)
         t0 = time.time()
