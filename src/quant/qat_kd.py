@@ -113,8 +113,12 @@ E6KD_CODE_PATHS = (
     # the src/distill modules E6-KD imports
     "src/distill/teacher.py", "src/distill/segnext_teacher.py", "src/distill/nmf_stream.py",
     "src/distill/cwd_projection.py", "src/distill/features.py",
-    # the teacher config of record and the module it imports (custom_imports)
+    # the teacher config of record and the module it imports (custom_imports), with that module's at-load imports
+    # that QAT_CODE_PATHS does not hold (DL-24 G1)
     "configs/teacher/segnext_mscan-b_1xb16-adamw-40k_plantseg116-512x512.py", "src/training/teacher_components.py",
+    "src/eval/artifacts.py", "src/eval/protocols.py",
+    # code_identity's src/quant/ptq.py loads it at import, and QAT_CODE_PATHS does not hold it (DL-24 G1)
+    "src/eval/model_loading.py",
     # gates 9 and 16: the values of record (DL-87, DL-88), loaded by file location
     "scripts/preflight_distill.py", "scripts/preflight_e1_trainval.py", "scripts/preflight_e1.py",
 )

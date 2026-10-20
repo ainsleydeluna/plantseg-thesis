@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Lane L-AM3, B-1: the mutation smoke of the AM-3 trigger. MT1-MT19 and the refusal table of
 src/quant/e6kd_trigger.py, each killed by a named check of scripts/smoke_e6kd_trigger.py.
-Lane L-AM3, B-2: E6-KD. MK1-MK46 and the refusal tables of src/quant/qat_kd.py and scripts/e6kd_eval.py, each killed
+Lane L-AM3, B-2: E6-KD. MK1-MK47 and the refusal tables of src/quant/qat_kd.py and scripts/e6kd_eval.py, each killed
 by a named check of scripts/smoke_e6kd_runner.py or scripts/smoke_e6kd_selection.py.
 
 Q2's harness, scripts/smoke_qat_mutations.py, runs it unchanged:
@@ -45,7 +45,7 @@ SHADOW_PATHS = (*H.SHADOW_PATHS, TRG, "scripts/e6kd_trigger.py", "scripts/smoke_
                 QKD, "scripts/run_e6kd.py", EVL, KDRULES, "configs/qat_selection_rules_am23.json",
                 "scripts/smoke_e6kd_runner.py", "scripts/smoke_e6kd_selection.py", TDS, "configs/distill.py",
                 "scripts/preflight_distill.py", "scripts/preflight_e1_trainval.py", "scripts/preflight_e1.py",
-                "scripts/invariance_harness.py")
+                "scripts/invariance_harness.py", "src/training/teacher_components.py")
 
 
 def case(*names: str) -> tuple:
@@ -293,6 +293,9 @@ MUTATIONS = [
       "or max_steps\n                           or max_val_batches):",
       kcase("run_refuses_zero_step_cap_in_real", "run_refuses_zero_val_cap_in_real"),
       "run_refuses_zero_step_cap_in_real", "run_refuses_zero_val_cap_in_real"),
+    M("MK47", "E6KD_CODE_PATHS without src/eval/protocols.py (DL-24 G1)", QKD,
+      '    "src/eval/artifacts.py", "src/eval/protocols.py",\n', '    "src/eval/artifacts.py",\n',
+      kcase("code_paths_cover_the_launch_imports"), "code_paths_cover_the_launch_imports"),
 ]
 
 # the refusal tables: every refusal, STOP and incomplete site of each module, each with the case that reaches it
@@ -467,7 +470,7 @@ KILLS.update(dict([
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--only", default=None, help="comma-separated job ids (MT1, ..., or file:function:code#k)")
-    ap.add_argument("--no-refusals", action="store_true", help="MT1-MT19 and MK1-MK46 only")
+    ap.add_argument("--no-refusals", action="store_true", help="MT1-MT19 and MK1-MK47 only")
     ap.add_argument("--workers", type=int, default=2, help="shadows edited and run in parallel")
     ap.add_argument("--keep-shadow", action="store_true")
     ap.add_argument("--self-check", action="store_true",
@@ -498,7 +501,7 @@ def main() -> int:
             shutil.rmtree(root, ignore_errors=True)
         raise
     print("=" * 78)
-    print("E6-KD MUTATION SMOKE (lane L-AM3, B-1 and B-2) -- MT1-MT19, MK1-MK46 and the refusal tables, each killed "
+    print("E6-KD MUTATION SMOKE (lane L-AM3, B-1 and B-2) -- MT1-MT19, MK1-MK47 and the refusal tables, each killed "
           "by a named check")
     print(f"{len(jobs)} edits | {len(SHADOW_PATHS)} shadow files x {len(shadows)} at {head} | temp {root}")
     print("=" * 78)

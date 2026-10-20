@@ -2131,6 +2131,33 @@ def qat_kd_imports_no_teacher_stack():
     check("qat_kd_imports_no_teacher_stack", rc == 0 and seen == [], f"{seen} {err}")
 
 
+@case("routing")
+def code_paths_cover_the_launch_imports():
+    """DL-24 G1 (LB26): every repository module a launch process loads is in E6KD_CODE_PATHS, which gate 11 requires
+    clean and run_meta hashes. A child imports qat_kd, code_identity's src/quant/ptq.py and what run_qat_kd and the
+    gates import when they run; the teacher config's custom_imports module needs mmcv, so its own repository imports
+    at load are read from its source and imported."""
+    code = ("import ast, json, os, sys\nsys.path.insert(0, %r)\nos.environ['PLANTSEG_DATA_ROOT'] = %r\n"
+            "import importlib\nimport src.quant.qat_kd as KD\nKD.preflight_distill()\n"
+            "for m in ('src.quant.ptq', 'src.seeds', 'src.training.losses', 'src.training.train_e1', "
+            "'src.quant.qconfig', 'src.quant.checkpoint', 'src.quant.prepare', 'src.data.isolation', 'configs.data'):\n"
+            "    importlib.import_module(m)\n"
+            "tc = ast.parse(open(os.path.join(%r, 'src/training/teacher_components.py'), encoding='utf-8').read())\n"
+            "for n in tc.body:\n"
+            "    if isinstance(n, ast.ImportFrom) and n.module and n.module.split('.')[0] in ('src', 'configs'):\n"
+            "        importlib.import_module(n.module)\n"
+            "root = os.path.realpath(%r)\n"
+            "mods = [m for m in list(sys.modules.values()) if getattr(m, '__file__', None)]\n"
+            "files = {os.path.realpath(m.__file__) for m in mods}\n"
+            "loaded = sorted(os.path.relpath(f, root) for f in files if f.startswith(root + os.sep))\n"
+            "print('LOADED:' + json.dumps(loaded))\n") % (str(REPO), str(TMP / "absent_data_root"), str(REPO),
+                                                           str(REPO))
+    rc, loaded, err = child_json(code, "LOADED:")
+    missing = [p for p in (loaded or []) if p not in KD.E6KD_CODE_PATHS]
+    check("code_paths_cover_the_launch_imports", rc == 0 and bool(loaded) and not missing,
+          f"{len(loaded or [])} repository modules loaded; not in E6KD_CODE_PATHS: {missing} {err}")
+
+
 # ---------------------------------------------------------------- sl1: SL-1's name check before any probe
 def sl1(name: str, want: str, bad: Path, argv: list[str]) -> None:
     with probe_recorder(bad) as seen:
