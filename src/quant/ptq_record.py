@@ -11,27 +11,33 @@ synthetic list never loads it. The PTQ itself stays src.quant.ptq.run_ptq (L-AM1
         --expect-head COMMIT --data-root ROOT --out-dir /out/e4_sS_cal42_a1 [--threads N] [--replicate-of RECORD]
     E7 adds  --lambda-selection reports/derived/lambda_selection.json --lambda-selection-sha256 SHA256
              --alpha-selection reports/derived/alpha_selection.json --alpha-selection-sha256 SHA256
+    E7-E2 (AM-23 item 2) adds the λ pair only, at --seed 42 on the seed-42 list
 
 Roles: of_record (the seed-42 list, AM-10); calibration_sensitivity (a seed-43/44/45 list at --seed 42, AM-16
-item 5); d3_replicate (--replicate-of: a second run of a record's inputs, L-AM10's d3). Only of_record is ever
-official (src/eval/stage_artifacts.py int8_official_error); the other two are descriptive.
+item 5); d3_replicate (--replicate-of: a second run of a record's inputs, L-AM10's d3); quant_descriptive
+(E7-E2's one record, on the seed-42 list: AM-23 item 2, ruling AQ19). The official gate
+(src/eval/stage_artifacts.py int8_official_error) takes the stage's role of record (role_of_record): of_record
+for E4 and E7, quant_descriptive for E7-E2. Every role but of_record is descriptive.
 
 The gates, in order; each refuses with exit 2 before anything is written, and no image, mask or checkpoint is
 opened before G8:
   G2  the list is configs/calibration/ptq_calibration_seed<S>.json, tracked and byte-equal at HEAD
       (calibration_list_not_committed)
   G3  seed_invalid (42, 43, 44); sensitivity_seed (a sensitivity list at a seed other than 42);
-      source_run_dir_required; expect_head_format; selection_not_applicable (E4)
+      source_run_dir_required; expect_head_format; selection_not_applicable (E4); E7-E2 only:
+      calibration_list_not_of_record (the seed-42 list), am23_seed (seed 42), selection_not_applicable (α)
   G4  out_dir_relative; output_dir_inside_repo; out_dir_name (<stage>_s<seed>_cal<list seed>_a<n>, with _d3
       exactly when --replicate-of is given); out_dir_not_empty
   G5  one identity reader, ptq.code_provenance(RECORD_CODE_PATHS): code_identity_unavailable,
       expect_head_mismatch, code_not_clean; then image_digest_not_of_record (PLANTSEG_IMAGE_DIGEST)
   G6  data_root_has_test (src.data.isolation.assert_no_test_surfaces: existence only, nothing listed)
-  G7  E7: the committed λ and α selections (qat.read_tracked_selection)
+  G7  E7: the committed λ and α selections (qat.read_tracked_selection); E7-E2: the λ selection only
   G8  the parent run directory and its best.json checkpoint (qat.resolve_parent)
   G9  E4 <- E1: parent_horizon, parent_payload
   G10 E7 <- E3: qat.e6_parent_binding; parent_not_of_record; parent_teacher_not_of_record;
       parent_checkpoint_not_selected (seed 42); parent_launch_log; parent_payload
+  G10 E7-E2 <- E2 seed 42 (bind_e2): qat.e2_parent_binding; parent_not_of_record;
+      parent_teacher_not_of_record; parent_launch_log; parent_payload
   G11 --replicate-of: replicate_mismatch
   An input a gate cannot read (a torn telemetry line, an unloadable checkpoint, no git binary) refuses as
   bound_input_unreadable: the gates only read, so it is a refusal, never a traceback.
@@ -62,8 +68,13 @@ RECORDS_ROOT: Path | None = None
 RECORD_FORMAT = "ptq_record/1"
 RECORD_NAME = "{key}_ptq_record.json"
 ROLE_OF_RECORD, ROLE_SENSITIVITY, ROLE_REPLICATE = "of_record", "calibration_sensitivity", "d3_replicate"
-ROLES = (ROLE_OF_RECORD, ROLE_SENSITIVITY, ROLE_REPLICATE)
+ROLE_QUANT_DESCRIPTIVE = "quant_descriptive"         # AM-23 item 2: E7-E2's record (ruling AQ19)
+ROLES = (ROLE_OF_RECORD, ROLE_SENSITIVITY, ROLE_REPLICATE, ROLE_QUANT_DESCRIPTIVE)
 REPLICABLE_ROLES = (ROLE_OF_RECORD, ROLE_SENSITIVITY)
+# A stage whose record on the AM-10 list of record takes another role than of_record (AQ19): read_record couples
+# that role to the stage, and the official gate (src/eval/stage_artifacts.py) asks role_of_record.
+ROLE_BY_STAGE = {"E7-E2": ROLE_QUANT_DESCRIPTIVE}
+LAMBDA_ONLY = ("lambda",)                            # E7-E2 reads the λ selection, never the α (AM-23 item 2)
 SEEDS = (42, 43, 44)                                # AM-1; AM-17 item 9: E4 and E7 at every seed
 SCRIPT_REL = "scripts/run_ptq.py"
 MODULE_REL = "src/quant/ptq_record.py"
@@ -119,6 +130,11 @@ def horizon_of_record() -> int:
     """80,000: IMPLEMENTATION_CONTRACT (b) and AM-16 item 3; train_e1.py's default horizon (its :336)."""
     from configs.e1_student import E1_STUDENT
     return int(E1_STUDENT["iterations"])
+
+
+def role_of_record(stage: str) -> str:
+    """The role of `stage`'s record on the AM-10 list of record: quant_descriptive for E7-E2 (AQ19), else of_record."""
+    return ROLE_BY_STAGE.get(str(stage).upper(), ROLE_OF_RECORD)
 
 
 def _is_int(x) -> bool:
@@ -309,6 +325,54 @@ def bind_e3(ctx: dict) -> dict:
             "selections": {"lambda": lam, "alpha": alpha}, "launch_log": launch}
 
 
+def bind_e2(ctx: dict) -> dict:
+    """E7-E2 <- E2 seed 42 (AM-23 item 2; rulings AQ19, AQ21): the E2 run the λ selection names (qat.e2_parent_binding:
+    its winner, and that run's inputs entry), on the 80,000-iteration horizon, never an arm and never a parent of
+    E4-E7, distilled from the teacher of record, launched as the committed KD launch log records, its checkpoint the
+    one best.json names."""
+    import scripts.preflight_distill as pd                      # the teacher of record (DL-88; ruling R17)
+    from src.quant import qat
+    parent, prefix, args, h = ctx["parent"], ctx["prefix"], ctx["args"], horizon_of_record()
+    (lam,) = ctx["selections"]
+    bound = _q2(prefix, qat.e2_parent_binding, parent, args.seed, lam, ctx["root"])
+    rm = _run_meta(parent)
+    not_e2 = [k for k, ok in (("arm", rm.get("arm") is None), ("descriptive", rm.get("descriptive") is False),
+                              ("parent_of_e4_e7", rm.get("parent_of_e4_e7") is False),
+                              ("max_iters", _is_int(rm.get("max_iters")) and rm.get("max_iters") == h),
+                              ("poly_horizon", _is_int(rm.get("poly_horizon")) and rm.get("poly_horizon") == h))
+              if not ok]
+    if not_e2:
+        _refuse("parent_not_of_record", f"{prefix}the parent's run_meta is not E2's run of record: "
+                                        f"{ {k: rm.get(k) for k in not_e2} }")
+    tprov = rm.get("teacher_provenance")
+    if (rm.get("teacher_mock") is not False or not isinstance(tprov, dict)
+            or tprov.get("builder") != pd.TEACHER_BUILDER or tprov.get("ckpt_sha256") != pd.TEACHER_SHA256
+            or tprov.get("expected_sha256") != pd.TEACHER_SHA256):
+        _refuse("parent_teacher_not_of_record", f"{prefix}the E2 parent was not distilled from the teacher of record "
+                                                f"{pd.TEACHER_FILE} ({pd.TEACHER_SHA256[:12]}..., "
+                                                f"{pd.TEACHER_BUILDER}): teacher_mock {rm.get('teacher_mock')!r}, "
+                                                f"teacher_provenance "
+                                                f"{ {k: (tprov or {}).get(k) for k in ('builder', 'ckpt_sha256')} }")
+    launch = launch_log_binding(parent, rm, ctx["root"], prefix)
+    pay = _payload(parent)
+    wrong = (["not a checkpoint dict"] if not isinstance(pay, dict) else
+             ([f"stage {pay.get('stage')!r}"] if pay.get("stage") != "E2" else [])
+             + [f"{k} key" for k in ("arm", "target_construction") if k in pay]
+             + (["teacher_provenance differs from run_meta's"] if pay.get("teacher_provenance") != tprov else [])
+             + ([f"best_val_miou_all_class {pay.get('best_val_miou_all_class')!r} != best.json's "
+                 f"{parent['best_val_miou_all_class']!r}"]
+                if pay.get("best_val_miou_all_class") != parent["best_val_miou_all_class"] else []))
+    if wrong:
+        _refuse("parent_payload", f"{prefix}the checkpoint best.json names is not E2's run of record: {wrong}")
+    rows, _torn = qat.read_jsonl(Path(parent["run_dir"]) / parent["telemetry"])
+    end = [r for r in rows if r.get("event") == "run_end"][-1]
+    return {"rule": ctx["rule"]["id"], "stage": "E2", **_parent_fields(parent, rm),
+            "lambda_logit": rm.get("lambda_logit"), "parent_of_e4_e7": False, "teacher_arch": TEACHER_ARCH,
+            "teacher_ckpt_sha256": tprov["ckpt_sha256"],
+            "run_end": {k: end.get(k) for k in ("iter", "checks_passed", "wall_clock_end", "best_ckpt")},
+            "selections": {"lambda": lam}, "selection_input": bound["selection_input"], "launch_log": launch}
+
+
 def launch_log_binding(parent: dict, meta: dict, root: Path, prefix: str) -> dict:
     """reports/kd_launch_log.jsonl at HEAD: the parent's launched line, no stopped line, and the fields
     sweep_select.check_run_against_log compares (sweep_select.py:1800-1818; ruling R8). That function takes a
@@ -345,6 +409,9 @@ def launch_log_binding(parent: dict, meta: dict, root: Path, prefix: str) -> dic
 PARENT_RULES = {
     "E4": {"id": "e1_run_of_record/1", "source_stage": "E1", "selections": False, "bind": bind_e1},
     "E7": {"id": "e3_run_of_record/1", "source_stage": "E3", "selections": True, "bind": bind_e3},
+    # AM-23 item 2 (AQ19, AQ21): descriptive, once, at seed 42 on the AM-10 list of record, from the λ selection
+    "E7-E2": {"id": "e2_run_of_record/1", "source_stage": "E2", "selections": LAMBDA_ONLY,
+              "role": ROLE_QUANT_DESCRIPTIVE, "seeds": (42,), "bind": bind_e2},
 }
 
 
@@ -391,11 +458,24 @@ def bound_gates(args, doc: dict, list_sha256: str) -> dict:
                        args.alpha_selection_sha256)
     if not rule["selections"] and any(v is not None for v in selection_flags):
         _refuse("selection_not_applicable", f"{st['name']} takes no λ or α selection file")
+    if rule.get("role") is not None and doc["seed"] != SEED_OF_RECORD:
+        _refuse("calibration_list_not_of_record", f"{st['name']} is made once, on the AM-10 list of record (seed "
+                                                  f"{SEED_OF_RECORD}), not on list seed {doc['seed']} (AM-23 "
+                                                  "item 2)")
+    if rule.get("seeds") and args.seed not in rule["seeds"]:
+        _refuse("am23_seed", f"{st['name']} runs at seed {rule['seeds'][0]} only, not {args.seed} (AM-23 item 2)")
+    if rule["selections"] == LAMBDA_ONLY and (args.alpha_selection is not None
+                                              or args.alpha_selection_sha256 is not None):
+        _refuse("selection_not_applicable", f"{st['name']} takes the λ selection only: its parent is E2, which "
+                                            "has no α")
     out = check_out_dir(args.out_dir, st["key"], args.seed, doc["seed"], args.replicate_of is not None)  # G4
     ident = identity(args.expect_head)                                                                 # G5
     iso = isolation(args.data_root)                                                                    # G6
     selections = None
-    if rule["selections"]:                                                                             # G7
+    if rule["selections"] == LAMBDA_ONLY:                                                              # G7
+        selections = (_q2(prefix, read_tracked_selection, args.lambda_selection, args.lambda_selection_sha256,
+                          LAMBDA_SELECTION_FORMAT, "lambda", root),)
+    elif rule["selections"]:
         selections = (_q2(prefix, read_tracked_selection, args.lambda_selection, args.lambda_selection_sha256,
                           LAMBDA_SELECTION_FORMAT, "lambda", root),
                       _q2(prefix, read_tracked_selection, args.alpha_selection, args.alpha_selection_sha256,
@@ -409,6 +489,8 @@ def bound_gates(args, doc: dict, list_sha256: str) -> dict:
         replicate = replicate_binding(args.replicate_of, st["name"], args.seed, doc, parent, out)
     role = (ROLE_REPLICATE if replicate is not None
             else ROLE_OF_RECORD if doc["seed"] == SEED_OF_RECORD else ROLE_SENSITIVITY)
+    if rule.get("role") is not None:                     # E7-E2: its rule's role (AQ19)
+        role = rule["role"]
     return {"stage": st, "seed": args.seed, "rule": rule, "list_rel": list_rel, "doc": doc,
             "list_sha256": list_sha256, "out": out, "identity": ident, "isolation": iso, "parent": parent,
             "bound_parent": bound_parent, "replicate": replicate, "role": role}
@@ -517,6 +599,9 @@ def read_record(path, expect_sha256: str | None = None) -> tuple[dict, str]:
         raise RecordInvalid(f"{p} is not a {RECORD_FORMAT} record")
     if rec["role"] not in ROLES or rec["descriptive"] is not (rec["role"] != ROLE_OF_RECORD):
         raise RecordInvalid(f"{p}: role {rec['role']!r}, descriptive {rec['descriptive']!r}")
+    if (rec["role"] == ROLE_QUANT_DESCRIPTIVE) != (isinstance(rec["stage"], str) and rec["stage"] in ROLE_BY_STAGE):
+        raise RecordInvalid(f"{p}: role {rec['role']!r} for stage {rec.get('stage')!r}: quant_descriptive is E7-E2's "
+                            "role and E7-E2's only (AQ19)")
     try:
         files = {k: (str(rec["artifacts"][k]["path"]), rec["artifacts"][k]["sha256"]) for k in ARTIFACT_KEYS}
         files["run_meta"] = (str(rec["ptq_run"]["run_meta"]), rec["ptq_run"]["sha256"])
@@ -546,17 +631,18 @@ def manifest_entry(record: dict) -> dict:
 
 def planned_entry(stage: str, seed: int, parent_checkpoint_sha256: str, list_file_sha256: str,
                   list_checksum_sha256: str, ptq_commit: str, image_digest: str) -> dict:
-    """An E4/E7 not yet made at the freeze, listed by the same inputs; its qconfig fingerprint is the registered
-    PTQ qconfig's (src/quant/ptq.py qconfig_summary)."""
+    """An E4, E7 or E7-E2 not yet made at the freeze, listed by the same inputs with its stage's role of record;
+    its qconfig fingerprint is the registered PTQ qconfig's (src/quant/ptq.py qconfig_summary)."""
     from src.quant.ptq import ptq_qconfig, qconfig_summary
-    return {"status": "planned", "stage": str(stage).upper(), "seed": seed, "role": ROLE_OF_RECORD,
+    return {"status": "planned", "stage": str(stage).upper(), "seed": seed, "role": role_of_record(stage),
             "parent_checkpoint_sha256": parent_checkpoint_sha256, "list_file_sha256": list_file_sha256,
             "list_checksum_sha256": list_checksum_sha256, "ptq_commit": ptq_commit, "ptq_script": SCRIPT_REL,
             "image_digest": image_digest, "qconfig_fingerprint": qconfig_summary(ptq_qconfig())["fingerprint"],
             "artifacts": None}
 
 
-__all__ = ["AUTHORITY", "ISOLATION_METHOD", "PARENT_RULES", "RECORDS_ROOT", "RECORD_EXTRA_CODE_PATHS",
-           "RECORD_FORMAT", "RECORD_NAME", "ROLES", "ROLE_OF_RECORD", "ROLE_REPLICATE", "ROLE_SENSITIVITY",
-           "RecordInvalid", "SEEDS", "bound_gates", "build_record", "manifest_entry", "planned_entry",
-           "read_record", "record_code_paths", "run_bound", "write_record"]
+__all__ = ["AUTHORITY", "ISOLATION_METHOD", "LAMBDA_ONLY", "PARENT_RULES", "RECORDS_ROOT", "RECORD_EXTRA_CODE_PATHS",
+           "RECORD_FORMAT", "RECORD_NAME", "ROLES", "ROLE_BY_STAGE", "ROLE_OF_RECORD", "ROLE_QUANT_DESCRIPTIVE",
+           "ROLE_REPLICATE", "ROLE_SENSITIVITY", "RecordInvalid", "SEEDS", "bound_gates", "build_record",
+           "manifest_entry", "planned_entry", "read_record", "record_code_paths", "role_of_record", "run_bound",
+           "write_record"]
