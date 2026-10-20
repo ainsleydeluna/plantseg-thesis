@@ -801,7 +801,7 @@ def e6kd_run_refused_under_q2_rules():
         got = None
     except Q.QATRefused as e:
         got = e.code
-    check("e6kd_run_refused_under_q2_rules", got is not None, f"[{got}]")
+    check("e6kd_run_refused_under_q2_rules", got == "stage", f"[{got}]")     # the stage rule (DL-24 RG2)
 
 
 @case("unaffected")
@@ -813,8 +813,8 @@ def select_clip_unaffected():
     rc, res, _ = run_cli(SC.main, ["--candidate", str(run), str(ev), "--expect-telemetry-sha256", sha,
                                    "--candidate", str(run), str(ev), "--expect-telemetry-sha256", sha,
                                    "--out", str(TMP / "clip_never_written.json")])
-    check("select_clip_unaffected", rc == 2 and not (TMP / "clip_never_written.json").exists()
-          and QUANT_STAGES["e5"]["method"] == "qat", res)
+    check("select_clip_unaffected", rc == 2 and "[not_a_pilot_run]" in res                  # its own rule (DL-24 RG2)
+          and not (TMP / "clip_never_written.json").exists() and QUANT_STAGES["e5"]["method"] == "qat", res)
 
 
 # ---------------------------------------------------------------- main
