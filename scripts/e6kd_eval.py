@@ -162,7 +162,7 @@ def cmd_check_run_meta(args) -> int:
     # SL-1: each path's given and resolved forms, before the path is read (the profile resolves the teacher's)
     if Q.names_test(args.run_dir):
         raise QATRefused("run_dir_forbidden_path", f"--run-dir {args.run_dir!r} holds a name SL-1 forbids")
-    if Q.names_test(args.teacher_ckpt):
+    if Q.names_test(args.teacher_ckpt) or Q.names_test(Path(args.teacher_ckpt).expanduser()):
         raise QATRefused("teacher_forbidden_path", f"--teacher-ckpt {args.teacher_ckpt!r} holds a name SL-1 forbids")
     tel = Path(args.run_dir) / Q.TELEMETRY_NAME
     if not tel.is_file():

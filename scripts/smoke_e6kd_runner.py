@@ -2216,6 +2216,29 @@ def sl1_forbidden_paths_refused_by_check_run_meta():
     check("sl1_forbidden_paths_refused_by_check_run_meta", ok, f"{out}")
 
 
+@case("sl1")
+def sl1_forbidden_expanded_teacher_refused_before_any_probe():
+    """DL-24 G3: '~' expands to a home whose name holds the token SL-1 forbids (never created); the name check reads
+    the expanded form too, before any probe."""
+    home = TMP / "nowhere_latest_home"
+    with probe_recorder(home) as seen, env_set({"HOME": str(home)}), patches(pass_patches(gfx())):
+        got = code_of(KD.teacher_of_record, "~/iter_24000.pth", gfx()["teacher_sha"], builder=stub_segnext_builder)
+    check("sl1_forbidden_expanded_teacher_refused_before_any_probe",
+          got == "teacher_forbidden_path" and not seen and not home.exists(), f"[{got}]; probed {seen[:2]}")
+
+
+@case("sl1")
+def sl1_forbidden_expanded_paths_refused_by_check_run_meta():
+    """DL-24 G3, check-run-meta's side: the expanded --teacher-ckpt is checked before the run's record is read."""
+    home = TMP / "nowhere_latest_home"
+    good_run = TMP / "profile" / "sl1_run_home"
+    good_run.mkdir(parents=True, exist_ok=True)
+    with probe_recorder(home) as seen, env_set({"HOME": str(home)}):
+        rc, res, _ = ev_main(profile_argv(good_run, **{"--teacher-ckpt": "~/iter_24000.pth"}))
+    check("sl1_forbidden_expanded_paths_refused_by_check_run_meta",
+          rc == 2 and "[teacher_forbidden_path]" in res and not seen and not home.exists(), f"{rc} {res[:90]}")
+
+
 # ---------------------------------------------------------------- profile: scripts/e6kd_eval.py check-run-meta
 REAL_PROFILE = EV.e6kd_profile_mismatches
 

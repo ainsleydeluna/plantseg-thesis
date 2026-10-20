@@ -358,9 +358,9 @@ def teacher_of_record(path, expect_sha256, *, builder=None):
     built from the default teacher config and loaded strictly on the CPU (src/distill/teacher.py
     load_frozen_teacher), then its identity checked as scripts/preflight_distill.py checks it."""
     pd = preflight_distill()
-    if path and Q.names_test(path):
-        _refuse("teacher_forbidden_path", f"--teacher-ckpt {path!r}: its given or resolved form holds a name SL-1 "
-                                          "forbids; refused before any filesystem call")
+    if path and (Q.names_test(path) or Q.names_test(Path(path).expanduser())):
+        _refuse("teacher_forbidden_path", f"--teacher-ckpt {path!r}: its given, expanded or resolved form holds a name "
+                                          "SL-1 forbids; refused before any filesystem call")
     if not isinstance(expect_sha256, str) or not _HEX64.match(expect_sha256):
         _refuse("teacher_sha256_format", "--teacher-ckpt-sha256 must be 64 lowercase hex characters")
     if expect_sha256 != pd.TEACHER_SHA256:
