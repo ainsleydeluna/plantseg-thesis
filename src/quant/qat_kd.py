@@ -933,8 +933,9 @@ def real_run_gates(args, stage: dict, *, repo_root: Path = REPO, teacher_builder
         _refuse("expect_head_format", "--expect-head must be the 40-hex commit of the checkout")
     if args.seed != SEED:
         _refuse("seed_not_42", f"--seed {args.seed!r}: E6-KD runs at seed {SEED} only (AM-3)")
-    if args.num_workers is None or args.num_workers < 1:
-        _refuse("num_workers", "--num-workers must be given and at least 1")
+    if args.num_workers != preflight_distill().NUM_WORKERS:     # the value check-run-meta requires (DL-24 G4)
+        _refuse("num_workers", f"--num-workers {args.num_workers!r}: E6-KD's loader workers are the KD value of "
+                               f"record, {preflight_distill().NUM_WORKERS} (DL-88)")
     # 4. the clip: clip_selection.json's U4 winner (AM-4a item 3)
     clip = Q.clip_binding(stage["name"], args.seed, args.grad_clip_norm, u4_pilot=False,
                           clip_selection=args.clip_selection, clip_selection_sha256=args.clip_selection_sha256)

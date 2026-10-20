@@ -1747,6 +1747,8 @@ GATE_CASES = [
     ("gate_refuses_seed_43", "seed_not_42", lambda: {"argv": argv_set(base_argv(), "--seed", "43")}),
     ("gate_refuses_seed_44", "seed_not_42", lambda: {"argv": argv_set(base_argv(), "--seed", "44")}),
     ("gate_refuses_num_workers_0", "num_workers", lambda: {"argv": argv_set(base_argv(), "--num-workers", "0")}),
+    # the KD value of record, which check-run-meta requires (DL-88; DL-24 G4)
+    ("gate_refuses_num_workers_8", "num_workers", lambda: {"argv": argv_set(base_argv(), "--num-workers", "8")}),
     ("gate_refuses_u4_pilot_flag", "usage", lambda: {"argv": base_argv() + ["--u4-pilot"]}),
     # 4-5: the clip of record and the λ/α selections (src/quant/qat.py, reused)
     ("gate_refuses_clip_not_the_winner", "clip_selection_winner_mismatch",
