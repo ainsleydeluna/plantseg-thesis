@@ -2422,7 +2422,7 @@ PROFILE_STOPS = [
      "cwd_projection_loaded"),
     ("profile_stops_on_parent_not_alpha_winner",
      lambda: mismatches(set_row(parent={**kd_row()["parent"], "run_id": "e3_s42_lambda0.5_alpha25_80k_a2"})),
-     "e6kd_binding"),
+     ("e6kd_binding", "parent_run_id_mismatch")),
     ("profile_stops_on_lambda_selection_sha256",
      lambda: mismatches(set_row(e6_selections={**kd_row()["e6_selections"],
                                                "lambda_selection": {"sha256": "0" * 64}})),
@@ -2432,10 +2432,15 @@ PROFILE_STOPS = [
 ]
 
 
-def register_profile_stop(name: str, make, key: str) -> None:
+def register_profile_stop(name: str, make, key) -> None:
+    """`key` is the mismatch key, or (key, refusal code) where two rules record under one key: e6kd_binding holds
+    e6_parent_binding's refusals and trigger_binding's (DL-24 SM1)."""
+    key, code = key if isinstance(key, tuple) else (key, None)
+
     def fn():
         bad = make()
-        check(name, key in bad, f"{sorted(bad)}")
+        got = (bad.get(key) or (None,))[0] if code is not None else None
+        check(name, key in bad and got == code, f"{sorted(bad)}" + (f" code {got}" if code is not None else ""))
     CASES.append((name, "profile", fn))
 
 
