@@ -372,6 +372,13 @@ def cmd_selfcheck() -> int:
                    "0" * 64])
     check("selfcheck_run_refuses_forbidden_path", rc == 2 and "[forbidden_path]" in buf.getvalue()
           and not (TMP / "nowhere_latest_e3").exists(), buf.getvalue().strip()[-120:])
+    buf = io.StringIO()                                     # the teacher's flag alone (DL-24 SM6)
+    with contextlib.redirect_stdout(buf):
+        rc = main(["run", "--source-run-dir", str(TMP / "e3_run"), "--expect-source-sha256", "0" * 64,
+                   "--projection-sha256", "0" * 64, "--teacher-ckpt", str(TMP / "nowhere_latest_t" / "iter_24000.pth"),
+                   "--teacher-ckpt-sha256", "0" * 64])
+    check("selfcheck_run_refuses_forbidden_teacher_path", rc == 2 and "[forbidden_path] -- --teacher-ckpt"
+          in buf.getvalue() and not (TMP / "nowhere_latest_t").exists(), buf.getvalue().strip()[-120:])
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         rc = main(["run", "--source-run-dir", str(TMP / "e3_run"), "--expect-source-sha256", "0" * 64,
