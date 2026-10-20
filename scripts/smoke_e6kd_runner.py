@@ -1933,6 +1933,11 @@ RUN_CASES = [
      lambda: (real_args("r05", inject={"loss_nan": [3]}, device="cpu"), {})),
     ("run_refuses_step_cap_in_real", "real_run_overrides", lambda: (real_args("r06", max_steps=2, device="cpu"), {})),
     ("run_refuses_val_cap_in_real", "real_run_overrides", lambda: (real_args("r07", max_val_batches=1, device="cpu"), {})),
+    # DL-24 T2: a cap of 0 is a cap too
+    ("run_refuses_zero_step_cap_in_real", "real_run_overrides",
+     lambda: (real_args("r27", max_steps=0, device="cpu"), {})),
+    ("run_refuses_zero_val_cap_in_real", "real_run_overrides",
+     lambda: (real_args("r28", max_val_batches=0, device="cpu"), {})),
     ("run_refuses_clip_source_in_real", "clip_source", lambda: (real_args("r08", clip_source="smoke"), {})),
     ("run_refuses_config_pins", "config_pins",
      lambda: (run_args("r09"), {(Q, "config_pins_error"): lambda: "configs/quant.py qat.epochs = 14 (smoke)"})),

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Lane L-AM3, B-1: the mutation smoke of the AM-3 trigger. MT1-MT19 and the refusal table of
 src/quant/e6kd_trigger.py, each killed by a named check of scripts/smoke_e6kd_trigger.py.
-Lane L-AM3, B-2: E6-KD. MK1-MK45 and the refusal tables of src/quant/qat_kd.py and scripts/e6kd_eval.py, each killed
+Lane L-AM3, B-2: E6-KD. MK1-MK46 and the refusal tables of src/quant/qat_kd.py and scripts/e6kd_eval.py, each killed
 by a named check of scripts/smoke_e6kd_runner.py or scripts/smoke_e6kd_selection.py.
 
 Q2's harness, scripts/smoke_qat_mutations.py, runs it unchanged:
@@ -288,6 +288,11 @@ MUTATIONS = [
     M("MK45", "a generic abort's readings guarded too, a failed reading read as non-finite (DL-24 T1)", QKD,
       "        guarded = rule == EXCEPTION_RULE\n", "        guarded = True\n",
       kcase("abort_generic_reading_failure_is_exception"), "abort_generic_reading_failure_is_exception"),
+    M("MK46", "a step or VAL cap of 0 accepted in a real run (DL-24 T2)", QKD,
+      "or max_steps is not None\n                           or max_val_batches is not None):",
+      "or max_steps\n                           or max_val_batches):",
+      kcase("run_refuses_zero_step_cap_in_real", "run_refuses_zero_val_cap_in_real"),
+      "run_refuses_zero_step_cap_in_real", "run_refuses_zero_val_cap_in_real"),
 ]
 
 # the refusal tables: every refusal, STOP and incomplete site of each module, each with the case that reaches it
@@ -410,7 +415,8 @@ KILLS.update(dict([
     KK(QKD, "run_qat_kd", "stage_not_qat_kd", "run_refuses_stage_not_qat_kd"),
     KK(QKD, "run_qat_kd", "mode_invalid", "run_refuses_mode"),
     KK(QKD, "run_qat_kd", "real_run_overrides", "run_refuses_loaders_in_real", "run_refuses_hooks_in_real",
-       "run_refuses_injection_in_real", "run_refuses_step_cap_in_real", "run_refuses_val_cap_in_real"),
+       "run_refuses_injection_in_real", "run_refuses_step_cap_in_real", "run_refuses_val_cap_in_real",
+       "run_refuses_zero_step_cap_in_real", "run_refuses_zero_val_cap_in_real"),
     KK(QKD, "run_qat_kd", "clip_source", "run_refuses_clip_source_in_real"),
     KK(QKD, "run_qat_kd", "config_pins", "run_refuses_config_pins"),
     KK(QKD, "run_qat_kd", "grad_clip_norm_invalid", "run_refuses_bad_clip"),
@@ -461,7 +467,7 @@ KILLS.update(dict([
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--only", default=None, help="comma-separated job ids (MT1, ..., or file:function:code#k)")
-    ap.add_argument("--no-refusals", action="store_true", help="MT1-MT19 and MK1-MK45 only")
+    ap.add_argument("--no-refusals", action="store_true", help="MT1-MT19 and MK1-MK46 only")
     ap.add_argument("--workers", type=int, default=2, help="shadows edited and run in parallel")
     ap.add_argument("--keep-shadow", action="store_true")
     ap.add_argument("--self-check", action="store_true",
@@ -492,7 +498,7 @@ def main() -> int:
             shutil.rmtree(root, ignore_errors=True)
         raise
     print("=" * 78)
-    print("E6-KD MUTATION SMOKE (lane L-AM3, B-1 and B-2) -- MT1-MT19, MK1-MK45 and the refusal tables, each killed "
+    print("E6-KD MUTATION SMOKE (lane L-AM3, B-1 and B-2) -- MT1-MT19, MK1-MK46 and the refusal tables, each killed "
           "by a named check")
     print(f"{len(jobs)} edits | {len(SHADOW_PATHS)} shadow files x {len(shadows)} at {head} | temp {root}")
     print("=" * 78)

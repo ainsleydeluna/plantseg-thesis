@@ -423,8 +423,8 @@ def run_qat_kd(*, mode: str, model: nn.Module, teacher, projection: nn.Module, w
     if unknown:
         raise ValueError(f"unknown injections {unknown}; the smokes' injections are {INJECTIONS}")
     inj = {k: {int(s) for s in (inject or {}).get(k, ())} for k in INJECTIONS}
-    if mode == "real" and (loaders is not None or hooks is not None or any(inj.values()) or max_steps
-                           or max_val_batches):
+    if mode == "real" and (loaders is not None or hooks is not None or any(inj.values()) or max_steps is not None
+                           or max_val_batches is not None):
         _refuse("real_run_overrides", "a real run takes no injected loaders, hooks, injections, step cap or VAL cap")
     if mode == "real" and clip_source != "clip_selection":
         _refuse("clip_source", f"E6-KD's clip is the U4 winner bound at launch (AM-4a item 3), not {clip_source!r}")
