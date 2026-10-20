@@ -141,7 +141,10 @@ _PD: dict = {}
 
 def preflight_distill():
     """scripts/preflight_distill.py, loaded once by file location (its own pattern for the E1 gate): the KD image and
-    the teacher of record with their values (DL-87, DL-88). Only its definitions run."""
+    the teacher of record with their values (DL-87, DL-88). Its module level runs once: its definitions, and the
+    bytecode settings it and scripts/preflight_e1_trainval.py make for the process and its children
+    (sys.dont_write_bytecode, PYTHONDONTWRITEBYTECODE); they only stop .pyc writes, as the launch's python -B does,
+    and no record reads them (DL-24 G5)."""
     if "mod" not in _PD:
         spec = importlib.util.spec_from_file_location("preflight_distill", str(REPO / "scripts" / "preflight_distill.py"))
         mod = importlib.util.module_from_spec(spec)
