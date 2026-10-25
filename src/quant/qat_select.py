@@ -14,7 +14,7 @@
                       (|Fraction(a) - Fraction(b)| <= 1/1000), goes to 5.0
 
 The rules are configs/qat_selection_rules.json (E5, E6) or, for AM-23's stages, configs/qat_selection_rules_am23.json
-(RULES_FILES), checked against configs/quant.py. Every input is
+or, for E6-KD, configs/e6kd_selection_rules.json (RULES_FILES), checked against configs/quant.py. Every input is
 re-verified from disk: the run's record (AM-19), every checkpoint's sha256 and state, the conversion and
 score records, and for each scored epoch the chain checkpoint -> provenance -> TorchScript identity ->
 evaluator summary. Every refusal is named; a selection is written once.
@@ -41,6 +41,7 @@ RULES_PATH = REPO / "configs" / "qat_selection_rules.json"
 RULES_FILES = {
     "configs/qat_selection_rules.json": {"stages": ["E5", "E6"], "qat_clip": True},
     "configs/qat_selection_rules_am23.json": {"stages": ["E6-E2", "E6-R1", "E6-R2"], "qat_clip": False},
+    "configs/e6kd_selection_rules.json": {"stages": ["E6-KD"], "qat_clip": False},
 }
 RULES_FORMAT = "qat_selection_rules/1"
 EPOCH_SELECTION_FORMAT = "qat_selection/1"
@@ -117,7 +118,7 @@ def load_rules(path=RULES_PATH) -> tuple[dict, str]:
                      ("qat_clip", "seed"): pilot["seed"], ("qat_clip", "tie"): 5.0,
                      ("qat_clip", "band", "numerator"): 1, ("qat_clip", "band", "denominator"): 1000,
                      ("qat_clip", "inherited_by"): list(pilot["inherited_by"])})
-    else:                                                # AM-23's file: the clip stays Q2's (AM-4a item 3)
+    else:                                                # AM-23's and E6-KD's files: the clip is Q2's (AM-4a item 3)
         want[("qat_clip",)] = None
     wrong = {".".join(k): _get(rules, ".".join(k)) for k, v in want.items() if _get(rules, ".".join(k)) != v}
     if pilot["tie_band"] != "1/1000":

@@ -1814,7 +1814,7 @@ def _x86_lists():
 # ================================================================== s10: the evaluation tables and refusals
 @case("s10_stages_appended")
 def _s10_stages():
-    return ART.STAGES == ARTIFACT_STAGES_AT_O + AM23, str(ART.STAGES)
+    return ART.STAGES == ARTIFACT_STAGES_AT_O + AM23 + ("E6-KD",), str(ART.STAGES)
 
 
 @case("s10_stage_artifact_rows")
@@ -1827,12 +1827,12 @@ def _s10_rows():
 
 @case("s10_projection_free_tuple")
 def _s10_pf():
-    return SA.PROJECTION_FREE_STAGES == ("E6", "E7") + AM23, str(SA.PROJECTION_FREE_STAGES)
+    return SA.PROJECTION_FREE_STAGES == ("E6", "E7") + AM23 + ("E6-KD",), str(SA.PROJECTION_FREE_STAGES)
 
 
 @case("s10_descriptive_only_tuple")
 def _s10_desc():
-    return (SA.DESCRIPTIVE_ONLY_STAGES == ("TEACHER", "A", "F", "G") + AM23
+    return (SA.DESCRIPTIVE_ONLY_STAGES == ("TEACHER", "A", "F", "G") + AM23 + ("E6-KD",)
             and all(SA.is_descriptive_only(s) for s in AM23)
             and not any(SA.is_descriptive_only(s) for s in ("E4", "E5", "E6", "E7"))), str(SA.DESCRIPTIVE_ONLY_STAGES)
 
@@ -1840,7 +1840,7 @@ def _s10_desc():
 @case("s10_em_choices_are_the_stages")
 def _s10_choices():
     choices = next(a.choices for a in EM.build_parser()._actions if a.dest == "stage")
-    return list(choices) == list(ART.STAGES) == list(ARTIFACT_STAGES_AT_O + AM23), str(choices)
+    return list(choices) == list(ART.STAGES) == list(ARTIFACT_STAGES_AT_O + AM23 + ("E6-KD",)), str(choices)
 
 
 @case("s10_em_parses_each")

@@ -188,8 +188,9 @@ def test_shared_calibration() -> None:
 
 
 # ---------------------------------------------------------------- 4. E6/E7 preparation routing
-# Tools, not launchers (ruling AQ30): L-AM3 B-1's e6kd_trigger.py and L-AM23Q B-1's e6x_condition.py.
-TOOL_SCRIPTS = frozenset({"e6kd_trigger.py", "e6x_condition.py"})
+# Tools, not launchers (ruling AQ30): L-AM3 B-1's e6kd_trigger.py, L-AM23Q B-1's e6x_condition.py and L-AM3 B-2's
+# e6kd_eval.py.
+TOOL_SCRIPTS = frozenset({"e6kd_trigger.py", "e6x_condition.py", "e6kd_eval.py"})
 
 
 def test_stage_preparation() -> None:
