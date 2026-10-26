@@ -428,6 +428,11 @@ def test_official() -> None:
     args = eval_parser().parse_args(["--stage", "E4", "--precision", "int8_ptq", "--provenance", str(prov),
                                      "--split", "test", "--confirm-test-split", "--artifact-status",
                                      "official", "--batch-size", "1", "--device", "cpu",
+                                     # IF-T1's flags (lane LEFF B-1b), so the run still reaches the list gate
+                                     "--expected-checkpoint-sha256", hashlib.sha256(prov.read_bytes()).hexdigest(),
+                                     "--expected-converted-sha256",
+                                     json.loads(prov.read_text(encoding="utf-8"))["converted_artifact_sha256"],
+                                     "--threads", str(torch.get_num_threads()),
                                      "--out-dir", str(BASE / "official_refused")])
     counters = Counters(dataset=[], model=[])
     try:
