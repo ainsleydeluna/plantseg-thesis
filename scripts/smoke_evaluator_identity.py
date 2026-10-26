@@ -699,7 +699,7 @@ def _absent_nothing_hashed(EM):
 # ---------------------------------------------------------------- threads (5)
 @check("threads_applied_before_any_model", "threads")
 def _threads_before_build(EM):
-    t, probes = other_threads(), {}
+    base, t, probes = torch.get_num_threads(), other_threads(), {}
 
     def probe(fn, key):
         return counted(fn, probes, key, probe=torch.get_num_threads)
@@ -711,10 +711,13 @@ def _threads_before_build(EM):
             patched(ML, load_student_checkpoint=probe(ML.load_student_checkpoint, "load_student_checkpoint"),
                     load_teacher_model=probe(ML.load_teacher_model, "load_teacher_model"),
                     load_int8_student=probe(ML.load_int8_student, "load_int8_student")):
-        runs = [run_em(EM, fp32_argv(F["fp32"], new_out("threads_fp32"), "--threads", str(t))),
-                run_em(EM, int8_argv(F["e4_prov"], new_out("threads_int8"), "--threads", str(t))),
-                run_em(EM, teacher_argv(F["teacher"], F["teacher_sha"], new_out("threads_teacher"), "--threads",
-                                        str(t)), teacher=True)]
+        runs = []
+        for argv, is_teacher in ((fp32_argv(F["fp32"], new_out("threads_fp32"), "--threads", str(t)), False),
+                                 (int8_argv(F["e4_prov"], new_out("threads_int8"), "--threads", str(t)), False),
+                                 (teacher_argv(F["teacher"], F["teacher_sha"], new_out("threads_teacher"),
+                                               "--threads", str(t)), True)):
+            torch.set_num_threads(base)        # each run starts from a count other than T (DL-24 R4-1)
+            runs.append(run_em(EM, argv, teacher=is_teacher))
     sites = ("load_class_map", "adapter", "validate_fp32_artifact", "validate_teacher_artifact",
              "resolve_evaluation_source", "load_student_checkpoint", "load_teacher_model", "load_int8_student")
     ok = (all(scored(r) for r in runs) and set(probes) == set(sites)
@@ -751,9 +754,13 @@ def _threads_drift(EM):
 
 @check("threads_recorded_in_eval_runtime", "threads")
 def _threads_recorded(EM):
-    t = other_threads()
-    runs = [run_em(EM, fp32_argv(F["fp32"], new_out("recorded_fp32"), "--threads", str(t))),
-            run_em(EM, int8_argv(F["e4_prov"], new_out("recorded_int8"), "--threads", str(t)))]
+    base, t, runs = torch.get_num_threads(), other_threads(), []
+    for argv, is_teacher in ((fp32_argv(F["fp32"], new_out("recorded_fp32"), "--threads", str(t)), False),
+                             (int8_argv(F["e4_prov"], new_out("recorded_int8"), "--threads", str(t)), False),
+                             (teacher_argv(F["teacher"], F["teacher_sha"], new_out("recorded_teacher"),
+                                           "--threads", str(t)), True)):
+        torch.set_num_threads(base)            # each run starts from a count other than T (DL-24 R4-1)
+        runs.append(run_em(EM, argv, teacher=is_teacher))
     got = [summary(r[0])["run"]["eval_runtime"]["torch_num_threads"] if scored(r) else code_of(r[1]) for r in runs]
     return all(g == t for g in got), f"T={t}; recorded {got}"
 
@@ -805,10 +812,15 @@ def _repo_unchanged(EM):
     return verdict == "unchanged", verdict
 
 
+def forbidden_names() -> list[str]:
+    """Every name under the smoke's temp dir that holds the SL-1 token (any case) or ':'."""
+    return [os.path.join(d, n) for d, dirs, files in os.walk(BASE) for n in dirs + files
+            if TOKEN in n.lower() or ":" in n]
+
+
 @check("no_forbidden_named_path_created", "layout")
 def _no_forbidden_names(EM):
-    bad = [os.path.join(d, n) for d, dirs, files in os.walk(BASE) for n in dirs + files
-           if TOKEN in n.lower() or ":" in n]
+    bad = forbidden_names()
     return not bad and not NEVER.exists(), f"{len(bad)} forbidden names; never-created root exists: {NEVER.exists()}"
 
 
@@ -1008,6 +1020,9 @@ def mutations() -> list[tuple[str, str, list[tuple[str, str]], str]]:
         ("M20", "one message's text changed",
          [('f"{expected}; the file was not parsed")', 'f"{expected}; the file was never parsed")')],
          "messages_verbatim"),
+        ("M21", "--threads applied to FP32 students only (DL-24 R4-1)",
+         [(T_LINE, '    threads = apply_threads(args) if args.precision == "fp32" and args.model_role == "student" '
+                   'else None\n')], "threads_applied_before_any_model"),
     ]
 
 
@@ -1058,7 +1073,7 @@ def main() -> int:
     real_git = (ART.git_porcelain_bytes, ART.git_commit)
     ART.git_porcelain_bytes = lambda repo: b""
     ART.git_commit = lambda repo: "0" * 40
-    results, killed, edits, end_state = [], 0, [], None
+    results, killed, edits, end_state, end_names = [], 0, [], None, None
     try:
         build_fixtures()
         for name, group, fn in CHECKS:
@@ -1079,7 +1094,9 @@ def main() -> int:
                 killed += not ok
                 print(f"  {mid:4} {what:52}: {'KILLED' if not ok else 'SURVIVED'} by {target}  ({detail[:120]})")
             end_state = state_verdict(STATE_BEFORE, repo_state(REPO))
-            print(f"\n  repository after the mutations: {end_state}")
+            end_names = forbidden_names()      # the mutations' own paths too (DL-24 R4-2)
+            print(f"\n  repository after the mutations: {end_state}; forbidden names in the temp dir: "
+                  f"{len(end_names)}")
     finally:
         ART.git_porcelain_bytes, ART.git_commit = real_git
     passed, n = sum(ok for _, ok in results), len(results)
@@ -1087,7 +1104,7 @@ def main() -> int:
         ok_all = passed == n
         print(f"\nRESULT: {'PASS' if ok_all else 'FAIL'} ({passed}/{n})")
     else:
-        ok_all = passed == n and killed == len(edits) and end_state == "unchanged"
+        ok_all = passed == n and killed == len(edits) and end_state == "unchanged" and not end_names
         print(f"\nRESULT: {'PASS' if ok_all else 'FAIL'} ({passed}/{n}; {killed}/{len(edits)} edits killed)")
     return 0 if ok_all else 1
 
