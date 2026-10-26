@@ -30,6 +30,8 @@ fbgemm/x86 copy with `reduce_range=True` is the x86 CPU-proxy latency artifact (
 """
 from __future__ import annotations
 
+import hashlib
+import io
 import platform
 import sys
 from pathlib import Path
@@ -72,8 +74,19 @@ CPU_PROXY = True
 ON_DEVICE = False
 MEASUREMENT_ROLE = "descriptive"
 
-STAGES = ("teacher", "E1", "E2", "E3", "E4", "E5", "E6", "E7")
+STAGES = ("teacher", "E1", "E2", "E3", "A", "F", "G", "E4", "E5", "E6", "E7")
 INT8_STAGES = ("E4", "E5", "E6", "E7")
+# The stages Chapter 4 reports an efficiency quantity for (LEFF-AUDIT-RULE-1 A1; TL §9). The exploratory arms A, F
+# and G are in STAGES so the resolver's checks (DL-52) apply to them (E-35); the run of record refuses them. E6-KD
+# and AM-23's descriptive quantizations (E6-E2, E7-E2, E6-R1, E6-R2) are in neither (A1; AM-23 items 1 and 3(f)).
+EFFICIENCY_ANALYSIS_STAGES = ("teacher", "E1", "E2", "E3", "E4", "E5", "E6", "E7")
+
+# Which count a record's footprint reports (LEFF-AUDIT-RULE-1 A13): an INT8 artifact's own packed params, or its
+# state_dict companion when a packed-params object cannot be unpacked (named in the record, never silent); an FP32
+# stage's loaded model.
+FOOTPRINT_SOURCE_ARTIFACT = "artifact"
+FOOTPRINT_SOURCE_COMPANION = "state_dict_companion"
+FOOTPRINT_SOURCE_MODEL = "model"
 
 
 class EfficiencyError(RuntimeError):
@@ -97,8 +110,17 @@ def count_parameters(model) -> dict:
 
 
 def is_quantized(model) -> bool:
-    """True when any submodule holds packed INT8 parameters."""
+    """True when any submodule holds packed INT8 parameters or is a converted quantized module.
+
+    FloatFunctional is torch.ao.nn.quantized's FLOAT placeholder, which convert() turns into QFunctional. The FP32
+    student holds such modules (src/models/student.py :20, :89-90), so they are skipped here: otherwise every FP32
+    student counted as quantized and its parameter and FLOP counts were refused.
+    """
+    from torch.ao.nn.quantized import FloatFunctional
+
     for mod in model.modules():
+        if isinstance(mod, FloatFunctional):
+            continue
         if hasattr(mod, "_packed_params") or ".quantized" in type(mod).__module__:
             return True
     return False
@@ -204,6 +226,78 @@ def weight_footprint(model) -> dict:
     return footprint_from_counts(int(int8_elements), int(fp32_elements), int(metadata_elements))
 
 
+def _packed_params_type(packed) -> str:
+    try:
+        return packed._type().qualified_name()
+    except Exception:                              # noqa: BLE001 - a name for the record only
+        return type(packed).__name__
+
+
+def _unpack_packed_params(packed):
+    """(weight, bias) of one packed-params object: conv2d_unpack (src/quant/ptq.py :484-496), then linear_unpack."""
+    errors = []
+    for op in (torch.ops.quantized.conv2d_unpack, torch.ops.quantized.linear_unpack):
+        try:
+            return op(packed)
+        except Exception as e:                     # noqa: BLE001 - every attempt is recorded by the caller
+            errors.append(f"{type(e).__name__}: {str(e).splitlines()[0][:120] if str(e) else ''}")
+    raise ValueError("; ".join(errors))
+
+
+def packed_params_footprint(module) -> dict:
+    """Weight footprint of an INT8 TorchScript artifact, read from the artifact's own packed params (A13; F4).
+
+    A traced submodule keeps its `_packed_params` but no `weight()`/`bias()` method, so `weight_footprint` counts no
+    INT8 weight on it (F4). Here every packed-params object is unpacked through the quantized ops, as
+    src/quant/ptq.py's weight_scheme_report reads the weights inside an artifact file, and counted with
+    weight_footprint's rules (INT8 elements; scale and zero-point per channel or per tensor; bias). FP32 parameters of
+    the other submodules are counted as weight_footprint counts them. A packed-params object that neither op unpacks
+    is listed under `packed_params_unreadable`, never skipped silently: the caller then reports the state_dict
+    companion's count and names it (LF26).
+    """
+    if not isinstance(module, torch.jit.ScriptModule):
+        raise TypeError(f"packed_params_footprint reads a TorchScript module, got {type(module).__name__}")
+    int8_elements = fp32_elements = metadata_elements = 0
+    unpacked, unreadable, seen = 0, [], set()
+    for name, mod in module.named_modules():
+        c = mod._c
+        packed = c.getattr("_packed_params") if c.hasattr("_packed_params") else None
+        if isinstance(packed, torch._C.ScriptModule):
+            continue                               # a quantized Linear's packed-params submodule: counted on its own
+        if packed is not None:
+            try:
+                weight, bias = _unpack_packed_params(packed)
+            except ValueError as e:
+                unreadable.append({"module": name or "<root>", "type": _packed_params_type(packed), "error": str(e)})
+                continue
+            unpacked += 1
+            int8_elements += weight.numel()
+            channels = weight.shape[0] if weight.dim() > 0 else 1
+            per_channel = weight.qscheme() in (torch.per_channel_affine, torch.per_channel_symmetric)
+            metadata_elements += 2 * (channels if per_channel else 1)
+            if torch.is_tensor(bias):
+                metadata_elements += bias.numel()
+            continue
+        for pname, param in mod.named_parameters(recurse=False):
+            key = (param.data_ptr(), tuple(param.shape), str(param.dtype))
+            if key in seen:
+                continue
+            seen.add(key)
+            if pname == "bias":
+                metadata_elements += param.numel()
+            else:
+                fp32_elements += param.numel()
+    counts = footprint_from_counts(int(int8_elements), int(fp32_elements), int(metadata_elements))
+    counts.update({"counted_from": "artifact_packed_params", "packed_params_unpacked": unpacked,
+                   "packed_params_unreadable": unreadable})
+    return counts
+
+
+def footprint_counts_equal(a: dict, b: dict) -> bool:
+    """Two footprints count the same INT8, FP32 and metadata elements (the artifact vs its state_dict companion)."""
+    return all(a[k] == b[k] for k in ("int8_weight_elements", "fp32_weight_elements", "metadata_elements"))
+
+
 def serialized_artifact(path) -> dict:
     """Physical on-disk bytes of the deployable artifact actually being measured."""
     p = Path(path)
@@ -216,6 +310,51 @@ def serialized_artifact(path) -> dict:
         "serialized_artifact_mib": size / (1024 ** 2),   # MiB = 1024^2, stated explicitly
         "size_convention": "bytes canonical; MiB = bytes / 1024^2",
         "sha256": sha256_file(p),
+    }
+
+
+def model_only_serialization(path, *, expected_sha256: str, teacher: bool = False) -> dict:
+    """The model-only serialization of an FP32 checkpoint file: a LABELLED COMPANION to its serialized size.
+
+    The serialized size of an FP32 stage is its checkpoint file (the which-artifact rule), which also holds the
+    optimizer state (F5; for the teacher's file INFERRED until LB-1 reads its keys, which this records). This is the
+    like-for-like number beside it (LEFF-AUDIT-RULE-1 Q7): the model state alone - a student checkpoint's
+    `model_state_dict`, a teacher checkpoint's `state_dict` read as src.distill.segnext_teacher reads it - written by
+    torch.save to memory and counted (deterministic for one torch build). The bytes are hashed and compared with the
+    validated sha256 before they are parsed, so the companion measures exactly the file of record.
+    """
+    p = Path(path)
+    if not p.is_file():
+        _fail("artifact_missing", f"serialized artifact not found: {p}")
+    raw = p.read_bytes()
+    digest = hashlib.sha256(raw).hexdigest()
+    if digest != expected_sha256:
+        _fail("checkpoint_changed_after_validation",
+              f"checkpoint bytes changed between validation ({expected_sha256}) and the size companion's read "
+              f"({digest}); the file was not parsed")
+    payload = torch.load(io.BytesIO(raw), map_location="cpu", weights_only=False)
+    if teacher:
+        key = "state_dict" if "state_dict" in payload else None
+        state = payload[key] if key else payload
+    else:
+        key = "model_state_dict"
+        state = payload[key]
+    buf = io.BytesIO()
+    torch.save(state, buf)
+    size = len(buf.getbuffer())
+    container = sorted(str(k) for k in payload) if key else None
+    return {
+        "model_only_serialized_bytes": int(size),
+        "model_only_serialized_mib": size / (1024 ** 2),
+        "state_key": key,
+        "checkpoint_top_level_keys": container,
+        "checkpoint_holds_optimizer_state": (any("optimizer" in k for k in container) if container is not None
+                                             else False),
+        "source_sha256": digest,
+        "source_bytes": len(raw),
+        "role": ("labelled companion: the model state alone, torch.save to memory; the serialized size of record is "
+                 "the checkpoint file (serialized_artifact_bytes)"),
+        "deterministic_for": "one torch build",
     }
 
 
@@ -486,8 +625,13 @@ def environment() -> dict:
 
 
 def provenance(*, stage: str, model_role: str, precision: str, artifact_role: str,
-               backend: str | None, source_path=None, source_sha256: str | None = None) -> dict:
-    """Identify EXACTLY which artifact produced a measurement. Never pool two unidentified ones."""
+               backend: str | None, source_path=None, source_sha256: str | None = None,
+               expected_sha256: str | None = None) -> dict:
+    """Identify EXACTLY which artifact produced a measurement. Never pool two unidentified ones.
+
+    `source_artifact_sha256` is the resolver's own hash of the file; `expected_sha256` the value the operator named
+    for it (the teacher's --teacher-ckpt-sha256, DL-59), None when none was named.
+    """
     if stage not in STAGES:
         _fail("unknown_stage", f"stage must be one of {STAGES}, got {stage!r}")
     return {
@@ -498,6 +642,7 @@ def provenance(*, stage: str, model_role: str, precision: str, artifact_role: st
         "backend": backend,
         "source_artifact_path": str(source_path) if source_path else None,
         "source_artifact_sha256": source_sha256,
+        "expected_sha256": expected_sha256,
         "input_shape": list(INPUT_SHAPE),
         "batch_size": BATCH_SIZE,
         "environment": environment(),

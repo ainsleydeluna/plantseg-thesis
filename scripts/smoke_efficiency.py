@@ -77,7 +77,7 @@ class FakePackedNet(torch.nn.Module):
 # ---------------------------------------------------------------- 1. resolution
 def test_resolution() -> None:
     kinds = {s: resolve_stage_artifact(s)["kind"] for s in eff.STAGES}
-    check("all_stages_route_through_existing_resolver", len(kinds) == 8,
+    check("all_stages_route_through_existing_resolver", len(kinds) == 11,
           f"{sorted(set(kinds.values()))}")
     check("int8_stages_identified",
           all(kinds[s] == "int8_artifact" for s in eff.INT8_STAGES),
