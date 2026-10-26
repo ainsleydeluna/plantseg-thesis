@@ -1,0 +1,214 @@
+{
+  "arithmetic": "decimal on the recorded values (IC:271's convention): drop = Decimal(repr(e3)) - Decimal(repr(e6)); drop_pp = 100 x drop; triggered iff drop_pp > Decimal('1.0')",
+  "code_clean_at_head": true,
+  "code_files_sha256": {
+    "configs/data.py": "a670f91aa7d6770fa5ead03dd6d67ef839522f41dafffc3692d50026cf7b07e8",
+    "configs/qat_selection_rules.json": "76addc57d0367dda9a1163f749ec32c9c240b20736104dc12aa77488344f9568",
+    "configs/quant.py": "086ccae136a0b4abd14f3cc695757e14197e4ed386069fe9bd7f18877ff21c53",
+    "scripts/e6kd_trigger.py": "9040ca0ed73dbc0486480578bcf66c635f64b998ab9694d6c85196f91214106e",
+    "scripts/evaluate_model.py": "6f55990bf515d0c43bd6a519597ca4e7b4e6b618e6bb6dfb0a107c98f338c27f",
+    "src/data/isolation.py": "74a063313cc04c1e327dce22b0faa4ae3a9334a01e6cf7c58eb1bee13c2e5014",
+    "src/eval/artifacts.py": "540eea7906d29674d9231bcb53758a20a41ee36cd8bfbcf3207db3905e8bf181",
+    "src/eval/metrics.py": "9898d6dc0ec68f15c8c90cebb5889914c0a2de2e3bd409c3fba9ba14e1be86d9",
+    "src/eval/model_loading.py": "0061fcaeb2429834f9d7c7f0d62be5bebce5e049a6ac17f3c93312ba9fdf179e",
+    "src/eval/stage_artifacts.py": "d62d3b197efea0915e882b8ed4927e13fdaac726a95cd08b2f4f892295a5b11d",
+    "src/models/student.py": "b6482f5741fbac035be0829777c822b40a1d854da836889a41eb133104542112",
+    "src/quant/e6kd_trigger.py": "2948a5dea21ba9fb9db0852d93dd239f03b6cb0da049cf30f2c3217ca872e278",
+    "src/quant/prepare.py": "4b82556ae3b2f35b3d93df5294aa7f0eb3c0702a92f82d63f502dedee75da2c4",
+    "src/quant/ptq.py": "c9b97a59ed8225b103fb120a179bd227703df4b8d0b87d8bd2c6b540e1f7f77c",
+    "src/quant/qat.py": "68e221177ba54c5374e94be46e362abd44ffcea37ea7b1a22eb76d6ffcbf2ba8",
+    "src/quant/qat_artifacts.py": "df95d4925bf156c583ab395516af5601c58811502e213524651b7a958ae37c67",
+    "src/quant/qat_select.py": "fa7a21bd7e01d85b27499db11a617bd067df3f27090880e08cd78073c3b1f40f",
+    "src/quant/qconfig.py": "d6ab1f7c01a7252791c1d166327d429ad23a67b9bf71b6d0bfaee64a6bf329d1",
+    "src/quant/runner.py": "0826d46bd7a10d65028837cece512ac6e2c97526cc5c5a3ba1baba8ad4420c8d",
+    "src/quant/stages.py": "1dc0aa6a9f082f7d1e9ac368167af3bbed21a5278243eb6afc8d7d78f713d22e"
+  },
+  "consequence": "E6-KD runs, at seed 42 only (AM-3; DL-07, DL-39, DL-51). Its launch gate reads this file, committed alone (read_trigger_record). E6-KD is descriptive and outside the Holm family.",
+  "cpu_model": "13th Gen Intel(R) Core(TM) i7-1360P",
+  "decision_rule": "strictly_greater",
+  "descriptive": true,
+  "drop": "0.03251960873603821",
+  "drop_pp": "3.25196087360382100",
+  "drop_pp_float": 3.251960873603821,
+  "e3": {
+    "best_json_sha256": "859207d0c12afddc05a79e9468c5a02854c0772c7c7c64931bb0eb2f85a1a77e",
+    "best_json_value_not_used": 0.36337557435035706,
+    "checkpoint": "e3_student_best_iter76000.pt",
+    "checkpoint_sha256": "4baa5bad682995091b66c67fb2d2ce467b3f139e02cc5a5cc62c243fe00f1a0d",
+    "eval_run_id": "e6kd_trigger_e3_4baa5bad6829",
+    "evaluator_command": [
+      "-B",
+      "scripts/evaluate_model.py",
+      "--stage",
+      "E3",
+      "--model-role",
+      "student",
+      "--precision",
+      "fp32",
+      "--split",
+      "val",
+      "--protocol",
+      "canvas",
+      "--checkpoint",
+      "/e3/e3_s42_lambda0.5_alpha25_80k_a1/e3_student_best_iter76000.pt",
+      "--artifact-status",
+      "provisional",
+      "--device",
+      "cpu",
+      "--batch-size",
+      "1",
+      "--out-dir",
+      "/trig/scores/e3",
+      "--run-id",
+      "e6kd_trigger_e3_4baa5bad6829"
+    ],
+    "run_id": "e3_s42_lambda0.5_alpha25_80k_a1",
+    "run_meta_sha256": "ab73e8279bbb2796b4deb5973c9e10f59192254f2c6ada2a3e9bab48a2edd6a3",
+    "summary": {
+      "path": "scores/e3/summary.json",
+      "sha256": "ab9f118b88edfb6bd6295639fec624ce94fb8c831c26f54f1fa22fa32e16d6ab"
+    },
+    "telemetry_sha256": "734417e4b33e64239cebe2485e3eace03a795163b47bf50667517be40c161d2e"
+  },
+  "e3_val": 0.36334073543548584,
+  "e3_val_decimal": "0.36334073543548584",
+  "e6": {
+    "artifact_of_record": {
+      "path": "converted/e15_int8_qnnpack.torchscript.pt",
+      "sha256": "cf14ae0362d07f6a576405320780622f504f1bccd032335c2968c02e37dbb0bb"
+    },
+    "block_b_summary": {
+      "path": "scores/e15/summary.json",
+      "sha256": "3676b11f624cc012aa59c902f77e26bbcae531d35442ae3a4ebf70c644379dba"
+    },
+    "checkpoint_sha256": "74fd438a9e953ce84117a61454b879940b0a6a8f357e7705c22a86ab0ed847a5",
+    "clip_norm": 5.0,
+    "clip_selection_sha256": "c433145a6cfe0e133ebee8fcb70a76f05b60fc6462670abee34c5304704fe698",
+    "epoch": 15,
+    "eval_run_id": "e6kd_trigger_e6_e15_74fd438a9e95",
+    "evaluator_command": [
+      "-B",
+      "scripts/evaluate_model.py",
+      "--stage",
+      "E6",
+      "--model-role",
+      "student",
+      "--precision",
+      "int8_qat",
+      "--split",
+      "val",
+      "--protocol",
+      "canvas",
+      "--provenance",
+      "/evals/e6_s42/converted/e15_run_meta.json",
+      "--artifact-status",
+      "provisional",
+      "--device",
+      "cpu",
+      "--batch-size",
+      "1",
+      "--out-dir",
+      "/trig/scores/e6",
+      "--run-id",
+      "e6kd_trigger_e6_e15_74fd438a9e95"
+    ],
+    "excluded_epochs": [],
+    "provenance": {
+      "path": "converted/e15_run_meta.json",
+      "sha256": "1d50ea8a36c5bef40c887068b95a12dfe99ffba1d0fd492e2c591f4e10e85a13"
+    },
+    "qat_selection": {
+      "path": "qat_selection.json",
+      "sha256": "ce435dea034073a45ae7353846f2c0a84c277e6126a838eb4d36d18de19358eb"
+    },
+    "rescore_equals_selection": true,
+    "rules_sha256": "76addc57d0367dda9a1163f749ec32c9c240b20736104dc12aa77488344f9568",
+    "run_id": "e6_s42_clip5.0_a1",
+    "selection_value": 0.33082112669944763,
+    "summary": {
+      "path": "scores/e6/summary.json",
+      "sha256": "57b77fc8f03a99bd9abeedabefb09a0ee5bf36857d0465a6af9d8d45423c860c"
+    },
+    "telemetry_sha256": "e03ea26e913a052966125e96335dedf80ace5b753cb22afb8486c7f68f23238c"
+  },
+  "e6_val": 0.33082112669944763,
+  "e6_val_decimal": "0.33082112669944763",
+  "format": "e6kd_trigger/1",
+  "git_head": "574e9a0dbd09b64eba2c69948e10a822d36c7a9d",
+  "holm_family": false,
+  "host_label": "desktop-2acijh0",
+  "input_sha256s": {
+    "alpha_selection": "1399b897278db17a8876c724b89c8d8e7a7b42ffe1d9c4d67002578a889f2dd8",
+    "e3_best_json": "859207d0c12afddc05a79e9468c5a02854c0772c7c7c64931bb0eb2f85a1a77e",
+    "e3_checkpoint": "4baa5bad682995091b66c67fb2d2ce467b3f139e02cc5a5cc62c243fe00f1a0d",
+    "e3_run_meta": "ab73e8279bbb2796b4deb5973c9e10f59192254f2c6ada2a3e9bab48a2edd6a3",
+    "e3_telemetry": "734417e4b33e64239cebe2485e3eace03a795163b47bf50667517be40c161d2e",
+    "e3_trigger_summary": "ab9f118b88edfb6bd6295639fec624ce94fb8c831c26f54f1fa22fa32e16d6ab",
+    "e6_artifact_of_record": "cf14ae0362d07f6a576405320780622f504f1bccd032335c2968c02e37dbb0bb",
+    "e6_block_b_summary": "3676b11f624cc012aa59c902f77e26bbcae531d35442ae3a4ebf70c644379dba",
+    "e6_clip_selection": "c433145a6cfe0e133ebee8fcb70a76f05b60fc6462670abee34c5304704fe698",
+    "e6_epoch_checkpoint": "74fd438a9e953ce84117a61454b879940b0a6a8f357e7705c22a86ab0ed847a5",
+    "e6_provenance": "1d50ea8a36c5bef40c887068b95a12dfe99ffba1d0fd492e2c591f4e10e85a13",
+    "e6_qat_selection": "ce435dea034073a45ae7353846f2c0a84c277e6126a838eb4d36d18de19358eb",
+    "e6_telemetry": "e03ea26e913a052966125e96335dedf80ace5b753cb22afb8486c7f68f23238c",
+    "e6_trigger_summary": "57b77fc8f03a99bd9abeedabefb09a0ee5bf36857d0465a6af9d8d45423c860c",
+    "lambda_selection": "719eaa0ae2379633786a545aff087d385b16a6c503cfa445ba456784f2592145",
+    "qat_selection_rules": "76addc57d0367dda9a1163f749ec32c9c240b20736104dc12aa77488344f9568",
+    "trigger_eval": "e7d5820b341f336802685eb1ad77f821d489ade61575f6511e534483e9ccc837"
+  },
+  "lane": "L-AM3 (docs/lane_specs/part2.md lane 7), B-1",
+  "rule": "AM-3 (DL-07): E6-KD runs iff the E3 -> E6 drop in dataset-level VAL all-class mIoU is greater than 1.0 percentage point at seed 42, E6 scored on the converted INT8 model; lane 7: both scored by scripts/evaluate_model.py on the CPU with the canvas protocol, on one code path and one device, never best.json values",
+  "rule_trace": [
+    "rule AM-3 (DL-07): E6-KD runs iff the E3 -> E6 drop in dataset-level VAL all-class mIoU is greater than 1.0 percentage point at seed 42, E6 scored on the converted INT8 model; lane 7: both scored by scripts/evaluate_model.py on the CPU with the canvas protocol, on one code path and one device, never best.json values",
+    "E3 0.36334073543548584: e3_s42_lambda0.5_alpha25_80k_a1 e3_student_best_iter76000.pt (sha256 4baa5bad6829), scored FP32 here (summary ab9f118b88ed); best.json's value 0.36337557435035706 is not used",
+    "E6 0.33082112669944763: e6_s42_clip5.0_a1 epoch 15 (artifact cf14ae0362d0), re-scored here (summary 57b77fc8f03a); equals block B's value 0.33082112669944763 (qat_selection.json ce435dea0340)",
+    "drop = 0.36334073543548584 - 0.33082112669944763 = 0.03251960873603821; drop_pp = 3.25196087360382100",
+    "3.25196087360382100 > 1.0 -> TRIGGERED"
+  ],
+  "same_code_path": {
+    "dataset.class_map_sha256": "d14182423b6f176f940cada979adb364701fe186be091655ce38a80ce791a729",
+    "dataset.preprocess_protocol": "core_preprocess/1.0.0",
+    "dataset.split_manifest_sha256": "35f6788e840a2dc22cf0c5caa552b9c6a85d3dbd1bbbe594c1b52102aa828fa3",
+    "metric_protocol": "plantseg-metrics/1.0.0",
+    "run.env.device": "cpu",
+    "run.env.torch": "2.1.0+cu121",
+    "run.eval_runtime.image_digest": "sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf",
+    "run.eval_runtime.torch_num_threads": 8,
+    "run.metric_impl_sha256": "9898d6dc0ec68f15c8c90cebb5889914c0a2de2e3bd409c3fba9ba14e1be86d9",
+    "run.repo_commit": "574e9a0dbd09b64eba2c69948e10a822d36c7a9d"
+  },
+  "seed": 42,
+  "selections": {
+    "alpha": {
+      "path": "reports/derived/alpha_selection.json",
+      "sha256": "1399b897278db17a8876c724b89c8d8e7a7b42ffe1d9c4d67002578a889f2dd8",
+      "winner": {
+        "alpha": 25.0,
+        "best_val": 0.36337557435035706,
+        "checkpoint_present": true,
+        "ckpt_sha256": "4baa5bad682995091b66c67fb2d2ce467b3f139e02cc5a5cc62c243fe00f1a0d",
+        "run_id": "e3_s42_lambda0.5_alpha25_80k_a1"
+      }
+    },
+    "lambda": {
+      "path": "reports/derived/lambda_selection.json",
+      "sha256": "719eaa0ae2379633786a545aff087d385b16a6c503cfa445ba456784f2592145",
+      "winner": {
+        "best_val": 0.38749080896377563,
+        "checkpoint_present": true,
+        "ckpt_sha256": "73dbc32dfc988124a9b81df24abd97c526f927ac2b094996411d174e89d32f06",
+        "lambda": 0.5,
+        "run_id": "e2_s42_lambda0.5_80k_a1"
+      }
+    }
+  },
+  "smoke_inputs": false,
+  "threshold": 1.0,
+  "threshold_decimal": "1.0",
+  "threshold_unit": "percentage points",
+  "trigger_eval": {
+    "path": "trigger_eval.json",
+    "sha256": "e7d5820b341f336802685eb1ad77f821d489ade61575f6511e534483e9ccc837"
+  },
+  "triggered": true
+}

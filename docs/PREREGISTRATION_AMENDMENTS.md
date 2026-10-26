@@ -35,11 +35,13 @@ leaves the original readable beside it.
 | AM-8a | — (extends AM-8) | Repeat rule for failed runs |
 | AM-4a | — (extends AM-4 and AM-1) | QAT recipe pins, converted-model selection and the U4 clipping pilot (~~DRAFT~~ reported as approved by the adviser in person, DL-83; amended by AM-21) |
 | AM-7a | — (extends AM-7; applies to AM-2, AM-16 items 2–3, AM-17 item 9, AM-8a) | Divergence handling for sweep candidates; pre-committed clipping value (~~DRAFT~~ reported as approved by the adviser in person, DL-83) |
-| AM-18 | — (extends AM-1, AM-7a item 3, AM-8a, AM-13, AM-17 items 1, 9 and 11, AM-17b items 2–4; for KD targets only, conditionally supersedes contract M4's non-adoption of multi-draw averaging) | Teacher diagnostics R0, descriptive arm teachers (R1, R2; B-avg not executable) and KD arms (E3-X, W, conditional K8), go rule, pre-set defect rules (D1, D4), dataset duplicates (DRAFT) |
-| AM-19 | — (amends AM-7, AM-7a items 1–4 and 6, AM-8a and AM-17 item 9; extends AM-1, AM-2, AM-7a item 5, AM-8, AM-16 items 1–3 and its cut rule, AM-17 items 4 and 6, AM-17b item 3 and AM-18 items 1, 2(c), 3, 6 and 7) | Schedule T/R, sweep decision dates, stops, repeats and cut records, card and launch order, runs with a cut or diverged parent, seed-43/44 divergence, seed stability with a missing run, AM-7's consequence under a schedule (DRAFT) |
+| AM-18 | — (extends AM-1, AM-7a item 3, AM-8a, AM-13, AM-17 items 1, 9 and 11, AM-17b items 2–4; for KD targets only, conditionally supersedes contract M4's non-adoption of multi-draw averaging) | Teacher diagnostics R0, descriptive arm teachers (R1, R2; B-avg not executable) and KD arms (E3-X, W, conditional K8), go rule, pre-set defect rules (D1, D4), dataset duplicates (DRAFT; item 3(a) amended for E6 by AM-23) |
+| AM-19 | — (amends AM-7, AM-7a items 1–4 and 6, AM-8a and AM-17 item 9; extends AM-1, AM-2, AM-7a item 5, AM-8, AM-16 items 1–3 and its cut rule, AM-17 items 4 and 6, AM-17b item 3 and AM-18 items 1, 2(c), 3, 6 and 7) | Schedule T/R, sweep decision dates, stops, repeats and cut records, card and launch order, runs with a cut or diverged parent, seed-43/44 divergence, seed stability with a missing run, AM-7's consequence under a schedule (DRAFT; items 1(a), 1(c), 1(d) and 3(b) amended under Schedule T by AM-22; item 4(c) amended for E7-E2 by AM-23) |
 | AM-20 | — (amends AM-18's header request rule and item 6(a)'s availability rule; settles a reading of AM-18 item 6(b)) | The unsent approval request; AM-18 item 6(a) state "no approval"; the 2026-10-05 in-person approval, as reported (DRAFT) |
-| AM-21 | — (amends AM-4a items 2–3; extends AM-19 item 3(a) for E5 and E6 runs) | Non-finite states in QAT runs (DRAFT) |
+| AM-21 | — (amends AM-4a items 2–3; extends AM-19 item 3(a) for E5 and E6 runs) | Non-finite states in QAT runs (DRAFT; items 1(g) and 2(b) amended by AM-23 for AM-23's runs) |
 | AM-19a | — (settles readings of AM-19's Definitions and items 2 and 3) | Readings of AM-19 for the KD sweeps (DRAFT) |
+| AM-22 | — (amends AM-19 items 1(a), 1(c), 1(d) and 3(b) under Schedule T; extends AM-16's cut rule, AM-17 item 9, AM-18 items 2(c), 7(a) and 7(b), and AM-19 items 3(c), 3(d), 4(c), 6(a), 8 and 9) | Early TEST freeze once every registered run is settled; a launch cutoff for cuttable runs (DRAFT) |
+| AM-23 | — (amends AM-18 item 3(a), AM-21 items 1(g) and 2(b) and the seed-42 QAT STOP of AM-22's Definitions for its own runs, and AM-19 item 4(c) for E7-E2; extends AM-4a, AM-10, AM-16 item 4, AM-17b item 4, AM-18 items 3(d), 7(b) and 8(c), AM-19 items 3(d) and 4, and AM-22's Definitions and items 1(a) and 2(a)) | Descriptive quantizations of E2 seed 42 (E6-E2, E7-E2) and of the arms' KD runs (E6-X) (DRAFT) |
 
 Code that implements an amendment is named by lane (L-AM…). Until that lane lands, the committed runtime
 keeps its pre-amendment behaviour and its launch gates.
@@ -98,6 +100,8 @@ Code: lane L-AM3.
 [Extended by DL-39: E6-KD uses E3's one-epoch ramp per term and retains the supervised CE + Dice loss.]
 
 [Extended by DL-51: E6-KD's projection starts from E3's trained projection.pt weights paired with the E3 checkpoint; FP32, never fake-quantized.]
+
+[Code: L-AM3 B-1 30b3060 (merged 574e9a0), B-2 a95b73b (merged ebc1201); DL-07, DL-140.]
 
 ## AM-4 — QAT (resolves M9)
 
@@ -2146,6 +2150,480 @@ launches.
     commit reached the remote before C is void.
 22. Disclosure. Chapter 4 lists these readings with AM-19 and names the five that go beyond its
     text.
+
+## AM-22 — Early TEST freeze once every registered run is settled, and a launch cutoff for cuttable runs (amends AM-19 items 1(a), 1(c), 1(d) and 3(b) under Schedule T; extends AM-16's cut rule, AM-17 item 9, AM-18 items 2(c), 7(a) and 7(b), and AM-19 items 3(c), 3(d), 4(c), 6(a), 8 and 9)
+
+Dated 2026-10-17. Status: DRAFT (group-recorded; OK by Ice De Luna under the group's delegation, 2026-10-14; a Tier F check run from am22v5_am23v4_check_prompt_20261014.md (sha256 f0e34c8f911df7ff14d56d0e19f32ad88b39f030df7f4fe250380787f32d38dd), and its confirmation run from am22v6_am23v5_confirm_prompt_20261014.md (sha256 fec13d3bfdbfcb809cfa503d99424f9af94cee262760af8772cad7d64de06cca); DL-126).
+- **Fixed text.** From its commit this text is changed only by a new amendment, which lists the
+  results known when it is written. A dated bracket note only points to a later record or records an
+  outcome.
+- **In force** from the time its commit reaches the remote, under Schedule T, which is in force
+  (DL-70). Under Schedule R nothing here applies. Approval gates nothing here. If the commit
+  reaches the remote after the end of 2026-10-17, the cutoff date and the ceiling of item 2(a)
+  move later by the number of days from 2026-10-17 to the day the commit reaches the remote, and
+  item 2(e)'s figures are restated in the commit; no other date moves.
+- **A rejection** is entered verbatim in the decision log on the day it arrives. It changes a rule
+  only through a new amendment, which lists the results known when it is written. It never reopens
+  a freeze already made, a cut already made or a TEST evaluation.
+- This is the new amendment that AM-19 item 1(b) requires to change the schedule in force after the
+  first KD run. It changes no decision date (AM-19 item 1(b), last clause).
+
+State at amendment (as of the commit). The text was fixed on 2026-10-14 (v6, sha256
+26c1231ab5f55221974882342d2b10de7ccba7d3981c3ed303d1c048bd6a6c69), after every
+entry below not marked ‡ was known. The entries marked ‡ became known after that and before the
+commit on 2026-10-17; no numbered item was changed for them.
+- **Schedule and λ.** Schedule T is in force (DL-70). The λ sweep is complete and selected: λ = 0.5
+  (DL-108, DL-109). Best VAL all-class mIoU by λ (reports/derived/lambda_selection.json at 2919936):
+  - 0.25 → 0.3795648515224457;
+  - 0.5 → 0.38749080896377563;
+  - 1 → 0.37515392899513245;
+  - 2 → 0.36609214544296265;
+  - 4 → 0.3443554639816284.
+
+  The α decision date is 2026-10-22 (DL-109).
+- **The α sweep and E2 seeds 43 and 44 are complete** (DL-120), at the code pin 8487551 (DL-116),
+  λ 0.5. Best VAL all-class mIoU (each run's best.json, MEASURED at copy-back):
+  - α 25: 0.36337557435035706 (iteration 76000);
+  - α 50: 0.323774516582489 (56000);
+  - α 100: 0.31717488169670105 (80000);
+  - E2 seed 43: 0.3716566562652588 (72000);
+  - E2 seed 44: 0.3703170716762543 (48000).
+
+  The α selection of record is α = 25, a boundary result (AM-16 item 2): reports/derived/
+  alpha_selection.json at a1a4512 (DL-121). E3 seed 42 is the α 25 run.
+- ‡ **Wave 3** launched on 2026-10-14 at the code pin 8487551 (the KD launch log at 31e12c4, lines
+  24–26). E3 seeds 43 and 44 at α 25 are complete (run_end at 2026-10-15T17:09:50Z and 17:13:56Z,
+  that is 2026-10-16 at 01:09 and 01:13 +08:00). Best VAL all-class mIoU (each run's best.json):
+  seed 43 0.3819650709629059 (iteration 72000); seed 44 0.35045793652534485 (60000). E2 seed 42 at
+  160,000 iterations ended on 2026-10-17 at 05:04:03 +08:00 with RESULT: PASS; best VAL all-class
+  mIoU 0.38838109374046326 (iteration 116000).
+- ‡ **E1 seed 42 at 160,000 iterations** launched on 2026-10-16 at 09:20:02Z (its run_meta row), at
+  the code pin 8487551; it is running.
+- **Arm teachers (AM-18 item 2).** R1 is complete (DL-118): its M12 selection is iteration 20000,
+  mIoU_full 0.38849183917045593. R2 is complete (DL-122): its M12 selection is iteration 24000,
+  mIoU_full 0.3971906304359436. ‡ Both go rules (AM-18 item 5) were evaluated on 2026-10-16
+  (DL-123): R1 go (DL-124) and R2 go (DL-125). No E3-X has launched.
+- **AM-18 item 1's outputs of record:**
+  - F = 0.005870938034469149: item 6(a)'s lower branch, so no K8 arm and no correction (DL-96);
+  - margin_dedup = 0.02401683637538049: "recorded, no change" (DL-97);
+  - the other item 1 records (DL-90 to DL-98).
+- AM-18 was approved in writing, as reported (DL-101).
+- The item 3 arms' code is pinned in one commit, the arms pin P_K (572ab22, DL-115), made on
+  2026-10-12, before E3 seed 42's α selection exists (AM-18 item 7(a)).
+- Also known: everything that AM-19's and AM-21's State blocks list, and the DL-27 band,
+  0.015621041685101825 (DL-99). L-AM17B-FG is merged (44c05dc, merged b4e9c57; DL-33). ‡ Lane Q2
+  is merged at 2b3b556, the QAT pin.
+- ‡ **The U4 pilot** (AM-4a item 3: E5 seed 42 at clip 1.0 and at clip 5.0) launched on 2026-10-16
+  at the QAT pin 2b3b556. Both runs are complete and finite, 15 of 15 epochs. Block B on the laptop
+  selected epoch 08 at clip 1.0 (converted VAL all-class mIoU 0.33294206857681274). Clip 5.0's first
+  record scoring stopped after epoch 7 on a host fault, so its record conversion and scoring are
+  being re-made once in a new evaluation directory (AM-8a; AM-21 item 2(c); the fault report
+  reports/pilot_blockb_fault_20261017.md). No clip value of record and no winner record exist at the
+  commit. No other E5 result, and no E4, E6 or E7 result, exists. TEST has not been evaluated.
+- **Lanes not yet IMPLEMENTED that the TEST unlock waits for:** the lanes of the current plan's lane
+  line, as it reads after this commit, that it does not mark done (none of lane Q2's, ‡ merged at
+  2b3b556), each with its status at the commit:
+  - L-CKPT-GUARD's Q-part and L-AM16-CALIB (lane LQP): Phase B done and checked, merge pending;
+  - L-LAT-THREADS and L-RESIDUAL-SHA's efficiency half (lane LEFF; its corruption half is carried by
+    L-CORR): plan, in its Tier F audit;
+  - L-AM16-ARM, which serves only the ARM latency measurement (item 1(g)): planned as lane LEFF's
+    third Phase B part, built only on spare capacity (DL-130);
+  - L-AM3: Phase B (B-1, the trigger); ‡ L-FQOFF, carried with it: plan;
+  - L-AM8 and the L-AM6 entry point (lane LREP): Phase B;
+  - L-AM16-SEV with L-CORR: Phase B, its first part done and checked, merge pending;
+  - the TEST-manifest lane: Phase B;
+  - AM-23's quantization lane (L-AM23Q: E2 sources and the arm parents of E6-X): Phase B (B-1, the
+    E6-X condition tool).
+
+  The SegNeXt-L arm's lanes (AM-17 item 11) are not built (DL-129: the group's review of
+  2026-10-14 recorded that none will be built).
+- **Cuttable runs blocked only by a pod or a card** at the commit:
+  - E3 at 160,000 iterations, A and F: since 2026-10-14, when the α selection of record was
+    committed (DL-121);
+  - G, which depends on no sweep (AM-17b item 1(f)): since 2026-10-10, when the first KD pod's smoke
+    passed and the λ wave launched (DL-54, DL-106);
+  - W (E3-flip): since 2026-10-14 (DL-121); its pod smoke and AM-19 item 3(b)'s arithmetic are
+    entered on its card before it launches (DL-114);
+  - ‡ E3-R1 and E3-R2: since 2026-10-17, when their go-rule records were committed (DL-124,
+    DL-125).
+
+  ‡ None of them had launched by the commit. The RunPod balance is funded just in time, with a
+  top-up on 2026-10-17 sized from the kits then ready, and each kit was finished only once its
+  inputs existed. They launch as cards free, in the card order of AM-19 item 1(e). E5 and E6 at
+  seeds 43 and 44 are not in this list: they wait for the pilot's winner record, which follows clip
+  5.0's re-made record scoring (AM-8a).
+- **N** (item 2(f)) is 6 cards. The group set it at its review of 2026-10-14 from the workload of
+  the registered runs still to run, and from no score (DL-128).
+- **How the dates below were set.** From the KD runs' measured pace: about 28 h per 80,000-iteration
+  KD run with validations, so about 57 h for a 160,000-iteration control (INFERRED from their
+  telemetry). And from the manuscript due 2026-11-17. No score set them, and no condition below
+  reads a score.
+
+No test is added to the Holm family. No test, threshold, family member, grid, tie rule, seed, recipe,
+decision date, never-cut item, cut order, launch order or teacher of record changes.
+
+Definitions used below (AM-19's Definitions otherwise apply):
+- **Registered runs.** Every training run that AM-1 to AM-21 register, at the seeds they name:
+  - the never-cut runs of AM-17 item 9, as AM-19 item 4 reads them (with the two U4 pilot runs,
+    whose winner is E5 seed 42, AM-4a);
+  - every cuttable training run in the cut orders of AM-16, AM-17 item 9, AM-17b item 3, AM-18 item
+    7(b) and AM-19 item 7(b).
+
+  Excluded are runs that a registered branch has ruled out or that a record shows cannot exist:
+  - K8 (DL-96);
+  - B-avg, with E3-avg (DL-66: not executable);
+  - E3-X for an arm teacher whose go rule gives no-go or that is reported as not evaluable (AM-18
+    item 5), and the SegNeXt-L KD run when AM-17 item 11(b) gives no-go (AM-18 item 4);
+  - E6-KD unless AM-3 triggers it.
+
+  Derived artifacts (AM-19 Definitions), among them E4, E7 at every seed, E7-X and E7-flip, are not
+  runs. The ARM latency measurement (AM-16) is not a registered run here (item 1(g)). The table at
+  the end is informative; the registering amendments govern.
+- **Settled.** A registered run is settled at a date when, by the end of that date, it is complete
+  (AM-19 Definitions) or it is entered in the decision log as superseded (AM-19 item 7(d)). A
+  cuttable registered run is also settled when it is so entered in one of these ways:
+  - diverged;
+  - "aborted (rule, cause)" (AM-19 item 3(a));
+  - cut by a rule other than the freeze (AM-19 item 3(b), points 2 to 4, or item 2 below);
+  - "not run: parent cut" or "not run: parent diverged" (AM-19 item 4(a)).
+
+  A never-cut registered run is settled in no other way, unless the new amendment that settles its
+  STOP says so (below). If AM-7's full consequence fires, the rerun runs are registered runs in the
+  classes AM-19 item 7(b) gives them.
+
+  A run whose record is a STOP that a new amendment settles is not settled until that amendment's
+  commit reaches the remote; the amendment states how the run is settled, and a run it registers in
+  that run's place is a registered run in the class it names. A default candidate's divergence is
+  not such a STOP: AM-19 item 7 pre-sets its consequence, the diverged run is settled once it is
+  entered as superseded (AM-19 item 7(d)), and the rerun runs are registered runs as stated above.
+  Such STOPs are:
+  - a default candidate, or a seed-42 QAT run, recorded as "aborted (rule, cause)" (AM-19 item
+    3(a); AM-21 item 1(g));
+  - E6-KD so recorded (a reading AM-19's header leaves to a new amendment);
+  - a refusal that no later input can lift (AM-19a header).
+
+  A run that stays complete under AM-21 item 2(b) is settled. The halts of AM-21 items 2(b) and
+  3(c) hold condition 1 of item 1(a) through the never-cut runs that cannot launch (E6 seed 42; E5
+  seed 42 as the winner), and they hold condition 2.
+
+  A run that is launched and not complete, not launched (ready or not), or waiting for a repeat
+  (AM-19 item 3(a)) is not settled. Under item 1 every never-cut run that is not superseded is
+  complete at D, so AM-19 item 1(d) has nothing to move; it applies under item 1(f) only.
+
+1. Early freeze (amends AM-19 items 1(a), 1(c) and 1(d) under Schedule T).
+   (a) **The trigger date.** D is the first date, no later than 2026-11-02, at whose end all of
+       these hold:
+       1. every registered run is settled;
+       2. AM-3's E6-KD trigger has been evaluated on E6 seed 42's converted-model VAL score and
+          entered in the decision log, and, if it fired, E6-KD is settled. E6 seed 42's derived
+          artifacts are made, and the trigger evaluated and entered, by the end of the second day
+          after the day E6 seed 42 is complete; a later entry is a deviation, reported in Chapter
+          4, and changes nothing else. If E6 seed 42 is entered as "non-finite: no model" (AM-21
+          item 2(b)), this condition holds only once the new amendment that AM-21 item 2(b)
+          requires has been committed and what it settles about the trigger and E6-KD is done;
+       3. every derived artifact that AM-19's Definitions require before the freeze has been made
+          (those of E6 seed 42);
+       4. every lane that serves a run or a quantity in TEST is IMPLEMENTED, or entered as not
+          required (AM-19 item 3(d));
+       5. the TEST-day manifest is drafted with every entry that AM-17 item 9 and AM-19 items 1(c),
+          3(d) and 4(c) require at the freeze, the evaluator commit among them, and its validator
+          passes on it.
+
+       Each condition reads records only: statuses, dates, hashes, merge records, the trigger's
+       entry and the validator's verdict. Condition 1 reads an arm's go-rule entry (AM-18 item 5;
+       AM-17 item 11(b)) as a record, not its values, and no other score enters any condition.
+       Condition 2 reads that the AM-3 trigger was evaluated, not its value.
+   (b) **The freeze.** The TEST manifest is frozen at the end of the day after D. That date
+       replaces 2026-11-03 in every sense AM-19 item 1(c) gives "the freeze":
+       - "the original freeze date" in every cut rule, and in AM-19 item 3(b)'s arithmetic from the
+         freeze entry's commit;
+       - "complete at the original freeze date" in AM-19 items 3(d) and 6(a), and "complete at the
+         freeze" in AM-19 item 4(c);
+       - the freeze of "no run is added to TEST after the freeze" and of "frozen at the freeze date";
+       - the freeze of AM-17 item 9, AM-17b item 3 and AM-18 items 2(c) and 7.
+
+       The decision-log entry of the freeze lists each condition of (a) with the record that meets
+       it and that record's date. Its commit reaches the remote before the end of the freeze date.
+   (c) **Before the freeze entry exists.** "The original freeze date" in AM-19 item 3(b)'s
+       arithmetic is 2026-11-03.
+   (d) **No discretion.** Nobody delays a freeze that (a) and (b) give, and nobody brings one
+       forward. Runs are cut only by the rules of AM-19 item 3(b) and item 2 below.
+   (e) **TEST.** The single TEST evaluation takes place after the freeze, once its unchanged unlock
+       gate is met, and no later than 2026-11-08 (AM-19 item 1(a)).
+   (f) **Fallback.** If (a) has given no D by the end of 2026-11-02, AM-19 applies as committed,
+       with item 2's cuts standing and with item 2's point in AM-19 item 3(b): the freeze is
+       2026-11-03, the cut list is fixed there, the unlock gate is unchanged, and AM-19 item 1(d)
+       moves the freeze for a never-cut run that is not complete then. Conditions 2 to 5 of (a)
+       then bind nothing before the freeze.
+   (g) **ARM latency.** The ARM latency measurement (AM-16 item 7) neither holds the trigger nor
+       falls under item 2, and condition 4 of (a) does not read L-AM16-ARM, the lane that serves
+       only that measurement. If the measurement is not complete at the freeze, it is cut there
+       (AM-19 item 3(b), first point), and L-AM16-ARM is then entered as not required (AM-19 item
+       3(d)).
+   (h) **Unchanged:**
+       - derived artifacts follow AM-19 item 4(c);
+       - no run is added to TEST after the freeze;
+       - TEST is evaluated once, never split or repeated;
+       - the analysis does not change;
+       - if the TEST date moves past 2026-11-17, the manuscript is submitted without final TEST
+         results and says so (AM-19 item 1(d)).
+
+2. Launch cutoff for cuttable runs (extends AM-19 item 3(b)).
+   (a) A cuttable registered run that has not launched (AM-19 Definitions) by the end of its cutoff
+       date is cut on that date. Its cutoff date is 2026-10-20, or, for a run whose launch waits
+       for a record that a registered rule writes, the later of 2026-10-20 and the end of the
+       second day after the day on which the last such record is committed or written, and in no
+       case later than 2026-10-29. Those records are: the α selection file or the α-cut decision
+       record (AM-19 item 2(g)); the run's parent's end-of-run record (AM-19 Definitions; item 4);
+       R1's end-of-run record, for R2 (AM-18 item 7(a)); the pilot's winner record (AM-21 item 3);
+       and, for an arm's KD run, its arm teacher's selection record (M12). Code merged and pinned,
+       a pod and a card do not move the cutoff. A teacher fine-tune, whose trainer writes no
+       run_meta row, is launched when its launcher's launch record exists (for R1 and R2,
+       teacher_arm_launch_provenance.json, written by scripts/launch_teacher_arm.py, with
+       "launch": true), at the recorded_utc that record gives; the SegNeXt-L lane names its launch
+       record before L launches. Its decision-log entry
+       (AM-19 item 3(c)) is made on the day after its cutoff date, from the timestamps that meet
+       that date; it states why it was not launched (a gate not met, code not merged, no card) and
+       since when, as for a run cut at the freeze, and for an AM-18 arm or the AM-17 item 11 arm
+       it is the arm's "not launched" record (AM-18 item 7(a)). AM-19 item 3(b)'s list of cuts
+       gains this point.
+   (b) A repeat under AM-19 item 3(a) or AM-8a of a run launched before its cutoff date is not a
+       launch under (a). It launches on the first card AM-19 item 1(e) gives it, subject to AM-19
+       item 3(b)'s arithmetic. A repeat of a cuttable run that has not launched by the end of the
+       third day after the day of the last row the attempt before it wrote is cut on that date,
+       with (a)'s entry; the attempt's VAL rows are reported under AM-19 item 3(c). For a teacher
+       fine-tune, whose scalar rows carry no wall-clock time, that day is the day of the last
+       time-stamped line its trainer wrote to its training log, read as UTC (its lines carry
+       "MM/DD HH:MM:SS" from the pod's UTC clock, with no year; the year is 2026); if there is
+       none, it is the day its stop is entered in the decision log, which is done on the day the
+       stop is found. This does not apply to a sweep candidate's on-course repeat (AM-19 item 2(b);
+       AM-19a reading 7).
+   (c) A cuttable run whose parent is still running at its cutoff date, the ceiling of (a) having
+       been reached, is not exempt. If it has not launched by then, it is cut under (a), and its
+       parent is unaffected.
+   (d) Never-cut runs have no cutoff. The cutoff cuts every affected run on its cutoff date, at
+       once. It is not a card choice, so the cut order is not consulted; cards are given under
+       (f).
+   (e) **Reason.** A cuttable run that never launches would otherwise keep item 1(a)1 from holding
+       until 2026-11-02. With the cutoff, every cuttable run that launches can finish well before
+       2026-11-02: the longest, a 160,000-iteration control, takes about 57 h (INFERRED from the KD
+       runs' measured pace). The extension in (a) leaves the same margin after a late selection or
+       parent, and its ceiling keeps the longest run inside 2026-11-02. No date of the freeze is
+       estimated here: D follows item 1(a) only.
+   (f) **Cards.** At the commit the group enters in the decision log N, the number of cards it keeps
+       for registered runs until every cuttable registered run is settled. On any day on which fewer
+       than N cards hold registered runs, it rents a card for each waiting run whose every gate
+       other than a pod and a card is met, up to N, in the order of AM-19 item 1(e). It never
+       lowers N. A cut entry under (a) gives "no card" only if, on every day on which the run's
+       every other gate was met, N cards held registered runs, or the provider's dated evidence
+       shows that no card could be rented. Any other case is a deviation from AM-19 item 1(e),
+       reported in Chapter 4; it does not undo the cut.
+
+3. Relation to the registered rules.
+   - **Unchanged:** the planning dates of AM-19 item 1(a) (2026-10-26 and 2026-10-30, which stand
+     as planning dates; under item 1 the manifest is drafted before D, condition 5), the λ and α
+     decision dates, the never-cut list, the cut order, the launch order and the card rules of
+     AM-19 item 1(e) as item 2(f) extends them, the single TEST evaluation, and the MVA 2027
+     clause with its date.
+   - **AM-19 item 8's list of narrowed gates gains three:**
+     - the freeze may come before 2026-11-03 (item 1);
+     - a cuttable run that has not launched by its cutoff date is cut then (item 2(a));
+     - a repeat of a cuttable run that has not launched within three days is cut then (item 2(b)).
+
+     Only scope flexes; no test, threshold or recipe is relaxed.
+   - **Reason for item 1.** AM-19 item 3(d) puts in the manifest every run complete at the original
+     freeze date. Under AM-19, then, the manifest cannot freeze before 2026-11-03, even when every
+     registered run is settled earlier. Item 1 lets the freeze follow as soon as the runs are
+     settled and the harness is final. Chapters 4 and 5 then get final TEST results earlier,
+     before the manuscript due 2026-11-17.
+
+4. Disclosure (extends AM-19 item 9). Chapter 4 states:
+   - the freeze date, and whether it came from item 1 or from item 1(f)'s fallback;
+   - for item 1, each condition's record and its date;
+   - every launch-cutoff cut, with its reason;
+   - that this amendment was written after the results its State block lists were known, and that
+     no condition of items 1 and 2 reads a score beyond the registered rules it names (AM-18 item
+     5; AM-3), and that item 2's dates were set then, from the measured pace and the manuscript
+     date;
+   - item 2(f)'s N and, for every cuttable run that was blocked only by a pod or a card and was not
+     launched, the date it became so and the cards held on each day it waited;
+   - the ARM latency measurement's status at the freeze (item 1(g)), and each lane entered as not
+     required, with its cut entries.
+
+Code:
+- **The TEST-manifest lane** implements item 1(a)'s check, in the manifest's validator or a script
+  beside it. The check reads the decision log, the merge records and the runs' records, and prints
+  for each condition either the record that meets it or what is missing.
+  - The lane also implements the freeze entry's fields and item 2's cut entries.
+  - Until the lane is IMPLEMENTED, conditions 4 and 5 cannot hold, so no early freeze can occur.
+- Item 2's cuts need no code beyond their decision-log entries.
+
+Informative table: registered runs at the commit (the registering amendments govern; the
+commit restates each status; ‡ marks a status known only after the text was fixed):
+
+| Run | Class | Status at the commit |
+|---|---|---|
+| E1 seed 42 | never cut | complete |
+| E1 seeds 43, 44 | in no cut order (AM-17 item 9's never-cut list names seed-42 runs) | complete |
+| λ sweep: E2 seed 42 at λ 1, 0.25, 2, 4 | sweep candidates (AM-19 item 2) | complete (DL-108) |
+| E2 seed 42 (λ 0.5, the λ winner) | never cut | complete |
+| α sweep: E3 seed 42 at α 50, 25, 100 (the winner is E3 seed 42) | α 50 is never stopped (AM-19 item 2(d)); α 25 and 100 are cut only at the decision date (AM-19 item 2) | complete (DL-120); α = 25 selected (DL-121) |
+| U4 pilot: two E5 seed-42 runs (the winner is E5 seed 42) | never cut | ‡ complete (both runs finite, 15 of 15 epochs); clip 5.0's record scoring being re-made (AM-8a); no winner record yet |
+| E6 seed 42 | never cut | ‡ not launched; waits for the pilot's winner record (lane Q2 merged at 2b3b556) |
+| E6-KD seed 42 | never cut, if AM-3 triggers | not evaluated (E6 seed 42 is not complete) |
+| E2 seeds 43, 44 | cuttable (AM-16 order) | complete (DL-120) |
+| E3 seeds 43, 44 | cuttable | ‡ complete (wave 3; best VAL 0.3819650709629059 and 0.35045793652534485) |
+| E5 and E6, seeds 43 and 44 | cuttable | ‡ not launched; waits for the pilot's winner record (E3 seeds 43 and 44 complete) |
+| E1, E2, E3 at 160,000 iterations (AM-16 item 3) | cuttable | ‡ E2 complete (2026-10-17; best 0.38838109374046326 at iteration 116000); E1 launched 2026-10-16, running; E3 not launched |
+| A (the CWD-only arm, AM-17 item 7), F and G (AM-17b) | cuttable | not launched |
+| SegNeXt-L arm, teacher and KD run (AM-17 item 11) | cuttable | lane not built (DL-129) |
+| R1: teacher, then E3-R1 if go | cuttable | teacher complete (DL-118); ‡ go (DL-124); E3-R1 not launched |
+| R2: teacher, then E3-R2 if go | cuttable | teacher complete (DL-122); ‡ go (DL-125); E3-R2 not launched |
+| W: E3-flip | cuttable | not launched (α = 25 selected, DL-121) |
+| Rerun E1 seeds 43, 44 (AM-19 item 7(b)) | cuttable, only if AM-7's full consequence fires | none |
+| E6-R2 and E6-R1, QAT of E3-R2 and E3-R1, each only if its E3-X beats E3 seed 42 on VAL (AM-23 item 3) | cuttable, first in every cut order (E6-R2, then E6-R1) | not launched; no E3-X exists |
+| E6-E2, QAT of E2 seed 42 (AM-23 item 1) | cuttable, next in every cut order (after E6-R2 and E6-R1) | not launched; AM-23's lane not merged |
+| K8 | — | ruled out (DL-96) |
+| B-avg with E3-avg | — | not executable (DL-66) |
+
+## AM-23 — Descriptive quantizations of E2 seed 42 (E6-E2 and E7-E2) and of the arms' KD runs (E6-X) (amends AM-18 item 3(a), AM-21 items 1(g) and 2(b) and the seed-42 QAT STOP of AM-22's Definitions for its own runs, and AM-19 item 4(c) for E7-E2; extends AM-4a, AM-10, AM-16 item 4, AM-17b item 4, AM-18 items 3(d), 7(b) and 8(c), AM-19 items 3(d) and 4, and AM-22's Definitions and items 1(a) and 2(a); amends no registered run)
+
+Dated 2026-10-17. Status: DRAFT (group-recorded; OK by Ice De Luna under the group's delegation, 2026-10-14; a Tier F check run from am22v5_am23v4_check_prompt_20261014.md (sha256 f0e34c8f911df7ff14d56d0e19f32ad88b39f030df7f4fe250380787f32d38dd), and its confirmation run from am22v6_am23v5_confirm_prompt_20261014.md (sha256 fec13d3bfdbfcb809cfa503d99424f9af94cee262760af8772cad7d64de06cca); DL-127).
+- **Fixed text.** From its commit this text is changed only by a new amendment, which lists the
+  results known when it is written. A dated bracket note only points to a later record or records an
+  outcome.
+- **In force** from the time its commit reaches the remote. It is committed with AM-22 or after it,
+  and it uses AM-22's terms. Approval gates nothing here.
+- **A rejection** is entered verbatim in the decision log on the day it arrives. It changes a rule
+  only through a new amendment, which lists the results known when it is written. It never reopens
+  a run already launched or a TEST evaluation.
+- **Written after results.** This amendment was written after the λ and α selections, the α
+  sweep's VAL scores and the arm teachers' in-training selections were known (State), and before
+  any arm teacher's go rule was evaluated or any E3-X existed. It adds descriptive quantities only.
+
+State at amendment (as of the commit). The text was fixed on 2026-10-14 (v6, sha256
+c6fafec1538fe2a59d91248979108c36bde72540937d26ed6d6183e66b0aa231), after every
+entry below not marked ‡ was known. The entries marked ‡ became known after that and before the
+commit on 2026-10-17; no numbered item was changed for them.
+- The λ selection: λ = 0.5; E2 seed 42 = run e2_s42_lambda0.5_80k_a1, best VAL all-class mIoU
+  0.38749080896377563, checkpoint sha256
+  73dbc32dfc988124a9b81df24abd97c526f927ac2b094996411d174e89d32f06 (DL-109). E2 seeds 43 and 44
+  are complete, best VAL 0.3716566562652588 and 0.3703170716762543 (DL-120); everything AM-22's
+  State lists is also known (its ‡ entries as marked there).
+- The α selection: α = 25, a boundary result; E3 seed 42 = run e3_s42_lambda0.5_alpha25_80k_a1,
+  best VAL 0.36337557435035706 (reports/derived/alpha_selection.json at a1a4512, DL-121). E1 seed
+  42's VAL is 0.36314016580581665 (DL-17).
+- Arm teachers (AM-18 item 2): R1 is complete (DL-118), its M12 selection iteration 20000, mIoU_full
+  0.38849183917045593; R2 is complete (DL-122), its M12 selection iteration 24000, mIoU_full
+  0.3971906304359436. ‡ Both go rules (AM-18 item 5) were evaluated on 2026-10-16 (DL-123): R1 go
+  (DL-124) and R2 go (DL-125). No E3-X has launched.
+- ‡ The U4 pilot launched on 2026-10-16 at 2b3b556 and is complete: clip 5.0's record scoring is
+  being re-made (AM-8a), so no clip value of record and no winner record exist at the commit. No
+  other E5 result, and no E4, E6 or E7 result, exists. TEST has not been evaluated.
+- The quantization code routes E6 and E7 to an E3 source only (src/quant/stages.py), and its E3
+  source loader refuses a checkpoint whose stage is not E3 (src/quant/checkpoint.py), at 2b6000e and
+  on lane/q2-qat at c19c0c2. At seed 42, E6's parent check accepts only the α winner's run
+  (src/quant/qat.py, e6_parent_binding, on lane/q2-qat at c19c0c2), and an arm's KD run is an E3 row
+  whose run_meta names its arm (src/training/train_distill.py at a1a4512). ‡ Lane Q2 (the QAT
+  code) is merged at 2b3b556, where all of this still holds. So every quantity below needs code
+  (item 4).
+
+No test is added to the Holm family. No test, threshold, family member, grid, tie rule, seed, recipe,
+decision date, never-cut item, cut order of a registered run, launch order or teacher of record
+changes. E6 and E7 of record stay built from E3 at every seed (AM-15; AM-19 item 4(a)), and the
+non-inferiority check is unchanged.
+
+1. **E6-E2.** QAT of E2 seed 42's best.json checkpoint (the λ winner of record), at seed 42 only:
+   AM-4a item 1's recipe, AM-4a item 2's selection as AM-21 amends it, AM-21 items 1(a) to 1(f), 2,
+   4 and 5, and the U4 pilot's clip value of record (AM-4a item 3). Only the parent differs from E6
+   seed 42.
+   - It is a cuttable registered run, and a registered run of AM-22's Definitions, which this
+     amendment extends to it. It is cut before every AM-18 arm, after item 3's E6-X runs (item
+     3(d)).
+   - Card priority: AM-19 item 1(e), in which only item 3's E6-X runs come after it among the
+     cuttable runs (the reverse of the cut order). No other gate is added.
+   - Its launch waits for the pilot's winner record (AM-21 item 3), a record a registered rule
+     writes, so AM-22 item 2(a)'s extension applies to its cutoff date. If the pilot has no winner
+     (AM-21 item 3(c)), it waits as every later QAT run does, and AM-22 item 2(a)'s ceiling applies.
+   - AM-21 item 1(g) does not apply. If AM-19 item 3(a) records E6-E2 as "aborted (rule, cause)",
+     that record settles it as a cuttable run (AM-22 Definitions); it is not a STOP. If no epoch is
+     convertible (AM-21 item 2(b)), it is entered as "non-finite: no model", stays complete and
+     settled, and every quantity that needs its model is reported as not evaluable; no new
+     amendment is required.
+   - It is descriptive: never a parent, not in the Holm family, not in the robustness or efficiency
+     analyses, no seeds 43/44.
+2. **E7-E2.** PTQ of E2 seed 42's best.json checkpoint with the AM-10 calibration list of record
+   (calibration pass only). It is a derived artifact (AM-19 Definitions) of a complete parent, not a
+   run (AM-22 Definitions), and follows AM-19 item 4(c), except as item 4 says.
+3. **E6-X** (amends AM-18 item 3(a)'s "no E4/E5/E6-X" for E6 only).
+   (a) **The run.** For each arm teacher X ∈ {R1, R2}, E6-X is the QAT of E3-X's best.json
+       checkpoint, at seed 42 only, with E6-E2's recipe (item 1). Only the parent differs from E6
+       seed 42. B-avg has no E3-avg (DL-66), so no E6-avg exists. AM-18 item 3(a)'s other
+       exclusions stand: no E2-X, E4-X or E5-X, no seeds 43/44, no robustness or efficiency scoring.
+   (b) **Condition.** E6-X runs only if E3-X is complete (AM-19 Definitions) and the best VAL
+       all-class mIoU that its best.json records is greater than E3 seed 42's,
+       0.36337557435035706 (State). The outcome (yes or no, with that value, the sha256 of the
+       checkpoint best.json names, and best.json's sha256) is entered in the decision log once
+       E3-X is complete, by the end of the following day, and before E6-X launches. The outcome
+       follows from that value alone; an entry whose verdict disagrees with its value is void and
+       is corrected in a new entry before any launch. A "no" rules E6-X out. If E3-X is cut or
+       diverges, E6-X is "not run: parent cut" or "not run: parent diverged" (AM-19 item 4(a)).
+   (c) **AM-22.** E6-X is a cuttable registered run, and a registered run of AM-22's Definitions,
+       which this amendment extends to it. It is excluded there, as a run a registered branch has
+       ruled out, when E3-X is excluded and when its condition gives "no". Condition 1 of AM-22
+       item 1(a) reads the condition's entry as a record, not its value, as it reads an arm's
+       go-rule entry. Its launch waits for E3-X's end-of-run record and the pilot's winner record,
+       both of which AM-22 item 2(a) lists, so its extension applies to E6-X's cutoff date; the
+       condition's entry is not such a record and moves no cutoff.
+   (d) **Cut order and cards.** The runs of this amendment are first in every cut order, first to
+       last: E6-R2, E6-R1, E6-E2. AM-17b item 4 cuts an arm registered later before every arm listed
+       there, AM-18's arms are cut first under that rule (AM-18 item 7(b)), and these runs,
+       registered later, are cut before them; E6-X follows AM-18 item 7(b)'s order of the arms.
+       Card priority: AM-19 item 1(e), the reverse of that order. No other gate is added.
+   (e) **As for E6-E2** (item 1): AM-21 item 1(g) does not apply, an "aborted (rule, cause)" record
+       settles E6-X as a cuttable run, and AM-21 item 2(b)'s entry needs no new amendment. E6-X is
+       registered here, not under AM-18 item 3, so AM-18 item 7(a)'s rule that the item 3 arms'
+       code is pinned before E3 seed 42's α selection does not reach it: it trains with the QAT code
+       of record, and its only new training code is item 4's E6-X stages with their parent check.
+   (f) It is descriptive: never a parent, not in the Holm family, not in the robustness or
+       efficiency analyses. E6 and E7 of record stay built only from E3 (AM-18 item 3(d)).
+   (g) **Reason.** The group set the condition on 2026-10-14, before any E3-X existed, to limit
+       cost: a QAT run is made only for an arm whose KD run beats E3 on VAL. It takes up the QAT of
+       arm students that the AM-18 vote deferred (DL-66), under AM-17b item 4 and AM-18 item 10,
+       with the arm teachers' M12 results known (item 7).
+4. **Code.** A lane adds the two stages with E2 as the source stage, an E2 source loader (E2's
+   checkpoint carries no projection; asserted on load, as AM-4a item 5), the parent check for an
+   E2 run directory, the E6-X stages (E6-R1 and E6-R2), and the entries of all four in the
+   evaluation artifacts and the TEST manifest. An E6-X stage's parent check accepts only seed 42
+   and only the run directory of E3-X for the same X (named by its run_meta's arm, with
+   parent_of_e4_e7 false), and refuses one whose best.json VAL is not above item 3(b)'s value or
+   whose best.json sha256 is not the one item 3(b)'s entry records. E6's parent check is
+   unchanged: at seed 42 it accepts only the α winner's run. The lane's merge does not move any
+   cutoff (AM-22 item 2(a)). If the lane is not merged by the end of a run's cutoff date, that run
+   is cut then with reason "code not merged"; for E6-E2, E7-E2 is entered in the decision log as
+   "not made: code not merged" in the same entry (AM-22 item 2(a)). That entry is E7-E2's record
+   and counts as a cut quantity under AM-19 item 3(d), and AM-19 item 4(c)'s "cannot be withheld"
+   does not apply to it.
+5. **TEST.** E6-E2, E7-E2 and E6-X, when they exist, are scored once at the single TEST evaluation:
+   clean, canvas protocol, descriptive (as AM-18 item 2(c) scores arm teachers), and also under the
+   upstream PlantSeg protocol, as AM-16 item 4 scores every student. E6-X is reported with AM-18
+   item 3(d)'s quantities. AM-18 item 8(c)'s duplicate-free subset reports them as it reports every
+   arm. Their converted VAL scores are also reported.
+6. **Reporting.** Chapter 4 reports E6-E2 − E6 and E7-E2 − E7 seed 42 as descriptive contrasts of
+   the parent under one quantization recipe, beside E2 − E3, on VAL and on clean TEST, with no test
+   and no claim beyond them. E6-X − E6 seed 42 joins AM-18 item 3(d)'s contrasts, beside E3-X − E3
+   and E7-X − E7, read the same way, with no test.
+7. **Disclosure.** Chapter 4 states that this amendment was written after the results its State
+   lists were known and before any E3-X existed: E6-E2 and E7-E2 after E2 seed 42's VAL was known
+   to exceed E3 seed 42's (seed 42 is the seed of the λ sweep and of every never-cut training run,
+   not a seed chosen on its result), and E6-X after the arm teachers' M12 results were known. It
+   also states that this amendment adds no test; that E6 and E7 of record stay built from E3; that
+   E6-X runs only for an arm whose E3-X beat E3 on VAL, so E6-X − E6 is reported only for arms
+   already ahead of E3 on VAL and is read with that selection in mind; and each of E6-E2's,
+   E7-E2's and E6-X's records (launched, complete, cut, not run, not made).
+
+Code: one lane (AM-23's quantization lane: E2 sources and the arm parents of E6-X). The
+TEST-manifest lane lists every quantity here.
 
 ## Status of PREREGISTRATION §10 items after these amendments
 

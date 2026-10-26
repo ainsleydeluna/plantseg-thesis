@@ -5,6 +5,8 @@
        later change to the function D2 mirrors (scripts/teacher_d2_calibration.py) fails here first. The
        value was measured at afd2d33 (b3313391...) and re-pinned by the P41 follow-up at 60c1417, after
        K-part's two run() hunks (expected_sha256 to validate_teacher_artifact and load_teacher_model).
+       Re-pinned by lane LQP (C14) after ruling R2's one call in run()'s INT8 official branch, outside the
+       part D2 mirrors (teacher_d2_calibration.py :105-258).
   P6   src/eval/teacher_diag.py calls load_frozen_teacher and load_teacher_model exactly once each (the two
        load lines), and no DIAG script calls either.
   P7   frozen.provenance.as_dict() is called at exactly one site (teacher_record), and no DIAG script
@@ -29,7 +31,7 @@ if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
 RESULTS: list[tuple[str, bool, str]] = []
-EVALUATE_MODEL_RUN_SHA256 = "d1c809d4ad588d6efffd7fd98a1240fa22ade18d729ec6f187963125de97de2a"   # at 60c1417
+EVALUATE_MODEL_RUN_SHA256 = "b031d3aea7545039dae0aaa98eae809e8ad2cb64af8963da8d94c334115fc4f0"   # at e37e339
 DIAG_SCRIPTS = ("scripts/teacher_d1_nmf_sensitivity.py", "scripts/teacher_d2_calibration.py",
                 "scripts/score_teacher_train.py", "scripts/teacher_d3_perclass_strata.py",
                 "scripts/hash_split_files.py", "scripts/dedup_val_scores.py")
