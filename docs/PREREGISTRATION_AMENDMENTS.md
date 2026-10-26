@@ -101,6 +101,8 @@ Code: lane L-AM3.
 
 [Extended by DL-51: E6-KD's projection starts from E3's trained projection.pt weights paired with the E3 checkpoint; FP32, never fake-quantized.]
 
+[Code: L-AM3 B-1 30b3060 (merged 574e9a0), B-2 a95b73b (merged ebc1201); DL-07, DL-140.]
+
 ## AM-4 — QAT (resolves M9)
 
 **Schedule.**
