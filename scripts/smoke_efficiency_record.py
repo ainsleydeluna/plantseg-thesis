@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
-"""Synthetic smoke of LEFF B-1: L-RESIDUAL-SHA's efficiency half and the profiler's record.
+"""Synthetic smoke of LEFF B-1: L-RESIDUAL-SHA's efficiency half, peak memory and the profiler's record.
 
-The LEFF Phase A plan §9's B-1 smoke as the LEFF-B1 GO amends it (LF23-LF27, LF35): the stage sets (E-35;
+The LEFF Phase A plan §9's B-1 smoke as the LEFF-B1 GO amends it (LF23-LF28, LF35): the stage sets (E-35;
 LEFF-AUDIT-RULE-1 A1), the teacher's identity (DL-59), the loader repairs (F1) with the converted artifact's re-hash
-before its load (B-1b's P3 twin), the serialized size with its model-only companion (Q7), and the INT8 footprint read
-from the artifact's own packed params and cross-checked against its state_dict companion (A13).
+before its load (B-1b's P3 twin), the serialized size with its model-only companion (Q7), the INT8 footprint read
+from the artifact's own packed params and cross-checked against its state_dict companion (A13), peak memory (§3 with
+A6's recorded slack) and the plantseg-efficiency/2.0.0 record.
 
 Synthetic only (DL-41): random-weight students, a stub teacher, a synthetic PTQ run directory; no dataset, no
 checkpoint of record, no GPU, no install. Temporary roots come from scripts/synthetic_ptq_fixtures.safe_tmpdir; no
 file or folder named with "test" is created (a refused path is a never-created one, or a symlink whose never-created
-target names it); the repository is unchanged (repo_state); no_forbidden_named_path_created is the last check.
+target names it); the repository is unchanged (repo_state); no_forbidden_named_path_created is the last check. Each
+high-water measurement runs in a fresh child process (`--child`), as a run of record does.
 
     python -B scripts/smoke_efficiency_record.py [--only CHECK[,CHECK...]]
 
@@ -18,11 +20,14 @@ Prints one line per check and `RESULT: PASS (n/n)`; exit 0 when every check pass
 from __future__ import annotations
 
 import argparse
+import ast
 import contextlib
+import gc
 import hashlib
 import io
 import json
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -42,7 +47,8 @@ from src.eval import model_loading as ML  # noqa: E402
 from src.eval import stage_artifacts as SA  # noqa: E402
 
 NC = 116
-TMP: Path = None                     # set by main()
+MiB = 1024 * 1024
+TMP: Path = None                     # set by main(); a --child process creates no temporary root
 TEACHER_CONFIG = REPO / "configs" / "teacher" / "segnext_mscan-b_1xb16-adamw-40k_plantseg116-512x512.py"
 AM23 = ("E6-E2", "E7-E2", "E6-R1", "E6-R2")
 LF23_STAGES = ("teacher", "E1", "E2", "E3", "A", "F", "G", "E4", "E5", "E6", "E7")
@@ -677,7 +683,238 @@ def _companion_before_parse():
     return code == "checkpoint_changed_after_validation" and loads.n == 0, f"{code}; torch.load calls {loads.n}"
 
 
-# ---------------------------------------------------------------- 5. paths (§2 step 2)
+# ---------------------------------------------------------------- 5. peak memory (LF28; §3; A6)
+CHILD_TAG = "CHILD_JSON:"
+ENV_CAUSES = ("is absent", "is not writable")    # LF28: environment-caused only when clear_refs cannot be written
+
+
+def child_forward() -> dict:
+    """A forward that allocates 64 MiB, every page touched: the phase's high-water mark must see it."""
+    class Alloc64(nn.Module):
+        def forward(self, x):
+            block = torch.ones(16 * 1024 * 1024)
+            return x.mean() + block[-1]
+    return PE.measure_memory(Alloc64())
+
+
+def child_spike() -> dict:
+    """128 MiB touched and freed before the phase (the load spike), then an allocation-free forward."""
+    spike = torch.ones(32 * 1024 * 1024)
+    del spike
+
+    class Quiet(nn.Module):
+        def forward(self, x):
+            return x[:, :1, :1, :1]
+    return PE.measure_memory(Quiet())
+
+
+def child_reset() -> dict:
+    """128 MiB touched and freed, then the reset: the high-water mark must come back to the resident set."""
+    spike = torch.ones(32 * 1024 * 1024)
+    del spike
+    gc.collect()
+    before = EFF.read_proc_status()
+    slack = EFF.hwm_slack_bytes(torch.get_num_threads(), os.sysconf("SC_PAGE_SIZE"))
+    reset = EFF.reset_rss_high_water(slack_bytes=slack)
+    return {"before": before, "after": EFF.read_proc_status(), "reset": reset, "slack": slack}
+
+
+CHILDREN = {"forward": child_forward, "spike": child_spike, "reset": child_reset}
+
+
+def run_child(name: str) -> dict:
+    """One high-water measurement in a fresh process, as a run of record is: the smoke's own mark cannot confound it."""
+    key = f"child_{name}"
+    if key not in FIX:
+        env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+        p = subprocess.run([sys.executable, "-B", str(Path(__file__).resolve()), "--child", name], cwd=str(REPO),
+                           env=env, capture_output=True, text=True, timeout=900)
+        lines = [ln for ln in p.stdout.splitlines() if ln.startswith(CHILD_TAG)]
+        FIX[key] = (json.loads(lines[-1][len(CHILD_TAG):]) if lines
+                    else {"error": f"exit {p.returncode}: {(p.stdout + p.stderr)[-400:]}"})
+    return FIX[key]
+
+
+def environment_caused(res: dict) -> str | None:
+    if res.get("refused") == "memory_hwm_reset_unavailable" and any(c in res.get("message", "") for c in ENV_CAUSES):
+        return (f"ENVIRONMENT-CAUSED [memory_hwm_reset_unavailable] {res['message'][:160]} (LB-0 proves it in the "
+                "KD image)")
+    return None
+
+
+def child_failed(res: dict) -> str | None:
+    return None if not ("error" in res or "refused" in res) else str(res)[:300]
+
+
+def write_status(rss_kb: int, hwm_kb: int) -> Path:
+    """A synthetic /proc/self/status with the two lines read_proc_status reads."""
+    p = fresh("status_probe")
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(f"Name:\tpython3\nVmHWM:\t{hwm_kb:8d} kB\nVmRSS:\t{rss_kb:8d} kB\n", encoding="ascii")
+    return p
+
+
+def writable_clear_refs() -> Path:
+    """A regular file standing in for /proc/self/clear_refs (the write succeeds; the status file decides)."""
+    p = fresh("clear_refs_probe")
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("", encoding="ascii")
+    return p
+
+
+def _calls(tree, name: str) -> list:
+    return [n for n in ast.walk(tree) if isinstance(n, ast.Call)
+            and (getattr(n.func, "id", None) == name or getattr(n.func, "attr", None) == name)]
+
+
+@case("adjacent_samples_removed")
+def _adjacent():
+    runner = ast.parse((REPO / "scripts" / "profile_efficiency.py").read_text(encoding="utf-8"))
+    eff = ast.parse((REPO / "src" / "eval" / "efficiency.py").read_text(encoding="utf-8"))
+    fn = next(n for n in eff.body if isinstance(n, ast.FunctionDef) and n.name == "measure_peak_memory")
+    samples = [i for i, st in enumerate(fn.body) if _calls(st, "read_proc_status")]
+    loops = [i for i, st in enumerate(fn.body)
+             if any(isinstance(n, ast.For) and _calls(n, "model") for n in ast.walk(st))]
+    ok = (not _calls(runner, "rss_bytes") and len(samples) >= 2 and len(loops) == 1
+          and samples[0] < loops[0] < samples[-1])
+    return ok, (f"profile_efficiency.py rss_bytes() calls {len(_calls(runner, 'rss_bytes'))}; measure_peak_memory "
+                f"statements: samples {samples}, forward loop {loops}")
+
+
+@case("hwm_reset_effective")
+def _reset_effective():
+    res = run_child("reset")
+    env = environment_caused(res)
+    if env:
+        return True, env
+    bad = child_failed(res)
+    if bad:
+        return False, bad
+    b, a, slack = res["before"], res["after"], res["slack"]
+    ok = (b["vm_hwm_bytes"] >= b["vm_rss_bytes"] + 100 * MiB and a["vm_hwm_bytes"] <= a["vm_rss_bytes"] + slack
+          and res["reset"]["slack_bytes"] == slack)
+    return ok, (f"VmHWM - VmRSS before the reset {(b['vm_hwm_bytes'] - b['vm_rss_bytes']) / MiB:.1f} MiB, after "
+                f"{(a['vm_hwm_bytes'] - a['vm_rss_bytes']) / MiB:.2f} MiB (slack {slack / MiB:.2f} MiB)")
+
+
+@case("memory_sees_forward_allocation")
+def _sees_forward():
+    res = run_child("forward")
+    env = environment_caused(res)
+    if env:
+        return True, env
+    bad = child_failed(res)
+    if bad:
+        return False, bad
+    delta = res["peak_rss_delta_bytes"]
+    return 60 * MiB <= delta <= 96 * MiB, f"a 64 MiB forward allocation: delta {delta / MiB:.1f} MiB (60-96)"
+
+
+@case("memory_ignores_load_spike")
+def _ignores_spike():
+    res = run_child("spike")
+    env = environment_caused(res)
+    if env:
+        return True, env
+    bad = child_failed(res)
+    if bad:
+        return False, bad
+    delta = res["peak_rss_delta_bytes"]
+    return delta < 16 * MiB, f"128 MiB freed before the phase, an allocation-free forward: delta {delta / MiB:.2f} MiB"
+
+
+@case("ru_maxrss_recorded")
+def _ru_maxrss():
+    res = run_child("forward")
+    env = environment_caused(res)
+    if env:
+        return True, env
+    bad = child_failed(res)
+    if bad:
+        return False, bad
+    start = res["process_start"] or {}
+    ok = (res["ru_maxrss_phase_start_bytes"] > 0 and res["ru_maxrss_end_bytes"] >= res["ru_maxrss_phase_start_bytes"]
+          and isinstance(res["ru_maxrss_consistent"], bool)
+          and all(isinstance(start.get(k), int) and start[k] > 0 for k in ("ru_maxrss_bytes", "vm_hwm_bytes",
+                                                                             "vm_rss_bytes"))
+          and res["parent_contamination"]["ru_maxrss_start_bytes"] == start["ru_maxrss_bytes"])
+    return ok, (f"ru_maxrss phase start {res['ru_maxrss_phase_start_bytes'] / MiB:.0f} MiB, end "
+                f"{res['ru_maxrss_end_bytes'] / MiB:.0f} MiB, consistent {res['ru_maxrss_consistent']}; process "
+                f"start {start}")
+
+
+@case("parent_contamination_detected")
+def _parent():
+    hwm = 200 * MiB
+    at = EFF.parent_contamination(hwm + 64 * MiB, hwm)
+    over = EFF.parent_contamination(hwm + 64 * MiB + 1, hwm)
+    clean = EFF.parent_contamination(hwm, hwm)
+    ok = (at["contaminated"] is False and over["contaminated"] is True and clean["contaminated"] is False
+          and over["threshold_bytes"] == 64 * MiB and over["excess_bytes"] == 64 * MiB + 1)
+    return ok, "excess 64 MiB: not contaminated; 64 MiB + 1 B: contaminated"
+
+
+@case("hwm_reset_unavailable_refused")
+def _unavailable():
+    absent = TMP / "nowhere_proc" / "clear_refs"        # its folder is never created; opened without O_CREAT
+    a_dir = fresh("proc_dir")
+    a_dir.mkdir(parents=True)
+    got = {}
+    for cause, kw in (("is absent", {"clear_refs": absent}), ("is not writable", {"clear_refs": a_dir}),
+                      ("did not take", {"clear_refs": writable_clear_refs(),
+                                        "status": write_status(100_000, 100_000 + 200 * 1024)})):
+        try:
+            EFF.reset_rss_high_water(slack_bytes=MiB, **kw)
+            got[cause] = None
+        except EFF.EfficiencyError as e:
+            got[cause] = e.code if cause in str(e) else f"{e.code} (other text: {str(e)[:80]})"
+    ok = set(got.values()) == {"memory_hwm_reset_unavailable"} and not os.path.lexists(absent.parent)
+    return ok, str(got)
+
+
+@case("hwm_slack_recorded")
+def _slack():
+    rules = EFF.hwm_slack_bytes(1, 4096) == MiB and EFF.hwm_slack_bytes(7, 4096) == 2 * MiB
+    at = code_of(EFF.reset_rss_high_water, slack_bytes=MiB, clear_refs=writable_clear_refs(),
+                 status=write_status(100_000, 100_000 + 1024))           # VmHWM = VmRSS + the slack: accepted
+    over = code_of(EFF.reset_rss_high_water, slack_bytes=MiB, clear_refs=writable_clear_refs(),
+                   status=write_status(100_000, 100_000 + 1025))         # one kB above it: refused
+    res = run_child("forward")
+    env = environment_caused(res)
+    if env:
+        recorded, detail = True, env
+    elif child_failed(res):
+        recorded, detail = False, child_failed(res)
+    else:
+        recorded = (res["slack_bytes"] == EFF.hwm_slack_bytes(res["threads"], res["page_size_bytes"])
+                    == res["reset"]["slack_bytes"])
+        detail = f"recorded slack {res['slack_bytes']} B at {res['threads']} threads"
+    ok = rules and at is None and over == "memory_hwm_reset_unavailable" and recorded
+    return ok, f"max(1 MiB, 64 pages x (threads + 1)); at the slack {at}, above it {over}; {detail}"
+
+
+# ---------------------------------------------------------------- 6. paths and the record (§2 step 2; LF28)
+@case("schema_2_0_0")
+def _schema():
+    code, path, rec = run_profile(e1_argv(fresh("schema_e1"), metrics="params,size,flops"))
+    code_a, _pa, rec_a = run_profile(["--stage", "A", "--checkpoint", fixture("arm_a"), "--metrics", "memory",
+                                      "--out-dir", fresh("schema_a")])
+    if code is not None or code_a is not None:
+        return False, f"refused: {code}, {code_a}"
+    keys = {"schema", "measurement_role", "cpu_proxy", "on_device", "no_arm_claim", "of_record",
+            "efficiency_analysis_member", "metric_group", "provenance", "parameters", "footprint", "footprint_source",
+            "artifact", "compute", "latency", "memory", "deferred", "created_utc", "wall_clock_start",
+            "wall_clock_end"}
+    env = rec["provenance"]["environment"]
+    ok = (rec["schema"] == rec_a["schema"] == "plantseg-efficiency/2.0.0" and keys <= set(rec)
+          and rec["of_record"] is False and rec["efficiency_analysis_member"] is True
+          and rec["metric_group"] == "static" and "_static_" in path.name and rec["footprint_source"] == "model"
+          and rec_a["efficiency_analysis_member"] is False and rec_a["metric_group"] == "memory"
+          and {"active_engine", "parallel_info"} <= set(env) and "expected_sha256" in rec["provenance"]
+          and rec["wall_clock_start"] <= rec["wall_clock_end"] and rec["created_utc"].endswith("Z"))
+    return ok, f"{path.name}; A member {rec_a['efficiency_analysis_member']}, group {rec_a['metric_group']}"
+
+
 
 @case("forbidden_path_name_refused")
 def _forbidden():
@@ -727,7 +964,7 @@ def _inside_repo():
     return ok and not os.path.lexists(inside), f"{code}; main exit {rc}"
 
 
-# ---------------------------------------------------------------- 6. hygiene (always last)
+# ---------------------------------------------------------------- 7. hygiene (always last)
 BEFORE = None
 
 
@@ -747,11 +984,24 @@ def _no_forbidden():
     return not bad, f"{len(bad)} under {TMP}" + (f": {bad[:3]}" if bad else "")
 
 
+def child_main(name: str) -> int:
+    """`--child NAME`: one memory measurement in this fresh process, printed as one CHILD_JSON line."""
+    try:
+        out = CHILDREN[name]()
+    except Exception as e:                                   # noqa: BLE001 - the parent judges it
+        out = {"refused": getattr(e, "code", None) or type(e).__name__, "message": str(e)}
+    print(CHILD_TAG + json.dumps(out, default=str), flush=True)
+    return 0
+
+
 def main(argv=None) -> int:
     global BEFORE, TMP
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--only", default=None, help="comma-separated check names (the mutation runner's)")
+    ap.add_argument("--child", default=None, choices=sorted(CHILDREN), help=argparse.SUPPRESS)
     args = ap.parse_args(argv)
+    if args.child:
+        return child_main(args.child)
     only = None if args.only is None else [n for n in args.only.split(",") if n]
     unknown = sorted(set(only or ()) - set(CASES))
     if unknown:

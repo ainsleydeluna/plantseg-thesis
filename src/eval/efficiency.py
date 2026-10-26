@@ -30,10 +30,13 @@ fbgemm/x86 copy with `reduce_range=True` is the x86 CPU-proxy latency artifact (
 """
 from __future__ import annotations
 
+import gc
 import hashlib
 import io
+import os
 import platform
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -46,7 +49,7 @@ if str(REPO) not in sys.path:
 from src.eval.model_loading import sha256_file  # noqa: E402  (reuse; no second loader here)
 from src.eval.stage_artifacts import OFFICIAL_ROWS  # noqa: E402  (governed clean-test row count)
 
-EFFICIENCY_SCHEMA = "plantseg-efficiency/1.0.0"
+EFFICIENCY_SCHEMA = "plantseg-efficiency/2.0.0"
 
 # ---- frozen protocol -------------------------------------------------------------------------
 INPUT_SHAPE = (1, 3, 512, 512)
@@ -556,6 +559,142 @@ def memory_delta(baseline_bytes: int, peak_bytes: int) -> dict:
     }
 
 
+# ------------------------------------------------------------------ peak memory (the LEFF Phase A plan §3; DL-b)
+# Two adjacent ru_maxrss reads measure nothing (FACT 4): ru_maxrss is a process-lifetime high-water mark that cannot
+# be reset. VmHWM in /proc/self/status is the same mm counter, per process and resettable through
+# /proc/self/clear_refs, so the inference phase gets its own high-water mark. Linux only.
+PROC_STATUS = "/proc/self/status"
+PROC_CLEAR_REFS = "/proc/self/clear_refs"
+CLEAR_REFS_RESET_HWM = "5"            # proc_pid_clear_refs(5): VmHWM reset to the current VmRSS (Linux >= 4.0)
+MEMORY_FORWARDS = WARMUP_FORWARDS + MEASURED_FORWARDS   # the protocol's 120 forwards, untimed here
+# VmRSS and VmHWM are approximate (proc_pid_status(5); per-thread counters are synced lazily), so the reset is judged
+# against a recorded slack, never one page (LEFF-AUDIT-RULE-1 A6).
+HWM_SLACK_FLOOR_BYTES = 1024 * 1024
+HWM_SLACK_PAGES_PER_THREAD = 64
+PARENT_CONTAMINATION_BYTES = 64 * 1024 * 1024
+MEMORY_SOURCE = "/proc/self/status VmHWM - VmRSS (high-water mark reset via /proc/self/clear_refs)"
+
+
+def read_proc_status(path=PROC_STATUS) -> dict:
+    """VmRSS and VmHWM of this process in bytes (the kB values x 1024)."""
+    try:
+        with open(path, encoding="ascii") as fh:
+            text = fh.read()
+    except OSError as e:
+        _fail("memory_sampler_unavailable",
+              f"NEEDS LINUX: {path} cannot be read ({type(e).__name__}: {e}); peak memory is the resident-set "
+              "high-water mark of the inference phase")
+    values = {}
+    for line in text.splitlines():
+        key, _, rest = line.partition(":")
+        if key in ("VmRSS", "VmHWM") and rest.split():
+            values[key] = int(rest.split()[0]) * 1024
+    if set(values) != {"VmRSS", "VmHWM"}:
+        _fail("memory_sampler_unavailable", f"{path} holds no VmRSS and VmHWM lines")
+    return {"vm_rss_bytes": values["VmRSS"], "vm_hwm_bytes": values["VmHWM"]}
+
+
+def ru_maxrss_bytes() -> int:
+    """resource.getrusage(RUSAGE_SELF).ru_maxrss in bytes (KiB on Linux): the contract's counter, recorded beside
+    VmHWM. It cannot be reset."""
+    import resource
+    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return int(peak * 1024) if sys.platform.startswith("linux") else int(peak)
+
+
+def hwm_slack_bytes(threads: int, page_size: int) -> int:
+    """The slack VmHWM may exceed VmRSS by after a reset: max(1 MiB, 64 pages x (threads + 1)) (A6)."""
+    return max(HWM_SLACK_FLOOR_BYTES, HWM_SLACK_PAGES_PER_THREAD * int(page_size) * (int(threads) + 1))
+
+
+def reset_rss_high_water(*, slack_bytes: int, clear_refs=PROC_CLEAR_REFS, status=PROC_STATUS) -> dict:
+    """Reset this process's resident-set high-water mark to its current resident set and prove the reset took.
+
+    `[memory_hwm_reset_unavailable]`, naming the cause, when clear_refs is absent or not writable, or when VmHWM still
+    exceeds VmRSS by more than `slack_bytes` after the write. The file is opened without O_CREAT: a wrong path is
+    never created.
+    """
+    try:
+        fd = os.open(str(clear_refs), os.O_WRONLY)
+    except FileNotFoundError:
+        _fail("memory_hwm_reset_unavailable",
+              f"{clear_refs} is absent (Linux >= 4.0 provides it); the high-water mark cannot be reset")
+    except OSError as e:
+        _fail("memory_hwm_reset_unavailable",
+              f"{clear_refs} is not writable ({type(e).__name__}: {e}); the high-water mark cannot be reset")
+    try:
+        os.write(fd, CLEAR_REFS_RESET_HWM.encode("ascii"))
+    except OSError as e:
+        _fail("memory_hwm_reset_unavailable",
+              f"{clear_refs} is not writable ({type(e).__name__}: {e}); the high-water mark cannot be reset")
+    finally:
+        os.close(fd)
+    after = read_proc_status(status)
+    if after["vm_hwm_bytes"] > after["vm_rss_bytes"] + slack_bytes:
+        _fail("memory_hwm_reset_unavailable",
+              f"the reset did not take: VmHWM {after['vm_hwm_bytes']} B exceeds VmRSS {after['vm_rss_bytes']} B by "
+              f"more than the slack {slack_bytes} B")
+    return {"vm_rss_after_reset_bytes": after["vm_rss_bytes"], "vm_hwm_after_reset_bytes": after["vm_hwm_bytes"],
+            "slack_bytes": int(slack_bytes)}
+
+
+def parent_contamination(ru_maxrss_start_bytes: int, vm_hwm_start_bytes: int) -> dict:
+    """§3: a process started from a large parent can start with the parent's ru_maxrss (Linux reports the larger of
+    the inherited signal maxrss and the mm high-water mark; INFERRED, kernel getrusage). Contaminated when ru_maxrss at
+    process start exceeds VmHWM at process start by more than 64 MiB; the run of record refuses it (B-2)."""
+    excess = int(ru_maxrss_start_bytes) - int(vm_hwm_start_bytes)
+    return {"ru_maxrss_start_bytes": int(ru_maxrss_start_bytes), "vm_hwm_start_bytes": int(vm_hwm_start_bytes),
+            "excess_bytes": excess, "threshold_bytes": PARENT_CONTAMINATION_BYTES,
+            "contaminated": excess > PARENT_CONTAMINATION_BYTES}
+
+
+def measure_peak_memory(model, *, input_shape=INPUT_SHAPE, forwards: int = MEMORY_FORWARDS,
+                        clear_refs=PROC_CLEAR_REFS, status=PROC_STATUS) -> dict:
+    """Peak inference memory (§3): VmHWM over the protocol's 120 untimed forwards minus VmRSS at the start of that
+    phase, in bytes, in a fresh process per stage of record.
+
+    The phase starts after the model is loaded and gc.collect() has run: the high-water mark is then reset to the
+    current resident set (reset_rss_high_water), so neither the load spike nor a parent's high-water mark enters the
+    delta. The input exists before the phase. ru_maxrss is recorded at the phase start and end; `ru_maxrss_consistent`
+    is informational, never a refusal (A6). A negative delta is reported, never clamped (memory_delta).
+    """
+    model.eval()
+    inputs = torch.zeros(*input_shape)
+    gc.collect()
+    threads = torch.get_num_threads()
+    page = os.sysconf("SC_PAGE_SIZE")
+    slack = hwm_slack_bytes(threads, page)
+    ru_phase_start = ru_maxrss_bytes()
+    reset = reset_rss_high_water(slack_bytes=slack, clear_refs=clear_refs, status=status)
+    start = read_proc_status(status)
+    with torch.inference_mode():
+        for _ in range(forwards):
+            model(inputs)
+    end = read_proc_status(status)
+    ru_end = ru_maxrss_bytes()
+    out = memory_delta(start["vm_rss_bytes"], end["vm_hwm_bytes"])
+    out.update({
+        "source": MEMORY_SOURCE,
+        "definition": ("VmHWM over the inference phase minus VmRSS at its start; the high-water mark reset after "
+                       "the load and gc.collect()"),
+        "forwards": forwards,
+        "input_shape": list(input_shape),
+        "inference_mode": True,
+        "threads": threads,
+        "page_size_bytes": page,
+        "slack_bytes": slack,
+        "vm_rss_start_bytes": start["vm_rss_bytes"],
+        "vm_hwm_start_bytes": start["vm_hwm_bytes"],
+        "vm_rss_end_bytes": end["vm_rss_bytes"],
+        "vm_hwm_end_bytes": end["vm_hwm_bytes"],
+        "ru_maxrss_phase_start_bytes": ru_phase_start,
+        "ru_maxrss_end_bytes": ru_end,
+        "ru_maxrss_consistent": ru_end >= end["vm_hwm_bytes"] - slack,
+        "reset": reset,
+    })
+    return out
+
+
 # ------------------------------------------------------------------ INT8 artifact roles
 def require_quantized_backend(name: str) -> str:
     """Select a quantization engine or refuse. Never silently substitutes another backend."""
@@ -619,8 +758,10 @@ def environment() -> dict:
         "processor": platform.processor() or "unknown",
         "machine": platform.machine(),
         "quant_backends_available": list(torch.backends.quantized.supported_engines),
+        "active_engine": torch.backends.quantized.engine,
         "thread_count": torch.get_num_threads(),
         "interop_thread_count": torch.get_num_interop_threads(),
+        "parallel_info": torch.__config__.parallel_info(),
     }
 
 
@@ -809,24 +950,36 @@ def finalize_parity_record(*, stage: str, engine: str, qnnpack_artifact: dict, x
 def efficiency_record(*, provenance_block: dict, parameters: dict | None = None,
                       footprint: dict | None = None, artifact: dict | None = None,
                       compute: dict | None = None, latency: dict | None = None,
-                      memory: dict | None = None, deferred: dict | None = None) -> dict:
+                      memory: dict | None = None, deferred: dict | None = None,
+                      of_record: bool = False, metric_group: str | None = None,
+                      wall_clock: tuple | None = None) -> dict:
     """One structured efficiency result for one stage/artifact.
 
     Written to its OWN schema: the frozen evaluation/statistics artifact schemas are not widened to
-    carry efficiency fields.
+    carry efficiency fields. 2.0.0 (the LEFF Phase A plan §2): `of_record`, `efficiency_analysis_member`,
+    `metric_group`, `footprint_source`, `created_utc` and the wall clock of the measurement; the run of record's
+    blocks (thread policy, host, code, image, binding) join under the same version (LF28).
     """
+    start, end = wall_clock if wall_clock else (None, None)
     return {
         "schema": EFFICIENCY_SCHEMA,
         "measurement_role": MEASUREMENT_ROLE,
         "cpu_proxy": CPU_PROXY,
         "on_device": ON_DEVICE,
         "no_arm_claim": True,
+        "of_record": bool(of_record),
+        "efficiency_analysis_member": provenance_block.get("stage") in EFFICIENCY_ANALYSIS_STAGES,
+        "metric_group": metric_group,
         "provenance": provenance_block,
         "parameters": parameters,
         "footprint": footprint,
+        "footprint_source": (footprint or {}).get("footprint_source"),
         "artifact": artifact,
         "compute": compute,
         "latency": latency,
         "memory": memory,
         "deferred": deferred or {},
+        "created_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+        "wall_clock_start": start,
+        "wall_clock_end": end,
     }

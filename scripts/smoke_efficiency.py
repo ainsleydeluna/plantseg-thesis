@@ -369,7 +369,7 @@ def test_scientific_role() -> None:
     check("record_labelled_descriptive",
           rec["measurement_role"] == "descriptive" and rec["cpu_proxy"] is True
           and rec["on_device"] is False and rec["no_arm_claim"] is True)
-    check("record_uses_own_schema", rec["schema"] == "plantseg-efficiency/1.0.0",
+    check("record_uses_own_schema", rec["schema"] == "plantseg-efficiency/2.0.0",
           "frozen evaluation/statistics schemas are not widened")
     check("provenance_identifies_artifact",
           {"stage", "model_role", "precision", "artifact_role", "backend",

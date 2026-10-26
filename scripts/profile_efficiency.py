@@ -28,6 +28,10 @@ L-RESIDUAL-SHA's efficiency half (LEFF B-1: E-35, DL-59; the LEFF Phase A plan �
     stage also records its model-only serialization, a labelled companion (LEFF-AUDIT-RULE-1 Q7). The INT8 weight
     footprint is read from the artifact's own packed params and cross-checked against its state_dict companion
     ([state_dict_companion_mismatch]; A13).
+  * Peak memory (§3): VmHWM over the protocol's 120 untimed forwards minus VmRSS at the phase start, the high-water
+    mark reset through /proc/self/clear_refs after the load and gc.collect(); in a combined invocation it runs
+    first, right after the load. The process-start values are recorded for §3's parent test. The record is
+    plantseg-efficiency/2.0.0.
 Every refusal prints `[code] message` and exits 2.
 """
 from __future__ import annotations
@@ -43,17 +47,38 @@ REPO = Path(__file__).resolve().parents[1]
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
+
+def _process_start_memory() -> dict | None:
+    """ru_maxrss and /proc/self/status at process start, read before torch is imported (§3's parent test)."""
+    try:
+        import resource
+        values = {}
+        with open("/proc/self/status", encoding="ascii") as fh:
+            for line in fh:
+                key, _, rest = line.partition(":")
+                if key in ("VmRSS", "VmHWM") and rest.split():
+                    values[key] = int(rest.split()[0]) * 1024
+        return {"ru_maxrss_bytes": int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss) * 1024,
+                "vm_hwm_bytes": values["VmHWM"], "vm_rss_bytes": values["VmRSS"]}
+    except (ImportError, OSError, KeyError, ValueError):
+        return None
+
+
+PROCESS_START_MEMORY = _process_start_memory()
+
 from src.eval.efficiency import (ARTIFACT_ROLE_ACCURACY, ARTIFACT_ROLE_X86_LATENCY,  # noqa: E402
                                  ARTIFACT_ROLES, FOOTPRINT_SOURCE_ARTIFACT, FOOTPRINT_SOURCE_COMPANION,
                                  FOOTPRINT_SOURCE_MODEL, INPUT_SHAPE, STAGES, EfficiencyError,
                                  architecture_parameter_count, efficiency_record, footprint_counts_equal,
-                                 measure_latency, memory_delta, model_only_serialization,
-                                 packed_params_footprint, profile_macs, provenance,
-                                 require_quantized_backend, rss_bytes, serialized_artifact,
-                                 validate_artifact_role, weight_footprint, x86_latency_copy_gate)
+                                 measure_latency, measure_peak_memory, model_only_serialization,
+                                 packed_params_footprint, parent_contamination, profile_macs, provenance,
+                                 require_quantized_backend, serialized_artifact, validate_artifact_role,
+                                 weight_footprint, x86_latency_copy_gate)
 from src.eval.stage_artifacts import resolve_evaluation_source  # noqa: E402
 
 METRICS = ("params", "size", "flops", "latency", "memory")
+# One group per process of record (§2): memory always alone, in a fresh process (§3)
+METRIC_GROUPS = {"static": ("params", "size", "flops"), "latency": ("latency",), "memory": ("memory",)}
 FORBIDDEN_NAME = "test"           # SL-1: a path whose given or resolved form names it is refused before it is opened
 PATH_FLAGS = ("out_dir", "checkpoint", "provenance", "teacher_config")
 
@@ -95,6 +120,11 @@ def parse_metrics(raw: str) -> tuple[str, ...]:
     if not requested:
         raise EfficiencyCliError("no metrics requested")
     return requested
+
+
+def metric_group_of(metrics) -> str | None:
+    """The metric group the requested metrics form exactly, or None for any other combination."""
+    return next((g for g, members in METRIC_GROUPS.items() if set(members) == set(metrics)), None)
 
 
 # ------------------------------------------------------------------ checks before anything is opened
@@ -281,10 +311,23 @@ def measure_footprint(model, resolved: dict, provenance_path) -> dict:
             "companion_count": from_companion}
 
 
+# ------------------------------------------------------------------ peak memory (§3)
+def measure_memory(model) -> dict:
+    """Peak inference memory (efficiency.measure_peak_memory) with this process's start values and §3's
+    parent-contamination test on them (recorded here; the run of record refuses a contaminated process, B-2)."""
+    out = measure_peak_memory(model)
+    start = PROCESS_START_MEMORY
+    out["process_start"] = start
+    out["parent_contamination"] = (parent_contamination(start["ru_maxrss_bytes"], start["vm_hwm_bytes"])
+                                   if start else None)
+    return out
+
+
 # ------------------------------------------------------------------ the profile
 def profile(resolved: dict, *, stage: str, metrics, artifact_role: str, threads: int | None,
             provenance_path=None, teacher_config: str | None = None, teacher_sha256: str | None = None,
             teacher_builder=None) -> dict:
+    wall_start = datetime.now(timezone.utc).timestamp()
     kind = resolved["spec"]["kind"]
     precision = "int8" if kind == "int8_artifact" else "fp32"
     model_role = "teacher" if kind == "teacher_checkpoint" else "student"
@@ -305,6 +348,13 @@ def profile(resolved: dict, *, stage: str, metrics, artifact_role: str, threads:
 
     parameters = footprint = compute = latency = memory = None
     deferred: dict[str, str] = {}
+
+    if "memory" in metrics:
+        # first, right after the load (§3): no other measurement's allocations precede the phase
+        try:
+            memory = measure_memory(model)
+        except EfficiencyError as e:
+            deferred["memory"] = f"[{e.code}] {e}"
 
     reference = fp32_reference_for(stage) if precision == "int8" else None
 
@@ -329,24 +379,19 @@ def profile(resolved: dict, *, stage: str, metrics, artifact_role: str, threads:
             latency = measure_latency(model, thread_count=threads)
         except EfficiencyError as e:
             deferred["latency"] = f"[{e.code}] {e}"
-    if "memory" in metrics:
-        try:
-            baseline = rss_bytes()
-            with_peak = rss_bytes()
-            memory = memory_delta(baseline, with_peak)
-        except EfficiencyError as e:
-            deferred["memory"] = f"[{e.code}] {e}"
 
     return efficiency_record(provenance_block=prov, parameters=parameters, footprint=footprint,
                              artifact=artifact, compute=compute, latency=latency, memory=memory,
-                             deferred=deferred)
+                             deferred=deferred, of_record=False, metric_group=metric_group_of(metrics),
+                             wall_clock=(wall_start, datetime.now(timezone.utc).timestamp()))
 
 
 def write_record(out_dir: Path, record: dict, *, stage: str, artifact_role: str) -> Path:
     """Create the record exclusively: an existing file is never replaced."""
     out_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    out_path = out_dir / f"efficiency_{stage}_{artifact_role}_{stamp}.json"
+    group = record.get("metric_group") or "mixed"
+    out_path = out_dir / f"efficiency_{stage}_{artifact_role}_{group}_{stamp}.json"
     with open(out_path, "x", encoding="utf-8") as fh:
         fh.write(json.dumps(record, indent=2, sort_keys=True))
     return out_path
