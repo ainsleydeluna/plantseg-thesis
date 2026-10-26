@@ -125,7 +125,8 @@ CODES = {
     "superseded": "R-5: kind superseded is refused, never mapped",
     "parent_rule": "R-12: a parentage or not-run inconsistency (AM-19 item 4(a); LRB5)",
     "seed42_not_complete": "R-13: a seed-42 run of record without a model",
-    "seed_inconsistent": "R-14: a slot's model row or parent at another stage or seed",
+    "seed_inconsistent": "R-14: a slot's model row or parent at another stage or seed, or its fq_off row "
+                         "not the model of its int8_qat row (LRB5)",
     # artifacts (R-6 to R-9; LRB3, LRB7)
     "artifact_missing": "R-6: a model of record without its model row or bound artifact",
     "artifact_for_missing_run": "R-6: a bound clean artifact for a planned run without a model",
@@ -1005,11 +1006,13 @@ def load_stats_artifact(path, input_root) -> StatsArtifact:
                          policy=rep.views.policy, profile=rep.family["artifact_status"])
 
 
-def check_seed42_identity(inv: Inventory, cells: PlannedCells, stats: StatsArtifact) -> None:
-    """R-11 (K6, an identity and pairing check): each of the 37's clean artifacts carries its family
-    slot's model identity, and any binding record of a family slot's clean artifact equals its files."""
+def check_seed42_identity(inv: Inventory, cells: PlannedCells, stats: StatsArtifact,
+                          stages=STAGES) -> None:
+    """R-11 (K6, an identity and pairing check): each of the 37's clean artifacts of `stages` carries its
+    family slot's model identity, and any binding record of a family slot's clean artifact equals its
+    files."""
     bad = []
-    for stage in STAGES:
+    for stage in stages:
         slot = cells.slots[(stage, 42)]
         li = stats.clean(stage)
         row = model_row(inv, slot, D.STAGE_PRECISION[stage])

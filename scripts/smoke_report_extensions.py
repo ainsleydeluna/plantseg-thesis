@@ -7,18 +7,21 @@ SYNTHETIC ONLY (DL-41): scripts/lrep_fixtures.py's world; the committed MDE entr
 (reports/derived/mde_entry_20261009T034825Z.json) is read as the MDE input. Created paths live under a
 new directory in TMPDIR (left in place); none contains "test".
 
-  W  writing through the CLI: exit 0, exactly three files, SHA256SUMS verifies
+  W  writing through the CLI: exit 0, exactly three files, SHA256SUMS verifies, the markdown is the
+     rendering of the JSON
   P  placement: refuse an existing out-dir, one inside the repository, one inside an input directory
-  F  the profile: nonofficial with a banner on every table and the unmet conditions named; an
-     unbound binding keeps it nonofficial even beside an official statistics artifact (D-13)
+     (the strata file's and the MDE entry's included), one whose parent does not exist
+  F  the profile: nonofficial with a banner on every table and the unmet conditions named; an export
+     read by LREP's stub keeps it nonofficial even beside an official statistics artifact (D-13; an
+     unbound binding under Policy.OFFICIAL is seed R2f's); the inputs' split in the banner
   C  each of the six parts present and populated
   Q  the fq_off table (LRB7): its values, driver.load_input on a qat_fakequant_off artifact, a slot
-     without one, E6-KD's row
+     without one, E6-KD's row; a row without its record, a row of another seed, the 37's identities
   M  the MDE part from the committed entry (LRB18)
   N  no regression: report.build_report keeps its three extension points unpopulated, and no LREP
-     module imports rehearsal.py or writes report.py's names (K1)
+     file imports rehearsal.py or writes report.py's names (K1)
   H  code provenance, exit codes 0 / 2 / 4, --parts, no temporary directory left after a failure,
-     determinism, no 'test' path
+     determinism, no 'test' path, the frozen code's provenance in the profile (O3)
   R  refusals: parts_invalid, mde_entry_invalid, usage_invalid
 
 Run:  TMPDIR=<a scratch directory without 'test'> python -B scripts/smoke_report_extensions.py
@@ -38,6 +41,7 @@ import sys
 import time
 import traceback
 import types
+import uuid
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -57,6 +61,23 @@ from src.stats.ingest import Policy                                      # noqa:
 CTX = types.SimpleNamespace(world=None, out=None, doc=None, paths={}, cli=None)
 MDE = REPO / "reports" / "derived" / "mde_entry_20261009T034825Z.json"
 CLI = REPO / "scripts" / "report_extensions.py"
+#: Texts written out here rather than read from the module under test (R4-03): LRB7's note and the
+#: seven LREP code paths.
+FQOFF_NONE = "not available: no fq_off artifact"
+LREP_FILES = ["src/stats/heldout_inputs.py", "src/stats/seed_stability.py", "src/stats/strata_tables.py",
+              "src/stats/default_candidates.py", "src/stats/am6_tables.py", "src/stats/report_extensions.py",
+              "scripts/report_extensions.py"]
+BANNER = "**NONOFFICIAL**"
+
+
+def refused(code, fn):
+    try:
+        fn()
+    except H.LrepRefusal as e:
+        return e.code == code, f"{e.code}: {e.detail[:300]}"
+    except Exception as e:                                              # noqa: BLE001
+        return False, f"unexpected {type(e).__name__}: {e}"
+    return False, f"no refusal (expected {code})"
 
 
 def cli(*args):
@@ -100,6 +121,14 @@ def build(**kw):
     return RX.build_report(**args)
 
 
+def the_doc():
+    """The CLI's JSON (W1), or, when W1 has not run (the mutation harness), the same report built in
+    process once and kept."""
+    if CTX.doc is None:
+        CTX.doc = build()
+    return CTX.doc
+
+
 # --------------------------------------------------------------------------------------------------
 def w_written():
     out = new_out("rx_main")
@@ -138,11 +167,70 @@ def p_in_input():
     return code == 2 and "out_dir_invalid" in so and not out.exists(), so[-200:]
 
 
-def f_banner():
+def p_in_strata_or_mde_dir():
+    """An out-dir inside the directory of an explicit --strata file, or of an --mde-entry, outside the
+    repository is refused, and nothing is written there (R3-08)."""
+    w = CTX.world
+    mde_copy = w.fresh("p_mde") / MDE.name
+    mde_copy.write_bytes(MDE.read_bytes())
+    res = []
+    for inside in (w.strata_path.parent, mde_copy.parent):
+        out = inside / f"rx_never_written_{uuid.uuid4().hex[:12]}"       # a mutant writes its report here
+        ok, det = refused("out_dir_invalid", lambda: RX.run(
+            stats_artifact=w.stats_path, inventory=w.inventory_path, out_dir=out, repo_root=w.input_root,
+            synthetic=True, strata=w.strata_path, mde_entry=mde_copy, parts="mde"))
+        res.append((ok and not out.exists(), det))
+    return all(ok for ok, _ in res), str([d for _, d in res])
+
+
+def p_missing_parent():
+    """The out-dir check refuses an out-dir whose parent does not exist, and nothing is created
+    (R3-09)."""
+    base = CTX.world.fresh("p_parent")
+    ok, det = refused("out_dir_invalid", lambda: RX.check_out_dir(base / "never_made" / "rx",
+                                                                  [CTX.world.input_root]))
+    return ok and not (base / "never_made").exists(), det
+
+
+def p_write_parent():
+    """write_report refuses an out-dir whose parent does not exist, and nothing is created (R3-09)."""
+    base = CTX.world.fresh("p_write")
+    ok, det = refused("out_dir_invalid", lambda: RX.write_report(base / "never_made" / "rx", the_doc()))
+    return ok and not (base / "never_made").exists(), det
+
+
+def w_rendering():
+    """The markdown the CLI wrote is the rendering of the JSON it wrote."""
     md = (CTX.out / "report_extensions.md").read_text(encoding="utf-8")
-    tables = md.count("\n## ")
-    return CTX.doc["profile"] == "nonofficial" and md.count("**NONOFFICIAL**") >= tables + 1 >= 7, \
-        f"{md.count('**NONOFFICIAL**')} banners, {tables} sections"
+    return md == RX.render_markdown(CTX.doc), "the markdown differs from the rendering of the JSON"
+
+
+def f_banner():
+    """Every table of the markdown (a block between headings with a '|---' line) carries the banner,
+    and so does the preamble (D-13; R3-03, R3-04, R4-02). Rendered in process from the CLI's JSON."""
+    doc = the_doc()
+    md = RX.render_markdown(doc)
+    blocks, cur = [], []
+    for ln in md.splitlines():
+        if ln.startswith("#") and cur:
+            blocks.append(cur)
+            cur = []
+        cur.append(ln)
+    blocks.append(cur)
+    tables = [b for b in blocks if any(x.startswith("|---") for x in b)]
+    bare = [b[0] for b in tables if not any(BANNER in x for x in b)]
+    # seed 3, strata 1 and its 8 appendix pairs, defaults 1, am6 1, fqoff 1, mde 1
+    return (doc["profile"] == "nonofficial" and any(BANNER in x for x in blocks[0])
+            and len(tables) == 16 and not bare), f"{len(tables)} tables; without a banner: {bare}"
+
+
+def f_split():
+    """The inputs' split is recorded, and the banner names it when it is not TEST (R3-15). Rendered in
+    process from the CLI's JSON."""
+    doc = the_doc()
+    md = RX.render_markdown(doc)
+    return (doc["statistics_artifact"]["split"] == "val"
+            and "Its inputs are the 'val' split, not TEST." in md), doc["statistics_artifact"]["split"]
 
 
 def f_unmet():
@@ -150,7 +238,7 @@ def f_unmet():
     return {"statistics_artifact_nonofficial", "binding_not_read_by_tman"} <= set(names), str(names)
 
 
-def f_unbound_official():
+def f_stub_read():
     """D-13: an official statistics artifact beside a stub-read export stays nonofficial."""
     st = H.load_stats_artifact(CTX.world.stats_path, CTX.world.input_root)
     fake = types.SimpleNamespace(**{**st.__dict__, "profile": "official"})
@@ -195,7 +283,7 @@ def q_not_available():
                                 if (r["slot"], r["precision"]) != ("E6:s44:sel", H.PRECISION_FQOFF)]
     doc = build(inventory=variant("no_fqoff", edit), parts="fqoff")
     r = next(r for r in part(doc, "fqoff")["rows"] if (r["stage"], r["seed"]) == ("E6", 44))
-    return r["note"] == RX.FQOFF_NONE and r["fq_off"] is None and r["int8_qat"] is not None, str(r)
+    return r["note"] == FQOFF_NONE and r["fq_off"] is None and r["int8_qat"] is not None, str(r)
 
 
 def q_e6kd():
@@ -204,14 +292,48 @@ def q_e6kd():
             and r[0]["int8_qat"]["precision"] == "int8_qat"), str(r)[:300]
 
 
+def q_row_without_record():
+    """A slot whose qat_fakequant_off row has no binding record is refused, never 'not available'
+    (LRB3; R1r1-09)."""
+    def edit(export, binding):
+        binding["artifacts"] = [r for r in binding["artifacts"]
+                                if (r["slot"], r["precision"]) != ("E6:s44:sel", H.PRECISION_FQOFF)]
+    return refused("artifact_missing", lambda: build(inventory=variant("fqoff_no_record", edit),
+                                                     parts="fqoff"))
+
+
+def q_row_other_seed():
+    """A slot's qat_fakequant_off row of another seed than its int8_qat row is refused (IF§11.1; LRB5;
+    R1r1-01)."""
+    def edit(export, binding):
+        r = next(r for r in export["models"] if (r["slot"], r["precision"]) == ("E5:s43:sel",
+                                                                              H.PRECISION_FQOFF))
+        r["seed"] = 44
+    return refused("seed_inconsistent", lambda: build(inventory=variant("fqoff_seed", edit), parts="fqoff"))
+
+
+def q_seed42_identity():
+    """--parts fqoff alone checks the 37's E5 and E6 identities against the family slots (R-11;
+    R1r1-01)."""
+    def edit(export, binding):
+        r = next(r for r in export["models"] if (r["slot"], r["precision"]) == ("E6:s42:sel", "int8_qat"))
+        r["converted_artifact_sha256"] = LF.syn_sha("another converted artifact")
+    return refused("seed42_mismatch", lambda: build(inventory=variant("fqoff_identity", edit),
+                                                    parts="fqoff"))
+
+
 def m_mde():
+    """The MDE part and its markdown: the label line and one row per pair (LRB18)."""
     p = part(CTX.doc, "mde")
     src = json.loads(MDE.read_text(encoding="utf-8"))
+    md = (CTX.out / "report_extensions.md").read_text(encoding="utf-8").splitlines()
     pairs_ok = all(p["pairs"][k][f] == src["pairs"][k][f] for k in src["pairs"]
                    for f in ("n", "n_zero", "share_ties"))
-    return (pairs_ok and p["label"] == src["label"] and p["entry"]["mde_w"] == src["mde_w"]
-            and p["power_caveat"] is False and "share_ties" in
-            (CTX.out / "report_extensions.md").read_text(encoding="utf-8")), str(p)[:300]
+    rows = [f"| {k} | {v['n']} | {v['n_zero']} | {format(v['share_ties'], '.6g')} | "
+            for k, v in sorted(src["pairs"].items())]
+    rows_ok = all(sum(1 for ln in md if ln.startswith(r)) == 1 for r in rows)
+    return (pairs_ok and rows_ok and f"Label: {src['label']}" in md and p["label"] == src["label"]
+            and p["entry"]["mde_w"] == src["mde_w"] and p["power_caveat"] is False), str(rows)[:300]
 
 
 def n_report_points():
@@ -221,13 +343,17 @@ def n_report_points():
 
 
 def n_no_rehearsal():
+    """No LREP file imports rehearsal.py in any form (`import ...rehearsal`, `from ... import
+    rehearsal`, `from ...rehearsal import ...`) or assigns a frozen module's attribute (K1)."""
     bad = []
-    for name in ("heldout_inputs", "seed_stability", "strata_tables", "default_candidates", "am6_tables",
-                 "report_extensions"):
-        tree = ast.parse((REPO / "src" / "stats" / f"{name}.py").read_text(encoding="utf-8"))
+    for name in LREP_FILES:
+        tree = ast.parse((REPO / name).read_text(encoding="utf-8"))
         for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom) and (node.module or "").endswith("rehearsal"):
-                bad.append((name, node.module))
+            if isinstance(node, ast.ImportFrom) and ((node.module or "").split(".")[-1] == "rehearsal"
+                                                     or any(a.name == "rehearsal" for a in node.names)):
+                bad.append((name, node.module, [a.name for a in node.names]))
+            if isinstance(node, ast.Import) and any(a.name.split(".")[-1] == "rehearsal" for a in node.names):
+                bad.append((name, [a.name for a in node.names]))
             if (isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Store)
                     and isinstance(node.value, ast.Name)
                     and node.value.id in ("D", "H", "A", "RP", "report", "artifact", "driver")):
@@ -237,7 +363,23 @@ def n_no_rehearsal():
 
 def h_code():
     code = CTX.doc["code"]
-    return sorted(code["code_files"]) == sorted(RX.LREP_CODE_PATHS) and code["code_commit"], str(code)[:200]
+    return (sorted(code["code_files"]) == sorted(LREP_FILES) == sorted(RX.LREP_CODE_PATHS)
+            and code["code_commit"]), str(code)[:200]
+
+
+def h_report_code():
+    """The frozen code that computes the numbers (artifact.OFFICIAL_CODE_PATHS) and the CLI are recorded,
+    and a path of them not clean at HEAD keeps the report nonofficial (O3; R3-01)."""
+    want = ["src/stats", "src/stats/driver.py", "scripts/run_stats.py", "configs/corruption_protocol.json",
+            "docs/STATISTICAL_ANALYSIS_CONTRACT.md", "scripts/report_extensions.py"]
+    code = the_doc()["code"]
+    st = H.load_stats_artifact(CTX.world.stats_path, CTX.world.input_root)
+    fake = types.SimpleNamespace(**{**st.__dict__, "profile": "official"})
+    inv = types.SimpleNamespace(bound=True, reader="tman.read_inventory", doc={"binding": {"state": "bound"}})
+    dirty = ["code_not_clean_at_head", "src/stats/driver.py:  M src/stats/driver.py"]
+    unmet = RX.official_unmet(fake, inv, {}, {"code_clean_at_commit": True, "report_code_unmet": [dirty]})
+    return (code["report_code_paths"] == want == [*A.OFFICIAL_CODE_PATHS, want[-1]]
+            and isinstance(code["report_code_unmet"], list) and unmet == [tuple(dirty)]), str(unmet)
 
 
 def h_exit_2():
@@ -326,13 +468,19 @@ def cases():
     return [("W1", "the CLI writes the report (exit 0, nonofficial)", w_written),
             ("W2", "exactly report_extensions.json, report_extensions.md and SHA256SUMS", w_three_files),
             ("W3", "SHA256SUMS verifies", w_sums),
+            ("W4", "the markdown is the rendering of the JSON", w_rendering),
             ("P1", "an existing out-dir is refused (exit 2)", p_overwrite),
             ("P2", "an out-dir inside the repository is refused", p_in_repo),
             ("P3", "an out-dir inside an input directory is refused", p_in_input),
+            ("P4", "an out-dir inside the --strata file's or the --mde-entry's directory is refused",
+             p_in_strata_or_mde_dir),
+            ("P5", "the out-dir check refuses a missing parent and creates nothing", p_missing_parent),
+            ("P6", "write_report refuses a missing parent and creates nothing", p_write_parent),
             ("F1", "profile nonofficial and a banner on every table", f_banner),
             ("F2", "the unmet official conditions are named", f_unmet),
             ("F3", "an official statistics artifact beside a stub-read export stays nonofficial (D-13)",
-             f_unbound_official),
+             f_stub_read),
+            ("F4", "the inputs' split is recorded and named in the banner", f_split),
             ("C1", "seed: ten rows, a verdict sentence", c_part("seed", lambda p: len(p["rows"]) == 10
                                                                   and p["verdict_sentence"])),
             ("C2", "strata: eight pairs", c_part("strata", lambda p: len(p["pairs"]) == 8)),
@@ -346,9 +494,15 @@ def cases():
             ("Q2", "driver.load_input passes a qat_fakequant_off artifact (LRB7)", q_load_input),
             ("Q3", "no fq_off row: 'not available: no fq_off artifact'", q_not_available),
             ("Q4", "E6-KD's row, whatever its role", q_e6kd),
-            ("M1", "the MDE label, share_ties and n_zero from the committed entry (LRB18)", m_mde),
+            ("Q5", "an fq_off row without its binding record: artifact_missing", q_row_without_record),
+            ("Q6", "an fq_off row of another seed than its int8_qat row: seed_inconsistent",
+             q_row_other_seed),
+            ("Q7", "--parts fqoff: an E6 family identity that is not the 37's: seed42_mismatch",
+             q_seed42_identity),
+            ("M1", "the MDE label line, and share_ties and n_zero per pair from the committed entry (LRB18)",
+             m_mde),
             ("N1", "report.build_report keeps three unpopulated extension points (K1)", n_report_points),
-            ("N2", "no LREP module imports rehearsal.py or assigns a module attribute", n_no_rehearsal),
+            ("N2", "no LREP file imports rehearsal.py or assigns a module attribute", n_no_rehearsal),
             ("H1", "code provenance of the seven LREP paths is recorded", h_code),
             ("H2", "exit 2 on a refusal (--parts repeated)", h_exit_2),
             ("H3", "exit 4 on an unexpected failure", h_exit_4),
@@ -356,6 +510,7 @@ def cases():
             ("H5", "no temporary directory left after a failure", h_no_tmp_left),
             ("H6", "byte-identical JSON from two runs", h_deterministic),
             ("H7", "no created path contains 'test'", h_no_test_path),
+            ("H8", "the frozen code and the CLI are recorded and gate the profile (O3)", h_report_code),
             ("R1", "parts_invalid", r_parts),
             ("R2", "mde_entry_invalid (an MDE path that does not exist)", r_mde),
             ("R3", "usage_invalid (--repo-root without --synthetic-inputs)", r_usage)]

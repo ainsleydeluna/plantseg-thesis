@@ -12,7 +12,9 @@ Parts, in order (`--parts` selects a subset; plan §1.6, §2.4, §3.3):
   am6       GT-present on TEST for every model of record (AM-6; AM-17 item 1(b)) -- src.stats.am6_tables
   fqoff     AM-4's fake-quant-off TEST score of each selected QAT model of record beside its int8_qat
             value (TL-12; LRB7): the qat_fakequant_off rows of family/per_seed E5/E6 slots, and
-            E6-KD's if it exists; "not available: no fq_off artifact" otherwise
+            E6-KD's if it exists; "not available: no fq_off artifact" for a slot with no such row. A
+            row must be the same model as the slot's int8_qat row, and the seed-42 int8_qat value
+            from the 37 must be the family slot's model (R-11)
   mde       the committed MDE entry's mde_w, tau_p, power_caveat, label and each pair's share_ties and
             n_zero (AM-17 item 3(c), (e), (f); DL-99; LRB18)
 
@@ -20,13 +22,17 @@ Every input is verified first: the statistics artifact with all thirteen checks 
 export through the reader (R-2), then the 21 planned cells (R-3 to R-6, R-12 to R-14). The profile
 follows the verified statistics artifact and is never set by a flag (D-13): "official" only if that
 artifact is official, the binding is bound and read by TMAN's reader, every LREP input is official,
-the strata file is the committed DL-63 file, the MDE entry is committed, and LREP's code is clean at
-HEAD. While the TEST-manifest binding is unbound the statistics verifier refuses every official
-artifact, so every extension report is nonofficial and every table carries a banner.
+the strata file is the committed DL-63 file, the MDE entry is committed, and the code is clean at
+HEAD: LREP's files, and the frozen code that computes the numbers (artifact.OFFICIAL_CODE_PATHS, which
+holds src/stats, and this CLI). While the TEST-manifest binding is unbound the statistics verifier
+refuses every official artifact, so every extension report is nonofficial and every table carries a
+banner, which also names the inputs' split when it is not TEST.
 
-Output (D-14): a new directory outside the repository and outside every input directory, holding
-exactly report_extensions.json, report_extensions.md and SHA256SUMS, written in a temporary sibling
-and renamed; the temporary sibling is removed on any failure, as report.write_report does.
+Output (D-14): a new directory, whose parent exists, outside the repository and outside every input
+directory (the statistics artifact, the input root, the export's, the strata file's and the MDE
+entry's), holding exactly report_extensions.json, report_extensions.md and SHA256SUMS, written in a
+temporary sibling and renamed; the temporary sibling is removed on any failure, as
+report.write_report does, and nothing is created above the out-dir.
 Import-time behaviour is side-effect free.
 """
 from __future__ import annotations
@@ -45,6 +51,11 @@ LREP_CODE_PATHS = ("src/stats/heldout_inputs.py", "src/stats/seed_stability.py",
                    "src/stats/strata_tables.py", "src/stats/default_candidates.py",
                    "src/stats/am6_tables.py", "src/stats/report_extensions.py",
                    "scripts/report_extensions.py")
+#: The code that computes the report's numbers, clean at HEAD for an official report (O3's paths, which
+#: hold all of src/stats, and this CLI).
+REPORT_CODE_PATHS = ("src/stats", "src/stats/driver.py", "scripts/run_stats.py",
+                     "configs/corruption_protocol.json", "docs/STATISTICAL_ANALYSIS_CONTRACT.md",
+                     "scripts/report_extensions.py")
 FQOFF_NONE = "not available: no fq_off artifact"
 EXTENSION_POINTS = ("AM-8 seed stability", "Rare-class strata TEST tables", "Default candidates")
 
@@ -70,9 +81,22 @@ def _score(li) -> dict:
             "checkpoint_sha256": run.get("checkpoint_sha256")}
 
 
+def fqoff_row(inv: H.Inventory, slot: str, stage: str) -> dict:
+    """The slot's qat_fakequant_off row, which must be the same model as its int8_qat row: the same
+    file_id, stage, seed, model_role and training_run_id (IF§8; IF§11.1: "an int8_qat row and a
+    qat_fakequant_off row under one slot"; LRB5)."""
+    fq, i8 = H.model_row(inv, slot, H.PRECISION_FQOFF), H.model_row(inv, slot, "int8_qat")
+    differ = [k for k in ("file_id", "stage", "seed", "model_role", "training_run_id") if fq[k] != i8[k]]
+    if differ:
+        raise H.refusal("seed_inconsistent", f"{stage} ({slot!r}): its qat_fakequant_off row differs from "
+                                             f"its int8_qat row in {differ} (IF§11.1; LRB5)")
+    return fq
+
+
 def build_fqoff(stats: H.StatsArtifact, inv: H.Inventory, cells: H.PlannedCells, *,
                 input_root: Path) -> dict:
     """One row per family/per_seed E5/E6 run of record, and E6-KD's if the export lists it."""
+    H.check_seed42_identity(inv, cells, stats, stages=H.QAT_STAGES)
     rows, clean, others = [], {}, {}
     targets = [(stage, seed, cells.slots[(stage, seed)], False) for stage in H.QAT_STAGES
                for seed in H.SEEDS]
@@ -97,10 +121,11 @@ def build_fqoff(stats: H.StatsArtifact, inv: H.Inventory, cells: H.PlannedCells,
         label = f"{stage} {slot}"
         clean[label] = int8
         out["int8_qat"] = _score(int8)
-        if not (inv.has_row(slot, H.PRECISION_FQOFF) and inv.has_record(slot, H.PRECISION_FQOFF,
-                                                                         "fq_off", None)):
+        if not inv.has_row(slot, H.PRECISION_FQOFF):
             out["note"] = FQOFF_NONE
             continue
+        fqoff_row(inv, slot, stage)
+        # a row without its binding record is refused (artifact_missing; LRB3), never "not available"
         fq = H.load_bound(inv, slot=slot, stage=stage, precision=H.PRECISION_FQOFF, scope="fq_off",
                           input_root=input_root, policy=stats.policy)
         others[f"{label} fq_off"] = fq
@@ -196,6 +221,7 @@ def official_unmet(stats: H.StatsArtifact, inv: H.Inventory, parts_docs: dict, c
         unmet.append(("mde_entry_not_committed", str((mde["entry"] or {}).get("path"))))
     if code.get("code_clean_at_commit") is not True:
         unmet.append(("lrep_code_not_clean_at_head", str(code.get("code_clean_at_commit"))))
+    unmet += [tuple(u) for u in code.get("report_code_unmet", [])]
     return unmet
 
 
@@ -203,6 +229,7 @@ def build_report(*, stats_artifact, inventory, input_root, strata=None, mde_entr
                  reader=None, expect_inventory_sha256=None) -> dict:
     """Verify every input, build the selected parts and the profile. Refuses by code."""
     from . import seed_stability, strata_tables, default_candidates, am6_tables
+    from .artifact import code_provenance_unmet
     from .val_artifacts import code_provenance
     parts = parse_parts(parts)
     stats = H.load_stats_artifact(stats_artifact, input_root)
@@ -228,7 +255,8 @@ def build_report(*, stats_artifact, inventory, input_root, strata=None, mde_entr
             docs[part] = build_fqoff(stats, inv, cells, input_root=Path(input_root))
         elif part == "mde":
             docs[part] = build_mde(mde_entry, official=official)
-    code = code_provenance(LREP_CODE_PATHS)
+    code = {**code_provenance(LREP_CODE_PATHS), "report_code_paths": list(REPORT_CODE_PATHS),
+            "report_code_unmet": [list(u) for u in code_provenance_unmet(paths=REPORT_CODE_PATHS)]}
     unmet = official_unmet(stats, inv, docs, code)
     profile = "official" if official and not unmet else "nonofficial"
     manifest = (Path(stats_artifact) / "MANIFEST.sha256").read_text(encoding="utf-8").splitlines()
@@ -238,6 +266,7 @@ def build_report(*, stats_artifact, inventory, input_root, strata=None, mde_entr
                                 "artifact_status": stats.profile, "warnings": stats.family["warnings"],
                                 "analysis_id": stats.family["analysis_id"], "manifest": manifest,
                                 "policy": stats.policy.value,
+                                "split": stats.clean(H.STAGES[0]).summary["dataset"]["split"],
                                 "am5_excluded_count_k": stats.views.am5_excluded_count},
         "inventory": {"path": str(Path(inventory).resolve()), "sha256": H.sha256_file(Path(inventory)),
                       "reader": inv.reader, "binding_state": inv.doc["binding"]["state"],
@@ -254,9 +283,11 @@ def banner(doc: dict) -> str:
     if doc["profile"] == "official":
         return ""
     names = ", ".join(n for n, _ in doc["unmet_official_conditions"])
+    split = doc["statistics_artifact"].get("split")
+    on = "" if split == "test" else f" Its inputs are the {split!r} split, not TEST."
     return (f"> **NONOFFICIAL** -- extends statistics artifact `{doc['statistics_artifact']['run_id']}` "
-            f"(status `{doc['statistics_artifact']['artifact_status']}`); unmet: {names}. Not a thesis "
-            "result.\n")
+            f"(status `{doc['statistics_artifact']['artifact_status']}`); unmet: {names}.{on} Not a "
+            "thesis result.\n")
 
 
 def render_markdown(doc: dict) -> str:
@@ -289,7 +320,10 @@ def check_out_dir(out_dir, inputs) -> Path:
                                                "the input directories keep their exact file sets")
     if H.path_problem(out.name) is not None:
         raise H.refusal("out_dir_invalid", f"--out-dir name {out.name!r}: {H.path_problem(out.name)}")
-    stale = sorted(p for p in out.parent.glob(f".{out.name}.tmp-*")) if out.parent.is_dir() else []
+    if not out.parent.is_dir():
+        raise H.refusal("out_dir_invalid", f"--out-dir {out_dir}: its parent {out.parent} does not exist; "
+                                           "nothing is created above the out-dir")
+    stale = sorted(p for p in out.parent.glob(f".{out.name}.tmp-*"))
     if stale:
         raise H.refusal("out_dir_invalid", f"stale temporary sibling {stale[0]}")
     return out
@@ -299,7 +333,8 @@ def write_report(out_dir, doc: dict) -> Path:
     """Atomic: a temporary sibling with the three files, renamed to `out_dir`."""
     from .artifact import canonical_json
     final = Path(out_dir)
-    final.parent.mkdir(parents=True, exist_ok=True)
+    if not final.parent.is_dir():
+        raise H.refusal("out_dir_invalid", f"{final}: its parent does not exist")
     tmp = final.parent / f".{final.name}.tmp-{uuid.uuid4().hex[:12]}"
     tmp.mkdir()
     try:
@@ -327,7 +362,9 @@ def run(*, stats_artifact, inventory, out_dir, repo_root=None, synthetic: bool =
     if stats_artifact is None or inventory is None or out_dir is None:
         raise H.refusal("usage_invalid", "--stats-artifact, --inventory and --out-dir are required")
     input_root = Path(repo_root) if repo_root is not None else CODE_REPO
-    check_out_dir(out_dir, [stats_artifact, input_root, Path(inventory).parent])
+    check_out_dir(out_dir, [stats_artifact, input_root, Path(inventory).parent,
+                            Path(strata).parent if strata is not None else None,
+                            Path(mde_entry).parent if mde_entry is not None else None])
     doc = build_report(stats_artifact=stats_artifact, inventory=inventory, input_root=input_root,
                        strata=strata, mde_entry=mde_entry, parts=parts, reader=reader,
                        expect_inventory_sha256=expect_inventory_sha256)
@@ -337,6 +374,7 @@ def run(*, stats_artifact, inventory, out_dir, repo_root=None, synthetic: bool =
     return write_report(out_dir, doc), doc
 
 
-__all__ = ["SCHEMA", "PARTS", "OUT_FILES", "LREP_CODE_PATHS", "FQOFF_NONE", "parse_parts", "build_fqoff",
-           "render_fqoff", "build_mde", "render_mde", "official_unmet", "build_report", "banner",
-           "render_markdown", "check_out_dir", "write_report", "run"]
+__all__ = ["SCHEMA", "PARTS", "OUT_FILES", "LREP_CODE_PATHS", "REPORT_CODE_PATHS", "FQOFF_NONE",
+           "parse_parts", "fqoff_row", "build_fqoff", "render_fqoff", "build_mde", "render_mde",
+           "official_unmet", "build_report", "banner", "render_markdown", "check_out_dir", "write_report",
+           "run"]

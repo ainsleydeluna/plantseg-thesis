@@ -253,6 +253,12 @@ MUTATIONS = [
      "seed:R12b"),
     ("R09", "precision_mismatch not raised (a model row whose model_role is not student)",
      [(H, "check_rows", [off("precision_mismatch")])], "seed:R18b"),
+    ("R10", "out_dir_invalid not raised by the out-dir check (a parent that does not exist)",
+     [(RX, "check_out_dir", [off_h("out_dir_invalid", ' f"--out-dir {out_dir}: its parent')])], "report:P5"),
+    ("R11", "seed_inconsistent not raised (an fq_off row that is not its int8_qat row's model)",
+     [(RX, "fqoff_row", [off_h("seed_inconsistent")])], "report:Q6"),
+    ("R12", "out_dir_invalid not raised by write_report (a parent that does not exist)",
+     [(RX, "write_report", [off_h("out_dir_invalid", ' f"{final}: its parent')])], "report:P6"),
     # S: semantic mutations
     ("S01", "condition 1: g > 0 becomes g >= 0",
      [(SS, "condition_1", [("not g[k] > 0.0", "not g[k] >= 0.0")])], "seed:S2"),
@@ -393,6 +399,25 @@ MUTATIONS = [
      "defaults:V14"),
     ("S50", "defaults: a coinciding row has 13 cells under the 12-column header",
      [(DC, "render_markdown", [('" |" * 9', '" |" * 10')])], "defaults:V11"),
+    ("S51", "report: the --strata file's directory no longer guarded against the out-dir (D-14)",
+     [(RX, "run", [("Path(strata).parent if strata is not None else None,", "None,")])], "report:P4"),
+    ("S52", "report: the --mde-entry's directory no longer guarded against the out-dir (D-14)",
+     [(RX, "run", [("Path(mde_entry).parent if mde_entry is not None else None]", "None]")])], "report:P4"),
+    ("S53", "report: an fq_off row without its binding record reads 'not available' (LRB3)",
+     [(RX, "build_fqoff", [("if not inv.has_row(slot, H.PRECISION_FQOFF):",
+                            'if not (inv.has_row(slot, H.PRECISION_FQOFF) and '
+                            'inv.has_record(slot, H.PRECISION_FQOFF, "fq_off", None)):')])], "report:Q5"),
+    ("S54", "report: --parts fqoff no longer checks the 37's identities (R-11)",
+     [(RX, "build_fqoff", [("H.check_seed42_identity(inv, cells, stats, stages=H.QAT_STAGES)", "None")])],
+     "report:Q7"),
+    ("S55", "report: the banner no longer names a split that is not TEST",
+     [(RX, "banner", [('on = "" if split == "test" else f" Its inputs are the {split!r} split, not TEST."',
+                       'on = ""')])], "report:F4"),
+    ("S56", "report: the frozen code's provenance no longer gates the profile (O3)",
+     [(RX, "official_unmet", [('unmet += [tuple(u) for u in code.get("report_code_unmet", [])]', "pass")])],
+     "report:H8"),
+    ("S57", "seed: the Conditions table loses its banner (D-13)",
+     [(SS, "render_markdown", [('"### Conditions", "", banner,', '"### Conditions", "",')])], "report:F1"),
 ]
 
 

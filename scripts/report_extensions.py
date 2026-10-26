@@ -18,9 +18,11 @@ and the MDE entry, as a separate document beside report.py's report (K1; src/sta
   --mde-entry       the MDE entry (default: the one committed reports/derived/mde_entry_*.json, if
                     exactly one is tracked)
   --parts           a comma-separated subset of seed,strata,defaults,am6,fqoff,mde (default all)
-  --out-dir         a new directory outside the repository and every input directory
+  --out-dir         a new directory, whose parent exists, outside the repository and every input
+                    directory
 
-Exit codes: 0 written; 2 refused by name (nothing written); 4 an unexpected failure (nothing written).
+Exit codes: 0 written (and --help, which writes nothing); 2 refused by name, or an argparse usage error
+without a RESULT line (nothing written); 4 an unexpected failure (nothing written).
 """
 from __future__ import annotations
 

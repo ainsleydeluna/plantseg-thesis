@@ -513,7 +513,7 @@ def _pp(v) -> str:
 def render_markdown(doc: dict, banner: str = "") -> list[str]:
     """Report section 1.6, in order: the model table, the effects table, the conditions, the verdict
     sentence, the cut-run VAL curves and every divergence at seeds 43 and 44."""
-    out = [f"## {doc['title']}", "", banner, "### Models: m(S,k) (and mC for E1 and E6)", "",
+    out = [f"## {doc['title']}", "", "### Models: m(S,k) (and mC for E1 and E6)", "", banner,
            "| stage | seed | m | m (pp) | mC | cell |", "|---|---|---|---|---|---|"]
     for r in doc["models"]:
         out.append(f"| {r['stage']} | {r['seed']} | {_fmt(r['m'])} | {_pp(r['m'])} | "
