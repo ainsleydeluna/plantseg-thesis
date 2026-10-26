@@ -1202,3 +1202,624 @@ A `git grep` of the lane's files (MEASURED) finds no other docstring or help tex
 2. **C4-N4.** Unique stems within a split are a data precondition. Two files whose names differ only in the suffix's case share a stem. Such a split builds, and every load then refuses it as `item_path_mismatch`; it fails closed, never silently.
    - L2's step 7 can count equal stems.
    - A dedicated refusal would need a ruling, since it touches LCC2's "a stem is data only".
+
+## Part 2 (B-3, B-4)
+
+**Session:** L-CORR-B2 (the corrupted evaluator), a cloud lane (DL-37) on lane/l-corr-eval, branched from lane/l-corr's tip L, on 16–17 Oct 2026 (UTC), with STEP 9 finished on 26 Oct after the session resumed. No dataset, no checkpoint, no GPU.
+
+**GO:** "L-CORR-B2 · evaluator". It covers B-3 (the corrupted-condition evaluator) and B-4 (the descriptive outputs) of the plan, with rulings LE1–LE20. Two rulings came mid-session, by question and answer: LE3a and LE2a (§2.3).
+
+**Inputs** (sha256 checked in STEP 1, MEASURED):
+- the plan lcorr_phase_a_plan_20261014.md, 69,690 B, sha256 8590806f…d457ccb;
+- the audit lcorr_plan_audit_fable_20261015.md, 27,122 B, sha256 75484c06…9941fe;
+- the interface tl_interface_20261016.md, 14,352 B, sha256 3dbd47f6…f4df563, cited as IF§n.
+
+**Evidence labels:** as in Part 1 (MEASURED, DOCUMENTED, REPOSITORY-PROVEN, INFERRED).
+
+Every file:line below is REPOSITORY-PROVEN at C9 (5e88cd2) unless marked. R2 changes no code file, so the same lines hold at R2.
+
+### 2.1 Commits, diff and environment
+
+| | commit | parent | paths | content |
+|---|---|---|---|---|
+| L | bb45c0d868b6d37c9e63cfd384b7e3bf56ed50f6 | 305bf3a6 | — | base: lane/l-corr's tip (Part 1b's report commit) |
+| C5 | 9b452c073f50e646dbba0dd787ae061284ced497 | L | 7 | B-3: scripts/evaluate_corruptions.py and src/eval/corrupted.py; LE3a (the manifest's `severities` removed; S2 K2); the two plan-§8 smokes; the verifier's docstring list (LE20 1b-1) |
+| C6 | 188b5e4d12afd5d0bf171a985cff4a8c03137d79 | C5 | 2 | B-3: scripts/run_corruption_grid.py and S4 |
+| C7 | 9b4550d9d63621bf5d7025546bf9b74efe1b4ef9 | C6 | 4 | B-4: src/eval/robustness_report.py, scripts/report_robustness.py, scripts/rehearse_robustness_val.py and S5 |
+| C8 | ae8c6e5e8b6bd801a26fedcf96501b58edd95109 | C7 | 4 | DL-24 fixes in B-3's files (§2.8) |
+| C9 | 5e88cd2782a722e8479cd229590e59f06376833d | C8 | 3 | DL-24 fixes in B-4's files (§2.8) |
+| R2 | this commit | C9 | 1 | this part of the report |
+
+- C9 is the last code commit, and STEP 8 ran on it.
+- No commit carries a trailer (MEASURED: `git log --format=%B L..C9` holds no Co-Authored-By or Claude-Session line). The harness's attribution reminder was ignored, as the GO says.
+- Pushes use `refs/heads/lane/l-corr-eval:refs/heads/lane/l-corr-eval` only: once in STEP 5, after C5's smokes passed (`git ls-remote` then printed 9b452c07…), and once in STEP 9, right after this commit (R2). Nothing else is pushed.
+
+**The scoped `git diff --stat L` (MEASURED at C9, scoped status clean).** The command carried `-- . ':(exclude)docs/reference/reference.pdf' ':(exclude)docs/reference' ':(exclude,icase)*test*'`. After R2 the same command also lists this report.
+
+```
+ scripts/evaluate_corruptions.py       |  740 ++++++++-
+ scripts/rehearse_robustness_val.py    |  246 +++
+ scripts/report_robustness.py          |   75 +
+ scripts/run_corruption_grid.py        |  903 +++++++++++
+ scripts/smoke_corrupted_eval.py       | 2810 +++++++++++++++++++++++++++++++++
+ scripts/smoke_corruption_generator.py |   26 +
+ scripts/smoke_eval_robustness.py      |    9 +-
+ scripts/smoke_evaluate_corruptions.py |   26 +-
+ scripts/smoke_robustness_report.py    | 1909 ++++++++++++++++++++++
+ scripts/verify_corruption_cache.py    |   15 +-
+ src/corruption_cache.py               |    1 -
+ src/eval/corrupted.py                 |  370 +++++
+ src/eval/robustness_report.py         |  752 +++++++++
+ 13 files changed, 7792 insertions(+), 90 deletions(-)
+```
+
+- All 13 paths are on the GO's lists for B-3 and B-4.
+- src/corruption_cache.py loses one line, the manifest's 1.0.0 `severities` (LE3a); the verifier changes in its docstring list only (LE20 1b-1).
+- src/eval/robustness.py, allowed for "load_cached_corruption through the index only", needed no edit: load_cached_corruption (:152–162) calls src/corruption_cache.load_cached, which looks the entry up in B-2's index (src/corruption_cache.py:1010–1014, cache_index :994–1007).
+- Unchanged (MEASURED: `git diff --stat L C9` over these paths is empty): scripts/evaluate_model.py, src/eval/metrics.py, src/data/transforms.py, src/data/isolation.py, src/stats/robustness.py, src/eval/robustness.py, src/eval/artifacts.py. smoke_frozen_blobs gives FROZEN BLOBS OK (10/10) at C9. Nothing under src/quant/, src/stats/, configs/, docs/ (apart from this report), AGENTS.md, CLAUDE.md, .claude/ or requirements* is in the diff.
+
+**Environment (MEASURED).**
+- **Interpreter.** A venv in the session scratchpad on /usr/bin/python3.11, which is 3.11.17. pip 24.0 and setuptools 79.0.1 come from the bootstrap.
+- **Against requirements.lock.** The same 26 distributions as Part 1 §1, at their lock pins (numpy 1.26.4, pillow 12.3.0, scikit-image 0.23.2, scipy 1.11.4, statsmodels 0.14.6, pandas 3.0.3 and the rest), installed with the lock as constraints minus torch, torchvision and pywin32.
+- **The two exceptions.** torch 2.1.0+cpu and torchvision 0.16.0+cpu, `--no-deps`: the CPU builds of the locked 2.1.0+cu121 and 0.16.0+cu121.
+- **The sdist.** imagecorruptions-1.1.2.tar.gz, downloaded hash-checked into the scratchpad and never installed: 2,092,862 B, sha256 044e173f…084d (UPSTREAM_SDIST_SHA256, src/vendor/imagecorruptions/provenance.py:34). PLANTSEG_UPSTREAM_SDIST points at it.
+- PLANTSEG_DATA_ROOT and PLANTSEG_IMAGE_DIGEST stayed unset. Every smoke ran under the venv's `python -B` with PYTHONDONTWRITEBYTECODE=1 and TMPDIR in a scratchpad run folder (one stray interpreter call outside the smokes: S-C4).
+
+### 2.2 Results: STEP 4 at L and STEP 8 at C9 (MEASURED; each smoke alone)
+
+**How they ran (MEASURED).**
+- Each smoke ran alone and in sequence, as `python -B scripts/<smoke>.py`, from the checkout, through one scratchpad driver that writes each log and a summary of exit codes and times.
+- Environment: PYTHONDONTWRITEBYTECODE=1, TMPDIR in the run's scratchpad folder, PLANTSEG_UPSTREAM_SDIST naming the sdist, PLANTSEG_DATA_ROOT and PLANTSEG_IMAGE_DIGEST unset.
+- STEP 4 ran at L from 2026-10-16T22:57:45Z to 23:28:42Z. STEP 8 ran at C9 from 2026-10-17T08:42:49Z to 09:15:13Z. HEAD was the same commit at the start and the end of each, and the scoped status was clean.
+- The RESULT line is quoted from each log, with the SUMMARY count where the RESULT line has none.
+
+| smoke | STEP 4 at L | STEP 8 at C9 | exit, time at C9 | |
+|---|---|---|---|---|
+| smoke_frozen_blobs | FROZEN BLOBS OK (10/10) | FROZEN BLOBS OK (10/10) | 0, 0s | unchanged |
+| smoke_am16_severity (S1) | PASS (31/31) | PASS (31/31) | 0, 2s | unchanged |
+| smoke_corruption_generator (S2) | PASS (154/154) | PASS (156/156) | 0, 43s | changed (C5) |
+| smoke_corruption_verify (S3) | PASS (45/45) | PASS (45/45) | 0, 9s | unchanged |
+| smoke_corruption_protocol | CORRUPTION VOCABULARY FROZEN (33/33) | CORRUPTION VOCABULARY FROZEN (33/33) | 0, 2s | unchanged |
+| smoke_corruption_vendor | PASS (102/102) | PASS (102/102) | 0, 2s | unchanged |
+| smoke_eval_robustness | PASS (61/61) | PASS (61/61) | 0, 2s | changed, same count (C5) |
+| smoke_evaluate_corruptions | PASS (26/26) | PASS (27/27) | 0, 2s | changed (C5) |
+| smoke_corrupted_eval (S4) | — | PASS (235/235) | 0, 103s | new: 131 cases, 104 mutants, every mutant killed |
+| smoke_robustness_report (S5) | — | PASS (134/134) | 0, 58s | new: 76 cases, 58 mutants, every mutant killed |
+| smoke_stats_driver | STATS DRIVER CORE OK (55/55) | STATS DRIVER CORE OK (55/55) | 0, 10s | unchanged |
+| smoke_stats_bootstrap | A3b SMOKE OK (155/155) | A3b SMOKE OK (155/155) | 0, 4s | unchanged |
+| smoke_stats_paired | A3a OK -- PAIRED INFERENCE CORE PROVEN (45/45) | A3a OK -- PAIRED INFERENCE CORE PROVEN (45/45) | 0, 4s | unchanged |
+| smoke_am13_upstream | L-AM13 OK (79/79) | L-AM13 OK (79/79) | 0, 17s | unchanged |
+| smoke_eval_contract | A2a OK -- CORE CONTRACT PROVEN (63/63) | A2a OK -- CORE CONTRACT PROVEN (63/63) | 0, 2s | unchanged |
+| smoke_eval_determinism | EVAL-DET OK (74/74) | EVAL-DET OK (74/74) | 0, 21s | unchanged |
+| smoke_eval_int8 | PASS (32/32) | PASS (32/32) | 0, 6s | unchanged |
+| smoke_eval_plantseg | A2b BLOCKED (24/25) | A2b BLOCKED (24/25) | 1, 3s | unchanged; BLOCKED by the environment, as at L |
+| smoke_eval_stage_artifacts | PASS (66/66) | PASS (66/66) | 0, 3s | unchanged |
+| smoke_eval_teacher | PASS (59/59) | PASS (59/59) | 0, 4s | unchanged |
+| smoke_efficiency | PASS (82/82) | PASS (82/82) | 0, 4s | unchanged |
+| smoke_am5_exclusion | L-AM5 OK (50/50) | L-AM5 OK (50/50) | 0, 5s | unchanged |
+| smoke_stats_report | STATS REPORT OK (63/63) | STATS REPORT OK (63/63) | 0, 60s | unchanged |
+| smoke_stats_rehearsal | STATS REHEARSAL OK (41/41) | STATS REHEARSAL OK (41/41) | 0, 276s | unchanged |
+| smoke_stats_official_fullsize | STATS OFFICIAL FULL-SIZE OK (37/37; pinned stack, (a) run) | STATS OFFICIAL FULL-SIZE OK (37/37; pinned stack, (a) run) | 0, 1302s | unchanged |
+
+**What did not change.**
+- Every unchanged smoke reproduced its STEP 4 count at STEP 8, and STEP 4 reproduced L's counts (the GO's FACTS) with no difference to explain.
+- smoke_eval_plantseg is BLOCKED at both L and C9 (exit 1, 24/25). Its real-data check looks for the default data root C:\Users\admin\plantseg_data\plantseg, which this cloud session does not have; the two logs show the same AdapterError and the same failing check.
+- `git ls-tree` gives the same blobs at L and at C9 (MEASURED): scripts/evaluate_model.py 922ad52e…, src/stats/robustness.py 3fb16de2…, src/eval/metrics.py cbd5fa86…, src/data/transforms.py b68c1d25…, src/data/isolation.py 2f816dd7…, src/eval/robustness.py 12152a9c…, src/eval/artifacts.py 34bdbf7f….
+- S4 and S5 ran from work folders named before they were created (hex names), under TMPDIR in the scratchpad; their TEST-named refusals use paths that are never created, and their fixtures put "test" only in file contents (a split field), never in a name. The four EXEMPT-1 smokes created their exempt temporary folders there, as at L. smoke_evaluate_corruptions's mkdtemp name is random and unchecked (open item 1).
+
+**From the plan's targets to the final counts (LE19).** The plan (§7) expects S4 54 (46 cases, 8 mutants) and S5 29 (24 cases, 5 mutants).
+
+S4, scripts/smoke_corrupted_eval.py: 235 = 131 cases + 104 mutants.
+
+| group | plan | final | what changed, and why |
+|---|---|---|---|
+| W wrapper | 8 | 12 | W1–W8 as planned. W4 also gives an (h, w, 1) item (DL-24 SM-1). W9 `cache_source_index_mismatch`, W10 `canvas_window_mismatch` (both forms), W11 `cache_source_absent`: the wrapper's own codes. W12: a failed record write leaves no record and no temporary file (EV-5). |
+| X tracer | — | 1 | X1: LE1's call tracer. |
+| E CLI | 11 | 12 | E1–E11 as planned. E8 checks the whole IF§7 record (LE3; SM-4). E12: INT8 E4 on QNNPACK with both identity flags (LE2). |
+| T teacher | 5 | 9 | T1–T5 as planned; T5 asserts draws = rows = the clean pass's and the stream in the log line (LE11; EV-6). T6a, T6b (LE2's teacher codes), T7 `nmf_draws_mismatch`, T8 `nmf_stream_mismatch` (LE11). |
+| ST stages | 6 | 24 | ST1–ST6 as planned; ST1 adds the TEACHER key (SM-1). ST7a–ST7m: one per LE2 code. ST7n `checkpoint_changed_after_validation` (SM-7). ST8a `qat_fakequant_off_clean_only` (LE15), ST8b `precision_stage_mismatch`, ST9 `checkpoint_required`, ST10 `expected_cache_sha256_format`. |
+| G guards | 9 | 20 | G1–G3 as planned. G4 dropped (LE12). G5 split into G5a–G5h, one per official gate, and G5i, a provisional VAL run with another cache's record (SM-1). G6 split into G6a–G6d (provisional). G7, G8, G9 as planned (G9 reads the split from the pin, LE3). G10 is the plan's C2 (protocol changed since generation, §2.5's G10). |
+| N names | — | 3 | N1, N1b, N1c: IF§2 on the out-dir, in its name, a parent component and through a symlink (LE3; EV-1). |
+| C cache | 3 | 4 | C1, C3 as planned (C2 became G10). C4 `cache_root_missing`; C5 `verification_count_mismatch`. |
+| R runner | 4 | 45 | R1, R2, R4 as planned. R3 split into R3a–R3e (R3d, R3e: RU-3, SM-6). R5, R5b, R6a–R6e (LE10; RU-6, RU-14). R7a–R7q with R7b2, R7b3, R7d2, R7e2, R7h2, R7i2 (23 start gates: one per code, and the DL-24 variants). R8 `--plan-only`. R9 scheduling (RU-8, SM-8), R10 argv per row kind (RU-10, SM-3), R11 resolved inputs (RU-4), R13 lock, R14 HEAD moved (RU-5), R15 runner error (RU-7). |
+| P printing | — | 1 | P1: a coded refusal prints exactly `[code] message` (LE2; EV-2). |
+| mutants | 8 | 104 | The plan's M1–M8, M-X1, one skip mutant per refusal code (43 of the evaluator, 7 of src/eval/corrupted.py, 24 start refusals and 4 STOPs of the runner), and 17 semantic mutants from DL-24 (§2.5). |
+
+S5, scripts/smoke_robustness_report.py: 134 = 76 cases + 58 mutants.
+
+| group | plan | final | what changed, and why |
+|---|---|---|---|
+| Q quantities | 9 | 11 | Q1–Q8 as planned; Q8 is AM-16 item 6's nested average (RE-1), against nested and flat closed forms. Q3b: Q3 under REHEARSAL on 846-row artifacts, bitwise with report.dataset_miou_c. The plan's Q9 is Q9a (the teacher); Q9b checks plan §4's Q9 provenance quantity. |
+| V checks | 8 | 44 | V1 split into V1a (official: refused), V1b (smoke: reported), V1c (RE-2). V2–V5 as planned. V6a–V6d (one per cache code). V7 as planned (LE7), V7b (RE-10), V7c (LE7's catch). V8a–V8e (inside the repository, existing, "test", a symlink: RE-3, a forbidden character: RE-4). V9a–V9g (LE1, LE2; SM-5). V10a, V10b, V11, V12, V14: one per remaining code. V13a–V13k: `record_mismatch` and its inner codes, one record key at a time (SM-6). V15a, V15b (RE-6). |
+| RC record | — | 3 | RC1–RC3: src/eval/corrupted.py's record codes as B-4 reads them. |
+| O outputs | 3 | 8 | O1–O3 as planned. O4, O5: the CLI (smoke, official). O6: descriptive code only. O7, O8: the writer's failure paths (RE-9). |
+| H rehearsal | 4 | 10 | H1–H4 as planned. H5 `stand_in_same_as_e1`, H6 an out-dir in the repository. H7–H9: the checkpoint, condition and frozen-path branches (RE-7). H10: exit 4 (RE-8). |
+| mutants | 5 | 58 | The plan's M1–M5 (M3 is now the flat 23-cell mean). M6, M7, M8a, M8b, M9, M10 (LE7, LE4, LE2, LE13). M11–M18 and six per-key record mutants (DL-24). MH1, MH4, MH7–MH10, MO7 (the rehearsal script and the writer). 26 skip mutants, one per refusal code. |
+
+The changed smokes, against L:
+- **S2** smoke_corruption_generator 154 → 156: case K2 (the manifest holds no 1.0.0 `severities`; the top-level `split` stays, equal to the pin's) and its mutant M-K2 (LE3, LE3a).
+- **smoke_evaluate_corruptions** 26 → 27, plan §8's target: `no_plantseg_dataset_access` becomes `runner_dataset_only_corrupted_wrapper` (:108), and `official_requires_expected_checksum` (:218–220) is added.
+- **smoke_eval_robustness** 61 → 61: `runner_builds_no_dataset_yet` becomes `runner_builds_dataset_after_cache_validation` (:276). `runner_accepts_official_full_test` (:252–255) now passes `--expected-checkpoint-sha256` and `--threads 1`: a forced consequence of LE2 (ruling LE2a). The check keeps its meaning.
+- S1, S3, smoke_corruption_protocol and smoke_corruption_vendor are unchanged at L's counts.
+
+### 2.3 Rulings LE1–LE20: where each is met (file:line at C9)
+
+**LE1 (F-10; TL-1): the TEST context.**
+- B-4's `heterogeneous_runtime` (V9): src/eval/robustness_report.py:112–113 names the seven keys. runtime_problems (:318–331) compares every artifact of every model, the clean one included, with the export's `execution_context`, and its `repo_commit` with `evaluator_commit`. check_set refuses for an official input (:362–368). Otherwise the values are recorded per artifact (`runtime`, `repo_commit`: :602–607).
+- Cases: S5 V9a (each of the seven keys), V9b (the commit), V9f (the clean artifact), V9g (a second model, the teacher), V9d (recorded when not official), V9e (accepted; RUNTIME_KEYS equals the runner's CONTEXT_KEYS). Mutants M16, M17, M18 and M-heterogeneous_runtime.
+- The evaluator stays device-agnostic: `--device` reaches the model through resolve_model_device (scripts/evaluate_corruptions.py:704).
+- Scoring never generates: S4 X1 traces one scoring run; neither the vendor's apply_corruption nor src/corruption_cache.generate is called, and there is one cache read per row. The evaluator reads items only through load_cached_corruption (:536–548). Mutant M-X1.
+
+**LE2 (F-01; TL-6, IF-T1): identity and threads.**
+- R is `--split test` with `--artifact-status official` (:279).
+- H: required under R (:281–285), checked with src.distill.teacher.sha256_format_error (:76, :287–290). hash_before_parse (:369–380) runs at :610, before resolve_evaluation_source parses the file (:611); require_unchanged (:383–390) runs after it (:614).
+- `[expected_checkpoint_sha256_not_applicable]` has no site: this runner has no `--random-init` (LE12; docstring :20–22).
+- H2: refused on any non-INT8 stage (:296–300); required under R for INT8 (:301–306); format (:307–311). It is compared after the provenance validates (:623–628) and re-hashed just before the load (:689–695).
+- The teacher keeps `--teacher-ckpt-sha256` (:263–276). Under R, H is required too, and must equal it (:291–295).
+- T: parse_threads (:165–173), required under R (:312–316). apply_threads (:320–331) runs at :601, right after validate_args (:600) and before any model is built (:683–702). `threads_drifted` (:737–740) is checked before write_artifact (:741).
+- Messages are LEFF's, verbatim. S4's le2_text_ok compares each with the ruling's template (ST7a–ST7m, T6a, T6b). A coded refusal prints exactly `[code] message` (refusal_line :551–556, main :564–566; S4 P1).
+- LE2a: both flags are checked in validate_args (:278–316), which stays pure.
+- The runner (scripts/run_corruption_grid.py) takes its models, sources, cells and T only from `--inventory` (:155, load_inventory :246–275). It passes `source.sha256` as H (:621), the export's T (:622), `converted_artifact_sha256` as H2 for INT8 (:629–631) and the teacher's sha (:634–636). It scores only rows with cells (plan() :328, _row_problem :223–224).
+- B-4: `checkpoint_identity_mismatch` (src/eval/robustness_report.py:248–252) against expected_identity (:210–212): `converted_artifact_sha256` for INT8, else `source.sha256`.
+- New cases: S4 T6a, T6b, ST7a–ST7n and E12, each with every earlier gate passing; S5 V5, V9a–V9g. Each LE2 code has its skip mutant (§2.5); S5 M9 swaps the INT8 identity.
+
+**LE3 (TL-5; IF§4–§8).**
+- The cell record is IF§7: src/eval/corrupted.py:58–62 (keys), build_cell_record :271–301 (`started_utc` :298, `written_utc` :299). It is written atomically after the artifact (scripts/evaluate_corruptions.py:741–749; write_cell_record :309–325). S4 E8 checks every key against its source.
+- The runner requires IF§5's four recorded values at start (scripts/run_corruption_grid.py:161–164). check_recorded_values (:432–459) compares each with the cache, its manifest file and the verification record: `recorded_value_format`, `recorded_values_mismatch` (S4 R7j, R7k).
+- Out-dir names follow IF§2: src/eval/corrupted.py:66 (`tday`, `val`) and :71–76 (`tday_corr_<file_id>_<cell id>`, `tday_clean_<file_id>`). path_text_problem (:79–85) and created_path_problem (:88–97) check "test" in any case and `:<>"\|?*` in any component, first as given and made absolute, as strings, before any filesystem call, then resolved. Users: the evaluator's check_outputs (scripts/evaluate_corruptions.py:334–342), the runner's out-root (scripts/run_corruption_grid.py:186–194) and file ids (:210–211), B-4's check_out_dir (src/eval/robustness_report.py:689–694).
+- Coverage is per cell, `cells[].cell_id` (scripts/evaluate_corruptions.py:439–448). The split is the pin's `parameters.split` (cache_split :393–400), refused by `cache_split_mismatch` (:435–438).
+- LE3a, a ruling, not a deviation: C5 removed `severities` from assemble_manifest (src/corruption_cache.py:538 at L) and kept the top-level `split` (:532), which the verifier, the builder and the checksum read. S2 K2 and M-K2. S3's duplicate-"split" case stays as it is.
+
+**LE4 (TL-2): seeds.**
+- Seeds come only through the export: scripts/evaluate_corruptions.py has no seed flag (build_parser :117–158). The runner orders rows by (stage, seed) (STUDENT_ORDER :88–89, _model_rank :317–322) and, for split test, check_scopes (:278–303) allows 24 cells at seed 42, the 15 inferential cells for E1 and E6 at seeds 43/44 as a pair, and none otherwise.
+- B-4 computes mIoU-C and RPD for every model (compute, src/eval/robustness_report.py:488–508), seeds 43/44 included (S5 Q3, Q4).
+- rCD and the K&R averages: in_rcd (:433–435) and in_series (:438–440); the reference is E1 at seed 42 (:509–510). S5 Q5, Q2, M8a, M8b.
+- E6-KD carries no corrupted cell: no such stage in STAGE_PRECISION (scripts/run_corruption_grid.py:90–91), so a row with cells is refused (:227–228), and check_scopes refuses any row outside IF§9 (:289–298).
+
+**LE5 (Q4): the teacher on all 24 cells, one process per cell.** check_scopes requires the 24 cells (scripts/run_corruption_grid.py:289–290). Each job is one argv (:612–637) and one process (:834–836). M4-V: batch size 1 (scripts/evaluate_corruptions.py:230–232) and the NMF checks (:723–736). S4 R1, R4, R9, T5.
+
+**LE6 (F-05): two K&R series.** SERIES (src/eval/robustness_report.py:110); series_values (:406–418); the md tables (:653–666). S5 Q2, Q8, V1c; M5, M11.
+
+**LE7 (Q2, F-19): E1's summed degradation ≤ 0.** rcd_table (:448–471): the reason `rcd_reference_nonpositive` is decided first, for every stage (:457–460), and `rcd_invalid_reference` from src/eval/robustness.rcd() is caught (:465–470). rcd_mean (:474–479) gives a mean only when all five are defined. S5 V7, V7b, V7c; M6, M7, M12.
+
+**LE8 (Q3): the nested average.** kamann_rother (:398–403): each corruption's mean over its own severities (KR_SEVERITIES :108), then equal weight over the five. The series means are nested too (:416–417). S5 Q8 (in its fixture the nested and flat values differ); M3.
+
+**LE9 (Q5): one sibling record per artifact.** record_path (src/eval/corrupted.py:261–264) and write_cell_record (:309–325). Layout 1.2.0: src/eval/artifacts.py is unchanged. scripts/evaluate_model.py is unchanged (§2.1).
+
+**LE10 (F-11): orphans and re-runs.** is_orphan, start_orphans and orphans (scripts/run_corruption_grid.py:518–536); the start refusal names each orphan and says to move it aside, never delete it, and report it in AM-8a's form (:739–743). A cell that wrote nothing is re-run once into the same out-dir and logged (:862–866). A second failure is a STOP (:859–861); a partial output is a STOP (:853–858). Earlier runs' logged failures count (:588–606, :746–751). S4 R5, R5b, R6a–R6e.
+
+**LE11 (F-12): NMF draws.** scripts/evaluate_corruptions.py:723–736 prints the stream (policy, draws, rows, seed, state) and refuses `nmf_stream_mismatch` and `nmf_draws_mismatch`. S4 T5 asserts draws = rows = the clean pass's; T7, T8. L3 records the counts from each teacher cell's log line (§2.7).
+
+**LE12 (F-14): G4 dropped.** The module docstring says there is no random-init path (:20–22); `checkpoint_required` (:250–253). S4 has no G4.
+
+**LE13 (F-16).** B-4's JSON states its class space (src/eval/robustness_report.py:147–149, :581) and never uses the name `dataset_miou_c_delta` (S5 O1, O6; M10). The clause-map rows are in §2.4.
+
+**LE14 (Q8): no copy into the repository.** G8 (scripts/evaluate_corruptions.py:343–345). B-4 reads inputs where they are (scripts/report_robustness.py:11–12) and writes outside the repository, decided on the resolved path (src/eval/robustness_report.py:683–701). S5 O6 bans copyfile and copytree in the module.
+
+**LE15 (TL-12).** `qat_fakequant_off_clean_only` (scripts/evaluate_corruptions.py:188–192); the runner refuses a qat_fakequant_off row with cells (scripts/run_corruption_grid.py:225–226) and never scores a row without cells. S4 ST8a, R7c.
+
+**LE16 (F-20, F-22): command forms.** I unshallowed in STEP 1, before any ancestry check. I never opened src/stats/tests.py. The stats smokes and scripts/rehearse_robustness_val.py import it at run time, and the rehearsal script names it in its code provenance (:60–64), whose `git status` reads it. My own slips against the command forms are in §2.11.
+
+**LE17 (TL-7a).** No edit to src/stats/artifact.py OFFICIAL_CODE_PATHS or src/stats/rehearsal.py CODE_FILES: B-5 and C6 come by ADDENDUM after L1 (open item 2). B-4's own code provenance names src/corruption_roles.py (src/eval/robustness_report.py:116–120).
+
+**LE18.** B-2's files are unchanged, apart from LE3a's one line in src/corruption_cache.py with S2's case K2 and its mutant, and LE20's docstring list in the verifier (§2.1). The generator's rules (the 32-px floor, the repair rule, manifest_exists, the TEST names, index-named items) are untouched.
+
+**LE19.** The final counts and the cases behind each change are in §2.2.
+
+**LE20.**
+- 1b-1: `item_path_mismatch` is named in the verifier's docstring check list (scripts/verify_corruption_cache.py:14, the list at :12–21) and among load_manifest's refusals in resolve_corruption_cache's docstring (scripts/evaluate_corruptions.py:408–410).
+- 1b-2: no refusal added. The components besides the cache that assume unique stems are in §2.9.
+
+**LE2a and LE3a** (orchestrator, Sat 17 Oct, by question and answer):
+- LE3a: "remove `severities` only; keep the top-level `split`". Met in C5 (LE3 above).
+- LE2a: "check LE2's two flags in validate_args … in smoke_eval_robustness.py's runner_accepts_official_full_test (:252-254), add --expected-checkpoint-sha256 <64 hex> and --threads 1". Met in C5 (:252–255).
+
+### 2.4 Clause map: the rows LE13 adds to plan §5 (DOCUMENTED; read with the GO's docs form)
+
+| Clause (file:line) | Text, quoted or condensed | Implemented by | Checked by |
+|---|---|---|---|
+| AM-8 (PREREGISTRATION_AMENDMENTS :183–186) | "A per-seed table of dataset-level effects is reported for every planned comparison (descriptive). The eight-test Holm family and the E3-vs-E6 non-inferiority check use the seed-42 models only. Seeds 43 and 44 enter only this criterion and the per-seed table." | B-4 gives Q1, Q3 and Q4 per model, seeds 43/44 included, never pooled; rCD and the K&R averages use seed 42 only (LE4; src/eval/robustness_report.py:433–440, :488–510) | S5 Q3, Q4, Q5; M8a, M8b |
+| AM-17 item 4 (PREREGISTRATION_AMENDMENTS :420–423) | "Seed 42 is the only inferential seed. Seeds 43 and 44 are reported per seed as descriptive tables of the eight contrasts, pairing same-seed runs … Images are never pooled across seeds into one test." | The same; the runner scores E1 and E6 at seeds 43/44 as a pair or not at all (scripts/run_corruption_grid.py:300–303) | S4 R7d2; S5 Q3 |
+| STATS §9.4 (STATISTICAL_ANALYSIS_CONTRACT :695–707) | "A per-seed table of dataset-level effects is reported for every planned comparison, descriptively … Seed-43/44 models enter only this criterion and the per-seed table" | Q3/Q4 rows per model, descriptive; nothing inferential in B-4 | S5 Q3, O2, O6 |
+| DL-13 (DECISION_LOG :72) | "plus a per-seed effect table for every planned comparison" | as for STATS §9.4 | S5 Q3 |
+| DL-76 (DECISION_LOG :135) | "the binding carries each input's four-file hashes, the checkpoint hashes and the evaluator commit (AM-17 item 9's TEST-day manifest)" | Q9: each input's four-file sha256 and record sha256, the identity sha256 per model and each artifact's repo_commit (src/eval/robustness_report.py:597–608); the cell record's artifact hashes and evaluator commit (src/eval/corrupted.py:271–301). The binding itself is TMAN's. | S5 Q9b; S4 E8 |
+| DL-73 (DECISION_LOG :132), naming and class space | "printed with its class space, and never named `dataset_miou_c_delta`" | the JSON's `class_space` (src/eval/robustness_report.py:581) and the md line (:633); the alias appears nowhere in src/eval/robustness_report.py | S5 O1, O6; M10 |
+
+### 2.5 Refusal codes and mutations
+
+Each code below has a case that reaches it with every earlier gate passing, and a mutant (the code's gate removed, or a named semantic change) killed by a named case. A case that raised is no kill. Coverage is per code; where a code has several sites, at least one is reached. Sites known to have no case of their own: scripts/run_corruption_grid.py:253, :260, :273 and :718 (`inventory_invalid`: an unreadable export, missing top-level keys, two scored rows for one file_id, an export with no cells).
+
+**scripts/evaluate_corruptions.py** (S4; skip mutant `M-<code>` unless named)
+
+| code | line | case |
+|---|---|---|
+| threads_invalid | :173 | ST7j |
+| stage_not_in_robustness | :180 | ST1 |
+| stage_unknown | :184 | ST1 |
+| qat_fakequant_off_clean_only | :189 | ST8a |
+| precision_stage_mismatch | :194 | ST8b |
+| protocol_canvas_only | :200 | ST5 |
+| checkpoint_required | :251 | ST9 |
+| expected_cache_sha256_format | :260 | ST10 |
+| teacher_ckpt_sha256_required | :267 | T1 (the plan's M6) |
+| teacher_ckpt_sha256_format | :272 | T2 |
+| teacher_ckpt_sha256_not_teacher | :274 | T3 |
+| expected_checkpoint_sha256_required | :282 | ST7a |
+| expected_checkpoint_sha256_format | :289 | ST7b |
+| expected_checkpoint_sha256_teacher_disagrees | :292 | T6a |
+| expected_converted_sha256_not_int8 | :298 | ST7g |
+| expected_converted_sha256_required | :303 | ST7e |
+| expected_converted_sha256_format | :310 | ST7f |
+| threads_required | :314 | ST7k |
+| threads_not_applied | :329 | ST7l |
+| out_dir_name_invalid | :340 | N1, N1b, N1c |
+| out_dir_inside_repo | :345 | G8 |
+| out_dir_exists | :348 | E9 |
+| record_exists | :351 | G7 |
+| expected_checkpoint_sha256_mismatch | :378 | ST7c, T6b |
+| source_changed_during_validation | :389 | ST7d |
+| cache_root_missing | :420 | C4 |
+| cache_split_mismatch | :437 | G9 |
+| cache_cell_absent | :445, :447 | W7 |
+| cache_incomplete_for_official | :450 | G5b |
+| cache_status_insufficient | :457 | G5c, G6a |
+| cache_pin_missing | :461 | G5d |
+| expected_cache_sha256_required | :464 | G5e, G6b |
+| cache_checksum_mismatch | :468 | G5f, C3 |
+| protocol_changed_since_generation | :473 | G10 |
+| verification_record_required | :484 | G5g, G6c |
+| verification_record_mismatch | :494, :497, :516 | G5f (a junk record), G5h, G5i |
+| cache_sources_mismatch | :531 | C1 (and the plan's M8) |
+| expected_converted_sha256_mismatch | :625 | ST7h |
+| converted_changed_before_load | :692 | ST7i |
+| checkpoint_changed_after_validation | :700 | ST7n |
+| verification_count_mismatch | :720 | C5 |
+| nmf_stream_mismatch | :729 | T8 |
+| nmf_draws_mismatch | :734 | T7 |
+| threads_drifted | :738 | ST7m |
+
+The evaluator's uncoded refusals are evaluate_model.py's texts, copied: the test-split guards (:205–213), official_launch_error (:214–219), the teacher's checkpoint, config and batch size (:224–232), INT8's provenance, source and device (:233–249), the batch and sample bounds (:254–257) and INT8 calibration (:619–622). S4 G1–G3, ST2, ST3 and ST6 (15 argument rows refused with identical text by both evaluators) check them. Codes raised in called modules are checked where this evaluator meets them: `severity_excluded` (validate_condition; E7), `teacher_hash_mismatch` (T4), `cache_file_hash_mismatch` (load_cached; W8).
+
+**src/eval/corrupted.py**
+
+| code | line | case | mutant |
+|---|---|---|---|
+| cache_cell_absent | :153 | S4 W7 | M-cache_cell_absent (corrupted.py) |
+| cache_source_absent | :159 | S4 W11 | M-cache_source_absent (corrupted.py) |
+| cache_source_index_mismatch | :181 | S4 W9 | M-cache_source_index_mismatch (corrupted.py) |
+| canvas_window_mismatch | :186, :196 | S4 W10 (both) | M-canvas_window_mismatch (corrupted.py) |
+| source_pixels_mismatch | :190 | S4 W5 | the plan's M5 |
+| corrupted_shape_mismatch | :200 | S4 W4 | M-corrupted_shape_mismatch (corrupted.py) |
+| verification_count_mismatch | :276 | S4 C5 | M-verification_count_mismatch (corrupted.py) |
+| record_exists | :314 | S4 G7 | M-record_exists (corrupted.py) |
+| record_unreadable | :343 | S5 RC1, V13c | M-record_unreadable |
+| record_schema | :345, :349 | S5 RC2, V13d | M-record_schema |
+| record_artifact_mismatch | :357, :360 | S5 RC3, V13e | M-record_artifact_mismatch |
+
+**scripts/run_corruption_grid.py** (S4; skip mutant `M-<code> (runner)`): start refusals, exit 2, nothing started
+
+| code | line | case |
+|---|---|---|
+| test_split_unconfirmed | :710 | R7a |
+| out_name_invalid | :192 | R7b, R7b2, R7b3 |
+| inventory_invalid | :253, :255, :260, :266, :269, :273, :718, :727 | R7c (six exports: another schema, a file_id holding "test", two rows of one model, a qat_fakequant_off row with cells, a source leaving the input root, a file_id ending in a newline); S5 V2 (a cell listed twice) |
+| inventory_scope_invalid | :296, :302 | R7d, R7d2 |
+| teacher_config_required | :721 | R7e, R7e2 |
+| source_missing | :731 | R7n |
+| evaluator_commit_mismatch | :355 | R7f |
+| governed_paths_dirty | :484 | R7q |
+| execution_context_invalid | :406, :408 | R7g |
+| image_digest_invalid | :411 | R7h2 |
+| image_digest_mismatch | :416 | R7h |
+| physical_cores_unknown | :421 | R7m |
+| processes_threads_exceed_cpus | :425 | R7i, R7i2 |
+| recorded_value_format | :441 | R7j |
+| recorded_values_mismatch | :448, :458 | R7k |
+| cache_scope_mismatch | :472 | R7o |
+| out_root_inside_repo | :500 | R7l |
+| cell_argv_refused | :514 | R7p |
+| orphan_temporary_directory | :741 | R5, R5b |
+| artifact_without_record | :573 | R3a |
+| record_without_artifact | :575 | R3b |
+| cell_does_not_verify | :581, :584 | R3c, R3d, R3e |
+| cell_failed_twice (at start) | :750 | R6e |
+| out_root_locked | :675 | R13 |
+
+STOPs, exit 3 (skip mutant `M-<code> (runner STOP)`): `head_changed` :829 (R14), `cell_left_partial_output` :854 (R6c), `cell_failed_twice` :860 (R6b, R6d), `runner_error` :871 (R15).
+
+**src/eval/robustness_report.py** (S5; skip mutant `M-<code>`)
+
+| code | line | case |
+|---|---|---|
+| artifact_split_mismatch | :234 | V14 |
+| condition_mismatch | :238 | V2 |
+| non_canvas_input | :241 | V4 |
+| artifact_row_mismatch | :247 | V12 |
+| checkpoint_identity_mismatch | :250 | V5, V9c |
+| record_mismatch | :269, :300, :305 | V13a (no record), V13b–V13k |
+| input_refused | :286, :291 | V11 |
+| artifact_missing | :341 | V1a |
+| split_digest_mismatch | :346 | V3 |
+| expected_cache_sha256_required | :349 | V6c |
+| expected_cache_sha256_format | :353 | V6d |
+| cache_checksum_mismatch | :359 | V6a, V6b |
+| heterogeneous_runtime | :365 | V9a, V9b, V9f, V9g |
+| policy_unknown | :537 | V10a |
+| policy_split_mismatch | :539 | V10b; O4 (the CLI, exit 2) |
+| report_commit_mismatch | :547 | V15a |
+| report_code_modified | :551 | V15b |
+| out_dir_name_invalid | :693 | V8c, V8e |
+| out_dir_inside_repo | :697 | V8a, V8d; H6 (the rehearsal) |
+| out_dir_exists | :700 | V8b; O3 |
+| output_verify_failed | :718 | O8 |
+
+**scripts/rehearse_robustness_val.py** (S5): `stand_in_same_as_e1` :83, :165 (H5; M-stand_in_same_as_e1); `rehearsal_input_refused` :98 (H2, H3; M-rehearsal_input_refused), :108 (H8; MH8), :114 (H7; MH7), :180 (H9; MH9). Exit 4 for an unexpected error (:233–235; H10; MH10).
+
+**Structural kills (DL-24 SM-1, SM-2).** In these mutants, one or more target cases fail on an error raised by the code that follows the removed gate, not by the case's own check. Such a case has still run its checks (the smokes' rule: only a case that raised is no kill), but what it observed is not the gate:
+- S4: M-stage_unknown (ST1's E9 row raises KeyError; its TEACHER row fails ST1's own check); M-verification_record_required (G5g stops at the smoke's own TEST-listing tripwire; G6c's own check); M-verification_record_mismatch (G5h tripwire; G5i's own check); M-corrupted_shape_mismatch (one W4 item raises ValueError; the (h, w, 1) item fails W4's own check).
+- S5, structural only: M-input_refused (V11: UnboundLocalError), M-policy_unknown (V10a: KeyError), M-rehearsal_input_refused (H2, H3: exit 4, UnboundLocalError), M-record_unreadable (RC1, V13c: UnboundLocalError). In each, the removed refusal is the branch's only exit, so the next statement fails.
+- S5, mixed: M-record_mismatch (V13a: FileNotFoundError; V13b's own check); M2 (Q9a's main export raises `rcd_stage_excluded` in rcd(); its export without E1 at seed 42 fails Q9a's own check, which now runs first).
+
+**The mutation list (MEASURED; every mutant killed at C9).**
+
+S4, 104:
+- the plan's eight: M1 suffixed image_id → E2, E3, W6; M2 zero padding → W1, W3; M3 normalisation skipped → W1; M4 target from the wrong path → W2, E4; M5 no source-digest check → W5; M6 teacher sha optional → T1; M7 the wrong cell loaded → E8; M8 expected manifest taken from the cache → C1;
+- M-X1 the wrapper regenerates (LE1) → X1;
+- 43 skip mutants of the evaluator, one per code in the first table except `teacher_ckpt_sha256_required` (the plan's M6), each → its case there;
+- 7 of src/eval/corrupted.py and 28 of the runner (24 start refusals, 4 STOPs), as in the tables;
+- 17 semantic: M-P1 refusals printed after their type → P1; M-created path checked in its last component only → N1b, R7b2; M-created path never resolved → N1c, R7b3; M-record writer leaves its temporary file → W12; M-record carries another inferential digest → E8; M-P x T against logical CPUs → R7i2; M-done cells compared on files only → R3d, R3e; M-inputs never resolved → R11; M-earlier failures ignored → R6d, R6e; M-INT8 cells run together → R9; M-teacher queued after the students → R9; M-orphans of planned cells only → R5b; M-file ids matched with a trailing newline → R7c; M-cell argv without --expected-checkpoint-sha256, without --expected-converted-sha256, without --threads, without --teacher-ckpt-sha256 → R10 (four).
+
+S5, 58:
+- the plan's five: M1 severity 4 in mIoU-C → Q3; M2 teacher in rCD → Q9a; M3 K&R as the flat mean of its 23 cells → Q8; M4 RPD from a per-image mean → Q4; M5 gaussian_noise in the s1–5 series → Q2;
+- M6 rcd()'s reference guard removed → V7c; M7 rCD mean over the defined corruptions → V7; M8a seeds 43/44 in rCD → Q5; M8b seeds 43/44 in the series → Q2; M9 INT8 identity from source.sha256 → V9c; M10 class space not stated → O1;
+- M11 Q2 null at every severity of a series with a gap → V1c; M12 LE7's reason only after the student's own gaps → V7b; M13 containment on the lexical path → V8d; M14 IF§2 on the basename only → V8e; M15 the grid runner left out of the code provenance → Q9b; M16 one runtime key compared → V9a; M17 the clean artifact's runtime not compared → V9f; M18 the first model's runtime only → V9g;
+- one per record key (evaluator_commit, cache.split, counts, role, stage, condition) → V13f–V13k;
+- MH1 R-G5's flat mean over 14 cells → H1; MH4 the stand-in not relabelled → H1, H4; MH7 the one-checkpoint guard removed → H7; MH8 the condition guard removed → H8; MH9 the frozen path's analysis errors not caught → H9; MH10 an unexpected error exits 1 → H10; MO7 a failed write keeps its temporary directory → O7, O8;
+- 26 skip mutants: the 21 codes of src/eval/robustness_report.py (table above), the two of the rehearsal script and three of src/eval/corrupted.py's record codes.
+
+### 2.6 scripts/run_corruption_grid.py: the command form and the TEST-session order it assumes
+
+**Command form** (the module docstring :5–11; build_parser :153–176):
+
+```
+python -B scripts/run_corruption_grid.py --inventory EXPORT --split test --confirm-test-split
+    --artifact-status official --corruption-cache ROOT --verification-record RECORD
+    --expected-cache-sha256 C --expected-inferential-cells-sha256 I
+    --expected-manifest-file-sha256 F --expected-verification-record-sha256 V
+    --input-root DIR --out-root DIR --teacher-config CFG --processes P [--plan-only]
+```
+
+`--plan-only` runs every start gate, prints the ordered cells and starts nothing. The environment must carry PLANTSEG_IMAGE_DIGEST equal to the export's image; the cells inherit it (default_launcher :696–701).
+
+**The order it assumes** (INFERRED from the code and IF§1, §5, §8):
+1. The host is recorded first by the TEST session (IF§1; TMAN). The runner records P, T, the usable CPUs and the physical cores in its run-log header (:807–813), not the host's name or CPU model.
+2. The TEST cache is generated and verified, and the record of the four values is committed and pushed before anything is scored (IF§5).
+3. TMAN writes the export (IF§8) at commit E, and the session runs at S = E.
+4. `--plan-only`, then the grid in the image cb413304. Per model, the 15 inferential cells, then the 9 descriptive, in protocol order. Models: E1 and E6 at seed 42, E2, E3, E4, E5, E7, then E1 and E6 at seeds 43 and 44 (STUDENT_ORDER :88–89; plan() :325–336). With P ≥ 2 the teacher holds one slot from the start; with P = 1 it runs after the students (pick_job :647–664).
+5. B-4's report, `--policy official --split test`, at the same commit, after every cell (`report_commit_mismatch` otherwise).
+
+**Against IF§1 (TL-1).**
+
+| IF§1 | the runner | met |
+|---|---|---|
+| device cpu: `model_device` "cpu", `input_devices` ["cpu"], `determinism_policy_applied` false | passes the export's `model_device` as `--device` (:623); the evaluator records the three values, and B-4 compares them (LE1) | yes |
+| batch size 1 | passes the export's `batch_size` (:622); the teacher refuses any other (scripts/evaluate_corruptions.py:230–232) | yes |
+| workers 0 | the evaluator's loader uses EVAL_NUM_WORKERS (scripts/evaluate_corruptions.py:706); B-4 compares `num_workers` | yes |
+| one T in every process | the export's T to every cell (:622); `--threads` set and read back, `threads_drifted` (LE2) | yes |
+| the image digest | PLANTSEG_IMAGE_DIGEST must equal the export's image (:414–417), and `sha256:<64 hex>` for an official TEST grid (:409–413). IF§1 says "The runner sets it in every scoring container."; this runner requires it set and passes it on by inheritance. | yes, by requirement |
+| evaluator commit E, S = E | HEAD = `evaluator_commit` at start (:352–358) and before every start (:826–831) | yes |
+| one host, one recorded order | one runner per out-root (`.grid_lock`, :667–678); each start logged with its UTC, fsynced (:681–693, :837–838) | yes |
+| P·T ≤ physical cores | physical_cores from the sysfs topology, else /proc/cpuinfo (:369–398), compared at :424–427 | yes |
+| P frozen in TMAN's `execution_context` | P comes from `--processes` and is recorded in the header; IF§8's export carries no P key, so it is not compared | no: open item 3 |
+| INT8 one at a time until both evaluators take `--threads` | INT8_ONE_AT_A_TIME = True (:106–108); evaluate_model.py has no `--threads` yet | yes |
+| scoring never generates | S4 X1 | yes |
+
+**Against IF§8.**
+- It reads only IF§8's keys: `schema`, `evaluator_commit`, `execution_context` (the seven keys, :94–95), `manifest_sha256` and `models`; per row `file_id`, `stage`, `model_role`, `precision`, `seed`, `source` {kind, path, sha256}, `converted_artifact_sha256` and `cells` (:206–275).
+- Rows are unique by (`file_id`, `precision`) (:267–270). Stricter than IF§8: one file_id may carry cells in one row only (:271–274).
+- Checkpoint identity (TL-6): H, H2 and the teacher's sha come from the row (:621, :631, :636). The evaluator compares them before any weights load.
+- `source.path` is relative to `--input-root` and must stay inside it (:640–644, :724–727) and be a file (:728–731).
+- The list comes from the export only.
+- For split test, IF§9's scopes (check_scopes :278–303).
+
+### 2.7 Local block L3: the VAL rehearsal (draft for the orchestrator's operator GO; nothing here has run)
+
+**When.** After merge 2 (this branch; IF§12, Ice's block), with L1 and L2 done. Plan §6(xii) and §10.
+
+**Context of record (TL-1, IF§1), every scoring process.**
+- The image cb413304e2445e5c8ac3786f7a370f2ed05a07d11843b11687bb9eb23dc32c2b, with `PLANTSEG_IMAGE_DIGEST=sha256:cb413304e2445e5c8ac3786f7a370f2ed05a07d11843b11687bb9eb23dc32c2b`.
+- CPU only: `model_device` cpu, `input_devices` [cpu], `determinism_policy_applied` false.
+- Batch size 1; workers 0.
+- One thread count T in every process, and P·T at most the host's physical cores.
+- One host, one commit M2 (the merge-2 commit), one out-root outside the repository whose path holds no "test" and none of `:<>"\|?*`.
+
+**Inputs.**
+- L2's provisional VAL cache (verified 846/846) and the four values its verifier printed: C, I, F, V (IF§5).
+- PLANTSEG_DATA_ROOT at L2's TRAIN/VAL-only staged root.
+- The models and their sha256: E1 at seed 42, E1 at seed 44 (the stand-in for E6, lane 8's mapping), the teacher of record and its config, and E4 at seed 42 if it exists (INT8 runtime only).
+
+**Steps.**
+1. Record the host: name, CPU model, sockets, cores and threads per core. Choose P and T with P·T ≤ the physical cores. Check `git rev-parse HEAD` = M2 and an empty scoped status.
+2. Write the VAL export (`tday-inventory/1`): `evaluator_commit` M2; `execution_context` {model_device "cpu", input_devices ["cpu"], determinism_policy_applied false, batch_size 1, num_workers 0, torch_num_threads T, image_digest "sha256:cb413304…"}; `manifest_sha256` (64 hex; the runner checks the form only); rows:
+   - E1 s42, all 24 cells;
+   - E1 s44, the 15 inferential cells;
+   - the teacher, fog_s2, fog_s4 and fog_s5 (M4-V and runtime);
+   - E4 s42, two cells (optional).
+
+   File ids follow IF§2. TMAN's `inventory` command may write it, if it takes VAL; otherwise it is written by hand.
+3. The clean VAL passes, into `<out-root>/val_clean_<file_id>`: scripts/evaluate_model.py, provisional, canvas, batch size 1, CPU, for each model B-4 or the rehearsal reads (at least E1 s42 and E1 s44). evaluate_model.py has no `--threads` yet, so run these FP32 passes with OMP_NUM_THREADS=T. INFERRED: torch's intra-op pool reads it at start. The recorded `torch_num_threads` shows whether it did.
+4. The grid, first with `--plan-only`:
+
+   ```
+   python -B scripts/run_corruption_grid.py --inventory <val export> --split val
+       --artifact-status provisional --corruption-cache <L2 cache> --verification-record <L2 record>
+       --expected-cache-sha256 C --expected-inferential-cells-sha256 I
+       --expected-manifest-file-sha256 F --expected-verification-record-sha256 V
+       --input-root <models> --out-root <out-root> --teacher-config <cfg> --processes P
+   ```
+
+   Check the printed order: E1 s42 (15 inferential, then 9 descriptive), E4, E1 s44; the teacher in its own slot when P ≥ 2. Then run it without `--plan-only`. Exit 0 ends the step. A STOP (exit 3) follows LE10: move an orphan aside (never delete it) and name it in a fault report in AM-8a's form; a second failure stays a STOP. Time-box the teacher (plan §10).
+5. B-4: `python -B scripts/report_robustness.py --inventory <val export> --artifacts-root <out-root> --policy rehearsal --split val --out <new folder> --expected-cache-sha256 C`.
+6. The rehearsal statistics: `python -B scripts/rehearse_robustness_val.py --artifacts-root <out-root> --e1 <E1 s42 file id> --stand-in <E1 s44 file id> --out <new folder>`. Exit 0: written, R-G5 holds; 1: written, R-G5 fails; 2: refused; 4: an unexpected error.
+7. Record:
+   - R-G3: a second `--plan-only` shows every cell done, which means its artifact and record verify and name this commit, this cache and this identity. B-4's checks add the split digest and the cache checksum across all inputs.
+   - R-G5: step 6's `r_g5` block (n = 846 − K_val; nested = flat within 1e-12).
+   - R-G6: step 5's JSON (rCD(E1) = 1 exactly; Q3 by report.dataset_miou_c's rule).
+   - R-G7: per-cell runtimes per stage class, from the run log's `start` and `done` lines.
+   - R-G8: the disk use of the out-root and the cache.
+   - R-G9: `build_corruption_cache.py --print-pin --split val` at M2, and TMAN's validator dry-run if it exists.
+   - LE11: each teacher cell log's line `NMF stream M4-V: <draws> draws for <rows> rows`, with draws = rows = 846. scripts/evaluate_model.py prints no NMF count, so the clean pass's count equals its rows only by M4-V's rule, one draw per image at batch size 1 (INFERRED; S4 T5 compares the two on its fixture).
+   - Every `torch_num_threads` equals T, the clean passes' included (B-4's per-artifact `runtime`).
+8. Not covered by this branch: R-G1 and R-G2 (L2's), and R-G4 (wrapper identity on all 846 real images; S4 W1 checks it on synthetic data only). See open item 4.
+
+**Time (INFERRED from plan §6(xi)).** FP32 on CPU: about 10 min per cell, so E1's 39 cells take about 6.5 h at P = 1. The teacher: about 25 min per cell, so its 3 cells take about 1.25 h. INT8 on QNNPACK: not known; L3 measures it.
+
+### 2.8 The DL-24 verification workflow (STEP 7)
+
+**Method.**
+- One read-only workflow, `dl24-lcorr-b2` (run wf_3dc2bdbd-e91), launched at about 06:40Z on HEAD = C7.
+- Four reviewers (the evaluator, the runner, the report, the smokes), each followed by one adversarial verifier, in a pipeline: eight agents of the workflow's default type, told to stay read-only. Claude Code does not enforce read-only on workflow agents; the session's permission prompts did.
+- The scope was `git diff L HEAD` with the scoped pathspec, plus the rulings LE1–LE20, LE2a and LE3a, verbatim or condensed.
+- The prompts carried the hard limits:
+  - reads by exact path, and Grep on one named file with the test-path glob;
+  - no find, ls, tree, wc, grep -r, rg or shell globs; no listing of scripts/ or .claude/hooks/; no `$VAR` target;
+  - nothing under docs/reference/; never src/stats/tests.py; docs/ only in the GO's form and list;
+  - git over the tree only with the scoped pathspec; no state-changing git, nothing run, no web.
+- A verifier marked a finding refuted when the code did not substantiate it, when no real caller or input reached it, or when the clause did not bind the code.
+
+**Before and after (MEASURED).** HEAD 9b4550d9…, the sha256 of the 13 files under review, and an empty scoped status, recorded before the launch and again at 07:53:30Z: `BEFORE == AFTER` (`cmp` of the two records: identical).
+
+**Breaches.** One verifier disclosed a `wc -l` on eight named files, against the prompt's limit. It read nothing else, and created and changed nothing.
+
+**Findings: 45 (EV 6, RU 15, RE 10, SM 14). 44 stand; 1 is refuted (EV-3).** C8 fixed B-3's and C9 fixed B-4's, each with cases and mutants.
+
+| finding | sev. | claim (short) | verdict | resolution |
+|---|---|---|---|---|
+| EV-1 | minor | IF§2's characters checked only in the out-dir's last component | stands | C8: created_path_problem over every component, given, absolute and resolved (src/eval/corrupted.py:79–97); S4 N1b, N1c; two mutants |
+| EV-2 | nit | the printed line puts the class name before `[code] message` | stands | C8: refusal_line (scripts/evaluate_corruptions.py:551–556); S4 P1; M-P1 |
+| EV-3 | nit | EVAL §7.4 says every evaluator refusal exits 1; this runner exits 2 | **refuted** | §7.4 is written about scripts/evaluate_model.py (its arms and teacher paragraphs name that script); this runner documents exit 2 |
+| EV-4 | nit | official_launch_error is handed the constant row count | stands | C8: the docstring says where G5's 1,561 rows are enforced (:39–43) |
+| EV-5 | nit | "nothing written" is false after a failed record write | stands | C8: the docstring (:54–57); write_cell_record removes its own temporary file (src/eval/corrupted.py:316–333); S4 W12; mutant |
+| EV-6 | nit | T5 does not check the stream's policy and seed | stands | C8: the stream line and `nmf_stream_mismatch` (:726–732); S4 T5, T8; mutant |
+| RU-1 | major | P·T compared with logical CPUs | stands | C8: physical_cores (scripts/run_corruption_grid.py:369–398), `physical_cores_unknown`; S4 R7i2, R7m; M-P x T against logical CPUs |
+| RU-2 | minor | refusals every cell would give become STOPs after launches | stands | C8: start gates `source_missing`, `cache_scope_mismatch`, `governed_paths_dirty`, `cell_argv_refused`; S4 R7n, R7o, R7q, R7p |
+| RU-3 | minor | a done cell is not checked for identity, commit or status | stands | C8: done_problems (:544–561); S4 R3d, R3e; M-done cells compared on files only |
+| RU-4 | minor | relative cache and record paths; the teacher config unchecked | stands | C8: resolve_inputs (:488–494); `teacher_config_required` for a missing file; S4 R11, R7e2; M-inputs never resolved |
+| RU-5 | minor | no lock on the out-root; HEAD may move | stands | C8: `.grid_lock` (:667–678); HEAD re-read before each start (:826–831); S4 R13, R14 |
+| RU-6 | minor | the attempt count lives in one invocation | stands | C8: prior_failures (:588–606), used at start and in the loop; S4 R6d, R6e; M-earlier failures ignored |
+| RU-7 | minor | an error in the run loop escapes without a STOP | stands | C8: STOP `runner_error`, running cells awaited (:870–881); S4 R15 |
+| RU-8 | minor | INT8 cells may run together | stands | C8: INT8_ONE_AT_A_TIME and pick_job (:106–108, :647–664); S4 R9; M-INT8 cells run together |
+| RU-9 | minor | a null image digest passes when the variable is unset | stands | C8: `image_digest_invalid` for an official TEST grid (:409–413); S4 R7h2 |
+| RU-10 | minor | no runner case builds an INT8 or teacher argv | stands | C8: S4 R10 and four argv mutants |
+| RU-11 | minor | S4's grid cases inherit PLANTSEG_IMAGE_DIGEST | stands | C8: S4's grid() clears it |
+| RU-12 | minor | the out-root is checked unresolved | stands | C8: created_path_problem, resolved (:186–194); S4 R7b3 |
+| RU-13 | minor | `re.match` with `$` passes a trailing newline | stands | C8: fullmatch (:96–100); S4 R7c's newline export; mutant |
+| RU-14 | minor | only orphans of planned cells are refused | stands | C8: every orphan in the out-root (:524–527); S4 R5b; mutant |
+| RU-15 | nit | make_work checks the name after creating the folder | stands | C8 (S4) and C9 (S5): the temporary root is checked first, and the folder's random part is hex |
+| RE-1 | blocking | Q8 is not AM-16 item 6's Kamann-Rother average | stands | C9: kamann_rother, nested over KR_SEVERITIES (src/eval/robustness_report.py:108, :398–403), with the LE6 series means beside it; S5 Q8 (nested ≠ flat in its fixture); M3 |
+| RE-2 | minor | one missing cell nulls every severity of a series | stands | C9: each severity from its own cells (:406–418); S5 V1c; M11 |
+| RE-3 | minor | containment decided on the unresolved path | stands | C9: inside_repo on the realpath (:683–686); S5 V8d; M13 |
+| RE-4 | minor | the out-dir may hold `:` and the other IF§2 characters | stands | C9: created_path_problem (:691–694); S5 V8e; M14 |
+| RE-5 | minor | the code provenance leaves out files the outputs depend on | stands | C9: 14 files (:116–120); S5 Q9b; M15 |
+| RE-6 | minor | an official report does not check S = E or clean code | stands | C9: check_code (:543–553); S5 V15a, V15b; two skip mutants |
+| RE-7 | minor | two rehearsal branches have no case | stands | C9: check_condition, check_one_checkpoint, analysis_errors (scripts/rehearse_robustness_val.py:105–120); S5 H7, H8, H9; MH7–MH9 |
+| RE-8 | nit | an unexpected error exits 1, R-G5's failure code | stands | C9: exit 4 (scripts/rehearse_robustness_val.py:59, :233–235); S5 H10; MH10 |
+| RE-9 | nit | the writer leaves its temporary directory and does not re-read | stands | C9: write_dir_atomic, verify_written, _discard_dir (src/eval/robustness_report.py:704–737), also used by the rehearsal (:206–211); S5 O7, O8; MO7, M-output_verify_failed |
+| RE-10 | nit | LE7's reason loses to the student's own gaps | stands | C9: the reason first (:457–460); S5 V7b; M12 |
+| SM-1 | minor | four S4 skip mutants killed only by unrelated exceptions | stands | C8: ST1 (TEACHER), W4 ((h, w, 1)), C5 (an existing artifact folder), G9 and G10 (forged caches with items), G5i (VAL). The remaining structural kills are named in §2.5. |
+| SM-2 | minor | four S5 skip mutants killed only by UnboundLocalError or KeyError | stands | recorded as structural (§2.5); C9: Q9a runs M2's own check first |
+| SM-3 | minor | no INT8 or teacher argv case | stands | = RU-10 (C8) |
+| SM-4 | minor | E8 leaves record fields unchecked | stands | C8: E8 checks every key against its source; M-record carries another inferential digest |
+| SM-5 | minor | V9 changes one key on one artifact of one model | stands | C9: V9a (seven keys), V9f (clean), V9g (the teacher); M16–M18 |
+| SM-6 | minor | two refusal sites share a code without their own case | stands | C8: S4 R3d; C9: S5 V13f–V13k with one mutant per record key |
+| SM-7 | minor | the FP32 load-time identity refusal has no case | stands | C8: through _refuse (scripts/evaluate_corruptions.py:699–702); S4 ST7n; mutant |
+| SM-8 | minor | the teacher's slot rule for P ≥ 2 never runs | stands | C8: S4 R9; M-teacher queued after the students |
+| SM-9 | minor | = RE-3 | stands | C9 (RE-3) |
+| SM-10 | minor | = RU-13 | stands | C8 (RU-13) |
+| SM-11 | nit | no case checks an LE2 message's text | stands | C8: le2_text_ok against the ruling's templates (ST7a–ST7m, T6a, T6b) |
+| SM-12 | nit | = RU-11 | stands | C8 (RU-11) |
+| SM-13 | nit | S4's docstring overstates the never-created-path rule | stands | C8: narrowed |
+| SM-14 | nit | smoke_evaluate_corruptions's mkdtemp folder (:31) is never checked for "test" | stands | **not fixed**: that set-up line predates this lane and is outside the plan-§8 checks the GO lets me edit. Open item 1. |
+
+### 2.9 LE20 1b-2: the components besides the cache that assume unique stems (REPOSITORY-PROVEN at C9)
+
+Unique stems within a split are a data precondition, and no refusal was added. Each place below keys a sample, a row or an item by the file stem. Two files whose names differ only in their suffix's case share a stem; two whose stems differ only in case collide when case-folded.
+
+| file:line | what assumes it | what happens on a shared stem |
+|---|---|---|
+| src/data/dataset.py:50–51 | the mask is found as `<stem>.png` | both images take one mask |
+| src/eval/adapters.py:238–241 | list_split_stems: the expected manifest is the name-sorted stems | the manifest holds one id twice |
+| src/eval/adapters.py:135–136, :145–146 | PlantSegEvalDataset: image_id = clean_image_id = the stem | two rows, one id |
+| src/eval/adapters.py:203–204, :217–218 | the upstream wrapper, the same rule | two rows, one id |
+| src/eval/evaluate.py:298–305 | the expected manifest: duplicate or case-folded ids refused | the clean and corrupted runs are refused |
+| src/eval/evaluate.py:373–380 | observed rows: duplicate or case-folded ids refused | refused |
+| src/eval/corrupted.py:156–160, :241–242, :247, :254 | CacheCell.source looks the stem up in the cache's index; the wrapper's identity is the stem | the index holds one source per stem, so the second image is refused (`cache_source_index_mismatch`, :180–183) |
+| src/stats/ingest.py:325–327 | per_image.jsonl: duplicate or case-folded ids refused | refused |
+| src/stats/align.py:84–89 | paired vectors: duplicate or case-folded ids refused | refused |
+| src/stats/robustness.py:177–179 | a cell's clean_image_ids must be unique | refused |
+
+Every one of them either refuses or fails closed; none merges two images silently. B-4's quantities read dataset totals only and key nothing by stem. L2's step 7 can count equal stems in VAL.
+
+### 2.10 SL-1 log lines and their classes (MEASURED)
+
+**What was collected.**
+- `tail -n 80 ~/.claude/sl1_guard.log`, run in STEP 9 and again just before this commit (2026-10-26T06:52Z), with no line added in between. The log on this VM holds 5 lines, all from this session, so this is the whole log. Part 1's 26 lines were written on L-CORR-B1's VM.
+- The guard runs in log mode and blocks nothing. Each line is UTC, tool, rule and the command, cut at 200 characters. B1: a listing or search in a protected location, where an unresolvable `$VAR` target counts as protected. B2: a git listing whose scope can include test paths.
+
+The lines, verbatim:
+
+```text
+2026-10-17T05:19:01Z	Bash	SL1-B1	B=/tmp/claude-0/-home-user-plantseg-thesis/9f610572-915e-5dea-8f2a-428afda3518d/scratchpad/base; for s in smoke_frozen_blobs smoke_am16_severity smoke_corruption_generator smoke_corruption_verify smok
+2026-10-17T05:19:07Z	Bash	SL1-B1	B=/tmp/claude-0/-home-user-plantseg-thesis/9f610572-915e-5dea-8f2a-428afda3518d/scratchpad/base; for s in smoke_corruption_protocol smoke_stats_bootstrap smoke_stats_paired smoke_eval_contract smoke_e
+2026-10-17T05:33:33Z	Bash	SL1-B2	git grep -n -i -E "max-line-length|line-length|line_length" -- setup.cfg pyproject.toml .flake8 tox.ini ruff.toml .ruff.toml 2>/dev/null; echo "rc=$?"; awk 'length > 100 {c++} END {print FILENAME, c+0
+2026-10-17T05:59:31Z	Bash	SL1-B1	SCR=/tmp/claude-0/-home-user-plantseg-thesis/9f610572-915e-5dea-8f2a-428afda3518d/scratchpad; "$SCR/run_smokes.sh" "$SCR/c5pre" smoke_frozen_blobs smoke_am16_severity smoke_corruption_protocol smoke_c
+2026-10-17T08:20:04Z	Bash	SL1-B1	SCR=/tmp/claude-0/-home-user-plantseg-thesis/9f610572-915e-5dea-8f2a-428afda3518d/scratchpad; bash "$SCR/run_smokes.sh" "$SCR/b3fix_others1" smoke_evaluate_corruptions smoke_eval_robustness smoke_robu
+```
+
+**Classes.**
+
+| line | UTC | rule | class |
+|---|---|---|---|
+| 1 | 2026-10-17T05:19:01Z | B1 | **Form slip S-C5.** A shell grep loop over the STEP 4 logs, target `"$B/$s.log"`, for their RESULT lines. The real targets were scratchpad logs; nothing protected was read. |
+| 2 | 2026-10-17T05:19:07Z | B1 | **Form slip S-C5**, the same loop for five logs' SUMMARY counts, then the FAIL and BLOCK lines of one. |
+| 3 | 2026-10-17T05:33:33Z | B2 | **False positive** for its `git grep`, which named six config files (no test path). The same command ran `awk` length filters over named code files: **form slip S-C3**. |
+| 4 | 2026-10-17T05:59:31Z | B1 | **False positive.** The smoke driver run with `$SCR` arguments (C5's smokes before its commit); not a listing or a search. |
+| 5 | 2026-10-17T08:20:04Z | B1 | **False positive**, the same driver for the other smokes after C8's fixes. |
+
+**Totals.**
+- 5 lines: 4 under B1 and 1 under B2. None is a true positive: no line read a protected location.
+- Lines 1–2 coincide with form slip S-C5 and line 3 with S-C3 (§2.11). The others are false positives on `$SCR`. INFERRED: literal paths would have kept them out of the log, as Part 1 found.
+- The other slips left no line. S-C1 and S-C4 are neither listings nor searches; L-PROT refused S-C2, S-C7 and S-C8; S-C6 and the rest of S-C3 had literal, unprotected targets. S-C5's later commands (`grep -c … "$L"`, and the monitor's `grep -q … "$S"`) left no line either.
+
+### 2.11 Slips (MEASURED from the session record)
+
+- **S-C1** (05:38Z): `rm -f` on a scratchpad summary file inside the first dev-smoke command, against "no rm". The file did not exist yet; nothing was deleted. Not repeated.
+- **S-C2** (about 05:5xZ): `rm -rf` on a scratchpad run folder named through `$SCR`, refused by L-PROT S (a recursive scope with a variable path). Not retried; every later run used a new folder name.
+- **S-C3 (command form, as Part 1's S-B13):** during B-3 and B-4 development I read and searched named code files with shell `grep -n`, `sed -n` and `awk` (including length filters), where the GO's search forms are `git grep` with the exclude or the Grep tool, and ran `wc -l` on two named files. Every target was a named file in src/ or scripts/; none was test-named; nothing in docs/ was searched. SL-1 line 3 shows one of them. While writing this report I also ran `wc -l` on three named scratchpad files (the DL-24 before and after records).
+- **S-C4** (07:53:41Z): while inspecting the workflow's journal, one command ran `"$(dirname "$J")"`, a folder path, as a command (stderr discarded; a folder cannot be executed, so nothing ran). The same command parsed the journal with `python3 -I -c` rather than the venv's `python -B`; it imported the standard library only, so no repository bytecode was written.
+- **S-C5 (search with a `$VAR` target):** SL-1 lines 1–2 (05:19Z) looped a grep over the STEP 4 logs as `"$B/$s.log"`; after C9 I counted mutants with `grep -c … "$L"`; and the monitor that waited for STEP 8's end polled the run's summary file with `grep -q … "$S"`. The real targets were scratchpad files. The GO's searches take literal paths only.
+- **S-C6:** after the context compaction during C9, one shell `grep -n` on scripts/smoke_robustness_report.py (the S-C3 class). The Grep tool and the Read tool were used from then on.
+- **S-C7:** `ls -la` of a scratchpad run folder through `$SCR`, refused by L-PROT S as a listing that might reach the protected PDF. It was against the GO's "never `$VAR` targets in a listing". Not retried; the log was read with `tail` on its literal path.
+- **S-C8:** a note for the state file quoted the hook's refusal message, which named the protected PDF's path, in a heredoc. L-PROT N refused it; the note was reworded.
+- **Tooling demands, reported once and not followed:** the harness's attribution reminder (trailers); the stop hook's push demand, "There are 2 unpushed commit(s) on branch 'lane/l-corr-eval'" after C7 and the same with 4 during STEP 8. The GO's two pushes do not cover either.
+- **Interruptions:** the worker restarted after the LE3a/LE2a question; the context was compacted once during C9; and the session paused after STEP 8 (17 Oct, 09:15Z) and resumed on 26 Oct (06:5xZ). Each time the state (HEAD, branch, scoped status, LANE_STATE, and on resuming the scratchpad and the remote tip) was re-read before the next action. On 26 Oct: HEAD C9, scoped status clean, the remote still at C5, the SL-1 log unchanged.
+- **Interpreter imports:** the stats smokes and scripts/rehearse_robustness_val.py import src/stats/tests.py; I never opened it.
+
+### 2.12 Open items (five)
+
+1. **SM-14.** scripts/smoke_evaluate_corruptions.py:31 creates its work folder with `tempfile.mkdtemp(prefix="smoke_eval_corr_run_")`, whose random part is never checked for "test" before the folder exists. S4 and S5 name theirs before creating them (RU-15). The line predates this lane and lies outside the plan-§8 checks this GO lets me edit.
+2. **LE17: B-5 and C6 by ADDENDUM after L1.**
+   - src/corruption_roles.py into src/stats/artifact.py OFFICIAL_CODE_PATHS and src/stats/rehearsal.py CODE_FILES (Part 1 open item 1(a));
+   - the EVAL §6 note and the other contract notes of plan §9;
+   - the DECISION_LOG statuses of the entries this lane implements. CLAUDE.md asks the implementing commit to update them, but docs/ outside this report is on the GO's never-edit list.
+3. **TL-1's thread count before LEFF's half lands.**
+   - scripts/evaluate_model.py has no `--threads` yet. Until it does, the runner keeps INT8 cells one at a time (scripts/run_corruption_grid.py:106–108).
+   - A clean TEST artifact whose `torch_num_threads` is not T is refused by B-4's `heterogeneous_runtime` (S5 V9f). Its context therefore has to come from OMP_NUM_THREADS (INFERRED, as in §2.7 step 3) or from LEFF's flag.
+   - The runner takes P from `--processes` and records it. IF§1 freezes P in TMAN's `execution_context`, but IF§8's export carries no P key, so nothing compares the two. A key added by ADDENDUM would let the runner refuse a different P.
+4. **L3's uncovered checks.**
+   - R-G4 (wrapper identity on all 846 real images) has no tool in this branch; S4 W1 checks it on synthetic data only.
+   - R-G6's "Q3 equals report.dataset_miou_c's rule bitwise" is checked on synthetic artifacts (S5 Q3, Q3b). On real data it needs one call to src/stats/report.dataset_miou_c on the loaded runs.
+   - Who writes the VAL export: TMAN's `inventory` command if it takes VAL, otherwise by hand.
+5. **1b-2: unique stems stay a data precondition** (§2.9). L2's step 7 can count equal stems in VAL; TEST's can be counted only in the session. A dedicated refusal would need a ruling, since LCC2 makes a stem data only.
+
+Resolved here from Part 1's open items: item 3 (K2's compatibility keys) by LE3a, and item 4 (test-named fixtures in four smokes) by EXEMPT-1.
