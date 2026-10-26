@@ -1676,8 +1676,8 @@ def mutations():
     mutant("M-worker_died", ["X33"], (cc, "worker_died", _reraise))
     mutant("M-provisional severity 5 refused too (LC12)", ["H10"],
            (cc, "require_severity5_validated", _severity5_refused_beyond_official))
-    mutant("M-severity 5 still pending: the L1 evidence commit reverted (LE24)", ["H10b"],
-           (cc, "SEVERITY5_REFERENCE_VALIDATED", False))
+    mutant("M-severity 5 still pending: SEVERITY5_REFERENCE_VALIDATED reverted to False (LE24)",
+           ["H10b"], (cc, "SEVERITY5_REFERENCE_VALIDATED", False))
     mutant("M-name test after the filesystem gates (LC6)", ["X01"],
            (B, "generate_cmd", _names_late))
     mutant("M-pin names the KD image", ["P5"],
