@@ -280,10 +280,11 @@ class World:
 
     def cut_fields(self, group: str, slots: list, reason: str, arm: bool) -> dict:
         mde = self.M.REFERENCE_FILES["mde_entry"][0]
+        mde_sha = self.S.sha256_bytes((REPO / mde).read_bytes())
         return {"rule": "freeze", "reason": reason, "launched": False, "run_ids": [],
-                "since": {"date": "2026-10-20", "record": {"path": mde, "sha256": self.S.sha256_bytes(
-                    (REPO / mde).read_bytes())}}, "arithmetic": None, "telemetry": [], "comparator": None,
-                "results_known": [{"dl": "DL-63", "path": mde, "sha256": "5" * 64}] if arm else [],
+                "since": {"date": "2026-10-20", "record": {"path": mde, "sha256": mde_sha}}, "arithmetic": None,
+                "telemetry": [], "comparator": None,
+                "results_known": [{"dl": "DL-99", "path": mde, "sha256": mde_sha}] if arm else [],
                 "cut_order_position": self.cat.position(group), "rule_record": None}
 
     def terminal_entries(self):
@@ -385,7 +386,8 @@ class World:
         except Exception as e:  # noqa: BLE001 -- a crash where a refusal is due fails its check
             return type(e).__name__, None, self.S.TmanRefused(type(e).__name__, str(e))
 
-    def commit(self, files: dict, msg: str = "more records", rows: dict | None = None) -> str:
+    def commit(self, files: dict, msg: str = "more records", rows: dict | None = None,
+               date: str = MANIFEST_DATE) -> str:
         """Add records (and decision-log rows) in a new commit; the records accessor reads HEAD."""
         files = dict(files)
         if rows:
@@ -393,7 +395,7 @@ class World:
         if rows or any(r.startswith("reports/derived/tday_entries/") for r in files):
             files[self.S.DECISION_LOG_REL] = FX.dl_table(dict(sorted(self.dl.items(), key=lambda kv: int(
                 kv[0].split("-")[1])))).encode()
-        sha = FX.commit_files(self.repo, files, msg, date=MANIFEST_DATE)
+        sha = FX.commit_files(self.repo, files, msg, date=date)
         self.records = self.R.Records.at_head(self.repo)
         return sha
 
@@ -629,6 +631,78 @@ def case_record_gates():
         m.startswith("MISSING: trigger_format_unknown") for m in res.missing), str(res.missing))
 
 
+def case_entry_files():
+    """Decision (iii) on every cited entry file, through one reader (DL-24 #17, #38, #87-#89, #92): a tday_entry/1
+    of the kind it is cited as, in its TB7 folder under its name, matched to its manifest entry; its sha256 in a
+    RECORDED or IMPLEMENTED row; written once. A cut's results known are committed at their sha256, in the row they
+    cite (decision (xvi); #69)."""
+    w = WORLD
+    g = w.entries["G:s42:80k"]
+    r1nr = w.entries["E6-R1:s42:15ep"]
+
+    def cite(slot, ref, dl):
+        return lambda d: w.entry(d, slot).update(entry={"path": ref["path"], "sha256": ref["sha256"]}, dl_rows=[dl])
+
+    def committed(rel, data, status="RECORDED"):
+        sha = w.S.sha256_bytes(data)
+        dl = w.row(f"TMAN entry file {rel} sha256 {sha}", status)
+        w.commit({rel: data}, f"entry file {rel}", rows={dl: w.dl[dl]})
+        return {"path": rel, "sha256": sha}, dl
+    expect_gate(w, "not_run_citing_a_cut_entry_file_B38", "entry_file_invalid",
+                doc=mutated(w, cite("E7:s44:list42", g["entry"], g["dl_rows"][0])),
+                detail="a cut entry, cited as a not_run entry")
+    expect_gate(w, "not_made_citing_a_cut_entry_file_B23", "entry_file_invalid",
+                doc=mutated(w, cite("E7-E2:s42:list42", g["entry"], g["dl_rows"][0])),
+                detail="a cut entry, cited as a not_made entry")
+    expect_gate(w, "not_run_citing_another_slot_s_not_run_file_B17", "entry_file_invalid",
+                doc=mutated(w, cite("E6:s43:15ep", r1nr["entry"], r1nr["dl_rows"][0])),
+                detail="E6:s43:15ep: its not_run entry file")
+    nm = w.entries["E7-E2:s42:list42"]["entry"]["path"]
+    arr, arr_dl = committed(nm.replace("__01.json", "__05.json"), b"[1, 2]\n")
+    expect_gate(w, "entry_file_holding_a_list_B87", "entry_file_invalid",
+                doc=mutated(w, cite("E7-E2:s42:list42", arr, arr_dl)), detail="entry kind None")
+    bad, bad_dl = committed(nm.replace("__01.json", "__06.json"), b"{")
+    expect_gate(w, "entry_file_not_json", "entry_file_invalid", doc=mutated(w, cite("E7-E2:s42:list42", bad, bad_dl)))
+    moved, moved_dl = committed("reports/derived/g_cut_record_renamed.json",
+                                w.records.read(g["entry"]["path"]))
+    expect_gate(w, "cut_entry_file_outside_its_folder_B89", "entry_file_invalid",
+                doc=mutated(w, cite("G:s42:80k", moved, moved_dl)), detail="do not state its kind, file_id and date")
+    expect_gate(w, "cut_label_against_its_entry_file", "entry_file_invalid",
+                doc=mutated(w, lambda d: w.entry(d, "G:s42:80k").update(cut_date="2026-11-02")),
+                detail="its cut label is not its entry file's")
+    gcut = w.cut_fields("G", ["G:s42:80k"], "no card", False)
+    for nn, (name, extra, detail) in enumerate((("cut_file_naming_a_derived_slot", "E7-R1:s42:list42",
+                                                 "slots of another class"),
+                                                ("cut_file_naming_an_unknown_slot", "G:s42:90k",
+                                                 "are not catalogue slots")), 12):
+        doc = dict(w.entry_file("cut", ["G:s42:80k"], gcut, nn=nn)["doc"], slots=["G:s42:80k", extra])
+        ref, dl = committed(w.S.entry_file_rel(w.S.entry_file_name("cut", "G_s42_80k", FREEZE_DAY, nn)),
+                            w.S.json_file_bytes(doc))
+        expect_gate(w, name, "entry_file_invalid", doc=mutated(w, cite("G:s42:80k", ref, dl)), detail=detail)
+    decided = w.entry_file("cut", ["G:s42:80k"], dict(gcut, since=dict(gcut["since"], date="2026-10-21")), nn=7)
+    w.dl[decided["dl"]] = ("DECIDED", w.dl[decided["dl"]][1])
+    w.commit({decided["path"]: w.files[decided["path"]]}, "a cut entry whose row is DECIDED")
+    expect_gate(w, "entry_file_whose_row_is_only_DECIDED_B92", "dl_row_missing",
+                doc=mutated(w, cite("G:s42:80k", decided, decided["dl"])), detail="in no RECORDED or IMPLEMENTED row")
+    v1 = w.entry_file("cut", ["G:s42:80k"], dict(gcut, since=dict(gcut["since"], date="2026-10-22")), nn=8)
+    w.commit({v1["path"]: w.files[v1["path"]]}, "a cut entry, first version")
+    v2 = w.entry_file("cut", ["G:s42:80k"], dict(gcut, since=dict(gcut["since"], date="2026-10-23")), nn=8)
+    w.commit({v2["path"]: w.files[v2["path"]]}, "the same cut entry rewritten")
+    expect_gate(w, "entry_file_rewritten_after_its_commit_B92", "entry_file_rewritten",
+                doc=mutated(w, cite("G:s42:80k", v2, v2["dl"])), detail="commit(s) in the history")
+    mde = w.M.REFERENCE_FILES["mde_entry"][0]
+    mde_sha = w.S.sha256_bytes((REPO / mde).read_bytes())
+    for nn, (name, want, known, detail) in enumerate((
+            ("results_known_at_another_sha256_B69", "record_uncommitted",
+             {"dl": "DL-99", "path": mde, "sha256": "5" * 64}, "is not the cited sha256"),
+            ("results_known_row_not_holding_its_sha256_B69", "dl_row_missing",
+             {"dl": "DL-63", "path": mde, "sha256": mde_sha}, "DL-63 does not hold its sha256")), 9):
+        ref = w.entry_file("cut", ["G:s42:80k"], dict(gcut, results_known=[known]), nn=nn)
+        w.commit({ref["path"]: w.files[ref["path"]]}, f"cut entry {name}")
+        expect_gate(w, name, want, doc=mutated(w, cite("G:s42:80k", ref, ref["dl"])), detail=detail)
+    check("entry_files_world_still_passes", w.run("freeze")[0] is None)
+
+
 def case_completion_gates():
     w = WORLD
     expect_gate(w, "freeze_without_runs", "launched_attempt_without_directory", runs_root=None,
@@ -753,7 +827,9 @@ def case_cut_gates():
     a = w.cut_fields("A", [A], "no card", False)
     named = {"rule": "named_rule", "rule_record": {"path": w.report["path"], "sha256": w.report["sha256"],
                                                   "date": "2026-10-28"}, "cut_order_position": None, "since": None}
+    named_today = {**named, "rule_record": dict(named["rule_record"], date=FREEZE_DAY)}   # its results known by then
     a100_rid = KD_RUNS[A100][1]
+    a100_dd = {**a, **w.launched_fields([(A100, a100_rid)]), "rule": "decision_date", "cut_order_position": None}
     variants = [
         ("cut_rule_operator", "cut_rule_unknown", [A], dict(a, rule="operator"), FREEZE_DAY),
         ("cut_of_never_cut_slot", "cut_of_never_cut", ["E2:s42:lambda0.5:80k", A], a, FREEZE_DAY),
@@ -763,20 +839,24 @@ def case_cut_gates():
          dict(a, arithmetic=dict(E.cut_arithmetic(10, [], "T", FX.utc("2026-10-20T03:00:00Z")), cut=True)),
          FREEZE_DAY),
         ("cut_launched_without_telemetry", "cut_val_record_missing", [G], dict(w.g_cut, telemetry=[]), FREEZE_DAY),
+        ("results_known_committed_after_the_cut_s_day_B69", "cut_results_unknown", [A100],
+         dict(a100_dd, results_known=w.r1_cut["results_known"]), "2026-10-22"),
         ("arm_cut_without_results", "arm_cut_results_missing", w.r1_slots, dict(w.r1_cut, results_known=[]),
          FREEZE_DAY),
-        ("launched_arm_cut_by_a_named_rule", "arm_run_cut_while_running", w.r1_slots, {**w.r1_cut, **named},
-         "2026-10-28"),
+        ("launched_arm_cut_by_a_named_rule", "arm_run_cut_while_running", w.r1_slots, {**w.r1_cut, **named_today},
+         FREEZE_DAY),
         ("arm_cut_missing_its_later_run", "arm_cut_partial", w.r1_slots[:1],
          w.cut_fields("R1", w.r1_slots[:1], "gate not met", True), FREEZE_DAY),
         ("cut_order_position_other", "cut_order_position_mismatch", [A], dict(a, cut_order_position=3), FREEZE_DAY),
-        ("decision_date_cut_not_in_the_record", "decision_date_cut_mismatch", [A100],
-         {**a, **w.launched_fields([(A100, a100_rid)]), "rule": "decision_date", "cut_order_position": None},
-         "2026-10-22"),
+        ("decision_date_cut_not_in_the_record", "decision_date_cut_mismatch", [A100], a100_dd, "2026-10-22"),
         ("stopped_run_cut_by_a_named_rule", "stopped_run_cut_early", [G], {**w.g_cut, **named}, "2026-10-28"),
         ("e6x_cut_citing_a_yes_condition_AM23_3b", "condition_unmet", ["E6-R1:s42:15ep"],
          {**w.cut_fields("E6-R1", ["E6-R1:s42:15ep"], "condition not met", False), **named,
           "rule_record": {"path": w.cond["path"], "sha256": w.cond["sha256"], "date": "2026-10-29"}}, "2026-10-29"),
+        ("e6x_cut_citing_a_cut_entry_as_its_condition", "entry_file_invalid", ["E6-R1:s42:15ep"],
+         {**w.cut_fields("E6-R1", ["E6-R1:s42:15ep"], "condition not met", False), **named,
+          "rule_record": {"path": w.cut_refs[A]["path"], "sha256": w.cut_refs[A]["sha256"], "date": "2026-10-29"}},
+         "2026-10-29"),
     ]
     for nn, (name, want, slots, fields, day) in enumerate(variants, 3):
         ref = w.entry_file("cut", slots, fields, nn=nn, date=day)
@@ -789,6 +869,13 @@ def case_cut_gates():
     finally:
         kd_arms.load_arms = saved
     check("world_still_passes_after_the_variants", w.run("freeze")[0] is None)
+    early = w.entry_file("cut", [A], dict(a, since=dict(a["since"], date="2026-10-19")), nn=30)
+    w.commit({early["path"]: w.files[early["path"]]}, "an A cut entered early", date="2026-11-01T08:00:00+00:00")
+    expect_gate(w, "cut_entered_before_its_rule_s_day_B75", "cut_date_mismatch",
+                doc=mutated(w, lambda d: cite_cut(w, d, early, [A])), detail="before its rule's day 2026-11-03")
+    w.commit({"reports/arms/arm_teacher_record_R1.json": b"{}\n"}, "R1's teacher record, by the freeze date")
+    expect_gate(w, "arm_cut_without_its_teacher_record_known_by_its_day_B69", "arm_cut_results_missing",
+                detail="reports/arms/arm_teacher_record_R1.json")
 
 
 def cite_cut(w: World, d: dict, ref: dict, slots: list) -> None:
@@ -923,8 +1010,14 @@ def case_parent_and_derived_gates():
     expect_gate(w, "derived_under_a_cut_parent", "parent_rule_violation", doc=mutated(w, derived_under_cut))
     expect_gate(w, "cut_parent_child_not_entered", "descendant_entry_missing", doc=mutated(
         w, lambda d: d["body"].update(entries=[e for e in d["body"]["entries"] if e["slot"] != "E7:s44:list42"])))
+    e3s44 = "E3:s44:lambda0.5:alpha25:80k"
+    other = {"path": w.cut_refs[e3s44]["path"], "sha256": "0" * 64}
+    nr = w.committed_not_run(e3s44, other, NOT_RUN[e3s44], nn=3)          # its file cites another parent record
     expect_gate(w, "not_run_with_another_parent_record", "not_run_without_parent_record", doc=mutated(
-        w, lambda d: w.entry(d, "E7:s44:list42")["parent_record"].update(sha256="0" * 64)))
+        w, lambda d: [w.entry(d, k).update(copy.deepcopy(nr[k])) for k in NOT_RUN[e3s44]]))
+    expect_gate(w, "not_run_entry_against_its_file", "entry_file_invalid", doc=mutated(
+        w, lambda d: w.entry(d, "E7:s44:list42")["parent_record"].update(sha256="0" * 64)),
+        detail="are not its not-run entry file's")
     expect_gate(w, "derived_parent_other_than_catalogue", "derived_parent_incomplete",
                 doc=mutated(w, lambda d: w.entry(d, "E4:s42:list43").update(parent="E1:s43:80k")))
     expect_gate(w, "derived_inputs_without_qconfig", "derived_inputs_incomplete",
@@ -934,6 +1027,22 @@ def case_parent_and_derived_gates():
                     ptq_record=w.entry(d, "E4:s44:list42")["ptq_record"])))
     expect_gate(w, "required_derived_absent", "derived_missing", doc=mutated(
         w, lambda d: d["body"].update(entries=[e for e in d["body"]["entries"] if e["slot"] != "E4:s42:list45"])))
+
+    def register(merge_commit):
+        return w.S.json_file_bytes({"format": w.S.LANES_FORMAT, "lanes": [
+            {"lane": "L-AM23", "serves": ["E7-E2:s42:list42"],
+             "status": {"kind": "implemented", "dl": "DL-70", "merge_commit": merge_commit, "entry": None}}]})
+    late = w.commit({"reports/derived/lane_merge_fixture.txt": b"L-AM23 merged after the freeze\n"},
+                    "L-AM23 merged after the freeze", date="2026-11-05T08:00:00+00:00")
+    w.commit({w.S.LANES_REL: register(late)}, "the lane register: L-AM23 merged after the freeze")
+    code, _, e = w.run("freeze")
+    check("not_made_whose_lane_merged_after_the_freeze_passes", code is None, f"{code}: {e.detail[:200] if e else ''}")
+    try:
+        w.commit({w.S.LANES_REL: register(w.E)}, "the lane register: L-AM23 merged before the freeze")
+        expect_gate(w, "not_made_whose_lane_merged_by_the_freeze_B23_B76", "derived_missing",
+                    detail="its lane L-AM23 is implemented")
+    finally:
+        w.commit({w.S.LANES_REL: register(late)}, "the lane register restored")
     expect_gate(w, "e6s42_by_inputs_at_the_freeze", "e6s42_not_hashed_at_freeze", doc=mutated(
         w, lambda d: w.entry(d, "E6:s42:sel").update(hashed=None)))
     expect_gate(w, "second_evaluation_without_report", "derived_selection_conflict", doc=mutated(
@@ -1079,6 +1188,16 @@ def case_moved_freeze():
         aside.rename(w.runs / "e6_s42_15ep")
     expect_gate(w, "delay_entry_without_runs_refused_at_its_gate", "launched_attempt_without_directory",
                 doc=mutated(w, lambda d: moved(d, "2026-11-04")), runs_root=None)
+    bad = {k: v for k, v in delay["doc"].items() if k != "runs"}
+    bad_rel = delay["path"].replace("__01.json", "__03.json")
+    data = w.S.json_file_bytes(bad)
+    dl = w.row(f"TMAN freeze_delay entry for the session: {bad_rel} sha256 {w.S.sha256_bytes(data)}")
+    w.commit({bad_rel: data}, "a freeze delay entry without its runs")
+    expect_gate(w, "freeze_delay_file_without_runs_B88", "entry_file_invalid", doc=mutated(
+        w, lambda d: d["body"]["schedule"].update(freeze_source={"provider": "freeze_delay", "path": bad_rel,
+                                                                 "sha256": w.S.sha256_bytes(data)})),
+        detail="runs")
+    check("freeze_delay_row_recorded", w.dl[dl][0] == "RECORDED")
 
 
 def case_coverage():
@@ -1247,7 +1366,7 @@ def case_draft_and_cli():
         check("cli_validate_freeze_without_runs_refused", rc == 2)
     finally:
         R.TRIGGER_READER = None
-    check("gate_codes_unique_and_ordered", len(set(c for c, _, _ in V.GATES)) == len(V.GATES) == 80)
+    check("gate_codes_unique_and_ordered", len(set(c for c, _, _ in V.GATES)) == len(V.GATES) == 82)
 
 
 WORLD: World | None = None
@@ -1262,7 +1381,8 @@ def main() -> int:
         return FX.run_cases("TMAN VALIDATE SMOKE (lane TMAN, B-1, C5)", ())
     try:
         return FX.run_cases("TMAN VALIDATE SMOKE (lane TMAN, B-1, C5)",
-                            (case_world_passes, case_input_gates, case_record_gates, case_completion_gates,
+                            (case_world_passes, case_input_gates, case_record_gates, case_entry_files,
+                             case_completion_gates,
                              case_cut_gates, case_cut_attribution, case_parent_and_derived_gates, case_appends,
                              case_non_finite_gate, case_scope_gates, case_moved_freeze, case_draft_and_cli,
                              case_inventory, case_coverage))

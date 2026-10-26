@@ -242,6 +242,23 @@ class Records:
         S.refuse_test_path(rel)
         return self.src.show(commit, rel)
 
+    def commit_time(self, commit: str) -> int | None:
+        """A commit's committer time (Unix), or None when it is no commit."""
+        out = self.src._out("show", "-s", "--format=%ct", f"{commit}^{{commit}}") if isinstance(commit, str) else None
+        return int(out) if out and out.isdigit() else None
+
+    def held_by(self, rel: str, until: int) -> set:
+        """The sha256 of each content `rel` held in a commit of the records' history whose committer time meets
+        `until` (sweep_select.meets): what was committed by then (decision (xvi): results known at that time)."""
+        S.refuse_test_path(rel)
+        out = self.src._out("log", "--full-history", "--no-renames", "--format=%H %ct", self.ref, "--", rel)
+        held = set()
+        for c, t in (ln.split() for ln in (out or "").splitlines() if len(ln.split()) == 2):
+            data = self.src.show(c, rel) if ss.meets(int(t), until) else None
+            if data is not None:
+                held.add(S.sha256_bytes(data))
+        return held
+
     def launch_log(self, *, code: str) -> ss.LaunchLog:
         """sweep_select's LaunchLog (launch lines only). Absent or uncommitted: record_uncommitted; any other
         refusal of its reader: `code`, the caller's gate."""

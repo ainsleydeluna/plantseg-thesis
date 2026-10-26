@@ -112,12 +112,15 @@ class Unlock:
         except Exception as e:  # noqa: BLE001 -- a crash where a refusal is due fails its check
             return type(e).__name__, None, self.S.TmanRefused(type(e).__name__, str(e))
 
-    def start_session(self, offset: float = 0.4, push_utc: str = "2026-11-04T09:00:00Z") -> bytes:
-        """The session part: the clock-offset record and the push evidence of the unlock entry's commit."""
+    def start_session(self, offset: float = 0.4, push_utc: str = "2026-11-04T09:00:00Z",
+                      clock_status: str = "RECORDED") -> bytes:
+        """The session part: the clock-offset record (its decision-log row of `clock_status`) and the push evidence
+        of the unlock entry's commit."""
         S, w = self.S, self.w
         clock = w.entry_file("clock_offset", [], {"host": "tday-host", "source": "chronyc tracking",
                                                   "offset_seconds": offset, "measured_utc": "2026-11-05T01:50:00Z"},
                              date="2026-11-05", nn=_nn(w, "clock_offset"))
+        w.dl[clock["dl"]] = (clock_status, w.dl[clock["dl"]][1])
         adding = FX.git(w.repo, "log", "--format=%H", "-1", "--", self.unlock["path"])
         resp = S.json_file_bytes({"fixture": "the remote's activity response, saved verbatim"})
         lst = S.json_file_bytes({"format": "tday_push_list/1", "pushes": [
@@ -159,6 +162,16 @@ def expect_gate(u: Unlock, name: str, want: str, mode: str = "unlock", data=None
     check(name, code == want and passed == before and detail in (e.detail if e else ""),
           f"code {code} ({(e.detail[:160] if e else '')}); passed {len(passed or [])}, want {want} after "
           f"{len(before or [])}")
+
+
+def committed_raw(u: Unlock, kind: str, doc: dict, nn: int, day: str) -> str:
+    """A session entry file of `kind` written as given (no field check), committed with its RECORDED row."""
+    S, w = u.S, u.w
+    rel = S.entry_file_rel(S.entry_file_name(kind, S.SESSION_FILE_ID, day, nn))
+    data = S.json_file_bytes(doc)
+    w.row(f"TMAN {kind} entry for the session: {rel} sha256 {S.sha256_bytes(data)}")
+    w.commit({rel: data}, f"a {kind} entry as given")
+    return rel
 
 
 def refreeze(u: Unlock, doc: dict, nn: int) -> dict:
@@ -271,6 +284,22 @@ def case_unlock_gates():
     w.commit({S.LANES_REL: S.json_file_bytes(lanes)}, "a not-required lane serving an uncut slot")
     expect_gate(u, "not_required_lane_serving_an_uncut_slot", "not_required_invalid", unlock_entry=None,
                 now=FX.utc("2026-11-04T09:00:00Z"), detail="serves ['G:s42:80k'] with no cut entry")
+    ref_arm = w.cut_refs["ARM:latency"]
+    arm_cut = w.entry_file("cut", ["ARM:latency"], dict(w.cut_fields("ARM", ["ARM:latency"], "code not merged", False),
+                                                        reason="gate not met"), nn=2)
+    for name, cut_ref, status in (("not_required_entry_not_DL_recorded_B55c", ref_arm, "DECIDED"),
+                                  ("not_required_cut_entry_not_DL_recorded_B55c", arm_cut, "RECORDED")):
+        nr = w.entry_file("not_required", ["ARM:latency"], {"lane": "L-AM16-ARM", "cut_entries": [
+            {"path": cut_ref["path"], "sha256": cut_ref["sha256"]}]}, nn=_nn(w, "not_required"), date=UNLOCK_DAY)
+        w.dl[nr["dl"]] = (status, w.dl[nr["dl"]][1])
+        if cut_ref is arm_cut:
+            w.dl[arm_cut["dl"]] = ("DECIDED", w.dl[arm_cut["dl"]][1])
+        lanes = copy.deepcopy(u.lanes)
+        lanes["lanes"][1]["status"]["entry"] = {"path": nr["path"], "sha256": nr["sha256"]}
+        w.commit({nr["path"]: w.files[nr["path"]], arm_cut["path"]: w.files[arm_cut["path"]],
+                  S.LANES_REL: S.json_file_bytes(lanes)}, f"lanes: {name}")
+        expect_gate(u, name, "dl_row_missing", unlock_entry=None, now=FX.utc("2026-11-04T09:00:00Z"),
+                    detail=f"{(nr if status == 'DECIDED' else arm_cut)['path']}: sha256")
     w.commit({S.LANES_REL: S.json_file_bytes(u.lanes)}, "the lane register of record")
     f = u.wt / "scripts/evaluate_model.py"
     saved = f.read_bytes()
@@ -303,6 +332,13 @@ def case_unlock_gates():
     expect_gate(u, "unlock_entry_of_another_body", "run_added_after_freeze", unlock_entry=other["path"],
                 detail="not the one the unlock entry records")
     expect_gate(u, "second_unlock_entry_in_the_decision_log", "second_session", detail="two unlock entries")
+    rel = committed_raw(u, "unlock", dict(ud, manifest=S.MANIFEST_REL), 3, UNLOCK_DAY)
+    expect_gate(u, "unlock_entry_whose_manifest_is_a_string_B89", "entry_file_invalid", unlock_entry=rel,
+                detail="manifest")
+    fr = {k: v for k, v in u.freeze["doc"].items() if k != "body_sha256"}
+    rel = committed_raw(u, "freeze", fr, 7, VW.FREEZE_DAY)
+    expect_gate(u, "freeze_record_without_body_sha256_B89", "entry_file_invalid", freeze_record=rel,
+                unlock_entry=None, now=FX.utc("2026-11-04T09:00:00Z"), detail="body_sha256")
 
 
 def hash_only_branch(u: Unlock) -> None:
@@ -365,6 +401,9 @@ def case_session():
     data = u.start_session(offset=75.0)
     expect_gate(u, "clock_offset_over_60_s_AM19a_r21", "clock_offset_invalid", mode="session", data=data,
                 detail="within 60 s")
+    data = u.start_session(offset=0.6, clock_status="DECIDED")         # a record of its own, not yet RECORDED
+    expect_gate(u, "clock_offset_entry_not_DL_recorded_B102", "dl_row_missing", mode="session", data=data,
+                detail="clock_offset__session__20261105")
     data = u.start_session(push_utc="2026-11-05T03:00:00Z")
     expect_gate(u, "unlock_pushed_after_the_session_started_TB11", "push_evidence_invalid", mode="session",
                 data=data, detail="no listed push carries the unlock entry")

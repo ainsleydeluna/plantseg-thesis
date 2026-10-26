@@ -85,6 +85,7 @@ class Ctx:
         self.doc = self.body = self.cat = self.freeze = self.dl = None
         self.by_slot: dict = {}
         self.states: dict = {}            # run_id -> completion.RunState
+        self.entry_data: dict = {}        # rel -> committed bytes
         self.entry_files: dict = {}       # rel -> (doc, sha256)
         self.freeze_conflict: S.TmanRefused | None = None
         self.ptq_ok: set = set()
@@ -127,23 +128,96 @@ class Ctx:
         """A run slot's status at the original freeze instant, from its own launched attempts."""
         return self.index().status(slot, self.freeze.original_utc)
 
+    def entry_sha(self, rel: str) -> str:
+        """An entry file's committed sha256 (record_uncommitted when it is not committed)."""
+        if rel not in self.entry_data:
+            self.entry_data[rel] = self.records.read(rel)
+        return S.sha256_bytes(self.entry_data[rel])
+
     def entry_file(self, rel: str) -> tuple[dict, str]:
         if rel not in self.entry_files:
-            data = self.records.read(rel)
-            self.entry_files[rel] = (S.strict_json(data, rel, code="entry_field"), S.sha256_bytes(data))
+            sha = self.entry_sha(rel)
+            self.entry_files[rel] = (S.strict_json(self.entry_data[rel], rel, code="entry_file_invalid"), sha)
         return self.entry_files[rel]
 
-    def entry_refs(self) -> list[tuple[str, dict]]:
-        """Every entry-file reference of the manifest: (slot or "", {path, sha256})."""
-        refs = [(e["slot"], e["entry"]) for e in self.entries if e["kind"] in ("cut", "not_run", "not_made")]
-        src = self.body["schedule"].get("freeze_source") or {}
-        if src.get("provider") in ("freeze_delay", "new_freeze"):
-            refs.append(("", {"path": src["path"], "sha256": src["sha256"]}))
-        if src.get("provider") == "new_freeze":
-            d = self.entry_file(src["path"])[0].get("delay_entry")
-            if isinstance(d, dict) and d.get("path"):
-                refs.append(("", {"path": d["path"], "sha256": d.get("sha256")}))
-        return refs
+    def entry_doc(self, rel: str):
+        """An entry file's document for finding the files it cites, or None when it does not parse (entry_file_invalid
+        refuses it at its gate)."""
+        try:
+            return self.entry_file(rel)[0]
+        except S.TmanRefused as e:
+            if e.code != "entry_file_invalid":
+                raise
+            return None
+
+    def cited_entries(self) -> list[dict]:
+        """Every entry-file citation the validation reads (decision (iii)): {path, sha256 (the cited one; None: cited by
+        path), kind (the kind it is cited as), entry (the manifest entry it records, or None)}: each cut, not-run and
+        not-made entry's file; the condition entry an E6-X named-rule cut cites (AM-23 item 3(b)); the freeze delay or
+        new freeze the schedule cites, and the delay the new freeze cites; the freeze record and the unlock entry; in
+        session mode the clock-offset record; at the unlock the lane register's not-required entries and the cut
+        entries they cite. A file cited twice is listed twice, each citation matched; a file that does not parse
+        cites nothing here (entry_file_invalid refuses it)."""
+        out = [{"path": e["entry"]["path"], "sha256": e["entry"]["sha256"], "kind": e["kind"], "entry": e}
+               for e in self.entries if e["kind"] in ("cut", "not_run", "not_made")]
+
+        def ref(r, kind):
+            if isinstance(r, dict) and isinstance(r.get("path"), str):
+                out.append({"path": r["path"], "sha256": r.get("sha256"), "kind": kind, "entry": None})
+                return r["path"]
+            return None
+        for c in [c for c in out if c["kind"] == "cut"]:
+            doc = self.entry_doc(c["path"])
+            slots = doc.get("slots") if isinstance(doc, dict) and doc.get("rule") == "named_rule" else None
+            if isinstance(slots, list) and any(isinstance(k, str) and k in self.cat.slots
+                                               and self.slot(k)["stage"] in E.CONDITION_STAGES for k in slots):
+                ref(doc.get("rule_record"), "condition")
+        src = self.body["schedule"].get("freeze_source")
+        if isinstance(src, dict) and src.get("provider") in ("freeze_delay", "new_freeze"):
+            rel = ref(src, src["provider"])
+            d = self.entry_doc(rel) if rel and src["provider"] == "new_freeze" else None
+            ref(d.get("delay_entry") if isinstance(d, dict) else None, "freeze_delay")
+        ref({"path": self.freeze_rel} if self.freeze_rel else None, "freeze")
+        ref({"path": self.unlock_rel} if self.unlock_rel else None, "unlock")
+        s = self.doc["session"] if self.mode == "session" else None
+        ref(s.get("clock_offset") if isinstance(s, dict) else None, "clock_offset")
+        for lane in self.lanes_listed() if self.mode in U else []:
+            st = lane.get("status") if isinstance(lane, dict) else None
+            rel = ref(st.get("entry") if isinstance(st, dict) and st.get("kind") == "not_required" else None,
+                      "not_required")
+            d = self.entry_doc(rel) if rel else None
+            cuts = d.get("cut_entries") if isinstance(d, dict) else None
+            for c in cuts if isinstance(cuts, list) else []:
+                ref(c, "cut")
+        return out
+
+    def cited_paths(self) -> list[str]:
+        return list(dict.fromkeys(c["path"] for c in self.cited_entries()))
+
+    def lanes_listed(self) -> list:
+        """The committed lane register's lanes as listed, unchecked ([] when it is not committed or does not parse;
+        lane_unmet checks it at the unlock)."""
+        if not self.records.has(S.LANES_REL):
+            return []
+        try:
+            doc = S.strict_json(self.records.read(S.LANES_REL), S.LANES_REL, code="lane_unmet")
+        except S.TmanRefused as e:
+            if e.code != "lane_unmet":
+                raise
+            return []
+        lanes = doc.get("lanes") if isinstance(doc, dict) else None
+        return lanes if isinstance(lanes, list) else []
+
+    def results_known(self) -> list[dict]:
+        """The results-of-record references the cut entry files list (decision (xvi)), well-formed ones only (the
+        entry-file gate checks the fields)."""
+        out = []
+        for c in self.cited_entries():
+            doc = self.entry_doc(c["path"]) if c["kind"] == "cut" else None
+            rk = doc.get("results_known") if isinstance(doc, dict) else None
+            out += [r for r in rk if isinstance(r, dict) and isinstance(r.get("path"), str)
+                    and isinstance(r.get("sha256"), str)] if isinstance(rk, list) else []
+        return out
 
     def launch_log(self):
         if not hasattr(self, "_log"):
@@ -244,7 +318,7 @@ def g_record_uncommitted(x: Ctx):
     rels = [S.CATALOGUE_REL, x.body["schedule"].get("file") or "configs/kd_schedule.json"]
     if x.path == S.MANIFEST_REL or x.mode in U:
         rels.append(S.MANIFEST_REL)
-    rels += [r["path"] for _, r in x.entry_refs()]
+    rels += x.cited_paths()
     ci = x.body["calibration_index"]
     if isinstance(ci, dict):
         rels += [v["path"] for v in [ci.get("of_record")] + list((ci.get("sensitivity") or {}).values())
@@ -253,7 +327,6 @@ def g_record_uncommitted(x: Ctx):
     rels += [refs[k]["path"] for k in ("mde_entry", "strata") if isinstance(refs.get(k), dict)]
     if isinstance(x.body["trigger"], dict):
         rels.append(x.body["trigger"]["path"])
-    rels += [r for r in (x.freeze_rel, x.unlock_rel) if r]
     if x.mode in U:
         rels.append(S.LANES_REL)
     for rel in rels:
@@ -266,6 +339,7 @@ def g_record_uncommitted(x: Ctx):
         cited.append(x.body["trigger"])                  # the AM-3 trigger record by its cited sha256 (#1)
     cited += [r for e in x.entries if e["kind"] == "arm_teacher" for r in (e["arm_record"], e["launch_provenance"],
                                                                            e["go_rule"]) if r]
+    cited += x.results_known()                             # each committed at its cited sha256 (decision (xvi); #69)
     for ref in cited:
         S.refuse_test_path(ref["path"])
         if S.sha256_bytes(x.records.read(ref["path"])) != ref["sha256"]:
@@ -275,20 +349,64 @@ def g_record_uncommitted(x: Ctx):
 def g_dl_row_missing(x: Ctx):
     x.dl = x.records.decision_log()
     errs = [f"{e['slot']}: {r} is not a decision-log row" for e in x.entries for r in e["dl_rows"] if not x.dl.has(r)]
-    for slot, ref in x.entry_refs() + [("", {"path": r, "sha256": None}) for r in (x.freeze_rel, x.unlock_rel) if r]:
-        _, sha = x.entry_file(ref["path"])
+    for rel in x.cited_paths():
+        sha = x.entry_sha(rel)
         if not x.dl.recorded_rows_with(sha):
-            errs.append(f"{ref['path']}: sha256 {sha[:12]} is in no RECORDED or IMPLEMENTED row (decision (iii))")
+            errs.append(f"{rel}: sha256 {sha[:12]} is in no RECORDED or IMPLEMENTED row (decision (iii))")
+    for r in x.results_known():
+        if isinstance(r.get("dl"), str) and r["sha256"] not in (x.dl.row_text(r["dl"]) or ""):
+            errs.append(f"{r['path']}: decision-log row {r['dl']} does not hold its sha256 (decision (xvi))")
     return _err(errs)
 
 
 def g_entry_file_rewritten(x: Ctx):
     errs = []
-    for slot, ref in x.entry_refs() + [("", {"path": r, "sha256": None}) for r in (x.freeze_rel, x.unlock_rel) if r]:
-        _, sha = x.entry_file(ref["path"])
-        if ref["sha256"] not in (None, sha):
-            errs.append(f"{ref['path']}: committed sha256 {sha[:12]} is not the cited {ref['sha256'][:12]}")
-        err = x.records.written_once_error(ref["path"])
+    for c in x.cited_entries():
+        sha = x.entry_sha(c["path"])
+        if c["sha256"] not in (None, sha):
+            errs.append(f"{c['path']}: committed sha256 {sha[:12]} is not the cited {str(c['sha256'])[:12]}")
+    for rel in x.cited_paths():
+        err = x.records.written_once_error(rel)
+        if err:
+            errs.append(err)
+    return _err(errs)
+
+
+def _entry_match(c: dict, doc: dict) -> str | None:
+    """A manifest entry's file records that entry: its slot, and a cut's date, rule and comparator; a not-run's
+    reason, parent and parent record (a not-made's one reason is the enum's)."""
+    e = c["entry"]
+    if e is None:
+        return None
+    if e["slot"] not in doc["slots"]:
+        return f"{e['slot']}: its {e['kind']} entry file {c['path']} names {doc['slots']}"
+    if e["kind"] == "cut":
+        cmp = doc["comparator"]["slot"] if doc["comparator"] else None
+        if (e["cut_date"], e["rule"], e["comparator"]) != (doc["date"], doc["rule"], cmp):
+            return f"{e['slot']}: its cut label is not its entry file's"
+    elif e["kind"] == "not_run" and (e["reason"], e["parent"], e["parent_record"]) != (doc["reason"], doc["parent"],
+                                                                                         doc["parent_record"]):
+        return f"{e['slot']}: its reason, parent and parent record are not its not-run entry file's (AM-19 item 4(a))"
+    return None
+
+
+def g_entry_file_invalid(x: Ctx):
+    """Each cited entry file is a tday_entry/1 of the kind it is cited as, its fields and its TB7 folder and name
+    (entries.entry_file_errors), naming catalogue slots of the classes its kind applies to; a manifest entry's file
+    records that entry (decision (iii); DL-24 #17, #38, #87-#89)."""
+    errs = []
+    for c in x.cited_entries():
+        doc, _ = x.entry_file(c["path"])
+        bad = E.entry_file_errors(doc, c["kind"], c["path"])
+        if bad:
+            errs += bad
+            continue
+        unknown = [k for k in doc["slots"] if k not in x.cat.slots]
+        wrong = [k for k in doc["slots"] if k in x.cat.slots and c["kind"] in ("cut", "not_run", "not_made")
+                 and c["kind"] not in S.KINDS_BY_CLASS[x.slot(k)["class"]]]
+        err = (f"{c['path']}: {unknown} are not catalogue slots" if unknown else
+               f"{c['path']}: a {c['kind']} entry names {wrong}, slots of another class" if wrong else
+               _entry_match(c, doc))
         if err:
             errs.append(err)
     return _err(errs)
@@ -696,13 +814,22 @@ def g_restored_checkpoint_unrecorded(x: Ctx):
 
 
 # ================================================================================================ cut gates
-def cut_context(x: Ctx) -> E.CutContext:
+def cut_context(x: Ctx, docs: dict | None = None) -> E.CutContext:
     """The cut checks' context from the records: the arm registry, each sweep's decision record (projected:
     decision_date, values' value and status), each slot's launched attempts, the slot of each launched run_id, the
     stopped run_ids and each slot's status at the original freeze instant from its own attempts (completion.RunIndex:
-    never from a cut entry), and the condition entries' verdicts."""
+    never from a cut entry), the condition entries' verdicts, and the day each cut entry file of `docs` ({sha256:
+    doc}) was entered in the decision log (decision (xv))."""
     from src.training import kd_arms
     idx = x.index()
+    sha_of = {id(d): sha for sha, d in (docs or {}).items()}
+
+    def entered(doc):
+        return E.entered_day(x.records, sha_of[id(doc)]) if id(doc) in sha_of else None
+
+    def known_by(rel, sha256, day):
+        held = x.records.held_by(rel, D.cutoff_instant(day))
+        return bool(held) if sha256 is None else sha256 in held
     recs = {}
     for key, rel in ss.DECISION_RECORD_REL.items():
         if x.records.has(rel):
@@ -715,24 +842,19 @@ def cut_context(x: Ctx) -> E.CutContext:
         return doc.get("verdict") if sha == ref["sha256"] and doc.get("kind") == "condition" else None
     return E.CutContext(x.cat, x.freeze, registry={s.run_stage: s for s in kd_arms.load_arms().values()},
                         decision_records=recs, attempts=idx.attempts, run_slot=idx.slot_of.get,
-                        stopped=idx.stopped_ids(), status=x.slot_status, condition=condition)
+                        stopped=idx.stopped_ids(), status=x.slot_status, condition=condition, entered=entered,
+                        known_by=known_by)
 
 
 def _cut_gate(code: str):
     def gate(x: Ctx):
         if not hasattr(x, "_cut_docs"):
             docs = {}
-            for e in x.entries:
+            for e in x.entries:                 # each file checked and matched to its entry by entry_file_invalid
                 if e["kind"] == "cut":
                     doc, sha = x.entry_file(e["entry"]["path"])
-                    E.require_fields(doc)
-                    E.check_slots(doc, x.cat, kinds_of_class=("run", "measurement"))
-                    cmp = doc["comparator"]["slot"] if doc["comparator"] else None
-                    if doc["kind"] != "cut" or e["slot"] not in doc["slots"] \
-                            or (e["cut_date"], e["rule"], e["comparator"]) != (doc["date"], doc["rule"], cmp):
-                        raise S.TmanRefused("entry_field", f"{e['slot']}: its cut label is not its entry file's")
                     docs[sha] = doc
-            x._cut_docs, x._cutctx = list(docs.values()), cut_context(x)
+            x._cut_docs, x._cutctx = list(docs.values()), cut_context(x, docs)
         fn = dict(E.CUT_CHECKS)[code]
         return _err([f"{d['slots']}: {err}" for d in x._cut_docs for err in [fn(d, x._cutctx)] if err])
     return gate
@@ -785,8 +907,32 @@ def g_ptq_record_invalid(x: Ctx):
     return _err(errs)
 
 
+def _merged_lanes(x: Ctx) -> dict:
+    """{lane: merge commit} of the lanes the committed lane register lists as implemented with a merge commit made
+    by the original freeze instant (its committer time; DL-24 #23, #76). The register is read when committed (it is
+    required at the unlock: lane_unmet)."""
+    out = {}
+    for lane in x.lanes_listed():
+        st = lane.get("status") if isinstance(lane, dict) else None
+        mc = st.get("merge_commit") if isinstance(st, dict) and st.get("kind") == "implemented" else None
+        t = x.records.commit_time(mc) if isinstance(mc, str) and S.COMMIT_RE.fullmatch(mc) else None
+        if t is not None and D.meets(t, x.freeze.original_utc) and isinstance(lane.get("lane"), str):
+            out[lane["lane"]] = mc
+    return out
+
+
 def g_derived_missing(x: Ctx):
-    return _err(M.derived_missing_errors(x.cat, x.by_slot))
+    """A required derived slot is entered derived, or not made when its code is not merged: its catalogue's
+    code_merged gate, and its lane not implemented by the freeze in the lane register when committed (AM-23 item 4;
+    TB8)."""
+    errs = M.derived_missing_errors(x.cat, x.by_slot)
+    merged = _merged_lanes(x)
+    for e in x.entries:
+        lane = x.entry_file(e["entry"]["path"])[0]["lane"] if e["kind"] == "not_made" else None
+        if lane in merged:
+            errs.append(f"{e['slot']}: not made, but its lane {lane} is implemented with merge {merged[lane][:12]} "
+                        "by the original freeze instant (AM-23 item 4: not made is for code not merged)")
+    return _err(errs)
 
 
 def g_e6s42_not_hashed_at_freeze(x: Ctx):
@@ -1049,7 +1195,7 @@ GATES = [
     ("entry_field", ALL, g_entry_field), ("slot_unknown", ALL, g_slot_unknown),
     ("slot_duplicate", ALL, g_slot_duplicate), ("derived_counted_as_run", ALL, g_derived_counted_as_run),
     ("record_uncommitted", ALL, g_record_uncommitted), ("dl_row_missing", ALL, g_dl_row_missing),
-    ("entry_file_rewritten", ALL, g_entry_file_rewritten),
+    ("entry_file_rewritten", ALL, g_entry_file_rewritten), ("entry_file_invalid", ALL, g_entry_file_invalid),
     ("evaluator_commit_invalid", ALL, g_evaluator_commit_invalid),
     ("execution_context_split", ALL, g_execution_context_split),
     ("calibration_index_mismatch", ALL, g_calibration_index_mismatch),
@@ -1089,8 +1235,9 @@ GATES = [
     ("second_session", U, g_second_session), ("session_after_deadline", U, g_session_after_deadline),
     ("clock_offset_invalid", SES, g_clock_offset_invalid), ("push_evidence_invalid", SES, g_push_evidence_invalid),
 ]
+REPORTED_KINDS = ("cut", "not_run", "not_made", "freeze_delay", "new_freeze")   # "entry later than its day" (xv)
 # F/U-only gates whose finding a draft prints as MISSING (plan §2.1) instead of skipping
-MISSING_IN_DRAFT = ("freeze_source_conflict", "content_class_missing", "generator_pin_incomplete",
+MISSING_IN_DRAFT =("freeze_source_conflict", "content_class_missing", "generator_pin_incomplete",
                     "trigger_format_unknown", "complete_run_omitted", "derived_missing", "e6s42_not_hashed_at_freeze",
                     "descendant_entry_missing", "scope_required_missing", "default_candidate_missing",
                     "cut_unentered_at_unlock")
@@ -1122,9 +1269,9 @@ def validate(x: Ctx) -> Result:
             refusal.passed = list(res.passed)
             raise refusal
         res.passed.append(code)
-    for slot, ref in x.entry_refs():
-        doc, sha = x.entry_file(ref["path"])
-        rep = E.late_entry_report(doc, E.entered_day(x.records, sha)) if doc.get("date") else None
+    for rel in dict.fromkeys(c["path"] for c in x.cited_entries() if c["kind"] in REPORTED_KINDS):
+        doc, sha = x.entry_file(rel)
+        rep = E.late_entry_report(doc, E.entered_day(x.records, sha))
         if rep:
             res.reports.append(f"REPORT {rep}")
     return res

@@ -162,6 +162,33 @@ def case_gate_order():
     expect_gate("launched_arm_cut_by_named_rule_refused", running,
                 ctx(runs={"teacher-R1:s42:40k": ["teacher-r1_s42_40k_a1"], ARM_R1[1]: ["e3-r1_s42_80k_a1"]}),
                 "arm_run_cut_while_running")
+    known = {"dl": "DL-99", "path": "reports/derived/mde.json", "sha256": "8" * 64}
+    teacher, go = "reports/arms/arm_teacher_record_R1.json", "reports/arms/arm_go_rule_R1.json"
+    expect_gate("results_committed_after_the_cut_s_day_B69", dict(arm, results_known=[known]),
+                ctx(known_by=lambda rel, sha, day: False), "cut_results_unknown")
+    expect_gate("results_committed_by_the_cut_s_day_pass", dict(arm, results_known=[known]),
+                ctx(known_by=lambda rel, sha, day: rel == known["path"]), None)
+    on_record = ctx(known_by=lambda rel, sha, day: rel in (known["path"], teacher, go))
+    expect_gate("arm_cut_without_its_teacher_and_go_rule_records_B69", dict(arm, results_known=[known]), on_record,
+                "arm_cut_results_missing")
+    expect_gate("arm_cut_listing_its_teacher_and_go_rule_records_passes", dict(arm, results_known=[
+        known, {"dl": None, "path": teacher, "sha256": "9" * 64}, {"dl": None, "path": go, "sha256": "a" * 64}]),
+                on_record, None)
+    expect_gate("cut_entered_before_its_rule_s_day_B75", freeze_cut(), ctx(entered=lambda d: "2026-11-02"),
+                "cut_date_mismatch")
+    expect_gate("cut_entered_on_its_day_passes", freeze_cut(), ctx(entered=lambda d: "2026-11-03"), None)
+    expect_gate("cut_entered_after_its_day_passes_its_REPORT_xv", freeze_cut(), ctx(entered=lambda d: "2026-11-05"),
+                None)
+    flip = "E3-flip:s42:lambda0.5:alpha25:80k"
+    two = freeze_cut(slots=[flip, "G:s42:80k"], pos=None, rule="named_rule", since=None, date="2026-10-28",
+                     rule_record={"path": "reports/x.json", "sha256": "7" * 64, "date": "2026-10-28"},
+                     results_known=[known])
+    expect_gate("two_group_named_rule_cut_passes", two, c, None)
+    expect_gate("two_group_cut_without_arm_results_B15", dict(two, results_known=[]), c, "arm_cut_results_missing")
+    expect_gate("two_group_named_rule_cut_of_a_running_arm_run_B15", dict(two, **launched_fields("e3-flip_s42_80k_a1")),
+                ctx(runs={flip: ["e3-flip_s42_80k_a1"]}), "arm_run_cut_while_running")
+    expect_gate("two_group_cut_of_teacher_R1_and_G_partial_B15", dict(two, slots=["teacher-R1:s42:40k", "G:s42:80k"]),
+                c, "arm_cut_partial")
     expect_gate("arm_cut_missing_its_later_run", dict(arm, slots=ARM_R1[:1]), c, "arm_cut_partial")
     expect_gate("arm_cut_skipping_an_incomplete_teacher", dict(arm, slots=ARM_R1[1:]),
                 ctx(status=lambda s: "running" if s.startswith("teacher") else None), "arm_cut_partial")
@@ -344,6 +371,9 @@ def case_printers_and_committed_files():
     rec = R.Records.at_head(repo)
     got, gsha = E.read_entry_file(rec, rel)
     check("committed_entry_read_back", got == doc and gsha == sha)
+    check("committed_entry_read_as_its_kind", E.read_entry_file(rec, rel, doc["kind"]) == (got, gsha))
+    expect_refused("committed_entry_read_as_another_kind_refused", "entry_file_invalid", E.read_entry_file, rec, rel,
+                   "not_run")
     check("entered_on_its_day_no_report", E.late_entry_report(got, E.entered_day(rec, sha)) is None
           and E.entered_day(rec, sha) == "2026-11-03")
     late_repo = FX.new_repo()

@@ -110,8 +110,9 @@ def required_derived(cat, by_slot: dict) -> list[str]:
 
 
 def derived_missing_errors(cat, by_slot: dict) -> list[str]:
-    """derived_missing: a required derived slot without a derived entry, or a not-made entry for a slot whose code
-    is merged (E7-E2's rule, AM-23 items 2 and 4)."""
+    """derived_missing: a required derived slot without a derived entry, or a not-made entry for a slot without a
+    code_merged gate (E7-E2's rule, AM-23 items 2 and 4). Whether the gated code has merged is the validator's
+    (the lane register's merge commit; validate.g_derived_missing)."""
     errs = []
     for k in required_derived(cat, by_slot):
         kind = (by_slot.get(k) or {}).get("kind")

@@ -20,7 +20,7 @@ equality fits.
 from __future__ import annotations
 
 import math
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from src.training import sweep_select as ss
 
@@ -66,7 +66,7 @@ ROW_STATUS = "RECORDED"
 
 
 def entry_spec(kind: str) -> dict:
-    if kind not in ENTRY_FILE_FIELDS:
+    if not isinstance(kind, str) or kind not in ENTRY_FILE_FIELDS:
         raise S.TmanRefused("entry_kind_unknown", f"entry kind {kind!r} is not one of {sorted(ENTRY_FILE_FIELDS)}")
     return {**ENTRY_FILE_COMMON, **ENTRY_FILE_FIELDS[kind]}
 
@@ -165,11 +165,12 @@ class CutContext:
     projected decision record (decision_date, values), and, from the records and the run directories, never from
     the entry (completion.RunIndex): each slot's launched attempts (None: not read), the slot a launched run_id
     belongs to, the run_ids stopped (a launch log's stopped line; a QAT run_stop row), each slot's status at the
-    original instant from its own attempts (None: not read or never launched); and each condition entry's
-    verdict."""
+    original instant from its own attempts (None: not read or never launched); each condition entry's verdict; the
+    day a committed cut entry was entered in the decision log; and whether a record was committed by the end of a
+    day."""
 
     def __init__(self, catalogue, freeze, *, registry=None, decision_records=None, attempts=None, run_slot=None,
-                 stopped=None, status=None, condition=None):
+                 stopped=None, status=None, condition=None, entered=None, known_by=None):
         self.cat, self.freeze = catalogue, freeze
         self.registry = registry or {}                      # run stage -> kd_arms.ArmSpec
         self.decision_records = decision_records or {}      # sweep key -> projected decision record
@@ -178,6 +179,9 @@ class CutContext:
         self.stopped = set(stopped or ())
         self.status = status or (lambda slot: None)          # slot -> completion status at the original instant
         self.condition = condition or (lambda ref: None)     # condition entry ref -> "yes" | "no" | None
+        self.entered = entered or (lambda doc: None)         # cut entry -> its entered day (decision (xv)), or None
+        # (path, sha256 or None: any content, day) -> committed by the end of that Manila day; None: not read
+        self.known_by = known_by or (lambda rel, sha256, day: None)
 
 
 def _slots(doc, ctx) -> list[dict]:
@@ -259,8 +263,15 @@ def chk_reason(doc, ctx):
 
 
 def chk_date(doc, ctx):
+    """The cut is dated its rule's day, and is not entered in the decision log before that day (AM-19 item 3(c):
+    "entered ... on the day it is made"; a later day is decision (xv)'s REPORT)."""
     want = rule_day(doc, ctx)
-    return None if want == doc["date"] else f"the cut is dated {doc['date']}; its rule's day is {want}"
+    if want != doc["date"]:
+        return f"the cut is dated {doc['date']}; its rule's day is {want}"
+    entered = ctx.entered(doc)
+    if entered is not None and entered < want:
+        return f"the cut is entered in the decision log on {entered}, before its rule's day {want} (AM-19 item 3(c))"
+    return None
 
 
 def chk_arithmetic(doc, ctx):
@@ -281,33 +292,62 @@ def chk_val_records(doc, ctx):
     return None
 
 
-def _arm_group(doc, ctx) -> str | None:
-    groups = {s["cut_group"] for s in _slots(doc, ctx)}
-    g = next(iter(groups)) if len(groups) == 1 else None
-    return g if g in ARM_GROUPS else None
+def chk_results(doc, ctx):
+    """Decision (xvi): the results of record known at that time are records committed by the end of the cut's day,
+    at the sha256 cited (each committed at it now: record_uncommitted; its decision-log row: dl_row_missing)."""
+    late = [r["path"] for r in doc["results_known"] if ctx.known_by(r["path"], r["sha256"], doc["date"]) is False]
+    return (f"{late} were not committed at the cited sha256 by the end of the cut's day {doc['date']}: not results "
+            "known at that time (AM-19 item 3(c); decision (xvi))") if late else None
+
+
+def _arm_groups(doc, ctx) -> list:
+    """The arm groups among the entry's slots, in catalogue order (AM-18 item 7; the AM-17 item 11 arm): each is
+    checked on its own (DL-24 #15)."""
+    return [g for g in ctx.cat.groups if g in ARM_GROUPS and any(s["cut_group"] == g for s in _slots(doc, ctx))]
+
+
+def arm_records(group: str, ctx) -> list:
+    """An arm teacher's records, by path (scripts/preflight_arms.py:119-120): the teacher record and the go-rule
+    record of each arm teacher the group's registered runs distil from (AM-18 items 2, 5)."""
+    arms = sorted({ctx.registry[s["stage"]].arm_teacher for s in (ctx.cat.slots[k] for k in ctx.cat.group_slots(group))
+                   if s["stage"] in ctx.registry and ctx.registry[s["stage"]].arm_teacher})
+    return [rel.format(arm=a) for a in arms for rel in (_pa().TEACHER_RECORD_REL, _pa().GO_RULE_REL)]
 
 
 def chk_arm_results(doc, ctx):
-    if _arm_group(doc, ctx) and not doc["results_known"]:
-        return "an arm's cut lists the arm results of record known at that time (AM-18 item 7(a); decision (xvi))"
+    """An arm's cut lists the arm results of record known at that time: at least one, and its arm teacher's teacher
+    and go-rule records when they were committed by the end of the cut's day (AM-18 item 7(a); decision (xvi))."""
+    listed = {r["path"] for r in doc["results_known"]}
+    for g in _arm_groups(doc, ctx):
+        if not listed:
+            return f"arm {g}'s cut lists the arm results of record known at that time (AM-18 item 7(a); decision (xvi))"
+        missing = [rel for rel in arm_records(g, ctx) if rel not in listed and ctx.known_by(rel, None, doc["date"])]
+        if missing:
+            return f"arm {g}'s cut does not list {missing}, committed by the end of its day (decision (xvi))"
     return None
 
 
 def chk_arm_running(doc, ctx):
-    if _arm_group(doc, ctx) and doc["launched"] and doc["rule"] != "freeze":
-        return "a launched arm run ends only by completion, divergence, a fault or the freeze (AM-18 item 7(a))"
+    """A launched arm run is cut only by the freeze (AM-18 item 7(a)): its slots' launched attempts, each arm on its
+    own."""
+    if doc["rule"] == "freeze":
+        return None
+    running = [k for g in _arm_groups(doc, ctx) for k in ctx.cat.group_slots(g) if k in doc["slots"]
+               and (ctx.attempts(k) or (ctx.attempts(k) is None and doc["launched"]))]
+    if running:
+        return (f"{running}: a launched arm run ends only by completion, divergence, a fault or the freeze (AM-18 "
+                "item 7(a))")
     return None
 
 
 def chk_arm_partial(doc, ctx):
-    g = _arm_group(doc, ctx)
-    if not g:
-        return None
-    runs = [k for k in ctx.cat.group_slots(g) if ctx.cat.slots[k]["class"] == "run"]
-    cut = [k for k in runs if k in doc["slots"]]
-    first = runs.index(cut[0]) if cut else None
-    if not cut or cut != runs[first:] or any(ctx.status(k) not in (None, C.COMPLETE) for k in runs[:first]):
-        return f"an arm is cut from its first incomplete run onward: runs {runs}, cut {cut} (AM-18 item 7(b))"
+    for g in _arm_groups(doc, ctx):
+        runs = [k for k in ctx.cat.group_slots(g) if ctx.cat.slots[k]["class"] == "run"]
+        cut = [k for k in runs if k in doc["slots"]]
+        first = runs.index(cut[0]) if cut else None
+        if not cut or cut != runs[first:] or any(ctx.status(k) not in (None, C.COMPLETE) for k in runs[:first]):
+            return (f"an arm is cut from its first incomplete run onward: arm {g}'s runs {runs}, cut {cut} (AM-18 item "
+                    "7(b))")
     return None
 
 
@@ -350,13 +390,11 @@ def chk_stopped(doc, ctx):
 
 
 def chk_registered_arm(doc, ctx):
-    g = _arm_group(doc, ctx)
-    if g in ("R2", "W", "R1"):
-        stages = sorted({s["stage"] for s in _slots(doc, ctx) if s["class"] == "run" and s["stage"].startswith("E3-")})
-        missing = [st for st in stages if st not in ctx.registry]
-        if missing:
-            return f"{missing} have no registry file (configs/kd_arms; AM-17b item 4)"
-    return None
+    groups = [g for g in _arm_groups(doc, ctx) if g in ("R2", "W", "R1")]
+    stages = sorted({s["stage"] for s in _slots(doc, ctx) if s["cut_group"] in groups and s["class"] == "run"
+                     and s["stage"].startswith("E3-")})
+    missing = [st for st in stages if st not in ctx.registry]
+    return f"{missing} have no registry file (configs/kd_arms; AM-17b item 4)" if missing else None
 
 
 def chk_condition(doc, ctx):
@@ -370,7 +408,8 @@ def chk_condition(doc, ctx):
 CUT_CHECKS = [("cut_rule_unknown", chk_rule), ("cut_of_never_cut", chk_never_cut),
               ("cut_of_complete_run", chk_complete), ("cut_reason_invalid", chk_reason),
               ("cut_date_mismatch", chk_date), ("cut_arithmetic_invalid", chk_arithmetic),
-              ("cut_val_record_missing", chk_val_records), ("arm_cut_results_missing", chk_arm_results),
+              ("cut_val_record_missing", chk_val_records), ("cut_results_unknown", chk_results),
+              ("arm_cut_results_missing", chk_arm_results),
               ("arm_run_cut_while_running", chk_arm_running), ("arm_cut_partial", chk_arm_partial),
               ("cut_order_position_mismatch", chk_order_position), ("decision_date_cut_mismatch", chk_decision_date),
               ("stopped_run_cut_early", chk_stopped), ("unregistered_arm", chk_registered_arm),
@@ -572,9 +611,33 @@ def new_freeze_errors(doc: dict, delay_ref: dict, instants: list, original_date:
 
 
 # --------------------------------------------------------------------------------- committed entry files (iii)
-def read_entry_file(records: R.Records, rel: str) -> tuple[dict, str]:
+def entry_name_error(rel: str, doc: dict) -> str | None:
+    """TB7: an entry file lies in reports/derived/tday_entries/ under <kind>__<file_id>__<YYYYMMDD>__<nn>.json, its
+    kind, file_id and date its own."""
+    p = PurePosixPath(str(rel))
+    m = S.ENTRY_FILE_RE.fullmatch(p.name)
+    if str(p.parent) != S.ENTRIES_DIR_REL or not m or m.group("kind") != doc["kind"] \
+            or m.group("date") != doc["date"].replace("-", "") or m.group("file_id") != file_id_of_entry(doc):
+        return f"{rel}: its folder and name do not state its kind, file_id and date ({S.ENTRIES_DIR_REL}; TB7)"
+    return None
+
+
+def entry_file_errors(doc, kind: str, rel: str) -> list[str]:
+    """A cited entry file is a tday_entry/1 of the kind it is cited as: its fields and its name."""
+    try:
+        require_fields(doc)
+    except S.TmanRefused as e:
+        return [f"{rel}: {e.detail}"]
+    if doc["kind"] != kind:
+        return [f"{rel}: a {doc['kind']} entry, cited as a {kind} entry"]
+    err = entry_name_error(rel, doc)
+    return [err] if err else []
+
+
+def read_entry_file(records: R.Records, rel: str, kind: str | None = None) -> tuple[dict, str]:
     """A committed entry file: committed and byte-equal (record_uncommitted), written once (entry_file_rewritten),
-    its sha256 in a RECORDED or IMPLEMENTED decision-log row (dl_row_missing), its fields (entry_field)."""
+    its sha256 in a RECORDED or IMPLEMENTED decision-log row (dl_row_missing), its fields and name (entry_field),
+    and, when given, of `kind` (entry_file_invalid)."""
     S.refuse_test_path(rel)
     data = records.read(rel)
     err = records.written_once_error(rel)
@@ -584,11 +647,12 @@ def read_entry_file(records: R.Records, rel: str) -> tuple[dict, str]:
     if not records.decision_log().recorded_rows_with(sha):
         raise S.TmanRefused("dl_row_missing", f"{rel}: sha256 {sha} is in no RECORDED or IMPLEMENTED decision-log row")
     doc = S.strict_json(data, rel, code="entry_field")
-    m = S.ENTRY_FILE_RE.fullmatch(Path(rel).name)
     require_fields(doc)
-    if not m or m.group("kind") != doc["kind"] or m.group("date") != doc["date"].replace("-", "") \
-            or m.group("file_id") != file_id_of_entry(doc):
-        raise S.TmanRefused("entry_field", f"{rel}: its name does not state its kind, file_id and date")
+    err = entry_name_error(rel, doc)
+    if err:
+        raise S.TmanRefused("entry_field", err)
+    if kind is not None and doc["kind"] != kind:
+        raise S.TmanRefused("entry_file_invalid", f"{rel}: a {doc['kind']} entry, cited as a {kind} entry")
     return doc, sha
 
 
