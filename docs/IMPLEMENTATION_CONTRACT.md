@@ -623,12 +623,17 @@ These are **operational** parameters. None of them touches a `[ch3]`-traced meth
 
 **Robustness**
 > **Canonical corruption identifiers are frozen in `configs/corruption_protocol.json`**
-> (`plantseg-corruptions/1.0.0`, A3b-0): `motion_blur` · `gaussian_noise` · `jpeg_compression` ·
+> (~~`plantseg-corruptions/1.0.0`~~ **[UPDATED 2026-10-26 — L-CORR]** `plantseg-corruptions/2.0.0` since
+> L-AM16-SEV, with per-corruption severity roles; the vocabulary, its order and `vocabulary_sha256`
+> 7aa33cc22845723e96e75a2a59027b210d812c30a5497ff61d2a3ac98828aa7b are unchanged; A3b-0):
+> `motion_blur` · `gaussian_noise` · `jpeg_compression` ·
 > **`brightness`** · `fog`, in that order — the vendored `imagecorruptions` reference function
 > names. Inferential severities **1–3**; severity **4 descriptive-only**; ~~severity **5 excluded**~~.
 > **[UPDATED 2026-09-24 — B65 CP-006]** The four non-noise corruptions (motion blur, JPEG compression,
-> brightness, fog) are also scored at severities 4 and 5, descriptively (AM-16 item 6); the protocol
-> file still lists severity 5 as excluded until lane L-AM16-SEV lands.
+> brightness, fog) are also scored at severities 4 and 5, descriptively (AM-16 item 6); ~~the protocol
+> file still lists severity 5 as excluded until lane L-AM16-SEV lands.~~ **[UPDATED 2026-10-26 —
+> L-CORR]** since L-AM16-SEV (3e054d2, merged f1effa5) the protocol file lists severity 5 as
+> descriptive-only for those four and as excluded for `gaussian_noise` only.
 > "brightness variation" is a display label, never an identifier; `brightness_variation` and
 > `motion-blur` are rejected. The future corruption generator and cache manifest must **consume
 > that file** rather than duplicate the vocabulary. Rationale:
@@ -655,8 +660,9 @@ These are **operational** parameters. None of them touches a `[ch3]`-traced meth
   non-noise corruptions (motion blur, JPEG compression, brightness, fog) are also scored at severities 4
   and 5 (descriptive), following Kamann & Rother (2020), who average non-noise corruptions over
   severities 1–5 and noise over severities 1–3; reported per severity and as that average (AM-16 item 6).
-  The mIoU-C, RPD and rCD definitions (inferential and descriptive) stay on severities 1–3. Code: lane
-  L-AM16-SEV.
+  The mIoU-C, RPD and rCD definitions (inferential and descriptive) stay on severities 1–3. ~~Code: lane
+  L-AM16-SEV.~~ **[UPDATED 2026-10-26 — L-CORR]** Code: IMPLEMENTED 3e054d2 (lane L-AM16-SEV), merged
+  f1effa5.
 - **RPD** = (mIoU_clean − mIoU_C)/mIoU_clean × 100 — **descriptive only**.
 - **rCD** (Kamann 2020) — descriptive only; E1 = internal reference (rCD(E1)=1); teacher excluded.
 
@@ -941,7 +947,13 @@ in the stack for statistics and as a scikit-image transitive dependency).
   isolated **Python 3.11.15** environment (numpy 1.26.4 · Pillow 12.3.0 · scikit-image 0.23.2 ·
   scipy 1.11.4) and `scripts/smoke_corruption_vendor.py` passed there, including the **40/40
   zero-tolerance** upstream reference-equivalence grid. `byte_reproducibility_proven_under_these_pins`
-  is therefore true **for the corruption closure**.
+  is therefore true **for the corruption closure**. **[UPDATED 2026-10-26 — L-CORR]** That 40/40 record
+  under Python 3.11.15 stays. The student-image validation of record is local block L1 (2026-10-26):
+  `scripts/smoke_corruption_vendor.py` passed 102/102 in the student image `b80b645d…` (Python
+  **3.11.16**, numpy 1.26.4 · Pillow 12.3.0 · scikit-image 0.23.2, no network), including the **56/56
+  zero-tolerance** grid with severity 5 of the four non-noise corruptions; it is recorded as
+  `VALIDATION_EVIDENCE["student_image_validation"]`, with its log, and sets
+  `SEVERITY5_REFERENCE_VALIDATED` (f3df0fc).
 
 That flag is a **historical record**, not a claim about whatever interpreter happens to be running:
 `runtime_pin_mismatches()` independently checks the live versions, and cache generation requires
@@ -956,11 +968,16 @@ interpreter remains development evidence only.
   mmsegmentation 1.2.2, mmcv 2.1.0, fvcore, CUDA and the RunPod container are now **specified**
   (see *Official experiment environment* below) but have not been executably validated together.
 
-Generating the official 31,220-item cache remains a **separate** operation: it reads the PlantSeg
-test split and produces a large governed artifact. This validation only removes the
+~~Generating the official 31,220-item cache remains a **separate** operation: it reads the PlantSeg
+test split and produces a large governed artifact.~~ This validation only removes the
 dependency-version blocker. **[UPDATED 2026-09-24 — B65 CP-006]** AM-16 item 6 adds 6,244 severity-5
-items for the four non-noise corruptions (1,561 × 4; 37,464 in all) once lane L-AM16-SEV lands; until
-then the generator and cache refuse severity 5, and severity-5 reference equivalence is not validated.
+items for the four non-noise corruptions (1,561 × 4; 37,464 in all) ~~once lane L-AM16-SEV lands; until
+then the generator and cache refuse severity 5, and severity-5 reference equivalence is not validated.~~
+**[UPDATED 2026-10-26 — L-CORR]** Generating the official cache remains a **separate** operation: one
+24-cell cache of **37,464** items (31,220 at severities 1–4 and 6,244 at severity 5) under one manifest,
+`plantseg-corruption-cache/2.0.0`, and one canonical checksum, generated and verified in the TEST session
+before any model is scored (AM-19 item 1(c)); its generator pin is the TL interface's (section 3,
+`plantseg-corruption-generator-pin/1.0.0`).
 
 **Descriptive backend-accuracy parity (ch3: "any accuracy difference between the two quantization
 configurations is documented")**

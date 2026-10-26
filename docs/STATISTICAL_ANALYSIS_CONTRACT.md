@@ -130,8 +130,10 @@ adopting the **vendored `imagecorruptions` reference function names** that ch3 a
 | `fog` | fog | `fog` |
 
 Machine-readable source of truth: **`configs/corruption_protocol.json`**
-(`schema_version = plantseg-corruptions/1.0.0`). The order above is the frozen
-`corruption_order` and follows ch3's presentation order.
+(~~`schema_version = plantseg-corruptions/1.0.0`~~ **[UPDATED 2026-10-26 — L-CORR]**
+`schema_version = plantseg-corruptions/2.0.0` since L-AM16-SEV (3e054d2, merged f1effa5); the vocabulary,
+its order, `vocabulary_sha256` and the inferential severities 1–3 are unchanged). The order above is the
+frozen `corruption_order` and follows ch3's presentation order.
 
 - **`brightness` is the official identifier**; *"brightness variation"* is explanatory thesis prose
   and is **not** an identifier. `brightness_variation` is **rejected**.
