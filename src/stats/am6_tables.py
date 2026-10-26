@@ -19,7 +19,8 @@ values reproducing summary.json bitwise, float64 beside them; ERR E-24: canvas a
     the same eligible counts; R3: GT-present all-class = union-present x n_union / n_gt within 1e-12
     (float64), the extra classes having TP = 0. The JSON carries the per-class table
     (eligibility.per_class_table).
-  * The seed-42 rows equal report.gt_present_rows on the same inputs exactly.
+  * The seed-42 rows equal report.gt_present_rows on the same inputs exactly; R-10 runs over the rows
+    read, with DL-99's E1 checkpoint record (a guard against a seed swap, as the seed part's).
   * VAL (LRB10) and the AM-18 item 8(c) subset (LRB17) are not here: the function works on any split,
     and those invocations belong to a separate block and to B-5.
 
@@ -126,6 +127,8 @@ def build_am6_tables(stats: H.StatsArtifact, inv: H.Inventory, cells: H.PlannedC
         if not st.has_model:
             labels.append({"slot": st.slot, "stage": stage, "seed": seed, "label": st.label})
     H.cross_check(loaded, {}, evaluator_commit=inv.evaluator_commit, official=stats.profile == "official")
+    H.check_e1_record({ident["seed"]: ident["checkpoint_sha256"] for ident, _, _ in items
+                       if ident["stage"] == "E1"})
     rows = am6_rows(items)
     ref = {g["stage"]: g for g in gt_present_rows(stats.views)}
     keys = [k for k in ref[D.STAGES[0]] if k != "stage"]

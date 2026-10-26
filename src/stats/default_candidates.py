@@ -6,10 +6,11 @@ where a default is the selected run the two coincide. The selected runs remain t
 ... No other candidate is evaluated on TEST." (PA:437-441.)
 
   * The selections of record are DL-109 (λ_logit 0.5) and DL-121 (α_CWD 25); both defaults differ
-    from them (K5), so both are scored. SELECTION_RECORD holds the five checkpoints with their DL
-    ids; the family E2 and E3 slots at seed 42 must carry the selected ones and each default slot
-    (role default_candidate, kind default_candidate: complete, never cut, AM-19 item 2(d)) the
-    default one. Any other default_candidate slot is refused.
+    from them (K5), so both are scored. SELECTION_RECORD holds the eight candidate checkpoints of
+    DL-109 and DL-121 with their DL ids, of which four are checked: the family E2 and E3 slots at seed
+    42 must carry the selected ones and each default slot (role default_candidate, kind
+    default_candidate: complete, never cut, AM-19 item 2(d)) the default one. Any other
+    default_candidate slot is refused.
   * Rows: D1 = E1 -> E2 at λ = 1, in place of the selected E2 for E1 vs E2; D2 = E2 of record -> E3 at
     α = 50, in place of the selected E3 for E2 vs E3. Each sits beside its run-of-record row
     (accuracy_e1_e2, accuracy_e2_e3), which is recomputed here from the 37 inputs and must equal
@@ -122,10 +123,19 @@ def m_of(stats) -> float:
     return pooled_miou_from_totals(stats.dataset_tp, stats.dataset_gt, stats.dataset_pred)
 
 
+def candidate_values(stats) -> dict:
+    """The candidate's GT-present (all-class, disease-only) and union-present disease-only values,
+    float64 (eligibility.rule_variants, as the AM-6 table reads them)."""
+    from .eligibility import GT_PRESENT, UNION_PRESENT, rule_variants
+    rv = rule_variants(stats)
+    return {"candidate_gt_present_all_class": rv[GT_PRESENT]["all_class"].value_float64,
+            "candidate_gt_present_disease_only": rv[GT_PRESENT]["disease_only"].value_float64,
+            "candidate_union_present_disease_only": rv[UNION_PRESENT]["disease_only"].value_float64}
+
+
 def pair_values(base_run, cand_run, policy) -> dict:
     """D-10's values for one pair of verified runs."""
     from .align import METRIC_DISEASE_ONLY, AlignmentError, align_runs
-    from .eligibility import GT_PRESENT, UNION_PRESENT, rule_variants
     from .tests import engineering_shifts, hodges_lehmann
     try:
         pv = align_runs(base_run, cand_run, policy=policy, metric=METRIC_DISEASE_ONLY)
@@ -133,12 +143,9 @@ def pair_values(base_run, cand_run, policy) -> dict:
         raise H.refusal("cross_artifact_mismatch", f"the pair cannot be aligned: {e}") from e
     d = np.asarray(pv.delta, dtype=np.float64)
     shifts = engineering_shifts(d)
-    rv = rule_variants(cand_run.stats)
     mb, mc = m_of(base_run.stats), m_of(cand_run.stats)
     return {"m_baseline": mb, "m_candidate": mc, "dataset_level_difference": mc - mb,
-            "candidate_gt_present_all_class": rv[GT_PRESENT]["all_class"].value_float64,
-            "candidate_gt_present_disease_only": rv[GT_PRESENT]["disease_only"].value_float64,
-            "candidate_union_present_disease_only": rv[UNION_PRESENT]["disease_only"].value_float64,
+            **candidate_values(cand_run.stats),
             "per_image": {"metric": METRIC_DISEASE_ONLY, "n_paired": int(d.size),
                           "mean_delta": float(shifts.mean_delta),
                           "median_delta": float(shifts.median_delta),
@@ -214,7 +221,7 @@ def render_markdown(doc: dict, banner: str = "") -> list[str]:
                               None)):
             if v is None:
                 out.append(f"| {label} | {r['baseline_stage']} -> {r['candidate_stage']} | "
-                           f"{r['note']} |" + " |" * 10)
+                           f"{r['note']} |" + " |" * 9)
                 continue
             p = v["per_image"]
             out.append(f"| {label} | {r['baseline_stage']} -> {r['candidate_stage']} | "
@@ -230,4 +237,5 @@ def render_markdown(doc: dict, banner: str = "") -> list[str]:
 
 
 __all__ = ["SELECTION_RECORD", "ROWS", "RECORD_SENTENCE", "COINCIDES", "check_selection_record",
-           "default_slots", "pair_values", "record_row", "build_default_candidates", "render_markdown"]
+           "default_slots", "candidate_values", "pair_values", "record_row", "build_default_candidates",
+           "render_markdown"]

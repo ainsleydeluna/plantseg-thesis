@@ -146,7 +146,15 @@ def v_record(rid, cid):
     return fn
 
 
+#: Texts written out here rather than read from the module under test (R4-03).
+COINCIDES = "coincides with the run of record (AM-17 item 6)"
+RECORD_SENTENCE = ("The selected runs remain the runs of record whatever these comparisons show "
+                   "(AM-17 item 6).")
+
+
 def v_coincide():
+    """A default that is its selection is not scored a second time; its markdown rows have the
+    header's 12 cells (R3-10)."""
     rec = copy.deepcopy(DC.SELECTION_RECORD)
     rec["E3"]["default_checkpoint"] = rec["E3"]["selected_checkpoint"]
 
@@ -154,8 +162,10 @@ def v_coincide():
         export["entries"] = [e for e in export["entries"] if e["slot"] != "E3:s42:alpha50"]
     d = doc_of(variant("no_e3_default", edit), record=rec)
     r = {x["row"]: x for x in d["rows"]}
-    return (r["D2"]["coincides"] is True and r["D2"]["values"] is None and r["D2"]["note"] == DC.COINCIDES
-            and r["D1"]["coincides"] is False), str(r["D2"])[:200]
+    md = DC.render_markdown(d)
+    width = {ln.count("|") for ln in md if ln.startswith("| ")}
+    return (r["D2"]["coincides"] is True and r["D2"]["values"] is None and r["D2"]["note"] == COINCIDES
+            and r["D1"]["coincides"] is False and width == {13}), f"{str(r['D2'])[:150]} {width}"
 
 
 def v_gt_present():
@@ -174,6 +184,24 @@ def v_disease_only():
     summary = json.loads((CTX.world.input_root / w.rel / "summary.json").read_text(encoding="utf-8"))
     g = AM6.gt_present_row(run.stats, summary, with_classes=False)
     return v["candidate_union_present_disease_only"] == g["union_present_disease_only_float64"], ""
+
+
+def v_candidate_rules():
+    """On hand totals where class 3 is predicted but absent from ground truth, the candidate's
+    GT-present fields are the GT-present rule's and differ from the union rule's (the world has no such
+    class, k = 0; R4-01)."""
+    import numpy as np
+    from src.stats.eligibility import GT_PRESENT, UNION_PRESENT, class_totals, rule_variants
+    cls, tp, gt, pred = (np.array(v, np.int64) for v in ([0, 1, 3], [90, 8, 0], [100, 10, 0], [95, 9, 5]))
+    t = class_totals({"class_id": cls, "tp": tp, "gt": gt, "pred": pred}, 116)
+    rv = rule_variants(t)
+    got = DC.candidate_values(t)
+    want = {"candidate_gt_present_all_class": rv[GT_PRESENT]["all_class"].value_float64,
+            "candidate_gt_present_disease_only": rv[GT_PRESENT]["disease_only"].value_float64,
+            "candidate_union_present_disease_only": rv[UNION_PRESENT]["disease_only"].value_float64}
+    differ = all(rv[GT_PRESENT][s].value_float64 != rv[UNION_PRESENT][s].value_float64
+                 for s in ("all_class", "disease_only"))
+    return got == want and differ, f"{got} vs {want}"
 
 
 # --------------------------------------------------------------------------------------------------
@@ -240,7 +268,7 @@ def d_deterministic_md():
 def d_sentence():
     d = doc_of()
     md = "\n".join(DC.render_markdown(d))
-    return d["record_sentence"] == DC.RECORD_SENTENCE and DC.RECORD_SENTENCE in md, ""
+    return d["record_sentence"] == RECORD_SENTENCE and RECORD_SENTENCE in md, ""
 
 
 def d_no_test_path():
@@ -267,9 +295,12 @@ def cases():
                                                                                      "accuracy_e1_e2")),
             ("V10", "D2's run-of-record row equals the statistics artifact's", v_record("D2",
                                                                                       "accuracy_e2_e3")),
-            ("V11", "a default that is its selection coincides: no second artifact", v_coincide),
+            ("V11", "a default that is its selection coincides: no second artifact; 12 cells a row",
+             v_coincide),
             ("V12", "the candidate's GT-present value equals the AM-6 table's", v_gt_present),
             ("V13", "the candidate's disease-only value equals the AM-6 table's", v_disease_only),
+            ("V14", "the candidate's GT-present fields follow the GT-present rule (a union-only class)",
+             v_candidate_rules),
             ("R1", "another lambda candidate under default_candidate is refused", r_other_candidate),
             ("R2", "a default that is not complete is refused", r_not_complete),
             ("R3", "a missing default is refused", r_missing),

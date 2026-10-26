@@ -12,7 +12,8 @@ place); none contains "test".
   T  the table: roles and seeds, 21 rows from the 37 and the binding (LRB7), no qat_fakequant_off
      row, a run without a model listed with its label, the seed-42 rows equal to report.py's
   R  refusals: an unfaithful summary (gt_present_unfaithful), another ground truth
-     (cross_artifact_mismatch), a record that is not canvas, a model of record without its record
+     (cross_artifact_mismatch), a record that is not canvas, a model of record without its record,
+     E1's seed-43/44 records swapped (e1_checkpoint_record)
   D  determinism, repr floats, no 'test' path
 
 Run:  TMPDIR=<a scratch directory without 'test'> python -B scripts/smoke_am6_tables.py
@@ -119,7 +120,9 @@ def f_r3():
 
 def f_extra_classes():
     """A hand artifact whose class 3 is predicted but absent from ground truth: it is listed, R3 holds
-    (its TP is 0), and the world's rows list exactly rule_variants' difference (empty there: k = 0)."""
+    (its TP is 0), every one of the row's twelve numbers (value, value_float64 and n_classes for both
+    rules and both scopes) equals rule_variants', the GT-present ones differing from the union-present
+    ones (R4-01); and the world's rows list exactly rule_variants' difference (empty there: k = 0)."""
     import numpy as np
     from src.stats.eligibility import class_totals, dataset_miou
     cls, tp, gt, pred = (np.array(v, np.int64) for v in ([0, 1, 3], [90, 8, 0], [100, 10, 0], [95, 9, 5]))
@@ -132,8 +135,12 @@ def f_extra_classes():
                                  "disease_only_miou_n_eligible": dis.n_classes}}
     hand = AM6.gt_present_row(tot, summary, with_classes=False)
     hrv = rule_variants(t)
-    rules_differ = all(hand[f"{GT_PRESENT}_{s}_float64"] == hrv[GT_PRESENT][s].value_float64
-                       != hrv[UNION_PRESENT][s].value_float64 for s in ("all_class", "disease_only"))
+    fields = (("", "value"), ("_float64", "value_float64"), ("_n_classes", "n_classes"))
+    every = all(hand[f"{rule}_{s}{sfx}"] == getattr(hrv[rule][s], attr)
+                for rule in (GT_PRESENT, UNION_PRESENT) for s in ("all_class", "disease_only")
+                for sfx, attr in fields)
+    rules_differ = every and all(getattr(hrv[GT_PRESENT][s], attr) != getattr(hrv[UNION_PRESENT][s], attr)
+                                 for s in ("all_class", "disease_only") for _, attr in fields)
     doc = doc_of()
     r = row(doc, "E2", 44)
     stats, _ = bound_stats("E2", 44)
@@ -228,8 +235,29 @@ def d_deterministic_md():
 
 
 def d_repr():
+    """The JSON round-trips, and every seed-42 row's four float64 values equal rule_variants on the 37's
+    statistics, called here (so nothing is rounded on its way out; R4-07)."""
     doc = doc_of()
-    return json.loads(A.canonical_json(doc)) == doc, ""
+    st = stats_artifact()
+    rv = {stage: rule_variants(st.clean(stage).run.stats) for stage in D.STAGES}
+    exact = all(r[f"{rule}_{s}_float64"] == rv[r["stage"]][rule][s].value_float64
+                for r in doc["rows"] if r["seed"] == 42 for rule in (GT_PRESENT, UNION_PRESENT)
+                for s in ("all_class", "disease_only"))
+    return json.loads(A.canonical_json(doc)) == doc and exact, ""
+
+
+def r_e1_swap():
+    """E1's seed-43 and seed-44 records and identities exchanged: every other check passes, and DL-99's
+    record names the swap (R-10; R1-13)."""
+    def edit(export, binding):
+        a, b = "E1:s43", "E1:s44"
+        for r in binding["artifacts"]:
+            if r["slot"] in (a, b):
+                r["slot"] = b if r["slot"] == a else a
+        ra = next(r for r in export["models"] if (r["slot"], r["precision"]) == (a, "fp32"))
+        rb = next(r for r in export["models"] if (r["slot"], r["precision"]) == (b, "fp32"))
+        ra["source"]["sha256"], rb["source"]["sha256"] = rb["source"]["sha256"], ra["source"]["sha256"]
+    return refused("e1_checkpoint_record", lambda: doc_of(variant("e1_swap", edit)))
 
 
 def d_no_test_path():
@@ -269,7 +297,7 @@ def cases():
             ("F2", "R1: union-present disease-only equals summary bitwise, same n",
              f_r1("disease_only_miou")),
             ("F3", "R3: GT-present = union-present x n_union / n_gt (1e-12), extra classes TP 0", f_r3),
-            ("F4", "the classes that are union-present but not GT-present", f_extra_classes),
+            ("F4", "a union-only class: listed, and all twelve numbers follow their rules", f_extra_classes),
             ("F5", "the per-class table (116 rows) is carried", f_per_class),
             ("T1", "role family at seed 42, per_seed at 43/44", t_roles),
             ("T2", "each row's slot is its planned cell's model of record", t_seeds_slots),
@@ -282,9 +310,10 @@ def cases():
             ("R2", "cross_artifact_mismatch: an artifact scored on another ground truth", r_other_gt),
             ("R3", "not_canvas: an upstream record", r_upstream),
             ("R4", "artifact_missing: a model of record whose record the binding lacks", r_no_record),
+            ("R5", "e1_checkpoint_record: E1's seed-43/44 records swapped (DL-99)", r_e1_swap),
             ("D1", "byte-identical JSON on repeated runs", d_deterministic),
             ("D2", "identical markdown on repeated runs", d_deterministic_md),
-            ("D3", "JSON floats unrounded (repr round trip)", d_repr),
+            ("D3", "JSON floats unrounded: the seed-42 float64 values equal rule_variants'", d_repr),
             ("D4", "no created path contains 'test'", d_no_test_path)]
     return out
 

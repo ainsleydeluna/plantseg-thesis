@@ -58,6 +58,9 @@ CTX = types.SimpleNamespace(world=None, stats=None, paths={}, tel={}, copies={})
 CUT_RULE = "AM-19 item 3(b): original freeze"
 CUT_DATE = "2026-11-02"
 E3_CUT_ITERS = tuple(range(4000, 40001, 4000))
+#: IF§11.2's cell texts, written out here rather than read from the module under test (R4-03).
+LABEL_PARENT_CUT, LABEL_PARENT_DIVERGED = "not run: parent cut", "not run: parent diverged"
+LABEL_NON_FINITE = "not evaluable: non-finite: no model (AM-21 item 2(b))"
 
 
 # --------------------------------------------------------------------------------------------------
@@ -420,7 +423,7 @@ def s_c3_not_evaluable():
 
 def s_nonfinite_reason():
     doc = seed_doc(variant("nonfinite_e6", v_nonfinite_e6))
-    want = f"not evaluable: runs missing — E6 seed 43: {H.LABEL_NON_FINITE}"
+    want = f"not evaluable: runs missing — E6 seed 43: {LABEL_NON_FINITE}"
     return (doc["conditions"]["3"]["status"] == SS.NOT_EVALUABLE and doc["verdict"] == SS.NOT_STABLE
             and doc["reasons"] == [want]), str(doc["reasons"])
 
@@ -447,7 +450,7 @@ def s_reason_order():
     a = vd(SS.condition_1({42: 0.0, 43: 0.1}), SS.condition_2(E1V, {42: 0.4, 43: 0.42}),
            SS.condition_3({42: 0.03, 43: 0.0}), e3=[div],
            missing=[SS.Missing("E3", 44, "diverged (iteration 41000, AM-7a item 1)"),
-                    SS.Missing("E6", 44, H.LABEL_PARENT_DIVERGED)])
+                    SS.Missing("E6", 44, LABEL_PARENT_DIVERGED)])
     want_a = ["E3 diverged at seed 44", "condition 1 fails at seed 42", "condition 3 fails at seed 42",
               "not evaluable: runs missing — E3 seed 44: diverged (iteration 41000, AM-7a item 1)"]
     b = vd(SS.condition_1({42: 0.0, 43: -0.1, 44: 0.1}),
@@ -491,7 +494,7 @@ def s_reason_entry():
         v_nonfinite_e6(export, binding)
         entry(export, "E6:s43")["dl_rows"] = ["DL-140"]
     doc = seed_doc(variant("nonfinite_dl", edit))
-    want = f"not evaluable: runs missing — E6 seed 43: {H.LABEL_NON_FINITE} [DL-140]"
+    want = f"not evaluable: runs missing — E6 seed 43: {LABEL_NON_FINITE} [DL-140]"
     return doc["reasons"] == [want], str(doc["reasons"])
 
 
@@ -516,25 +519,25 @@ def l_aborted():
 def l_parent_cut():
     doc = seed_doc(variant("labels", v_labels))
     a, b = cell(doc, "accuracy_e4_e7", 43), cell(doc, "accuracy_e7_e6", 43)
-    return (a["missing"] == [f"E7: {H.LABEL_PARENT_CUT}"]
-            and b["missing"] == [f"E7: {H.LABEL_PARENT_CUT}", f"E6: {H.LABEL_PARENT_CUT}"]), f"{a} {b}"
+    return (a["missing"] == [f"E7: {LABEL_PARENT_CUT}"]
+            and b["missing"] == [f"E7: {LABEL_PARENT_CUT}", f"E6: {LABEL_PARENT_CUT}"]), f"{a} {b}"
 
 
 def l_parent_diverged():
     doc = seed_doc(variant("div_e3", v_div_e3))
     a, b = cell(doc, "accuracy_e4_e7", 44), cell(doc, "accuracy_e5_e6", 44)
-    return (a["missing"] == [f"E7: {H.LABEL_PARENT_DIVERGED}"]
-            and b["missing"] == [f"E6: {H.LABEL_PARENT_DIVERGED}"]), f"{a} {b}"
+    return (a["missing"] == [f"E7: {LABEL_PARENT_DIVERGED}"]
+            and b["missing"] == [f"E6: {LABEL_PARENT_DIVERGED}"]), f"{a} {b}"
 
 
 def l_nonfinite():
     c = cell(seed_doc(variant("nonfinite_e6", v_nonfinite_e6)), "accuracy_e1_e6", 43)
-    return c["missing"] == [f"E6: {H.LABEL_NON_FINITE}"], str(c)
+    return c["missing"] == [f"E6: {LABEL_NON_FINITE}"], str(c)
 
 
 def l_two_missing():
     c = cell(seed_doc(variant("labels", v_labels)), "noninferiority_e3_e6", 43)
-    return c["missing"] == [f"E3: cut ({CUT_DATE}, {CUT_RULE})", f"E6: {H.LABEL_PARENT_CUT}"], str(c)
+    return c["missing"] == [f"E3: cut ({CUT_DATE}, {CUT_RULE})", f"E6: {LABEL_PARENT_CUT}"], str(c)
 
 
 def l_date():
@@ -627,12 +630,12 @@ def w_div_e3():
     doc = seed_doc(variant("div_e3", v_div_e3))
     r = doc["reasons"]
     want_missing = ("not evaluable: runs missing — E3 seed 44: diverged (iteration 41000, AM-7a item "
-                    f"1); E6 seed 44: {H.LABEL_PARENT_DIVERGED}")
+                    f"1); E6 seed 44: {LABEL_PARENT_DIVERGED}")
     d = doc["divergences_43_44"]
     return (doc["verdict"] == SS.NOT_STABLE and r == ["E3 diverged at seed 44", want_missing]
             and [(x["stage"], x["seed"]) for x in d] == [("E3", 44)] and d[0]["limitation"]
             and doc["limitation_divergences"] == ["E3 diverged at seed 44 (iteration 41000, AM-7a item 1)"]
-            and cell(doc, D.ROBUSTNESS_ID, 44)["missing"] == [f"E6: {H.LABEL_PARENT_DIVERGED}"]), str(r)
+            and cell(doc, D.ROBUSTNESS_ID, 44)["missing"] == [f"E6: {LABEL_PARENT_DIVERGED}"]), str(r)
 
 
 def w_div_e2_sentence():
@@ -646,7 +649,7 @@ def w_cut_e3_comparators():
     b = [x for x in doc["cut_runs"] if x["stage"] == "E3"][0]
     comps = {c["stage"]: c for c in b["comparators"]}
     return (sorted(comps) == ["E1", "E2", "E6"]
-            and comps["E6"]["note"] == f"no comparator values: {H.LABEL_PARENT_CUT}"
+            and comps["E6"]["note"] == f"no comparator values: {LABEL_PARENT_CUT}"
             and comps["E2"]["shared_points"] == len(LF.KD_VAL_ITERS)), str(b)[:300]
 
 
@@ -681,7 +684,8 @@ def w_cut_pair():
             and all(vals[u] == want[u] for u in E3_CUT_ITERS)
             and all(vals[u] is None for u in vals if u not in want)
             and e3_in_e2["note"].startswith("no model (cut (")
-            and len(e2_in_e3["attempts"]) == 1 and e2_in_e3["attempts"][0]["shared_points"] == len(E3_CUT_ITERS)
+            and len(e2_in_e3["attempts"]) == 1
+            and e2_in_e3["attempts"][0]["shared_points"] == len(E3_CUT_ITERS)
             and f"attempt `{a[0]['run_id']}`" in md), str(e3_in_e2)[:300]
 
 

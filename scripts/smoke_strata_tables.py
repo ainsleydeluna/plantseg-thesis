@@ -9,9 +9,11 @@ under a new directory in TMPDIR (left in place); none contains "test".
 
   H  hand values: deltas, the five group summaries, not-evaluable classes, the background line, the
      INT8 zero-IoU lists of the four direct conversions (D-8), ties, row counts, pair order
-  E  end to end on the world's 37 inputs: integrity, determinism, repr floats, the pp column
-  R  refusals: strata_invalid, strata_not_of_record, strata_gt_mismatch, strata_integrity, and a
-     statistics-artifact input that is not its family slot's model (seed42_mismatch)
+  E  end to end on the world's 37 inputs: integrity, determinism, unrounded floats, the pp column, the
+     markdown appendix
+  R  refusals: strata_invalid, strata_not_of_record, strata_gt_mismatch, strata_integrity (a summary
+     not reproduced, or a per-class block that is not the npz's), and a statistics-artifact input that
+     is not its family slot's model (seed42_mismatch)
 
 Run:  TMPDIR=<a scratch directory without 'test'> python -B scripts/smoke_strata_tables.py
 """
@@ -207,9 +209,15 @@ def h_rows():
     return [r["class_id"] for r in t["rows"]] == list(range(1, 116)) and t["background"] is not None, ""
 
 
+#: AM-17 item 8's pairs, in its order (PA:459-460), written out here rather than read from the module
+#: under test (R4-03).
+PA_PAIRS = [("E1", "E2"), ("E2", "E3"), ("E1", "E3"), ("E1", "E4"), ("E1", "E5"), ("E1", "E6"),
+            ("E3", "E6"), ("E3", "E7")]
+
+
 def h_pair_order():
     doc = world_doc()
-    return [(p["baseline_stage"], p["candidate_stage"]) for p in doc["pairs"]] == list(ST.PAIRS), ""
+    return [(p["baseline_stage"], p["candidate_stage"]) for p in doc["pairs"]] == PA_PAIRS, ""
 
 
 # --------------------------------------------------------------------------------------------------
@@ -246,7 +254,7 @@ def e_strata_record():
 
 
 def e_committed_strata():
-    """The committed DL-63 file is read and recorded as of record (nonofficial profile)."""
+    """The committed DL-63 file is read and recorded as of record (official profile: no refusal)."""
     rec = ST.load_strata_checked(REPO / ST.STRATA_REL, official=True)[1]
     return rec["of_record"] is True and rec["sha256"] == ST.STRATA_SHA256_OF_RECORD, str(rec)
 
@@ -260,9 +268,17 @@ def e_deterministic_hand():
 
 
 def e_repr_floats():
+    """The JSON round-trips, and E1 -> E2's deltas and overall mean equal the exact float64 values
+    computed here from the 37's summaries (so nothing is rounded on its way out; R4-07)."""
     doc = world_doc()
     back = json.loads(A.canonical_json(doc))
-    return back == doc, ""
+    st = stats_artifact()
+    ib, ic = (st.clean(s).summary["per_class"]["iou"] for s in ("E1", "E2"))
+    p = doc["pairs"][0]
+    ok_rows = [r for r in p["rows"] if r["status"] == "ok"]
+    deltas = [ic[r["class_id"]] - ib[r["class_id"]] for r in ok_rows]
+    return (back == doc and [r["delta"] for r in ok_rows] == deltas
+            and p["groups"]["overall"]["mean_delta"] == math.fsum(deltas) / len(deltas)), ""
 
 
 def e_pp_markdown():
@@ -275,6 +291,28 @@ def e_no_test_path():
     bad = [os.path.join(d, n) for d, dirs, files in os.walk(CTX.world.root) for n in dirs + files
            if "test" in n.lower()]
     return not bad, str(bad[:3])
+
+
+def e_appendix():
+    """The markdown appendix lists, per pair, the background line and the 115 per-class rows (plan
+    §2.4), each class's delta or 'not evaluable'."""
+    md = ST.render_markdown(world_doc())
+    start = md.index("### Appendix: per-class IoU by pair (AM-17 item 8)")
+    app = md[start:]
+    heads = [ln for ln in app if ln.startswith("#### ")]
+    bg = [ln for ln in app if ln.startswith("| 0 | background |")]
+    cls = [ln for ln in app if ln.split("|")[1:3] and ln.split("|")[1].strip().isdigit()
+           and ln.split("|")[1].strip() != "0"]
+    return (heads == [f"#### {b} -> {c}" for b, c in PA_PAIRS] and len(bg) == 8 and len(cls) == 8 * 115
+            and all(ln.endswith(" |") for ln in cls)), f"{len(heads)} {len(bg)} {len(cls)}"
+
+
+def hand_totals():
+    from src.stats.eligibility import ClassTotals
+    return {st: ClassTotals(tp=np.asarray(s["per_class"]["intersection"], np.int64),
+                            gt=np.asarray(s["per_class"]["gt_support"], np.int64),
+                            pred=np.asarray(s["per_class"]["pred_support"], np.int64))
+            for st, s in CTX.hand.items()}
 
 
 # --------------------------------------------------------------------------------------------------
@@ -295,6 +333,19 @@ def r_integrity():
     hand["E3"]["dataset_level"]["all_class_miou"] = math.nextafter(
         hand["E3"]["dataset_level"]["all_class_miou"], 1.0)
     return refused("strata_integrity", lambda: ST.model_checks(hand))
+
+
+def r_npz_differs():
+    """E2's summary.per_class is internally consistent but its sufficient statistics say class 1 has
+    tp 5, not 6: the per-class block is not the npz's (plan §2.1; R3-02). The true totals pass."""
+    totals = hand_totals()
+    ST.model_checks(CTX.hand, totals)
+    from src.stats.eligibility import ClassTotals
+    t = totals["E2"]
+    tp = np.asarray(t.tp, np.int64).copy()
+    tp[1] -= 1
+    totals["E2"] = ClassTotals(tp=tp, gt=np.asarray(t.gt, np.int64), pred=np.asarray(t.pred, np.int64))
+    return refused("strata_integrity", lambda: ST.model_checks(CTX.hand, totals))
 
 
 def r_not_of_record():
@@ -329,7 +380,7 @@ def setup(root: Path, world=None) -> None:
 
 
 def cases():
-    out = [("H1", "delta of a class the candidate improves (6/10 - 4/12)", h_delta_better),
+    out = [("H1", "delta of a class the candidate improves (6/8 - 4/8)", h_delta_better),
            ("H2", "delta of a class the candidate worsens", h_delta_worse),
            ("H3", "an exact tie has delta 0.0", h_delta_tie),
            ("H4", "delta is candidate - baseline", h_delta_direction)]
@@ -353,14 +404,19 @@ def cases():
             ("E5", "the committed DL-63 file is of record", e_committed_strata),
             ("E6", "byte-identical JSON on repeated runs", e_deterministic),
             ("E7", "the hand table is deterministic", e_deterministic_hand),
-            ("E8", "JSON floats unrounded (repr round trip)", e_repr_floats),
+            ("E8", "JSON floats unrounded: the deltas and the mean equal the exact float64 values",
+             e_repr_floats),
             ("E9", "the pp column is in the markdown only", e_pp_markdown),
             ("E10", "no created path contains 'test'", e_no_test_path),
+            ("E11", "the markdown appendix: each pair's 115 classes and background line (plan §2.4)",
+             e_appendix),
             ("R1", "strata_gt_mismatch (one model's gt_support differs)", r_gt_differs),
             ("R2", "strata_integrity (a summary not reproduced bitwise)", r_integrity),
             ("R3", "strata_not_of_record (official profile, synthetic file)", r_not_of_record),
             ("R4", "strata_invalid (a class missing from the strata file)", r_class_missing),
-            ("R5", "seed42_mismatch (a family slot that is not the 37's model)", r_seed43_model)]
+            ("R5", "seed42_mismatch (a family slot that is not the 37's model)", r_seed43_model),
+            ("R6", "strata_integrity (summary.per_class is not the npz's sufficient statistics)",
+             r_npz_differs)]
     return out
 
 

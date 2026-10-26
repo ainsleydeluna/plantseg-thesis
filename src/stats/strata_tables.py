@@ -22,7 +22,11 @@ classes with no TEST ground truth are reported as not evaluable. No test." (PA:4
     shows its deltas but no list.
   * Integrity per model: perclass.model_integrity (the per-class supports reproduce the summary's
     all-class and disease-only union-present mIoU bitwise, with equal eligible counts; the IoU column
-    equals summary.per_class.iou and intersection / union).
+    equals summary.per_class.iou and intersection / union); and summary.per_class equals
+    eligibility.per_class_table of the artifact's sufficient statistics exactly (plan §2.1, as
+    scripts/eligibility_variants.py's R2 checks it), so the summary's per-class block is the npz's.
+  * The markdown carries the group summaries, the zero-IoU lists and, as an appendix, each pair's 115
+    per-class rows and its background line (plan §2.4).
 
 Descriptive only. Import-time behaviour is side-effect free.
 """
@@ -46,6 +50,9 @@ STRATA_REL = "reports/strata/train_strata_v1.json"
 #: DL-63: the strata file of record.
 STRATA_SHA256_OF_RECORD = "ab0df4e3af32f0d25d416700effe51e036cb83ca1c9d451e7e80c9077bdc65b6"
 OK, NOT_EVALUABLE = "ok", "not_evaluable"
+#: summary.per_class key -> eligibility.per_class_table column (scripts/eligibility_variants.py).
+PER_CLASS_COLUMNS = (("gt_support", "gt"), ("pred_support", "pred"), ("intersection", "tp"),
+                     ("union", "union"), ("iou", "iou"), ("iou_status", "iou_status"))
 
 
 def load_strata_checked(path, *, official: bool) -> tuple[dict, dict]:
@@ -82,8 +89,11 @@ def _per_class(summary: dict, stage: str) -> dict:
     return pc
 
 
-def model_checks(summaries: dict) -> dict:
-    """Per model, perclass.model_integrity; and one TEST ground truth across the seven models."""
+def model_checks(summaries: dict, totals: dict | None = None) -> dict:
+    """Per model, perclass.model_integrity and, given `totals` (stage -> its sufficient statistics),
+    summary.per_class against eligibility.per_class_table; and one TEST ground truth across the seven
+    models."""
+    from .eligibility import per_class_table
     from .perclass import PerclassError, model_integrity
     out, problems = {}, []
     for stage, s in summaries.items():
@@ -92,6 +102,13 @@ def model_checks(summaries: dict) -> dict:
             rec, probs = model_integrity(s, list(pc["iou"]))
         except PerclassError as e:
             rec, probs = None, [str(e)]
+        if totals is not None:
+            table = per_class_table(totals[stage])
+            differ = [key for key, col in PER_CLASS_COLUMNS if [r[col] for r in table] != list(pc[key])]
+            if differ:
+                probs = [*probs, f"summary.per_class {differ} differ from the npz's sufficient statistics"]
+            if rec is not None:
+                rec = {**rec, "per_class_equals_npz": not differ}
         out[stage] = rec
         problems += [f"{stage}: {p}" for p in probs]
     if problems:
@@ -161,7 +178,7 @@ def build_strata_tables(stats: H.StatsArtifact, inv: H.Inventory, cells: H.Plann
     H.check_seed42_identity(inv, cells, stats)
     strata, record = load_strata_checked(strata_path, official=official)
     summaries = {stage: stats.clean(stage).summary for stage in D.STAGES}
-    integrity = model_checks(summaries)
+    integrity = model_checks(summaries, {stage: stats.clean(stage).run.stats for stage in D.STAGES})
     pairs = [pair_table(b, c, summaries, strata) for b, c in PAIRS]
     not_evaluable = [r["class_id"] for r in pairs[0]["rows"] if r["status"] == NOT_EVALUABLE]
     return {"part": "strata", "title": "Rare-class strata on TEST (AM-17 item 8; descriptive)",
@@ -199,7 +216,17 @@ def render_markdown(doc: dict, banner: str = "") -> list[str]:
             ids = ", ".join(f"{c['class_id']} ({c['stratum']}{', rare' if c['rare'] else ''})"
                             for c in z["classes"]) or "none"
             out.append(f"- {p['baseline_stage']} -> {p['candidate_stage']}: {ids}")
-    out += ["", f"_{doc['footnote']}_", ""]
+    out += ["", "### Appendix: per-class IoU by pair (AM-17 item 8)", ""]
+    for p in doc["pairs"]:
+        out += [f"#### {p['baseline_stage']} -> {p['candidate_stage']}", "", banner,
+                "| class | stratum | rare | TEST gt | IoU base | IoU cand. | Δ |",
+                "|---|---|---|---|---|---|---|"]
+        for r in [p["background"], *p["rows"]]:
+            out.append(f"| {r['class_id']} | {r['stratum']} | {'yes' if r.get('rare') else ''} | "
+                       f"{r['gt_support']} | {_fmt(r['iou_baseline'])} | {_fmt(r['iou_candidate'])} | "
+                       f"{_fmt(r['delta']) if r['delta'] is not None else 'not evaluable'} |")
+        out.append("")
+    out += [f"_{doc['footnote']}_", ""]
     return out
 
 
