@@ -287,6 +287,13 @@ def _read_bytes(path, code: str) -> bytes:
         raise S.TmanRefused(code, f"{path}: unreadable ({type(e).__name__})") from None
 
 
+# ------------------------------------------------------------------------------- the AM-3 trigger record (O-8)
+# L-AM3's reader of the AM-3 trigger record, read(path, bytes) -> {"triggered": bool}. No format exists in code until
+# L-AM3 merges (plan O-8): the slot stays empty, so freeze, unlock and session refuse trigger_format_unknown and a
+# draft lists it as MISSING; the smokes fill it, or the validator's Ctx, with a fixture reader.
+TRIGGER_READER = None
+
+
 # ------------------------------------------------------------------------------------- PTQ records (A2; lane LQP)
 def ptq_record_reader():
     """Lane LQP's read_record(path, expect_sha256) -> (record, sha256), which re-hashes the record and every file it

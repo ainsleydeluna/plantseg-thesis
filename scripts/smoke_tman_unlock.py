@@ -97,7 +97,7 @@ class Unlock:
         args = dict(mode=mode, manifest_bytes=self.data if data is None else data, manifest_path=self.S.MANIFEST_REL,
                     records=self.records(), runs_root=self.w.runs, freeze_record=self.freeze["path"],
                     unlock_entry=self.unlock["path"], registered_cells=PINS.IF6_CELLS, ptq_reader=self.w.reader(),
-                    repo_root=self.wt)
+                    trigger_reader=self.w.trigger_reader(), repo_root=self.wt)
         args.update(kw)
         return V.Ctx(**args)
 
@@ -107,6 +107,10 @@ class Unlock:
             return None, V.validate(self.ctx(mode, data, **kw)).passed, None
         except self.S.TmanRefused as e:
             return e.code, getattr(e, "passed", None), e
+        except AssertionError:
+            raise                                       # the score sentinel's signal (smoke_tman_noscore)
+        except Exception as e:  # noqa: BLE001 -- a crash where a refusal is due fails its check
+            return type(e).__name__, None, self.S.TmanRefused(type(e).__name__, str(e))
 
     def start_session(self, offset: float = 0.4, push_utc: str = "2026-11-04T09:00:00Z") -> bytes:
         """The session part: the clock-offset record and the push evidence of the unlock entry's commit."""
@@ -203,6 +207,10 @@ def case_cli():
     try:
         R.ptq_record_reader = lambda: u.w.reader()
         rc, out = cli(argv + ["--records", str(folder), "--records-commit", head])
+        check("cli_unlock_without_a_trigger_reader_refused_O8", rc == 2 and "trigger_format_unknown" in out,
+              out.strip()[-200:])
+        R.TRIGGER_READER = u.w.trigger_reader()
+        rc, out = cli(argv + ["--records", str(folder), "--records-commit", head])
         check("cli_unlock_at_S_with_the_records_folder_passes", rc == 0 and
               f"PASS: mode unlock; {len(gate_codes('unlock'))} gates passed" in out, out.strip()[-200:])
         rc, out = cli(argv)
@@ -212,6 +220,7 @@ def case_cli():
         check("cli_records_without_its_commit_refused", rc == 2 and "go together" in out, out.strip()[-200:])
     finally:
         R.ptq_record_reader = saved
+        R.TRIGGER_READER = None
 
 
 def case_unlock_gates():

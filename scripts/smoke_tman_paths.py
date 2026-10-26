@@ -325,12 +325,15 @@ def case_cli_outputs():
                                        "--runs", str(w.runs), "--now", "2026-10-21T00:00:00Z", "--out",
                                        str(dirs["arith"])])]
         import src.data.isolation as ISO
+        from src.tman import records as R
         saved = ISO.DEFAULT_EXPECTED_COUNTS
         try:
             ISO.DEFAULT_EXPECTED_COUNTS = {"train": 1, "val": 1}      # the fixture root's counts
+            R.TRIGGER_READER = w.trigger_reader()                     # L-AM3's reader's stand-in (plan O-8)
             got = {name: _cli(argv) for name, argv in runs}
         finally:
             ISO.DEFAULT_EXPECTED_COUNTS = saved
+            R.TRIGGER_READER = None
         check("every_command_passes_once", all(rc == 0 for rc, _ in got.values()),
               str({k: (rc, txt.strip().splitlines()[-1:]) for k, (rc, txt) in got.items() if rc}))
         made = {k: sorted(p.name for p in v.iterdir()) for k, v in dirs.items()}

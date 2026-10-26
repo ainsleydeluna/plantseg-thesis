@@ -127,6 +127,29 @@ M = [
      "validate", "case_record_gates", "session_part_before_the_session", ["test_value_before_unlock"], None),
     ("trigger_e6kd", VAL, [('if t["triggered"] and "E6-KD:s42:15ep" not in x.by_slot:', "if False:")],
      "validate", "case_record_gates", "triggered_without_e6kd", ["trigger_inconsistent"], None),
+    ("trigger_sha256_compared", VAL, [('        cited.append(x.body["trigger"])', "        pass")],
+     "validate", "case_record_gates", "trigger_record_other_sha256_B1", ["record_uncommitted"], None),
+    ("trigger_reader_required", VAL, [("        return f\"{t.get('path')}: no reader of the AM-3 trigger record",
+                                       "        return None and f\"{t.get('path')}: no reader of the AM-3 trigger "
+                                       "record")],
+     "validate", "case_record_gates", "trigger_format_unknown_without_a_reader_O8", ["trigger_format_unknown"], None),
+    ("trigger_verdict_compared", VAL, [('if x.trigger_verdict is not None and t["triggered"] != x.trigger_verdict:',
+                                        "if False:")],
+     "validate", "case_record_gates", "trigger_block_against_the_record_s_verdict_B1", ["trigger_inconsistent"], None),
+    ("kind_of_the_slot_s_role", SCH, [('    return model.get(slot["scope_class"], ("scored_run",)) + ends',
+                                       '    return model.get(slot["scope_class"], ("scored_run", "listed_run")) + ends')],
+     "validate", "case_input_gates", "family_run_entered_as_listed_run_B2", ["derived_counted_as_run"], None),
+    ("sweep_of_record_strict", SCH, [('    if sweep and not sweep["of_record"]:', "    if sweep:")],
+     "validate", "case_input_gates", "lambda_of_record_entered_as_listed_run_B2", ["derived_counted_as_run"], None),
+    ("non_finite_qat_only", SCH, [('ends = RUN_ENDINGS + (("non_finite",) if slot["record_kind"] == "qat_epoch15" '
+                                   "else ())", 'ends = RUN_ENDINGS + ("non_finite",)')],
+     "validate", "case_input_gates", "non_finite_entry_on_a_kd_slot", ["derived_counted_as_run"], None),
+    ("evaluator_stage_of_the_catalogue", VAL, [('                and e["evaluator_stage"] != s["evaluator_stage"]:',
+                                                "                and False:")],
+     "validate", "case_input_gates", "evaluator_stage_other_than_the_catalogue_s_B91", ["derived_counted_as_run"], None),
+    ("derived_method_of_the_slot", VAL, [('elif e["kind"] == "derived" and e["method"] != s["record_kind"]:',
+                                          "elif False:")],
+     "validate", "case_input_gates", "derived_method_other_than_the_slot_s_B21", ["derived_counted_as_run"], None),
     # -------------------------------------------------------------------------------------- completion gates
     ("attempt_directories", VAL, [("missing = sorted(r for r in ids if not x.run_dir(r).is_dir())", "missing = []")],
      "validate", "case_completion_gates", "attempt_without_directory", ["launched_attempt_without_directory"], None),
@@ -210,7 +233,7 @@ M = [
      ["restored_checkpoint_unrecorded"], None),
     # ------------------------------------------------------------------------------------------- cut checks
     ("S03_rule_operator_allowed", ENT, [('return None if doc["rule"] in S.CUT_RULES else',
-                                         'return None if doc["rule"] in S.CUT_RULES + ("operator",) else')],
+                                         'return None if doc["rule"] in S.CUT_RULES + ["operator"] else')],
      "cuts", "case_gate_order", "rule_operator_refused", ["cut_rule_unknown"], 3),
     ("S04_never_cut_test_skipped", ENT, [('bad = [s["slot"] for s in _slots(doc, ctx) if s["never_cut"]]',
                                           "bad = []")],
@@ -562,16 +585,17 @@ def case_mutations():
             continue
         m = next(x for x in M if x[0] == key)
         fails = [n for n, ok, _ in out.get("results", []) if not ok]
-        killed = "error" not in out and (out.get("raised") is not None or bool(fails))
+        # killed: the named check itself fails (DL-24 #6) -- a crash, or another check failing, is no kill
+        killed = "error" not in out and m[5] in fails
         how = out.get("error") or (f"raised {out['raised']}" if out.get("raised") else f"failed {fails[:3]}")
         print(f"MUTATION {key:42} {m[1]:30} {'KILLED' if killed else 'SURVIVED'} by {m[3]}:{m[4]} -- {how[:160]}")
-        check(f"mut_{key}", killed, f"survived: {m[3]}:{m[4]} ran to {m[5]} with every check passing" if not killed
-              and "error" not in out else str(out.get("error"))[:300])
+        check(f"mut_{key}", killed, f"survived: {m[3]}:{m[4]}'s check {m[5]} did not fail ({how[:200]})"
+              if "error" not in out else str(out.get("error"))[:300])
         if killed:
             killed_codes |= set(m[6])
     if not ONLY:
         codes = {c for c, _, _ in V.GATES} | set(REFUSAL_EXTRA)
-        check("every_refusal_code_has_a_killed_mutation", codes <= killed_codes and len(codes) == 82,
+        check("every_refusal_code_has_a_killed_mutation", codes <= killed_codes and len(codes) == 83,
               str(sorted(codes - killed_codes)))
         check("plan_s_sixteen_sample_mutations_present", sorted(m[7] for m in M if m[7]) == list(range(1, 17)))
     check("the_repository_files_are_unchanged", files_sha256() == before)

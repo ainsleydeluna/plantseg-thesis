@@ -76,13 +76,18 @@ def case_cli_build():
     out = FX.scratch_dir("tmandet")
     (out / "sources.json").write_bytes(S.json_file_bytes(w.sources))
     (out / "cells.json").write_text(json.dumps(PINS.IF6_CELLS), encoding="utf-8")
+    from src.tman import records as R
     got = []
-    for n in (1, 2):
-        d = out / f"build{n}"
-        d.mkdir()
-        rc = CLI.main(["--root", str(w.repo), "build", "--sources", str(out / "sources.json"), "--out", str(d),
-                       "--runs", str(w.runs), "--registered-cells", str(out / "cells.json")])
-        got.append((rc, (d / "tday_manifest.json").read_bytes()))
+    try:
+        R.TRIGGER_READER = w.trigger_reader()          # L-AM3's reader's stand-in (plan O-8)
+        for n in (1, 2):
+            d = out / f"build{n}"
+            d.mkdir()
+            rc = CLI.main(["--root", str(w.repo), "build", "--sources", str(out / "sources.json"), "--out", str(d),
+                           "--runs", str(w.runs), "--registered-cells", str(out / "cells.json")])
+            got.append((rc, (d / "tday_manifest.json").read_bytes()))
+    finally:
+        R.TRIGGER_READER = None
     check("cli_build_twice_byte_identical_and_the_builder_s", got[0] == got[1] == (0, w.data), str([g[0] for g in got]))
 
 

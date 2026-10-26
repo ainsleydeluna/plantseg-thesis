@@ -352,23 +352,38 @@ class World:
             return read_one(path, expect_sha256)
         return read
 
+    @staticmethod
+    def trigger_reader():
+        """A stand-in for L-AM3's reader of the AM-3 trigger record (plan O-8): the fixture's am3_trigger/1."""
+        def read(path, data):
+            doc = json.loads(data)
+            if doc.get("format") != "am3_trigger/1":
+                raise ValueError(f"{path}: not an am3_trigger/1 record")
+            return {"triggered": doc["triggered"]}
+        return read
+
     def ctx(self, mode: str = "freeze", data: bytes | None = None, **kw):
         from src.tman import validate as V
         args = dict(mode=mode, manifest_bytes=self.data if data is None else data, manifest_path="tman_out/m.json",
                     records=self.records, runs_root=self.runs, registered_cells=PINS.IF6_CELLS,
-                    ptq_reader=self.reader())
+                    ptq_reader=self.reader(), trigger_reader=self.trigger_reader())
         args.update(kw)
         return V.Ctx(**args)
 
     def run(self, mode: str = "freeze", doc: dict | None = None, **kw):
-        """(code or None, passed gates, Result or None) of the validator on the world, `doc` replacing the
-        manifest."""
+        """(code or None, passed gates, the refusal or None) of the validator on the world, `doc` replacing the
+        manifest; an exception other than a refusal is reported by its type name (a check fails, the case goes
+        on)."""
         from src.tman import validate as V
         data = kw.pop("data", None) if doc is None else self.S.json_file_bytes(doc)
         try:
             return None, V.validate(self.ctx(mode, data, **kw)).passed, None
         except self.S.TmanRefused as e:
             return e.code, getattr(e, "passed", None), e
+        except AssertionError:
+            raise                                       # the score sentinel's signal (smoke_tman_noscore)
+        except Exception as e:  # noqa: BLE001 -- a crash where a refusal is due fails its check
+            return type(e).__name__, None, self.S.TmanRefused(type(e).__name__, str(e))
 
     def commit(self, files: dict, msg: str = "more records", rows: dict | None = None) -> str:
         """Add records (and decision-log rows) in a new commit; the records accessor reads HEAD."""
@@ -509,16 +524,42 @@ def case_input_gates():
                 doc=mutated(w, lambda d: w.entry(d, "G:s42:80k").update(role=["arm", "control"])),
                 detail="stage, seed, catalogue block or role differ")
 
+    def listed(slot):
+        def fn(d):
+            e = w.entry(d, slot)
+            for k in ("evaluator_stage", "teacher_ckpt_sha256", "selection"):
+                e.pop(k, None)
+            e.update(kind="listed_run", scope=[], reason="listed")
+        return fn
+    for name, slot in (("family_run_entered_as_listed_run_B2", "E1:s42:80k"),
+                       ("teacher_of_record_entered_as_listed_run_B2", "teacher:s42:40k"),
+                       ("lambda_of_record_entered_as_listed_run_B2", "E2:s42:lambda0.5:80k")):
+        expect_gate(w, name, "derived_counted_as_run", doc=mutated(w, listed(slot)), detail="does not take kind")
+
+    def non_finite(d):
+        e = w.entry(d, "E2:s42:lambda2:80k")
+        for k in ("checkpoint", "reason"):
+            e.pop(k)
+        e.update(kind="non_finite", telemetry_sha256=e["completion"]["sha256"], refusal_text="non-finite: no model")
+    expect_gate(w, "non_finite_entry_on_a_kd_slot", "derived_counted_as_run", doc=mutated(w, non_finite),
+                detail="does not take kind non_finite")
+    expect_gate(w, "evaluator_stage_other_than_the_catalogue_s_B91", "derived_counted_as_run",
+                doc=mutated(w, lambda d: w.entry(d, "E1:s42:80k").update(evaluator_stage="E7")),
+                detail="evaluator stage 'E7'")
+    expect_gate(w, "derived_method_other_than_the_slot_s_B21", "derived_counted_as_run",
+                doc=mutated(w, lambda d: w.entry(d, "E4:s42:list43").update(method="qat_selection")),
+                detail="method 'qat_selection'")
+
 
 def case_record_gates():
     w = WORLD
-    trig = w.repo / "reports/derived/am3_trigger.json"
-    saved = trig.read_bytes()
+    cal = w.repo / "configs/calibration/ptq_calibration_seed43.json"
+    saved = cal.read_bytes()
     try:
-        trig.write_bytes(b"{}\n")
-        expect_gate(w, "record_modified_in_the_tree", "record_uncommitted", detail="am3_trigger.json")
+        cal.write_bytes(saved + b"\n")
+        expect_gate(w, "record_modified_in_the_tree", "record_uncommitted", detail="ptq_calibration_seed43.json")
     finally:
-        trig.write_bytes(saved)
+        cal.write_bytes(saved)
     expect_gate(w, "default_candidate_selection_not_the_cited", "record_uncommitted", doc=mutated(
         w, lambda d: w.entry(d, "E2:s42:lambda1:80k")["selection"].update(sha256="0" * 64)),
                 detail="is not the cited sha256")
@@ -571,9 +612,21 @@ def case_record_gates():
     expect_gate(w, "session_part_before_the_session", "test_value_before_unlock",
                 doc=mutated(w, lambda d: d.update(session={"started_utc": "2026-11-04T00:00:00Z"})),
                 detail="a session part exists")
-    expect_gate(w, "triggered_without_e6kd", "trigger_inconsistent",
-                doc=mutated(w, lambda d: d["body"]["trigger"].update(triggered=True)),
+    expect_gate(w, "trigger_record_other_sha256_B1", "record_uncommitted",
+                doc=mutated(w, lambda d: d["body"]["trigger"].update(sha256="0" * 64)), detail="am3_trigger.json")
+    expect_gate(w, "trigger_format_unknown_without_a_reader_O8", "trigger_format_unknown", trigger_reader=None,
+                detail="L-AM3 has not fixed its format")
+    expect_gate(w, "trigger_reader_refusing_the_record_O8", "trigger_format_unknown",
+                trigger_reader=lambda path, data: {"triggered": "yes"}, detail="gives no triggered verdict")
+    expect_gate(w, "trigger_block_against_the_record_s_verdict_B1", "trigger_inconsistent",
+                trigger_reader=lambda path, data: {"triggered": True}, detail="the AM-3 trigger record says True")
+    expect_gate(w, "triggered_without_e6kd", "trigger_inconsistent", trigger_reader=lambda path, data: {
+        "triggered": True}, doc=mutated(w, lambda d: d["body"]["trigger"].update(triggered=True)),
                 detail="E6-KD:s42:15ep is not entered")
+    from src.tman import validate as V
+    res = V.validate(w.ctx("draft", runs_root=None, trigger_reader=None))
+    check("draft_lists_the_trigger_format_O8", res.exit_code == 3 and any(
+        m.startswith("MISSING: trigger_format_unknown") for m in res.missing), str(res.missing))
 
 
 def case_completion_gates():
@@ -1178,17 +1231,23 @@ def case_draft_and_cli():
     built = M.build_manifest(w.records, w.cat, w.sources, runs_root=w.runs)
     check("builder_is_deterministic", w.S.json_file_bytes(built) == w.data)
     import scripts.tday_manifest as CLI
+    from src.tman import records as R
     out = FX.scratch_dir("tmanout")
     (out / "m.json").write_bytes(w.data)
     cells = out / "cells.json"
     cells.write_text(json.dumps(PINS.IF6_CELLS), encoding="utf-8")
-    rc = CLI.main(["--root", str(w.repo), "validate", "--manifest", str(out / "m.json"), "--mode", "draft",
-                   "--registered-cells", str(cells)])
-    check("cli_validate_draft_passes", rc == 0)
-    rc = CLI.main(["--root", str(w.repo), "validate", "--manifest", str(out / "m.json"), "--mode", "freeze",
-                   "--registered-cells", str(cells)])
-    check("cli_validate_freeze_without_runs_refused", rc == 2)
-    check("gate_codes_unique_and_ordered", len(set(c for c, _, _ in V.GATES)) == len(V.GATES) == 79)
+    argv = ["--root", str(w.repo), "validate", "--manifest", str(out / "m.json"), "--registered-cells", str(cells)]
+    rc = CLI.main(argv + ["--mode", "draft"])
+    check("cli_validate_draft_lists_the_trigger_format_O8", rc == 3)
+    try:
+        R.TRIGGER_READER = w.trigger_reader()
+        rc = CLI.main(argv + ["--mode", "draft"])
+        check("cli_validate_draft_passes", rc == 0)
+        rc = CLI.main(argv + ["--mode", "freeze"])
+        check("cli_validate_freeze_without_runs_refused", rc == 2)
+    finally:
+        R.TRIGGER_READER = None
+    check("gate_codes_unique_and_ordered", len(set(c for c, _, _ in V.GATES)) == len(V.GATES) == 80)
 
 
 WORLD: World | None = None

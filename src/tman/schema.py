@@ -99,6 +99,28 @@ KINDS_BY_CLASS = {"run": ("scored_run", "default_candidate", "arm_teacher", "lis
                           "not_run", "superseded", "diverged", "aborted"),
                   "derived": ("derived", "not_run", "not_made"),
                   "measurement": ("measurement", "cut")}
+RUN_ENDINGS = ("cut", "not_run", "superseded", "diverged", "aborted")      # a run slot's entries without a model
+
+
+def allowed_kinds(slot: dict) -> tuple:
+    """The entry kinds a catalogue slot takes (plan §1.4; DL-24 #2): a derived slot derived, not run or not made; a
+    measurement measured or cut; a run slot its endings (non_finite for a QAT run, AM-21 item 2(b)) and the one kind
+    its role gives a complete run: listed_run for a listed slot (scope class none), arm_teacher for an arm teacher,
+    nothing for an arm whose code is not built, scored_run otherwise. A sweep candidate other than the selected run
+    may be entered listed, scored or as a default candidate: candidate_scored and default_candidate_missing decide
+    (AM-17 item 6)."""
+    if slot["class"] == "derived":
+        return ("derived", "not_run", "not_made")
+    if slot["class"] == "measurement":
+        return ("measurement", "cut")
+    ends = RUN_ENDINGS + (("non_finite",) if slot["record_kind"] == "qat_epoch15" else ())
+    sweep = slot["sweep"]
+    if sweep and not sweep["of_record"]:
+        return ("listed_run", "scored_run", "default_candidate") + ends
+    model = {"none": ("listed_run",), "not_built": (), "arm_teacher": ("arm_teacher",)}
+    return model.get(slot["scope_class"], ("scored_run",)) + ends
+
+
 # The entry files' kinds (decision (iii)); B-2 adds rule "cutoff" and AM-22's fields of kind "freeze" (T-19).
 ENTRY_FILE_KINDS = ["cut", "not_run", "freeze_delay", "new_freeze", "not_required", "unlock", "condition",
                     "not_made", "freeze", "clock_offset"]

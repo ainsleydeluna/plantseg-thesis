@@ -63,19 +63,23 @@ class Result:
 
 class Ctx:
     """Everything the gates read. `records` is the committed records; `runs_root` the local run directories
-    (freeze, unlock, session); `freeze_record` and `unlock_entry` committed entry-file paths; `registered_cells` and
-    `ptq_reader` stand in for src.corruption_roles and lane LQP's reader until they merge; `artifact_runtimes` are
-    projected eval_runtime records of scored artifacts (B-3b) compared with the execution context."""
+    (freeze, unlock, session); `freeze_record` and `unlock_entry` committed entry-file paths; `registered_cells`,
+    `ptq_reader` and `trigger_reader` stand in for src.corruption_roles, lane LQP's reader and L-AM3's trigger reader
+    (records.TRIGGER_READER) until they merge; `artifact_runtimes` are projected eval_runtime records of scored
+    artifacts (B-3b) compared with the execution context."""
 
     def __init__(self, *, mode: str, manifest_bytes: bytes, manifest_path: str, records: R.Records, runs_root=None,
                  freeze_record: str | None = None, unlock_entry: str | None = None, registered_cells=None,
-                 ptq_reader=None, artifact_runtimes=(), now: float | None = None, repo_root=None):
+                 ptq_reader=None, trigger_reader=None, artifact_runtimes=(), now: float | None = None,
+                 repo_root=None):
         if mode not in MODES:
             raise ValueError(f"mode {mode!r}")
         self.mode, self.data, self.path, self.records = mode, manifest_bytes, manifest_path, records
         self.runs_root = None if runs_root is None else Path(runs_root)
         self.freeze_rel, self.unlock_rel = freeze_record, unlock_entry
         self.registered_cells, self.ptq_reader = registered_cells, ptq_reader
+        self.trigger_reader = R.TRIGGER_READER if trigger_reader is None else trigger_reader
+        self.trigger_verdict: bool | None = None
         self.artifact_runtimes, self.now = list(artifact_runtimes), now
         self.repo_root = Path(records.src.root if repo_root is None else repo_root)
         self.doc = self.body = self.cat = self.freeze = self.dl = None
@@ -212,14 +216,26 @@ def g_slot_duplicate(x: Ctx):
 
 
 def g_derived_counted_as_run(x: Ctx):
+    """An entry's kind is one its slot takes (schema.allowed_kinds: its class and the kind its role gives a complete
+    run, DL-24 #2); its class, stage, seed, catalogue block, role, evaluator stage (#91) and, derived, its method
+    (the slot's record kind, #21) are the catalogue's."""
     errs = []
     for e in x.entries:
         s = x.slot(e["slot"])
         if e["kind"] not in S.KINDS_BY_CLASS[s["class"]] or e["class"] != s["class"]:
             errs.append(f"{e['slot']}: kind {e['kind']} of class {e['class']}; the slot is a {s['class']}")
+        elif e["kind"] not in S.allowed_kinds(s):
+            errs.append(f"{e['slot']}: a {s['scope_class']} slot of role {s['roles']} does not take kind {e['kind']} "
+                        f"(it takes {list(S.allowed_kinds(s))})")
         elif (e["stage"], e["seed"], e["catalogue"], e["role"]) != (s["stage"], s["seed"], x.cat.entry_block(e["slot"]),
                                                                     s["roles"]):
             errs.append(f"{e['slot']}: stage, seed, catalogue block or role differ from the catalogue's")
+        elif "evaluator_stage" in e and s["evaluator_stage"] is not None \
+                and e["evaluator_stage"] != s["evaluator_stage"]:            # a listed slot's is candidate_scored's
+            errs.append(f"{e['slot']}: evaluator stage {e['evaluator_stage']!r} is not the catalogue's "
+                        f"{s['evaluator_stage']!r}")
+        elif e["kind"] == "derived" and e["method"] != s["record_kind"]:
+            errs.append(f"{e['slot']}: method {e['method']!r} is not the slot's record kind {s['record_kind']!r}")
     return _err(errs)
 
 
@@ -246,6 +262,8 @@ def g_record_uncommitted(x: Ctx):
     if x.mode in U and x.records.read(S.MANIFEST_REL) != x.data:
         return f"the manifest validated is not the committed {S.MANIFEST_REL}"
     cited = [e["selection"] for e in x.entries if e["kind"] == "default_candidate"]
+    if isinstance(x.body["trigger"], dict):
+        cited.append(x.body["trigger"])                  # the AM-3 trigger record by its cited sha256 (#1)
     cited += [r for e in x.entries if e["kind"] == "arm_teacher" for r in (e["arm_record"], e["launch_provenance"],
                                                                            e["go_rule"]) if r]
     for ref in cited:
@@ -502,11 +520,31 @@ def g_test_value_before_unlock(x: Ctx):
     return _err(errs)
 
 
+def g_trigger_format_unknown(x: Ctx):
+    """Plan O-8: the AM-3 trigger record is read only through L-AM3's reader (records.TRIGGER_READER, or the Ctx's
+    stand-in); until that lane fixes the format there is none, so freeze, unlock and session refuse and a draft lists
+    it. The reader's verdict is the record's: trigger_inconsistent compares the trigger block with it."""
+    t = x.body["trigger"]
+    if not isinstance(t, dict):
+        return None                                  # content_class_missing names an absent trigger record
+    if x.trigger_reader is None:
+        return f"{t.get('path')}: no reader of the AM-3 trigger record: L-AM3 has not fixed its format (plan O-8)"
+    try:
+        got = x.trigger_reader(t["path"], x.records.read(t["path"]))
+    except (ValueError, KeyError, TypeError, AttributeError) as e:
+        return f"{t['path']}: the trigger reader refuses it ({type(e).__name__}: {e})"
+    if not (isinstance(got, dict) and isinstance(got.get("triggered"), bool)):
+        return f"{t['path']}: the trigger reader gives no triggered verdict"
+    x.trigger_verdict = got["triggered"]
+
+
 def g_trigger_inconsistent(x: Ctx):
     t = x.body["trigger"]
     kd = [e for e in x.entries if e["stage"] == "E6-KD"]
     if not isinstance(t.get("triggered"), bool):
         return "the trigger record states no triggered verdict (AM-3)"
+    if x.trigger_verdict is not None and t["triggered"] != x.trigger_verdict:
+        return f"the trigger block says triggered {t['triggered']}; the AM-3 trigger record says {x.trigger_verdict}"
     if not t["triggered"] and kd:
         return f"AM-3 is not triggered, yet {[e['slot'] for e in kd]} are entered"
     if t["triggered"] and "E6-KD:s42:15ep" not in x.by_slot:
@@ -1021,7 +1059,8 @@ GATES = [
     ("generator_pin_incomplete", FU, g_generator_pin_incomplete),
     ("generator_pin_sha256_mismatch", ALL, g_generator_pin_sha256_mismatch),
     ("generator_cells_mismatch", FU, g_generator_cells_mismatch),
-    ("test_value_before_unlock", ALL, g_test_value_before_unlock), ("trigger_inconsistent", FU, g_trigger_inconsistent),
+    ("test_value_before_unlock", ALL, g_test_value_before_unlock),
+    ("trigger_format_unknown", FU, g_trigger_format_unknown), ("trigger_inconsistent", FU, g_trigger_inconsistent),
     ("launched_attempt_without_directory", FU, g_launched_attempt_without_directory),
     ("completion_record_invalid", FU, g_completion_record_invalid),
     ("completion_source_mismatch", FU, g_completion_source_mismatch),
@@ -1052,7 +1091,7 @@ GATES = [
 ]
 # F/U-only gates whose finding a draft prints as MISSING (plan §2.1) instead of skipping
 MISSING_IN_DRAFT = ("freeze_source_conflict", "content_class_missing", "generator_pin_incomplete",
-                    "complete_run_omitted", "derived_missing", "e6s42_not_hashed_at_freeze",
+                    "trigger_format_unknown", "complete_run_omitted", "derived_missing", "e6s42_not_hashed_at_freeze",
                     "descendant_entry_missing", "scope_required_missing", "default_candidate_missing",
                     "cut_unentered_at_unlock")
 
