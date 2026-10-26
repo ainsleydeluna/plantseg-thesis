@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""GT-present on TEST for every model of record (lane LREP, B-3: L-AM6): src/stats/am6_tables.py
-against AM-6, AM-17 item 1(b), STATS §9.5 and ERR E-24, the plan of record's §3 and LRB7 / LRB10 /
-LRB17.
+"""GT-present on TEST for every model of record (lane LREP, B-3: L-AM6; B-5 (d) and the subset mode):
+src/stats/am6_tables.py against AM-6, AM-17 item 1(b), STATS §9.5 and ERR E-24, the plan of record's §3,
+LRB7 / LRB10 / LRB17 and rulings B5-S1 and (d) (DL-24 R3-14).
 
-SYNTHETIC ONLY (DL-41): scripts/lrep_fixtures.py's world, plus two edited or re-scored copies of one
-seed-43 artifact for the refusals. Created paths live under a new directory in TMPDIR (left in
-place); none contains "test".
+SYNTHETIC ONLY (DL-41): scripts/lrep_fixtures.py's world, plus edited or re-scored copies of one
+seed-43 artifact and of the teacher's for the refusals. Created paths live under a new directory in
+TMPDIR (left in place); none contains "test".
 
   N  the four numbers, both arithmetics, against eligibility.rule_variants
   F  R1 bitwise and R3, the union-present-only classes, the per-class table
@@ -13,7 +13,14 @@ place); none contains "test".
      row, a run without a model listed with its label, the seed-42 rows equal to report.py's
   R  refusals: an unfaithful summary (gt_present_unfaithful), another ground truth
      (cross_artifact_mismatch), a record that is not canvas, a model of record without its record,
-     E1's seed-43/44 records swapped (e1_checkpoint_record)
+     E1's seed-43/44 records swapped (e1_checkpoint_record); and, with coverage, another ground truth
+     under the teacher's record, a teacher scored as a student (precision_mismatch), a model row at
+     another seed (seed_inconsistent), a stage outside the map (stage_unmapped)
+  M  B5-S1's stage map, static, against STAGE_ARTIFACTS and the evaluator's STAGES
+  V  (d): every other clean canvas record as a row (23 here), each with its slot's roles, kind, stage,
+     seed and label, its twelve numbers and R1/R3, the stages it is scored at, the sort, the markdown
+  S  the subset mode: the four numbers recomputed on the kept rows, the eligibility changes, the
+     fingerprint; zero ids removed gives the full values bitwise; a kept id outside the artifact
   D  determinism, repr floats, no 'test' path
 
 Run:  TMPDIR=<a scratch directory without 'test'> python -B scripts/smoke_am6_tables.py
@@ -21,6 +28,7 @@ Run:  TMPDIR=<a scratch directory without 'test'> python -B scripts/smoke_am6_ta
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import math
 import os
@@ -35,17 +43,31 @@ for p in (REPO, REPO / "scripts"):
     if str(p) not in sys.path:
         sys.path.insert(0, str(p))
 
+import numpy as np                                                       # noqa: E402
+
 import lrep_fixtures as LF                                               # noqa: E402
 import stats_fixtures as F                                               # noqa: E402
+from src.eval import artifacts as EA                                     # noqa: E402
 from src.eval.evaluate import Condition                                  # noqa: E402
+from src.eval.stage_artifacts import STAGE_ARTIFACTS                     # noqa: E402
 from src.stats import am6_tables as AM6                                  # noqa: E402
 from src.stats import artifact as A                                      # noqa: E402
 from src.stats import driver as D                                        # noqa: E402
 from src.stats import heldout_inputs as H                                # noqa: E402
 from src.stats import report as RP                                       # noqa: E402
-from src.stats.eligibility import GT_PRESENT, UNION_PRESENT, rule_variants  # noqa: E402
+from src.stats.eligibility import GT_PRESENT, UNION_PRESENT, class_totals, rule_variants  # noqa: E402
 
-CTX = types.SimpleNamespace(world=None, stats=None, paths={}, copies={})
+CTX = types.SimpleNamespace(world=None, stats=None, paths={}, copies={}, cov=None)
+#: B5-S1, typed out from the ruling: the TMAN stages in the map's order and the evaluator stages that
+#: differ from their own name (E3-X, E7-X, the teachers).
+TMAN_STAGES = ("E1", "E2", "E3", "E4", "E5", "E6", "E7", "E3-R1", "E3-R2", "E3-flip", "E7-R1", "E7-R2",
+               "E7-flip", "E6-E2", "E7-E2", "E6-R1", "E6-R2", "E6-KD", "A", "F", "G", "teacher", "R1", "R2")
+EVALUATED_AS = {"E3-R1": "E3", "E3-R2": "E3", "E3-flip": "E3", "E7-R1": "E7", "E7-R2": "E7", "E7-flip": "E7",
+                "R1": "teacher", "R2": "teacher"}
+#: (d)'s rows beyond B-5's slots: the default candidates and E6-KD (Part 1's world).
+PART1_COVERAGE = (("E2:s42:lambda1", "fp32"), ("E3:s42:alpha50", "fp32"), ("E6-KD:s42:sel", "int8_qat"))
+SPACES = ("all_class", "disease_only")
+FIELDS = (("", "value"), ("_float64", "value_float64"), ("_n_classes", "n_classes"))
 
 
 def stats_artifact():
@@ -54,10 +76,28 @@ def stats_artifact():
     return CTX.stats
 
 
-def doc_of(inventory=None):
+def doc_of(inventory=None, *, coverage=False, subset=None):
     st = stats_artifact()
     inv = H.open_inventory(inventory or CTX.world.inventory_path, policy=st.policy)
-    return AM6.build_am6_tables(st, inv, H.planned_cells(inv), input_root=CTX.world.input_root)
+    return AM6.build_am6_tables(st, inv, H.planned_cells(inv), input_root=CTX.world.input_root,
+                                coverage=coverage, subset=subset)
+
+
+def cov_doc():
+    if CTX.cov is None:
+        CTX.cov = doc_of(coverage=True)
+    return CTX.cov
+
+
+def summary_of(w):
+    return json.loads((CTX.world.input_root / w.rel / "summary.json").read_text(encoding="utf-8"))
+
+
+def stats_at(w):
+    """An artifact's statistics, loaded at the stage its own summary records (independent of B5-S1)."""
+    li = D.load_input(summary_of(w)["run"]["stage"], D.CLEAN, w.rel, CTX.world.input_root,
+                      stats_artifact().policy)
+    return li.run.stats, li.summary
 
 
 def variant(name, edit):
@@ -266,9 +306,211 @@ def d_no_test_path():
     return not bad, str(bad[:3])
 
 
+# --------------------------------------------------------------------------------------------------
+# B-5: the stage map (B5-S1), the coverage rows ((d)) and the subset mode
+# --------------------------------------------------------------------------------------------------
+def m_stage_map():
+    """B5-S1, static: the map holds B-5's stages in order; every stage is scored at its evaluator stage
+    (E3-X at E3, E7-X at E7, the teachers at "teacher", E6-KD at E6-KD, the others at their own); the
+    map reaches every stage of src/eval/artifacts.STAGES and no other; each precision is
+    STAGE_ARTIFACTS' (and driver.STAGE_PRECISION's for E1-E7); the teachers alone are model_role
+    teacher; a stage outside the map (K8, avg, an E6-flip) is stage_unmapped."""
+    m = H.STAGE_MAP
+    evaluated = {st: EVALUATED_AS.get(st, st) for st in TMAN_STAGES}
+    checks = {
+        "keys": tuple(m) == TMAN_STAGES == H.STAGE_ORDER,
+        "evaluator": all(m[st][0] == evaluated[st] for st in TMAN_STAGES),
+        "reach": {spec[0] for spec in m.values()} == set(EA.STAGES),
+        "precision": all(spec[2] == STAGE_ARTIFACTS["TEACHER" if spec[0] == "teacher" else spec[0]][
+            "precision"] for spec in m.values()),
+        "E1-E7": all(m[st] == (st, "student", D.STAGE_PRECISION[st]) for st in D.STAGES),
+        "roles": all(spec[1] == ("teacher" if spec[0] == "teacher" else "student") for spec in m.values()),
+        "E6-KD": m["E6-KD"] == ("E6-KD", "student", "int8_qat"),
+        "unmapped": all(refused("stage_unmapped", lambda s=s: H.stage_spec(s))[0]
+                        for s in ("E3-K8", "E3-avg", "E6-flip", "e3-r1", None))}
+    return all(checks.values()), str({k: v for k, v in checks.items() if not v})
+
+
+def v_coverage_rows():
+    """(d): the rows extend to the 23 other clean canvas records (B-5's slots, the default candidates,
+    E6-KD), none an fq_off or upstream row; the 21 planned rows and the missing list are those of the
+    table without coverage, value for value."""
+    doc, base = cov_doc(), doc_of()
+    planned = [r for r in doc["rows"] if AM6.is_planned(r)]
+    others = sorted((r["slot"], r["precision"]) for r in doc["rows"] if not AM6.is_planned(r))
+    want = sorted([(slot, p) for slot, _, _, precs, *_ in LF.B5_SLOTS for p in precs
+                   if p != H.PRECISION_FQOFF] + list(PART1_COVERAGE))
+    return (others == want and len(others) == 23 and doc["missing"] == base["missing"]
+            and A.canonical_json(planned) == A.canonical_json(base["rows"])), \
+        str(sorted(set(others) ^ set(want))[:5])
+
+
+def v_identity():
+    """Each coverage row carries its slot's roles, kind, stage and seed (its entry's), the IF§11.2 label
+    None (a scored slot carries its value), its precision, run_id and checkpoint (its artifact's)."""
+    entries = {e["slot"]: e for e in CTX.world.export["entries"]}
+    bad = []
+    for r in cov_doc()["rows"]:
+        if AM6.is_planned(r):
+            continue
+        e, w = entries[r["slot"]], CTX.world.written[(r["slot"], r["precision"], "clean", None)]
+        if not (r["roles"] == e["role"] and r["kind"] == e["kind"] and r["stage"] == e["stage"]
+                and r["seed"] == e["seed"] and r["label"] is None and r["run_id"] == w.run_id
+                and r["checkpoint_sha256"] == w.checkpoint and r["source"] == AM6.COVERAGE_SOURCE
+                and "role" not in r):
+            bad.append(r["slot"])
+    return not bad, str(bad)
+
+
+def v_values():
+    """Each coverage row's twelve numbers equal rule_variants on its artifact's statistics, loaded here at
+    the stage its summary records; R1 (float32 equal to summary.json's, the default candidates' among
+    them) and R3 hold."""
+    bad, n = [], 0
+    for r in cov_doc()["rows"]:
+        if AM6.is_planned(r):
+            continue
+        n += 1
+        stats, summary = stats_at(CTX.world.written[(r["slot"], r["precision"], "clean", None)])
+        rv, dl = rule_variants(stats), summary["dataset_level"]
+        same = all(r[f"{rule}_{s}{sfx}"] == getattr(rv[rule][s], attr) for rule in (GT_PRESENT, UNION_PRESENT)
+                   for s in SPACES for sfx, attr in FIELDS)
+        r1 = (r["union_present_all_class"] == dl["all_class_miou"]
+              and r["union_present_disease_only"] == dl["disease_only_miou"])
+        if not (same and r1 and r["R3"]["holds"]):
+            bad.append(r["slot"])
+    return not bad and n == 23, f"{bad} of {n}"
+
+
+def v_stages():
+    """B5-S1 in the rows: E6-KD's artifact is scored at E6-KD, the arms' at E3 and E7, the teachers' at
+    "teacher" with model_role teacher and a null seed; the row's stage is TMAN's."""
+    rows = {r["slot"]: r for r in cov_doc()["rows"] if not AM6.is_planned(r)}
+    run = {slot: summary_of(CTX.world.written[(slot, rows[slot]["precision"], "clean", None)])["run"]
+           for slot in rows}
+    want = {"E6-KD:s42:sel": ("E6-KD", "student"), "E3-R1:s42": ("E3", "student"),
+            "E3-flip:s42": ("E3", "student"), "E7-R2:s42": ("E7", "student"), "A:s42": ("A", "student"),
+            "E7-E2:s42": ("E7-E2", "student"), "teacher": ("teacher", "teacher"),
+            "R1": ("teacher", "teacher"), "R2": ("teacher", "teacher")}
+    got = {slot: (run[slot]["stage"], run[slot]["model_role"]) for slot in want}
+    nulls = sorted(slot for slot, r in rows.items() if r["seed"] is None)
+    return (got == want and nulls == ["R1", "R2", "teacher"] and rows["E6-KD:s42:sel"]["stage"] == "E6-KD"
+            and rows["R1"]["stage"] == "R1"), str(got)
+
+
+def v_sort():
+    """The sort covers every stage and a null seed: seed (null last), then the map's stage order, then
+    the slot."""
+    rows = cov_doc()["rows"]
+    keys = [(r["seed"] is None, r["seed"] or 0, TMAN_STAGES.index(r["stage"]), r["slot"]) for r in rows]
+    tail = [r["seed"] for r in rows[-3:]]
+    return keys == sorted(keys) and tail == [None] * 3 and rows[0]["slot"] == "E1:s42", \
+        str([r["slot"] for r in rows[:4]])
+
+
+def v_markdown():
+    """The planned table renders as without coverage; a second table, under the banner, lists the 23
+    rows with their roles and precision (a null seed as —); no slot key with ':' is printed (IF§2)."""
+    md = AM6.render_markdown(cov_doc(), "BANNER")
+    head = AM6.render_markdown(doc_of(), "BANNER")[:-3]
+    i = md.index(f"### {AM6.COVERAGE_TITLE}")
+    rows = [line for line in md[i:] if line.startswith("| ") and not line.startswith("| stage")]
+    slots = {e["slot"] for e in CTX.world.export["entries"] if ":" in e["slot"]}
+    text = "\n".join(md)
+    return (md[:len(head)] == head and md[i + 1:i + 3] == ["", "BANNER"] and len(rows) == 23
+            and "| teacher | — | teacher_reference | fp32 |" in text
+            and "| R2 | — | arm_teacher | fp32 |" in text
+            and "| E6-E2 | 42 | quant_descriptive | int8_qat |" in text
+            and not any(s in text for s in slots)), str(rows[:2])
+
+
+def r_cov_other_gt():
+    """With coverage, the teacher's record pointed at an artifact scored on another ground truth (its
+    checkpoint, stage and model_role the teacher's): one ground truth holds across every row (R-10)."""
+    def edit(export, binding):
+        point_record(binding, "teacher", "fp32", CTX.copies["teacher_other_gt"])
+    return refused("cross_artifact_mismatch",
+                   lambda: doc_of(variant("teacher_other_gt", edit), coverage=True))
+
+
+def r_cov_role():
+    """B5-S1: the teacher's artifact recording model_role student is refused (precision_mismatch)."""
+    def edit(export, binding):
+        point_record(binding, "teacher", "fp32", CTX.copies["teacher_as_student"])
+    return refused("precision_mismatch", lambda: doc_of(variant("teacher_as_student", edit), coverage=True))
+
+
+def r_cov_seed():
+    """R-14 for a coverage row: A's model row at seed 43 while its entry is at 42."""
+    def edit(export, binding):
+        next(r for r in export["models"] if (r["slot"], r["precision"]) == ("A:s42", "fp32"))["seed"] = 43
+    return refused("seed_inconsistent", lambda: doc_of(variant("a_row_s43", edit), coverage=True))
+
+
+def r_cov_unmapped():
+    """B5-S1 through (d): a slot whose stage is outside the map (E3-K8) is refused, never skipped."""
+    def edit(export, binding):
+        next(e for e in export["entries"] if e["slot"] == "E3-R1:s42")["stage"] = "E3-K8"
+        next(r for r in export["models"] if r["slot"] == "E3-R1:s42")["stage"] = "E3-K8"
+    return refused("stage_unmapped", lambda: doc_of(variant("e3r1_k8", edit), coverage=True))
+
+
+def own_subset(stats, kept):
+    """The kept rows' totals, rebuilt here: image_index -> manifest_ids, then class_totals."""
+    keep = {i for i, m in enumerate(stats.manifest_ids) if m in set(kept)}
+    mask = np.array([int(ix) in keep for ix in np.asarray(stats.image_index)], dtype=bool)
+    return class_totals({k: np.asarray(getattr(stats, k))[mask] for k in ("class_id", "tp", "gt", "pred")},
+                        num_classes=116)
+
+
+def s_subset_values():
+    """The subset mode on the world's kept ids: each row's twelve numbers equal rule_variants on the kept
+    rows' totals rebuilt here, the eligibility changes are the eligible sets' differences against the full
+    split (some class drops out here), 26 kept and 4 removed, and the fingerprint is the sha256 of the
+    sorted ids joined by LF."""
+    kept = CTX.world.dedup["kept_ids"]
+    doc = doc_of(subset=kept)
+    bad, dropped = [], 0
+    for r in doc["rows"]:
+        if r["seed"] == 42:
+            stats = stats_artifact().clean(r["stage"]).run.stats
+        else:
+            stats, _ = stats_at(CTX.world.art(r["stage"], r["seed"]))
+        sub, full = rule_variants(own_subset(stats, kept)), rule_variants(stats)
+        s = r["subset"]
+        same = all(s[f"{rule}_{sp}{sfx}"] == getattr(sub[rule][sp], attr)
+                   for rule in (GT_PRESENT, UNION_PRESENT) for sp in SPACES for sfx, attr in FIELDS)
+        changes = {}
+        for rule in (UNION_PRESENT, GT_PRESENT):
+            f_el, s_el = set(full[rule]["all_class"].eligible), set(sub[rule]["all_class"].eligible)
+            changes[rule] = {"dropped": sorted(f_el - s_el), "added": sorted(s_el - f_el)}
+        fp = hashlib.sha256("\n".join(sorted(stats.manifest_ids)).encode("utf-8")).hexdigest()
+        dropped += len(changes[GT_PRESENT]["dropped"])
+        if not (same and s["eligibility_changes"] == changes and s["n_images_kept"] == 26
+                and s["n_images_removed"] == 4 and s["image_ids_sha256"] == fp):
+            bad.append((r["stage"], r["seed"]))
+    return not bad and dropped > 0 and len(doc["rows"]) == 21, f"{bad} dropped={dropped}"
+
+
+def s_zero_removed():
+    """Guard 1, (i)'s half: with every id kept, each row's subset values equal its full values bitwise and
+    nothing changes eligibility."""
+    doc = doc_of(coverage=True, subset=list(CTX.world.truth.ids))
+    keys = [f"{rule}_{sp}{sfx}" for rule in (GT_PRESENT, UNION_PRESENT) for sp in SPACES for sfx, _ in FIELDS]
+    bad = [r["slot"] for r in doc["rows"]
+           if any(r["subset"][k] != r[k] for k in keys) or r["subset"]["n_images_removed"] != 0
+           or any(v["dropped"] or v["added"] for v in r["subset"]["eligibility_changes"].values())]
+    return not bad and len(doc["rows"]) == 44, str(bad[:3])
+
+
+def s_outside():
+    """A kept id that is not an image id of the artifact is refused (dedup_invalid; B5-S2)."""
+    return refused("dedup_invalid", lambda: doc_of(subset=[*CTX.world.dedup["kept_ids"], "img_99999"]))
+
+
 def setup(root: Path, world=None) -> None:
     w = world or LF.build_world(root, strata=False)
-    CTX.world, CTX.stats, CTX.paths = w, None, {}
+    CTX.world, CTX.stats, CTX.paths, CTX.cov = w, None, {}, None
     src = w.art("E2", 43)
     CTX.copies["nudged"] = LF.edited_copy(
         w, src, "e2_s43_clean_nudged",
@@ -287,6 +529,22 @@ def setup(root: Path, world=None) -> None:
         checkpoint=src.checkpoint, files_sha256=D.input_file_sha256(w.input_root / rel),
         run_id="lrep-e2-s43-othergt",
         split_manifest_sha256=summary["dataset"]["split_manifest_sha256"])
+    # B-5 (d): the teacher's artifact on another ground truth, and the teacher scored as a student
+    tw = w.written[("teacher", "fp32", "clean", None)]
+    rel_t = "runs/heldout/teacher_clean_othergt"
+    scored = F.score(other, F.predict(other, quality=0.8, seed=F.int_seed(LF.WORLD_SEED, rel_t)),
+                     Condition(*D.CLEAN))
+    F.write_fixture(w.input_root / rel_t, scored, w.n, stage="teacher", condition=Condition(*D.CLEAN),
+                    split="val", status="provisional", repo_root=w.input_root,
+                    run_id="lrep-teacher-othergt", precision="fp32", checkpoint_sha256=tw.checkpoint)
+    F.edit_summary(w.input_root / rel_t, lambda s: {**s, "run": {**s["run"], "model_role": "teacher"}})
+    summary = json.loads((w.input_root / rel_t / "summary.json").read_text(encoding="utf-8"))
+    CTX.copies["teacher_other_gt"] = LF.Written(
+        slot="teacher", stage="teacher", seed=None, precision="fp32", scope="clean", cell=None, rel=rel_t,
+        checkpoint=tw.checkpoint, files_sha256=D.input_file_sha256(w.input_root / rel_t),
+        run_id="lrep-teacher-othergt", split_manifest_sha256=summary["dataset"]["split_manifest_sha256"])
+    CTX.copies["teacher_as_student"] = LF.edited_copy(
+        w, tw, "teacher_clean_asstudent", lambda s: {**s, "run": {**s["run"], "model_role": "student"}})
 
 
 def cases():
@@ -311,6 +569,23 @@ def cases():
             ("R3", "not_canvas: an upstream record", r_upstream),
             ("R4", "artifact_missing: a model of record whose record the binding lacks", r_no_record),
             ("R5", "e1_checkpoint_record: E1's seed-43/44 records swapped (DL-99)", r_e1_swap),
+            ("M1", "B5-S1: the stage map against STAGE_ARTIFACTS and the evaluator's STAGES", m_stage_map),
+            ("V1", "(d): the 23 other clean canvas records are rows; the 21 planned rows unchanged",
+             v_coverage_rows),
+            ("V2", "(d): each row's roles, kind, stage, seed, label, run_id and checkpoint", v_identity),
+            ("V3", "(d): each row's twelve numbers equal rule_variants'; R1 and R3 hold", v_values),
+            ("V4", "(d): E6-KD scored at E6-KD, the arms at E3/E7, the teachers at teacher (B5-S1)",
+             v_stages),
+            ("V5", "(d): the sort covers every stage and a null seed", v_sort),
+            ("V6", "(d): the second table, its banner, a null seed as —, no slot key", v_markdown),
+            ("R6", "cross_artifact_mismatch: the teacher's record on another ground truth", r_cov_other_gt),
+            ("R7", "precision_mismatch: the teacher scored as a student (B5-S1)", r_cov_role),
+            ("R8", "seed_inconsistent: a coverage row's model row at another seed (R-14)", r_cov_seed),
+            ("R9", "stage_unmapped: a coverage slot at a stage outside the map", r_cov_unmapped),
+            ("S1", "subset: the four numbers recomputed on the kept rows, the changes, the fingerprint",
+             s_subset_values),
+            ("S2", "subset, guard 1 (i): nothing removed gives the full values bitwise", s_zero_removed),
+            ("S3", "dedup_invalid: a kept id outside the artifact", s_outside),
             ("D1", "byte-identical JSON on repeated runs", d_deterministic),
             ("D2", "identical markdown on repeated runs", d_deterministic_md),
             ("D3", "JSON floats unrounded: the seed-42 float64 values equal rule_variants'", d_repr),
