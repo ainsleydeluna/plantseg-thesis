@@ -423,7 +423,7 @@ def open_inventory(path, *, policy: Policy, expect_sha256=None, reader=None) -> 
     if doc["binding"]["state"] == "bound" and "artifacts" not in doc["binding"]:
         raise refusal("binding_invalid", f"{path}: a bound export carries no binding.artifacts; the reader "
                                          "returns the binding's records under it (IF§11.6)")
-    records = doc["binding"]["artifacts"] if doc["binding"]["state"] == "bound" else []
+    records = doc["binding"].get("artifacts", []) if doc["binding"]["state"] == "bound" else []
     if not isinstance(records, list) or not all(isinstance(r, dict) for r in records):
         raise refusal("binding_invalid", f"{path}: binding.artifacts is not a list of objects")
     for i, r in enumerate(records):

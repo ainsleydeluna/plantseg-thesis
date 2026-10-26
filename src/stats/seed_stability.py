@@ -28,8 +28,10 @@ scripts/smoke_seed_stability.py).
   * A cut run that wrote VAL rows is shown with its VAL curve and its comparators' VAL scores at the
     same points (AM-19 item 3(c); LRB6): a KD or E1 run's comparators are the runs it is paired with
     in a planned cell at that seed, matched by iteration; a QAT run's is its stage's seed-42
-    model-of-record run, matched by epoch; the cut entry's comparator is always shown; a derived
-    artifact has no curve; nothing is interpolated.
+    model-of-record run, matched by epoch; the cut entry's comparator is always shown; a comparator
+    without a model that wrote VAL rows (cut, diverged, aborted, non-finite) shows each attempt's
+    rows; a derived artifact has no curve; nothing is interpolated.
+  * The markdown names runs by stage and seed; TMAN's slot keys stay in the JSON (IF§2).
 
 Import-time behaviour is side-effect free.
 """
@@ -65,6 +67,8 @@ FOOTNOTE = ("Descriptive: no test, no p-value and no interval (AM-19 item 6(f); 
             "and 44 enter no test (AM-1). Effects are candidate - baseline, as fractions.")
 LIMITATION = ("the recipe of record diverged at this seed and no clipped rerun was made; Chapters 4 "
               "and 5 state it as a limitation of the seed-42 results (AM-19 item 5(d))")
+#: The kinds of a run without a model whose training wrote telemetry (IF§11.3).
+TELEMETRY_KINDS = ("cut", "diverged", "aborted", "non_finite")
 
 
 # --------------------------------------------------------------------------------------------------
@@ -149,13 +153,16 @@ def condition_3(d: Mapping[int, float]) -> ConditionState:
 
 @dataclass(frozen=True)
 class Missing:
-    """A planned run without a value: its stage, seed and cell label."""
+    """A planned run without a value: its stage, seed, cell label and the decision-log rows of the
+    entry that decided it (D-6: the reason names the run and its entry)."""
     stage: str
     seed: int
     label: str
+    entry: tuple = ()
 
     def text(self) -> str:
-        return f"{self.stage} seed {self.seed}: {self.label}"
+        rows = f" [{', '.join(self.entry)}]" if self.entry else ""
+        return f"{self.stage} seed {self.seed}: {self.label}{rows}"
 
 
 @dataclass(frozen=True)
@@ -324,8 +331,9 @@ def build_tables(stats: H.StatsArtifact, inputs: SeedInputs) -> dict:
                      {k: m[("E3", k)] for k in SEEDS if ("E3", k) in m})
     c3 = condition_3(d)
     divs = divergences(inputs)
-    missing = [Missing(st, k, labels[(st, k)]) for st in ("E1", "E3", "E6") for k in SEEDS
-               if (st, k) not in m]
+    missing = [Missing(st, k, labels[(st, k)],
+                       tuple(inputs.cells.status[(st, k)].record.get("dl_rows") or ()))
+               for st in ("E1", "E3", "E6") for k in SEEDS if (st, k) not in m]
     v = verdict(c1, c2, c3, e3_divergences=[x for x in divs if x.stage == "E3"], missing=missing,
                 e2_divergences=[x for x in divs if x.stage == "E2"])
     return {"rows": rows, "models": models,
@@ -334,6 +342,7 @@ def build_tables(stats: H.StatsArtifact, inputs: SeedInputs) -> dict:
                                    "rule": x.rule, "text": x.text(),
                                    "limitation": LIMITATION if x.stage in ("E2", "E3") else None}
                                   for x in divs],
+            "limitation_divergences": [x.text() for x in divs if x.stage in ("E2", "E3")],
             "seed42_cross_checks": {"bitwise_equal": True, "checked": checked}}
 
 
@@ -444,10 +453,24 @@ def _comparator(inv, cells, stage, seed, why, unit, points, input_root) -> dict:
     slot, cunit, row = _run_of_record(inv, cells, stage, seed)
     out = {"stage": stage, "seed": seed, "slot": cells.slots[(stage, seed)], "run_slot": slot,
            "why": why, "cut_entry_comparator": False, "unit": None, "run_id": None, "values": [],
-           "shared_points": 0, "note": None}
+           "shared_points": 0, "attempts": [], "note": None}
     st = cells.status[(stage, seed)]
     if not st.has_model:
-        out["note"] = f"no comparator values: {st.label}"
+        if slot is None or st.kind not in TELEMETRY_KINDS:
+            out["note"] = f"no comparator values: {st.label}"
+            return out
+        # a paired run without a model that wrote VAL rows: every attempt's scores at the cut run's
+        # points (AM-19 item 3(c)); no attempt is "of record", so each is shown with its run_id
+        out.update(unit=cunit, note=f"no model ({st.label}): the VAL rows it wrote")
+        if cunit != unit:
+            out["note"] += (f"; counted in {H.TELEMETRY_UNITS[cunit]}s: no point at the same "
+                            f"{H.TELEMETRY_UNITS[unit]}s (never interpolated)")
+            return out
+        for a in H.read_telemetry(inv, slot, input_root, unit=cunit):
+            have = a.values()
+            out["attempts"].append({"run_id": a.run_id, "telemetry": a.path, "sha256": a.sha256,
+                                    "values": [{unit: u, "all_class_miou": have.get(u)} for u in points],
+                                    "shared_points": sum(1 for u in points if u in have)})
         return out
     if slot is None:
         out["note"] = "derived artifact: no VAL curve (LRB6)"
@@ -491,10 +514,10 @@ def render_markdown(doc: dict, banner: str = "") -> list[str]:
     """Report section 1.6, in order: the model table, the effects table, the conditions, the verdict
     sentence, the cut-run VAL curves and every divergence at seeds 43 and 44."""
     out = [f"## {doc['title']}", "", banner, "### Models: m(S,k) (and mC for E1 and E6)", "",
-           "| stage | seed | m | m (pp) | mC | slot | cell |", "|---|---|---|---|---|---|---|"]
+           "| stage | seed | m | m (pp) | mC | cell |", "|---|---|---|---|---|---|"]
     for r in doc["models"]:
         out.append(f"| {r['stage']} | {r['seed']} | {_fmt(r['m'])} | {_pp(r['m'])} | "
-                   f"{_fmt(r['miou_c'])} | `{r['slot']}` | {r['label'] or 'value'} |")
+                   f"{_fmt(r['miou_c'])} | {r['label'] or 'value'} |")
     out += ["", "### Dataset-level effects per seed (candidate - baseline)", "", banner,
             "| row | label | b -> c | seed 42 | seed 43 | seed 44 |", "|---|---|---|---|---|---|"]
     for r in doc["rows"]:
@@ -505,7 +528,8 @@ def render_markdown(doc: dict, banner: str = "") -> list[str]:
                          else "; ".join(c["missing"]))
         out.append(f"| {r['comparison_id']} | {r['label']} | {r['baseline_stage']} -> "
                    f"{r['candidate_stage']} | " + " | ".join(cells) + " |")
-    out += ["", "### Conditions", "", "| condition | status | values | detail |", "|---|---|---|---|"]
+    out += ["", "### Conditions", "", banner, "| condition | status | values | detail |",
+            "|---|---|---|---|"]
     for n in ("1", "2", "3"):
         c = doc["conditions"][n]
         vals = ", ".join(f"s{k}: {_fmt(v)}" for k, v in c["values"].items()) or "—"
@@ -516,16 +540,19 @@ def render_markdown(doc: dict, banner: str = "") -> list[str]:
     if doc["cut_runs"]:
         out += ["### Cut runs: VAL curves (AM-19 item 3(c))", ""]
         for b in doc["cut_runs"]:
-            out.append(f"- {b['stage']} seed {b['seed']} (`{b['cut_slot']}`): {b['label']}"
+            out.append(f"- {b['stage']} seed {b['seed']}: {b['label']}"
                        + (f" — {b['note']}" if b["note"] else ""))
             for a in b["attempts"]:
                 pts = ", ".join(f"{p[b['unit']]}: {_fmt(p['all_class_miou'])}" for p in a["points"])
                 out.append(f"  - attempt `{a['run_id']}`: {pts}")
             for c in b["comparators"]:
                 tag = " [cut entry's comparator]" if c.get("cut_entry_comparator") else ""
-                vals = ", ".join(f"{v[c['unit']]}: {_fmt(v['all_class_miou'])}" for v in c["values"])
+                vals = ", ".join(f"{v[b['unit']]}: {_fmt(v['all_class_miou'])}" for v in c["values"])
                 out.append(f"  - comparator {c['stage']} seed {c['seed']}{tag} ({c['why']}): "
-                           + (vals or c["note"] or "—"))
+                           + ("; ".join(x for x in (vals, c["note"]) if x) or "—"))
+                for a in c.get("attempts", []):
+                    pts = ", ".join(f"{v[b['unit']]}: {_fmt(v['all_class_miou'])}" for v in a["values"])
+                    out.append(f"    - attempt `{a['run_id']}`: {pts}")
         out.append("")
     divs = doc["divergences_43_44"]
     out += ["### Divergences at seeds 43 and 44 (AM-19 item 9)", "",
@@ -535,7 +562,8 @@ def render_markdown(doc: dict, banner: str = "") -> list[str]:
 
 
 __all__ = ["SEEDS", "DROP_THRESHOLD", "HOLDS", "FAILS", "NOT_EVALUABLE", "STABLE", "NOT_STABLE",
-           "ROBUSTNESS_SEEDS", "ROW_LABELS", "ROW_IDS", "C2_FAILS", "m_of", "miou_c", "mean_and_sds",
+           "ROBUSTNESS_SEEDS", "ROW_LABELS", "ROW_IDS", "C2_FAILS", "TELEMETRY_KINDS", "m_of", "miou_c",
+           "mean_and_sds",
            "ConditionState", "condition_1", "condition_2", "condition_3", "Missing", "Divergence",
            "verdict", "SeedInputs", "load_seed_inputs", "seed42_cross_checks", "build_tables",
            "divergences", "cut_curves", "build_seed_stability", "render_markdown"]

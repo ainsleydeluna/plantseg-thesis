@@ -57,6 +57,7 @@ from src.stats.ingest import Policy                                      # noqa:
 CTX = types.SimpleNamespace(world=None, stats=None, paths={}, tel={}, copies={})
 CUT_RULE = "AM-19 item 3(b): original freeze"
 CUT_DATE = "2026-11-02"
+E3_CUT_ITERS = tuple(range(4000, 40001, 4000))
 
 
 # --------------------------------------------------------------------------------------------------
@@ -236,26 +237,35 @@ def f_m_hand():
 
 
 def f_effect_sign():
+    """The table's clean cell (seed_stability._cell) is m(candidate) - m(baseline) (STATS §1)."""
     base, cand = totals([1, 0], [2, 1], [1, 1]), totals([1, 1, 0], [2, 1, 0], [1, 1, 0])
-    eff = SS.m_of(cand) - SS.m_of(base)                            # candidate - baseline (STATS §1)
-    return eff == 0.5, repr(eff)
+    c = SS._cell({("E1", 43): SS.m_of(base), ("E2", 43): SS.m_of(cand)}, {}, "E1", "E2", 43)
+    return c["value"] == 0.5 and c["missing"] == [], str(c)
 
 
 def f_ni_direction():
-    e3, e6 = 0.75, 0.5
-    d = e3 - e6
-    return d == 0.25 and (e6 - e3) == -d, "d = m(E3) - m(E6); the NI effect is its negative"
+    """The table's NI cell (E3 -> E6) is the negative of the drop d = m(E3) - m(E6), and condition 3
+    reads d."""
+    c = SS._cell({("E3", 43): 0.75, ("E6", 43): 0.5}, {}, "E3", "E6", 43)
+    c3 = SS.condition_3({42: 0.0, 43: 0.75 - 0.5, 44: 0.0})
+    return c["value"] == -0.25 and c3.values[43] == 0.25 == -c["value"] and c3.failing_seeds == (43,), \
+        f"{c} {c3.values}"
 
 
 def f_miou_c_hand():
+    """Nested mC on cells whose unions differ by severity, with a prediction-only class at severity 3:
+    the mean of the per-corruption means of the cells' m is 37/96 (0.38541666666666663 in float64),
+    while pooling the totals over the severities gives 0.19642857142857145 (R5-03). A flat mean of
+    the 15 cells is equal in exact arithmetic; F5 checks report.dataset_miou_c bitwise."""
     names = H.corruption_names()
     cells = {}
-    for i, n in enumerate(names):          # every cell of corruption i has m = i/8 (tp i, union 8)
+    for i, n in enumerate(names):
         for s in (1, 2, 3):
-            cells[(n, s)] = totals([i], [8 - i + i], [i])
+            g = 2 ** (s + 1)
+            tp = (i + s) % (g + 1)
+            cells[(n, s)] = totals([tp, 0], [g, 0], [tp, 5 if s == 3 else 0])
     got = SS.miou_c(cells, names)
-    want = sum(i / 8 for i in range(5)) / 5
-    return got == want == 0.25, f"{got!r} vs {want!r}"
+    return got == 0.38541666666666663, repr(got)
 
 
 def f_miou_c_report():
@@ -302,9 +312,12 @@ def f_stdev_sample():
 
 
 def f_c2_larger_sd():
-    c2 = SS.condition_2({42: 0.0, 43: 0.3, 44: 0.6}, {42: 0.3, 43: 0.4, 44: 0.5})
-    return c2.status == SS.FAILS and c2.detail["max_sd"] == c2.detail["sd_e1"] > c2.detail["mean_gain"] \
-        > c2.detail["sd_e3"], str(c2.detail)
+    """Exact binary fractions: SD_E1 0.5 > mean gain 0.375 > SD_E3 0.125, so condition 2 fails against
+    the larger SD and would hold against the smaller (R4-10)."""
+    c2 = SS.condition_2({42: 0.0, 43: 0.5, 44: 1.0}, {42: 0.75, 43: 0.875, 44: 1.0})
+    d = c2.detail
+    return (c2.status == SS.FAILS and (d["sd_e1"], d["mean_gain"], d["sd_e3"]) == (0.5, 0.375, 0.125)
+            and d["max_sd"] == 0.5), str(d)
 
 
 def f_c3_fraction():
@@ -471,6 +484,17 @@ def s_c2_no_seed():
     return v["reasons"] == [SS.C2_FAILS] and "seed" not in SS.C2_FAILS, str(v["reasons"])
 
 
+def s_reason_entry():
+    """D-6: the reason line names the run and its entry: the decision-log rows of the entry that
+    decided it."""
+    def edit(export, binding):
+        v_nonfinite_e6(export, binding)
+        entry(export, "E6:s43")["dl_rows"] = ["DL-140"]
+    doc = seed_doc(variant("nonfinite_dl", edit))
+    want = f"not evaluable: runs missing — E6 seed 43: {H.LABEL_NON_FINITE} [DL-140]"
+    return doc["reasons"] == [want], str(doc["reasons"])
+
+
 # --------------------------------------------------------------------------------------------------
 # L: labels (IF§11.2; AM-19 item 6(e); D-6; D-15)
 # --------------------------------------------------------------------------------------------------
@@ -607,6 +631,7 @@ def w_div_e3():
     d = doc["divergences_43_44"]
     return (doc["verdict"] == SS.NOT_STABLE and r == ["E3 diverged at seed 44", want_missing]
             and [(x["stage"], x["seed"]) for x in d] == [("E3", 44)] and d[0]["limitation"]
+            and doc["limitation_divergences"] == ["E3 diverged at seed 44 (iteration 41000, AM-7a item 1)"]
             and cell(doc, D.ROBUSTNESS_ID, 44)["missing"] == [f"E6: {H.LABEL_PARENT_DIVERGED}"]), str(r)
 
 
@@ -623,6 +648,58 @@ def w_cut_e3_comparators():
     return (sorted(comps) == ["E1", "E2", "E6"]
             and comps["E6"]["note"] == f"no comparator values: {H.LABEL_PARENT_CUT}"
             and comps["E2"]["shared_points"] == len(LF.KD_VAL_ITERS)), str(b)[:300]
+
+
+def v_cut_e2_e3(export, binding):
+    """E2 and E3 both cut at seed 43, each with its own VAL rows; E3's descendants not run."""
+    v_cut_e2(export, binding)
+    entry(export, "E2:s43")["comparator"] = None
+    set_kind(export, "E3:s43", "cut", cut_date=CUT_DATE, rule=CUT_RULE, comparator=None)
+    entry(export, "E3:s43")["telemetry"] = [CTX.tel["e3_s43_cut"]]
+    drop(export, binding, "E3:s43")
+    set_kind(export, "E7:s43", None)
+    drop(export, binding, "E7:s43")
+    set_kind(export, "E6:s43", "not_run", reason="parent cut")
+    set_kind(export, "E6:s43:sel", None)
+    drop(export, binding, "E6:s43:sel")
+
+
+def w_cut_pair():
+    """Two paired cut KD runs at one seed: each block shows the other's VAL rows at its own points
+    (AM-19 item 3(c); R2-03); nothing is interpolated."""
+    doc = seed_doc(variant("cut_e2_e3", v_cut_e2_e3))
+    blocks = {b["stage"]: b for b in doc["cut_runs"] if b["seed"] == 43}
+    if sorted(blocks) != ["E2", "E3"]:
+        return False, str(doc["cut_runs"])[:300]
+    e3_in_e2 = next(c for c in blocks["E2"]["comparators"] if c["stage"] == "E3")
+    e2_in_e3 = next(c for c in blocks["E3"]["comparators"] if c["stage"] == "E2")
+    want = dict(LF.kd_curve(0.38, iters=E3_CUT_ITERS))
+    a = e3_in_e2["attempts"]
+    vals = {v["iter"]: v["all_class_miou"] for v in a[0]["values"]} if len(a) == 1 else {}
+    md = "\n".join(SS.render_markdown(doc))
+    return (len(a) == 1 and a[0]["shared_points"] == len(E3_CUT_ITERS)
+            and all(vals[u] == want[u] for u in E3_CUT_ITERS)
+            and all(vals[u] is None for u in vals if u not in want)
+            and e3_in_e2["note"].startswith("no model (cut (")
+            and len(e2_in_e3["attempts"]) == 1 and e2_in_e3["attempts"][0]["shared_points"] == len(E3_CUT_ITERS)
+            and f"attempt `{a[0]['run_id']}`" in md), str(e3_in_e2)[:300]
+
+
+def v_cut_e2_odd(export, binding):
+    v_cut_e2(export, binding)
+    entry(export, "E2:s43")["comparator"] = None
+    entry(export, "E2:s43")["telemetry"] = [CTX.tel["e2_s43_odd"]]
+
+
+def w_no_shared_point():
+    """A comparator curve that shares no point with the cut run is stated as such in the markdown, beside
+    its empty values (LRB6; R2-02)."""
+    doc = seed_doc(variant("cut_e2_odd", v_cut_e2_odd))
+    b = next(x for x in doc["cut_runs"] if x["stage"] == "E2")
+    e1 = next(c for c in b["comparators"] if c["stage"] == "E1")
+    note = "no VAL point shared with the cut run (never interpolated)"
+    line = next((ln for ln in SS.render_markdown(doc) if ln.startswith("  - comparator E1 seed 43")), "")
+    return (e1["shared_points"] == 0 and e1["note"] == note and "2000: —" in line and note in line), line
 
 
 # --------------------------------------------------------------------------------------------------
@@ -963,26 +1040,43 @@ def d_key_order():
         json.loads(A.canonical_json(doc)) == doc, str(keys)
 
 
-FORBIDDEN_IMPORTS = {"scipy", "scipy.stats", "statsmodels", "tests", "src.stats.tests"}
+#: X1 scans the six LREP modules of src/stats. LRB19 L-14: they may import the statistics module's
+#: engineering_shifts and hodges_lehmann, as bootstrap.py does, and nothing else from it.
+LREP_SRC = ("heldout_inputs", "seed_stability", "strata_tables", "default_candidates", "am6_tables",
+            "report_extensions")
+L14_ALLOWED = {"engineering_shifts", "hodges_lehmann"}
+STATS_PACKAGES = {"scipy", "statsmodels"}
 FORBIDDEN_NAMES = {"run_comparison", "holm_family", "wilcoxon", "paired_t_test", "bca_interval",
-                   "run_bootstrap_task", "engineering_shifts", "hodges_lehmann"}
+                   "run_bootstrap_task"}
 
 
 def x_no_test_objects():
+    """No test or p-value object is imported or reached: no import of the statistics module but L-14's
+    two names (`from .tests import ...`, `from . import tests`, `import src.stats.tests`), no scipy or
+    statsmodels import, and no attribute named after a test object (e.g. D.run_comparison)."""
     bad = []
-    for path in (REPO / "src/stats/seed_stability.py", REPO / "src/stats/heldout_inputs.py"):
+    for name in LREP_SRC:
+        path = REPO / "src" / "stats" / f"{name}.py"
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
             if isinstance(node, ast.ImportFrom):
-                mod = (node.module or "")
-                if mod.split(".")[-1] in FORBIDDEN_IMPORTS or mod in FORBIDDEN_IMPORTS:
+                mod = node.module or ""
+                names = {a.name for a in node.names}
+                if mod.split(".")[-1] == "tests":
+                    bad += [(path.name, f"{mod}.{n}") for n in sorted(names - L14_ALLOWED)]
+                elif mod.split(".")[0] in STATS_PACKAGES:
                     bad.append((path.name, mod))
-                bad += [(path.name, a.name) for a in node.names if a.name in FORBIDDEN_NAMES]
+                bad += [(path.name, n) for n in sorted(names & ({"tests"} | FORBIDDEN_NAMES))]
             elif isinstance(node, ast.Import):
-                bad += [(path.name, a.name) for a in node.names if a.name in FORBIDDEN_IMPORTS]
+                bad += [(path.name, a.name) for a in node.names
+                        if a.name.split(".")[-1] == "tests" or a.name.split(".")[0] in STATS_PACKAGES]
+            elif isinstance(node, ast.Attribute) and node.attr in FORBIDDEN_NAMES | {"tests"}:
+                bad.append((path.name, f".{node.attr}"))
     return not bad, str(bad)
 
 
 def x_repr_floats():
+    """Every JSON float round-trips by repr, and the seed-42 m values equal a float64 recomputation from
+    the 37's dataset totals in this smoke (so no value is rounded on its way out; R4-07)."""
     doc = seed_doc(variant("cut_e2", v_cut_e2))
     floats = []
 
@@ -997,7 +1091,16 @@ def x_repr_floats():
                 walk(x)
     walk(doc)
     back = json.loads(json.dumps(doc, allow_nan=False))
-    return back == doc and all(float(repr(f)) == f for f in floats) and len(floats) > 50, len(floats)
+    exact = {}
+    for stage in D.STAGES:
+        s = stats_artifact().clean(stage).run.stats
+        tp = np.asarray(s.dataset_tp, np.int64)
+        union = np.asarray(s.dataset_gt, np.int64) + np.asarray(s.dataset_pred, np.int64) - tp
+        keep = union > 0
+        exact[stage] = float(np.mean(tp[keep].astype(np.float64) / union[keep].astype(np.float64)))
+    m42 = {r["stage"]: r["m"] for r in doc["models"] if r["seed"] == 42}
+    return (back == doc and all(float(repr(f)) == f for f in floats) and len(floats) > 50
+            and m42 == exact), f"{len(floats)} floats; m(S,42) equal: {m42 == exact}"
 
 
 def x_pp_markdown_only():
@@ -1020,6 +1123,15 @@ def x_path_rule():
     return all(probs[:4]) and probs[4] is None and "test" in probs[0], str(probs)
 
 
+def x_no_slot_in_markdown():
+    """IF§2: slot keys with ':' stay inside the JSON; the markdown names runs by stage and seed."""
+    slots = {e["slot"] for e in CTX.world.export["entries"] if ":" in e["slot"]}
+    doc = seed_doc(variant("cut_e2", v_cut_e2))
+    md = "\n".join(SS.render_markdown(doc))
+    bad = sorted(s for s in slots if s in md)
+    return not bad and any(s in A.canonical_json(doc) for s in slots), str(bad[:5])
+
+
 # --------------------------------------------------------------------------------------------------
 # setup and run
 # --------------------------------------------------------------------------------------------------
@@ -1033,6 +1145,11 @@ def setup(root: Path, world=None) -> None:
         points=LF.kd_curve(0.37, iters=list(range(4000, 48001, 4000)) + [50000]))
     CTX.tel["e6_s43_cut"] = LF.write_telemetry(w, "e6_s43_cut", run_id="e6_s43_qat_a1", unit="epoch",
                                                points=LF.qat_curve(0.36, epochs=range(1, 10)))
+    CTX.tel["e3_s43_cut"] = LF.write_telemetry(w, "e3_s43_cut", run_id="e3_s43_lambda0.5_alpha25_80k_a1",
+                                               unit="iter", points=LF.kd_curve(0.38, iters=E3_CUT_ITERS))
+    CTX.tel["e2_s43_odd"] = LF.write_telemetry(w, "e2_s43_odd", run_id="e2_s43_lambda0.5_80k_a1",
+                                               unit="iter", points=LF.kd_curve(0.37, iters=[2000, 6000,
+                                                                                          10000]))
     CTX.copies["upstream"] = LF.edited_copy(
         w, w.art("E2", 43), "e2_s43_clean_upstream",
         lambda s: {**s, "dataset": {**s["dataset"], "preprocess_protocol": "upstream/1.0.0"}})
@@ -1055,7 +1172,7 @@ def cases():
         ("F9", "the SD is the sample SD (n - 1), not pstdev", f_stdev_sample),
         ("F10", "condition 2 compares with the larger of the two SDs", f_c2_larger_sd),
         ("F11", "condition 3 compares d with the fraction 0.020, not 2.0", f_c3_fraction),
-        ("F12", "the world's seed-42 values equal the statistics artifact's (12 bitwise checks)",
+        ("F12", "the world's seed-42 values equal the statistics artifact's (14 bitwise checks)",
          f_seed42_world),
         ("F13", "seed-42 robustness effect == report.dataset_miou_c_contrast's difference",
          f_robust42_report),
@@ -1080,6 +1197,7 @@ def cases():
         ("S18", "a missing run never gives stable", s_missing_never_stable),
         ("S19", "a condition's values at every seed where they exist", s_values_reported),
         ("S20", "condition 2's failure has no seed", s_c2_no_seed),
+        ("S21", "a missing run's reason names its entry's decision-log rows (D-6)", s_reason_entry),
         ("L1", "cut (YYYY-MM-DD, rule)", l_cut),
         ("L2", "diverged (iteration n, rule)", l_diverged),
         ("L3", "aborted (rule, cause)", l_aborted),
@@ -1102,6 +1220,9 @@ def cases():
                "status", w_div_e3),
         ("W7", "E2 diverged at 43: stated in the verdict sentence (AM-19 item 6(e))", w_div_e2_sentence),
         ("W8", "a cut E3: comparators E2, E1 and E6 (no model, stated)", w_cut_e3_comparators),
+        ("W9", "two paired cut KD runs show each other's VAL rows (AM-19 item 3(c))", w_cut_pair),
+        ("W10", "a comparator sharing no point is stated as such in the markdown (LRB6)",
+         w_no_shared_point),
         ("R1", "R-1 stats_artifact_unverified (its inputs missing)", r_stats_unverified),
         ("R2a", "stub_reader_official", r_stub_official),
         ("R2b", "R-2 inventory_unreadable", r_inventory_unreadable),
@@ -1157,11 +1278,13 @@ def cases():
         ("R20", "robustness_cells_missing (LRB11)", r_robustness_cells),
         ("D1", "byte-identical JSON on repeated runs", d_identical),
         ("D2", "fixed key order", d_key_order),
-        ("X1", "no test or p-value object imported (AST)", x_no_test_objects),
-        ("X2", "every JSON float round-trips by repr", x_repr_floats),
+        ("X1", "no test or p-value object imported or reached in the six LREP modules (AST; L-14)",
+         x_no_test_objects),
+        ("X2", "JSON floats round-trip by repr; m(S,42) equals a float64 recomputation", x_repr_floats),
         ("X3", "pp appears in the markdown only", x_pp_markdown_only),
         ("X4", "no created path contains 'test'", x_no_test_path),
         ("X5", "path_problem: 'test' in any case, absolute, '..' and backslash", x_path_rule),
+        ("X6", "no slot key with ':' in the markdown; the JSON keeps them (IF§2)", x_no_slot_in_markdown),
     ]
 
 
