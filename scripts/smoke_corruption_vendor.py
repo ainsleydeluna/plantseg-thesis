@@ -447,7 +447,9 @@ def test_cache() -> None:
 
 # ---------------------------------------------------------------- 5b. official dependency pins
 def test_dependency_pins() -> None:
-    """The PIN DECISION is registered; EXECUTABLE VALIDATION is explicitly still pending."""
+    """The PIN DECISION is registered and EXECUTABLY VALIDATED: the 40/40 grid of 2026-09 (Python
+    3.11.15, severities 1-4) stays on record, and local block L1 ran the 56-case grid, severity 5
+    included, in the student image of record (Python 3.11.16; its log is committed)."""
     pins = cache.official_dependency_pins()
 
     check("official_pillow_machine_readable", pins["pillow"] == "12.3.0", pins["pillow"])
@@ -474,11 +476,26 @@ def test_dependency_pins() -> None:
 
     # two-phase honesty: both phases are now satisfied for the CORRUPTION CLOSURE ONLY
     check("versions_registered", pins["dependency_versions_registered"] is True)
+    evidence = pins["validation_evidence"]
+    l1 = evidence.get("student_image_validation") or {}
     check("corruption_environment_validated",
           pins["official_dependency_environment_validated"] is True
           and pins["byte_reproducibility_proven_under_these_pins"] is True
-          and "40/40" in pins["validation_evidence"]["reference_equivalence"],
-          pins["validation_evidence"]["validated_on_python"])
+          and "40/40" in evidence["reference_equivalence"]
+          and "56/56" in l1.get("reference_equivalence", "")
+          and l1.get("python") == "3.11.16"
+          and l1.get("image_digest") == cache.STUDENT_IMAGE_DIGEST
+          and l1.get("upstream_sdist_sha256") == prov.UPSTREAM_SDIST_SHA256,
+          f"{evidence['validated_on_python']} (40/40); student image {l1.get('python')} "
+          f"(56/56)")
+    log = REPO / l1["log"] if l1.get("log") else None
+    log_sha = hashlib.sha256(log.read_bytes()).hexdigest() if log and log.is_file() else None
+    check("severity5_reference_validated",
+          cache.SEVERITY5_REFERENCE_VALIDATED is True
+          and pins["severity5_reference_validated"] is True
+          and pins["severity5_reference_status"] == "validated"
+          and log_sha is not None and log_sha == l1.get("log_sha256"),
+          f"{l1.get('log')} sha256 {str(log_sha)[:16]}…")
     check("validation_scope_is_corruption_closure_only",
           pins["validation_scope"] == "corruption_dependency_closure_only"
           and pins["full_experiment_environment_validated"] is False,

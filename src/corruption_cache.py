@@ -156,6 +156,21 @@ VALIDATION_EVIDENCE = {
     "reference_equivalence": "40/40 byte-identical, zero tolerance "
                              "(5 corruptions x severities 1-4 x {square, non-square})",
     "isolated_environment": True,
+    "student_image_validation": {
+        "image_digest": "sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf",
+        "python": "3.11.16", "numpy": "1.26.4", "pillow": "12.3.0", "scikit_image": "0.23.2",
+        "check": "scripts/smoke_corruption_vendor.py",
+        "result": "PASS (102/102)",
+        "reference_equivalence": "56/56 byte-identical, zero tolerance (5 corruptions x their "
+                                 "severities (1-5; gaussian_noise 1-4) x {64x64, 40x72} + 4 "
+                                 "non-noise x severity 5 x {512x512, 512x384})",
+        "upstream_sdist_sha256": "044e173f24d5934899bdbf3596bfbec917e8083e507eed583ab217abebbe084d",
+        "commit": "0859d3e2356c392fc672805a2d8d821897a4060a",
+        "run_utc": "2026-10-26T15:53:57Z",
+        "log": "reports/lcorr_l1_severity5_grid_20261026.txt",
+        "source_log_name": "lcorr_l1_severity5_grid_20261026.log",
+        "log_sha256": "d0c8cd2eb5b2cb67939cd151f00625a619b7f019e92cf232d7f9e28277b03de5",
+    },
 }
 
 # SCOPE LIMIT — the two validation claims are NOT interchangeable. Only the corruption dependency
@@ -166,12 +181,12 @@ VALIDATION_SCOPE = "corruption_dependency_closure_only"
 FULL_EXPERIMENT_ENVIRONMENT_VALIDATED = False
 
 # SEVERITY 5 (L-AM16-SEV). The 40/40 evidence above covers severities 1-4. Severity 5 of the four
-# non-noise corruptions (AM-16 item 6) joins the reference grid in
-# scripts/smoke_corruption_vendor.py (56 cases), and that grid is evidence of record only when run
-# in the student image (local block L1). Until the L1 evidence commit sets this True and extends
-# VALIDATION_EVIDENCE, an official cache refuses severity-5 items; smoke and provisional caches may
-# hold them, and their manifests record the status "pending".
-SEVERITY5_REFERENCE_VALIDATED = False
+# non-noise corruptions (AM-16 item 6) joined the reference grid in
+# scripts/smoke_corruption_vendor.py (56 cases), and local block L1 validated it in the student
+# image of record: 56/56 under Python 3.11.16 on 2026-10-26, recorded with its log under
+# VALIDATION_EVIDENCE["student_image_validation"]. An official cache may therefore hold severity-5
+# items, and manifests record the status "validated".
+SEVERITY5_REFERENCE_VALIDATED = True
 
 # The corruption RUNTIME closure imports exactly these third-party modules (AST-verified in
 # scripts/smoke_corruption_vendor.py). scikit-image's own transitive dependencies are not corruption
