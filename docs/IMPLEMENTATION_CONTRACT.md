@@ -969,15 +969,17 @@ interpreter remains development evidence only.
   (see *Official experiment environment* below) but have not been executably validated together.
 
 ~~Generating the official 31,220-item cache remains a **separate** operation: it reads the PlantSeg
-test split and produces a large governed artifact.~~ This validation only removes the
-dependency-version blocker. **[UPDATED 2026-09-24 — B65 CP-006]** AM-16 item 6 adds 6,244 severity-5
-items for the four non-noise corruptions (1,561 × 4; 37,464 in all) ~~once lane L-AM16-SEV lands; until
-then the generator and cache refuse severity 5, and severity-5 reference equivalence is not validated.~~
+test split and produces a large governed artifact.~~
 **[UPDATED 2026-10-26 — L-CORR]** Generating the official cache remains a **separate** operation: one
 24-cell cache of **37,464** items (31,220 at severities 1–4 and 6,244 at severity 5) under one manifest,
 `plantseg-corruption-cache/2.0.0`, and one canonical checksum, generated and verified in the TEST session
 before any model is scored (AM-19 item 1(c)); its generator pin is the TL interface's (section 3,
-`plantseg-corruption-generator-pin/1.0.0`).
+`plantseg-corruption-generator-pin/1.0.0`). This validation only removes the
+dependency-version blocker. **[UPDATED 2026-09-24 — B65 CP-006]** AM-16 item 6 adds 6,244 severity-5
+items for the four non-noise corruptions (1,561 × 4; 37,464 in all) ~~once lane L-AM16-SEV lands; until
+then the generator and cache refuse severity 5, and severity-5 reference equivalence is not validated~~.
+**[UPDATED 2026-10-26 — L-CORR]** Lane L-AM16-SEV landed (3e054d2, merged f1effa5), and local
+block L1 validated severity-5 reference equivalence (f3df0fc; the L1 note above).
 
 **Descriptive backend-accuracy parity (ch3: "any accuracy difference between the two quantization
 configurations is documented")**
