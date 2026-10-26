@@ -290,6 +290,149 @@ def load_int8_student(resolved: dict, *, require_qnnpack: bool = True,
 
 
 # ---------------------------------------------------------------------------------------------
+# qat_fakequant_off (AM-4's fake-quant-off score; lane L-FQOFF, rulings FQR9 and FQR14)
+#
+# The selected epoch's pre-convert QAT state, epoch_ckpts/eNN.pt, scored where it is: Q2's prepared student
+# (src/quant/qat_artifacts.py prepared_skeleton) holding the state exactly, every fake-quant module's fake quantization
+# and observer disabled, in eval mode on the CPU. Each fused ConvBn then passes its weight unquantized and normalises
+# with the stored running statistics, and every activation fake-quant is the identity. No model file is written.
+# ---------------------------------------------------------------------------------------------
+def _fqoff_refuse(code: str, message: str):
+    """A refusal of the fake-quant-off load: an EvalRuntimeError, whose message reads "[code] ..."."""
+    from .eval_runtime import EvalRuntimeError
+    raise EvalRuntimeError(code, message)
+
+
+def load_qat_fakequant_off_student(fqoff: dict):
+    """Load the qat_fakequant_off student from `fqoff`, src.eval.stage_artifacts.validate_qat_fakequant_off_source's
+    carrier. Returns the model, in eval mode on the CPU.
+
+    In order (FQR9): the eNN.pt's bytes are read once and their sha256 compared with the carrier's before they are
+    loaded (EvalRuntimeError checkpoint_changed_after_validation, the FP32 path's code); they are loaded with
+    weights_only=True; prepared_skeleton() is built (build_student, then prepare_qat_model(select_backend=False)) and
+    the state copied into it exactly, the 18 FixedQParams aliases included (load_state_by_name; else
+    fqoff_load_not_exact); torch's disable_fake_quant and disable_observer are applied to every module; the model is put
+    in eval mode; and the census must find observer_enabled [0] and fake_quant_enabled [0] over at least one fake-quant
+    module, with every module in eval mode (else fqoff_fake_quant_enabled).
+    """
+    import io
+
+    from torch.ao.quantization import disable_fake_quant, disable_observer
+
+    from ..quant import qat as Q
+    from ..quant.qat_artifacts import load_state_by_name, prepared_skeleton
+    from .eval_runtime import EvalRuntimeError
+
+    path = Path(fqoff["checkpoint_path"])
+    raw = path.read_bytes()
+    digest = hashlib.sha256(raw).hexdigest()
+    if digest != fqoff["checkpoint_sha256"]:
+        raise EvalRuntimeError("checkpoint_changed_after_validation",
+                               f"checkpoint bytes changed between validation ({fqoff['checkpoint_sha256']}) and load "
+                               f"({digest})")
+    payload = torch.load(io.BytesIO(raw), map_location="cpu", weights_only=TORCH_LOAD_WEIGHTS_ONLY)
+    model = prepared_skeleton()
+    try:
+        load_state_by_name(model, payload["model_state_dict"])
+    except Exception as e:                                    # noqa: BLE001 -- any inexact copy is refused
+        _fqoff_refuse("fqoff_load_not_exact", f"{path}: the state does not load exactly into the prepared student: "
+                                              f"[{getattr(e, 'code', type(e).__name__)}] {str(e)[:300]}")
+    model.apply(disable_fake_quant)
+    model.apply(disable_observer)
+    model.eval()
+    flags = Q.flag_summary(model)
+    fq = Q.fake_quant_modules(model)
+    training = [n for n, m in model.named_modules() if m.training]
+    if flags != {"observer_enabled": [0], "fake_quant_enabled": [0]} or not fq or training:
+        _fqoff_refuse("fqoff_fake_quant_enabled", f"{path}: the census finds {flags} over {len(fq)} fake-quant "
+                                                  f"module(s), and {len(training)} module(s) in training mode")
+    return model
+
+
+def fp32_reference_from_qat_state(state: dict):
+    """The FP32 student holding a QAT state's weights and BN statistics: AM-4's "its FP32 weights after QAT" made
+    explicit (FQR14). Descriptive: the loader never calls it, and nothing selects or gates on it.
+
+    build_student(pretrained=False), unfused, in eval mode on the CPU. The keys are copied through the fusion groups the
+    student's fuse() makes, reached through src/quant/prepare.py _fused_copy as prepare_qat_model reaches it, never by
+    name: a fused ConvBn's weight (and bias) are its convolution's, its bn.* entries its BN sibling's (weight, bias,
+    running_mean, running_var, num_batches_tracked); an unfused or ConvReLU module keeps its keys; fake-quant and
+    observer entries, the 18 FixedQParams aliases among them, are left out. Every key of the state and of the FP32
+    student is accounted for, mapped or left out, and the FP32 load is strict. Returns (model, report): the counts by
+    kind and the fusion groups by type.
+    """
+    import torch.ao.nn.intrinsic as nni
+    from torch.ao.nn.intrinsic.qat.modules.conv_fused import _ConvBnNd
+    from torch.ao.quantization.fake_quantize import FakeQuantizeBase
+    from torch.ao.quantization.observer import ObserverBase
+
+    from ..quant.prepare import _fused_copy
+    from ..quant.qat_artifacts import alias_keys, prepared_skeleton
+
+    fp32 = build_fp32_student()
+    fp32_mods = dict(fp32.named_modules())
+    fp32_state = fp32.state_dict()
+    # the fusion groups, as fuse() makes them: each fused module with the siblings it absorbed (now Identity)
+    fused = _fused_copy(build_student(num_classes=FROZEN_NUM_CLASSES, pretrained=False), is_qat=True)
+    groups, by_type = {}, {}
+    for name, mod in fused.named_modules():
+        if not isinstance(mod, nni._FusedModule):
+            continue
+        parent = name.rpartition(".")[0]
+        absorbed = [f"{parent}.{c}" if parent else c
+                    for c, sub in (fused.get_submodule(parent) if parent else fused).named_children()
+                    if isinstance(sub, torch.nn.Identity)
+                    and not isinstance(fp32_mods.get(f"{parent}.{c}" if parent else c), torch.nn.Identity)]
+        names = [name, *absorbed]
+        if [type(m) for m in mod] != [type(fp32_mods.get(n)) for n in names]:
+            raise CheckpointError(f"the fusion group at {name} ({[type(m).__name__ for m in mod]}) is not the FP32 "
+                                  f"modules {names}")
+        groups[name] = names
+        by_type[type(mod).__name__] = by_type.get(type(mod).__name__, 0) + 1
+    prepared = prepared_skeleton()
+    pmods = dict(prepared.named_modules())
+    if set(state) != set(prepared.state_dict()):
+        raise CheckpointError("the state's keys are not the prepared student's: "
+                              f"{len(set(state) - set(prepared.state_dict()))} extra, "
+                              f"{len(set(prepared.state_dict()) - set(state))} missing")
+    aliases = set(alias_keys(prepared))
+    mapping, mapped, left_out = {}, {}, {}
+    for key in state:
+        parts = key.split(".")
+        owners = [p for p in (".".join(parts[:i]) for i in range(1, len(parts))) if p in pmods]
+        if key in aliases:
+            left_out["fixedqparams_alias"] = left_out.get("fixedqparams_alias", 0) + 1
+            continue
+        if any(isinstance(pmods[p], (FakeQuantizeBase, ObserverBase)) for p in owners):
+            left_out["fake_quant_or_observer"] = left_out.get("fake_quant_or_observer", 0) + 1
+            continue
+        owner = owners[-1] if owners else ""
+        attr = key[len(owner) + 1:] if owner else key
+        bn_of = owner[:-len(".bn")] if owner.endswith(".bn") else None
+        if isinstance(pmods.get(owner), _ConvBnNd):
+            kind, target = "convbn_convolution", f"{owner}.{attr}"
+        elif bn_of is not None and isinstance(pmods.get(bn_of), _ConvBnNd):
+            kind, target = f"convbn_bn.{attr}", f"{groups[bn_of][1]}.{attr}"
+        else:
+            kind, target = "same_name", key
+        mapping[key] = target
+        mapped[kind] = mapped.get(kind, 0) + 1
+    targets = list(mapping.values())
+    if len(set(targets)) != len(targets) or set(targets) != set(fp32_state):
+        raise CheckpointError(f"the mapping does not account for the FP32 student: "
+                              f"{len(set(fp32_state) - set(targets))} FP32 keys unmapped, "
+                              f"{len(set(targets) - set(fp32_state))} targets unknown")
+    wrong = [k for k, t in mapping.items()
+             if state[k].shape != fp32_state[t].shape or state[k].dtype != fp32_state[t].dtype]
+    if wrong:
+        raise CheckpointError(f"{len(wrong)} mapped entries differ in shape or dtype, e.g. {wrong[:3]}")
+    fp32.load_state_dict({t: state[k] for k, t in mapping.items()}, strict=True)
+    report = {"state_keys": len(state), "fp32_keys": len(fp32_state), "mapped": dict(sorted(mapped.items())),
+              "left_out": dict(sorted(left_out.items())), "fusion_groups": dict(sorted(by_type.items()))}
+    return fp32.eval(), report
+
+
+# ---------------------------------------------------------------------------------------------
 # Teacher (descriptive reference) -- evaluation-side adapter
 # ---------------------------------------------------------------------------------------------
 class TeacherEvalModel(torch.nn.Module):
