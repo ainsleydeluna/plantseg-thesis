@@ -23,19 +23,24 @@ creates has "test" in its name; TEST-named refusals use never-created paths.
   O   the outputs: strict canonical JSON, the md banner and no significance value, SHA256SUMS, the
       CLI (smoke and official), descriptive code only, the writer's failure paths (RE-9)
   H   scripts/rehearse_robustness_val.py (R-G5; the stand-in mapping; its branch refusals, RE-7;
-      exit 4, RE-8; R-G6 with --descriptive-json against B-4's report of fixture H, LE26)
+      exit 4, RE-8; R-G6 with --descriptive-json against B-4's report of fixture H, LE26; a report
+      whose 'models' is not a list, and the code provenance's coverage, L-CORR-B3's DL-24 C14-F2
+      and C14-F1)
   RC  the cell-record codes of src/eval/corrupted.py that B-4 reads
   M   mutations: the plan's five (M1-M5), LE2/LE4/LE7/LE13 (M6-M10), the DL-24 defects (M11-M18,
-      the per-key record mutants, MH7-MH10, MO7), the rehearsal's two, and one per refusal code,
-      each killed by its named case. A case that raised is no kill (its checks never ran); a case
-      that sees an outcome other than its expectation has run its checks.
+      the per-key record mutants, MH7-MH10, MO7), the rehearsal's two, LE26's three (MH11-MH13),
+      L-CORR-B3's DL-24 two (MH14, MH15), and one per refusal code, each killed by its named case.
+      A case that raised is no kill (its checks never ran); a case that sees an outcome other than
+      its expectation has run its checks.
 
 Run:  python -B scripts/smoke_robustness_report.py
 """
 from __future__ import annotations
 
+import ast
 import contextlib
 import hashlib
+import importlib
 import io
 import itertools
 import json
@@ -1661,6 +1666,53 @@ def h13():
     return ok and not out.exists(), f"rc {rc}: {stderr.strip()[:140]}"
 
 
+@case("H14")
+def h14():
+    """DL-24 C14-F2: a report whose 'models' is not a list (here 5), all else B-4's, holds no E1
+    model: refused (rehearsal_input_refused), exit 2, nothing written; never exit 4."""
+    path = h_descriptive("h14", lambda doc: doc.update(models=5))
+    code, rc, _, stderr, out, _ = rehearse(S["h"], descriptive=path)
+    ok = (rc == 2 and "[rehearsal_input_refused] the descriptive report holds no E1 model 'e1v'"
+          in stderr)
+    return ok and not out.exists(), f"rc {rc}: {stderr.strip()[:140]}"
+
+
+def imported_repo_files(path: Path) -> set:
+    """The repository files of every module a script imports, at any depth (function-level imports
+    included): the imported module's own file, or for `from <module> import <name>` the file of
+    <name> when it is a module, else of <module>. Read from the imported modules' __file__ as
+    strings; no module file is listed, searched or opened."""
+    files = set()
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.Import):
+            mods = [importlib.import_module(a.name) for a in node.names]
+        elif isinstance(node, ast.ImportFrom) and not node.level and node.module:
+            base = importlib.import_module(node.module)
+            mods = [getattr(base, a.name) if isinstance(getattr(base, a.name, None),
+                                                        types.ModuleType) else base
+                    for a in node.names]
+        else:
+            continue
+        for mod in mods:
+            file = getattr(mod, "__file__", None)
+            where = Path(os.path.abspath(file)) if file else None
+            if where is not None and REPO in where.parents:
+                files.add(where.relative_to(REPO).as_posix())
+    return files
+
+
+@case("H15")
+def h15():
+    """DL-24 C14-F1: the rehearsal's code provenance covers the code it runs: the script itself and
+    every repository module it imports, at any depth, are in RH.CODE_FILES (the two the finding
+    named among them)."""
+    script = Path(os.path.abspath(RH.__file__))
+    need = imported_repo_files(script) | {script.relative_to(REPO).as_posix()}
+    missing = sorted(need - set(RH.CODE_FILES))
+    named = {"src/corruption_cache.py", "src/corruption_roles.py"}
+    return named <= need and not missing, f"{len(need)} files needed; not listed: {missing}"
+
+
 LABELS = {
     "Q1": "Q1 per cell: the all-class pooled values and the disease-only column equal their closed "
           "forms for every cell of E1 and E6 (seed 42), the teacher and E1 seed 43",
@@ -1785,6 +1837,10 @@ LABELS = {
     "H11": "H11 (LE26) R-G6: dataset_miou_c on the loaded E1 runs equals B-4's Q3 bitwise; exit 0",
     "H12": "H12 (LE26) R-G6 fails on a Q3 one ulp away: exit 1, written, R-G5 still holds",
     "H13": "H13 (LE26) a report of other artifacts -> rehearsal_input_refused; nothing written",
+    "H14": "H14 (DL-24 C14-F2) a report whose 'models' is not a list -> rehearsal_input_refused; "
+           "exit 2, nothing written",
+    "H15": "H15 (DL-24 C14-F1) the rehearsal's CODE_FILES hold the script and every repository "
+           "module it imports",
 }
 
 
@@ -1917,6 +1973,11 @@ def mutations() -> None:
            (RH, "checks_hold", lambda doc: doc["r_g5"]["holds"]))
     mutant("MH13 the report not bound to the loaded artifacts (LE26)", ["H13"],
            (RH, "check_report_binding", lambda doc, e1_id, e1: None))
+    mutant("MH14 a non-list 'models' iterated as given (DL-24 C14-F2)", ["H14"],
+           (RH, "report_models", lambda doc: doc.get("models") or []))
+    mutant("MH15 src/corruption_cache.py left out of the rehearsal's provenance (DL-24 C14-F1)",
+           ["H15"], (RH, "CODE_FILES", tuple(f for f in RH.CODE_FILES
+                                             if f != "src/corruption_cache.py")))
     mutant("MO7 a failed write keeps its temporary directory (RE-9)", ["O7", "O8"],
            (RR, "_discard_dir", lambda tmp: None))
     for code, targets in (

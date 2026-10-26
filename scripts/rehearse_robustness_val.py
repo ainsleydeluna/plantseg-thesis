@@ -72,7 +72,7 @@ CODE_FILES = ("scripts/rehearse_robustness_val.py", "src/eval/corrupted.py",
               "src/stats/val_artifacts.py", "src/stats/ingest.py", "src/stats/align.py",
               "src/stats/artifact.py", "src/stats/tests.py", "src/stats/corruption_protocol.py",
               "configs/corruption_protocol.json", "src/stats/report.py",
-              "src/stats/noninferiority.py")
+              "src/stats/noninferiority.py", "src/corruption_cache.py", "src/corruption_roles.py")
 
 
 class RehearsalRefusal(RuntimeError):
@@ -181,10 +181,17 @@ def read_descriptive(path) -> dict:
     return doc
 
 
+def report_models(doc: dict) -> list:
+    """The report's models: a value that is not a list holds none, so it is refused below (exit 2)
+    rather than iterated as given."""
+    models = doc.get("models")
+    return models if isinstance(models, list) else []
+
+
 def check_report_binding(doc: dict, e1_id: str, e1: dict) -> None:
     """The report describes the artifacts loaded here: its E1 model names each of the 15 inferential
     cells' directory and four-file sha256 as read."""
-    model = next((m for m in doc.get("models") or [] if isinstance(m, dict)
+    model = next((m for m in report_models(doc) if isinstance(m, dict)
                   and m.get("file_id") == e1_id), None)
     if model is None or model.get("stage") != "E1":
         _refuse("rehearsal_input_refused", f"the descriptive report holds no E1 model {e1_id!r}")
