@@ -33,6 +33,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from . import heldout_inputs as H
+from . import lrep_descriptive as LD
 
 #: (candidate stage, the E3 parent's quantization it sits beside) at seed 42 (AM-23 item 6).
 ROWS = (("E6-E2", "E6"), ("E7-E2", "E7"))
@@ -119,8 +120,8 @@ def build_quant_rows(stats: H.StatsArtifact, inv: H.Inventory, cells: H.PlannedC
         e6x.append({"stage": stage, "slot": slot, "label": st.label if st else NO_SLOT,
                     "arms_row": arm_contrast_id(stage.split("-", 1)[1], "E6")})
     H.cross_check(loaded, {}, evaluator_commit=inv.evaluator_commit, official=stats.profile == "official")
-    return {"part": "quant", "title": TITLE, "rows": rows, "reference": reference, "e6_x": e6x,
-            "converted_val_scores": CONVERTED_VAL, "footnote": FOOTNOTE}
+    return {"part": "quant", "title": TITLE, "banner": LD.BANNER, "rows": rows, "reference": reference,
+            "e6_x": e6x, "converted_val_scores": CONVERTED_VAL, "footnote": FOOTNOTE}
 
 
 def _fmt(v) -> str:
@@ -128,7 +129,7 @@ def _fmt(v) -> str:
 
 
 def render_markdown(doc: dict, banner: str = "") -> list[str]:
-    out = [f"## {doc['title']}", "", banner,
+    out = [f"## {doc['title']}", "", banner, f"> {doc['banner']}", "",
            "| contrast | m candidate | m baseline | Δ all-class | Δ GT-present | Δ disease-only | note |",
            "|---|---|---|---|---|---|---|"]
     for r in [*doc["rows"], doc["reference"]]:

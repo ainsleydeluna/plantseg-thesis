@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-"""The LREP extension report (lane LREP, B-3): seed stability and the per-seed tables, the rare-class
-strata TEST tables, the default candidates, GT-present for every model of record, the fq_off table
-and the MDE entry, as a separate document beside report.py's report (K1; src/stats/report_extensions.py).
+"""The LREP extension report (lane LREP, B-3; B-5): seed stability and the per-seed tables, the
+rare-class strata TEST tables, the default candidates, GT-present for every model of record and every
+other clean canvas record, the fq_off table, the MDE entry, and B-5's descriptive parts (AM-18's arm
+tables, the duplicate-free TEST, AM-23's rows), as a separate document beside report.py's report (K1;
+src/stats/report_extensions.py). B-5's intervals use bootstrap.PRODUCTION_B replicates.
 
     python -B scripts/report_extensions.py --stats-artifact DIR --inventory FILE --out-dir DIR
         [--inventory-sha256 HEX] [--strata FILE] [--mde-entry FILE] [--parts seed,strata,...]
@@ -17,7 +19,8 @@ and the MDE entry, as a separate document beside report.py's report (K1; src/sta
   --strata          the strata file (default: the committed reports/strata/train_strata_v1.json)
   --mde-entry       the MDE entry (default: the one committed reports/derived/mde_entry_*.json, if
                     exactly one is tracked)
-  --parts           a comma-separated subset of seed,strata,defaults,am6,fqoff,mde (default all)
+  --parts           a comma-separated subset of seed,strata,defaults,am6,fqoff,mde,arms,dedup,quant
+                    (default all)
   --out-dir         a new directory, whose parent exists, outside the repository and every input
                     directory
 
@@ -38,7 +41,7 @@ EXIT_OK, EXIT_REFUSED, EXIT_ERROR = 0, 2, 4
 
 
 def parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description="LREP extension report (lane LREP, B-3).")
+    p = argparse.ArgumentParser(description="LREP extension report (lane LREP, B-3; B-5).")
     p.add_argument("--stats-artifact", type=Path, required=True)
     p.add_argument("--inventory", type=Path, required=True)
     p.add_argument("--inventory-sha256", default=None)

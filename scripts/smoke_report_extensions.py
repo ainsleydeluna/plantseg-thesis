@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""The LREP extension report end to end (lane LREP, B-3): src/stats/report_extensions.py and
-scripts/report_extensions.py against the plan of record's §1.6, §2.4, §3.3, D-13 and D-14, and
-LRB7 (fq_off) and LRB18 (a separate document; the MDE label and zero-tie shares).
+"""The LREP extension report end to end (lane LREP, B-3; B-5): src/stats/report_extensions.py and
+scripts/report_extensions.py against the plan of record's §1.6, §2.4, §3.3, D-13 and D-14, LRB7
+(fq_off), LRB18 (a separate document; the MDE label and zero-tie shares) and B5-S4 (B-5's parts).
 
 SYNTHETIC ONLY (DL-41): scripts/lrep_fixtures.py's world; the committed MDE entry
 (reports/derived/mde_entry_20261009T034825Z.json) is read as the MDE input. Created paths live under a
@@ -14,7 +14,7 @@ new directory in TMPDIR (left in place); none contains "test".
   F  the profile: nonofficial with a banner on every table and the unmet conditions named; an export
      read by LREP's stub keeps it nonofficial even beside an official statistics artifact (D-13; an
      unbound binding under Policy.OFFICIAL is seed R2f's); the inputs' split in the banner
-  C  each of the six parts present and populated
+  C  each of the nine parts present and populated (the am6 part with (d)'s rows)
   Q  the fq_off table (LRB7): its values, driver.load_input on a qat_fakequant_off artifact, a slot
      without one, E6-KD's row; a row without its record, a row of another seed, the 37's identities;
      AM-23's quant_descriptive QAT slots' rows and a cut one's label (B-5 (c))
@@ -24,6 +24,13 @@ new directory in TMPDIR (left in place); none contains "test".
   H  code provenance, exit codes 0 / 2 / 4, --parts, no temporary directory left after a failure,
      determinism, no 'test' path, the frozen code's provenance in the profile (O3)
   R  refusals: parts_invalid, mde_entry_invalid, usage_invalid
+  S  B5-S4: PARTS and --parts, the new parts under the split banner and "descriptive; outside protocol
+     1.0.0", each equal to its module's own build, the MDE part's caveat in the dedup labels, B =
+     PRODUCTION_B through the CLI and a smaller B keeping the profile nonofficial, dedup_invalid
+     through the CLI
+
+In process, the report is built with SMOKE_B bootstrap replicates; the CLI runs (W1, H7) use
+bootstrap.PRODUCTION_B.
 
 Run:  TMPDIR=<a scratch directory without 'test'> python -B scripts/smoke_report_extensions.py
 """
@@ -51,9 +58,13 @@ for p in (REPO, REPO / "scripts"):
         sys.path.insert(0, str(p))
 
 import lrep_fixtures as LF                                               # noqa: E402
+from src.stats import arm_tables as AT                                   # noqa: E402
 from src.stats import artifact as A                                      # noqa: E402
+from src.stats import bootstrap as BS                                    # noqa: E402
+from src.stats import dedup_subset as DS                                 # noqa: E402
 from src.stats import driver as D                                        # noqa: E402
 from src.stats import heldout_inputs as H                                # noqa: E402
+from src.stats import quant_rows as QR                                   # noqa: E402
 from src.stats import report as RP                                       # noqa: E402
 from src.stats import report_extensions as RX                            # noqa: E402
 from src.stats import seed_stability as SS                               # noqa: E402
@@ -63,11 +74,15 @@ CTX = types.SimpleNamespace(world=None, out=None, doc=None, paths={}, cli=None)
 MDE = REPO / "reports" / "derived" / "mde_entry_20261009T034825Z.json"
 CLI = REPO / "scripts" / "report_extensions.py"
 #: Texts written out here rather than read from the module under test (R4-03): LRB7's note and the
-#: seven LREP code paths.
+#: eleven LREP code paths (B5-S4 adds B-5's four modules).
 FQOFF_NONE = "not available: no fq_off artifact"
 LREP_FILES = ["src/stats/heldout_inputs.py", "src/stats/seed_stability.py", "src/stats/strata_tables.py",
               "src/stats/default_candidates.py", "src/stats/am6_tables.py", "src/stats/report_extensions.py",
-              "scripts/report_extensions.py"]
+              "src/stats/lrep_descriptive.py", "src/stats/arm_tables.py", "src/stats/dedup_subset.py",
+              "src/stats/quant_rows.py", "scripts/report_extensions.py"]
+PARTS = ("seed", "strata", "defaults", "am6", "fqoff", "mde", "arms", "dedup", "quant")
+DESCRIPTIVE = "descriptive; outside protocol 1.0.0"
+SMOKE_B = 60
 BANNER = "**NONOFFICIAL**"
 
 
@@ -106,7 +121,7 @@ def variant(name, edit):
     if name not in CTX.paths:
         export, binding = copy.deepcopy(CTX.world.export), copy.deepcopy(CTX.world.binding)
         edit(export, binding)
-        CTX.paths[name] = LF.write_inventory(CTX.world.fresh(name), export, binding)
+        CTX.paths[name] = LF.write_inventory(CTX.world.fresh(name), export, binding, CTX.world.dedup)
     return CTX.paths[name]
 
 
@@ -117,7 +132,7 @@ def part(doc, name):
 def build(**kw):
     w = CTX.world
     args = dict(stats_artifact=w.stats_path, inventory=w.inventory_path, input_root=w.input_root,
-                strata=w.strata_path, mde_entry=MDE)
+                strata=w.strata_path, mde_entry=MDE, B=SMOKE_B)
     args.update(kw)
     return RX.build_report(**args)
 
@@ -220,9 +235,10 @@ def f_banner():
     blocks.append(cur)
     tables = [b for b in blocks if any(x.startswith("|---") for x in b)]
     bare = [b[0] for b in tables if not any(BANNER in x for x in b)]
-    # seed 3, strata 1 and its 8 appendix pairs, defaults 1, am6 1, fqoff 1, mde 1
+    # seed 3, strata 1 and its 8 appendix pairs, defaults 1, am6 2 (B-5 (d)), fqoff 1, mde 1; B-5:
+    # arms 1, dedup 5, quant 1
     return (doc["profile"] == "nonofficial" and any(BANNER in x for x in blocks[0])
-            and len(tables) == 16 and not bare), f"{len(tables)} tables; without a banner: {bare}"
+            and len(tables) == 24 and not bare), f"{len(tables)} tables; without a banner: {bare}"
 
 
 def f_split():
@@ -495,6 +511,113 @@ def r_usage():
     return code == 2 and "REFUSED (usage_invalid)" in so, so[-200:]
 
 
+# --------------------------------------------------------------------------------------------------
+# S: B5-S4
+# --------------------------------------------------------------------------------------------------
+def inputs():
+    st = H.load_stats_artifact(CTX.world.stats_path, CTX.world.input_root)
+    inv = H.open_inventory(CTX.world.inventory_path, policy=st.policy)
+    return st, inv, H.planned_cells(inv)
+
+
+def section(md: str, title: str) -> str:
+    """The markdown from a part's heading to the next part's."""
+    i = md.index(f"## {title}")
+    j = md.find("\n## ", i + 1)
+    return md[i:] if j < 0 else md[i:j]
+
+
+def s_parts():
+    """PARTS is Part 1's six then arms, dedup and quant; --parts accepts the new names and returns them in
+    that order; an unknown name is still refused."""
+    ok, det = refused("parts_invalid", lambda: RX.parse_parts("dedup,bogus"))
+    return (RX.PARTS == PARTS and RX.parse_parts("quant,arms") == ("arms", "quant")
+            and RX.parse_parts(None) == PARTS and ok), det
+
+
+def s_banner():
+    """In the CLI's markdown, each new part's section carries the split banner and the note."""
+    md = (CTX.out / "report_extensions.md").read_text(encoding="utf-8")
+    bad = [t for t in (AT.TITLE, DS.TITLE, QR.TITLE)
+           if not (BANNER in section(md, t) and DESCRIPTIVE in section(md, t))]
+    return not bad, str(bad)
+
+
+def s_am6():
+    """The am6 part (with coverage) holds the 21 planned rows and (d)'s 23, the teacher's with a null seed
+    and its roles; the markdown's second table follows the planned one."""
+    p = part(CTX.doc, "am6")
+    others = [r for r in p["rows"] if r.get("role") not in ("family", "per_seed")]
+    teacher = [r for r in others if r["stage"] == "teacher"]
+    md = (CTX.out / "report_extensions.md").read_text(encoding="utf-8")
+    return (len(p["rows"]) == 44 and len(others) == 23 and len(teacher) == 1 and teacher[0]["seed"] is None
+            and teacher[0]["roles"] == ["teacher_reference"]
+            and "### Every other clean canvas TEST record" in section(md, p["title"])), str(len(others))
+
+
+def s_arms():
+    st, inv, cells = inputs()
+    want = AT.build_arm_tables(st, inv, cells, input_root=CTX.world.input_root, B=SMOKE_B)
+    got = part(build(parts="arms"), "arms")
+    return A.canonical_json(got) == A.canonical_json(want), ""
+
+
+def s_dedup():
+    """The dedup part's labels read the MDE part's committed caveat (False here) and mde_w."""
+    doc = build(parts="mde,dedup")
+    mde, got = part(doc, "mde"), part(doc, "dedup")
+    st, inv, cells = inputs()
+    want = DS.build_dedup(st, inv, cells, input_root=CTX.world.input_root, B=SMOKE_B,
+                          power_caveat=mde["power_caveat"], mde_w=mde.get("mde_w_committed"))
+    return (mde["power_caveat"] is False and got["power_caveat"] is False
+            and A.canonical_json(got) == A.canonical_json(want)), str(mde["power_caveat"])
+
+
+def s_quant():
+    st, inv, cells = inputs()
+    want = QR.build_quant_rows(st, inv, cells, input_root=CTX.world.input_root)
+    return A.canonical_json(part(build(parts="quant"), "quant")) == A.canonical_json(want), ""
+
+
+def s_unmet_b():
+    """An official statistics artifact read by TMAN with every other condition met: B = 60 in the arms
+    part is named (bootstrap_replicates_nonproduction); B = PRODUCTION_B is not."""
+    st = H.load_stats_artifact(CTX.world.stats_path, CTX.world.input_root)
+    fake = types.SimpleNamespace(**{**st.__dict__, "profile": "official"})
+    inv = types.SimpleNamespace(bound=True, reader="tman.read_inventory", doc={"binding": {"state": "bound"}})
+    code = {"code_clean_at_commit": True, "report_code_unmet": []}
+    low = RX.official_unmet(fake, inv, {"arms": {"B": 60}, "dedup": {"B": 10_000}}, code)
+    prod = RX.official_unmet(fake, inv, {"arms": {"B": 10_000}, "dedup": {"B": 10_000}}, code)
+    return (low == [("bootstrap_replicates_nonproduction", "arms: B = 60, not 10000")] and prod == []
+            and BS.PRODUCTION_B == 10_000), str(low)
+
+
+def s_cli_b():
+    """The CLI's arms and dedup parts, and every interval in them, use B = 10,000 (bootstrap.PRODUCTION_B)."""
+    arms, dedup = part(CTX.doc, "arms"), part(CTX.doc, "dedup")
+    bs = ([arms["B"], dedup["B"]] + [r["per_image"]["B"] for r in arms["rows"] if r["per_image"]]
+          + [i["B"] for c in dedup["contrasts"] for i in c["subset"]["intervals"]]
+          + [dedup["noninferiority"]["subset"]["interval"]["B"]])
+    return len(bs) == 2 + 8 + 31 + 1 and set(bs) == {10_000}, str(sorted(set(bs)))
+
+
+def s_cli_dedup():
+    """--parts dedup on an export whose dedup is null: exit 2, dedup_invalid, nothing written."""
+    def edit(export, binding):
+        export["dedup"] = None
+    out = new_out("rx_dedup_null")
+    code, so, _ = cli(*base_args(out, inventory=variant("dedup_null", edit), parts="dedup"))
+    return code == 2 and "REFUSED (dedup_invalid)" in so and not out.exists(), so[-200:]
+
+
+def s_alone():
+    """--parts dedup alone still reads the MDE entry for its caveat (not added as a part); --parts arms
+    alone gives the arms part only."""
+    d, a = build(parts="dedup"), build(parts="arms")
+    return ([p["part"] for p in d["parts"]] == ["dedup"] and part(d, "dedup")["power_caveat"] is False
+            and [p["part"] for p in a["parts"]] == ["arms"]), ""
+
+
 def setup(root: Path, world=None) -> None:
     CTX.world = world or LF.build_world(root)
     CTX.out, CTX.doc, CTX.paths = None, None, {}
@@ -522,11 +645,16 @@ def cases():
             ("C2", "strata: eight pairs", c_part("strata", lambda p: len(p["pairs"]) == 8)),
             ("C3", "defaults: D1 and D2", c_part("defaults", lambda p: [r["row"] for r in p["rows"]]
                                                  == ["D1", "D2"])),
-            ("C4", "am6: 21 rows", c_part("am6", lambda p: len(p["rows"]) == 21)),
+            ("C4", "am6: 21 planned rows and (d)'s 23 (B-5)", c_part("am6", lambda p: len(p["rows"]) == 44)),
             ("C5", "fqoff: six E5/E6 rows, E6-KD and the three quant_descriptive QAT slots (B-5 (c))",
              c_part("fqoff", lambda p: len(p["rows"]) == 10)),
             ("C6", "mde: the three pairs", c_part("mde", lambda p: sorted(p["pairs"]) == ["43-42", "44-42",
                                                                                          "44-43"])),
+            ("C7", "arms: the eight rows (B-5 (a))", c_part("arms", lambda p: len(p["rows"]) == 8)),
+            ("C8", "dedup: the eight contrasts and the NI check (B-5 (b))",
+             c_part("dedup", lambda p: len(p["contrasts"]) == 8 and "noninferiority" in p)),
+            ("C9", "quant: E6-E2 and E7-E2 beside E2 - E3 (B-5 (c))",
+             c_part("quant", lambda p: len(p["rows"]) == 2 and p["reference"] is not None)),
             ("Q1", "fq_off values beside int8_qat (m and the difference)", q_values),
             ("Q2", "driver.load_input passes a qat_fakequant_off artifact (LRB7)", q_load_input),
             ("Q3", "no fq_off row: 'not available: no fq_off artifact'", q_not_available),
@@ -543,7 +671,7 @@ def cases():
              m_mde),
             ("N1", "report.build_report keeps three unpopulated extension points (K1)", n_report_points),
             ("N2", "no LREP file imports rehearsal.py or assigns a module attribute", n_no_rehearsal),
-            ("H1", "code provenance of the seven LREP paths is recorded", h_code),
+            ("H1", "code provenance of the eleven LREP paths is recorded", h_code),
             ("H2", "exit 2 on a refusal (--parts repeated)", h_exit_2),
             ("H3", "exit 4 on an unexpected failure", h_exit_4),
             ("H4", "--parts selects parts", h_parts),
@@ -553,7 +681,18 @@ def cases():
             ("H8", "the frozen code and the CLI are recorded and gate the profile (O3)", h_report_code),
             ("R1", "parts_invalid", r_parts),
             ("R2", "mde_entry_invalid (an MDE path that does not exist)", r_mde),
-            ("R3", "usage_invalid (--repo-root without --synthetic-inputs)", r_usage)]
+            ("R3", "usage_invalid (--repo-root without --synthetic-inputs)", r_usage),
+            ("S1", "PARTS gains arms, dedup and quant after mde; --parts accepts and orders them", s_parts),
+            ("S2", "the new parts render under the split banner and 'descriptive; outside protocol 1.0.0'",
+             s_banner),
+            ("S3", "the am6 part carries (d)'s rows: the teacher's among them, a second table", s_am6),
+            ("S4", "the arms part equals arm_tables.build_arm_tables at the same B", s_arms),
+            ("S5", "the dedup part equals dedup_subset.build_dedup with the MDE part's caveat", s_dedup),
+            ("S6", "the quant part equals quant_rows.build_quant_rows", s_quant),
+            ("S7", "a B other than PRODUCTION_B is an unmet official condition", s_unmet_b),
+            ("S8", "through the CLI every B-5 interval has B = PRODUCTION_B", s_cli_b),
+            ("S9", "the CLI refuses --parts dedup on an export whose dedup is null (exit 2)", s_cli_dedup),
+            ("S10", "--parts dedup alone reads the MDE entry's caveat; --parts arms alone", s_alone)]
 
 
 def run_case(fn):

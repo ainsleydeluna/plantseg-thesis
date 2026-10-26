@@ -1,5 +1,6 @@
-"""The LREP extension report (lane LREP, B-3): the tables report.py's three extension points name,
-written as a separate document (K1; LRB18), plus the fq_off table (LRB7; TL-12) and the MDE label.
+"""The LREP extension report (lane LREP, B-3; B-5): the tables report.py's three extension points name,
+written as a separate document (K1; LRB18), plus the fq_off table (LRB7; TL-12), the MDE label and
+B-5's descriptive parts (B5-S4).
 
 report.py, rehearsal.py and their smokes are untouched: report.build_report keeps its three
 `extension_points` unpopulated (scripts/smoke_stats_report.py:383-385), and this report names the
@@ -9,7 +10,8 @@ Parts, in order (`--parts` selects a subset; plan §1.6, §2.4, §3.3):
   seed      Seed stability (AM-8; AM-19 item 6) and the per-seed tables -- src.stats.seed_stability
   strata    Rare-class strata on TEST (AM-17 item 8) -- src.stats.strata_tables
   defaults  Default candidates on TEST (AM-17 item 6) -- src.stats.default_candidates
-  am6       GT-present on TEST for every model of record (AM-6; AM-17 item 1(b)) -- src.stats.am6_tables
+  am6       GT-present on TEST for every model of record (AM-6; AM-17 item 1(b)), and for every other
+            clean canvas record (B-5 (d); coverage) -- src.stats.am6_tables
   fqoff     AM-4's fake-quant-off TEST score of each selected QAT model of record beside its int8_qat
             value (TL-12; LRB7): the qat_fakequant_off rows of family/per_seed E5/E6 slots, E6-KD's
             if it exists, and those of AM-23's quant_descriptive QAT slots E6-E2, E6-R1 and E6-R2
@@ -19,6 +21,13 @@ Parts, in order (`--parts` selects a subset; plan §1.6, §2.4, §3.3):
             family slot's model (R-11)
   mde       the committed MDE entry's mde_w, tau_p, power_caveat, label and each pair's share_ties and
             n_zero (AM-17 item 3(c), (e), (f); DL-99; LRB18)
+  arms      AM-18's arm tables (items 3(d) and 11; B-5 (a)) -- src.stats.arm_tables
+  dedup     the duplicate-free TEST (AM-18 item 8(c); B-5 (b)), its labels with the MDE part's caveat --
+            src.stats.dedup_subset
+  quant     AM-23's descriptive quantizations (items 5-6; B-5 (c)) -- src.stats.quant_rows
+B-5's parts are descriptive, outside protocol 1.0.0, and render under the split banner and that note
+(B5-S4). Their intervals use B bootstrap replicates: bootstrap.PRODUCTION_B unless a caller passes
+another B, which keeps the profile nonofficial (bootstrap_replicates_nonproduction).
 
 Every input is verified first: the statistics artifact with all thirteen checks (R-1), then the
 export through the reader (R-2), then the 21 planned cells (R-3 to R-6, R-12 to R-14). The profile
@@ -45,14 +54,16 @@ import uuid
 from pathlib import Path
 
 from . import heldout_inputs as H
+from .bootstrap import PRODUCTION_B
 
 SCHEMA = "plantseg-lrep-report-extensions/1.0.0"
-PARTS = ("seed", "strata", "defaults", "am6", "fqoff", "mde")
+PARTS = ("seed", "strata", "defaults", "am6", "fqoff", "mde", "arms", "dedup", "quant")
 OUT_FILES = ("SHA256SUMS", "report_extensions.json", "report_extensions.md")
 LREP_CODE_PATHS = ("src/stats/heldout_inputs.py", "src/stats/seed_stability.py",
                    "src/stats/strata_tables.py", "src/stats/default_candidates.py",
                    "src/stats/am6_tables.py", "src/stats/report_extensions.py",
-                   "scripts/report_extensions.py")
+                   "src/stats/lrep_descriptive.py", "src/stats/arm_tables.py", "src/stats/dedup_subset.py",
+                   "src/stats/quant_rows.py", "scripts/report_extensions.py")
 #: The code that computes the report's numbers, clean at HEAD for an official report (O3's paths, which
 #: hold all of src/stats, and this CLI).
 REPORT_CODE_PATHS = ("src/stats", "src/stats/driver.py", "scripts/run_stats.py",
@@ -234,13 +245,19 @@ def official_unmet(stats: H.StatsArtifact, inv: H.Inventory, parts_docs: dict, c
     if code.get("code_clean_at_commit") is not True:
         unmet.append(("lrep_code_not_clean_at_head", str(code.get("code_clean_at_commit"))))
     unmet += [tuple(u) for u in code.get("report_code_unmet", [])]
+    for name in ("arms", "dedup"):
+        p = parts_docs.get(name)
+        if p is not None and p["B"] != PRODUCTION_B:
+            unmet.append(("bootstrap_replicates_nonproduction", f"{name}: B = {p['B']}, not {PRODUCTION_B}"))
     return unmet
 
 
 def build_report(*, stats_artifact, inventory, input_root, strata=None, mde_entry=None, parts=None,
-                 reader=None, expect_inventory_sha256=None) -> dict:
-    """Verify every input, build the selected parts and the profile. Refuses by code."""
+                 reader=None, expect_inventory_sha256=None, B: int = PRODUCTION_B) -> dict:
+    """Verify every input, build the selected parts and the profile. Refuses by code. `B` is the
+    replicate count of B-5's intervals (PRODUCTION_B unless a smoke passes another)."""
     from . import seed_stability, strata_tables, default_candidates, am6_tables
+    from . import arm_tables, dedup_subset, quant_rows
     from .artifact import code_provenance_unmet
     from .val_artifacts import code_provenance
     parts = parse_parts(parts)
@@ -262,11 +279,21 @@ def build_report(*, stats_artifact, inventory, input_root, strata=None, mde_entr
             docs[part] = default_candidates.build_default_candidates(stats, inv, cells,
                                                                      input_root=Path(input_root))
         elif part == "am6":
-            docs[part] = am6_tables.build_am6_tables(stats, inv, cells, input_root=Path(input_root))
+            docs[part] = am6_tables.build_am6_tables(stats, inv, cells, input_root=Path(input_root),
+                                                     coverage=True)
         elif part == "fqoff":
             docs[part] = build_fqoff(stats, inv, cells, input_root=Path(input_root))
         elif part == "mde":
             docs[part] = build_mde(mde_entry, official=official)
+        elif part == "arms":
+            docs[part] = arm_tables.build_arm_tables(stats, inv, cells, input_root=Path(input_root), B=B)
+        elif part == "dedup":
+            mde = docs.get("mde") or build_mde(mde_entry, official=official)
+            docs[part] = dedup_subset.build_dedup(stats, inv, cells, input_root=Path(input_root), B=B,
+                                                  power_caveat=mde["power_caveat"],
+                                                  mde_w=mde.get("mde_w_committed"))
+        elif part == "quant":
+            docs[part] = quant_rows.build_quant_rows(stats, inv, cells, input_root=Path(input_root))
     code = {**code_provenance(LREP_CODE_PATHS), "report_code_paths": list(REPORT_CODE_PATHS),
             "report_code_unmet": [list(u) for u in code_provenance_unmet(paths=REPORT_CODE_PATHS)]}
     unmet = official_unmet(stats, inv, docs, code)
@@ -304,6 +331,7 @@ def banner(doc: dict) -> str:
 
 def render_markdown(doc: dict) -> str:
     from . import seed_stability, strata_tables, default_candidates, am6_tables
+    from . import arm_tables, dedup_subset, quant_rows
     b = banner(doc)
     st = doc["statistics_artifact"]
     out = [f"# LREP extension report -- {st['run_id']}", "", b,
@@ -314,7 +342,8 @@ def render_markdown(doc: dict) -> str:
            f"{doc['code']['code_clean_at_commit']}.", ""]
     render = {"seed": seed_stability.render_markdown, "strata": strata_tables.render_markdown,
               "defaults": default_candidates.render_markdown, "am6": am6_tables.render_markdown,
-              "fqoff": render_fqoff, "mde": render_mde}
+              "fqoff": render_fqoff, "mde": render_mde, "arms": arm_tables.render_markdown,
+              "dedup": dedup_subset.render_markdown, "quant": quant_rows.render_markdown}
     for part in doc["parts"]:
         out += render[part["part"]](part, b)
     return "\n".join(out) + "\n"
