@@ -536,8 +536,9 @@ def s_parts():
 
 
 def s_banner():
-    """In the CLI's markdown, each new part's section carries the split banner and the note."""
-    md = (CTX.out / "report_extensions.md").read_text(encoding="utf-8")
+    """Each new part's section of the markdown carries the split banner and the note (rendered in process
+    from the CLI's JSON, or from the in-process report when the CLI has not run)."""
+    md = RX.render_markdown(the_doc())
     bad = [t for t in (AT.TITLE, DS.TITLE, QR.TITLE)
            if not (BANNER in section(md, t) and DESCRIPTIVE in section(md, t))]
     return not bad, str(bad)
@@ -545,11 +546,12 @@ def s_banner():
 
 def s_am6():
     """The am6 part (with coverage) holds the 21 planned rows and (d)'s 23, the teacher's with a null seed
-    and its roles; the markdown's second table follows the planned one."""
-    p = part(CTX.doc, "am6")
+    and its roles; the markdown's second table follows the planned one. Built here."""
+    doc = build(parts="am6")
+    p = part(doc, "am6")
     others = [r for r in p["rows"] if r.get("role") not in ("family", "per_seed")]
     teacher = [r for r in others if r["stage"] == "teacher"]
-    md = (CTX.out / "report_extensions.md").read_text(encoding="utf-8")
+    md = RX.render_markdown(doc)
     return (len(p["rows"]) == 44 and len(others) == 23 and len(teacher) == 1 and teacher[0]["seed"] is None
             and teacher[0]["roles"] == ["teacher_reference"]
             and "### Every other clean canvas TEST record" in section(md, p["title"])), str(len(others))
