@@ -14,10 +14,11 @@ model or GPU; no created path contains "test".
   L  the cell labels (IF§11.2's map; AM-19 item 6(e); D-6; D-15), from world variants
   W  the world end to end: ten labelled rows, robustness at every seed, ignored slots never refused,
      cut-run VAL curves (iterations for KD, epochs for QAT, the cut entry's comparator, never
-     interpolated), divergences and the verdict sentence
+     interpolated), divergences and the verdict sentence; B-5 (e): an attempt with no VAL row (R2-04)
+     and a non-finite comparator row (R2-09)
   R  refusals: one case per code, each reached with every earlier gate passing (R-15 is an assertion),
      and one per further raise site the DL-24 review added (R2h-R2j, R4c-R4d, R12b-R12e, R13b, R14b,
-     R17b, R18b)
+     R17b, R18b); B-5 (e): a null freeze under Policy.OFFICIAL (R2k; R1-12)
   D  determinism
   X  hygiene: no test or p-value object imported, repr floats, pp only in markdown, no 'test' path
 
@@ -695,6 +696,49 @@ def v_cut_e2_odd(export, binding):
     entry(export, "E2:s43")["telemetry"] = [CTX.tel["e2_s43_odd"]]
 
 
+def v_cut_e2_e3_empty(export, binding):
+    """W9's pair, each cut run with a second attempt whose telemetry holds no VAL row."""
+    v_cut_e2_e3(export, binding)
+    entry(export, "E2:s43")["telemetry"].append(CTX.tel["e2_s43_empty"])
+    entry(export, "E3:s43")["telemetry"].append(CTX.tel["e3_s43_empty"])
+
+
+def w_no_val_rows():
+    """B-5 (e), R2-04: an attempt whose telemetry holds no VAL row reads "wrote no VAL rows" -- the cut
+    run's own and a no-model comparator's -- in the JSON and the markdown."""
+    doc = seed_doc(variant("cut_e2_e3_empty", v_cut_e2_e3_empty))
+    b = next(x for x in doc["cut_runs"] if (x["stage"], x["seed"]) == ("E2", 43))
+    own = {a["run_id"]: a for a in b["attempts"]}
+    e3 = next(c for c in b["comparators"] if c["stage"] == "E3")
+    theirs = {a["run_id"]: a for a in e3["attempts"]}
+    md = SS.render_markdown(doc)
+    a2, e3a2 = "e2_s43_lambda0.5_80k_a2", "e3_s43_lambda0.5_alpha25_80k_a2"
+    return (own[a2]["points"] == [] and own[a2]["note"] == "wrote no VAL rows"
+            and own["e2_s43_lambda0.5_80k_a1"]["note"] is None and theirs[e3a2]["note"] == "wrote no VAL rows"
+            and f"  - attempt `{a2}`: wrote no VAL rows" in md
+            and f"    - attempt `{e3a2}`: wrote no VAL rows" in md), str(own.get(a2))[:300]
+
+
+def v_cut_e2_nan(export, binding):
+    """E2 cut at 43; its comparator E1 at 43 (the run of record) wrote a NaN VAL score at 8000."""
+    v_cut_e2(export, binding)
+    entry(export, "E1:s43")["telemetry"] = [CTX.tel["e1_s43_nan"]]
+
+
+def w_nonfinite_comparator():
+    """B-5 (e), R2-09: a comparator's non-finite VAL row carries its tag ("nan") in the JSON and reads
+    "non-finite (nan)" in the markdown; a point the comparator did not write stays the absent mark."""
+    doc = seed_doc(variant("cut_e2_nan", v_cut_e2_nan))
+    b = next(x for x in doc["cut_runs"] if (x["stage"], x["seed"]) == ("E2", 43))
+    e1 = next(c for c in b["comparators"] if c["stage"] == "E1")
+    vals = {v["iter"]: v for v in e1["values"]}
+    line = next((ln for ln in SS.render_markdown(doc) if ln.startswith("  - comparator E1 seed 43")), "")
+    return (vals[8000]["all_class_miou"] is None and vals[8000]["nonfinite"] == "nan"
+            and vals[50000]["all_class_miou"] is None and vals[50000]["nonfinite"] is None
+            and vals[4000]["nonfinite"] is None and isinstance(vals[4000]["all_class_miou"], float)
+            and "8000: non-finite (nan)" in line and "50000: —" in line), line[:300]
+
+
 def w_no_shared_point():
     """A comparator curve that shares no point with the cut run is stated as such in the markdown, beside
     its empty values (LRB6; R2-02)."""
@@ -752,6 +796,17 @@ def r_freeze():
     def edit(export, binding):
         export["freeze"]["manifest_sha256"] = LF.syn_sha("another manifest")
     return refused("freeze_mismatch", lambda: inventory(variant("freeze", edit)))
+
+
+def r_freeze_null_official():
+    """B-5 (e), R1-12: a null freeze under Policy.OFFICIAL, read through the non-stub reader the OFFICIAL
+    cases use (R1-11), is freeze_mismatch; the fixtures' policy reads the same export."""
+    def edit(export, binding):
+        export["freeze"] = None
+    p = variant("freeze_null", edit)
+    ok, detail = refused("freeze_mismatch",
+                         lambda: inventory(p, policy=Policy.OFFICIAL, reader=standin_reader))
+    return ok and inventory(p).doc["freeze"] is None, detail
 
 
 def r_slot_missing():
@@ -1139,9 +1194,25 @@ def x_no_slot_in_markdown():
 # --------------------------------------------------------------------------------------------------
 # setup and run
 # --------------------------------------------------------------------------------------------------
+def write_nan_telemetry(w, name: str, *, run_id: str, nan_at: int) -> dict:
+    """A KD telemetry file in the trainers' format whose VAL score at `nan_at` is NaN (E1's writer may
+    emit NaN, train_e1.py:205-209; LF.write_telemetry refuses it). Returns the export's item."""
+    rel = f"telemetry/{name}.jsonl"
+    rows = [{"event": "run_meta", "mode": "real", "run_id": run_id}]
+    for u, v in LF.kd_curve(0.361):
+        rows.append({"event": "train", "iter": u, "loss": 0.5})
+        rows.append({"event": "val", "iter": u, "all_class_miou": float("nan") if u == nan_at else v,
+                     "disease_only_miou_PROVISIONAL": v, "wall_clock": 1.79e9 + u})
+    p = w.input_root / rel
+    if p.exists() or "test" in rel.lower():
+        raise ValueError(rel)
+    p.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8", newline="\n")
+    return {"run_id": run_id, "path": rel, "sha256": H.sha256_file(p)}
+
+
 def setup(root: Path, world=None) -> None:
-    """Build the world once (or take a shared one): the base fixtures, two partial telemetry files and
-    two edited copies."""
+    """Build the world once (or take a shared one): the base fixtures, partial, empty and non-finite
+    telemetry files, and two edited copies."""
     w = world or LF.build_world(root)
     CTX.world, CTX.stats, CTX.paths = w, None, {}
     CTX.tel["e2_s43_cut"] = LF.write_telemetry(
@@ -1154,6 +1225,13 @@ def setup(root: Path, world=None) -> None:
     CTX.tel["e2_s43_odd"] = LF.write_telemetry(w, "e2_s43_odd", run_id="e2_s43_lambda0.5_80k_a1",
                                                unit="iter", points=LF.kd_curve(0.37, iters=[2000, 6000,
                                                                                           10000]))
+    # B-5 (e): attempts that wrote no VAL row (R2-04), and E1's seed-43 run with a NaN VAL score (R2-09)
+    CTX.tel["e2_s43_empty"] = LF.write_telemetry(w, "e2_s43_empty", run_id="e2_s43_lambda0.5_80k_a2",
+                                                 unit="iter", points=[])
+    CTX.tel["e3_s43_empty"] = LF.write_telemetry(w, "e3_s43_empty", run_id="e3_s43_lambda0.5_alpha25_80k_a2",
+                                                 unit="iter", points=[])
+    CTX.tel["e1_s43_nan"] = write_nan_telemetry(w, "e1_s43_nan", run_id=LF.training_run_id("E1", 43),
+                                                nan_at=8000)
     CTX.copies["upstream"] = LF.edited_copy(
         w, w.art("E2", 43), "e2_s43_clean_upstream",
         lambda s: {**s, "dataset": {**s["dataset"], "preprocess_protocol": "upstream/1.0.0"}})
@@ -1227,6 +1305,9 @@ def cases():
         ("W9", "two paired cut KD runs show each other's VAL rows (AM-19 item 3(c))", w_cut_pair),
         ("W10", "a comparator sharing no point is stated as such in the markdown (LRB6)",
          w_no_shared_point),
+        ("W11", "B-5 (e) R2-04: an attempt with no VAL row reads 'wrote no VAL rows'", w_no_val_rows),
+        ("W12", "B-5 (e) R2-09: a non-finite comparator VAL row keeps its tag, never the absent mark",
+         w_nonfinite_comparator),
         ("R1", "R-1 stats_artifact_unverified (its inputs missing)", r_stats_unverified),
         ("R2a", "stub_reader_official", r_stub_official),
         ("R2b", "R-2 inventory_unreadable", r_inventory_unreadable),
@@ -1235,6 +1316,8 @@ def cases():
         ("R2e", "R-2 binding_invalid (sha256)", r_binding_invalid),
         ("R2f", "binding_unbound under Policy.OFFICIAL (a non-stub reader)", r_binding_unbound),
         ("R2g", "freeze_mismatch", r_freeze),
+        ("R2k", "B-5 (e) R1-12: freeze_mismatch for a null freeze under Policy.OFFICIAL (non-stub reader)",
+         r_freeze_null_official),
         ("R2h", "R-2 binding_invalid (a bound export without binding.artifacts; IF§11.6)",
          r_binding_no_artifacts),
         ("R2i", "R-2 inventory_invalid (a model row's entry_kind is not its slot's; IF§11.1)",

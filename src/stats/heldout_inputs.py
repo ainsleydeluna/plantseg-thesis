@@ -1111,6 +1111,11 @@ class TelemetryAttempt:
     def values(self) -> dict:
         return {u: v for u, v, _ in self.points}
 
+    def tags(self) -> dict:
+        """{unit value: non-finite tag} of the VAL rows whose all_class_miou is not finite (B-5 (e):
+        R2-09; the tag is _val_point's "nan", "inf" or "-inf", or the row's own nonfinite tag)."""
+        return {u: t for u, _, t in self.points if t is not None}
+
 
 def _val_point(o: dict, unit: str, where: str):
     u = o.get(unit)

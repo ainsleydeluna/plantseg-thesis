@@ -69,6 +69,8 @@ LIMITATION = ("the recipe of record diverged at this seed and no clipped rerun w
               "and 5 state it as a limitation of the seed-42 results (AM-19 item 5(d))")
 #: The kinds of a run without a model whose training wrote telemetry (IF§11.3).
 TELEMETRY_KINDS = ("cut", "diverged", "aborted", "non_finite")
+#: B-5 (e): an attempt whose telemetry holds no VAL row (R2-04).
+WROTE_NO_VAL_ROWS = "wrote no VAL rows"
 
 
 # --------------------------------------------------------------------------------------------------
@@ -421,7 +423,8 @@ def cut_curves(inv: H.Inventory, inputs: SeedInputs, *, input_root: Path) -> lis
             block["unit"] = unit
             block["attempts"] = [{"run_id": a.run_id, "telemetry": a.path, "sha256": a.sha256,
                                   "points": [{unit: u, "all_class_miou": v, "nonfinite": t}
-                                             for u, v, t in a.points]} for a in attempts]
+                                             for u, v, t in a.points],
+                                  "note": None if a.points else WROTE_NO_VAL_ROWS} for a in attempts]
             comps = []                     # (stage, seed, why)
             if stage in H.QAT_STAGES:
                 comps.append((stage, 42, f"{stage}'s seed-42 model-of-record run, matched by epoch "
@@ -467,10 +470,12 @@ def _comparator(inv, cells, stage, seed, why, unit, points, input_root) -> dict:
                             f"{H.TELEMETRY_UNITS[unit]}s (never interpolated)")
             return out
         for a in H.read_telemetry(inv, slot, input_root, unit=cunit):
-            have = a.values()
+            have, tags = a.values(), a.tags()
             out["attempts"].append({"run_id": a.run_id, "telemetry": a.path, "sha256": a.sha256,
-                                    "values": [{unit: u, "all_class_miou": have.get(u)} for u in points],
-                                    "shared_points": sum(1 for u in points if u in have)})
+                                    "values": [{unit: u, "all_class_miou": have.get(u),
+                                                "nonfinite": tags.get(u)} for u in points],
+                                    "shared_points": sum(1 for u in points if u in have),
+                                    "note": None if a.points else WROTE_NO_VAL_ROWS})
         return out
     if slot is None:
         out["note"] = "derived artifact: no VAL curve (LRB6)"
@@ -483,6 +488,9 @@ def _comparator(inv, cells, stage, seed, why, unit, points, input_root) -> dict:
         return out
     have = a.values()
     out["values"] = [{unit: u, "all_class_miou": have.get(u)} for u in points]
+    tags = a.tags()                        # B-5 (e), R2-09: a non-finite row keeps its tag
+    for v in out["values"]:
+        v["nonfinite"] = tags.get(v[unit])
     out["shared_points"] = sum(1 for u in points if u in have)
     if not out["shared_points"]:
         out["note"] = "no VAL point shared with the cut run (never interpolated)"
@@ -508,6 +516,12 @@ def _fmt(v) -> str:
 
 def _pp(v) -> str:
     return "—" if v is None else f"{100.0 * v:.2f}"
+
+
+def _val(v: dict) -> str:
+    """A VAL value as printed: "non-finite (<tag>)" for a non-finite row (B-5 (e): R2-09), never the
+    absent mark, which stays for a point the run did not write."""
+    return f"non-finite ({v['nonfinite']})" if v.get("nonfinite") else _fmt(v["all_class_miou"])
 
 
 def render_markdown(doc: dict, banner: str = "") -> list[str]:
@@ -543,16 +557,16 @@ def render_markdown(doc: dict, banner: str = "") -> list[str]:
             out.append(f"- {b['stage']} seed {b['seed']}: {b['label']}"
                        + (f" — {b['note']}" if b["note"] else ""))
             for a in b["attempts"]:
-                pts = ", ".join(f"{p[b['unit']]}: {_fmt(p['all_class_miou'])}" for p in a["points"])
-                out.append(f"  - attempt `{a['run_id']}`: {pts}")
+                pts = ", ".join(f"{p[b['unit']]}: {_val(p)}" for p in a["points"])
+                out.append(f"  - attempt `{a['run_id']}`: {a['note'] or pts}")
             for c in b["comparators"]:
                 tag = " [cut entry's comparator]" if c.get("cut_entry_comparator") else ""
-                vals = ", ".join(f"{v[b['unit']]}: {_fmt(v['all_class_miou'])}" for v in c["values"])
+                vals = ", ".join(f"{v[b['unit']]}: {_val(v)}" for v in c["values"])
                 out.append(f"  - comparator {c['stage']} seed {c['seed']}{tag} ({c['why']}): "
                            + ("; ".join(x for x in (vals, c["note"]) if x) or "—"))
                 for a in c.get("attempts", []):
-                    pts = ", ".join(f"{v[b['unit']]}: {_fmt(v['all_class_miou'])}" for v in a["values"])
-                    out.append(f"    - attempt `{a['run_id']}`: {pts}")
+                    pts = ", ".join(f"{v[b['unit']]}: {_val(v)}" for v in a["values"])
+                    out.append(f"    - attempt `{a['run_id']}`: {a['note'] or pts}")
         out.append("")
     divs = doc["divergences_43_44"]
     out += ["### Divergences at seeds 43 and 44 (AM-19 item 9)", "",
