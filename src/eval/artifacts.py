@@ -58,7 +58,12 @@ ARTIFACT_STATUSES = ("official", "provisional", "smoke")
 STAGES = ("teacher", "E1", "E2", "E3", "A", "F", "G", "E4", "E5", "E6", "E7", "E6-E2", "E7-E2", "E6-R1", "E6-R2",
           "E6-KD")
 MODEL_ROLES = ("teacher", "student")
-PRECISIONS = ("fp32", "int8_ptq", "int8_qat")
+# Lane L-FQOFF (AM-4's supplementary score): qat_fakequant_off, a selected QAT model's pre-convert state with every
+# fake-quant and observer disabled, descriptive only. The field gains a value and no field changes, as for the stages.
+PRECISIONS = ("fp32", "int8_ptq", "int8_qat", "qat_fakequant_off")
+# The QAT stages whose selected models carry it (FQR1). E6-R1 and E6-R2 were cut and never launched (DL-137,
+# DL-138), so they have no model. Defined here only; other modules import it.
+FQOFF_STAGES = ("E5", "E6", "E6-E2", "E6-KD")
 SPLITS = ("val", "test")
 
 ARTIFACT_FILES = ("per_image.jsonl", "sufficient_stats.npz", "summary.json")  # sorted; manifest excluded
@@ -298,6 +303,14 @@ def validate_artifact_request(req: ArtifactRequest) -> Provenance:
         raise ArtifactRequestError(f"model_role must be one of {MODEL_ROLES}")
     if req.run.precision not in PRECISIONS:
         raise ArtifactRequestError(f"precision must be one of {PRECISIONS}")
+    # lane L-FQOFF (FQR3): defence in depth behind the CLI's rules for this precision
+    if req.run.precision == "qat_fakequant_off" and not (
+            req.run.stage in FQOFF_STAGES and req.run.model_role == "student" and req.run.quant_backend is None
+            and req.run.random_init is False):
+        raise ArtifactRequestError(
+            f"precision 'qat_fakequant_off' requires a stage in {FQOFF_STAGES}, model_role 'student', quant_backend "
+            f"None and random_init False; got stage {req.run.stage!r}, model_role {req.run.model_role!r}, "
+            f"quant_backend {req.run.quant_backend!r}, random_init {req.run.random_init!r}")
     if req.dataset.split not in SPLITS:
         raise ArtifactRequestError(f"split must be one of {SPLITS}, got {req.dataset.split!r}")
     pp = req.dataset.preprocess_protocol
