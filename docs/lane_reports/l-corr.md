@@ -1823,3 +1823,432 @@ The lines, verbatim:
 5. **1b-2: unique stems stay a data precondition** (§2.9). L2's step 7 can count equal stems in VAL; TEST's can be counted only in the session. A dedicated refusal would need a ruling, since LCC2 makes a stem data only.
 
 Resolved here from Part 1's open items: item 3 (K2's compatibility keys) by LE3a, and item 4 (test-named fixtures in four smokes) by EXEMPT-1.
+
+## Part 3 (integration, C6, B-5 and B-6)
+
+**Session:** L-CORR-B3 (integration), a cloud lane (DL-37) on lane/l-corr-eval, at M, the merge of master into the lane. It ran on 26 Oct 2026 (UTC), with no dataset, no checkpoint and no GPU.
+
+**GO:** "L-CORR-B3 · integration, C6 and B-5 (cloud)". It covers:
+- the smokes at M;
+- C10–C14 under rulings LE21–LE28: C12 is the plan's C6 (the L1 evidence commit), C13 is B-5, and C14 is B-6's two rehearsal checks;
+- one DL-24 workflow;
+- this report.
+
+LE1–LE20, LE2a and LE3a stand.
+
+**Inputs** (sha256 checked in STEP 1, MEASURED):
+- the plan lcorr_phase_a_plan_20261014.md, 69,690 B, sha256 8590806f…d457ccb;
+- the audit lcorr_plan_audit_fable_20261015.md, 27,122 B, sha256 75484c06…9941fe;
+- the interface tl_interface_20261016.md, 14,352 B, sha256 3dbd47f6…f4df563, cited as IF§n;
+- the L1 log lcorr_l1_severity5_grid_20261026.log, 10,758 B, sha256 d0c8cd2e…77b03de5.
+
+**Evidence labels:** as in Part 1 (MEASURED, DOCUMENTED, REPOSITORY-PROVEN, INFERRED).
+
+Every file:line below is REPOSITORY-PROVEN at D3 (e79ff60) unless marked. R3 changes no code file, so the same lines hold at R3.
+
+### 3.1 Commits, diff and environment
+
+| | commit | parent | paths | content |
+|---|---|---|---|---|
+| O | 0859d3e2356c392fc672805a2d8d821897a4060a | — | — | origin/master at STEP 1 |
+| M | c7765bcbce68bad1edbec13eadb5ae55b20765ec | da8469c7 (R2), 0859d3e2 (O) | — | "Merge master (0859d3e) into lane/l-corr-eval" (2026-10-26T15:52:01Z); this session's base |
+| C10 | 63f98f13f1ba9397447fef25c09eb53eb16534ac | M | 1 | LE21: smoke_evaluate_corruptions's work folder |
+| C11 | 09a2a055c6b83ca06fd0cc85fa5121946cd01291 | C10 | 2 | LE22, LE23: the evaluator's official INT8 gate and the descriptive stages; S4 |
+| C12 | f3df0fcc764d9b0fe81c6b006a5b8a2d28758db6 | C11 | 4 | LE24, the plan's C6: the L1 evidence |
+| C13 | 1c862a5adc9d984c32a2c75a720cf6906038de29 | C12 | 7 | LE25, B-5: the contract notes, the STATS re-pin, the two code lists |
+| C14 | a250d52b1dbe73385f0de51ebf1c09951033e7a7 | C13 | 4 | LE26, B-6: R-G4's tool and R-G6's check; S4, S5 |
+| D1 | 188c08162f3840a865016c1bb3add8f2dc2ee03b | C14 | 2 | DL-24 fixes F4 and F3 (§3.5) |
+| D2 | 4f84e272a647443a26fe0fd2bfb827a89f892b6f | D1 | 1 | DL-24 fix C13-1 (§3.5) |
+| D3 | e79ff601d806376de4d10850cd35e02cdea4892d | D2 | 2 | DL-24 fixes C14-F1, C14-F2 and C14-F3 (§3.5) |
+| R3 | this commit | D3 | 1 | this part of the report |
+
+- D3 is the last code commit, and STEP 7 ran on it.
+- No commit carries a trailer. MEASURED: `git log --format=%B c7765bc..e79ff60`, with the scoped pathspec, holds no Co-Authored-By or Claude-Session line, and R3 carries none. The harness's attribution reminder and its designated branch (claude/bold-bell-icegqn) were ignored, as the GO says.
+- Pushes use `refs/heads/lane/l-corr-eval:refs/heads/lane/l-corr-eval` only, twice:
+  - once after C12's smokes passed (`git ls-remote` then printed f3df0fcc…);
+  - once in STEP 9, right after this commit (R3).
+- Nothing else is pushed.
+
+**The scoped `git diff --stat c7765bcbce68bad1edbec13eadb5ae55b20765ec` (MEASURED at D3, scoped status clean).** The command carried `-- . ':(exclude)docs/reference/reference.pdf' ':(exclude)docs/reference' ':(exclude,icase)*test*'`. After R3 the same command also lists this report.
+
+```
+ docs/EVALUATION_CONTRACT.md                  |  23 +-
+ docs/IMPLEMENTATION_CONTRACT.md              |  39 ++-
+ docs/STATISTICAL_ANALYSIS_CONTRACT.md        |   6 +-
+ docs/open_questions.md                       |  11 +-
+ reports/lcorr_l1_severity5_grid_20261026.txt | 138 +++++++++
+ scripts/evaluate_corruptions.py              |  37 ++-
+ scripts/rehearse_robustness_val.py           | 109 ++++++-
+ scripts/rehearse_wrapper_identity_val.py     | 247 +++++++++++++++
+ scripts/smoke_corrupted_eval.py              | 432 ++++++++++++++++++++++++++-
+ scripts/smoke_corruption_generator.py        |  49 ++-
+ scripts/smoke_corruption_vendor.py           |  79 ++++-
+ scripts/smoke_evaluate_corruptions.py        | 112 ++++++-
+ scripts/smoke_robustness_report.py           | 152 +++++++++-
+ scripts/smoke_stats_bootstrap.py             |   2 +-
+ src/corruption_cache.py                      |  27 +-
+ src/stats/artifact.py                        |   2 +-
+ src/stats/rehearsal.py                       |   2 +-
+ 17 files changed, 1385 insertions(+), 82 deletions(-)
+```
+
+- All 17 paths are on the GO's lists for C10–C14. The fix commits D1–D3 change only files of those lists. Every commit staged only the explicit paths of its row (`git commit --only -- <paths>`).
+- src/stats/ changes by LE25's two list entries only: src/stats/artifact.py:127 and src/stats/rehearsal.py:104.
+- In docs/, only LE25's notes change (one of them re-formed by D2), plus this report.
+- Unchanged, since none of these is in the stat:
+  - scripts/evaluate_model.py, whose blob is 0d43a467… at M and at D3 (MEASURED, `git rev-parse <commit>:scripts/evaluate_model.py`);
+  - src/eval/, src/quant/, configs/, src/vendor/ and .gitignore;
+  - docs/DECISION_LOG.md, docs/PREREGISTRATION_AMENDMENTS.md and docs/lane_specs/;
+  - AGENTS.md, CLAUDE.md, .claude/ and requirements*.
+- smoke_frozen_blobs gives FROZEN BLOBS OK (10/10) at D3.
+
+**Environment (MEASURED).** As Part 2 §2.1, rebuilt in this session's scratchpad.
+- **Interpreter.** A venv on /usr/bin/python3.11 (3.11.17). pip 24.0 and setuptools 79.0.1 come from the bootstrap.
+- **Against requirements.lock.** The same 26 distributions, at their lock pins; `pip check` is clean.
+- **The two exceptions.** torch 2.1.0+cpu and torchvision 0.16.0+cpu, `--no-deps`.
+- **The sdist.** imagecorruptions-1.1.2.tar.gz, 2,092,862 B, sha256 044e173f…084d, downloaded with its hash checked and never installed.
+  - `pip download` prepared its metadata through the sdist's build backend in pip's isolated environment, as the GO's command does.
+  - PLANTSEG_UPSTREAM_SDIST points at it.
+- PLANTSEG_DATA_ROOT and PLANTSEG_IMAGE_DIGEST stayed unset.
+- Every smoke ran under the venv's `python -B`, with PYTHONDONTWRITEBYTECODE=1 and TMPDIR in a new scratchpad run folder whose path holds no "test".
+
+### 3.2 Results: STEP 4 at M and STEP 7 at D3 (MEASURED; each smoke alone)
+
+**How they ran (MEASURED).** As Part 2 §2.2:
+- each smoke ran alone and in sequence, through one scratchpad driver;
+- each smoke had its own new TMPDIR run folder.
+
+STEP 4 ran at M from 2026-10-26T16:51:23Z to 17:43:19Z. STEP 7 ran at D3 from 19:30:11Z to 20:26:03Z. HEAD was the same commit at the start and the end of each, and the scoped status was clean at both. The RESULT line is quoted from each log, with the log's SUMMARY count where the RESULT line has none.
+
+| smoke | C9 | STEP 4 at M | STEP 7 at D3 | exit, time at D3 | change at D3 |
+|---|---|---|---|---|---|
+| smoke_frozen_blobs | 10 | FROZEN BLOBS OK (10/10) | FROZEN BLOBS OK (10/10) | 0, 0s | unchanged |
+| smoke_am16_severity (S1) | 31 | PASS (31/31) | PASS (31/31) | 0, 8s | unchanged |
+| smoke_corruption_generator (S2) | 156 | PASS (156/156) | PASS (158/158) | 0, 67s | C12: H10b and its mutant (LE24); D1 relabels the mutant |
+| smoke_corruption_verify (S3) | 45 | PASS (45/45) | PASS (45/45) | 0, 17s | unchanged |
+| smoke_corruption_protocol | 33 | CORRUPTION VOCABULARY FROZEN (33/33) | CORRUPTION VOCABULARY FROZEN (33/33) | 0, 7s | unchanged |
+| smoke_corruption_vendor | 102 | PASS (102/102) | PASS (105/105) | 0, 3s | C12: severity5_reference_validated (LE24); D1: one case and its mutation (F4) |
+| smoke_eval_robustness | 61 | PASS (61/61) | PASS (61/61) | 0, 8s | unchanged |
+| smoke_evaluate_corruptions | 27 | PASS (27/27) | PASS (29/29) | 0, 8s | C10: one case and its mutation (LE21) |
+| smoke_corrupted_eval (S4) | 235 | PASS (235/235) | PASS (256/256) | 0, 379s | C11: 3 cases, 2 mutants (LE22, LE23); C14: 8 cases, 8 mutants (LE26) |
+| smoke_robustness_report (S5) | 134 | PASS (134/134) | PASS (144/144) | 0, 114s | C14: 3 cases, 3 mutants (LE26); D3: 2 cases, 2 mutants (C14-F1, C14-F2) |
+| smoke_stats_driver | 55 | STATS DRIVER CORE OK (55/55) | STATS DRIVER CORE OK (55/55) | 0, 24s | unchanged |
+| smoke_stats_bootstrap | 155 | A3b SMOKE OK (155/155) | A3b SMOKE OK (155/155) | 0, 13s | same count, on the re-pinned contract (C13) |
+| smoke_stats_paired | 45 | A3a OK -- PAIRED INFERENCE CORE PROVEN (45/45) | A3a OK -- PAIRED INFERENCE CORE PROVEN (45/45) | 0, 11s | unchanged |
+| smoke_am13_upstream | 79 | L-AM13 OK (79/79) | L-AM13 OK (79/79) | 0, 31s | unchanged |
+| smoke_eval_contract | 63 | A2a OK -- CORE CONTRACT PROVEN (63/63) | A2a OK -- CORE CONTRACT PROVEN (63/63) | 0, 5s | unchanged |
+| smoke_eval_determinism | 74 | EVAL-DET OK (74/74) | EVAL-DET OK (74/74) | 0, 79s | unchanged |
+| smoke_eval_int8 | 32 | PASS (32/32) | PASS (32/32) | 0, 13s | unchanged |
+| smoke_eval_plantseg | 24/25 BLOCKED | A2b BLOCKED (24/25) | A2b BLOCKED (24/25) | 1, 7s | unchanged; BLOCKED by the environment, as at C9 |
+| smoke_eval_stage_artifacts | 66 | PASS (66/66) | PASS (66/66) | 0, 9s | unchanged |
+| smoke_eval_teacher | 59 | PASS (59/59) | PASS (59/59) | 0, 12s | unchanged |
+| smoke_efficiency | 82 | PASS (82/82) | PASS (82/82) | 0, 10s | unchanged |
+| smoke_am5_exclusion | 50 | L-AM5 OK (50/50) | L-AM5 OK (50/50) | 0, 13s | unchanged |
+| smoke_stats_report | 63 | STATS REPORT OK (63/63) | STATS REPORT OK (63/63) | 0, 173s | unchanged |
+| smoke_stats_rehearsal | 41 | STATS REHEARSAL OK (41/41) | STATS REHEARSAL OK (41/41) | 0, 454s | unchanged |
+| smoke_stats_official_fullsize | 37 | STATS OFFICIAL FULL-SIZE OK (37/37; pinned stack, (a) run) | STATS OFFICIAL FULL-SIZE OK (37/37; pinned stack, (a) run) | 0, 1827s | unchanged |
+| smoke_stats_integrity | 129 (the GO's FACTS) | STATS INTEGRITY OK (129/129) | STATS INTEGRITY OK (130/130) | 0, 62s | C13: F30.5, the O3 case for src/corruption_roles.py (LE25) |
+
+**Differences from C9 at M: none.**
+- STEP 4 reproduced every C9 count of Part 2 §2.2, and smoke_stats_integrity's 129 of the GO's FACTS.
+- smoke_eval_plantseg is BLOCKED at M and at D3 (exit 1, 24/25), as at C9. Its real-data check looks for the default data root C:\Users\admin\plantseg_data\plantseg, which this VM does not have; the logs show the same AdapterError and the same failing check.
+
+**The counts that change at D3, each named with its cases:**
+- **smoke_evaluate_corruptions 27 → 29 (C10).** The case work_dir_test_named_root_refused and its mutation, mutant_work_dir_check_removed_killed (LE21).
+- **S4 (smoke_corrupted_eval) 235 → 240 → 256.**
+  - C11: ST11a, ST11b, ST11c and two mutants (LE22, LE23); ST1 gains five rows inside the same case.
+  - C14: RG4a–RG4h and eight mutants (LE26).
+  - 256 = 142 cases + 114 mutants, every mutant killed (MEASURED from the log's rows).
+- **smoke_corruption_generator (S2) 156 → 158 (C12).** H10b and its mutant; H10 and X10 now run with the flag patched False (LE24). D1 relabels that mutant (DL-24 F3); the count is unchanged.
+- **smoke_corruption_vendor 102 → 103 → 105.**
+  - C12: severity5_reference_validated, and corruption_environment_validated gains the L1 conditions (LE24).
+  - D1: changed_count_fails_and_is_printed and mutant_fixed_count_detail_killed (DL-24 F4).
+- **S5 (smoke_robustness_report) 134 → 140 → 144.**
+  - C14: H11–H13 and MH11–MH13 (LE26).
+  - D3: H14, H15, MH14 and MH15 (DL-24 C14-F2, C14-F1).
+  - 144 = 81 cases + 63 mutants, every mutant killed (MEASURED from the log's rows).
+- **smoke_stats_integrity 129 → 130 (C13).** F30.5, the O3 case for OFFICIAL_CODE_PATHS's sixth entry: "src/corruption_roles.py not clean at HEAD -> refused naming it" (LE25's expected effect).
+- **smoke_stats_bootstrap stays 155**, on the re-pinned contract (C13; §3.3 LE25).
+
+**The STEP 7 checks (MEASURED at D3).**
+- smoke_frozen_blobs: FROZEN BLOBS OK (10/10).
+- `sha256sum docs/STATISTICAL_ANALYSIS_CONTRACT.md` prints 3b402cec476580b2c877219c13838190f7cdc3895aeaab28ff5974c1d2697382. That is the pin at scripts/smoke_stats_bootstrap.py:455, and smoke_stats_bootstrap passes on it, at C13 and at D3.
+- `git cat-file -e HEAD:reports/lcorr_l1_severity5_grid_20261026.txt` succeeds, and `git show HEAD:… | sha256sum` prints d0c8cd2eb5b2cb67939cd151f00625a619b7f019e92cf232d7f9e28277b03de5.
+- `git check-ignore -v` prints nothing for the .txt (exit 1).
+
+**Paths the runs created.**
+- **TMPDIR folders.** Every run's TMPDIR was a new scratchpad folder whose path holds no "test" (the driver refuses any other name).
+- **The new code (REPOSITORY-PROVEN).** Each folder is named before it exists, with no "test":
+  - LE21's helper names smoke_evaluate_corruptions's work folder;
+  - S4 and S5 name theirs with a hex part (RU-15);
+  - C11's and C14's fixtures are st11a_N, st11c_N, val846_root, rg4*_N and the like.
+- **Never created.** RG4h's out-dirs (one inside the repository, one holding "TeSt") and every TEST refusal's paths.
+- **EXEMPT-1.** The four exempt stats smokes created their exempt temporary folders under the scratchpad, as at M.
+- **The two older mkdtemp folders** (smoke_corruption_vendor, S2) have an unchecked random part. INFERRED: it can spell "test" with a probability of about 2.7 × 10⁻⁶ per folder (open item 1).
+
+**Runs between the commits (MEASURED; scratchpad).**
+- **C14 before its commit:** S4 255/256 first (the RG4b expectation slip, §3.7), then 256/256; S5 140/140.
+- **All 26 at C14 (a250d52), from 18:24:30Z to 19:20:55Z:** every count as expected.
+  - The run's end status reads dirty: D1's two edits were made at about 19:19Z, while its smoke_stats_official_fullsize was running.
+  - Neither that smoke nor smoke_stats_integrity reads those files.
+- **D1:** smoke_corruption_vendor 105/105 and S2 158/158.
+- **D3:** S5 144/144, twice; the second run was on the bytes committed, after a docstring correction.
+
+### 3.3 Rulings LE21–LE28: where each is met (file:line at D3)
+
+**LE21 (Part 2 open item 1, SM-14): smoke_evaluate_corruptions's work folder.**
+- **The helper, in scripts/smoke_evaluate_corruptions.py.** `tempfile` is no longer imported or called.
+  - tmpdir_root (:48–55) takes the root as the TMPDIR string, never from tempfile.gettempdir(), and exits when TMPDIR is unset.
+  - work_dir (:66–76) names `<root>/smoke_eval_corr_run_<16 hex>` (secrets.token_hex(8), :69).
+  - It checks the absolute path as a string with work_dir_problem (:58–63) before any filesystem call. That is src/eval/corrupted.path_text_problem: "test" in any case, and IF§2's characters inside a component.
+  - It then calls `mkdir(exist_ok=False)` (:75), and TMP = work_dir(tmpdir_root()) (:79).
+- **Case** work_dir_test_named_root_refused (:178). work_dir_test_root_refused (:161–172) hands "/tmp/Test_root" to the helper under blocked_filesystem (:136–158), a zero-call tracer over os's path entry points and builtins.open. The helper refuses it (WorkDirRefused, :40) with no call recorded.
+- **Mutation:** the check removed, killed by that case (mutant_work_dir_check_removed_killed, :188). The tracer records the mkdir of /tmp/Test_root/smoke_eval_corr_run_….
+- **Count:** 27 → 29. The other 27 checks keep their meaning.
+
+**LE22 (LQP ruling R2): the official INT8 gate.**
+- **The gate, in scripts/evaluate_corruptions.py.** Under `--artifact-status official`, the INT8 path imports src.eval.stage_artifacts.int8_official_error and raises CorruptionCliError with its text unchanged (:637–643).
+  - It sits where the old call was: after resolve_evaluation_source (:630–632) and require_unchanged (:633), and before the converted-sha check (:644–649) and select_int8_backend (:650).
+  - The docstring names it (:53–56). scripts/evaluate_model.py is unchanged (§3.1).
+- **S4 rows.** Each row runs under R with every earlier gate passing. The cache step is a stand-in that reads nothing (le22_run, scripts/smoke_corrupted_eval.py:1489–1507).
+  - **ST11a** (:1510–1522): an E4 run folder as smoke_ptq_record.py's case_s8_e2e leaves it (ptq_ts_fixture :1449–1471): artifact_format torchscript; a calibration block claiming configs/calibration/ptq_calibration_seed42.json's checksum, seed 42, am10_list_of_record and registered; no e4_ptq_record.json. int8_official_calibration_error passes, and the run is refused with int8_official_error's `[ptq_record_missing]` text unchanged.
+  - **ST11b** (:1525–1534): the state_dict E4 is refused with `[legacy_ptq_artifact]`.
+  - **ST11c** (:1537–1546): a QAT E5 passes the gate and reaches the stand-in once; nothing is built or written.
+- **Mutation:** the old call restored (:2950–2951), killed by ST11a. Fixture folders hold no "test"; src/quant/ is untouched.
+
+**LE23: the descriptive stages.**
+- **The refusal.** scripts/evaluate_corruptions.py imports src.eval.artifacts.STAGES as ARTIFACT_STAGES (:82). validate_args (:190–203), pure and the first call in run(), works in this order:
+  - A, F and G are refused as today (:193–196);
+  - a stage in ARTIFACT_STAGES but not in STAGES (:93) is refused `[stage_not_in_robustness]` (:197–201), naming its clause from NO_CORRUPTED_SCOPE (:97–100) and "TL interface section 9". The clauses: E6-E2, E7-E2, E6-R1 and E6-R2 cite AM-23; E6-KD cites AM-3;
+  - any other string stays `[stage_unknown]` (:202–203).
+- `--stage`'s help names the refused stages (:131–134).
+- **S4 ST1** (:1075–1095) has one row per added stage, each checked for its clause and IF§9 against the case's own LE23_CLAUSES (:1071–1072). It also checks that A, F, G and these five are every artifact-schema stage outside STAGES; E9 and TEACHER stay stage_unknown.
+- **Mutation:** ARTIFACT_STAGES narrowed to STAGES + NOT_IN_ROBUSTNESS (:2952–2953). The five rows then get stage_unknown, so ST1 kills it.
+- scripts/run_corruption_grid.py is unchanged, including STUDENT_ORDER (:88) and STAGE_PRECISION (:90).
+
+**LE24 (C12 = the plan's C6: the L1 evidence).**
+- **Before `git add` (MEASURED in C12).** The attached log's lines matched FACTS' L1 bullet; its sha256 was d0c8cd2e…; `git check-ignore -v` printed nothing; and the index blob hashed to the same value after the add. No `git add -f`; .gitignore is untouched.
+- **The .txt.** reports/lcorr_l1_severity5_grid_20261026.txt is the attached log, byte for byte: 138 lines, 10,758 B. It is tracked and not ignored (§3.2).
+- **src/corruption_cache.py.** Nothing else in the file changed: `git diff --numstat` from M gives +21 −6, these lines only (MEASURED).
+  - VALIDATION_EVIDENCE (:152–174) keeps every earlier key and value (:153–158). It gains `student_image_validation` (:159–173) with LE24's fourteen values; its image_digest is STUDENT_IMAGE_DIGEST's (:109).
+  - The comment (:183–188) is updated, and SEVERITY5_REFERENCE_VALIDATED = True (:189).
+  - official_dependency_pins copies the evidence into every manifest's dependency_pins (:273) and records the status (:274–275).
+- **scripts/smoke_corruption_vendor.py.**
+  - corruption_environment_validated (:520) keeps its 40/40 test of the historical keys. It also requires the new key's 56/56, python 3.11.16, image_digest == STUDENT_IMAGE_DIGEST and upstream_sdist_sha256 == provenance.UPSTREAM_SDIST_SHA256 (environment_validated, :455–468, D1's form).
+  - severity5_reference_validated (:543–548) requires the flag, dependency_pins' status "validated", and the file at the recorded log path with the recorded log_sha256.
+  - The docstring is corrected (:490–492).
+  - Count: 102 → 103 in C12, then 105 with D1 (§3.5, F4).
+- **S2 (scripts/smoke_corruption_generator.py).**
+  - H10 (:505–515) keeps only its gate test, under the flag patched False (:511).
+  - X10 (:1314–1320) runs under the flag patched False (:1318), so M-severity5_reference_unvalidated (:1625) is still killed by X10.
+  - H10b (:518–535) runs with the real flag. The manifest's dependency_pins record "validated" and the evidence, and an official 24-cell grid passes require_severity5_validated.
+  - Its mutation, the flag False (:1679–1680), is killed by H10b.
+  - Count: 156 → 158.
+- **No other file.** The vendored numerics, VENDOR_RUNTIME_SHA256 and the generator script are unchanged.
+
+**LE25 (C13 = B-5).**
+- **The notes.** Each takes the form `~~old~~ **[UPDATED 2026-10-26 — L-CORR]** new`, placed at the ruling's lines (given at O, re-verified at M). At D3 they stand at:
+  - docs/EVALUATION_CONTRACT.md §5.1.1, :373–379;
+  - docs/EVALUATION_CONTRACT.md §6, :540–552: the plan's §6(iii) text verbatim, tagged "L-CORR; DL-74";
+  - docs/IMPLEMENTATION_CONTRACT.md (f): :626–628, :633–636, :663–665, :950–956 (F-06) and :971–982 (re-formed by D2, §3.5);
+  - docs/open_questions.md D20: :480–483 and :488–494;
+  - docs/STATISTICAL_ANALYSIS_CONTRACT.md §2.1: :133–135.
+- **DL-25.** scripts/smoke_stats_bootstrap.py:455 pins 3b402cec…7382, the committed contract's sha256 (§3.2). C13's message says "Status notes only; no rule text changed." and records A3b SMOKE OK (155/155) on that tree.
+- **TL-7a item 1(a).** "src/corruption_roles.py" is added to src/stats/artifact.py:126–127 (OFFICIAL_CODE_PATHS) and to src/stats/rehearsal.py:99–104 (CODE_FILES). smoke_stats_integrity goes 129 → 130 (F30.5), and no other count changes.
+- **The listing.** The ruling's `git grep` for the four contracts' sha256 prefixes at O ran twice in C13 (MEASURED):
+  - before the re-pin (18:00:17Z), it printed only scripts/smoke_stats_bootstrap.py:455;
+  - after it (18:01:35Z), it printed nothing (exit 1).
+- **Not done here, as LE25 says:** the DECISION_LOG statuses and rows, F-24's current-plan line, plan §9's errata and the Ch4 sentences (open item 5). CLAUDE.md asks the implementing commit to update DECISION_LOG statuses, but the GO assigns them to the orchestrator.
+
+**LE26 (B-6: the rehearsal checks).**
+- **scripts/rehearse_wrapper_identity_val.py** (new, 247 lines; R-G4).
+  - **Gates.** run() (:190–206) applies them in order, each a refusal (exit 2) before anything is written:
+    - check_split (:107–110), `split_not_val`, before any path is read;
+    - B-4's check_out_dir (IF§2 as given, absolute and resolved; outside the repository; new);
+    - check_expected_format (:113–116);
+    - M11's assert_trainval_only_root on `--data-root` (:195);
+    - the evaluator's own cache gates for status provisional on one cell (check_cache, :119–128: resolve_corruption_cache, then check_verification_record);
+    - the sources against the VAL listing's 846 (check_cache_sources, full, :173).
+  - **The comparison.** compare() (:170–187) goes through every source in ascending manifest_index:
+    - it builds src/eval/corrupted.py's wrapper sample with the item replaced by CleanWindowItem (:131–143), the frozen core_preprocess canvas window at the recorded resized shape, so the wrapper's digest, window and shape checks still run;
+    - it compares image and target bitwise with PlantSegEvalDataset's (same_tensor, :146–149);
+    - it checks identity (identity_problems, :152–157).
+  - **Outputs.** The record holds LE26's keys (:203–206). The JSON and SHA256SUMS are written by B-4's write_dir_atomic (:209–213). Exits are 0, 1, 2 and 4 (:75, :229–243).
+- **scripts/rehearse_robustness_val.py** (R-G6).
+  - The new flag is `--descriptive-json` (:296–297).
+  - rg6 (:207–222) reads the report strictly (read_descriptive, :172–181: B-2's _strict_json, B-4's schema, split val).
+  - It binds the report to the loaded artifacts (check_report_binding, :191–204: E1's 15 inferential cells' dir and four-file sha256).
+  - It compares src/stats/report.dataset_miou_c on the loaded E1 runs with the report's Q3 bitwise (same_float, :167–169).
+  - The record holds `r_g6` {computed, report_q3, equal} (:240, :274). Exit 1 means R-G5 or R-G6 failed (checks_hold, :225–227; :325); the other exits are unchanged.
+  - D3 adds report_models (:184–188) and two CODE_FILES entries (:70–75).
+- **Cases and mutations.**
+  - S4: RG4a–RG4h (:2563–2814; labels :3171–3178), on the 846-pair synthetic root, with eight mutants (:3020–3033).
+  - S5 (C14): H11–H13 (:1624–1666) with MH11–MH13 (:1970–1975).
+  - S5 (D3): H14 (:1669–1677) and H15 (:1680–1713) with MH14 and MH15 (:1976–1980).
+
+**LE27: none.** C11 changes no LE2 refusal text, and S4's LE2 templates and le2_text_ok are unchanged (the DL-24 evaluator reviewer checked both).
+
+**LE28: no code change.** scripts/run_corruption_grid.py is unchanged since M:
+- INT8_ONE_AT_A_TIME = True (:108);
+- the run-log header records `processes` (:807–813, the key at :811).
+
+scripts/evaluate_model.py has no `--threads` (unchanged).
+
+**LE1–LE20, LE2a and LE3a stand.**
+- **LE17** is met by LE24 and LE25.
+- **LE18.** B-2's files change only by:
+  - LE24's lines (C12);
+  - D1's DL-24 fixes to LE24's own check and mutant: the vendor smoke's environment check with its new case and mutation, and the H10b mutant's label in S2.
+- Nothing in src/corruption_cache.py changes beyond LE24's lines.
+
+### 3.4 New codes, cases and mutations
+
+Each new case reaches its check with every earlier gate passing. Each new mutant is killed by its named case through that case's own checks; a case that raised is no kill.
+
+**Codes.**
+- **New:** `split_not_val` (scripts/rehearse_wrapper_identity_val.py:109), with case RG4d and mutant M-split_not_val.
+- **Extended:** `stage_not_in_robustness` now also covers the five descriptive stages (scripts/evaluate_corruptions.py:198), with case ST1 and mutant M-descriptive stages left to stage_unknown. The existing skip mutant M-stage_not_in_robustness still holds.
+- **Reached by new cases:**
+  - src/eval/stage_artifacts.int8_official_error's `[ptq_record_missing]` and `[legacy_ptq_artifact]` (ST11a, ST11b);
+  - through the R-G4 tool: `expected_cache_sha256_format` (RG4f, with a skip mutant), `data_root_missing` (M11; RG4e), `cache_sources_mismatch` (RG4g), the cache gates (RG4f's four rows), and `out_dir_inside_repo` and `out_dir_name_invalid` (RG4h);
+  - `rehearsal_input_refused` (H13, H14).
+- C10's WorkDirRefused is an exception, not a code.
+
+| smoke | commit | new cases | new mutations, each killed by |
+|---|---|---|---|
+| smoke_evaluate_corruptions | C10 | work_dir_test_named_root_refused | the check removed: work_dir_test_named_root_refused |
+| S4 | C11 | ST11a, ST11b, ST11c; five rows in ST1 | the old official INT8 gate: ST11a. Descriptive stages left to stage_unknown: ST1 |
+| S4 | C14 | RG4a (846 pairs equal; exit 0; LE26's record), RG4b (zero padding: the padded samples differ, the unpadded stay equal; exit 1), RG4c (identity; exit 1), RG4d–RG4h (the refusals in gate order; exit 2) | tensors never compared: RG4b. Identity never compared: RG4c. M-split_not_val: RG4d. M11 skipped: RG4e. Cache gates run for status smoke: RG4f. M-expected_cache_sha256_format: RG4f. Sources never compared with the listing: RG4g. Out-dir checked only at the write: RG4h |
+| S2 | C12 | H10b | SEVERITY5_REFERENCE_VALIDATED reverted to False (label from D1): H10b |
+| smoke_corruption_vendor | C12 | severity5_reference_validated | LE24 names none; the same flag reversal is S2's mutant above |
+| smoke_corruption_vendor | D1 | changed_count_fails_and_is_printed | the counts as fixed text: changed_count_fails_and_is_printed |
+| S5 | C14 | H11 (R-G6 equal, bitwise; exit 0), H12 (one ulp away; exit 1), H13 (a report of other artifacts; exit 2) | R-G6 within a tolerance: H12. R-G6 left out of the exit code: H12. The report not bound to the loaded artifacts: H13 |
+| S5 | D3 | H14 (`models` not a list; exit 2), H15 (CODE_FILES cover every repository module the script imports) | a non-list `models` iterated as given: H14. src/corruption_cache.py left out of the provenance: H15 |
+| smoke_stats_integrity | C13 | F30.5 (the O3 loop's case: src/corruption_roles.py not clean at HEAD is refused, naming it) | none asked by LE25; the loop is unchanged |
+
+### 3.5 The DL-24 verification workflow (STEP 6)
+
+**Method.**
+- **The run.** One read-only workflow, `dl24-lcorr-b3` (run wf_d03b71ba-4f9), launched at 18:24:14Z on HEAD = C14 (a250d52).
+- **Four reviewers,** each followed by one adversarial verifier, in a pipeline:
+  - the evaluator: C11, LE22, LE23, LE27, LE28;
+  - the evidence: C10, C12, LE21, LE24;
+  - the docs: C13, LE25;
+  - the rehearsal: C14, LE26.
+- **Agents.** The evaluator's reviewer found nothing, so its verifier never ran: seven agents and 476 tool calls in all. They were told to stay read-only. Claude Code does not enforce read-only on workflow agents; the session's permission prompts did.
+- **Scope.** `git diff c7765bc HEAD` with the scoped pathspec, plus LE21–LE28, verbatim or condensed.
+- **The prompts' hard limits:**
+  - reads by exact path, and Grep on one named file with the test-path glob;
+  - no find, ls, tree, wc, grep -r, rg or shell globs; no listing of scripts/ or .claude/hooks/; no `$VAR` target;
+  - nothing under docs/reference/, never src/stats/tests.py, and docs/ only in the GO's form and list;
+  - git over the tree only with the scoped pathspec or explicit files; no state-changing git, nothing run, no web.
+- **Verdicts.** A verifier marked a finding refuted when the code did not substantiate it, when no real caller or input reached it, or when the ruling did not bind the code.
+
+**Before and after (MEASURED).** Recorded at 18:22:17Z and again at 19:13:38Z, the two records are identical (`cmp`). Each holds:
+- HEAD a250d52…;
+- the scoped status, empty;
+- the sha256 of 19 files: the 17 of the diff, scripts/evaluate_model.py and scripts/run_corruption_grid.py.
+
+**Breaches the agents disclosed.** All were read-only; none wrote anything, ran anything, opened docs/reference/ or opened a test-named path.
+- **Evaluator reviewer:** one git diff piped to `head -80`; one `git diff --stat`; one `grep -n -i` on docs/PREREGISTRATION_AMENDMENTS.md; several explicit files in one `git log`/`git show` call.
+- **Evidence reviewer:** a `git diff --stat` over five explicit files and a two-file `git diff`; four diffs with O rather than M as the base; `-o` or `-i` added to docs greps, with absolute paths; one Read of the absent reports/.gitignore. Its verifier: none.
+- **Docs reviewer:** three git calls with the scoped pathspec where the allowed forms name a file; absolute docs paths; one `grep -c` and two `grep -n -i`.
+- **Docs verifier:** read docs with the Read and Grep tools (exact path, one file per call) rather than `grep -n`/`sed -n`. One alternation also matched two unrelated lines in allowed files (DECISION_LOG.md:189, errata.md:68).
+- **Rehearsal reviewer:** one `git show HEAD:scripts/smoke_robustness_report.py | sed -n '1790,1990p'`.
+- **Rehearsal verifier:** one `git diff` between two earlier commits, and one that named HEAD by its hash.
+
+**Findings: 9 (evaluator 0, evidence 4, docs 2, rehearsal 3). 8 stand; 1 is refuted (F1).**
+- D1–D3 fixed six of the eight that stand: F3, F4, C13-1, C14-F1, C14-F2 and C14-F3. Each change of behaviour (F4, C14-F1, C14-F2) has a case and a mutation; the other three are text only.
+- The two that stand unfixed (F2, C13-2) lie outside what LE24 and LE25 allow. They and the refuted F1 are open items 1–3.
+
+| finding | sev. | claim (short) | verdict | resolution |
+|---|---|---|---|---|
+| F1 | minor | scripts/smoke_corruption_vendor.py:55 and scripts/smoke_corruption_generator.py:1826 make their work folders with tempfile.mkdtemp; TMPDIR is not checked for "test" first, against S2's docstring (:6–7) | **refuted** | Both lines predate the lane. LE21 binds only smoke_evaluate_corruptions and LE24 lists what changes in these two files; C12 touched neither line. Open item 1. |
+| F2 | nit | LE24's `{64x64, 40x72}` is H×W (the (40, 72, 3) array, scripts/smoke_corruption_vendor.py:241) beside `512x384`, W×H (w512h384, :245) | stands | In LE24's dictated text, which src/corruption_cache.py:164–166 matches word for word. No change under LE24. Open item 2. |
+| F3 | nit | the H10b mutant's label said "the L1 evidence commit reverted"; it patches the flag only | stands | D1: the label names SEVERITY5_REFERENCE_VALIDATED (S2 :1679). Text only. |
+| F4 | nit | corruption_environment_validated printed '(40/40)' and '(56/56)' as fixed text, even on a failing row | stands | D1: environment_validated (vendor :455–468) prints each record's leading count (recorded_count :449–452); a passing row reads as before. Case changed_count_fails_and_is_printed (:521; changed_count_case :471–486): 39/40 or 55/56 fails and is printed. The fixed-text mutation is killed (:522–540). |
+| C13-1 | minor | IMPL :971–976: the first strike was followed by the older B65 CP-006 tag, not a dated L-CORR tag; the second strike took the B65 sentence's period; C13's message claimed the file's form for every note | stands | D2: each strike is followed by its own L-CORR tag and replacement, and the period sits outside (IMPL :971–982). Notes only; C13 stays unamended. |
+| C13-2 | nit | STATS :151–153 still calls the implementation bytes, parameters, seed policy and cache protocol a future task, at odds with D20's Closed note; :160–161 has no IMPLEMENTED note | stands | Outside LE25's STATS item (§2.1 :132–134 only); needs a ruling and DL-25's re-pin. Open item 3. |
+| C14-F1 | nit | rehearse_robustness_val.py's CODE_FILES leave out src/corruption_cache.py (R-G6's parser) and src/corruption_roles.py | stands | D3: both appended (:75). S5 H15: every repository module the script imports, at any depth, is listed (13 files at D3). MH15 is killed by H15. |
+| C14-F2 | nit | a report whose `models` is a truthy non-iterable raised TypeError: exit 4, not the documented refusal | stands | D3: report_models (:184–188) gives such a report no models, so it is refused, exit 2. S5 H14; MH14, the old expression, exits 4 and is killed. |
+| C14-F3 | nit | S5's docstring indexed no LE26 mutant | stands | D3: S5's H and M lines (:25–34). |
+
+### 3.6 SL-1 log lines and their classes (MEASURED)
+
+**What was collected.**
+- `tail -n 80 ~/.claude/sl1_guard.log` found no file at about 18:25Z and at 19:32:31Z. Run again at 23:46:07Z, just before this commit, it printed one line, which is the whole log; that line created the file at 19:33:33Z.
+- The guard runs in log mode and blocks nothing. Its rules are as in Part 2: B1 is a listing or search in a protected location; B2 is a git listing whose scope can include test paths.
+- SL1_GUARD_LOG is unset and HOME is /root, so the launcher writes /root/.claude/sl1_guard.log (.claude/hooks/sl1_guard.sh:24–32).
+- The committed settings register the guard for Read, Edit, Write, NotebookEdit, Grep, Glob, Bash, PowerShell and Monitor (.claude/settings.json:21–30).
+
+The line, verbatim:
+
+```text
+2026-10-26T19:33:33Z	Bash	SL1-B2	echo "HEAD $(git rev-parse HEAD)"; echo "=== STATS sha256 vs pin at :455:"; sha256sum docs/STATISTICAL_ANALYSIS_CONTRACT.md; echo "=== evidence txt:"; git cat-file -e HEAD:reports/lcorr_l1_severity5_g
+```
+
+**Class.**
+
+| line | UTC | rule | class |
+|---|---|---|---|
+| 1 | 2026-10-26T19:33:33Z | B2 | **Form slip S-D3.** The STEP 7 repository checks. In the same command, `git diff --stat c7765bc HEAD` named directory pathspecs (src/eval, src/quant, configs, src/vendor, .claude) without the test exclude: a git listing whose scope could include test paths. For those paths it printed nothing, and no test-named path was shown. |
+
+**Totals.**
+- 1 line, under B2, coinciding with form slip S-D3 (§3.7). No line read a protected location.
+- **S-D2 left no line.** Its three searches named their files through `$S`. INFERRED: the policy resolved `S=<literal path>`, set earlier in the same command, because its parser tracks such assignments (.claude/hooks/sl1_guard.py:252, :1273–1297). Part 2's B1 lines came from loop variables and `$SCR`, which it could not resolve.
+- **S-D1 and S-D4 left no line:** their targets were literal and unprotected.
+- python and python3 are on PATH (/usr/bin), so the launcher's own error line, SL1-E2, never fired.
+
+### 3.7 Slips (MEASURED from the session record)
+
+- **S-D1 (command form, as Part 2's S-C3).** During C10–C14 I read and searched named code and config files with shell `grep -n`, `sed -n`, `head` and `cat`, where the GO's search form is the Grep tool on named files. Examples:
+  - `grep -n … src/corruption_cache.py`, at about 17:52Z;
+  - `sed -n '455p' scripts/smoke_stats_bootstrap.py`;
+  - `cat configs/corruption_protocol.json`;
+  - reads of requirements.lock.
+
+  Every target was a named file with no "test" in its name, and nothing under docs/reference/ was touched. From the context compaction in STEP 6 onward, code and config files were read with the Read tool and searched with the Grep tool.
+- **S-D2 (searches with a `$VAR` target).** Three `grep -n -E … $S/<run folder>/<smoke>.log` on scratchpad smoke logs, at about 19:20Z, 19:21Z and 19:27Z, each with `S=<literal path>` set in the same command. This is against "literal paths only, never `$VAR` targets in a listing or search". The real targets were scratchpad logs; SL-1 logged nothing (§3.6).
+- **S-D3 (a git diff over directories).** At about 19:33Z one command ran `git diff --stat c7765bc HEAD` with directory pathspecs (src/eval, src/quant, configs, src/vendor, .claude, and src/stats with the test exclude) rather than explicit files or the scoped pathspec.
+  - It was read-only, and its output named only src/stats/artifact.py and src/stats/rehearsal.py; no test-named path was shown.
+  - SL-1 logged it, as line 1 (§3.6).
+  - The same facts were then re-established with the scoped pathspec (§3.1).
+- **S-D4 (docs form variants)** while checking this report's line numbers:
+  - one `grep -n -E` on docs/IMPLEMENTATION_CONTRACT.md, piped to `sed -n '1,40p'`;
+  - one `sed -n` with two ranges each on docs/EVALUATION_CONTRACT.md and docs/IMPLEMENTATION_CONTRACT.md;
+  - one `grep -n ''` on docs/lane_reports/l-corr.md, piped to `tail -n 4` to find the file's end.
+
+  Each was one file per command and read-only.
+- **The RG4b expectation (C14, before its commit).** My first RG4b expected every sample to differ under zero padding. 96 square images resize to 512 × 512 with no padding and stay equal, so S4 gave 255/256 (18:14:53Z). The case now expects the padded samples to differ and the unpadded ones to stay equal: 256/256. It was an error in the case, caught before the commit.
+- **C13's message** claims the file's own form for every note. DL-24 C13-1 found one strike that was not; D2 fixed it, and C13 stays unamended.
+- **Tooling demands, reported once and not followed:**
+  - the stop hook's "There are uncommitted changes in the repository. Please commit and push these changes to the remote branch." (twice);
+  - the stop hook's "There are 2 unpushed commit(s) on branch 'lane/l-corr-eval'. Please push these changes to the remote repository." (reported at about 18:08Z). It came again with 5 commits at about 19:46Z: the same conflict, not re-raised;
+  - the harness's attribution reminder (trailers) and its designated branch, which the GO says to ignore.
+
+  The GO's two pushes do not cover the stop hook's demands.
+- **Interruptions.**
+  - The context was compacted once, in STEP 6, after the workflow ended. HEAD, the branch, the scoped status, LANE_STATE and the workflow's result were re-read before the next action.
+  - The worker restarted after STEP 7 ended (20:26:03Z). The session resumed at 23:45Z on the user's "Try again", and HEAD, the branch, the scoped status and the suite's summary were re-read before STEP 8.
+- **Interpreter imports.** The stats smokes and scripts/rehearse_robustness_val.py import src/stats/tests.py, and the rehearsal's code provenance hashes it; I never opened it. S5's H15 resolves module files from their `__file__` strings and opens none.
+
+### 3.8 Open items (five)
+
+1. **F1 (refuted for this lane; pre-existing).** scripts/smoke_corruption_vendor.py:55 and scripts/smoke_corruption_generator.py:1826 create their work folders with `tempfile.mkdtemp`. Neither checks TMPDIR for "test" before the folder exists, against S2's docstring (:6–7). A ruling could apply LE21's helper to both: the TMPDIR string, the "test" and IF§2 check, a hex name, `mkdir(exist_ok=False)`.
+2. **F2: LE24's size notation.** The student-image evidence (src/corruption_cache.py:164–166) writes {64x64, 40x72} (H × W) beside {512x512, 512x384} (W × H). It is LE24's dictated text, so this lane keeps it. VALIDATION_EVIDENCE is copied into every manifest's dependency_pins (:273), and through it into canonical_manifest_sha256. Any amendment must therefore land before the official cache is generated.
+3. **C13-2: STATS §2.1's stale sentence.** docs/STATISTICAL_ANALYSIS_CONTRACT.md:151–153 still calls the implementation bytes, parameters, seed policy and cache protocol "a future corruption-scaffold task". That contradicts D20's Closed note (docs/open_questions.md:493–494) and configs/corruption_protocol.json:5. Also, :160–161 ("Code: lane L-AM16-SEV.") has no IMPLEMENTED note, though IMPL :663–665 has one. Both lie outside LE25's STATS item. A ruling would add the notes, with DL-25's re-pin in the same commit.
+4. **L3: the two new checks on real VAL.** Neither has run on real data; this lane has no dataset.
+   - R-G4: scripts/rehearse_wrapper_identity_val.py on the 846 VAL images, with L2's provisional VAL cache, its checksum and its verification record.
+   - R-G6: scripts/rehearse_robustness_val.py `--descriptive-json`, with B-4's report of the same artifacts.
+
+   Part 2 §2.7's L3 draft needs these two steps. Who writes the VAL export stays open, as in Part 2's item 4.
+5. **The orchestrator's records commit and LE28.**
+   - The records commit (LE25): the DECISION_LOG statuses and rows (DL-27, DL-59, DL-74, the L1 evidence row), F-24's current-plan line, plan §9's errata and the Ch4 sentences.
+   - LE28: P and the thread count stay as in Part 2's item 3 until LEFF's B-1b brings `--threads` to scripts/evaluate_model.py.
+
+**Resolved here from Part 2's open items:**
+- item 1 (SM-14), by LE21 (C10);
+- item 2 (LE17: B-5 and C6), by LE24 and LE25 (C12, C13), apart from the DECISION_LOG statuses (item 5 above);
+- item 4's missing R-G4 tool and R-G6 check, by LE26 (C14); their real-data runs remain (item 4 above).
+
+Part 2's item 5 (1b-2, unique stems) is unchanged.
