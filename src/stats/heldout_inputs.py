@@ -215,6 +215,11 @@ CODES = {
                       "model_role, precision)",
     "dedup_invalid": "B5-S2: the export's dedup or the file it names is null, unreadable, not at its "
                      "sha256 or malformed, or its ids break the invariants against the scored artifacts",
+    # the arm tables (AM-18 items 3(d) and 11; B5-S3)
+    "arm_slot_invalid": "B5-S3: an arm or arm_teacher slot or row that the arm tables cannot place (an X "
+                        "outside the three, two slots for one (X, stage))",
+    "arm_record_invalid": "B5-S3: a teacher or seed-noise record that is missing, unreadable or not at its "
+                          "DL sha256, or whose √2·s differs from its band",
 }
 
 
