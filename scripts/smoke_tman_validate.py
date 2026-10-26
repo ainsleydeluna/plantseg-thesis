@@ -174,7 +174,7 @@ class World:
             self.launch_lines(slot, rid, d)
         for seed in (42, 43, 44):
             slot, rid = f"E1:s{seed}:80k", f"e1_s{seed}_80k"
-            d = FX.e1_run(self.runs, rid)
+            d = FX.e1_run(self.runs, rid, seed=seed, max_iters=80000)
             ck, dl = self.ckpt(d, slot, "best.pth")
             self.run_entry(slot, "scored_run", rid, ck, dl)
         t = self.run_entry("teacher:s42:40k", "scored_run", "teacher_s42_40k")
@@ -183,10 +183,10 @@ class World:
         t.update(checkpoint={"name": "iter_24000.pth", "sha256": sha, "bytes": len(tdata),
                              "sources": [{"kind": "dl_row", "path": None, "dl": "DL-88", "sha256": sha}]},
                  teacher_ckpt_sha256=sha, dl_rows=["DL-88"])
-        for slot, rid, stage in (("E5:s42:clip1:15ep", "e5_s42_clip1_15ep", "E5"),
-                                 ("E5:s42:clip5:15ep", "e5_s42_clip5_15ep", "E5"),
-                                 ("E6:s42:15ep", "e6_s42_15ep", "E6")):
-            FX.qat_run(self.runs, rid, stage=stage)
+        for slot, rid, stage, clip in (("E5:s42:clip1:15ep", "e5_s42_clip1_15ep", "E5", 1.0),
+                                       ("E5:s42:clip5:15ep", "e5_s42_clip5_15ep", "E5", 5.0),
+                                       ("E6:s42:15ep", "e6_s42_15ep", "E6", 5.0)):
+            FX.qat_run(self.runs, rid, stage=stage, clip_norm=clip)
             self.run_entry(slot, "listed_run", rid, None, self.row(f"{slot} completes"))
 
     def launch_lines(self, slot: str, rid: str, d: Path):
@@ -385,6 +385,48 @@ class World:
     def entry(self, doc: dict, slot: str) -> dict:
         return next(e for e in doc["body"]["entries"] if e["slot"] == slot)
 
+    def rebuild(self, entries: dict | None = None, drop=()) -> dict:
+        """The manifest the builder makes from this world's sources, `entries` replacing or adding slots' source
+        entries and `drop` removed, from the records committed now; it becomes the world's manifest (not
+        committed: freeze mode reads it from --manifest)."""
+        src = copy.deepcopy(self.sources)
+        src["entries"].update(copy.deepcopy(entries or {}))
+        for k in drop:
+            src["entries"].pop(k, None)
+        self.doc = self.M.build_manifest(self.records, self.cat, src, runs_root=self.runs)
+        self.data = self.S.json_file_bytes(self.doc)
+        return self.doc
+
+    def committed_cut(self, slots: list, fields: dict, *, nn: int, day: str = FREEZE_DAY) -> tuple[dict, dict]:
+        """A cut entry file committed with its decision-log row; (its ref, each slot's source entry citing it)."""
+        ref = self.entry_file("cut", slots, fields, nn=nn, date=day)
+        self.commit({ref["path"]: self.files[ref["path"]]}, f"cut entry {slots}")
+        cmp = fields.get("comparator")
+        src = {"kind": "cut", "dl_rows": [ref["dl"]], "entry": {"path": ref["path"], "sha256": ref["sha256"]},
+               "cut_date": day, "rule": fields["rule"], "comparator": cmp["slot"] if cmp else None}
+        return ref, {k: copy.deepcopy(src) for k in slots}
+
+    def committed_not_run(self, parent: str, parent_ref: dict, slots: list, *, nn: int) -> dict:
+        """A not-run entry file for `slots` under the cut parent whose entry file is `parent_ref`, committed; each
+        slot's source entry citing it."""
+        pref = {"path": parent_ref["path"], "sha256": parent_ref["sha256"]}
+        ref = self.entry_file("not_run", slots, {"reason": "parent cut", "parent": parent, "parent_record": pref},
+                              nn=nn)
+        self.commit({ref["path"]: self.files[ref["path"]]}, f"not-run entry {slots}")
+        return {k: {"kind": "not_run", "dl_rows": [ref["dl"]], "reason": "parent cut", "parent": parent,
+                    "parent_record": pref, "entry": {"path": ref["path"], "sha256": ref["sha256"]}} for k in slots}
+
+    def launched_fields(self, runs: list, comparator: str = E3S42) -> dict:
+        """A launched cut's own fields for `runs` [(slot, run_id)]: the run_ids, their telemetry hashed from the run
+        directories, and a comparator with its telemetry (AM-19 item 3(c))."""
+        def tel(slot, rid):
+            name = self.M.telemetry_name(self.cat.slots[slot])
+            return {"run_id": rid, "path": f"{rid}/{name}",
+                    "sha256": self.S.sha256_bytes((self.runs / rid / name).read_bytes())}
+        c = tel(comparator, self.entries[comparator]["run_id"])
+        return {"launched": True, "run_ids": [rid for _, rid in runs], "reason": "not complete at the freeze",
+                "since": None, "telemetry": [tel(k, rid) for k, rid in runs], "comparator": {"slot": comparator, **c}}
+
 
 def gate_codes(mode: str) -> list:
     from src.tman import validate as V
@@ -544,12 +586,16 @@ def case_completion_gates():
     tel = w.runs / "e1_s44_80k" / "e1_telemetry.jsonl"
     saved = tel.read_bytes()
     try:
-        tel.write_bytes(saved.replace(b'"max_iters": 4', b'"max_iters": "4"'))
+        tel.write_bytes(saved.replace(b'"max_iters": 80000', b'"max_iters": "80000"'))
         expect_gate(w, "completion_record_unreadable", "completion_record_invalid")
     finally:
         tel.write_bytes(saved)
     expect_gate(w, "completion_block_other_line", "completion_source_mismatch",
                 doc=mutated(w, lambda d: w.entry(d, "E1:s42:80k")["completion"].update(line=1)))
+    lam = KD_RUNS["E2:s42:lambda0.5:80k"][1]
+    expect_gate(w, "run_entry_citing_another_slot_s_run_B52", "completion_source_mismatch", doc=mutated(
+        w, lambda d: w.entry(d, "E2:s42:lambda1:80k").update(run_id=lam, attempts=[{"run_id": lam, "attempt": 1}])),
+        detail="are not launched attempts of this slot")
     q = w.runs / "e6_s42_15ep"
     tel = q / "qat_telemetry.jsonl"
     saved = tel.read_bytes()
@@ -606,69 +652,80 @@ def case_completion_gates():
              "sha256": w.entry(d, "E1:s44:80k")["checkpoint"]["sha256"]})))
 
 
-def case_cut_gates():
-    """Each cut code through a committed cut entry file, cited by the manifest in place of the slots' entries; the
-    launch log gains a launched G run and a launched E3-R1 run (running) and a stopped line for G; the alpha sweep
-    gains a decision record; an AM-23 condition entry reads yes."""
-    from src.tman import entries as E
-    from src.training import kd_arms
-    w = WORLD
-    for rid, stage, slot in (("g_s42_80k_a1", "G", "G:s42:80k"),
-                             ("e3-r1_s42_lambda0.5_alpha25_80k_a1", "E3-R1", "E3-R1:s42:lambda0.5:alpha25:80k")):
+R1 = "E3-R1:s42:lambda0.5:alpha25:80k"
+G = "G:s42:80k"
+A = "A:s42:alpha25:80k"
+A100 = "E3:s42:lambda0.5:alpha100:80k"
+
+
+def cut_world() -> World:
+    """A world of its own for the cut gates: the launch log gains a launched, running G run (with a stopped line: it
+    awaits a repeat) and a launched, running E3-R1 run; the manifest enters G and the R1 arm as launched cuts at the
+    freeze (their runs, telemetry and comparator; E6-R1 and E7-R1 not run under the new R1 cut), so the world still
+    passes every freeze gate. The alpha sweep gains a decision record; an AM-23 condition entry reads yes."""
+    w = World()
+    w.g_rid, w.r1_rid = "g_s42_80k_a1", "e3-r1_s42_lambda0.5_alpha25_80k_a1"
+    for rid, stage, slot in ((w.g_rid, "G", G), (w.r1_rid, "E3-R1", R1)):
         d = FX.kd_run(w.runs, rid, stage_key=stage.split("-")[0].lower(), end=None)
         w.launch_lines(slot, rid, d)
     mde = w.M.REFERENCE_FILES["mde_entry"][0]
-    report = {"path": mde, "sha256": w.S.sha256_bytes((REPO / mde).read_bytes())}
-    w.launch.append({"event": "stopped", "run_id": "g_s42_80k_a1", "report": report})
+    w.report = {"path": mde, "sha256": w.S.sha256_bytes((REPO / mde).read_bytes())}
+    w.launch.append({"event": "stopped", "run_id": w.g_rid, "report": w.report})
     decision = w.S.json_file_bytes({"format": "sweep_decision_record/1", "sweep": "alpha_cwd",
                                     "decision_date": "2026-10-22", "values": [
                                         {"value": v, "status": "finished", "reason": None}
                                         for v in (25.0, 50.0, 100.0)]})
-    cond = w.entry_file("condition", ["E6-R1:s42:15ep"], {"arm": "R1", "verdict": "yes", "e3x": {
-        "run_id": "e3-r1_s42_lambda0.5_alpha25_80k_a1", "checkpoint_sha256": "6" * 64, "best_json_sha256": "7" * 64}},
-        date="2026-10-29")
+    w.cond = w.entry_file("condition", ["E6-R1:s42:15ep"], {"arm": "R1", "verdict": "yes", "e3x": {
+        "run_id": w.r1_rid, "checkpoint_sha256": "6" * 64, "best_json_sha256": "7" * 64}}, date="2026-10-29")
     w.commit({"reports/kd_launch_log.jsonl": b"".join(json.dumps(x).encode() + b"\n" for x in w.launch),
-              "reports/derived/alpha_decision_record.json": decision, cond["path"]: w.files[cond["path"]]},
+              "reports/derived/alpha_decision_record.json": decision, w.cond["path"]: w.files[w.cond["path"]]},
              "launch log, decision record, condition")
-    g = w.cut_fields("G", ["G:s42:80k"], "no card", False)
-    r1_slots = CUT_GROUPS["R1"][0]
-    r1 = w.cut_fields("R1", r1_slots, "gate not met", True)
-    named = {"rule": "named_rule", "rule_record": {"path": mde, "sha256": report["sha256"], "date": "2026-10-28"},
-             "cut_order_position": None, "since": None}
+    w.g_cut = {**w.cut_fields("G", [G], "no card", False), **w.launched_fields([(G, w.g_rid)])}
+    w.r1_slots = CUT_GROUPS["R1"][0]
+    w.r1_cut = {**w.cut_fields("R1", w.r1_slots, "gate not met", True), **w.launched_fields([(R1, w.r1_rid)])}
+    _, g_src = w.committed_cut([G], w.g_cut, nn=2)
+    r1_ref, r1_src = w.committed_cut(w.r1_slots, w.r1_cut, nn=2)
+    w.rebuild({**g_src, **r1_src, **w.committed_not_run(R1, r1_ref, NOT_RUN[R1], nn=2)})
+    return w
 
-    def launched(rid):
-        return {"launched": True, "run_ids": [rid], "reason": "not complete",
-                "telemetry": [{"run_id": rid, "path": f"{rid}/t.jsonl", "sha256": "8" * 64}],
-                "comparator": {"slot": E3S42, "run_id": "e3_s42", "path": "e3_s42/t.jsonl", "sha256": "9" * 64}}
-    e3r1 = "e3-r1_s42_lambda0.5_alpha25_80k_a1"
+
+def case_cut_gates():
+    """Each cut code through a committed cut entry file, cited by the manifest in place of the slots' entries, in
+    cut_world: a never-launched A cut, the launched G and R1 cuts, the alpha sweep's decision date, a named rule."""
+    from src.tman import entries as E
+    from src.training import kd_arms
+    w = cut_world()
+    code, _, e = w.run("freeze")
+    check("cut_world_passes_with_its_launched_cuts", code is None, f"{code}: {e.detail[:300] if e else ''}")
+    a = w.cut_fields("A", [A], "no card", False)
+    named = {"rule": "named_rule", "rule_record": {"path": w.report["path"], "sha256": w.report["sha256"],
+                                                  "date": "2026-10-28"}, "cut_order_position": None, "since": None}
+    a100_rid = KD_RUNS[A100][1]
     variants = [
-        ("cut_rule_operator", "cut_rule_unknown", ["G:s42:80k"], dict(g, rule="operator"), FREEZE_DAY),
-        ("cut_of_never_cut_slot", "cut_of_never_cut", ["E2:s42:lambda0.5:80k", "G:s42:80k"], g, FREEZE_DAY),
-        ("cut_of_a_complete_run_TB10", "cut_of_complete_run", ["G:s42:80k"],
-         dict(g, run_ids=["e2_s42_lambda4_80k_a1"]), FREEZE_DAY),
-        ("cut_reason_outside_the_list", "cut_reason_invalid", ["G:s42:80k"], dict(g, reason="busy"), FREEZE_DAY),
-        ("cut_dated_off_the_freeze", "cut_date_mismatch", ["G:s42:80k"], g, "2026-11-02"),
-        ("cut_arithmetic_recomputed_differently", "cut_arithmetic_invalid", ["G:s42:80k"],
-         dict(g, arithmetic=dict(E.cut_arithmetic(10, [], "T", FX.utc("2026-10-20T03:00:00Z")), cut=True)),
+        ("cut_rule_operator", "cut_rule_unknown", [A], dict(a, rule="operator"), FREEZE_DAY),
+        ("cut_of_never_cut_slot", "cut_of_never_cut", ["E2:s42:lambda0.5:80k", A], a, FREEZE_DAY),
+        ("cut_reason_outside_the_list", "cut_reason_invalid", [A], dict(a, reason="busy"), FREEZE_DAY),
+        ("cut_dated_off_the_freeze", "cut_date_mismatch", [A], a, "2026-11-02"),
+        ("cut_arithmetic_recomputed_differently", "cut_arithmetic_invalid", [A],
+         dict(a, arithmetic=dict(E.cut_arithmetic(10, [], "T", FX.utc("2026-10-20T03:00:00Z")), cut=True)),
          FREEZE_DAY),
-        ("cut_launched_without_telemetry", "cut_val_record_missing", ["G:s42:80k"],
-         dict(g, **dict(launched("g_s42_80k_a1"), telemetry=[]), since=None), FREEZE_DAY),
-        ("arm_cut_without_results", "arm_cut_results_missing", r1_slots, dict(r1, results_known=[]), FREEZE_DAY),
-        ("launched_arm_cut_by_a_named_rule", "arm_run_cut_while_running", r1_slots, dict(r1, **launched(e3r1),
-                                                                                           **named), "2026-10-28"),
-        ("arm_cut_missing_its_later_run", "arm_cut_partial", r1_slots[:1], r1, FREEZE_DAY),
-        ("cut_order_position_other", "cut_order_position_mismatch", ["G:s42:80k"], dict(g, cut_order_position=3),
+        ("cut_launched_without_telemetry", "cut_val_record_missing", [G], dict(w.g_cut, telemetry=[]), FREEZE_DAY),
+        ("arm_cut_without_results", "arm_cut_results_missing", w.r1_slots, dict(w.r1_cut, results_known=[]),
          FREEZE_DAY),
-        ("decision_date_cut_not_in_the_record", "decision_date_cut_mismatch", ["E3:s42:lambda0.5:alpha100:80k"],
-         dict(g, rule="decision_date", reason="cut at its decision date", since=None, cut_order_position=None),
+        ("launched_arm_cut_by_a_named_rule", "arm_run_cut_while_running", w.r1_slots, {**w.r1_cut, **named},
+         "2026-10-28"),
+        ("arm_cut_missing_its_later_run", "arm_cut_partial", w.r1_slots[:1],
+         w.cut_fields("R1", w.r1_slots[:1], "gate not met", True), FREEZE_DAY),
+        ("cut_order_position_other", "cut_order_position_mismatch", [A], dict(a, cut_order_position=3), FREEZE_DAY),
+        ("decision_date_cut_not_in_the_record", "decision_date_cut_mismatch", [A100],
+         {**a, **w.launched_fields([(A100, a100_rid)]), "rule": "decision_date", "cut_order_position": None},
          "2026-10-22"),
-        ("stopped_run_cut_by_a_named_rule", "stopped_run_cut_early", ["G:s42:80k"],
-         dict(g, **launched("g_s42_80k_a1"), **named), "2026-10-28"),
+        ("stopped_run_cut_by_a_named_rule", "stopped_run_cut_early", [G], {**w.g_cut, **named}, "2026-10-28"),
         ("e6x_cut_citing_a_yes_condition_AM23_3b", "condition_unmet", ["E6-R1:s42:15ep"],
-         dict(g, reason="condition not met", **dict(named, rule_record={"path": cond["path"], "sha256": cond["sha256"],
-                                                                        "date": "2026-10-29"})), "2026-10-29"),
+         {**w.cut_fields("E6-R1", ["E6-R1:s42:15ep"], "condition not met", False), **named,
+          "rule_record": {"path": w.cond["path"], "sha256": w.cond["sha256"], "date": "2026-10-29"}}, "2026-10-29"),
     ]
-    for nn, (name, want, slots, fields, day) in enumerate(variants, 2):
+    for nn, (name, want, slots, fields, day) in enumerate(variants, 3):
         ref = w.entry_file("cut", slots, fields, nn=nn, date=day)
         w.commit({ref["path"]: w.files[ref["path"]]}, f"cut variant {name}")
         expect_gate(w, name, want, doc=mutated(w, lambda d, ref=ref, slots=slots: cite_cut(w, d, ref, slots)))
@@ -696,6 +753,110 @@ def cite_cut(w: World, d: dict, ref: dict, slots: list) -> None:
             old[0].update(new)
         else:
             d["body"]["entries"].append(new)
+
+
+def case_cut_attribution():
+    """DL-24 blockers #0 and #5 (with #12-#14 and #44): a cut slot's launched attempts and status come from the
+    launch log and the run directories, never from the entry. Its own world: E2 seed 43 launched and complete
+    (entered as its scored run), E2 seed 44 launched and running (cut at the freeze as launched), E5 seed 43
+    launched and running (a QAT run, launched by its run_meta row with mode real; the E5E6-s4344 freeze cut names
+    it)."""
+    w = World()
+    s43, s44, q43 = "E2:s43:lambda0.5:80k", "E2:s44:lambda0.5:80k", "E5:s43:15ep"
+    r43, r44, q = "e2_s43_lambda0.5_80k_a1", "e2_s44_lambda0.5_80k_a1", "e5_s43_15ep_a1"
+    d43 = FX.kd_run(w.runs, r43, stage_key="e2", seed=43)
+    ck43, dl43 = w.ckpt(d43, s43, "iter_80000.pth")
+    w.launch_lines(s43, r43, d43)
+    w.launch_lines(s44, r44, FX.kd_run(w.runs, r44, stage_key="e2", seed=44, end=None))
+    FX.qat_run(w.runs, q, stage="E5", seed=43, epochs=7)
+    w.commit({"reports/kd_launch_log.jsonl": b"".join(json.dumps(x).encode() + b"\n" for x in w.launch)},
+             "E2 seeds 43 and 44 launched", rows={dl43: w.dl[dl43]})
+    scored = w.run_entry(s43, "scored_run", r43, ck43, dl43)
+    _, c44 = w.committed_cut([s44], {**w.cut_fields("E2-s4344", [s44], "no card", False),
+                                     **w.launched_fields([(s44, r44)])}, nn=2)
+    e5 = ["E5:s43:15ep", "E5:s44:15ep"]
+    _, c5 = w.committed_cut(e5, {**w.cut_fields("E5E6-s4344", e5, "gate not met", False),
+                                 **w.launched_fields([(q43, q)])}, nn=2)
+    w.rebuild({s43: scored, **c44, **c5})
+    code, _, e = w.run("freeze")
+    check("attribution_world_passes_launched_qat_cut_AM19_definitions", code is None,
+          f"{code}: {e.detail[:300] if e else ''}")
+    group = w.cut_fields("E2-s4344", [s43, s44], "no card", False)
+    variants = [
+        ("group_cut_naming_a_complete_run_first_B0", "cut_of_complete_run", [s43, s44],
+         {**group, **w.launched_fields([(s43, r43), (s44, r44)])}, f"[{s43!r}] are complete"),
+        ("group_cut_naming_a_complete_run_last_B5", "cut_of_complete_run", [s43, s44],
+         {**group, **w.launched_fields([(s44, r44), (s43, r43)])}, f"[{s43!r}] are complete"),
+        ("never_launched_cut_of_a_complete_run_B0", "cut_of_complete_run", [s43],
+         w.cut_fields("E2-s4344", [s43], "no card", False), f"[{s43!r}] are complete"),
+        ("cut_naming_another_slot_s_run_B5", "cut_reason_invalid", [s44],
+         {**group, **w.launched_fields([(s44, r44), (s43, r43)])}, f"is a launched attempt of {s43}"),
+        ("launched_kd_run_cut_as_never_launched_B13", "cut_reason_invalid", [s44],
+         w.cut_fields("E2-s4344", [s44], "no card", False), "are not named in run_ids"),
+        ("launched_qat_run_cut_as_never_launched_B12", "cut_reason_invalid", e5,
+         w.cut_fields("E5E6-s4344", e5, "gate not met", False), "are not named in run_ids"),
+    ]
+    for nn, (name, want, slots, fields, detail) in enumerate(variants, 3):
+        ref = w.entry_file("cut", slots, fields, nn=nn)
+        w.commit({ref["path"]: w.files[ref["path"]]}, f"cut variant {name}")
+        expect_gate(w, name, want, doc=mutated(w, lambda d, ref=ref, slots=slots: cite_cut(w, d, ref, slots)),
+                    detail=detail)
+    aside = w.runs / "e5_s43_15ep_aside"
+    (w.runs / q).rename(aside)
+    try:
+        expect_gate(w, "cut_run_withheld_from_runs_B44", "launched_attempt_without_directory", detail=q)
+    finally:
+        aside.rename(w.runs / q)
+    expect_gate(w, "complete_e1_run_omitted_B4", "complete_run_omitted", doc=mutated(
+        w, lambda d: d["body"].update(entries=[x for x in d["body"]["entries"]
+                                               if x["slot"] not in ("E1:s43:80k", "E4:s43:list42")])),
+        detail="E1:s43:80k")
+    expect_gate(w, "complete_never_cut_pilot_run_omitted_B3", "complete_run_omitted", doc=mutated(
+        w, lambda d: d["body"].update(entries=[x for x in d["body"]["entries"] if x["slot"] != "E5:s42:clip1:15ep"])),
+        detail="E5:s42:clip1:15ep")
+    tel = w.runs / "e5_s42_clip1_15ep" / "qat_telemetry.jsonl"
+    saved = tel.read_bytes()
+    try:
+        FX.qat_run(w.runs, "e5_s42_clip1_15ep", stage="E5", clip_norm=1.0, epochs=7)
+        expect_gate(w, "late_never_cut_run_absent_without_delay_B3", "freeze_source_conflict", doc=mutated(
+            w, lambda d: d["body"].update(entries=[x for x in d["body"]["entries"]
+                                                   if x["slot"] != "E5:s42:clip1:15ep"])), detail="enter")
+    finally:
+        tel.write_bytes(saved)
+    from src.tman import validate as V
+    d = mutated(w, lambda d: d["body"].update(entries=[x for x in d["body"]["entries"]
+                                                       if x["slot"] not in ("E5:s42:clip1:15ep", A)]))
+    res = V.validate(w.ctx("draft", w.S.json_file_bytes(d), runs_root=None))
+    check("draft_lists_absent_never_cut_and_cuttable_slots_B3", res.exit_code == 3 and any(
+        m.startswith("MISSING: freeze_source_conflict") and "E5:s42:clip1:15ep" in m for m in res.missing)
+          and any(m.startswith("MISSING: cut_unentered_at_unlock") and A in m for m in res.missing), str(res.missing))
+    expect_gate(w, "cuttable_slot_without_entry_at_the_freeze_B4", "cut_unentered_at_unlock", doc=mutated(
+        w, lambda d: d["body"].update(entries=[x for x in d["body"]["entries"] if x["slot"] != A])), detail=A)
+    work = FX.teacher_run(w.runs, "teacher-r1_s42_40k_a1")
+    (work / "teacher_arm_launch_provenance.json").write_bytes(w.S.json_file_bytes({
+        "format": "teacher_arm_launch_provenance/1", "arm": "R1", "attempt": 1, "work_dir": str(work), "launch": True,
+        "recorded_utc": "2026-10-12T00:00:00Z", "code_pin": w.E, "records_commit": w.E}))
+    try:
+        expect_gate(w, "cut_of_a_complete_arm_teacher_AM18_7b", "cut_of_complete_run", detail="teacher-R1:s42:40k")
+        expect_gate(w, "complete_arm_teacher_omitted_B4", "complete_run_omitted", doc=mutated(
+            w, lambda d: d["body"].update(entries=[x for x in d["body"]["entries"] if x["slot"] not in (
+                "teacher-R1:s42:40k", R1, "E6-R1:s42:15ep", "E7-R1:s42:list42")])), detail="teacher-R1:s42:40k")
+    finally:
+        import shutil
+        shutil.rmtree(work)
+    launch = list(w.launch)
+    rid = "a_s43_alpha25_80k_a1"
+    w.launch_lines(A, rid, FX.kd_run(w.runs, rid, stage_key="a", seed=43))
+    w.launch[-2]["seed"] = 43
+    w.commit({"reports/kd_launch_log.jsonl": b"".join(json.dumps(x).encode() + b"\n" for x in w.launch)},
+             "a launched run outside the catalogue")
+    try:
+        expect_gate(w, "launched_run_outside_the_catalogue_B94", "complete_run_omitted", detail="A:s43:alpha25:80k")
+    finally:
+        w.launch = launch
+        w.commit({"reports/kd_launch_log.jsonl": b"".join(json.dumps(x).encode() + b"\n" for x in w.launch)},
+                 "the launch log restored")
+    check("attribution_world_still_passes", w.run("freeze")[0] is None)
 
 
 def case_parent_and_derived_gates():
@@ -845,10 +1006,26 @@ def case_moved_freeze():
           f"{code}: {e.detail[:200] if e else ''}")
     expect_gate(w, "new_freeze_not_the_first_complete_day", "freeze_source_conflict",
                 doc=mutated(w, lambda d: moved(d, "2026-11-05")))
-    code, passed, e = w.run("freeze", mutated(w, lambda d: moved(d, "2026-11-04")), runs_root=None)
-    order = gate_codes("freeze")
-    check("delay_entry_without_runs_refused_not_raised", code == "launched_attempt_without_directory"
-          and passed == order[:order.index("freeze_source_conflict")], f"{code} {len(passed or [])}")
+
+    def delayed(d):
+        moved(d, "2026-11-04")
+        d["body"]["schedule"] = D.freeze_instant(sch, delays=[dict(dref, doc=delay["doc"])]).as_block()
+    expect_gate(w, "delay_without_new_freeze_stays_a_draft_B3", "freeze_source_conflict", doc=mutated(w, delayed),
+                detail="stays a draft")
+    expect_gate(w, "late_never_cut_run_without_delay_B3", "freeze_source_conflict", doc=mutated(
+        w, lambda d: moved(d, "2026-11-04") or d["body"].update(schedule=w.doc["body"]["schedule"])),
+        detail="the delay is entered")
+    aside = FX.scratch_dir("tmanaside") / "e6_s42_15ep"
+    (w.runs / "e6_s42_15ep").rename(aside)              # E6 seed 42's only launched attempt is the late one
+    try:
+        expect_gate(w, "late_never_cut_run_absent_at_the_new_freeze_B3", "freeze_source_conflict", doc=mutated(
+            w, lambda d: moved(d, "2026-11-04") or d["body"].update(
+                entries=[x for x in d["body"]["entries"] if x["slot"] != "E6:s42:15ep"])),
+            detail="no entry at the new freeze")
+    finally:
+        aside.rename(w.runs / "e6_s42_15ep")
+    expect_gate(w, "delay_entry_without_runs_refused_at_its_gate", "launched_attempt_without_directory",
+                doc=mutated(w, lambda d: moved(d, "2026-11-04")), runs_root=None)
 
 
 def case_coverage():
@@ -1027,8 +1204,9 @@ def main() -> int:
     try:
         return FX.run_cases("TMAN VALIDATE SMOKE (lane TMAN, B-1, C5)",
                             (case_world_passes, case_input_gates, case_record_gates, case_completion_gates,
-                             case_cut_gates, case_parent_and_derived_gates, case_appends, case_non_finite_gate,
-                             case_scope_gates, case_moved_freeze, case_draft_and_cli, case_inventory, case_coverage))
+                             case_cut_gates, case_cut_attribution, case_parent_and_derived_gates, case_appends,
+                             case_non_finite_gate, case_scope_gates, case_moved_freeze, case_draft_and_cli,
+                             case_inventory, case_coverage))
     finally:
         if REAL_TEACHER is not None:
             WORLD.M.TEACHER_OF_RECORD.clear()

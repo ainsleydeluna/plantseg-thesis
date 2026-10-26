@@ -207,12 +207,15 @@ def write_jsonl(path: Path, rows: list, torn: bytes = b"") -> Path:
 
 
 def kd_run(root: Path, run_id: str, *, stage_key: str = "e2", end: str | None = "2026-10-20T10:00:00Z",
-           checks: bool = True, abort: dict | None = None, iters: int = 3) -> Path:
+           checks: bool = True, abort: dict | None = None, iters: int = 3, seed: int = 42,
+           max_iters: int | None = None) -> Path:
     """A KD run directory: run_meta and telemetry with train rows (loss, iter_seconds), VAL rows with scores and,
     when `end`, a run_end record whose best_val is a score; or an abort record (its non-finite detail values as
-    strings, as train_distill.record_number writes them, :817-823)."""
+    strings, as train_distill.record_number writes them, :817-823). `max_iters` (default `iters`) is the run_meta's
+    horizon and the run_end's iteration; the train rows are `iters` few."""
     d = Path(root) / run_id
     t0 = utc("2026-10-10T00:00:00Z")
+    last = iters if max_iters is None else max_iters
     rows = [{"event": "train", "iter": i, "loss": 2.0 / i, "grad_norm": 1.5, "iter_seconds": 0.7 + 0.01 * i,
              "wall_clock": t0 + i} for i in range(1, iters + 1)]
     rows.append({"event": "val", "iter": iters, "all_class_miou": 0.31, "wall_clock": t0 + iters + 0.5})
@@ -221,26 +224,26 @@ def kd_run(root: Path, run_id: str, *, stage_key: str = "e2", end: str | None = 
         rows.append({"event": "run_abort", "iter": iters, "detail": {"loss": "nan", "grad_norm": None},
                      "wall_clock": utc(abort.pop("at", "2026-10-15T00:00:00Z")), **abort})
     elif end:
-        rows.append({"event": "run_end", "iter": iters, "best_val_miou_all_class": 0.31, "best_ckpt": "iter_3.pth",
+        rows.append({"event": "run_end", "iter": last, "best_val_miou_all_class": 0.31, "best_ckpt": "iter_3.pth",
                      "checks_passed": checks, "wall_clock_start": t0, "wall_clock_end": utc(end),
                      "wall_seconds": 9.0, "train_seconds": 8.0, "gpu_hours": 0.01})
     write_jsonl(d / f"{stage_key}_telemetry.jsonl", rows)
     write_jsonl(d / f"{stage_key}_run_meta.jsonl", [{"event": "run_meta", "stage": stage_key.upper(), "mode": "real",
-                                                    "seed": 42, "wall_clock": t0, "max_iters": iters,
+                                                    "seed": seed, "wall_clock": t0, "max_iters": last,
                                                     "lambda_logit": 0.5, "image_digest": "sha256:" + "c" * 64}])
     return d
 
 
 def e1_run(root: Path, run_id: str, *, end: str | None = "2026-09-20T10:00:00Z", result: str | None = "PASS",
-           max_iters: int = 4) -> Path:
-    """An E1 run directory: e1_telemetry.jsonl (run_meta, train rows, a VAL row with scores, at max_iters when
+           max_iters: int = 4, seed: int = 42) -> Path:
+    """An E1 run directory: e1_telemetry.jsonl (run_meta, four train rows, a VAL row with scores, at max_iters when
     `end`) and e1_stdout.log with its RESULT line when `result`."""
     d = Path(root) / run_id
     t0 = utc("2026-09-18T00:00:00Z")
-    rows = [{"event": "run_meta", "wall_clock": t0, "mode": "real", "seed": 42, "max_iters": max_iters,
+    rows = [{"event": "run_meta", "wall_clock": t0, "mode": "real", "seed": seed, "max_iters": max_iters,
              "git_head": "0" * 40, "image_digest": "sha256:" + "b" * 64}]
-    rows += [{"event": "train", "iter": i, "loss": 1.0, "iter_seconds": 0.5, "wall_clock": t0 + i}
-             for i in range(1, max_iters + 1)]
+    rows += [{"event": "train", "iter": max(1, max_iters * i // 4), "loss": 1.0, "iter_seconds": 0.5,
+              "wall_clock": t0 + i} for i in range(1, 5)]
     last = max_iters if end else max_iters - 2
     rows.append({"event": "val", "iter": last, "all_class_miou": 0.36, "per_class_iou": [0.1] * 3,
                  "wall_clock": utc(end) if end else t0 + 100})
@@ -253,13 +256,15 @@ def e1_run(root: Path, run_id: str, *, end: str | None = "2026-09-20T10:00:00Z",
 
 def qat_run(root: Path, run_id: str, *, epochs: int = 15, end: str = "2026-10-25T12:00:00Z", stop: bool = False,
             nonfinite_from: int | None = None, complete_flag: bool = True, stage: str = "E6",
-            torn: bool = False) -> Path:
-    """A QAT run directory: qat_telemetry.jsonl with run_meta, train and fake-quant VAL rows (scores), epoch_end
-    rows and, when asked, a non-finite state, a run_stop or a torn last line."""
+            torn: bool = False, seed: int = 42, clip_norm: float = 5.0, launched: str = "2026-10-24T00:00:00Z",
+            mode: str = "real") -> Path:
+    """A QAT run directory: qat_telemetry.jsonl with run_meta (its stage, seed, clip and launch time), train and
+    fake-quant VAL rows (scores), epoch_end rows and, when asked, a non-finite state, a run_stop or a torn last
+    line."""
     d = Path(root) / run_id
-    t0 = utc("2026-10-24T00:00:00Z")
-    rows = [{"event": "run_meta", "wall_clock": t0, "mode": "real", "stage": stage, "source_stage": "E3",
-             "seed": 42, "run_id": run_id, "clip_norm": 5.0, "clip_source": "clip_selection",
+    t0 = utc(launched)
+    rows = [{"event": "run_meta", "wall_clock": t0, "mode": mode, "stage": stage, "source_stage": "E3",
+             "seed": seed, "run_id": run_id, "clip_norm": clip_norm, "clip_source": "clip_selection",
              "source_checkpoint_sha256": "c" * 64, "image_digest": "sha256:" + "b" * 64, "git_head": "0" * 40}]
     since = None
     for e in range(1, epochs + 1):

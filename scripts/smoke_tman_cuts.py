@@ -47,12 +47,17 @@ def catalogue():
     return S.load_catalogue((REPO / S.CATALOGUE_REL).read_bytes())
 
 
-def ctx(**kw):
+def ctx(runs: dict | None = None, unread: tuple = (), **kw):
+    """A cut context whose records give each slot's launched attempts: `runs` {slot: [run_id, ...]}, every other
+    slot never launched, the slots in `unread` not read (a non-KD slot without --runs)."""
     from src.tman import entries as E
     from src.tman import schedule as D
     from src.training import kd_arms
+    runs = dict(runs or {})
+    owner = {r: k for k, rs in runs.items() for r in rs}
     reg = {spec.run_stage: spec for spec in kd_arms.load_arms().values()}
-    base = dict(registry=reg, decision_records={}, launched=set(), stopped=set(), status=lambda s: None,
+    base = dict(registry=reg, decision_records={}, stopped=set(), status=lambda s: None,
+                attempts=lambda k: None if k in unread else list(runs.get(k, [])), run_slot=owner.get,
                 condition=lambda r: YES_NO.get((r or {}).get("sha256")))
     base.update(kw)
     return E.CutContext(catalogue(), D.freeze_instant(SCHEDULE_T), **base)
@@ -117,7 +122,18 @@ def case_gate_order():
     expect_gate("since_after_cut_date", freeze_cut(since={"date": "2026-11-04", "record": dict(REF)}), c,
                 "cut_reason_invalid")
     expect_gate("launched_flag_against_launch_log", freeze_cut(run_ids=["g_s42_80k_a1"]),
-                ctx(launched={"g_s42_80k_a1"}), "cut_reason_invalid")
+                ctx(runs={"G:s42:80k": ["g_s42_80k_a1"]}), "cut_reason_invalid")
+    expect_gate("launched_attempt_left_out_of_run_ids_R099", freeze_cut(), ctx(runs={"G:s42:80k": ["g_s42_80k_a1"]}),
+                "cut_reason_invalid")
+    expect_gate("run_id_of_another_slot", freeze_cut(**launched_fields("f_s42_alpha25_80k_a1")),
+                ctx(runs={"F:s42:alpha25:80k": ["f_s42_alpha25_80k_a1"]}), "cut_reason_invalid")
+    expect_gate("run_id_no_record_launched", freeze_cut(run_ids=["g_s42_80k_a9"]), c, "cut_reason_invalid")
+    qat = freeze_cut(slots=["E5:s43:15ep"], pos=19, **launched_fields("e5_s43_15ep_a1"))
+    expect_gate("launched_qat_cut_passes_AM19_definitions", qat, ctx(runs={"E5:s43:15ep": ["e5_s43_15ep_a1"]}), None)
+    expect_gate("qat_cut_unread_without_runs_passes_as_named", qat, ctx(unread=("E5:s43:15ep",)), None)
+    expect_gate("qat_cut_unread_naming_runs_never_launched", dict(qat, launched=False, reason="gate not met",
+                                                                 since={"date": "2026-10-01", "record": dict(REF)}),
+                ctx(unread=("E5:s43:15ep",)), "cut_reason_invalid")
     expect_gate("freeze_cut_dated_off_its_day", freeze_cut(date="2026-11-02"), c, "cut_date_mismatch")
     a = arithmetic(80000, 30.0, "2026-10-20T03:00:00Z", True)
     arith = freeze_cut(rule="arithmetic", reason="does not fit", since=None, date="2026-10-20", arithmetic=a,
@@ -128,12 +144,12 @@ def case_gate_order():
     fits = arithmetic(10, 1.0, "2026-10-20T03:00:00Z", False)
     expect_gate("arithmetic_rule_that_fits_refused", dict(arith, arithmetic=fits), c, "cut_arithmetic_invalid")
     expect_gate("launched_cut_without_telemetry", freeze_cut(**dict(launched_fields("g_s42_80k_a1"), telemetry=[])),
-                ctx(launched={"g_s42_80k_a1"}), "cut_val_record_missing")
+                ctx(runs={"G:s42:80k": ["g_s42_80k_a1"]}), "cut_val_record_missing")
     expect_gate("launched_cut_without_comparator",
                 freeze_cut(**dict(launched_fields("g_s42_80k_a1"), comparator=None)),
-                ctx(launched={"g_s42_80k_a1"}), "cut_val_record_missing")
+                ctx(runs={"G:s42:80k": ["g_s42_80k_a1"]}), "cut_val_record_missing")
     expect_gate("launched_freeze_cut_passes", freeze_cut(**launched_fields("g_s42_80k_a1")),
-                ctx(launched={"g_s42_80k_a1"}), None)
+                ctx(runs={"G:s42:80k": ["g_s42_80k_a1"]}), None)
     arm = freeze_cut(slots=ARM_R1, pos=7, results_known=[{"dl": "DL-118", "path": "reports/x.json",
                                                           "sha256": "4" * 64}])
     expect_gate("arm_freeze_cut_passes", arm, c, None)
@@ -144,7 +160,8 @@ def case_gate_order():
     running["run_ids"] = ["teacher-r1_s42_40k_a1", "e3-r1_s42_80k_a1"]
     running["telemetry"] = running["telemetry"] + [{"run_id": "teacher-r1_s42_40k_a1", "path": "t", "sha256": "6" * 64}]
     expect_gate("launched_arm_cut_by_named_rule_refused", running,
-                ctx(launched={"teacher-r1_s42_40k_a1", "e3-r1_s42_80k_a1"}), "arm_run_cut_while_running")
+                ctx(runs={"teacher-R1:s42:40k": ["teacher-r1_s42_40k_a1"], ARM_R1[1]: ["e3-r1_s42_80k_a1"]}),
+                "arm_run_cut_while_running")
     expect_gate("arm_cut_missing_its_later_run", dict(arm, slots=ARM_R1[:1]), c, "arm_cut_partial")
     expect_gate("arm_cut_skipping_an_incomplete_teacher", dict(arm, slots=ARM_R1[1:]),
                 ctx(status=lambda s: "running" if s.startswith("teacher") else None), "arm_cut_partial")
@@ -174,9 +191,13 @@ def case_gate_order():
                        rule_record={"path": "reports/x.json", "sha256": "7" * 64, "date": "2026-10-28"},
                        date="2026-10-28", cut_order_position=None)
     expect_gate("stopped_run_cut_by_named_rule_refused", named,
-                ctx(launched={"g_s42_80k_a2"}, stopped={"g_s42_80k_a2"}), "stopped_run_cut_early")
+                ctx(runs={"G:s42:80k": ["g_s42_80k_a2"]}, stopped={"g_s42_80k_a2"}), "stopped_run_cut_early")
     expect_gate("stopped_run_cut_at_the_freeze_passes", freeze_cut(**launched_fields("g_s42_80k_a2")),
-                ctx(launched={"g_s42_80k_a2"}, stopped={"g_s42_80k_a2"}), None)
+                ctx(runs={"G:s42:80k": ["g_s42_80k_a2"]}, stopped={"g_s42_80k_a2"}), None)
+    stopped_dd = {**dd, **launched_fields("e3_s42_lambda0.5_alpha100_80k_a1")}
+    expect_gate("stopped_candidate_cut_at_its_decision_date_AM19_2b", stopped_dd,
+                ctx(runs={a100: ["e3_s42_lambda0.5_alpha100_80k_a1"]}, stopped={"e3_s42_lambda0.5_alpha100_80k_a1"},
+                    decision_records={"alpha_cwd": cut_rec}), None)
     reg = {k: v for k, v in ctx().registry.items() if k != "E3-R1"}
     expect_gate("arm_without_registry_file_refused", arm, ctx(registry=reg), "unregistered_arm")
     cond = freeze_cut(slots=["E6-R1:s42:15ep"], pos=None, rule="named_rule", reason="condition not met",

@@ -316,6 +316,146 @@ def arm_state(out_dir: Path, output_rel: str, agreement_rel: str, at_utc: str) -
                     ended_at=at)
 
 
+# ------------------------------------------------------------------------------- launched attempts per slot
+TEACHER_WORK_DIR_RE = re.compile(r"^teacher-(?P<arm>r1|r2|l)_s(?P<seed>\d+)_40k_a(?P<attempt>[1-9]\d*)$")
+TEACHER_PROVENANCE = "teacher_arm_launch_provenance.json"      # scripts/launch_teacher_arm.py:92, in the work dir
+
+
+def slot_of_launch(line: dict) -> str:
+    """A KD launch line's catalogue slot: <stage>:s<seed>[:lambda<v>][:alpha<v>]:<horizon/1000>k (plan §1.3)."""
+    parts = [line["stage"], f"s{line['seed']}"]
+    if line.get("lambda_logit") is not None:
+        parts.append(f"lambda{float(line['lambda_logit']):g}")
+    if line.get("alpha_cwd") is not None:
+        parts.append(f"alpha{float(line['alpha_cwd']):g}")
+    parts.append(f"{int(line['horizon']) // 1000}k")
+    return ":".join(parts)
+
+
+class RunIndex:
+    """Each catalogue run slot's launched attempts, from the records and the run directories, never from an entry
+    (AM-19 Definitions: a run is launched when its run_meta row with mode "real" exists; AM-19a readings 6 and 20).
+    KD slots: the launch log's launched lines, mapped by slot_of_launch, in attempt order (the log receives every KD
+    launch). E1 and QAT slots: the run directories under --runs, found by one listing of that folder (each name
+    checked for "test" before any call on it) and named by their own run_meta row with mode real (E1: seed and
+    max_iters; QAT: stage, seed and, for the U4 pilot, clip_norm), in launch-time order. A teacher arm: its work dir,
+    named teacher-<arm>_s<seed>_40k_a<n> by its launcher (scripts/launch_teacher_arm.py:90), with the launch
+    provenance launch true. Without --runs only the KD slots are known. A launched run whose records name no
+    catalogue slot is kept in `foreign`; the teacher of record and the ARM measurement have no attempts here."""
+
+    def __init__(self, cat, log=None, runs_root=None, states: dict | None = None):
+        self.cat, self.root = cat, None if runs_root is None else Path(runs_root)
+        self.slot_of: dict = {}               # run_id -> its catalogue slot
+        self.foreign: list = []               # (run_id, the slot its records name)
+        self.stopped: set = set()             # KD stopped lines
+        self._states = {} if states is None else states          # run_id -> RunState (shared with the caller)
+        found: dict = {}
+        if log is not None:
+            for rid in log.order:
+                if rid in log.launched:
+                    self._add(found, rid, slot_of_launch(log.launch[rid]), (log.launch[rid]["attempt"], rid))
+            self.stopped = set(log.stopped)
+        kd = set(log.launch) if log is not None else set()
+        if self.root is not None:
+            S.refuse_test_path(self.root)
+            if not self.root.is_dir():
+                raise S.TmanRefused("launched_attempt_without_directory", f"--runs {self.root} is not a folder")
+            for name in sorted(p.name for p in self.root.iterdir()):
+                S.refuse_test_path(name)
+                if name in kd:
+                    continue
+                got = self._identify(name)
+                if got is not None:
+                    self._add(found, name, got[0], got[1])
+        self.by_slot = {k: [rid for _, rid in sorted(v)] for k, v in found.items()}
+        self._kd_slots = {k for k, s in cat.slots.items() if s["record_kind"] == "kd_run_end"}
+
+    def _add(self, found: dict, rid: str, slot: str, order) -> None:
+        if slot in self.cat.slots and self.cat.slots[slot]["class"] == "run":
+            self.slot_of[rid] = slot
+            found.setdefault(slot, []).append(order)
+        else:
+            self.foreign.append((rid, slot))
+
+    def _identify(self, name: str):
+        """(slot, order key) of a directory under --runs that is a launched E1, QAT or teacher-arm run, else None."""
+        d = self.root / name
+        m = TEACHER_WORK_DIR_RE.fullmatch(name)
+        if m:
+            p = d / TEACHER_PROVENANCE
+            if not p.is_file():
+                return None
+            prov, _ = R.read_json_file(p, R.LAUNCH_PROVENANCE, code="completion_record_invalid")
+            if prov.get("launch") is not True:
+                return None
+            return f"teacher-{m.group('arm').upper()}:s{m.group('seed')}:40k", (int(m.group("attempt")), name)
+        for rel, allow, key in ((QAT_TELEMETRY, R.QAT_ROWS, "qat"), (E1_TELEMETRY, R.E1_ROWS, "e1")):
+            p = d / rel
+            if not p.is_file():
+                continue
+            rows, _, _ = R.read_jsonl(p, allow, code="completion_record_invalid")
+            meta = rows[0] if rows and rows[0].get("event") == "run_meta" else {}
+            if meta.get("mode") != "real":
+                return None
+            at = _second(meta.get("wall_clock"))
+            return (self._qat_slot(meta) if key == "qat" else self._e1_slot(meta)), (at if at is not None else 0, name)
+        return None
+
+    def _qat_slot(self, meta: dict) -> str:
+        hits = [k for k, s in self.cat.slots.items() if s["record_kind"] == "qat_epoch15"
+                and s["stage"] == meta.get("stage") and s["seed"] == meta.get("seed")
+                and ("clip" not in s["params"] or (S.TYPES["number"](meta.get("clip_norm"))
+                                                   and float(meta["clip_norm"]) == float(s["params"]["clip"])))]
+        return hits[0] if len(hits) == 1 else f"{meta.get('stage')}:s{meta.get('seed')}:clip{meta.get('clip_norm')}"
+
+    @staticmethod
+    def _e1_slot(meta: dict) -> str:
+        it = meta.get("max_iters")
+        return f"E1:s{meta.get('seed')}:{it // 1000 if S.TYPES['int'](it) else it}k"
+
+    def known(self, slot: str) -> bool:
+        """Whether a slot's attempts are read: a KD slot always (the launch log); an E1, QAT or teacher-arm slot with
+        --runs. The teacher of record's run folder is named by no launcher rule: its entry and DL-88 name it."""
+        s = self.cat.slots[slot]
+        if slot in self._kd_slots:
+            return True
+        return self.root is not None and s["class"] == "run" and (
+            s["record_kind"] in ("e1_val_result", "qat_epoch15") or s["stage"].startswith("teacher-"))
+
+    def attempts(self, slot: str):
+        """The slot's launched attempts in order, or None when they are not read (a non-KD slot without --runs, a
+        measurement)."""
+        return list(self.by_slot.get(slot, [])) if self.known(slot) else None
+
+    def state(self, run_id: str) -> RunState:
+        """A launched attempt's state, read from its directory under its own slot's record kind."""
+        if run_id not in self._states:
+            S.refuse_test_path(run_id)
+            if self.root is None:
+                raise S.TmanRefused("launched_attempt_without_directory", "the run directories are read (--runs)")
+            self._states[run_id] = run_state(self.cat.slots[self.slot_of[run_id]], self.root / run_id)
+        return self._states[run_id]
+
+    def status(self, slot: str, cutoff: int) -> str | None:
+        """The slot's status at `cutoff` from its own attempts: complete when one of them is complete then, else its
+        latest attempt's; None without --runs or without a launched attempt."""
+        att = self.attempts(slot) if self.root is not None else None
+        if not att:
+            return None
+        states = [self.state(r) for r in att]
+        if any(st.complete_at(cutoff) for st in states):
+            return COMPLETE
+        return status_at(states[-1], cutoff)
+
+    def stopped_ids(self) -> set:
+        """The run_ids stopped awaiting a repeat (AM-19 item 3(a)): KD stopped lines and QAT run_stop rows."""
+        out = set(self.stopped)
+        if self.root is not None:
+            out |= {r for r, k in self.slot_of.items() if self.cat.slots[k]["record_kind"] == "qat_epoch15"
+                    and self.state(r).status == STOPPED}
+        return out
+
+
 # --------------------------------------------------------------------------------------- one reader per kind
 def run_state(slot: dict, run_dir: Path, **kw) -> RunState:
     """The state of a catalogue slot's run directory, by its record kind (the run class; derived slots take their

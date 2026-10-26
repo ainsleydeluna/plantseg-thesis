@@ -167,21 +167,25 @@ def cmd_entry(args) -> int:
 
 
 def printer_cut_context(records: R.Records, cat, freeze, doc: dict, runs) -> E.CutContext:
-    """The cut printer's context from the records: the registry, the decision records, the launch log and the cut
-    runs' own statuses under --runs (other slots: not read)."""
+    """The cut printer's context, the validator's (validate.cut_context): the registry, the decision records, and
+    every run slot's launched attempts and status from the launch log and the run directories under --runs
+    (completion.RunIndex; never from the entry). A cut is printed from the run directories: --runs is required."""
     from src.training import kd_arms
     from src.training import sweep_select as ss
+    if runs is None:
+        raise S.TmanRefused("launched_attempt_without_directory", "a cut is printed from the run directories: each "
+                                                                  "cut slot's launched attempts and status (--runs)")
     log = records.launch_log(code="completion_record_invalid") if records.has(ss.LAUNCH_LOG_REL) else None
     recs = {k: records.json(rel, R.DECISION_RECORD, code="decision_date_cut_mismatch")[0]
             for k, rel in ss.DECISION_RECORD_REL.items() if records.has(rel)}
-
-    def status(slot):
-        if runs is None or slot not in doc["slots"] or not doc["run_ids"]:
-            return None
-        rid = doc["run_ids"][-1]
-        S.refuse_test_path(rid)
-        d = Path(runs) / rid
-        return C.status_at(C.run_state(cat.slots[slot], d), freeze.original_utc) if d.is_dir() else None
+    idx = C.RunIndex(cat, log, runs)
+    named = set(log.launched if log else ()) | set(doc["run_ids"])
+    for r in sorted(named):
+        S.refuse_test_path(r)
+    missing = sorted(r for r in named if not (Path(runs) / r).is_dir())
+    if missing:
+        raise S.TmanRefused("launched_attempt_without_directory", f"launched attempts without a directory under "
+                                                                  f"--runs: {missing} (AM-19a reading 20)")
 
     def condition(ref):
         if not ref:
@@ -190,8 +194,9 @@ def printer_cut_context(records: R.Records, cat, freeze, doc: dict, runs) -> E.C
         return got["doc"].get("verdict") if got["sha256"] == ref["sha256"] and got["doc"].get("kind") == "condition" \
             else None
     return E.CutContext(cat, freeze, registry={s.run_stage: s for s in kd_arms.load_arms().values()},
-                        decision_records=recs, launched=set(log.launched) if log else set(),
-                        stopped=set(log.stopped) if log else set(), status=status, condition=condition)
+                        decision_records=recs, attempts=idx.attempts, run_slot=idx.slot_of.get,
+                        stopped=idx.stopped_ids(), status=lambda slot: idx.status(slot, freeze.original_utc),
+                        condition=condition)
 
 
 # -------------------------------------------------------------------------------------------- arithmetic
@@ -217,7 +222,7 @@ def cmd_arithmetic(args) -> int:
             "run_ids": [], "since": None, "arithmetic": a, "telemetry": [], "comparator": None, "results_known": [],
             "cut_order_position": None, "rule_record": None}, amendment="AM-19 item 3(b)", script=SCRIPT_REL,
             commit=records.src.head() or None)
-        E.check_cut(doc, printer_cut_context(records, cat, D.freeze_instant(sch), doc, None))
+        E.check_cut(doc, printer_cut_context(records, cat, D.freeze_instant(sch), doc, args.runs))
         path, rel, sha = E.write_entry(doc, out_folder(args.out, args.root), records=records)
         print(f"WROTE {path} sha256 {sha}")
         print(E.dl_row(doc, rel, sha, "cut before its launch by AM-19 item 3(b)'s arithmetic."))

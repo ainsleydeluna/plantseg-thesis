@@ -84,6 +84,7 @@ class Ctx:
         self.entry_files: dict = {}       # rel -> (doc, sha256)
         self.freeze_conflict: S.TmanRefused | None = None
         self.ptq_ok: set = set()
+        self._index: C.RunIndex | None = None
 
     # ----------------------------------------------------------------------------------------- helpers
     @property
@@ -110,6 +111,17 @@ class Ctx:
         if rid not in self.states:
             self.states[rid] = C.run_state(self.slot(e["slot"]), self.run_dir(rid))
         return self.states[rid]
+
+    def index(self) -> C.RunIndex:
+        """Every run slot's launched attempts, from the launch log and the run directories (completion.RunIndex);
+        it shares the run states read here."""
+        if self._index is None:
+            self._index = C.RunIndex(self.cat, self.launch_log(), self.runs_root, states=self.states)
+        return self._index
+
+    def slot_status(self, slot: str) -> str | None:
+        """A run slot's status at the original freeze instant, from its own launched attempts."""
+        return self.index().status(slot, self.freeze.original_utc)
 
     def entry_file(self, rel: str) -> tuple[dict, str]:
         if rel not in self.entry_files:
@@ -384,35 +396,65 @@ def g_schedule_invalid(x: Ctx):
         return "the schedule block differs from the schedule in force and its freeze entries (plan §2.3)"
 
 
-def _never_cut_instants(x: Ctx) -> dict:
-    """{never-cut run slot: its completion instant, or None} (E6-KD only when AM-3 triggered it)."""
+SETTLED_KINDS = ("not_run", "diverged", "aborted", "superseded")      # a never-cut slot's ending that is no completion
+
+
+def _never_cut_slots(x: Ctx) -> list:
+    """The never-cut run slots (E6-KD only when AM-3 triggered it; an absent E6-KD is trigger_inconsistent's)."""
     kd_off = (x.body["trigger"] or {}).get("triggered") is not True
+    return [k for k, s in x.cat.slots.items() if s["never_cut"] and s["class"] == "run"
+            and not (s["stage"] == "E6-KD" and (kd_off or k not in x.by_slot))]
+
+
+def _never_cut_instants(x: Ctx) -> dict:
+    """{never-cut run slot: its completion instant, or None without one}: an entered run's from its entry's run
+    directory; an absent slot's, the earliest of its own launched attempts' (completion.RunIndex). A slot entered
+    not run, diverged, aborted or superseded has ended without a completion and is left out."""
     out = {}
-    for k, s in x.cat.slots.items():
-        if not s["never_cut"] or s["class"] != "run" or (kd_off and s["stage"] == "E6-KD"):
-            continue
+    for k in _never_cut_slots(x):
         e = x.by_slot.get(k)
-        st = x.state(e) if e and e["kind"] in M.COMPLETE_KINDS + ("non_finite",) else None
-        out[k] = st.completion.at if st and st.completion else None
+        if e is not None and e["kind"] in SETTLED_KINDS:
+            continue
+        if e is not None and e["kind"] in M.COMPLETE_KINDS + ("non_finite",):
+            st = x.state(e)
+            out[k] = st.completion.at if st.completion else None
+        else:
+            done = [x.index().state(r).completion.at for r in x.index().attempts(k) or []
+                    if x.index().state(r).completion is not None]
+            out[k] = min(done) if done else None
     return out
 
 
 def g_freeze_source_conflict(x: Ctx):
+    """AM-19 item 1(d): a never-cut run not complete at the original freeze instant moves the freeze. With no delay
+    entry every never-cut run is complete then; a delay entry lists exactly the late ones, and the manifest stays a
+    draft until the new freeze, the first later date at whose end every never-cut run is complete, when each late run
+    is entered. (A never-cut slot complete at the original instant and absent is complete_run_omitted's.)"""
     if x.freeze_conflict is not None:
         return x.freeze_conflict.detail
+    if x.runs_root is None:                      # draft: the absent ones only; F/U/S: launched_attempt_... refuses
+        absent = [k for k in _never_cut_slots(x) if k not in x.by_slot] if x.mode == "draft" else []
+        return f"never-cut runs without an entry: {absent} (AM-19 items 1(d), 3(d))" if absent else None
     delays, _ = _freeze_docs(x)
-    if not delays:
-        return None
     inst = _never_cut_instants(x)
     late = sorted(k for k, t in inst.items() if t is None or not D.meets(t, x.freeze.original_utc))
+    if not delays:
+        return None if not late else f"the never-cut runs {late} are not complete at the original freeze instant: " \
+                                     "the freeze moves, and the delay is entered on the original freeze date (AM-19 " \
+                                     "item 1(d))"
     if not late or sorted(delays[0]["doc"]["runs"]) != late:
         return f"the delay lists {sorted(delays[0]['doc']['runs'])}; the never-cut runs not complete at the original " \
                f"freeze instant are {late} (AM-19 item 1(d))"
-    if x.freeze.moved_date is not None:
-        want = D.first_complete_day(list(inst.values()), x.freeze.original_date)
-        if want != x.freeze.moved_date:
-            return f"the new freeze {x.freeze.moved_date} is not the first later date at whose end every never-cut " \
-                   f"run is complete ({want}; AM-19 item 1(d))"
+    if x.freeze.moved_date is None:
+        return f"the delay moves the freeze for {late}: the manifest stays a draft until the new freeze is entered " \
+               "(AM-19 item 1(d))"
+    want = D.first_complete_day(list(inst.values()), x.freeze.original_date)
+    if want != x.freeze.moved_date:
+        return f"the new freeze {x.freeze.moved_date} is not the first later date at whose end every never-cut " \
+               f"run is complete ({want}; AM-19 item 1(d))"
+    absent = [k for k in late if k not in x.by_slot]
+    if absent:
+        return f"the late never-cut runs {absent} have no entry at the new freeze (AM-19 item 1(d))"
 
 
 def g_content_class_missing(x: Ctx):
@@ -476,10 +518,23 @@ def _run_entries(x: Ctx) -> list:
     return [e for e in x.entries if e["kind"] in RUN_KINDS and e.get("run_id") is not None]
 
 
+def _cut_run_ids(x: Ctx) -> set:
+    """The run_ids the cut entries' files name (their fields are the cut gates'; a malformed list names none)."""
+    ids = set()
+    for e in x.entries:
+        if e["kind"] == "cut":
+            doc = x.entry_file(e["entry"]["path"])[0]
+            if isinstance(doc, dict) and isinstance(doc.get("run_ids"), list):
+                ids |= {r for r in doc["run_ids"] if isinstance(r, str)}
+    return ids
+
+
 def g_launched_attempt_without_directory(x: Ctx):
+    """AM-19a reading 20: a launched attempt is read, never taken for never launched: every entry's attempts, a
+    diverged or aborted entry's runs, every run a cut entry names, and every KD launched line, under --runs."""
     if x.runs_root is None:
         return "freeze, unlock and session modes read the run directories (--runs)"
-    ids = {a["run_id"] for e in _run_entries(x) for a in e.get("attempts", [])}
+    ids = {a["run_id"] for e in _run_entries(x) for a in e.get("attempts", [])} | _cut_run_ids(x)
     for e in x.entries:
         if e["kind"] == "diverged":
             ids.add(e["run_id"])
@@ -493,19 +548,32 @@ def g_launched_attempt_without_directory(x: Ctx):
 
 
 def g_completion_record_invalid(x: Ctx):
+    """Each entry's run and every launched attempt of a run slot (completion.RunIndex) is read by its completion
+    reader."""
     for e in _run_entries(x):
         if e["kind"] in M.COMPLETE_KINDS or e["kind"] in ("non_finite", "diverged"):
             x.state(e)
-    log = x.launch_log()
-    for rid in sorted(log.launched if log else []):
-        line = log.launch[rid]
-        slot = slot_of_launch(line)
-        if slot in x.cat.slots:
-            x.states.setdefault(rid, C.run_state(x.slot(slot), x.run_dir(rid)))
+    for rid in sorted(x.index().slot_of):
+        x.index().state(rid)
+
+
+def _entry_run_ids(e: dict) -> list:
+    if e["kind"] == "aborted":
+        return list(e["run_ids"])
+    if e["kind"] == "diverged":
+        return [e["run_id"]]
+    return [a["run_id"] for a in e.get("attempts", [])] + ([e["run_id"]] if e.get("run_id") else [])
 
 
 def g_completion_source_mismatch(x: Ctx):
     errs = []
+    idx = x.index()
+    for e in x.entries:                     # a run entry's runs are launched attempts of its own slot (#52)
+        if e["kind"] in RUN_KINDS and idx.known(e["slot"]):
+            wrong = sorted({r for r in _entry_run_ids(e) if idx.slot_of.get(r) != e["slot"]})
+            if wrong:
+                errs.append(f"{e['slot']}: {wrong} are not launched attempts of this slot "
+                            f"({[idx.slot_of.get(r) for r in wrong]}; the launch log and the run directories)")
     for e in _run_entries(x):
         st = x.state(e)
         if e["kind"] in M.COMPLETE_KINDS or e["kind"] == "non_finite":
@@ -534,27 +602,21 @@ def g_entry_not_complete(x: Ctx):
     return f"{bad} are not complete at their instant (AM-19 Definitions; item 1(c))" if bad else None
 
 
-def slot_of_launch(line: dict) -> str:
-    """A KD launch line's catalogue slot: <stage>:s<seed>[:lambda<v>][:alpha<v>]:<horizon/1000>k (plan §1.3)."""
-    parts = [line["stage"], f"s{line['seed']}"]
-    if line.get("lambda_logit") is not None:
-        parts.append(f"lambda{float(line['lambda_logit']):g}")
-    if line.get("alpha_cwd") is not None:
-        parts.append(f"alpha{float(line['alpha_cwd']):g}")
-    parts.append(f"{int(line['horizon']) // 1000}k")
-    return ":".join(parts)
+slot_of_launch = C.slot_of_launch
 
 
 def g_complete_run_omitted(x: Ctx):
-    log = x.launch_log()
-    bad = []
-    for rid in sorted(log.launched if log else []):
-        slot = slot_of_launch(log.launch[rid])
-        st = x.states.get(rid)
-        if slot in x.cat.slots and slot not in x.by_slot and st is not None \
-                and st.complete_at(x.freeze.original_utc):
-            bad.append(f"{slot} ({rid})")
-    return f"complete at the original freeze instant and not in the manifest: {bad} (AM-19 item 3(d))" if bad else None
+    """AM-19 item 3(d): a run slot whose own launched attempt is complete at the original freeze instant has an
+    entry (of any kind, TB10): every run slot, from the launch log and the run directories (completion.RunIndex),
+    never only the KD ones. A launched run whose records name no catalogue run slot is refused too: the catalogue
+    changes only with an amendment (Q12)."""
+    idx = x.index()
+    bad = [f"{rid} (its records name {slot}, no catalogue run slot)" for rid, slot in idx.foreign]
+    if x.runs_root is not None:
+        for slot, att in sorted(idx.by_slot.items()):
+            if slot not in x.by_slot and any(idx.state(r).complete_at(x.freeze.original_utc) for r in att):
+                bad.append(f"{slot} ({att[-1]})")
+    return f"launched and not in the manifest: {bad} (AM-19 item 3(d))" if bad else None
 
 
 def g_checkpoint_hash_mismatch(x: Ctx):
@@ -596,30 +658,17 @@ def g_restored_checkpoint_unrecorded(x: Ctx):
 
 
 # ================================================================================================ cut gates
-def cut_context(x: Ctx, cut_docs: dict) -> E.CutContext:
+def cut_context(x: Ctx) -> E.CutContext:
     """The cut checks' context from the records: the arm registry, each sweep's decision record (projected:
-    decision_date, values' value and status), the launch log's launched and stopped run_ids, each slot's status at
-    the original freeze instant (its entry's run, or a cut's last run_id; None without --runs) and the condition
-    entries' verdicts."""
+    decision_date, values' value and status), each slot's launched attempts, the slot of each launched run_id, the
+    stopped run_ids and each slot's status at the original freeze instant from its own attempts (completion.RunIndex:
+    never from a cut entry), and the condition entries' verdicts."""
     from src.training import kd_arms
-    log = x.launch_log()
+    idx = x.index()
     recs = {}
     for key, rel in ss.DECISION_RECORD_REL.items():
         if x.records.has(rel):
             recs[key] = x.records.json(rel, R.DECISION_RECORD, code="decision_date_cut_mismatch")[0]
-
-    def status(slot):
-        e = x.by_slot.get(slot)
-        rid = None
-        if e is not None and e["kind"] in RUN_KINDS and e.get("run_id"):
-            rid = e["run_id"]
-        elif slot in cut_docs and cut_docs[slot]["run_ids"]:
-            rid = cut_docs[slot]["run_ids"][-1]
-        if x.runs_root is None or rid is None or not x.run_dir(rid).is_dir():
-            return None
-        if rid not in x.states:
-            x.states[rid] = C.run_state(x.slot(slot), x.run_dir(rid))
-        return C.status_at(x.states[rid], x.freeze.original_utc)
 
     def condition(ref):
         if not ref:
@@ -627,14 +676,14 @@ def cut_context(x: Ctx, cut_docs: dict) -> E.CutContext:
         doc, sha = x.entry_file(ref["path"])
         return doc.get("verdict") if sha == ref["sha256"] and doc.get("kind") == "condition" else None
     return E.CutContext(x.cat, x.freeze, registry={s.run_stage: s for s in kd_arms.load_arms().values()},
-                        decision_records=recs, launched=set(log.launched) if log else set(),
-                        stopped=set(log.stopped) if log else set(), status=status, condition=condition)
+                        decision_records=recs, attempts=idx.attempts, run_slot=idx.slot_of.get,
+                        stopped=idx.stopped_ids(), status=x.slot_status, condition=condition)
 
 
 def _cut_gate(code: str):
     def gate(x: Ctx):
         if not hasattr(x, "_cut_docs"):
-            docs, by_slot = {}, {}
+            docs = {}
             for e in x.entries:
                 if e["kind"] == "cut":
                     doc, sha = x.entry_file(e["entry"]["path"])
@@ -645,8 +694,7 @@ def _cut_gate(code: str):
                             or (e["cut_date"], e["rule"], e["comparator"]) != (doc["date"], doc["rule"], cmp):
                         raise S.TmanRefused("entry_field", f"{e['slot']}: its cut label is not its entry file's")
                     docs[sha] = doc
-                    by_slot.update({k: doc for k in doc["slots"]})
-            x._cut_docs, x._cutctx = list(docs.values()), cut_context(x, by_slot)
+            x._cut_docs, x._cutctx = list(docs.values()), cut_context(x)
         fn = dict(E.CUT_CHECKS)[code]
         return _err([f"{d['slots']}: {err}" for d in x._cut_docs for err in [fn(d, x._cutctx)] if err])
     return gate
@@ -817,10 +865,14 @@ def g_run_added_after_freeze(x: Ctx):
 
 
 def g_cut_unentered_at_unlock(x: Ctx):
-    kd_off = x.body["trigger"].get("triggered") is False
+    """Every run and measurement slot has an entry from the freeze on: the cut list is fixed at the original freeze
+    date (AM-19 items 1(d) and 3(c); plan §1.9), so a slot that is not entered as a run is entered as cut or not run
+    by then (E6-KD only when AM-3 triggered it). A draft lists them as MISSING."""
+    kd_off = (x.body["trigger"] or {}).get("triggered") is not True
     bad = [k for k, s in x.cat.slots.items() if s["class"] in ("run", "measurement") and k not in x.by_slot
            and not (kd_off and s["stage"] == "E6-KD")]
-    return f"{bad} have no entry at the unlock: a cut or not-run entry is required (AM-19 item 3(c))" if bad else None
+    return f"{bad} have no entry: from the freeze on, a slot that is not a run is entered as cut or not run (AM-19 " \
+           "items 1(d), 3(c))" if bad else None
 
 
 def g_lane_unmet(x: Ctx):
@@ -991,16 +1043,18 @@ GATES = [
     ("scope_forbidden", ALL, g_scope_forbidden), ("scope_required_missing", FU, g_scope_required_missing),
     ("candidate_scored", ALL, g_candidate_scored), ("default_candidate_missing", FU, g_default_candidate_missing),
     ("listed_or_terminal_scored", ALL, g_listed_or_terminal_scored),
-    ("run_added_after_freeze", U, g_run_added_after_freeze), ("cut_unentered_at_unlock", U, g_cut_unentered_at_unlock),
+    ("run_added_after_freeze", U, g_run_added_after_freeze),
+    ("cut_unentered_at_unlock", FU, g_cut_unentered_at_unlock),
     ("lane_unmet", U, g_lane_unmet), ("not_required_invalid", U, g_not_required_invalid),
     ("evaluator_files_changed", U, g_evaluator_files_changed), ("hasher_pin_mismatch", U, g_hasher_pin_mismatch),
     ("second_session", U, g_second_session), ("session_after_deadline", U, g_session_after_deadline),
     ("clock_offset_invalid", SES, g_clock_offset_invalid), ("push_evidence_invalid", SES, g_push_evidence_invalid),
 ]
 # F/U-only gates whose finding a draft prints as MISSING (plan §2.1) instead of skipping
-MISSING_IN_DRAFT = ("content_class_missing", "generator_pin_incomplete", "derived_missing",
-                    "e6s42_not_hashed_at_freeze", "descendant_entry_missing", "scope_required_missing",
-                    "default_candidate_missing")
+MISSING_IN_DRAFT = ("freeze_source_conflict", "content_class_missing", "generator_pin_incomplete",
+                    "complete_run_omitted", "derived_missing", "e6s42_not_hashed_at_freeze",
+                    "descendant_entry_missing", "scope_required_missing", "default_candidate_missing",
+                    "cut_unentered_at_unlock")
 
 
 def validate(x: Ctx) -> Result:

@@ -162,16 +162,19 @@ CONDITION_STAGES = ("E6-R1", "E6-R2")        # AM-23 item 3(b)
 
 class CutContext:
     """What the cut checks read: the catalogue, the freeze instant, the arm registry by run stage, each sweep's
-    projected decision record (decision_date, values), the run_ids with a launched line, the run_ids whose last
-    attempt stopped awaiting a repeat, each slot's status at the original instant (None: not read) and each condition
-    entry's verdict."""
+    projected decision record (decision_date, values), and, from the records and the run directories, never from
+    the entry (completion.RunIndex): each slot's launched attempts (None: not read), the slot a launched run_id
+    belongs to, the run_ids stopped (a launch log's stopped line; a QAT run_stop row), each slot's status at the
+    original instant from its own attempts (None: not read or never launched); and each condition entry's
+    verdict."""
 
-    def __init__(self, catalogue, freeze, *, registry=None, decision_records=None, launched=None, stopped=None,
-                 status=None, condition=None):
+    def __init__(self, catalogue, freeze, *, registry=None, decision_records=None, attempts=None, run_slot=None,
+                 stopped=None, status=None, condition=None):
         self.cat, self.freeze = catalogue, freeze
         self.registry = registry or {}                      # run stage -> kd_arms.ArmSpec
         self.decision_records = decision_records or {}      # sweep key -> projected decision record
-        self.launched = set(launched or ())
+        self.attempts = attempts or (lambda slot: None)     # slot -> its launched run_ids in order, or None
+        self.run_slot = run_slot or (lambda run_id: None)   # launched run_id -> its slot, or None
         self.stopped = set(stopped or ())
         self.status = status or (lambda slot: None)          # slot -> completion status at the original instant
         self.condition = condition or (lambda ref: None)     # condition entry ref -> "yes" | "no" | None
@@ -224,9 +227,23 @@ def chk_complete(doc, ctx):
 
 
 def chk_reason(doc, ctx):
-    launched = sorted(r for r in doc["run_ids"] if r in ctx.launched)
-    if bool(launched) != doc["launched"]:
-        return f"the entry says launched {doc['launched']}; the launch log's launched lines name {launched}"
+    """run_ids are the cut slots' launched attempts (the records' and run directories', never the entry's): each
+    named, none of another slot, and `launched` true when any exists (AM-19 Definitions; AM-19a readings 6 and 20;
+    R-099). A never-launched freeze cut states why, and since when (decision (xiv))."""
+    att = [ctx.attempts(k) for k in doc["slots"]]
+    unread = any(a is None for a in att)
+    launched = sorted({r for a in att if a for r in a})
+    omitted = [r for r in launched if r not in doc["run_ids"]]
+    if omitted:
+        return f"the slots' launched attempts {omitted} are not named in run_ids (AM-19a reading 20)"
+    for r in doc["run_ids"]:
+        owner = ctx.run_slot(r)
+        if owner is not None and owner not in doc["slots"]:
+            return f"run_id {r} is a launched attempt of {owner}, not of {doc['slots']}"
+        if owner is None and not unread:
+            return f"run_id {r} is no launched attempt of {doc['slots']}"
+    if doc["launched"] != bool(launched or (unread and doc["run_ids"])):
+        return f"the entry says launched {doc['launched']}; the slots' launched attempts are {launched}"
     if doc["launched"]:
         return None
     if doc["rule"] == "freeze":
@@ -321,10 +338,15 @@ def chk_decision_date(doc, ctx):
 
 
 def chk_stopped(doc, ctx):
+    """A stopped run awaiting a repeat (AM-19 item 3(a)) is cut only by the freeze, on the original freeze date, or,
+    a sweep candidate, at its decision date when the sweep's decision record cuts it (AM-19 item 2(b); the record
+    is decision_date_cut_mismatch's, checked before this)."""
     stopped = sorted(r for r in doc["run_ids"] if r in ctx.stopped)
-    if stopped and (doc["rule"] != "freeze" or doc["date"] != ctx.freeze.original_date):
-        return f"{stopped} await a repeat (AM-19 item 3(a)); only the freeze cuts them, on the original freeze date"
-    return None
+    if not stopped or (doc["rule"] == "freeze" and doc["date"] == ctx.freeze.original_date) \
+            or doc["rule"] == "decision_date":
+        return None
+    return (f"{stopped} await a repeat (AM-19 item 3(a)); only the freeze, on the original freeze date, or the "
+            "sweep's decision record cuts them")
 
 
 def chk_registered_arm(doc, ctx):

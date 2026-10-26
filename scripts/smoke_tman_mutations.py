@@ -10,7 +10,8 @@ smoke up to its named check. The mutation is killed when a check the case record
 Each killing case first passes alone on the unmutated copy, its named checks among those it records. The
 repository's files are read, never written; the scratch copies live under the system temp dir and are removed.
 
-Run:  python -B scripts/smoke_tman_mutations.py          (a worker is the same file with --worker <spec>)
+Run:  python -B scripts/smoke_tman_mutations.py          (a worker is the same file with --worker <spec>; --only
+      <id>,<id> runs those mutations and their cases alone, a development aid whose RESULT is not the record)
 """
 from __future__ import annotations
 
@@ -129,9 +130,13 @@ M = [
     # -------------------------------------------------------------------------------------- completion gates
     ("attempt_directories", VAL, [("missing = sorted(r for r in ids if not x.run_dir(r).is_dir())", "missing = []")],
      "validate", "case_completion_gates", "attempt_without_directory", ["launched_attempt_without_directory"], None),
-    ("runs_needed_before_the_runs_gate", VAL, [("        if self.runs_root is None:                    # a gate",
-                                                "        if False:                    # a gate")],
-     "validate", "case_moved_freeze", "delay_entry_without_runs_refused_not_raised",
+    ("cut_run_directories", VAL, [("for a in e.get(\"attempts\", [])} | _cut_run_ids(x)",
+                                   "for a in e.get(\"attempts\", [])}")],
+     "validate", "case_cut_attribution", "cut_run_withheld_from_runs_B44", ["launched_attempt_without_directory"],
+     None),
+    ("runs_needed_in_freeze_mode", VAL, [("    if x.runs_root is None:                      # draft: the absent",
+                                          "    if False:                      # draft: the absent")],
+     "validate", "case_moved_freeze", "delay_entry_without_runs_refused_at_its_gate",
      ["launched_attempt_without_directory"], None),
     ("e1_max_iters", COM, [('if not metas or not S.TYPES["int"](metas[-1].get("max_iters")):', "if not metas:")],
      "validate", "case_completion_gates", "completion_record_unreadable", ["completion_record_invalid"], None),
@@ -145,10 +150,54 @@ M = [
      "validate", "case_completion_gates", "qat_checkpoint_flag_disagrees_TB13", ["checkpoint_state_flag"], None),
     ("S01_meets_flipped", COM, [("        return ss.meets(self.at, cutoff)", "        return self.at <= cutoff")],
      "validate", "case_completion_gates", "complete_at_the_freeze_instant_is_late", ["entry_not_complete"], 1),
-    ("S02_completeness_loop_removed", VAL, [("    for rid in sorted(log.launched if log else []):\n"
-                                             "        slot = slot_of_launch(log.launch[rid])",
-                                             "    for rid in []:\n        slot = slot_of_launch(log.launch[rid])")],
+    ("S02_completeness_loop_removed", VAL, [("        for slot, att in sorted(idx.by_slot.items()):",
+                                             "        for slot, att in []:")],
      "validate", "case_completion_gates", "complete_kd_run_omitted_AM19_3d", ["complete_run_omitted"], 2),
+    ("completeness_over_kd_slots_only", VAL, [("        for slot, att in sorted(idx.by_slot.items()):",
+                                               "        for slot, att in sorted((k, v) for k, v in idx.by_slot.items() "
+                                               "if x.slot(k)[\"record_kind\"] == \"kd_run_end\"):")],
+     "validate", "case_cut_attribution", "complete_e1_run_omitted_B4", ["complete_run_omitted"], None),
+    ("launched_run_outside_the_catalogue", VAL, [('bad = [f"{rid} (its records name {slot}, no catalogue run slot)" '
+                                                  "for rid, slot in idx.foreign]", "bad = []")],
+     "validate", "case_cut_attribution", "launched_run_outside_the_catalogue_B94", ["complete_run_omitted"], None),
+    ("entry_runs_of_its_own_slot", VAL, [('wrong = sorted({r for r in _entry_run_ids(e) if idx.slot_of.get(r) != '
+                                          'e["slot"]})', "wrong = []")],
+     "validate", "case_completion_gates", "run_entry_citing_another_slot_s_run_B52", ["completion_source_mismatch"],
+     None),
+    ("late_never_cut_run_needs_the_delay", VAL, [("        return None if not late else f\"the never-cut runs",
+                                                  "        return None if True else f\"the never-cut runs")],
+     "validate", "case_cut_attribution", "late_never_cut_run_absent_without_delay_B3", ["freeze_source_conflict"],
+     None),
+    ("delay_keeps_the_manifest_a_draft", VAL, [("    if x.freeze.moved_date is None:\n        return f\"the delay",
+                                                "    if False:\n        return f\"the delay")],
+     "validate", "case_moved_freeze", "delay_without_new_freeze_stays_a_draft_B3", ["freeze_source_conflict"], None),
+    ("late_run_entered_at_the_new_freeze", VAL, [("    if absent:\n        return f\"the late never-cut runs",
+                                                  "    if False:\n        return f\"the late never-cut runs")],
+     "validate", "case_moved_freeze", "late_never_cut_run_absent_at_the_new_freeze_B3", ["freeze_source_conflict"],
+     None),
+    ("draft_lists_absent_never_cut_runs", VAL, [("absent = [k for k in _never_cut_slots(x) if k not in x.by_slot] "
+                                                 "if x.mode == \"draft\" else []", "absent = []")],
+     "validate", "case_cut_attribution", "draft_lists_absent_never_cut_and_cuttable_slots_B3",
+     ["freeze_source_conflict"], None),
+    ("every_slot_entered_at_the_freeze", VAL, [('("cut_unentered_at_unlock", FU, g_cut_unentered_at_unlock)',
+                                                '("cut_unentered_at_unlock", U, g_cut_unentered_at_unlock)')],
+     "validate", "case_cut_attribution", "cuttable_slot_without_entry_at_the_freeze_B4", ["cut_unentered_at_unlock"],
+     None),
+    ("kd_attempts_from_the_launch_log", COM, [("                    self._add(found, rid, slot_of_launch(log.launch[rid]),",
+                                               "                    if False: self._add(found, rid, "
+                                               "slot_of_launch(log.launch[rid]),")],
+     "validate", "case_cut_attribution", "launched_kd_run_cut_as_never_launched_B13", ["cut_reason_invalid"], None),
+    ("qat_attempts_from_run_meta", COM, [('for rel, allow, key in ((QAT_TELEMETRY, R.QAT_ROWS, "qat"), '
+                                          '(E1_TELEMETRY, R.E1_ROWS, "e1")):',
+                                          'for rel, allow, key in ((E1_TELEMETRY, R.E1_ROWS, "e1"),):')],
+     "validate", "case_cut_attribution", "launched_qat_run_cut_as_never_launched_B12", ["cut_reason_invalid"], None),
+    ("teacher_arm_attempts_from_the_work_dir", COM, [('            if prov.get("launch") is not True:\n'
+                                                      "                return None",
+                                                      "            if True:\n                return None")],
+     "validate", "case_cut_attribution", "cut_of_a_complete_arm_teacher_AM18_7b", ["cut_of_complete_run"], None),
+    ("slot_status_from_its_own_attempts", COM, [("return list(self.by_slot.get(slot, [])) if self.known(slot) else None",
+                                                 "return [] if self.known(slot) else None")],
+     "validate", "case_cut_attribution", "group_cut_naming_a_complete_run_first_B0", ["cut_of_complete_run"], None),
     ("checkpoint_sources", VAL, [('if src["sha256"] != ck["sha256"] or (src["dl"] and ck["sha256"] not in '
                                   '(x.dl.row_text(src["dl"]) or "")):', "if False:")],
      "validate", "case_completion_gates", "checkpoint_source_holds_another_sha", ["checkpoint_hash_mismatch"], None),
@@ -191,9 +240,19 @@ M = [
      "cuts", "case_gate_order", "freeze_cut_wrong_position", ["cut_order_position_mismatch"], None),
     ("decision_record_cuts", ENT, [("if rec is None or not vals <= cut_values:", "if rec is None:")],
      "cuts", "case_gate_order", "decision_date_cut_not_in_the_record", ["decision_date_cut_mismatch"], None),
-    ("stopped_run", ENT, [('if stopped and (doc["rule"] != "freeze" or doc["date"] != ctx.freeze.original_date):',
-                           "if False:")],
+    ("stopped_run", ENT, [('if not stopped or (doc["rule"] == "freeze" and doc["date"] == ctx.freeze.original_date)',
+                           'if True or (doc["rule"] == "freeze" and doc["date"] == ctx.freeze.original_date)')],
      "cuts", "case_gate_order", "stopped_run_cut_by_named_rule_refused", ["stopped_run_cut_early"], None),
+    ("stopped_candidate_at_its_decision_date", ENT, [('            or doc["rule"] == "decision_date":\n        return None',
+                                                      "            or False:\n        return None")],
+     "cuts", "case_gate_order", "stopped_candidate_cut_at_its_decision_date_AM19_2b", ["stopped_run_cut_early"], None),
+    ("launched_attempts_named", ENT, [("    if omitted:\n        return f\"the slots' launched attempts",
+                                       "    if False:\n        return f\"the slots' launched attempts")],
+     "validate", "case_cut_attribution", "launched_kd_run_cut_as_never_launched_B13", ["cut_reason_invalid"], None),
+    ("run_ids_of_the_cut_slots", ENT, [('if owner is not None and owner not in doc["slots"]:', "if False:")],
+     "validate", "case_cut_attribution", "cut_naming_another_slot_s_run_B5", ["cut_reason_invalid"], None),
+    ("run_ids_launched", ENT, [("        if owner is None and not unread:", "        if False:")],
+     "cuts", "case_gate_order", "run_id_no_record_launched", ["cut_reason_invalid"], None),
     ("arm_registry", ENT, [("missing = [st for st in stages if st not in ctx.registry]", "missing = []")],
      "cuts", "case_gate_order", "arm_without_registry_file_refused", ["unregistered_arm"], None),
     ("condition_no", ENT, [('return None if verdict == "no" else', 'return None if verdict in ("no", "yes") else')],
@@ -466,16 +525,20 @@ def files_sha256() -> dict:
     return {rel: hashlib.sha256((REPO / rel).read_bytes()).hexdigest() for rel in tuple(MM.LANE_CODE_FILES) + (PRE,)}
 
 
+ONLY: set = set()        # --only id,id: a development run of those mutations and their cases; never the record
+
+
 def case_mutations():
     import scripts.smoke_tman_schema as FX
     from src.tman import validate as V
     check = FX.check
     before = files_sha256()
     clean = scratch_root({}, FX)
-    cases = sorted({(m[3], m[4]) for m in M})
+    mutations = [m for m in M if not ONLY or m[0] in ONLY]
+    cases = sorted({(m[3], m[4]) for m in mutations})
     jobs = [("baseline", (smoke, case), {"root": str(clean), "smoke": smoke, "case": case, "check": None})
             for smoke, case in cases]
-    for mid, rel, edits, smoke, case, target, codes, sample in M:
+    for mid, rel, edits, smoke, case, target, codes, sample in mutations:
         try:
             root = scratch_root({rel: edits}, FX)
         except ValueError as e:
@@ -485,7 +548,7 @@ def case_mutations():
     with ThreadPoolExecutor(max_workers=max(1, min(4, os.cpu_count() or 1))) as pool:
         outs = list(pool.map(lambda job: run_worker(job[2]), jobs))
     targets = {}
-    for m in M:
+    for m in mutations:
         targets.setdefault((m[3], m[4]), set()).add(m[5])
     killed_codes = set()
     for (kind, key, spec), out in zip(jobs, outs):
@@ -506,10 +569,11 @@ def case_mutations():
               and "error" not in out else str(out.get("error"))[:300])
         if killed:
             killed_codes |= set(m[6])
-    codes = {c for c, _, _ in V.GATES} | set(REFUSAL_EXTRA)
-    check("every_refusal_code_has_a_killed_mutation", codes <= killed_codes and len(codes) == 82,
-          str(sorted(codes - killed_codes)))
-    check("plan_s_sixteen_sample_mutations_present", sorted(m[7] for m in M if m[7]) == list(range(1, 17)))
+    if not ONLY:
+        codes = {c for c, _, _ in V.GATES} | set(REFUSAL_EXTRA)
+        check("every_refusal_code_has_a_killed_mutation", codes <= killed_codes and len(codes) == 82,
+              str(sorted(codes - killed_codes)))
+        check("plan_s_sixteen_sample_mutations_present", sorted(m[7] for m in M if m[7]) == list(range(1, 17)))
     check("the_repository_files_are_unchanged", files_sha256() == before)
 
 
@@ -517,6 +581,11 @@ def main() -> int:
     if len(sys.argv) == 3 and sys.argv[1] == "--worker":
         print(RESULT_TAG + json.dumps(worker(json.loads(sys.argv[2]))))
         return 0
+    if len(sys.argv) == 3 and sys.argv[1] == "--only":
+        ONLY.update(sys.argv[2].split(","))
+        unknown = ONLY - {m[0] for m in M}
+        if unknown:
+            raise SystemExit(f"--only names no mutation: {sorted(unknown)}")
     import scripts.smoke_tman_schema as FX
     return FX.run_cases("TMAN MUTATIONS SMOKE (lane TMAN, B-1, C6)", (case_mutations,))
 

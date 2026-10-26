@@ -160,13 +160,22 @@ def docstrings(tree) -> set:
             and isinstance(n.body[0], ast.Expr) and isinstance(n.body[0].value, ast.Constant)}
 
 
+def listing_sites(mods: dict) -> list:
+    """(file, enclosing function, call) of each directory listing in the lane's code."""
+    import ast
+    return sorted((rel, fn.name, name) for rel, t in mods.items() for fn in ast.walk(t)
+                  if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef))
+                  for name, _ in calls(fn) if name in LISTING_CALLS)
+
+
 def case_static_file_access():
     import ast
     from src.tman import schema as S
     mods = lane_python()
-    listing = sorted((rel, name) for rel, t in mods.items() for name, _ in calls(t) if name in LISTING_CALLS)
-    check("no_directory_walk_but_the_teacher_log_listing", len(mods) == 9
-          and listing == [("src/tman/completion.py", "iterdir")], str(listing))
+    listing = listing_sites(mods)
+    check("listings_are_the_teacher_log_and_the_runs_folder_only", len(mods) == 9
+          and listing == [("src/tman/completion.py", "__init__", "iterdir"),
+                          ("src/tman/completion.py", "teacher_state", "iterdir")], str(listing))
     writes = sorted((rel, name) for rel, t in mods.items() for name, n in calls(t)
                     if name in WRITE_CALLS or (name == "replace" and isinstance(n.func, ast.Attribute)
                                                and isinstance(n.func.value, ast.Name) and n.func.value.id == "os"))
