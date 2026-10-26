@@ -1216,6 +1216,36 @@ def case_moved_freeze():
         aside.rename(w.runs / "e6_s42_15ep")
     expect_gate(w, "delay_entry_without_runs_refused_at_its_gate", "launched_attempt_without_directory",
                 doc=mutated(w, lambda d: moved(d, "2026-11-04")), runs_root=None)
+    delay2 = w.entry_file("freeze_delay", [], {"original_date": FREEZE_DAY, "runs": ["E2:s42:lambda0.5:80k",
+                                                                                    "E6:s42:15ep"]}, nn=4)
+    dref2 = {"path": delay2["path"], "sha256": delay2["sha256"]}
+    new2 = w.entry_file("new_freeze", [], {"new_date": "2026-11-04", "delay_entry": dref2}, nn=4, date="2026-11-04")
+    w.commit({r["path"]: w.files[r["path"]] for r in (delay2, new2)}, "a delay listing a complete run too")
+
+    def moved2(d):
+        moved(d, "2026-11-04")
+        d["body"]["schedule"] = D.freeze_instant(sch, delays=[dict(dref2, doc=delay2["doc"])], news=[
+            {"doc": new2["doc"], "path": new2["path"], "sha256": new2["sha256"]}]).as_block()
+    expect_gate(w, "delay_listing_a_complete_run_too_B93", "freeze_source_conflict", doc=mutated(w, moved2),
+                detail="the never-cut runs not complete at the original freeze instant are ['E6:s42:15ep']")
+    man = FX.scratch_dir("tmanmoved") / "m.json"
+    man.write_bytes(w.S.json_file_bytes(mutated(w, lambda d: moved(d, "2026-11-04"))))
+    extra = ["--manifest", str(man), "--runs", str(w.runs)]
+    printed(w, "printer_freeze_delay_of_the_late_run_passes", "freeze_delay", [],
+            {"original_date": FREEZE_DAY, "runs": ["E6:s42:15ep"]}, None, extra=extra)
+    printed(w, "printer_freeze_delay_listing_a_complete_run_B8", "freeze_delay", [],
+            {"original_date": FREEZE_DAY, "runs": ["E2:s42:lambda0.5:80k", "E6:s42:15ep"]}, "freeze_source_conflict",
+            extra=extra)
+    printed(w, "printer_freeze_delay_without_the_runs_folder", "freeze_delay", [],
+            {"original_date": FREEZE_DAY, "runs": ["E6:s42:15ep"]}, "launched_attempt_without_directory",
+            extra=extra[:2])
+    printed(w, "printer_new_freeze_on_the_first_complete_day_passes", "new_freeze", [],
+            {"new_date": "2026-11-04", "delay_entry": dref}, None, date="2026-11-04", extra=extra)
+    printed(w, "printer_new_freeze_a_day_late_B8", "new_freeze", [], {"new_date": "2026-11-05", "delay_entry": dref},
+            "freeze_source_conflict", date="2026-11-05", extra=extra)
+    printed(w, "printer_new_freeze_citing_an_uncommitted_delay", "new_freeze", [],
+            {"new_date": "2026-11-04", "delay_entry": dict(dref, path=dref["path"].replace("__01.json", "__09.json"))},
+            "record_uncommitted", date="2026-11-04", extra=extra)
     bad = {k: v for k, v in delay["doc"].items() if k != "runs"}
     bad_rel = delay["path"].replace("__01.json", "__03.json")
     data = w.S.json_file_bytes(bad)
@@ -1226,6 +1256,91 @@ def case_moved_freeze():
                                                                  "sha256": w.S.sha256_bytes(data)})),
         detail="runs")
     check("freeze_delay_row_recorded", w.dl[dl][0] == "RECORDED")
+
+
+def _cli(argv) -> tuple[int, str]:
+    import contextlib
+    import io
+    import scripts.tday_manifest as CLI
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = CLI.main(argv)
+    return rc, buf.getvalue()
+
+
+PRINTED: list = []
+
+
+def printed(w: World, name: str, kind: str, slots: list, fields: dict, want: str | None, *, date: str = FREEZE_DAY,
+            extra=(), detail: str = "") -> None:
+    """The CLI's `entry` printer on `fields`: refused with `want` (by the check whose message holds `detail`) and
+    nothing written, or, `want` None, the file written (into a folder of its own, numbered past the records')."""
+    out = FX.scratch_dir("tmanprint")
+    f = out / "fields.json"
+    f.write_bytes(w.S.json_file_bytes(fields))
+    dest = out / "out"
+    dest.mkdir()
+    PRINTED.append(name)
+    argv = ["--root", str(w.repo), "entry", kind, *[a for s in slots for a in ("--slot", s)], "--date", date,
+            "--fields", str(f), "--amendment", "AM-19", "--summary", "printed by a smoke.", "--out", str(dest),
+            "--nn", str(50 + len(PRINTED)), *[str(a) for a in extra]]
+    rc, txt = _cli(argv)
+    made = sorted(p.name for p in dest.iterdir())
+    ok = rc == 0 and len(made) == 1 if want is None else \
+        rc == 2 and f"REFUSED [{want}]" in txt and detail in txt and not made
+    check(name, ok, f"rc {rc}: {txt.strip()[-220:]} {made}")
+
+
+def case_printers():
+    """Each entry printer runs its kind's checks on the would-be record set before it writes (plan §0; DL-24 #8, #9,
+    #16, #68, #71): refused, it writes nothing; the freeze delay and new freeze are case_moved_freeze's."""
+    w = WORLD
+    man = FX.scratch_dir("tmanpman") / "m.json"
+    man.write_bytes(w.data)
+    e3s43 = "E3:s43:lambda0.5:alpha25:80k"
+    pref = {"path": w.cut_refs[e3s43]["path"], "sha256": w.cut_refs[e3s43]["sha256"]}
+    not_run = {"reason": "parent cut", "parent": e3s43, "parent_record": pref}
+    printed(w, "printer_not_run_passes", "not_run", NOT_RUN[e3s43], not_run, None, extra=["--manifest", man])
+    printed(w, "printer_not_run_naming_an_unknown_slot_B68", "not_run", ["E9:s43:15ep"], not_run, "slot_unknown",
+            extra=["--manifest", man])
+    printed(w, "printer_not_run_without_the_manifest", "not_run", NOT_RUN[e3s43], not_run,
+            "not_run_without_parent_record")
+    made = {"reason": "code not merged", "lane": "L-AM23"}
+    printed(w, "printer_not_made_passes", "not_made", ["E7-E2:s42:list42"], made, None)
+    printed(w, "printer_not_made_for_a_slot_without_a_code_gate_B9", "not_made", ["E4:s42:list43"], made,
+            "derived_missing")
+    printed(w, "printer_not_made_naming_a_run_slot", "not_made", ["G:s42:80k"], made, "derived_counted_as_run")
+    e3x = {"run_id": "e3-r1_s42_lambda0.5_alpha25_80k_a1", "checkpoint_sha256": "6" * 64, "best_json_sha256": "7" * 64}
+    printed(w, "printer_condition_passes", "condition", ["E6-R1:s42:15ep"], {"arm": "R1", "verdict": "no", "e3x": e3x},
+            None, date="2026-10-29")
+    printed(w, "printer_condition_naming_another_arm_s_slot_B16", "condition", ["E6-R2:s42:15ep"],
+            {"arm": "R1", "verdict": "no", "e3x": e3x}, "entry_field", date="2026-10-29")
+    clock = {"host": "tday-host", "source": "chronyc tracking", "offset_seconds": 0.4,
+             "measured_utc": "2026-11-05T01:50:00Z"}
+    printed(w, "printer_clock_offset_passes", "clock_offset", [], clock, None, date="2026-11-05")
+    printed(w, "printer_clock_offset_over_60_s_B9", "clock_offset", [], dict(clock, offset_seconds=75.0),
+            "clock_offset_invalid", date="2026-11-05")
+    fr = {"body_sha256": w.S.canonical_sha256(w.doc["body"]), "freeze_date": FREEZE_DAY, "source": "schedule"}
+    printed(w, "printer_freeze_record_of_this_body_passes", "freeze", [], fr, None, extra=["--manifest", man])
+    printed(w, "printer_freeze_record_of_another_body_B9", "freeze", [], dict(fr, body_sha256="0" * 64),
+            "run_added_after_freeze", extra=["--manifest", man])
+    arm = {"path": w.cut_refs["ARM:latency"]["path"], "sha256": w.cut_refs["ARM:latency"]["sha256"]}
+    nr = {"lane": "L-AM16-ARM", "cut_entries": [arm]}
+    printed(w, "printer_not_required_passes", "not_required", ["ARM:latency"], nr, None)
+    printed(w, "printer_not_required_slot_without_a_cut_entry_B9", "not_required", ["ARM:latency", "G:s42:80k"], nr,
+            "not_required_invalid")
+    nr_path = w.entries["E6:s43:15ep"]["entry"]
+    printed(w, "printer_not_required_citing_a_not_run_entry_as_a_cut", "not_required", ["ARM:latency"],
+            {"lane": "L-AM16-ARM", "cut_entries": [nr_path]}, "entry_file_invalid")
+    printed(w, "printer_fields_naming_a_common_key_B71", "not_made", ["E7-E2:s42:list42"],
+            dict(made, printed_by={"script": "scripts/another_printer.py", "commit": None}), "entry_field")
+    mde = w.M.REFERENCE_FILES["mde_entry"][0]
+    cut = dict(w.cut_fields("G", ["G:s42:80k"], "no card", False), rule="named_rule", since=None,
+               cut_order_position=None, rule_record={"path": mde, "sha256": w.S.sha256_bytes((REPO / mde).read_bytes()),
+                                                     "date": "2026-10-28"})
+    printed(w, "printer_named_rule_cut_citing_an_unknown_record_B16", "cut", ["G:s42:80k"], cut, "cut_rule_unknown",
+            date="2026-10-28", extra=["--runs", w.runs])
+    check("printers_leave_the_records_unchanged", w.run("freeze")[0] is None)
 
 
 def case_coverage():
@@ -1412,7 +1527,8 @@ def main() -> int:
                             (case_world_passes, case_input_gates, case_record_gates, case_entry_files,
                              case_completion_gates,
                              case_cut_gates, case_cut_attribution, case_parent_and_derived_gates, case_appends,
-                             case_non_finite_gate, case_scope_gates, case_moved_freeze, case_draft_and_cli,
+                             case_non_finite_gate, case_scope_gates, case_moved_freeze, case_printers,
+                             case_draft_and_cli,
                              case_inventory, case_coverage))
     finally:
         if REAL_TEACHER is not None:

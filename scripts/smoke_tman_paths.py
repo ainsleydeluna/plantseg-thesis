@@ -342,8 +342,12 @@ def case_cli_outputs():
               and len(made["entry"]) == 1 and len(made["isolation"]) == 1 and made["arith"] == [], str(made))
         first = (dirs["entry"] / made["entry"][0]).read_bytes() if made["entry"] else b""
         rc, txt = _cli(entry)
-        check("a_second_write_is_refused_and_the_first_kept", rc == 2 and "entry_file_rewritten" in txt
+        check("a_second_write_is_refused_and_the_first_kept", rc == 2 and "REFUSED [output_exists]" in txt
               and (dirs["entry"] / made["entry"][0]).read_bytes() == first if made["entry"] else False)
+        built = (dirs["build"] / "tday_manifest.json").read_bytes()
+        rc, txt = _cli(runs[0][1])
+        check("a_second_build_is_refused_and_the_first_kept_B110", rc == 2 and "REFUSED [output_exists]" in txt
+              and (dirs["build"] / "tday_manifest.json").read_bytes() == built, txt.strip()[-160:])
         check("the_entry_command_prints_its_row_and_never_writes_the_log", "DECISION-LOG ROW" in got["entry"][1]
               and (w.repo / S.DECISION_LOG_REL).read_bytes() == dl0)
         appended = json.loads((dirs["append"] / "tday_manifest.json").read_bytes())
@@ -354,7 +358,8 @@ def case_cli_outputs():
                   ("out_in_this_checkout", REPO / "nonexistent_tman_out")]
         for name, p in inside:
             rc, txt = _cli(base + ["build", "--sources", str(out / "sources.json"), "--out", str(p)])
-            check(f"{name}_refused", rc == 2 and "inside the repository" in txt, txt.strip()[-160:])
+            check(f"{name}_refused", rc == 2 and "REFUSED [output_location]" in txt and "inside the repository" in txt,
+                  txt.strip()[-160:])
         check("nothing_created_in_the_checkout", not os.path.lexists(REPO / "nonexistent_tman_out"))
         bad = f"/{MARKER}/te" + "st_out"
         for name, argv in (("out", base + ["build", "--sources", str(out / "sources.json"), "--out", bad]),

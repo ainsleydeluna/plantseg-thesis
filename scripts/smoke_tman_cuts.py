@@ -343,19 +343,16 @@ def case_freeze_delay_and_new_freeze():
     from src.tman import entries as E
     from src.tman import schedule as D
     c = ctx()
-    late = {"E6:s42:15ep"}
-    status = (lambda s: "running" if s in late else "complete")
+    late = ["E6:s42:15ep"]                    # validate.late_never_cut's reading, the one the printer shares
     delay = {"format": "tday_entry/1", "kind": "freeze_delay", "slots": [], "date": "2026-11-03",
              "amendment": "AM-19 item 1(d)", "printed_by": {"script": "scripts/tday_manifest.py", "commit": None},
-             "corrects": None, "push_evidence": None, "original_date": "2026-11-03", "runs": sorted(late)}
+             "corrects": None, "push_evidence": None, "original_date": "2026-11-03", "runs": list(late)}
     check("freeze_delay_fields", not E.entry_field_errors(delay))
-    check("freeze_delay_lists_the_late_never_cut_runs", not E.freeze_delay_errors(delay, c.freeze, c.cat, status))
-    check("freeze_delay_missing_a_late_run", bool(E.freeze_delay_errors(dict(delay, runs=[]), c.freeze, c.cat,
-                                                                         status)))
+    check("freeze_delay_lists_the_late_never_cut_runs", not E.freeze_delay_errors(delay, c.freeze, late))
+    check("freeze_delay_missing_a_late_run", bool(E.freeze_delay_errors(dict(delay, runs=[]), c.freeze, late)))
     check("freeze_delay_off_the_original_date", bool(E.freeze_delay_errors(dict(delay, date="2026-11-04"), c.freeze,
-                                                                            c.cat, status)))
-    check("freeze_delay_without_late_runs_refused", bool(E.freeze_delay_errors(delay, c.freeze, c.cat,
-                                                                                lambda s: "complete")))
+                                                                            late)))
+    check("freeze_delay_without_late_runs_refused", bool(E.freeze_delay_errors(delay, c.freeze, [])))
     ref = {"path": "reports/derived/tday_entries/freeze_delay__session__20261103__01.json", "sha256": "8" * 64}
     new = dict(delay, kind="new_freeze", date="2026-11-05", new_date="2026-11-05", delay_entry=dict(ref))
     del new["original_date"], new["runs"]
@@ -388,9 +385,19 @@ def case_printers_and_committed_files():
           and rel == "reports/derived/tday_entries/cut__G_s42_80k__20261103__01.json"
           and sha == S.sha256_bytes(path.read_bytes()) and S.created_name_error(rel) is None)
     check("printer_file_is_record_bytes", path.read_bytes() == S.json_file_bytes(doc))
-    expect_refused("printer_writes_once", "entry_file_rewritten", E.write_entry, doc, out)
+    expect_refused("printer_writes_once_B110", "output_exists", E.write_entry, doc, out)
     path2, _, _ = E.write_entry(doc, out, nn=2)
     check("printer_next_sequence", path2.name.endswith("__02.json"))
+    drive = out / "drive:x"                     # a folder named like a Windows drive: the operator's (DL-24 #72)
+    drive.mkdir()
+    try:
+        path3, _, _ = E.write_entry(doc, drive)
+        got = path3.parent == drive and path3.is_file()
+    except S.TmanRefused as e:
+        got = f"refused: {e.line()}"
+    check("printer_writes_into_a_folder_whose_path_holds_a_colon_B72", got is True, str(got))
+    expect_refused("printer_fields_naming_a_common_key_B71", "entry_field", E.make_entry, "unlock", [], "2026-11-04",
+                   {"kind": "cut", "rule": "operator"}, amendment="x", script="s", commit=None)
     row = E.dl_row(doc, rel, sha, "G is cut at the freeze (gate not met since 2026-10-01).")
     check("printer_row_names_path_and_sha", rel in row and sha in row and "| DL-<next> | RECORDED (2026-11-03) |"
           in row)

@@ -545,30 +545,44 @@ def g_schedule_invalid(x: Ctx):
 SETTLED_KINDS = ("not_run", "diverged", "aborted", "superseded")      # a never-cut slot's ending that is no completion
 
 
-def _never_cut_slots(x: Ctx) -> list:
+def never_cut_slots(cat, by_slot: dict, triggered: bool) -> list:
     """The never-cut run slots (E6-KD only when AM-3 triggered it; an absent E6-KD is trigger_inconsistent's)."""
-    kd_off = (x.body["trigger"] or {}).get("triggered") is not True
-    return [k for k, s in x.cat.slots.items() if s["never_cut"] and s["class"] == "run"
-            and not (s["stage"] == "E6-KD" and (kd_off or k not in x.by_slot))]
+    return [k for k, s in cat.slots.items() if s["never_cut"] and s["class"] == "run"
+            and not (s["stage"] == "E6-KD" and (not triggered or k not in by_slot))]
 
 
-def _never_cut_instants(x: Ctx) -> dict:
+def never_cut_instants(cat, by_slot: dict, triggered: bool, entry_state, index: C.RunIndex) -> dict:
     """{never-cut run slot: its completion instant, or None without one}: an entered run's from its entry's run
-    directory; an absent slot's, the earliest of its own launched attempts' (completion.RunIndex). A slot entered
-    not run, diverged, aborted or superseded has ended without a completion and is left out."""
+    directory (entry_state); an absent slot's, the earliest of its own launched attempts' (completion.RunIndex). A
+    slot entered not run, diverged, aborted or superseded has ended without a completion and is left out. The one
+    reading of AM-19 item 1(d), the validator's and the freeze-delay and new-freeze printers' (DL-24 #8, #74)."""
     out = {}
-    for k in _never_cut_slots(x):
-        e = x.by_slot.get(k)
+    for k in never_cut_slots(cat, by_slot, triggered):
+        e = by_slot.get(k)
         if e is not None and e["kind"] in SETTLED_KINDS:
             continue
         if e is not None and e["kind"] in M.COMPLETE_KINDS + ("non_finite",):
-            st = x.state(e)
+            st = entry_state(e)
             out[k] = st.completion.at if st.completion else None
         else:
-            done = [x.index().state(r).completion.at for r in x.index().attempts(k) or []
-                    if x.index().state(r).completion is not None]
+            done = [index.state(r).completion.at for r in index.attempts(k) or []
+                    if index.state(r).completion is not None]
             out[k] = min(done) if done else None
     return out
+
+
+def late_never_cut(instants: dict, original_utc) -> list:
+    """The never-cut runs not complete at the original freeze instant (AM-19 item 1(d))."""
+    return sorted(k for k, t in instants.items() if t is None or not D.meets(t, original_utc))
+
+
+def _never_cut_slots(x: Ctx) -> list:
+    return never_cut_slots(x.cat, x.by_slot, (x.body["trigger"] or {}).get("triggered") is True)
+
+
+def _never_cut_instants(x: Ctx) -> dict:
+    return never_cut_instants(x.cat, x.by_slot, (x.body["trigger"] or {}).get("triggered") is True, x.state,
+                              x.index())
 
 
 def g_freeze_source_conflict(x: Ctx):
@@ -583,14 +597,14 @@ def g_freeze_source_conflict(x: Ctx):
         return f"never-cut runs without an entry: {absent} (AM-19 items 1(d), 3(d))" if absent else None
     delays, _ = _freeze_docs(x)
     inst = _never_cut_instants(x)
-    late = sorted(k for k, t in inst.items() if t is None or not D.meets(t, x.freeze.original_utc))
+    late = late_never_cut(inst, x.freeze.original_utc)
     if not delays:
         return None if not late else f"the never-cut runs {late} are not complete at the original freeze instant: " \
                                      "the freeze moves, and the delay is entered on the original freeze date (AM-19 " \
                                      "item 1(d))"
-    if not late or sorted(delays[0]["doc"]["runs"]) != late:
-        return f"the delay lists {sorted(delays[0]['doc']['runs'])}; the never-cut runs not complete at the original " \
-               f"freeze instant are {late} (AM-19 item 1(d))"
+    errs = E.freeze_delay_errors(delays[0]["doc"], x.freeze, late)
+    if errs:
+        return "; ".join(errs) + " (AM-19 item 1(d))"
     if x.freeze.moved_date is None:
         return f"the delay moves the freeze for {late}: the manifest stays a draft until the new freeze is entered " \
                "(AM-19 item 1(d))"

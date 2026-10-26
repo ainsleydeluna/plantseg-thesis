@@ -48,9 +48,10 @@ def out_folder(path, root=None) -> Path:
     p = Path(path).resolve()
     for repo in {REPO.resolve(), Path(root or REPO).resolve()}:
         if p == repo or repo in p.parents:
-            raise S.TmanRefused("test_path", f"--out {p} is inside the repository: outputs are written outside it")
+            raise S.TmanRefused("output_location", f"--out {p} is inside the repository: outputs are written "
+                                                   "outside it")
     if not p.is_dir():
-        raise S.TmanRefused("manifest_format", f"--out {p} is not an existing folder")
+        raise S.TmanRefused("output_location", f"--out {p} is not an existing folder")
     return p
 
 
@@ -63,7 +64,7 @@ def write_new(folder: Path, name: str, data: bytes) -> Path:
         with open(out, "xb") as fh:
             fh.write(data)
     except FileExistsError:
-        raise S.TmanRefused("entry_file_rewritten", f"{out} exists: outputs are created once") from None
+        raise S.TmanRefused("output_exists", f"{out} exists: outputs are created once") from None
     return out
 
 
@@ -133,32 +134,134 @@ def cmd_validate(args) -> int:
 
 
 # ------------------------------------------------------------------------------------------------- entry
+def manifest_body(args, code: str) -> dict:
+    """--manifest's body as a printer reads it: its entries (each naming its slot), trigger and schedule blocks;
+    `code` refuses a missing --manifest."""
+    if not args.manifest:
+        raise S.TmanRefused(code, f"entry {args.kind} reads the manifest's entries (--manifest)")
+    doc = read_json(args.manifest, "manifest_unreadable")
+    body = doc.get("body") if isinstance(doc, dict) else None
+    if not (isinstance(body, dict) and isinstance(body.get("entries"), list)
+            and all(isinstance(e, dict) and isinstance(e.get("slot"), str) for e in body["entries"])):
+        raise S.TmanRefused("manifest_format", f"{args.manifest}: no body with its entries")
+    return body
+
+
+def check_cut_entry(args, records, cat, freeze, doc):
+    E.check_cut(doc, printer_cut_context(records, cat, freeze, doc, args.runs))
+
+
+def check_not_run(args, records, cat, freeze, doc):
+    """Its slots (slot_unknown; DL-24 #68), then its parent's manifest entry (not_run_without_parent_record)."""
+    E.check_slots(doc, cat, kinds_of_class=("run", "derived"))
+    body = manifest_body(args, "not_run_without_parent_record")
+    parent = next((e for e in body["entries"] if e["slot"] == doc["parent"]), None)
+    errs = E.not_run_entry_errors(doc, cat, parent)
+    if errs:
+        raise S.TmanRefused("not_run_without_parent_record", "; ".join(errs))
+
+
+def check_freeze_source(args, records, cat, freeze, doc):
+    """AM-19 item 1(d) on the never-cut runs' records, read as the validator reads them (validate.never_cut_instants:
+    the manifest's entries, the launch log and the run directories under --runs): the delay lists exactly the runs
+    late at the original instant; the new freeze is the first later date at whose end every one is complete, citing
+    the committed delay entry (freeze_source_conflict)."""
+    from src.training import sweep_select as ss
+    if args.runs is None:
+        raise S.TmanRefused("launched_attempt_without_directory", "AM-19 item 1(d)'s entries read the never-cut runs' "
+                                                                  "directories (--runs)")
+    body = manifest_body(args, "freeze_source_conflict")
+    by_slot = {e["slot"]: e for e in body["entries"]}
+    triggered = isinstance(body.get("trigger"), dict) and body["trigger"].get("triggered") is True
+    log = records.launch_log(code="completion_record_invalid") if records.has(ss.LAUNCH_LOG_REL) else None
+    inst = V.never_cut_instants(cat, by_slot, triggered, lambda e: C.run_state(cat.slots[e["slot"]],
+                                                                             Path(args.runs) / e["run_id"]),
+                                C.RunIndex(cat, log, args.runs))
+    if doc["kind"] == "freeze_delay":
+        errs = E.freeze_delay_errors(doc, freeze, V.late_never_cut(inst, freeze.original_utc))
+    else:
+        _, dsha = E.read_entry_file(records, doc["delay_entry"]["path"], "freeze_delay")
+        errs = E.new_freeze_errors(doc, {"path": doc["delay_entry"]["path"], "sha256": dsha}, list(inst.values()),
+                                   freeze.original_date)
+    if errs:
+        raise S.TmanRefused("freeze_source_conflict", "; ".join(errs) + " (AM-19 item 1(d))")
+
+
+def check_not_required(args, records, cat, freeze, doc):
+    """The cut entries it cites are committed, recorded entry files of kind cut at the cited sha256, and cut every
+    slot it names (not_required_invalid; AM-19 item 3(d))."""
+    covered = set()
+    for ref in doc["cut_entries"]:
+        cut, sha = E.read_entry_file(records, ref["path"], "cut")
+        if sha != ref["sha256"]:
+            raise S.TmanRefused("not_required_invalid", f"{ref['path']}: the committed cut entry is not the cited one")
+        covered |= set(cut["slots"])
+    if set(doc["slots"]) - covered:
+        raise S.TmanRefused("not_required_invalid", f"{sorted(set(doc['slots']) - covered)} have no cut entry")
+
+
+def check_unlock(args, records, cat, freeze, doc):
+    """The would-be unlock record set (AM-17 item 9; AM-19 item 4(c)): the committed manifest, its file, body and
+    appends as cited, and the freeze record of that body (run_added_after_freeze); the committed lane register
+    (lane_unmet); no unlock entry in the decision log yet (second_session)."""
+    m = doc["manifest"]
+    data = records.read(S.MANIFEST_REL)
+    mdoc = S.strict_json(data, S.MANIFEST_REL, code="manifest_unreadable")
+    if m["path"] != S.MANIFEST_REL or not isinstance(mdoc, dict) or S.sha256_bytes(data) != m["sha256"] \
+            or S.canonical_sha256(mdoc.get("body")) != m["body_sha256"] \
+            or S.canonical_sha256(mdoc.get("appends")) != m["appends_sha256"]:
+        raise S.TmanRefused("run_added_after_freeze", f"the unlock entry records the committed {S.MANIFEST_REL}: its "
+                                                      "file, body and appends")
+    fr, fsha = E.read_entry_file(records, doc["freeze_record"]["path"], "freeze")
+    if fsha != doc["freeze_record"]["sha256"] or fr["body_sha256"] != m["body_sha256"]:
+        raise S.TmanRefused("run_added_after_freeze", "the unlock entry cites the freeze record of this body")
+    if doc["lanes"] != {"path": S.LANES_REL, "sha256": S.sha256_bytes(records.read(S.LANES_REL))}:
+        raise S.TmanRefused("lane_unmet", f"the unlock entry cites the committed {S.LANES_REL}")
+    rows = [dl for dl, (_, line) in records.decision_log().rows.items() if "TMAN unlock entry" in line]
+    if rows:
+        raise S.TmanRefused("second_session", f"an unlock entry is in the decision log already: {rows} (AM-17 item 9)")
+
+
+def check_condition(args, records, cat, freeze, doc):
+    if doc["slots"] != [f"E6-{doc['arm']}:s42:15ep"]:
+        raise S.TmanRefused("entry_field", f"a condition entry of arm {doc['arm']} names E6-{doc['arm']}:s42:15ep "
+                                           "alone (AM-23 item 3(b))")
+
+
+def check_not_made(args, records, cat, freeze, doc):
+    E.check_slots(doc, cat, kinds_of_class=("derived",))
+    bad = [k for k in doc["slots"] if not M.code_gated(k, cat)]
+    if bad:
+        raise S.TmanRefused("derived_missing", f"{bad}: not made is for a slot whose code is gated (AM-23 item 4)")
+
+
+def check_freeze_record(args, records, cat, freeze, doc):
+    if doc["body_sha256"] != S.canonical_sha256(manifest_body(args, "run_added_after_freeze")):
+        raise S.TmanRefused("run_added_after_freeze", "the freeze record records --manifest's body")
+
+
+def check_clock_offset(args, records, cat, freeze, doc):
+    if abs(doc["offset_seconds"]) > S.CLOCK_OFFSET_LIMIT_S:
+        raise S.TmanRefused("clock_offset_invalid", f"offset {doc['offset_seconds']} s: within 60 s (AM-19a "
+                                                    "reading 21)")
+
+
+ENTRY_CHECKS = {"cut": check_cut_entry, "not_run": check_not_run, "freeze_delay": check_freeze_source,
+                "new_freeze": check_freeze_source, "not_required": check_not_required, "unlock": check_unlock,
+                "condition": check_condition, "not_made": check_not_made, "freeze": check_freeze_record,
+                "clock_offset": check_clock_offset}
+
+
 def cmd_entry(args) -> int:
+    """A printer builds its entry, runs that kind's checks on the would-be record set, then writes the file and
+    prints its decision-log row (plan §0; DL-24 #8, #9, #74): the checks are chosen by the entry's own kind."""
     records = records_at(args)
     cat = catalogue(records)
     fields = read_json(args.fields, "entry_field")
     doc = E.make_entry(args.kind, args.slot or [], args.date, fields, amendment=args.amendment, script=SCRIPT_REL,
                        commit=records.src.head() or None)
     freeze = D.freeze_instant(D.schedule_block(records.src))
-    if args.kind == "cut":
-        ctx = printer_cut_context(records, cat, freeze, doc, args.runs)
-        E.check_cut(doc, ctx)
-    elif args.kind == "not_run":
-        if not args.manifest:
-            raise S.TmanRefused("not_run_without_parent_record", "a not-run entry reads its parent's manifest entry "
-                                                                 "(--manifest)")
-        body = read_json(args.manifest, "manifest_unreadable")["body"]
-        parent = next((e for e in body["entries"] if e["slot"] == doc["parent"]), None)
-        errs = E.not_run_entry_errors(doc, cat, parent)
-        if errs:
-            raise S.TmanRefused("not_run_without_parent_record", "; ".join(errs))
-    elif args.kind in ("freeze_delay", "new_freeze"):
-        if args.kind == "freeze_delay":
-            delays, news = [{"doc": doc, "path": "(printed)", "sha256": "0" * 64}], []
-        else:
-            delays, news = [M.entry_ref(records, doc["delay_entry"]["path"])], [{"doc": doc, "path": "(printed)",
-                                                                                 "sha256": "0" * 64}]
-        D.freeze_instant(D.schedule_block(records.src), delays=delays, news=news)
+    ENTRY_CHECKS[doc["kind"]](args, records, cat, freeze, doc)
     path, rel, sha = E.write_entry(doc, out_folder(args.out, args.root), nn=args.nn, records=records)
     print(f"WROTE {path} sha256 {sha}")
     print("DECISION-LOG ROW (the orchestrator assigns the ID; commit the file at its path with it):")

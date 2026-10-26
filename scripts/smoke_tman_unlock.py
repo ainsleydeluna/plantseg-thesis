@@ -236,6 +236,25 @@ def case_cli():
         R.TRIGGER_READER = None
 
 
+def case_unlock_printer():
+    """The unlock printer checks the would-be record set before it writes (plan §0; DL-24 #9): the committed
+    manifest's file, body and appends; the freeze record of that body; the committed lane register; and no unlock
+    entry yet -- this world already records one, so the faithful fields reach second_session."""
+    u, w = UW, UW.w
+    ud = u.unlock["doc"]
+    fields = {k: ud[k] for k in ("manifest", "lanes", "freeze_record")}
+    other = refreeze(u, dict(u.doc, body=dict(u.doc["body"], expected_rows={"value": 1})), 8)
+    for name, f, want in (
+            ("printer_unlock_of_another_manifest_file_B9", dict(fields, manifest=dict(ud["manifest"], sha256="0" * 64)),
+             "run_added_after_freeze"),
+            ("printer_unlock_citing_the_freeze_record_of_another_body_B9",
+             dict(fields, freeze_record={"path": other["path"], "sha256": other["sha256"]}), "run_added_after_freeze"),
+            ("printer_unlock_citing_another_lane_register_B9", dict(fields, lanes=dict(ud["lanes"], sha256="0" * 64)),
+             "lane_unmet"),
+            ("printer_unlock_after_an_unlock_entry_B9", fields, "second_session")):
+        VW.printed(w, name, "unlock", [], f, want, date=UNLOCK_DAY)
+
+
 def case_unlock_gates():
     S, w = UW.S, UW.w
     u = UW
@@ -431,7 +450,8 @@ def main() -> int:
         return FX.run_cases("TMAN UNLOCK SMOKE (lane TMAN, B-1, C5)", ())
     try:
         return FX.run_cases("TMAN UNLOCK SMOKE (lane TMAN, B-1, C5)",
-                            (case_unlock_world, case_cli, case_unlock_gates, case_session, case_coverage))
+                            (case_unlock_world, case_cli, case_unlock_printer, case_unlock_gates, case_session,
+                             case_coverage))
     finally:
         if VW.REAL_TEACHER is not None:
             UW.w.M.TEACHER_OF_RECORD.clear()

@@ -596,8 +596,13 @@ def file_id_of_entry(doc: dict) -> str:
 
 def make_entry(kind: str, slots: list, date: str, fields: dict, *, amendment: str, script: str,
                commit: str | None, corrects: dict | None = None, push_evidence: dict | None = None) -> dict:
-    """A tday_entry/1 document, fields checked (entry_kind_unknown, entry_field)."""
+    """A tday_entry/1 document, fields checked (entry_kind_unknown, entry_field). `fields` are the kind's own: the
+    common keys (kind, slots, date, printed_by, ...) are the printer's (DL-24 #71)."""
     entry_spec(kind)
+    common = sorted(set(fields) & set(ENTRY_FILE_COMMON)) if isinstance(fields, dict) else []
+    if common or not isinstance(fields, dict):
+        raise S.TmanRefused("entry_field", f"the fields name {common or fields!r}: they hold the kind's own fields, "
+                                           "never the printer's common keys")
     doc = {"format": S.ENTRY_FORMAT, "kind": kind, "slots": list(slots), "date": date, "amendment": amendment,
            "printed_by": {"script": script, "commit": commit}, "corrects": corrects, "push_evidence": push_evidence,
            **fields}
@@ -618,11 +623,12 @@ def dl_row(doc: dict, rel: str, sha256: str, summary: str) -> str:
 
 
 def write_entry(doc: dict, out_dir: Path, *, nn: int = 1, records: R.Records | None = None) -> tuple[Path, str, str]:
-    """Write the entry file exclusively into `out_dir`, outside the repository (created names obey IF§2); refuse a
-    name the records already hold. Returns (path, repository path, sha256)."""
+    """Write the entry file exclusively into `out_dir`, outside the repository (the name it creates obeys IF§2: the
+    folder is the operator's, a Windows drive included; DL-24 #72); refuse a name the records already hold. Returns
+    (path, repository path, sha256)."""
     name = entry_name(doc, nn)
     rel = S.entry_file_rel(name)
-    err = S.created_name_error(Path(out_dir) / name)
+    err = S.created_name_error(name)
     if err:
         raise S.TmanRefused("test_path", f"refusing to create {name}: {err}")
     if records is not None and records.has(rel):
@@ -633,7 +639,7 @@ def write_entry(doc: dict, out_dir: Path, *, nn: int = 1, records: R.Records | N
         with open(out, "xb") as fh:
             fh.write(data)
     except FileExistsError:
-        raise S.TmanRefused("entry_file_rewritten", f"{out} exists: an entry file is written once") from None
+        raise S.TmanRefused("output_exists", f"{out} exists: an output is created once") from None
     return out, rel, S.sha256_bytes(data)
 
 
@@ -653,15 +659,14 @@ def not_run_entry_errors(doc: dict, cat, parent_entry: dict | None) -> list[str]
     return errs
 
 
-def freeze_delay_errors(doc: dict, freeze, cat, status) -> list[str]:
-    """AM-19 item 1(d): the delay entry is dated the original freeze date and lists the never-cut runs not complete at
-    the original instant, each of them (freeze_source_conflict). `status` gives a slot's status at that instant."""
+def freeze_delay_errors(doc: dict, freeze, late: list) -> list[str]:
+    """AM-19 item 1(d): the delay entry is dated the original freeze date and lists exactly the never-cut runs not
+    complete at the original instant, `late` (validate.late_never_cut, the one reading of item 1(d)), at least one
+    (freeze_source_conflict)."""
     errs = []
     if doc["date"] != freeze.original_date or doc["original_date"] != freeze.original_date:
         errs.append(f"the delay is entered on {doc['date']} for {doc['original_date']}, not on the original freeze "
                     f"date {freeze.original_date}")
-    late = sorted(k for k, s in cat.slots.items() if s["never_cut"] and s["class"] == "run"
-                  and status(k) not in (None, C.COMPLETE))
     if not late or sorted(doc["runs"]) != late:
         errs.append(f"the delay lists {sorted(doc['runs'])}; the never-cut runs not complete at the original freeze "
                     f"instant are {late}")

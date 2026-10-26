@@ -550,14 +550,82 @@ M = [
      "paths", "case_evaluator_closure_never_reads_a_test_named_module",
      "closure_records_a_test_named_module_by_blob_id_unread", [], None),
     ("entry_written_over", ENT, [('        with open(out, "xb") as fh:', '        with open(out, "wb") as fh:')],
-     "paths", "case_cli_outputs", "a_second_write_is_refused_and_the_first_kept", ["entry_file_rewritten"], None),
+     "paths", "case_cli_outputs", "a_second_write_is_refused_and_the_first_kept", ["output_exists"], None),
     ("out_inside_the_repository", CLI, [("if p == repo or repo in p.parents:", "if p == repo:")],
-     "paths", "case_cli_outputs", "out_in_the_repository_at_root_refused", ["test_path"], None),
+     "paths", "case_cli_outputs", "out_in_the_repository_at_root_refused", ["output_location"], None),
+    ("output_exists_code_of_the_cli", CLI, [('raise S.TmanRefused("output_exists", f"{out} exists: outputs are',
+                                             'raise S.TmanRefused("entry_file_rewritten", f"{out} exists: outputs are')],
+     "paths", "case_cli_outputs", "a_second_build_is_refused_and_the_first_kept_B110", ["output_exists"], None),
+    ("output_exists_code_of_the_printer", ENT, [('raise S.TmanRefused("output_exists", f"{out} exists: an output',
+                                                 'raise S.TmanRefused("entry_file_rewritten", f"{out} exists: an output')],
+     "cuts", "case_printers_and_committed_files", "printer_writes_once_B110", ["output_exists"], None),
+    ("output_location_code", CLI, [('raise S.TmanRefused("output_location", f"--out {p} is inside the repository',
+                                    'raise S.TmanRefused("test_path", f"--out {p} is inside the repository')],
+     "paths", "case_cli_outputs", "out_in_the_repository_at_root_refused", ["output_location"], None),
+    ("write_entry_checks_the_created_name_only", ENT, [("    err = S.created_name_error(name)\n    if err:\n        "
+                                                        'raise S.TmanRefused("test_path", f"refusing to create {name}',
+                                                        "    err = S.created_name_error(Path(out_dir) / name)\n    "
+                                                        'if err:\n        raise S.TmanRefused("test_path", '
+                                                        'f"refusing to create {name}')],
+     "cuts", "case_printers_and_committed_files", "printer_writes_into_a_folder_whose_path_holds_a_colon_B72",
+     ["test_path"], None),
+    ("make_entry_common_keys", ENT, [("    if common or not isinstance(fields, dict):",
+                                      "    if not isinstance(fields, dict):")],
+     "validate", "case_printers", "printer_fields_naming_a_common_key_B71", ["entry_field"], None),
+    # -------------------------------------------- the printers run their kind's checks (DL-24 #8 #9 #68 #74)
+    ("printer_checks_run", CLI, [('    ENTRY_CHECKS[doc["kind"]](args, records, cat, freeze, doc)', "    pass")],
+     "validate", "case_moved_freeze", "printer_freeze_delay_listing_a_complete_run_B8", ["freeze_source_conflict"],
+     None),
+    ("printer_late_runs_from_the_records", CLI, [("errs = E.freeze_delay_errors(doc, freeze, "
+                                                  "V.late_never_cut(inst, freeze.original_utc))",
+                                                  'errs = E.freeze_delay_errors(doc, freeze, sorted(doc["runs"]))')],
+     "validate", "case_moved_freeze", "printer_freeze_delay_listing_a_complete_run_B8", ["freeze_source_conflict"],
+     None),
+    ("freeze_delay_runs", ENT, [('    if not late or sorted(doc["runs"]) != late:', "    if False:")],
+     "validate", "case_moved_freeze", "delay_listing_a_complete_run_too_B93", ["freeze_source_conflict"], None),
+    ("new_freeze_first_day_of_the_printer", ENT, [('if want is None or doc["new_date"] != want or doc["date"] != '
+                                                   'doc["new_date"]:', "if want is None:")],
+     "validate", "case_moved_freeze", "printer_new_freeze_a_day_late_B8", ["freeze_source_conflict"], None),
+    ("printer_not_run_slots", CLI, [('    E.check_slots(doc, cat, kinds_of_class=("run", "derived"))', "    pass")],
+     "validate", "case_printers", "printer_not_run_naming_an_unknown_slot_B68", ["slot_unknown"], None),
+    ("printer_not_required_coverage", CLI, [('    if set(doc["slots"]) - covered:', "    if False:")],
+     "validate", "case_printers", "printer_not_required_slot_without_a_cut_entry_B9", ["not_required_invalid"], None),
+    ("printer_not_required_cut_kind", CLI, [('cut, sha = E.read_entry_file(records, ref["path"], "cut")',
+                                             'cut, sha = E.read_entry_file(records, ref["path"])')],
+     "validate", "case_printers", "printer_not_required_citing_a_not_run_entry_as_a_cut", ["entry_file_invalid"],
+     None),
+    ("printer_unlock_manifest_file", CLI, [('or S.sha256_bytes(data) != m["sha256"] \\', "or False \\")],
+     "unlock", "case_unlock_printer", "printer_unlock_of_another_manifest_file_B9", ["run_added_after_freeze"], None),
+    ("printer_unlock_freeze_record_body", CLI, [('    if fsha != doc["freeze_record"]["sha256"] or fr["body_sha256"] '
+                                                 '!= m["body_sha256"]:',
+                                                 '    if fsha != doc["freeze_record"]["sha256"]:')],
+     "unlock", "case_unlock_printer", "printer_unlock_citing_the_freeze_record_of_another_body_B9",
+     ["run_added_after_freeze"], None),
+    ("printer_unlock_lanes", CLI, [('    if doc["lanes"] != {"path": S.LANES_REL, "sha256": '
+                                    "S.sha256_bytes(records.read(S.LANES_REL))}:", "    if False:")],
+     "unlock", "case_unlock_printer", "printer_unlock_citing_another_lane_register_B9", ["lane_unmet"], None),
+    ("printer_unlock_second", CLI, [('    if rows:\n        raise S.TmanRefused("second_session"',
+                                     '    if False:\n        raise S.TmanRefused("second_session"')],
+     "unlock", "case_unlock_printer", "printer_unlock_after_an_unlock_entry_B9", ["second_session"], None),
+    ("printer_condition_slot", CLI, [("    if doc[\"slots\"] != [f\"E6-{doc['arm']}:s42:15ep\"]:", "    if False:")],
+     "validate", "case_printers", "printer_condition_naming_another_arm_s_slot_B16", ["entry_field"], None),
+    ("printer_not_made_gated", CLI, [('    bad = [k for k in doc["slots"] if not M.code_gated(k, cat)]', "    bad = []")],
+     "validate", "case_printers", "printer_not_made_for_a_slot_without_a_code_gate_B9", ["derived_missing"], None),
+    ("printer_not_made_class", CLI, [('    E.check_slots(doc, cat, kinds_of_class=("derived",))', "    pass")],
+     "validate", "case_printers", "printer_not_made_naming_a_run_slot", ["derived_counted_as_run"], None),
+    ("printer_freeze_record_body", CLI, [('    if doc["body_sha256"] != S.canonical_sha256(manifest_body(args, '
+                                          '"run_added_after_freeze")):', "    if False:")],
+     "validate", "case_printers", "printer_freeze_record_of_another_body_B9", ["run_added_after_freeze"], None),
+    ("printer_clock_offset", CLI, [('    if abs(doc["offset_seconds"]) > S.CLOCK_OFFSET_LIMIT_S:', "    if False:")],
+     "validate", "case_printers", "printer_clock_offset_over_60_s_B9", ["clock_offset_invalid"], None),
+    ("printer_named_rule_record", CLI, [("rule_record=E.rule_record_reader(records), ", "")],
+     "validate", "case_printers", "printer_named_rule_cut_citing_an_unknown_record_B16", ["cut_rule_unknown"], None),
     ("teacher_logs_unsorted", COM, [("logs = [log_rel] if log_rel else sorted(",
                                      "logs = [log_rel] if log_rel else list(")],
      "determinism", "case_listing_order", "shuffled_listing_4_byte_identical", [], None),
 ]
-REFUSAL_EXTRA = ("inventory_invalid", "inventory_sha256_mismatch", "binding_invalid")       # read_inventory's codes
+REFUSAL_EXTRA = ("inventory_invalid", "inventory_sha256_mismatch", "binding_invalid",       # read_inventory's codes
+                 "output_location", "output_exists")                                       # the CLI's outputs
 MUTATED_FILES = (VAL, MAN, ENT, SCH, REC, COM, CLI, CAT, PRE)
 
 
@@ -701,7 +769,7 @@ def case_mutations():
             killed_codes |= set(m[6])
     if not ONLY:
         codes = {c for c, _, _ in V.GATES} | set(REFUSAL_EXTRA)
-        check("every_refusal_code_has_a_killed_mutation", codes <= killed_codes and len(codes) == 85,
+        check("every_refusal_code_has_a_killed_mutation", codes <= killed_codes and len(codes) == 87,
               str(sorted(codes - killed_codes)))
         check("plan_s_sixteen_sample_mutations_present", sorted(m[7] for m in M if m[7]) == list(range(1, 17)))
     check("the_repository_files_are_unchanged", files_sha256() == before)
