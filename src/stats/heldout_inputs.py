@@ -1,4 +1,4 @@
-"""LREP's read-only input layer for the TEST tables beyond the 37 seed-42 inputs (lane LREP, B-1).
+"""LREP's read-only input layer for the TEST tables beyond the 37 seed-42 inputs (lane LREP, B-1; B-5).
 
 Interface of record: IF§11 v2 (tl_interface_lrep_20261016.md) over IF§8's inventory export
 `tday-inventory/1` and TMAN's binding `tday_binding/1`. TMAN builds every field; LREP reads them, never
@@ -19,9 +19,13 @@ writes them, never parses the TEST-day manifest and never builds its path (IF§1
   * Every scored artifact outside the 37 is read through `driver.load_input` (four-file hash
     snapshots, MANIFEST agreement, canvas guard, declared identity, the policy's row rules) after its
     files are compared with its binding `artifacts` record, and every field of that record is checked
-    (R-7; LRB3). (model_role, precision) must be (student, the row's precision) for fq_off rows and
-    (student, driver.STAGE_PRECISION) for the others (LRB7).
+    (R-7; LRB3). The stage map (B5-S1, STAGE_MAP) gives each TMAN stage its evaluator stage, model_role
+    and precision; (model_role, precision) must be (student, qat_fakequant_off) for fq_off rows (LRB7)
+    and the map's for the others.
   * Telemetry files are hashed before they are parsed; only their VAL rows are read (LRB2).
+  * B-5 (rulings LREP-B5-RULE-1 to LREP-B5-RULE-3): the readers of the slots of role arm, arm_teacher
+    and quant_descriptive with the family slots they compare with (IF§11.1 :25), and the
+    duplicate-free TEST list (B5-S2), in section 8.
 
 Every refusal is an `LrepRefusal` with a code from CODES, raised at a site that reads
 `raise refusal("<code>", ...)` (scripts/smoke_lrep_mutations.py mutates those sites), except the three
@@ -73,9 +77,53 @@ PTQ_STAGES = ("E4", "E7")                     # a derived PTQ model of its paren
 QAT_STAGES = ("E5", "E6")                     # a derived selection of a QAT run
 #: AM-19 item 4(a); AM-1: E4 and E5 are built from E1, E6 and E7 from E3, at the same seed.
 PARENT_STAGE = {"E4": "E1", "E5": "E1", "E6": "E3", "E7": "E3"}
-#: The evaluator stage of an export stage that the evaluator does not name (an assumption B-4 checks
-#: against TMAN's lane report): E6-KD is scored as stage E6.
-EVALUATOR_STAGE = {"E6-KD": "E6"}
+
+#: B5-S1 (ruling LREP-B5-RULE-2 item 1): every TMAN stage LREP reads -> (evaluator stage, model_role,
+#: precision); load_bound reads it for every row. Each precision comes from the frozen tables
+#: (driver.STAGE_PRECISION, src/eval/stage_artifacts.STAGE_ARTIFACTS), never typed. B-4's second
+#: assumption (E6-KD scored as E6) is retired: the evaluator names E6-KD (src/eval/artifacts.py:58-59;
+#: stage_artifacts.py:56-58). The arm and teacher stages are IF§9's names, used as fixtures and listed for
+#: B-4; E3-X and E7-X are evaluator stages E3 and E7 (stage_artifacts.py:50-51 proves "E3" for E3-R1 and
+#: E3-R2; E3-flip's "E3" and E7-X's "E7" are INFERRED).
+ARM_XS = ("R1", "R2", "flip")
+ARM_STUDENT_STAGES = tuple(f"E3-{x}" for x in ARM_XS) + tuple(f"E7-{x}" for x in ARM_XS)
+QUANT_STAGES = ("E6-E2", "E7-E2", "E6-R1", "E6-R2")          # AM-23 items 1-3 (quant_descriptive)
+EXPLORATORY_STAGES = ("A", "F", "G")
+E6KD_STAGE = "E6-KD"
+TEACHER_STAGES = ("teacher", "R1", "R2")                     # the teacher of record; R1 and R2
+EVALUATOR_TEACHER_STAGE = "teacher"                          # src/eval/artifacts.py:58
+
+
+def _stage_map() -> dict:
+    from ..eval.stage_artifacts import STAGE_ARTIFACTS, STUDENT_ROLE, TEACHER_ROLE, TEACHER_STAGE
+    out = {st: (st, STUDENT_ROLE, D.STAGE_PRECISION[st]) for st in D.STAGES}
+    for parent in ("E3", "E7"):
+        for x in ARM_XS:
+            out[f"{parent}-{x}"] = (parent, STUDENT_ROLE, D.STAGE_PRECISION[parent])
+    for st in (*QUANT_STAGES, E6KD_STAGE, *EXPLORATORY_STAGES):
+        out[st] = (st, STUDENT_ROLE, STAGE_ARTIFACTS[st]["precision"])
+    for st in TEACHER_STAGES:
+        out[st] = (EVALUATOR_TEACHER_STAGE, TEACHER_ROLE, STAGE_ARTIFACTS[TEACHER_STAGE]["precision"])
+    return out
+
+
+STAGE_MAP = _stage_map()
+#: Every mapped stage in one fixed order (the AM-6 table's sort key covers every stage).
+STAGE_ORDER = tuple(STAGE_MAP)
+#: The run each of B-5's derived stages comes from (AM-18 item 3(a); AM-23 items 1-3; AM-3): a PTQ model
+#: of its parent run, or a QAT run's selection whose run descends from it (IF§11.2).
+B5_PARENT_STAGE = {"E7-R1": "E3-R1", "E7-R2": "E3-R2", "E7-flip": "E3-flip", "E7-E2": "E2",
+                   "E6-R1": "E3-R1", "E6-R2": "E3-R2", "E6-E2": "E2", E6KD_STAGE: "E3"}
+B5_PTQ_STAGES = tuple(s for s in B5_PARENT_STAGE if STAGE_MAP[s][2] == "int8_ptq")
+B5_QAT_STAGES = tuple(s for s in B5_PARENT_STAGE if STAGE_MAP[s][2] == "int8_qat")
+#: The kinds of a B-5 run slot that carry a model (IF§11.1-11.2): a scored run, or an arm's teacher.
+B5_RUN_MODEL_KINDS = ("scored_run", "arm_teacher")
+#: The family slots B-5's tables compare with, at seed 42 (IF§11.1 :25).
+B5_FAMILY_STAGES = ("E2", "E3", "E6", "E7")
+#: B5-S2: the fields of the export's `dedup` (IF§11.5) and of the file it names (T4's wording, plan :62;
+#: lane/tman holds no committed schema for it at STEP 1).
+DEDUP_EXPORT_FIELDS = ("path", "sha256", "removed_by_reason")
+DEDUP_FILE_FIELDS = ("kept_ids", "removed_by_reason")
 
 #: DL-99: the E1 checkpoints of record (best VAL checkpoint sha256) at seeds 42, 43 and 44 -- an
 #: independent guard against a seed swap (plan §1.1(3)).
@@ -101,8 +149,8 @@ _HEX40 = re.compile(r"^[0-9a-f]{40}$")
 _FILE_ID = re.compile(r"^[A-Za-z0-9._-]+$")
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
-#: Every LREP refusal code of B-1 to B-3, with the plan rule or ruling it implements. The CLI exits 2
-#: on any of them and writes nothing.
+#: Every LREP refusal code of B-1 to B-3 and B-5, with the plan rule or ruling it implements. The CLI
+#: exits 2 on any of them and writes nothing.
 CODES = {
     # the statistics artifact (R-1)
     "stats_artifact_unverified": "R-1: the statistics artifact does not verify with its 37 inputs",
@@ -134,8 +182,8 @@ CODES = {
     "not_canvas": "R-8: a binding record whose protocol is not canvas (an artifact whose protocol "
                   "differs from its record is R-7; LRB3)",
     "artifact_unreadable": "R-9: an artifact the driver refuses (files, manifest, the row rules)",
-    "precision_mismatch": "LRB7: (model_role, precision) of an artifact or a model row is not (student, "
-                          "the row's precision)",
+    "precision_mismatch": "LRB7; B5-S1: (model_role, precision) of an artifact or a model row is not the "
+                          "one its stage maps to ((student, qat_fakequant_off) for an fq_off row)",
     "path_unsafe": "IF§2: a path that is not plain relative POSIX, or contains 'test'",
     # cross-artifact and seed-42 checks (R-10, R-11)
     "cross_artifact_mismatch": "R-10: manifest, class map, metric code, commit, AM-5, GT, run_id or "
@@ -162,6 +210,11 @@ CODES = {
     "parts_invalid": "§3.3: --parts names an unknown or repeated part",
     "mde_entry_invalid": "LRB18: the MDE entry cannot be read",
     "usage_invalid": "a bad command line (--repo-root without --synthetic-inputs, a missing input)",
+    # B-5's input layer (B5-S3: rulings B5-S1 and B5-S2)
+    "stage_unmapped": "B5-S1: a TMAN stage outside LREP's stage map (TMAN stage -> evaluator stage, "
+                      "model_role, precision)",
+    "dedup_invalid": "B5-S2: the export's dedup or the file it names is null, unreadable, not at its "
+                     "sha256 or malformed, or its ids break the invariants against the scored artifacts",
 }
 
 
@@ -256,8 +309,14 @@ def inferential_cells() -> tuple[tuple[str, str, int], ...]:
     return tuple((cell_id(n, s), n, s) for n in corruption_names() for s in INFERENTIAL_SEVERITIES)
 
 
-def evaluator_stage(stage: str) -> str:
-    return EVALUATOR_STAGE.get(stage, stage)
+def stage_spec(stage) -> tuple[str, str, str]:
+    """B5-S1: (evaluator stage, model_role, precision) of a TMAN stage; a stage outside the map is
+    stage_unmapped."""
+    spec = STAGE_MAP.get(stage) if isinstance(stage, str) else None
+    if spec is None:
+        raise refusal("stage_unmapped", f"stage {stage!r} is not in LREP's stage map (B5-S1), which holds "
+                                        f"{list(STAGE_MAP)}")
+    return spec
 
 
 # --------------------------------------------------------------------------------------------------
@@ -848,8 +907,9 @@ def load_bound(inv: Inventory, *, slot: str, stage: str, precision: str, scope: 
     """Read one artifact the binding lists, refusing by code on any defect (R-6 to R-9, LRB3, LRB7).
 
     Order: the model row and the record; the record's path and protocol; the four files against the
-    record; the manifest and canvas; `driver.load_input` under `policy`; (model_role, precision);
-    then the record's checkpoint, commit and split manifest, and the row's identity."""
+    record; the manifest and canvas; the stage's evaluator stage, model_role and precision (B5-S1);
+    `driver.load_input` under `policy` at that evaluator stage; (model_role, precision); then the
+    record's checkpoint, commit and split manifest, and the row's identity."""
     row = model_row(inv, slot, precision)
     rec = binding_record(inv, slot, precision, scope, cell)
     label = f"{stage} ({slot!r}, {precision}, {scope}{', ' + cell if cell else ''})"
@@ -874,17 +934,18 @@ def load_bound(inv: Inventory, *, slot: str, stage: str, precision: str, scope: 
         raise refusal("artifact_record_mismatch", f"{label}: the artifact's protocol is "
                                                   f"{art_protocol!r} (preprocess_protocol {pp!r}), its "
                                                   f"record says {rec['protocol']!r} (R-7; LRB3)")
+    ev_stage, want_role, want_precision = stage_spec(stage)
+    if precision == PRECISION_FQOFF:
+        want_role, want_precision = "student", PRECISION_FQOFF
     try:
-        loaded = D.load_input(evaluator_stage(stage), condition, rel, Path(input_root), policy)
+        loaded = D.load_input(ev_stage, condition, rel, Path(input_root), policy)
     except D.DriverRefusal as e:
         raise refusal("artifact_unreadable", f"{label}: {e}") from e
     run, ds = loaded.summary["run"], loaded.summary["dataset"]
-    want_precision = precision if precision == PRECISION_FQOFF else D.STAGE_PRECISION.get(
-        evaluator_stage(stage))
-    if (run["model_role"], run["precision"]) != ("student", want_precision) or precision != want_precision:
+    if (run["model_role"], run["precision"]) != (want_role, want_precision) or precision != want_precision:
         raise refusal("precision_mismatch", f"{label}: (model_role, precision) is "
-                                            f"({run['model_role']}, {run['precision']}), not (student, "
-                                            f"{want_precision}) (LRB7)")
+                                            f"({run['model_role']}, {run['precision']}), not ({want_role}, "
+                                            f"{want_precision}) (LRB7; B5-S1)")
     got = {"checkpoint_sha256": run.get("checkpoint_sha256"), "repo_commit": run.get("repo_commit"),
            "split_manifest_sha256": ds.get("split_manifest_sha256")}
     diff = [k for k, v in got.items() if v != rec[k]]
@@ -1110,17 +1171,184 @@ def read_telemetry(inv: Inventory, slot: str, input_root: Path, *, unit: str) ->
     return tuple(out)
 
 
+# --------------------------------------------------------------------------------------------------
+# 8. B-5's readers: the slots of role arm, arm_teacher and quant_descriptive with the family slots they
+#    compare with (IF§11.1 :25), and the duplicate-free TEST list (B5-S2)
+# --------------------------------------------------------------------------------------------------
+def role_slots(inv: Inventory, role: str) -> list[str]:
+    """The slots whose entry's role includes `role`, in the export's order (IF§11.1). B-5's tables read
+    arm, arm_teacher and quant_descriptive; every other slot is ignored by them (LRB4)."""
+    if role not in ROLES:
+        raise ValueError(f"role {role!r} is not one of {ROLES}")
+    return [slot for slot, items in inv.entries.items() if any(role in e["role"] for e in items)]
+
+
+def family_inputs(stats: StatsArtifact, inv: Inventory, cells: PlannedCells,
+                  stages=B5_FAMILY_STAGES) -> dict:
+    """The family slots B-5's tables compare with (E2, E3, E6 and E7 at seed 42; IF§11.1 :25): the 37's
+    clean inputs, each checked to be its family slot's model (R-11)."""
+    check_seed42_identity(inv, cells, stats, stages=stages)
+    return {stage: stats.clean(stage) for stage in stages}
+
+
+def _b5_parent(inv: Inventory, slot: str, e: dict, stage: str, seed) -> str:
+    """A B-5 slot's catalogue.parent: a slot at B5_PARENT_STAGE[stage] and the same seed (R-12)."""
+    parent = _parent_of(inv, e, slot)
+    pe = inv.entry(parent)
+    if pe.get("stage") != B5_PARENT_STAGE[stage]:
+        raise refusal("parent_rule", f"{slot!r} ({stage}): its parent {parent!r} is {pe.get('stage')!r}, "
+                                     f"not {B5_PARENT_STAGE[stage]} (AM-18 item 3(a); AM-23 items 1-3; AM-3)")
+    if pe.get("seed") != seed:
+        raise refusal("seed_inconsistent", f"{slot!r} (seed {seed}) has parent {parent!r} at seed "
+                                           f"{pe.get('seed')!r}")
+    return parent
+
+
+def b5_status(inv: Inventory, slot: str) -> SlotStatus:
+    """IF§11.2's map for a slot B-5's tables read (an arm's student or teacher, the teacher of record,
+    A, F, G, AM-23's quant_descriptive slots, E6-KD), by its stage's kind (B5-S1): a QAT run's selection
+    reads its QAT run's kind unless it is derived; a PTQ model with kind null takes its parent's cut or
+    divergence; a run reads its own. Parentage runs through B5_PARENT_STAGE at the same seed (R-12)."""
+    e, kind = _checked_kind(inv, slot)
+    stage, seed = e.get("stage"), e.get("seed")
+    stage_spec(stage)
+
+    def status(has_model: bool, label, source: str, record, decided):
+        return SlotStatus(slot, stage, seed, decided, has_model, label, source, record)
+
+    if stage in B5_QAT_STAGES:
+        run_slot = _parent_of(inv, e, slot)
+        run = inv.entry(run_slot)
+        if run.get("stage") != stage or run.get("seed") != seed:
+            raise refusal("parent_rule", f"selection {slot!r}: its parent {run_slot!r} is not the {stage} "
+                                         f"QAT run at seed {seed} (LRB5)")
+        _b5_parent(inv, run_slot, run, stage, seed)
+        if kind == "derived":
+            return status(True, None, slot, _record_of(e), kind)
+        re_, rk = _checked_kind(inv, run_slot)
+        if rk == "not_run":
+            label, src, rec = _not_run_status(inv, run_slot, re_, seed)
+            return status(False, label, src, rec, rk)
+        if rk in QAT_RUN_NO_MODEL_KINDS:
+            _check_unit(run_slot, re_, "epoch")
+            return status(False, _label(re_), run_slot, _record_of(re_), rk)
+        raise refusal("status_invalid", f"selection {slot!r} has no model (kind {kind!r}) but its QAT run "
+                                        f"{run_slot!r} is {rk!r}")
+    if stage in B5_PTQ_STAGES:
+        parent = _b5_parent(inv, slot, e, stage, seed)
+        if kind == "derived":
+            return status(True, None, slot, _record_of(e), kind)
+        if kind is None:
+            pe, pk = _checked_kind(inv, parent)
+            if pk in ("cut", "diverged"):
+                return status(False, LABEL_PARENT_CUT if pk == "cut" else LABEL_PARENT_DIVERGED, parent,
+                              _record_of(pe), "not_run")
+            raise refusal("status_invalid", f"PTQ slot {slot!r} has kind null and its parent {parent!r} is "
+                                            f"{pk!r}: any other null case is refused (IF§11.2; R-4)")
+        if kind == "not_run":
+            label, src, rec = _not_run_status(inv, slot, e, seed)
+            return status(False, label, src, rec, kind)
+        if kind in PTQ_NO_MODEL_KINDS:
+            return status(False, _label(e), slot, _record_of(e), kind)
+        raise refusal("status_invalid", f"slot {slot!r}: kind {kind!r} is not a status of a {stage} model "
+                                        f"(derived, null or {PTQ_NO_MODEL_KINDS})")
+    if kind in B5_RUN_MODEL_KINDS:
+        return status(True, None, slot, _record_of(e), kind)
+    if kind == "not_run":
+        label, src, rec = _not_run_status(inv, slot, e, seed)
+        return status(False, label, src, rec, kind)
+    if kind in RUN_NO_MODEL_KINDS:
+        _check_unit(slot, e, "iteration")
+        return status(False, _label(e), slot, _record_of(e), kind)
+    raise refusal("status_invalid", f"slot {slot!r}: kind {kind!r} is not a status of a {stage} run "
+                                    f"({B5_RUN_MODEL_KINDS}, not_run or {RUN_NO_MODEL_KINDS})")
+
+
+@dataclass(frozen=True)
+class DedupRecord:
+    """B5-S2: TMAN's duplicate-free TEST list (IF§11.5; T4), its sha256 checked before it was parsed."""
+    path: str                                       # the export's dedup.path
+    file: Path                                      # resolved against the export's directory (H:10's rule)
+    sha256: str
+    kept_ids: tuple[str, ...]                       # sorted and unique
+    removed_by_reason: tuple[tuple[str, int], ...]  # (reason, count), sorted by reason
+    other_fields: tuple[str, ...]                   # the file's keys LREP does not read
+
+    @property
+    def removed_total(self) -> int:
+        return sum(n for _, n in self.removed_by_reason)
+
+
+def _reason_counts(value):
+    if not isinstance(value, dict) or not all(_is_text(k) and _is_int(n) and n >= 0
+                                              for k, n in value.items()):
+        return None
+    return tuple(sorted(value.items()))
+
+
+def read_dedup(inv: Inventory) -> DedupRecord:
+    """B5-S2 (ruling LREP-B5-RULE-2 item 2): the export's `dedup` {path, sha256, removed_by_reason}
+    (IF§11.5 :85) and the file at `path`, resolved like binding.path (against the export's directory; B-4
+    checks), its sha256 compared before it is parsed as strict JSON. Without TMAN's committed schema the
+    file is T4's (plan :62): `kept_ids`, the kept (duplicate-free) image ids, sorted, unique and not
+    empty, and `removed_by_reason`, the per-reason removed counts, equal to the export's. Any failure, or
+    `dedup` null, is dedup_invalid. The id-set invariants against the scored artifacts are checked where
+    those are read (src/stats/dedup_subset.py)."""
+    d = inv.doc.get("dedup")
+    where = f"{inv.path}: dedup"
+    if d is None:
+        raise refusal("dedup_invalid", f"{where} is null: tday_dedup.json does not exist yet, and the "
+                                       "duplicate-free part needs it (IF§11.5)")
+    if not isinstance(d, dict) or any(k not in d for k in DEDUP_EXPORT_FIELDS):
+        raise refusal("dedup_invalid", f"{where} is not an object with {list(DEDUP_EXPORT_FIELDS)}")
+    counts, problem = _reason_counts(d["removed_by_reason"]), path_problem(d["path"])
+    if problem is not None or counts is None or not (isinstance(d["sha256"], str)
+                                                     and _HEX64.fullmatch(d["sha256"])):
+        raise refusal("dedup_invalid", f"{where}: path {d['path']!r} ({problem or 'plain'}), sha256 "
+                                       f"{d['sha256']!r} or removed_by_reason {d['removed_by_reason']!r} "
+                                       "is malformed")
+    f = inv.path.parent / d["path"]
+    try:
+        raw = f.read_bytes()
+    except OSError as e:
+        raise refusal("dedup_invalid", f"{where}: {f} cannot be read ({type(e).__name__})") from e
+    digest = hashlib.sha256(raw).hexdigest()
+    if digest != d["sha256"]:
+        raise refusal("dedup_invalid", f"{where}: {f} has sha256 {digest}, the export says {d['sha256']} "
+                                       "(B5-S2)")
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as e:
+        raise refusal("dedup_invalid", f"{where}: {f} is not UTF-8") from e
+    doc = strict_json_text(text, str(f), "dedup_invalid")
+    if not isinstance(doc, dict) or any(k not in doc for k in DEDUP_FILE_FIELDS):
+        raise refusal("dedup_invalid", f"{where}: {f} is not an object with {list(DEDUP_FILE_FIELDS)} (T4)")
+    ids = doc["kept_ids"]
+    if not (isinstance(ids, list) and ids and all(_is_text(i) for i in ids) and ids == sorted(set(ids))):
+        raise refusal("dedup_invalid", f"{where}: kept_ids are not a non-empty sorted list of unique image "
+                                       "ids (T4)")
+    if _reason_counts(doc["removed_by_reason"]) != counts:
+        raise refusal("dedup_invalid", f"{where}: the file's removed_by_reason {doc['removed_by_reason']!r} "
+                                       f"is not the export's {d['removed_by_reason']!r}")
+    return DedupRecord(path=d["path"], file=f, sha256=digest, kept_ids=tuple(ids), removed_by_reason=counts,
+                       other_fields=tuple(sorted(set(doc) - set(DEDUP_FILE_FIELDS))))
+
+
 __all__ = [
     "INVENTORY_SCHEMA", "BINDING_SCHEMA", "KINDS", "ROLES", "SCOPES", "PROTOCOLS", "PRECISIONS",
     "INT8_PRECISIONS", "PRECISION_FQOFF", "SCORED_ENTRY_KINDS", "STAGES", "SEEDS", "RECORD_ROLES",
-    "RUN_STAGES", "PTQ_STAGES", "QAT_STAGES", "PARENT_STAGE", "EVALUATOR_STAGE", "E1_CHECKPOINT_RECORD",
+    "RUN_STAGES", "PTQ_STAGES", "QAT_STAGES", "PARENT_STAGE", "ARM_XS", "ARM_STUDENT_STAGES",
+    "QUANT_STAGES", "EXPLORATORY_STAGES", "E6KD_STAGE", "TEACHER_STAGES", "EVALUATOR_TEACHER_STAGE",
+    "STAGE_MAP", "STAGE_ORDER", "B5_PARENT_STAGE", "B5_PTQ_STAGES", "B5_QAT_STAGES", "B5_RUN_MODEL_KINDS",
+    "B5_FAMILY_STAGES", "DEDUP_EXPORT_FIELDS", "DEDUP_FILE_FIELDS", "E1_CHECKPOINT_RECORD",
     "LABEL_NON_FINITE", "LABEL_PARENT_CUT", "LABEL_PARENT_DIVERGED", "TELEMETRY_UNITS", "CODES",
     "LrepRefusal", "refusal", "sha256_file", "strict_json_text", "path_problem", "safe_relative_path",
-    "cell_id", "corruption_names", "inferential_cells", "evaluator_stage", "read_inventory",
+    "cell_id", "corruption_names", "inferential_cells", "stage_spec", "read_inventory",
     "Inventory", "open_inventory", "SlotStatus", "record_slots", "parent_slot", "resolve_status",
     "PlannedCells", "check_parentage", "model_row",
     "row_identity", "check_rows", "check_missing_runs", "check_seed42", "planned_cells",
     "binding_record", "cell_condition", "BoundArtifact", "load_bound", "load_clean_of_record",
     "metrics_sha256", "cross_check", "check_e1_record", "StatsArtifact", "load_stats_artifact",
-    "check_seed42_identity", "TelemetryAttempt", "read_telemetry",
+    "check_seed42_identity", "TelemetryAttempt", "read_telemetry", "role_slots", "family_inputs",
+    "b5_status", "DedupRecord", "read_dedup",
 ]

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The mutation harness of lane LREP (B-1 to B-3; LRB8): every mutation names the case that kills it.
+"""The mutation harness of lane LREP (B-1 to B-3, B-5; LRB8): every mutation names the case that kills it.
 
 Each mutation rewrites one LREP function from its own source (an exact, unique text replacement,
 compiled into the module's namespace and restored afterwards; scripts/smoke_teacher_diag_mutations.py's
@@ -49,6 +49,7 @@ from src.stats import heldout_inputs as H                                # noqa:
 from src.stats import report_extensions as RX                            # noqa: E402
 from src.stats import seed_stability as SS                               # noqa: E402
 from src.stats import strata_tables as ST                                # noqa: E402
+from src.stats.ingest import Policy                                      # noqa: E402
 
 CTX = types.SimpleNamespace(world=None)
 
@@ -130,8 +131,29 @@ def m_seed42_tamper():
     return refused("seed42_mismatch", lambda: SS.seed42_cross_checks(fake, m, mc))
 
 
+def m_stage_unmapped():
+    """B5-S1: a bound arm row read at a stage outside the map (E3-K8; K8 is out, DL-96) is refused once
+    its row, record, path, protocol, files and manifest have passed."""
+    w = CTX.world
+    inv = H.open_inventory(w.inventory_path, policy=Policy.NONOFFICIAL_SMOKE)
+    return refused("stage_unmapped", lambda: H.load_bound(
+        inv, slot="E3-R1:s42", stage="E3-K8", precision="fp32", scope="clean", input_root=w.input_root,
+        policy=Policy.NONOFFICIAL_SMOKE))
+
+
+def m_dedup_invalid():
+    """B5-S2: an export whose dedup.sha256 is not its file's is refused before the file is parsed."""
+    w = CTX.world
+    export, binding = copy.deepcopy(w.export), copy.deepcopy(w.binding)
+    export["dedup"]["sha256"] = LF.syn_sha("not the dedup file")
+    path = LF.write_inventory(w.fresh("mut_dedup_sha"), export, binding, w.dedup)
+    inv = H.open_inventory(path, policy=Policy.NONOFFICIAL_SMOKE)
+    return refused("dedup_invalid", lambda: H.read_dedup(inv))
+
+
 LOCAL = {"mut:out_dir": m_out_dir, "mut:mde": m_mde, "mut:usage": m_usage,
-         "mut:seed42_tamper": m_seed42_tamper}
+         "mut:seed42_tamper": m_seed42_tamper, "mut:stage_unmapped": m_stage_unmapped,
+         "mut:dedup_invalid": m_dedup_invalid}
 
 
 def all_cases() -> dict:
@@ -232,6 +254,10 @@ MUTATIONS = [
      [(RX, "build_mde", [off_h("mde_entry_invalid", ' f"cannot be read')])], "mut:mde"),
     ("C41", "usage_invalid not raised (--repo-root without --synthetic-inputs)",
      [(RX, "run", [off_h("usage_invalid", ' "--repo-root is accepted')])], "mut:usage"),
+    ("C42", "stage_unmapped not raised (B5-S1)", [(H, "stage_spec", [off("stage_unmapped")])],
+     "mut:stage_unmapped"),
+    ("C43", "dedup_invalid not raised (the dedup file's sha256; B5-S2)",
+     [(H, "read_dedup", [off("dedup_invalid", ' f"{where}: {f} has sha256')])], "mut:dedup_invalid"),
     # R: further raise sites (DL-24)
     ("R01", "binding_invalid not raised (a bound export without binding.artifacts)",
      [(H, "open_inventory", [off("binding_invalid", ' f"{path}: a bound export')])], "seed:R2h"),
@@ -319,8 +345,7 @@ MUTATIONS = [
     ("S21", "slots without a family/per_seed role are no longer skipped (LRB4)",
      [(H, "record_slots", [("if not roles:", "if not roles and False:")])], "seed:W1"),
     ("S22", "fq_off rows checked against the stage precision (LRB7)",
-     [(H, "load_bound", [("precision if precision == PRECISION_FQOFF else D.STAGE_PRECISION.get(",
-                          "D.STAGE_PRECISION.get(")])], "report:Q3"),
+     [(H, "load_bound", [("if precision == PRECISION_FQOFF:", "if False:")])], "report:Q3"),
     ("S23", "the non-finite label replaced (D-6)",
      [(H, "_label", [("return LABEL_NON_FINITE", "return LABEL_PARENT_CUT")])], "seed:L6"),
     ("S24", "the binding's sha256 comparison skipped",

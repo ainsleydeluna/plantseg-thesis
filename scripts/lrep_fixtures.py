@@ -1,4 +1,4 @@
-"""Synthetic TEST-day fixtures for lane LREP's smokes (B-1 to B-3).
+"""Synthetic TEST-day fixtures for lane LREP's smokes (B-1 to B-3; B-5).
 
 SYNTHETIC ONLY (DL-41). Every evaluation artifact is generated from integer counts and written through
 the unmodified evaluator writer by scripts/stats_fixtures.py, into a temporary clean fixture git
@@ -10,10 +10,14 @@ inputs are "provisional", so that they carry checkpoint identities (R-7, R-11).
 
 The world also writes what TMAN will supply (IF§11 v2):
   * an inventory export `tday-inventory/1`: model rows and entries for the 21 planned slots, the two
-    default candidates, E6-KD, and slots every LREP table must ignore (listed sweep runs, the losing
-    pilot, a 160k control, a calibration-sensitivity E4, an arm, an arm teacher, the teacher, a
-    quant_descriptive selection and the QAT run slots), whose records name directories that do not
-    exist;
+    default candidates, E6-KD, B-5's slots (B5_SLOTS: the arms' students and teachers, the teacher of
+    record, A, F, G, AM-23's quant_descriptive selections and their QAT runs, the 160k controls and the
+    calibration-sensitivity E4 and E7), each scored model with a real clean artifact at the evaluator
+    stage B5-S1's map gives it, and slots every LREP table must ignore (a listed sweep run, the losing
+    pilot and the QAT run slots), whose records name directories that do not exist;
+  * B5-S2's duplicate-free TEST list tman/tday_dedup.json in T4's wording (kept_ids, removed_by_reason;
+    four of the thirty images removed, the per-reason counts overlapping by one), named by the export's
+    `dedup` {path, sha256, removed_by_reason};
   * a bound binding `tday_binding/1` with one record per (row, scope, cell), including records no
     B-1 to B-3 table reads (upstream, seed 42's corrupted cells of E2-E5 and E7, the corrupted_sev45
     cells; IF§9), which name directories that do not exist;
@@ -24,9 +28,11 @@ DL-109 and DL-121, and the default candidates their defaults; every other identi
 sha256. LRB7's exception: fq_off artifacts are written through the writer as int8_qat, then their
 summary.json `run.precision` is rewritten to `qat_fakequant_off` and MANIFEST.sha256 rehashed
 (stats_fixtures.edit_summary), because the writer refuses that value (src/eval/artifacts.py:57, :295).
+A teacher's artifact (stage "teacher") gets `run.model_role` teacher the same way, because
+stats_fixtures.write_fixture writes every artifact as a student's (scripts/stats_fixtures.py:218).
 
-Names (LRB20; IF§2): runs/heldout/<stage>_s<seed>_<tail>, telemetry/<file_id>.jsonl, tman/, stats/,
-strata/. stats_fixtures.rel_name is never used (it names folders by split), the JSON split value is
+Names (LRB20; IF§2): runs/heldout/<stage>_s<seed>_<tail> (B-5's: runs/heldout/<file_id>_<tail>),
+telemetry/<file_id>.jsonl, tman/, stats/, strata/. stats_fixtures.rel_name is never used (it names folders by split), the JSON split value is
 "val", and no created path contains "test". `make_root` follows scripts/smoke_mde.py: TMPDIR must be
 set and free of "test", and the root's name ends in hex digits, which cannot spell it.
 
@@ -82,6 +88,45 @@ KD_VAL_ITERS = tuple(range(4000, 80001, 4000))
 QAT_VAL_EPOCHS = tuple(range(1, 16))
 EXPORT_NAME = "tday_inventory.json"
 BINDING_NAME = "tday_binding.json"
+DEDUP_NAME = "tday_dedup.json"
+#: B-5's slots (IF§9; AM-18 item 3; AM-23 items 1-3; AM-3; AM-17 items 6-7; AM-16 item 5), each scored
+#: model written as a real clean canvas artifact: (slot, stage, seed, precisions, kind, class, roles,
+#: parent, quality). The stages are IF§9's names (B5-S1 maps them); the slot keys of Part 1's ignored
+#: slots are kept (scripts/smoke_seed_stability.py's W3 names them). A, F and G carry role `listed`.
+B5_SLOTS = (
+    ("E3-R1:s42", "E3-R1", 42, ("fp32",), "scored_run", "run", ("arm",), None, 0.768),
+    ("E3-R2:s42", "E3-R2", 42, ("fp32",), "scored_run", "run", ("arm",), None, 0.790),
+    ("E3-flip:s42", "E3-flip", 42, ("fp32",), "scored_run", "run", ("arm",), None, 0.757),
+    ("E7-R1:s42", "E7-R1", 42, ("int8_ptq",), "derived", "derived", ("arm",), "E3-R1:s42", 0.760),
+    ("E7-R2:s42", "E7-R2", 42, ("int8_ptq",), "derived", "derived", ("arm",), "E3-R2:s42", 0.781),
+    ("E7-flip:s42", "E7-flip", 42, ("int8_ptq",), "derived", "derived", ("arm",), "E3-flip:s42", 0.749),
+    ("E6-R1:s42", "E6-R1", 42, (), "listed_run", "run", (), "E3-R1:s42", None),
+    ("E6-R1:s42:sel", "E6-R1", 42, ("int8_qat", "qat_fakequant_off"), "derived", "derived",
+     ("quant_descriptive",), "E6-R1:s42", 0.765),
+    ("E6-R2:s42", "E6-R2", 42, (), "listed_run", "run", (), "E3-R2:s42", None),
+    ("E6-R2:s42:sel", "E6-R2", 42, ("int8_qat", "qat_fakequant_off"), "derived", "derived",
+     ("quant_descriptive",), "E6-R2:s42", 0.786),
+    ("E6-E2:s42", "E6-E2", 42, (), "listed_run", "run", (), "E2:s42", None),
+    ("E6-E2:s42:sel", "E6-E2", 42, ("int8_qat", "qat_fakequant_off"), "derived", "derived",
+     ("quant_descriptive",), "E6-E2:s42", 0.716),
+    ("E7-E2:s42", "E7-E2", 42, ("int8_ptq",), "derived", "derived", ("quant_descriptive",), "E2:s42", 0.713),
+    ("R1", "R1", None, ("fp32",), "arm_teacher", "run", ("arm_teacher",), None, 0.812),
+    ("R2", "R2", None, ("fp32",), "arm_teacher", "run", ("arm_teacher",), None, 0.821),
+    ("teacher", "teacher", None, ("fp32",), "scored_run", "run", ("teacher_reference",), None, 0.805),
+    ("A:s42", "A", 42, ("fp32",), "scored_run", "run", ("listed",), None, 0.741),
+    ("F:s42", "F", 42, ("fp32",), "scored_run", "run", ("listed",), None, 0.744),
+    ("G:s42", "G", 42, ("fp32",), "scored_run", "run", ("listed",), None, 0.738),
+    ("E1:s42:160k", "E1", 42, ("fp32",), "scored_run", "run", ("control",), None, 0.706),
+    ("E2:s42:160k", "E2", 42, ("fp32",), "scored_run", "run", ("control",), None, 0.727),
+    ("E4:s42:cal43", "E4", 42, ("int8_ptq",), "derived", "derived", ("calibration_sensitivity",), "E1:s42",
+     0.691),
+    ("E7:s42:cal43", "E7", 42, ("int8_ptq",), "derived", "derived", ("calibration_sensitivity",), "E3:s42",
+     0.751),
+)
+#: B5-S2's fixture: the images TMAN's hash list would remove (AM-18 item 8(c)), and per-reason counts that
+#: overlap by one (an image equal to both a TRAIN and a VAL image), which the reader reports.
+DEDUP_REMOVED = ("img_00003", "img_00011", "img_00017", "img_00024")
+DEDUP_REASONS = {"equals_train_image": 2, "equals_val_image": 2, "repeats_an_earlier_image": 1}
 
 
 def make_root(prefix: str) -> tuple[Path | None, str | None]:
@@ -172,6 +217,7 @@ class World:
     telemetry: dict = field(default_factory=dict)      # slot -> [telemetry items]
     export: dict | None = None                         # binding.path/sha256 filled by write_inventory
     binding: dict | None = None
+    dedup: dict | None = None                          # B5-S2's file; dedup.sha256 filled likewise
     stats_path: Path | None = None
     strata_path: Path | None = None
     inventory_path: Path | None = None
@@ -196,19 +242,27 @@ class World:
 # --------------------------------------------------------------------------------------------------
 def _write(world: World, rel: str, *, slot: str, stage: str, seed, precision: str, scope: str,
            cell, cond: tuple, quality: float, checkpoint: str, run_id: str) -> Written:
-    """One artifact. Every model at one seed and condition shares that (seed, condition)'s noise draw
-    and differs only by its quality, as a conversion differs from its parent, so the world's m values
-    are ordered by quality at each seed and its states are known before it is scored."""
+    """One artifact, scored at the evaluator stage B5-S1's map gives `stage`. Every model at one seed and
+    condition shares that (seed, condition)'s noise draw and differs only by its quality, as a
+    conversion differs from its parent, so the world's m values are ordered by quality at each seed and
+    its states are known before it is scored. A teacher's summary records model_role teacher and an
+    fq_off one precision qat_fakequant_off (edit_summary; the writer takes neither)."""
     pred = F.predict(world.truth, quality=quality, seed=F.int_seed(WORLD_SEED, "noise", seed, *cond))
     condition = Condition(*cond)
     scored = F.score(world.truth, pred, condition)
     write_precision = "int8_qat" if precision == H.PRECISION_FQOFF else precision
+    evaluator_stage, model_role, _ = H.stage_spec(stage)
     d = world.input_root / rel
-    F.write_fixture(d, scored, world.n, stage=H.evaluator_stage(stage), condition=condition,
+    F.write_fixture(d, scored, world.n, stage=evaluator_stage, condition=condition,
                     split="val", status="provisional", repo_root=world.input_root, run_id=run_id,
                     precision=write_precision, checkpoint_sha256=checkpoint)
+    edits = {}
     if precision == H.PRECISION_FQOFF:
-        F.edit_summary(d, lambda s: {**s, "run": {**s["run"], "precision": H.PRECISION_FQOFF}})
+        edits["precision"] = H.PRECISION_FQOFF
+    if model_role != "student":
+        edits["model_role"] = model_role
+    if edits:
+        F.edit_summary(d, lambda s: {**s, "run": {**s["run"], **edits}})
     summary = json.loads((d / "summary.json").read_text(encoding="utf-8"))
     w = Written(slot=slot, stage=stage, seed=seed, precision=precision, scope=scope, cell=cell,
                 rel=rel, checkpoint=checkpoint, files_sha256=D.input_file_sha256(d), run_id=run_id,
@@ -272,6 +326,44 @@ def write_artifacts(world: World) -> None:
     _write(world, "runs/heldout/e6kd_s42_fqoff", slot=kd, stage="E6-KD", seed=42,
            precision=H.PRECISION_FQOFF, scope="fq_off", cell=None, cond=D.CLEAN, quality=0.762,
            checkpoint=syn_sha("qat checkpoint", "E6-KD", 42), run_id="lrep-e6kd-s42-fqoff")
+
+
+def b5_identity(slot: str, precision: str) -> dict:
+    """{source_kind, source, converted, artifact} of a B-5 slot's row of `precision` (IF§8, TL-6)."""
+    if precision == "fp32":
+        c = syn_sha("b5 checkpoint", slot)
+        return {"source_kind": "checkpoint", "source": c, "converted": None, "artifact": c}
+    if precision == "int8_ptq":
+        conv = syn_sha("b5 converted", slot)
+        return {"source_kind": "provenance", "source": syn_sha("b5 provenance", slot), "converted": conv,
+                "artifact": conv}
+    src = syn_sha("b5 qat checkpoint", slot)
+    if precision == H.PRECISION_FQOFF:
+        return {"source_kind": "checkpoint", "source": src, "converted": None, "artifact": src}
+    conv = syn_sha("b5 converted", slot)
+    return {"source_kind": "checkpoint", "source": src, "converted": conv, "artifact": conv}
+
+
+def b5_run_id(slot: str, kind: str, parent) -> str:
+    """The training run of a B-5 slot's rows (IF§11.1): a run's own; a QAT selection's QAT run's; a PTQ
+    model's parent run's (a family run's id of record when the parent is one)."""
+    src = parent if kind == "derived" else slot
+    family = {run_slot(st, 42): training_run_id(st, 42) for st in H.RUN_STAGES}
+    return family.get(src, f"{file_id(src)}_a1")
+
+
+def write_b5_artifacts(world: World) -> None:
+    """B-5's scored models (B5_SLOTS): one clean canvas artifact per row, and a QAT selection's fq_off
+    model as Part 1's are."""
+    for slot, stage, seed, precisions, kind, cls, roles, parent, quality in B5_SLOTS:
+        for precision in precisions:
+            ids = b5_identity(slot, precision)
+            fq = precision == H.PRECISION_FQOFF
+            tail = "fqoff" if fq else "clean"
+            _write(world, f"runs/heldout/{file_id(slot)}_{tail}", slot=slot, stage=stage, seed=seed,
+                   precision=precision, scope="fq_off" if fq else "clean", cell=None, cond=D.CLEAN,
+                   quality=quality + (FQOFF_GAIN if fq else 0.0), checkpoint=ids["artifact"],
+                   run_id=f"lrep-{file_id(slot).replace('_', '-')}-{tail}")
 
 
 def edited_copy(world: World, src: Written, name: str, fn) -> Written:
@@ -411,6 +503,36 @@ def _ghost_record(world: World, slot: str, precision: str, scope: str | None = N
             "split_manifest_sha256": syn_sha("ghost manifest")}
 
 
+def b5_export_parts(world: World) -> tuple[list, list, list]:
+    """(entries, model rows, upstream ghost records) of B-5's slots; their scored records come from
+    world.written. A teacher's row carries model_role teacher (B5-S1); an fq_off row a student's."""
+    entries, models, ghosts = [], [], []
+    for slot, stage, seed, precisions, kind, cls, roles, parent, _ in B5_SLOTS:
+        entries.append(_entry(slot, kind, stage, seed, list(roles), parent=parent, cls=cls,
+                              never_cut=stage in H.TEACHER_STAGES))
+        for precision in precisions:
+            ids = b5_identity(slot, precision)
+            role = "student" if precision == H.PRECISION_FQOFF else H.stage_spec(stage)[1]
+            models.append(_row(slot, stage, seed, precision, source_kind=ids["source_kind"],
+                               source_sha=ids["source"], converted=ids["converted"], entry_kind=kind,
+                               roles=list(roles), run_id=b5_run_id(slot, kind, parent), model_role=role))
+            if (precision != H.PRECISION_FQOFF and stage not in ("R1", "R2")
+                    and "calibration_sensitivity" not in roles):
+                ghosts.append(_ghost_record(world, slot, precision, "upstream"))
+    return entries, models, ghosts
+
+
+def dedup_doc(world: World) -> dict:
+    """B5-S2's file in T4's wording (plan :62): the kept (duplicate-free) image ids, sorted and unique,
+    with the per-reason removed counts."""
+    return {"kept_ids": sorted(i for i in world.truth.ids if i not in DEDUP_REMOVED),
+            "removed_by_reason": dict(DEDUP_REASONS)}
+
+
+def dedup_bytes(doc: dict) -> bytes:
+    return (json.dumps(doc, indent=2, allow_nan=False) + "\n").encode("utf-8")
+
+
 def sev45_cells() -> list[str]:
     """IF§6's nine corrupted_sev45 cells: gaussian_noise at 4, the other four corruptions at 4 and 5."""
     return [H.cell_id(n, s) for n in H.corruption_names() for s in (4, 5)
@@ -478,43 +600,32 @@ def build_export(world: World) -> tuple[dict, dict]:
         models.append(_row("E6-KD:s42:sel", "E6-KD", 42, prec, source_kind="checkpoint",
                            source_sha=sha, converted=conv, entry_kind="derived", roles=["listed"],
                            run_id="e6kd_s42_qat_a1"))
-    # slots every LREP table of B-1 to B-3 ignores (IF§11.1; LRB4)
-    ghosts = (("E2:s42:lambda0.25", "listed_run", "E2", 42, ["listed"], None),
-              ("U4:pilot", "listed_run", "E5", 42, ["listed"], None),
-              ("E2:s42:160k", "scored_run", "E2", 42, ["control"], "fp32"),
-              ("E4:s42:cal43", "derived", "E4", 42, ["calibration_sensitivity"], "int8_ptq"),
-              ("E3-R1:s42", "scored_run", "E3-R1", 42, ["arm"], "fp32"),
-              ("R1", "arm_teacher", "R1", None, ["arm_teacher"], "fp32"),
-              ("teacher", "scored_run", "teacher", None, ["teacher_reference"], "fp32"),
-              ("E6-E2:s42:sel", "derived", "E6-E2", 42, ["quant_descriptive"], "int8_qat"))
-    for slot, kind, stage, seed, roles, prec in ghosts:
-        entries.append(_entry(slot, kind, stage, seed, roles, never_cut=False))
-        if prec is None:
-            continue
-        precs = [prec] + ([H.PRECISION_FQOFF] if prec == "int8_qat" else [])
-        for pr in precs:
-            models.append(_row(slot, stage, seed, pr, source_kind="checkpoint",
-                               source_sha=syn_sha("ghost source", slot),
-                               converted=syn_sha("ghost converted", slot), entry_kind=kind,
-                               roles=roles, run_id=f"{file_id(slot)}_a1",
-                               model_role="teacher" if stage in ("R1", "teacher") else "student"))
-            records.append(_ghost_record(world, slot, pr))
+    # B-5's slots (B5_SLOTS), with real clean artifacts
+    b5_entries, b5_models, b5_ghosts = b5_export_parts(world)
+    entries += b5_entries
+    models += b5_models
+    records += b5_ghosts
+    # slots every LREP table ignores (IF§11.1; LRB4): listed runs without a model row
+    for slot, stage in (("E2:s42:lambda0.25", "E2"), ("U4:pilot", "E5")):
+        entries.append(_entry(slot, "listed_run", stage, 42, ["listed"], never_cut=False))
     records.extend(_record(world, w) for w in world.written.values())
     manifest = syn_sha("TEST-day manifest")
     export = {"schema": H.INVENTORY_SCHEMA, "evaluator_commit": world.commit,
               "execution_context": {"model_device": "cpu", "input_devices": ["cpu"],
                                     "determinism_policy_applied": False, "batch_size": 1, "num_workers": 0,
                                     "torch_num_threads": 1, "image_digest": "sha256:" + syn_sha("image")},
-              "manifest_sha256": manifest, "models": models, "entries": entries, "dedup": None,
+              "manifest_sha256": manifest, "models": models, "entries": entries,
+              "dedup": {"path": DEDUP_NAME, "sha256": None, "removed_by_reason": dict(DEDUP_REASONS)},
               "binding": {"state": "bound", "path": BINDING_NAME, "sha256": None},
               "freeze": {"dl_row": "DL-synthetic", "manifest_sha256": manifest}}
     binding = {"schema": H.BINDING_SCHEMA, "artifacts": records}
     return export, binding
 
 
-def write_inventory(out_dir: Path, export: dict, binding: dict | None) -> Path:
-    """Write `binding` (if any) and `export` into `out_dir`; a bound export's binding.sha256 is set
-    from the written binding bytes unless the export already pins another value."""
+def write_inventory(out_dir: Path, export: dict, binding: dict | None, dedup: dict | None = None) -> Path:
+    """Write `binding` and `dedup` (B5-S2's file; each if given) and `export` into `out_dir`; a bound
+    export's binding.sha256, and its dedup.sha256, are set from the written bytes unless the export
+    already pins another value."""
     out_dir = Path(out_dir)
     doc = copy.deepcopy(export)
     if binding is not None:
@@ -523,6 +634,11 @@ def write_inventory(out_dir: Path, export: dict, binding: dict | None) -> Path:
                          newline="\n")
         if doc["binding"].get("state") == "bound" and doc["binding"].get("sha256") is None:
             doc["binding"]["sha256"] = H.sha256_file(bpath)
+    if dedup is not None:
+        dpath = out_dir / DEDUP_NAME
+        dpath.write_bytes(dedup_bytes(dedup))
+        if isinstance(doc.get("dedup"), dict) and doc["dedup"].get("sha256") is None:
+            doc["dedup"]["sha256"] = H.sha256_file(dpath)
     p = out_dir / EXPORT_NAME
     p.write_text(json.dumps(doc, indent=2, allow_nan=False) + "\n", encoding="utf-8", newline="\n")
     return p
@@ -568,13 +684,15 @@ def build_world(root: Path, *, n: int = N_IMAGES, B: int = STATS_B, stats: bool 
     truth = F.make_truth(n, 0, F.int_seed(WORLD_SEED, "truth"))
     world = World(root=root, input_root=input_root, commit=commit, truth=truth, n=n)
     write_artifacts(world)
+    write_b5_artifacts(world)
     write_all_telemetry(world)
     if stats:
         write_stats_artifact(world, B=B)
     if strata:
         write_strata(world)
     world.export, world.binding = build_export(world)
-    world.inventory_path = write_inventory(new_dir(root, "tman"), world.export, world.binding)
+    world.dedup = dedup_doc(world)
+    world.inventory_path = write_inventory(new_dir(root, "tman"), world.export, world.binding, world.dedup)
     return world
 
 
@@ -582,4 +700,6 @@ __all__ = ["WORLD_SEED", "N_IMAGES", "STATS_B", "QUALITY", "SEED_SHIFT", "E2_SEL
            "E2_DEFAULT", "E3_DEFAULT", "make_root", "new_dir", "syn_sha", "run_slot", "record_slot",
            "file_id", "training_run_id", "fp32_checkpoint", "identities", "Written", "World",
            "edited_copy", "write_telemetry", "kd_curve", "qat_curve", "write_stats_artifact",
-           "sev45_cells", "build_export", "write_inventory", "write_strata", "build_world"]
+           "sev45_cells", "build_export", "write_inventory", "write_strata", "build_world", "DEDUP_NAME",
+           "B5_SLOTS", "DEDUP_REMOVED", "DEDUP_REASONS", "b5_identity", "b5_run_id", "write_b5_artifacts",
+           "b5_export_parts", "dedup_doc", "dedup_bytes"]
