@@ -208,16 +208,25 @@ class Ctx:
         lanes = doc.get("lanes") if isinstance(doc, dict) else None
         return lanes if isinstance(lanes, list) else []
 
-    def results_known(self) -> list[dict]:
-        """The results-of-record references the cut entry files list (decision (xvi)), well-formed ones only (the
-        entry-file gate checks the fields)."""
+    def _cut_refs(self, field: str) -> list[dict]:
+        """`field`'s references in the cut entry files, well-formed ones only (the entry-file gate checks the
+        fields)."""
         out = []
         for c in self.cited_entries():
             doc = self.entry_doc(c["path"]) if c["kind"] == "cut" else None
-            rk = doc.get("results_known") if isinstance(doc, dict) else None
-            out += [r for r in rk if isinstance(r, dict) and isinstance(r.get("path"), str)
-                    and isinstance(r.get("sha256"), str)] if isinstance(rk, list) else []
+            refs = doc.get(field) if isinstance(doc, dict) else None
+            refs = [refs] if isinstance(refs, dict) else refs
+            out += [r for r in refs if isinstance(r, dict) and isinstance(r.get("path"), str)
+                    and isinstance(r.get("sha256"), str)] if isinstance(refs, list) else []
         return out
+
+    def results_known(self) -> list[dict]:
+        """The results-of-record references the cut entry files list (decision (xvi))."""
+        return self._cut_refs("results_known")
+
+    def rule_records(self) -> list[dict]:
+        """The records the named-rule cuts cite (AM-19 item 3(b))."""
+        return self._cut_refs("rule_record")
 
     def launch_log(self):
         if not hasattr(self, "_log"):
@@ -340,6 +349,7 @@ def g_record_uncommitted(x: Ctx):
     cited += [r for e in x.entries if e["kind"] == "arm_teacher" for r in (e["arm_record"], e["launch_provenance"],
                                                                            e["go_rule"]) if r]
     cited += x.results_known()                             # each committed at its cited sha256 (decision (xvi); #69)
+    cited += x.rule_records()                              # a named rule's record, at its cited sha256 (#16)
     for ref in cited:
         S.refuse_test_path(ref["path"])
         if S.sha256_bytes(x.records.read(ref["path"])) != ref["sha256"]:
@@ -818,8 +828,9 @@ def cut_context(x: Ctx, docs: dict | None = None) -> E.CutContext:
     """The cut checks' context from the records: the arm registry, each sweep's decision record (projected:
     decision_date, values' value and status), each slot's launched attempts, the slot of each launched run_id, the
     stopped run_ids and each slot's status at the original freeze instant from its own attempts (completion.RunIndex:
-    never from a cut entry), the condition entries' verdicts, and the day each cut entry file of `docs` ({sha256:
-    doc}) was entered in the decision log (decision (xv))."""
+    never from a cut entry), a named rule's record (entries.rule_record_reader) and E3-X's run of record (its
+    manifest entry: a scored run, or none), the day each cut entry file of `docs` ({sha256: doc}) was entered in the
+    decision log (decision (xv)), and the records committed by a day (decision (xvi))."""
     from src.training import kd_arms
     idx = x.index()
     sha_of = {id(d): sha for sha, d in (docs or {}).items()}
@@ -827,23 +838,18 @@ def cut_context(x: Ctx, docs: dict | None = None) -> E.CutContext:
     def entered(doc):
         return E.entered_day(x.records, sha_of[id(doc)]) if id(doc) in sha_of else None
 
-    def known_by(rel, sha256, day):
-        held = x.records.held_by(rel, D.cutoff_instant(day))
-        return bool(held) if sha256 is None else sha256 in held
+    def e3x(arm):
+        e = x.by_slot.get(x.slot(f"E6-{arm}:s42:15ep")["parent"]) if f"E6-{arm}:s42:15ep" in x.cat.slots else None
+        return {"run_id": e["run_id"], "checkpoint_sha256": e["checkpoint"]["sha256"]} \
+            if e is not None and e["kind"] == "scored_run" else False
     recs = {}
     for key, rel in ss.DECISION_RECORD_REL.items():
         if x.records.has(rel):
             recs[key] = x.records.json(rel, R.DECISION_RECORD, code="decision_date_cut_mismatch")[0]
-
-    def condition(ref):
-        if not ref:
-            return None
-        doc, sha = x.entry_file(ref["path"])
-        return doc.get("verdict") if sha == ref["sha256"] and doc.get("kind") == "condition" else None
     return E.CutContext(x.cat, x.freeze, registry={s.run_stage: s for s in kd_arms.load_arms().values()},
                         decision_records=recs, attempts=idx.attempts, run_slot=idx.slot_of.get,
-                        stopped=idx.stopped_ids(), status=x.slot_status, condition=condition, entered=entered,
-                        known_by=known_by)
+                        stopped=idx.stopped_ids(), status=x.slot_status, rule_record=E.rule_record_reader(x.records),
+                        e3x=e3x, entered=entered, known_by=E.known_by_reader(x.records))
 
 
 def _cut_gate(code: str):

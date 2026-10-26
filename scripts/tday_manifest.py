@@ -167,9 +167,11 @@ def cmd_entry(args) -> int:
 
 
 def printer_cut_context(records: R.Records, cat, freeze, doc: dict, runs) -> E.CutContext:
-    """The cut printer's context, the validator's (validate.cut_context): the registry, the decision records, and
-    every run slot's launched attempts and status from the launch log and the run directories under --runs
-    (completion.RunIndex; never from the entry). A cut is printed from the run directories: --runs is required."""
+    """The cut printer's context, the validator's (validate.cut_context): the registry, the decision records, every
+    run slot's launched attempts and status from the launch log and the run directories under --runs
+    (completion.RunIndex; never from the entry), a named rule's record and the records committed by a day (E3-X's
+    run of record is read from the manifest by the validator). A cut is printed from the run directories: --runs is
+    required."""
     from src.training import kd_arms
     from src.training import sweep_select as ss
     if runs is None:
@@ -187,16 +189,10 @@ def printer_cut_context(records: R.Records, cat, freeze, doc: dict, runs) -> E.C
         raise S.TmanRefused("launched_attempt_without_directory", f"launched attempts without a directory under "
                                                                   f"--runs: {missing} (AM-19a reading 20)")
 
-    def condition(ref):
-        if not ref:
-            return None
-        got = M.entry_ref(records, ref["path"])
-        return got["doc"].get("verdict") if got["sha256"] == ref["sha256"] and got["doc"].get("kind") == "condition" \
-            else None
     return E.CutContext(cat, freeze, registry={s.run_stage: s for s in kd_arms.load_arms().values()},
                         decision_records=recs, attempts=idx.attempts, run_slot=idx.slot_of.get,
                         stopped=idx.stopped_ids(), status=lambda slot: idx.status(slot, freeze.original_utc),
-                        condition=condition)
+                        rule_record=E.rule_record_reader(records), known_by=E.known_by_reader(records))
 
 
 # -------------------------------------------------------------------------------------------- arithmetic

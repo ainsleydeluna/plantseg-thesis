@@ -158,6 +158,7 @@ def reference_smoke(path: Path, key: str) -> dict:
 # ------------------------------------------------------------------------------- the cut checks, in gate order
 ARM_GROUPS = ("R2", "W", "R1", "L")          # AM-18 item 7(a)/(b) and the AM-17 item 11 arm
 CONDITION_STAGES = ("E6-R1", "E6-R2")        # AM-23 item 3(b)
+NAMED_RULE_KINDS = ("condition", "go_rule")  # AM-23 item 3(b)'s condition entry; AM-18 item 5's go-rule record
 
 
 class CutContext:
@@ -165,12 +166,12 @@ class CutContext:
     projected decision record (decision_date, values), and, from the records and the run directories, never from
     the entry (completion.RunIndex): each slot's launched attempts (None: not read), the slot a launched run_id
     belongs to, the run_ids stopped (a launch log's stopped line; a QAT run_stop row), each slot's status at the
-    original instant from its own attempts (None: not read or never launched); each condition entry's verdict; the
-    day a committed cut entry was entered in the decision log; and whether a record was committed by the end of a
-    day."""
+    original instant from its own attempts (None: not read or never launched); the reading of a named rule's record
+    (rule_record_reader) and E3-X's run of record; the day a committed cut entry was entered in the decision log; and
+    whether a record was committed by the end of a day."""
 
     def __init__(self, catalogue, freeze, *, registry=None, decision_records=None, attempts=None, run_slot=None,
-                 stopped=None, status=None, condition=None, entered=None, known_by=None):
+                 stopped=None, status=None, rule_record=None, e3x=None, entered=None, known_by=None):
         self.cat, self.freeze = catalogue, freeze
         self.registry = registry or {}                      # run stage -> kd_arms.ArmSpec
         self.decision_records = decision_records or {}      # sweep key -> projected decision record
@@ -178,10 +179,50 @@ class CutContext:
         self.run_slot = run_slot or (lambda run_id: None)   # launched run_id -> its slot, or None
         self.stopped = set(stopped or ())
         self.status = status or (lambda slot: None)          # slot -> completion status at the original instant
-        self.condition = condition or (lambda ref: None)     # condition entry ref -> "yes" | "no" | None
+        self.rule_record = rule_record or (lambda ref: None)  # a named rule's record ref -> its reading; None: not read
+        self.e3x = e3x or (lambda arm: None)                 # arm -> E3-X's run of record; False: none; None: not read
         self.entered = entered or (lambda doc: None)         # cut entry -> its entered day (decision (xv)), or None
         # (path, sha256 or None: any content, day) -> committed by the end of that Manila day; None: not read
         self.known_by = known_by or (lambda rel, sha256, day: None)
+
+
+def rule_record_reader(records: R.Records):
+    """CutContext.rule_record from the records, for the validator and the printer: the record a named-rule cut
+    cites, committed at the cited sha256 (record_uncommitted), read as an AM-23 condition entry (tday_entry/1 of
+    kind condition: its arm, verdict and e3x, dated its date) or an AM-18 go-rule record (arm_go_rule/1, projected:
+    its arm and verdict, dated the Manila day of its generated_utc); any other record reads as kind "unknown"."""
+    def read(ref):
+        if not isinstance(ref, dict):
+            return {"kind": None, "date": None}
+        data = records.read(ref["path"])
+        if S.sha256_bytes(data) != ref["sha256"]:
+            raise S.TmanRefused("record_uncommitted", f"{ref['path']}: the committed file is not the cited sha256")
+        try:
+            doc = S.strict_json(data, ref["path"], code="cut_rule_unknown")
+        except S.TmanRefused:
+            doc = None
+        if isinstance(doc, dict) and doc.get("format") == S.ENTRY_FORMAT and doc.get("kind") == "condition" \
+                and not entry_field_errors(doc):
+            return {"kind": "condition", "date": doc["date"], "arm": doc["arm"], "verdict": doc["verdict"],
+                    "e3x": doc["e3x"]}
+        if isinstance(doc, dict) and doc.get("format") == _pa().GO_RULE_FORMAT:
+            go = R.project(doc, R.GO_RULE_RECORD)
+            try:
+                return {"kind": "go_rule", "date": D.manila_day(D.parse_utc_any(go["generated_utc"])),
+                        "arm": str(go["arm"]), "verdict": go["verdict"]}
+            except (KeyError, TypeError, ValueError, AttributeError):
+                pass
+        return {"kind": "unknown", "date": None}
+    return read
+
+
+def known_by_reader(records: R.Records):
+    """CutContext.known_by from the records (decision (xvi)): `rel` committed by the end of `day` (Manila), at
+    `sha256` when one is given."""
+    def known_by(rel, sha256, day):
+        held = records.held_by(rel, D.cutoff_instant(day))
+        return bool(held) if sha256 is None else sha256 in held
+    return known_by
 
 
 def _slots(doc, ctx) -> list[dict]:
@@ -204,7 +245,8 @@ def rule_day(doc, ctx) -> str | None:
         return rec.get("decision_date")
     if rule == "named_rule":
         rr = doc["rule_record"]
-        return rr["date"] if rr else None
+        rec = ctx.rule_record(rr) if rr else None
+        return rec["date"] if rec else (rr["date"] if rr else None)
     if rule == "arithmetic":
         a = doc["arithmetic"]
         try:
@@ -215,7 +257,15 @@ def rule_day(doc, ctx) -> str | None:
 
 
 def chk_rule(doc, ctx):
-    return None if doc["rule"] in S.CUT_RULES else f"rule {doc['rule']!r} is not one of {S.CUT_RULES} (AM-19 3(b))"
+    """A rule of AM-19 item 3(b); a named rule cites the record that names its cut, read through the records: an
+    AM-23 condition entry or an AM-18 go-rule record (rule_record_reader; DL-24 #16)."""
+    if doc["rule"] not in S.CUT_RULES:
+        return f"rule {doc['rule']!r} is not one of {S.CUT_RULES} (AM-19 3(b))"
+    rec = ctx.rule_record(doc["rule_record"]) if doc["rule"] == "named_rule" else None
+    if rec is not None and rec["kind"] not in NAMED_RULE_KINDS:
+        return (f"a named rule cites the committed record that names its cut, an AM-23 condition entry or an AM-18 "
+                f"go-rule record, not {doc['rule_record']}")
+    return None
 
 
 def chk_never_cut(doc, ctx):
@@ -268,6 +318,9 @@ def chk_date(doc, ctx):
     want = rule_day(doc, ctx)
     if want != doc["date"]:
         return f"the cut is dated {doc['date']}; its rule's day is {want}"
+    rr = doc["rule_record"] if doc["rule"] == "named_rule" else None
+    if rr is not None and rr["date"] != want:
+        return f"the cut cites its rule's record as dated {rr['date']}; the record's day is {want}"
     entered = ctx.entered(doc)
     if entered is not None and entered < want:
         return f"the cut is entered in the decision log on {entered}, before its rule's day {want} (AM-19 item 3(c))"
@@ -398,11 +451,29 @@ def chk_registered_arm(doc, ctx):
 
 
 def chk_condition(doc, ctx):
-    if doc["rule"] != "named_rule" or not any(s["stage"] in CONDITION_STAGES for s in _slots(doc, ctx)):
+    """A named-rule cut is the cut its record names (AM-19 item 3(b)): E6-X alone, by an AM-23 condition entry of arm
+    X reading no whose E3-X run is E3-X's run of record (AM-23 item 3(b)); an arm's runs, by its arm teacher's AM-18
+    go-rule record reading no_go (AM-18 item 5). Each arm needs its own record (DL-24 #16)."""
+    if doc["rule"] != "named_rule":
         return None
-    verdict = ctx.condition(doc["rule_record"])
-    return None if verdict == "no" else (f"an E6-X cut under AM-23 item 3(b) cites a condition entry reading no, "
-                                         f"not {verdict!r}")
+    rec = ctx.rule_record(doc["rule_record"])
+    if rec is None:                                         # not read: a context without the records
+        return None
+    if rec["kind"] == "condition":
+        arm = rec["arm"]
+        if [s["stage"] for s in _slots(doc, ctx)] != [f"E6-{arm}"] * len(doc["slots"]) or rec["verdict"] != "no":
+            return (f"an AM-23 condition entry of arm {arm} reading {rec['verdict']!r} cuts E6-{arm} alone, when it "
+                    f"reads no; the cut names {doc['slots']}")
+        got = ctx.e3x(arm)
+        if got is False or (got and (rec["e3x"]["run_id"], rec["e3x"]["checkpoint_sha256"])
+                            != (got["run_id"], got["checkpoint_sha256"])):
+            return f"the condition entry's E3-{arm} run {rec['e3x']['run_id']} is not E3-{arm}'s run of record ({got})"
+        return None
+    groups = sorted({str(s["cut_group"]) for s in _slots(doc, ctx)})       # E6-X's group is never an arm's
+    if rec["verdict"] != "no_go" or groups != [rec["arm"]]:
+        return (f"an AM-18 go-rule record of arm {rec['arm']} reading {rec['verdict']!r} cuts that arm's runs, when "
+                f"it reads no_go; the cut names {doc['slots']}")
+    return None
 
 
 CUT_CHECKS = [("cut_rule_unknown", chk_rule), ("cut_of_never_cut", chk_never_cut),

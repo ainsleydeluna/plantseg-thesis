@@ -804,12 +804,19 @@ def cut_world() -> World:
                                         for v in (25.0, 50.0, 100.0)]})
     w.cond = w.entry_file("condition", ["E6-R1:s42:15ep"], {"arm": "R1", "verdict": "yes", "e3x": {
         "run_id": w.r1_rid, "checkpoint_sha256": "6" * 64, "best_json_sha256": "7" * 64}}, date="2026-10-29")
+    go = w.S.json_file_bytes({"format": "arm_go_rule/1", "arm": "R1", "verdict": "no_go",
+                              "generated_utc": "2026-11-03T05:00:00Z", "checkpoint": {"name": "x", "sha256": "8" * 64,
+                                                                                      "bytes": 1},
+                              "teacher_record": {"path": "reports/arms/arm_teacher_record_R1.json",
+                                                 "sha256": "9" * 64}})
+    w.go_rule = {"path": "reports/arms/arm_go_rule_R1.json", "sha256": w.S.sha256_bytes(go)}   # AM-18 item 5
     w.commit({"reports/kd_launch_log.jsonl": b"".join(json.dumps(x).encode() + b"\n" for x in w.launch),
-              "reports/derived/alpha_decision_record.json": decision, w.cond["path"]: w.files[w.cond["path"]]},
-             "launch log, decision record, condition")
+              "reports/derived/alpha_decision_record.json": decision, w.cond["path"]: w.files[w.cond["path"]],
+              w.go_rule["path"]: go}, "launch log, decision record, condition, R1's go-rule record")
     w.g_cut = {**w.cut_fields("G", [G], "no card", False), **w.launched_fields([(G, w.g_rid)])}
     w.r1_slots = CUT_GROUPS["R1"][0]
     w.r1_cut = {**w.cut_fields("R1", w.r1_slots, "gate not met", True), **w.launched_fields([(R1, w.r1_rid)])}
+    w.r1_cut["results_known"] = w.r1_cut["results_known"] + [dict(w.go_rule, dl=None)]
     _, g_src = w.committed_cut([G], w.g_cut, nn=2)
     r1_ref, r1_src = w.committed_cut(w.r1_slots, w.r1_cut, nn=2)
     w.rebuild({**g_src, **r1_src, **w.committed_not_run(R1, r1_ref, NOT_RUN[R1], nn=2)})
@@ -827,7 +834,15 @@ def case_cut_gates():
     a = w.cut_fields("A", [A], "no card", False)
     named = {"rule": "named_rule", "rule_record": {"path": w.report["path"], "sha256": w.report["sha256"],
                                                   "date": "2026-10-28"}, "cut_order_position": None, "since": None}
-    named_today = {**named, "rule_record": dict(named["rule_record"], date=FREEZE_DAY)}   # its results known by then
+    named_go = {**named, "rule_record": dict(w.go_rule, date=FREEZE_DAY)}       # R1's go-rule record, no_go (AM-18)
+    conds = {}
+    for arm, verdict in (("R2", "no"), ("R1", "no")):
+        ref = w.entry_file("condition", [f"E6-{arm}:s42:15ep"], {"arm": arm, "verdict": verdict, "e3x": {
+            "run_id": w.r1_rid, "checkpoint_sha256": "6" * 64, "best_json_sha256": "7" * 64}}, nn=2,
+            date="2026-10-29")
+        w.commit({ref["path"]: w.files[ref["path"]]}, f"{arm}'s condition entry reading {verdict}")
+        conds[arm] = {"path": ref["path"], "sha256": ref["sha256"], "date": "2026-10-29"}
+    e6r1 = {**w.cut_fields("E6-R1", ["E6-R1:s42:15ep"], "condition not met", False), **named}
     a100_rid = KD_RUNS[A100][1]
     a100_dd = {**a, **w.launched_fields([(A100, a100_rid)]), "rule": "decision_date", "cut_order_position": None}
     variants = [
@@ -843,13 +858,26 @@ def case_cut_gates():
          dict(a100_dd, results_known=w.r1_cut["results_known"]), "2026-10-22"),
         ("arm_cut_without_results", "arm_cut_results_missing", w.r1_slots, dict(w.r1_cut, results_known=[]),
          FREEZE_DAY),
-        ("launched_arm_cut_by_a_named_rule", "arm_run_cut_while_running", w.r1_slots, {**w.r1_cut, **named_today},
+        ("launched_arm_cut_by_a_named_rule", "arm_run_cut_while_running", w.r1_slots, {**w.r1_cut, **named_go},
          FREEZE_DAY),
         ("arm_cut_missing_its_later_run", "arm_cut_partial", w.r1_slots[:1],
-         w.cut_fields("R1", w.r1_slots[:1], "gate not met", True), FREEZE_DAY),
+         dict(w.cut_fields("R1", w.r1_slots[:1], "gate not met", True), results_known=w.r1_cut["results_known"]),
+         FREEZE_DAY),
         ("cut_order_position_other", "cut_order_position_mismatch", [A], dict(a, cut_order_position=3), FREEZE_DAY),
         ("decision_date_cut_not_in_the_record", "decision_date_cut_mismatch", [A100], a100_dd, "2026-10-22"),
-        ("stopped_run_cut_by_a_named_rule", "stopped_run_cut_early", [G], {**w.g_cut, **named}, "2026-10-28"),
+        ("stopped_run_cut_by_a_named_rule", "stopped_run_cut_early", [G], {**w.g_cut, **named_go}, FREEZE_DAY),
+        ("named_rule_citing_an_unknown_record_B16", "cut_rule_unknown", [G], {**w.g_cut, **named}, "2026-10-28"),
+        ("named_rule_record_at_another_sha256_B16", "record_uncommitted", [G],
+         {**w.g_cut, **named_go, "rule_record": dict(named_go["rule_record"], sha256="0" * 64)}, FREEZE_DAY),
+        ("named_rule_record_dated_otherwise_B16", "cut_date_mismatch", [G],
+         {**w.g_cut, **named_go, "rule_record": dict(named_go["rule_record"], date="2026-11-02")}, FREEZE_DAY),
+        ("go_rule_no_go_of_another_arm_B16", "condition_unmet", CUT_GROUPS["R2"][0],
+         {**w.cut_fields("R2", CUT_GROUPS["R2"][0], "gate not met", True), **named_go,
+          "results_known": w.r1_cut["results_known"]}, FREEZE_DAY),
+        ("e6x_cut_citing_another_arm_s_no_condition_B16", "condition_unmet", ["E6-R1:s42:15ep"],
+         dict(e6r1, rule_record=conds["R2"]), "2026-10-29"),
+        ("e6x_cut_without_an_e3x_run_of_record_B16", "condition_unmet", ["E6-R1:s42:15ep"],
+         dict(e6r1, rule_record=conds["R1"]), "2026-10-29"),
         ("e6x_cut_citing_a_yes_condition_AM23_3b", "condition_unmet", ["E6-R1:s42:15ep"],
          {**w.cut_fields("E6-R1", ["E6-R1:s42:15ep"], "condition not met", False), **named,
           "rule_record": {"path": w.cond["path"], "sha256": w.cond["sha256"], "date": "2026-10-29"}}, "2026-10-29"),

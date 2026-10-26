@@ -39,7 +39,14 @@ SCHEDULE_T = {"in_force": "T", "file": "configs/kd_schedule.json", "file_sha256"
               "decision_log_entry": "DL-70"}
 E3S42 = "E3:s42:lambda0.5:alpha25:80k"
 ARM_R1 = ["teacher-R1:s42:40k", "E3-R1:s42:lambda0.5:alpha25:80k"]
-YES_NO = {"c" * 64: "yes", "d" * 64: "no"}            # condition entries by sha256 (AM-23 item 3(b))
+E3X = {"run_id": "e3-r1_s42_80k_a1", "checkpoint_sha256": "6" * 64, "best_json_sha256": "7" * 64}
+RULE_RECORDS = {   # named rules' records by sha256: AM-23 item 3(b) condition entries, AM-18 go-rule records
+    "c" * 64: {"kind": "condition", "arm": "R1", "verdict": "yes", "date": "2026-10-29", "e3x": E3X},
+    "d" * 64: {"kind": "condition", "arm": "R1", "verdict": "no", "date": "2026-10-29", "e3x": E3X},
+    "e" * 64: {"kind": "condition", "arm": "R2", "verdict": "no", "date": "2026-10-29", "e3x": E3X},
+    "f" * 64: {"kind": "go_rule", "arm": "R1", "verdict": "no_go", "date": "2026-10-25"},
+    "9" * 64: {"kind": "go_rule", "arm": "R1", "verdict": "go", "date": "2026-10-25"},
+    "b" * 64: {"kind": "unknown", "date": None}}
 
 
 def catalogue():
@@ -58,7 +65,7 @@ def ctx(runs: dict | None = None, unread: tuple = (), **kw):
     reg = {spec.run_stage: spec for spec in kd_arms.load_arms().values()}
     base = dict(registry=reg, decision_records={}, stopped=set(), status=lambda s: None,
                 attempts=lambda k: None if k in unread else list(runs.get(k, [])), run_slot=owner.get,
-                condition=lambda r: YES_NO.get((r or {}).get("sha256")))
+                rule_record=lambda r: {"kind": None, "date": None} if r is None else RULE_RECORDS.get(r["sha256"]))
     base.update(kw)
     return E.CutContext(catalogue(), D.freeze_instant(SCHEDULE_T), **base)
 
@@ -234,6 +241,37 @@ def case_gate_order():
     expect_gate("e6x_cut_citing_a_yes_condition_refused", cond, c, "condition_unmet")
     expect_gate("e6x_cut_citing_a_no_condition_passes", dict(cond, rule_record=dict(cond["rule_record"],
                                                                                      sha256="d" * 64)), c, None)
+    no = dict(cond, rule_record=dict(cond["rule_record"], sha256="d" * 64))
+    expect_gate("e6x_cut_citing_another_arm_s_no_condition_B16", dict(no, rule_record=dict(no["rule_record"],
+                                                                                         sha256="e" * 64)), c,
+                "condition_unmet")
+    expect_gate("e6x_cuts_of_both_arms_under_one_condition_B16", dict(no, slots=["E6-R1:s42:15ep", "E6-R2:s42:15ep"]),
+                c, "condition_unmet")
+    expect_gate("e6x_condition_with_its_e3x_run_of_record_passes", no,
+                ctx(e3x=lambda arm: {"run_id": E3X["run_id"], "checkpoint_sha256": E3X["checkpoint_sha256"]}), None)
+    expect_gate("e6x_condition_naming_another_e3x_run_B16", no,
+                ctx(e3x=lambda arm: {"run_id": "e3-r1_s42_80k_a2", "checkpoint_sha256": "6" * 64}), "condition_unmet")
+    expect_gate("e6x_condition_without_an_e3x_run_of_record_B16", no, ctx(e3x=lambda arm: False), "condition_unmet")
+    go = freeze_cut(slots=[ARM_R1[1]], pos=None, rule="named_rule", since=None, date="2026-10-25",
+                    rule_record={"path": "reports/arms/arm_go_rule_R1.json", "sha256": "f" * 64, "date": "2026-10-25"},
+                    results_known=[known])
+    expect_gate("go_rule_no_go_cuts_its_arm_s_run_passes", go, c, None)
+    expect_gate("go_rule_reading_go_refused_B16", dict(go, rule_record=dict(go["rule_record"], sha256="9" * 64)), c,
+                "condition_unmet")
+    expect_gate("go_rule_of_another_arm_refused_B16", dict(go, slots=["E3-R2:s42:lambda0.5:alpha25:80k"]), c,
+                "condition_unmet")
+    expect_gate("e6x_cut_by_a_go_rule_refused_B16", dict(go, slots=["E6-R1:s42:15ep"], results_known=[]), c,
+                "condition_unmet")
+    expect_gate("named_rule_citing_an_unknown_record_B16", dict(go, rule_record=dict(go["rule_record"],
+                                                                                   sha256="b" * 64)), c,
+                "cut_rule_unknown")
+    expect_gate("named_rule_without_its_record_B16", dict(go, rule_record=None), c, "cut_rule_unknown")
+    expect_gate("named_rule_record_dated_otherwise_B16", dict(go, rule_record=dict(go["rule_record"],
+                                                                                 date="2026-10-24")), c,
+                "cut_date_mismatch")
+    expect_gate("named_rule_cut_dated_by_its_entry_not_its_record_B16",
+                dict(go, date="2026-10-24", rule_record=dict(go["rule_record"], date="2026-10-24")), c,
+                "cut_date_mismatch")
 
 
 def case_input_gates():
