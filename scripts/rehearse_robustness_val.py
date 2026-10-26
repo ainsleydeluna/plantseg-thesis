@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """The VAL rehearsal statistics of the robustness contrast (L-CORR B-4; plan sections 4 and 6(xii);
-R-G5).
+R-G5, and R-G6 on real data, L-CORR B-6).
 
   python -B scripts/rehearse_robustness_val.py --artifacts-root <dir> --e1 <file_id>
       --stand-in <file_id> --out <new dir outside the repo>
+      [--descriptive-json <B-4's robustness_descriptive.json of these artifacts>]
 
 Inputs: the clean VAL artifact and the 15 inferential cells of E1 at seed 42 (`--e1`) and of the
 stand-in for E6 (`--stand-in`: E1 at seed 44, lane 8's mapping), named as src/eval/corrupted.py
@@ -21,25 +22,33 @@ R-G5, checked and recorded: for each model, n = 846 - K_val, the mIoU-C image se
 artifact's included set, and every per-image mIoU-C equals the flat mean of its 15 cells' per-image
 disease-only values within 1e-12.
 
+R-G6, with --descriptive-json (LE26): src/stats/report.dataset_miou_c on the E1 runs loaded here
+(`computed`) equals B-4's Q3 for --e1 in that report (`report_q3`), bitwise as float64 (`equal`).
+The report must be a VAL robustness_descriptive report whose E1 model names each of the 15
+inferential cells' directory and four-file sha256 as loaded here; anything else is refused.
+
 Outputs: rehearsal_robustness.json (the stand-in mapping, each input's file hashes, K_val and n, the
-R-G5 result, the serialised ComparisonResult, the code provenance) and SHA256SUMS, written
-atomically to a new directory outside the repository. The outputs are nonofficial: a rehearsal of
-the pipeline on VAL, never evidence on the robustness contrast.
+R-G5 result, the R-G6 result or null, the serialised ComparisonResult, the code provenance) and
+SHA256SUMS, written atomically to a new directory outside the repository. The outputs are
+nonofficial: a rehearsal of the pipeline on VAL, never evidence on the robustness contrast.
 
 Refusals, by code, before anything is written: `stand_in_same_as_e1` (the same file_id, or one
 checkpoint for both); `rehearsal_input_refused` (an input the reader refuses, a role or condition
-that is not the cell's, more than one checkpoint within a model, or the frozen modules' analysis
-errors); the out-dir and writer codes of src/eval/robustness_report (write_dir_atomic).
+that is not the cell's, more than one checkpoint within a model, the frozen modules' analysis
+errors, or a descriptive report that is unreadable, not a VAL report of these artifacts, or holds no
+Q3 for --e1); the out-dir and writer codes of src/eval/robustness_report (write_dir_atomic).
 
-Exit codes: 0 written and R-G5 holds; 1 written and R-G5 fails; 2 refused; 4 an unexpected error
-(nothing written).
+Exit codes: 0 written, R-G5 holds and R-G6 (when asked) holds; 1 written, R-G5 or R-G6 fails; 2
+refused; 4 an unexpected error (nothing written).
 """
 from __future__ import annotations
 
 import argparse
 import datetime as _dt
 import json
+import struct
 import sys
+import types
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -50,18 +59,20 @@ import numpy as np  # noqa: E402
 
 import src.eval.robustness_report as RR  # noqa: E402
 from src import corruption_roles  # noqa: E402
+from src.corruption_cache import _strict_json  # noqa: E402
 from src.eval.corrupted import clean_dir_name, corrupted_dir_name  # noqa: E402
 
 SCHEMA = "plantseg-robustness-rehearsal/1.0.0"
 OUT_NAME, SUMS_NAME = "rehearsal_robustness.json", "SHA256SUMS"
 TOLERANCE = 1e-12
 CELLS = corruption_roles.INFERENTIAL_CELL_IDS
-EXIT_DONE, EXIT_RG5_FAILED, EXIT_REFUSED, EXIT_UNEXPECTED = 0, 1, 2, 4
+EXIT_DONE, EXIT_CHECKS_FAILED, EXIT_REFUSED, EXIT_UNEXPECTED = 0, 1, 2, 4
 CODE_FILES = ("scripts/rehearse_robustness_val.py", "src/eval/corrupted.py",
               "src/eval/robustness_report.py", "src/stats/robustness.py", "src/stats/rehearsal.py",
               "src/stats/val_artifacts.py", "src/stats/ingest.py", "src/stats/align.py",
               "src/stats/artifact.py", "src/stats/tests.py", "src/stats/corruption_protocol.py",
-              "configs/corruption_protocol.json")
+              "configs/corruption_protocol.json", "src/stats/report.py",
+              "src/stats/noninferiority.py")
 
 
 class RehearsalRefusal(RuntimeError):
@@ -153,7 +164,63 @@ def rg5(mc, cells: dict, clean) -> dict:
             "max_abs_difference": max_diff, "tolerance": TOLERANCE, "holds": bool(holds)}
 
 
-def rehearse(root, e1_id: str, stand_in_id: str) -> dict:
+def same_float(a: float, b: float) -> bool:
+    """Bitwise float64 equality (R-G6)."""
+    return struct.pack("<d", float(a)) == struct.pack("<d", float(b))
+
+
+def read_descriptive(path) -> dict:
+    """B-4's robustness_descriptive.json: strict JSON (B-2's reader), its schema, split val."""
+    try:
+        doc = _strict_json(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError, UnicodeDecodeError) as e:
+        _refuse("rehearsal_input_refused", f"{path} is not a readable descriptive report: "
+                                           f"{type(e).__name__}: {e}")
+    if not isinstance(doc, dict) or doc.get("schema") != RR.SCHEMA or doc.get("split") != "val":
+        _refuse("rehearsal_input_refused", f"{path} is not a VAL {RR.SCHEMA} report")
+    return doc
+
+
+def check_report_binding(doc: dict, e1_id: str, e1: dict) -> None:
+    """The report describes the artifacts loaded here: its E1 model names each of the 15 inferential
+    cells' directory and four-file sha256 as read."""
+    model = next((m for m in doc.get("models") or [] if isinstance(m, dict)
+                  and m.get("file_id") == e1_id), None)
+    if model is None or model.get("stage") != "E1":
+        _refuse("rehearsal_input_refused", f"the descriptive report holds no E1 model {e1_id!r}")
+    arts = model.get("artifacts") if isinstance(model.get("artifacts"), dict) else {}
+    differ = [c for c in CELLS if not isinstance(arts.get(c), dict)
+              or arts[c].get("dir") != corrupted_dir_name("val", e1_id, c)
+              or arts[c].get("file_sha256") != dict(e1[c].file_sha256s)]
+    if differ:
+        _refuse("rehearsal_input_refused", f"the descriptive report's {e1_id} is not these "
+                                           f"artifacts: {differ[:3]} differ")
+
+
+def rg6(path, e1_id: str, e1: dict) -> dict:
+    """R-G6: B-4's Q3 for E1 equals src/stats/report.dataset_miou_c on the E1 runs loaded here,
+    bitwise."""
+    from src.stats.report import dataset_miou_c
+    doc = read_descriptive(path)
+    check_report_binding(doc, e1_id, e1)
+    q3 = doc.get("q3_miou_c")
+    report_q3 = q3.get(e1_id) if isinstance(q3, dict) else None
+    if not isinstance(report_q3, float):
+        _refuse("rehearsal_input_refused", f"the descriptive report holds no Q3 for {e1_id}: "
+                                           f"{report_q3!r}")
+    views = types.SimpleNamespace(loaded={
+        ("E1", ("corruption", *corruption_roles.parse_cell_id(c))):
+            types.SimpleNamespace(run=e1[c].run) for c in CELLS})
+    computed = dataset_miou_c(views, "E1")
+    return {"computed": computed, "report_q3": report_q3, "equal": same_float(computed, report_q3)}
+
+
+def checks_hold(doc: dict) -> bool:
+    """R-G5, and R-G6 when it was asked."""
+    return doc["r_g5"]["holds"] and (doc["r_g6"] is None or doc["r_g6"]["equal"])
+
+
+def rehearse(root, e1_id: str, stand_in_id: str, descriptive=None) -> dict:
     from src.stats.artifact import serialize_a3a
     from src.stats.corruption_protocol import official_corruption_grid
     from src.stats.ingest import Policy
@@ -163,6 +230,7 @@ def rehearse(root, e1_id: str, stand_in_id: str) -> dict:
     e1, si = load_model(root, e1_id), load_model(root, stand_in_id)
     if e1["clean"].summary["run"]["checkpoint_sha256"] == si["clean"].summary["run"]["checkpoint_sha256"]:
         _refuse("stand_in_same_as_e1", f"{e1_id} and {stand_in_id} name one checkpoint")
+    r_g6 = None if descriptive is None else rg6(descriptive, e1_id, e1)
     grid = official_corruption_grid()
     policy = Policy.REHEARSAL
     try:
@@ -196,6 +264,7 @@ def rehearse(root, e1_id: str, stand_in_id: str) -> dict:
                                       "file_sha256": dict(art.file_sha256s)}
                    for tag, arts in (("E1", e1), ("E6", si)) for label, art in arts.items()},
         "r_g5": {**checks, "holds": all(c["holds"] for c in checks.values())},
+        "r_g6": r_g6,
         "miou_c_per_image_mean": {"E1": float(np.mean(mc_e1.values)),
                                   "E6": float(np.mean(mc_e6.values))},
         "comparison": comparison,
@@ -217,6 +286,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--e1", required=True, help="file_id of E1 at seed 42")
     p.add_argument("--stand-in", required=True, help="file_id of the E6 stand-in (E1 at seed 44)")
     p.add_argument("--out", required=True, help="a new folder outside the repository")
+    p.add_argument("--descriptive-json", default=None,
+                   help="B-4's robustness_descriptive.json of these artifacts: R-G6 is checked")
     return p
 
 
@@ -225,7 +296,8 @@ def main(argv=None) -> int:
     try:
         check_pair(args.e1, args.stand_in)
         RR.check_out_dir(args.out)
-        doc = rehearse(args.artifacts_root, args.e1, args.stand_in)
+        doc = rehearse(args.artifacts_root, args.e1, args.stand_in,
+                       descriptive=args.descriptive_json)
         out = write_outputs(args.out, doc)
     except (RehearsalRefusal, RR.ReportRefusal) as e:
         print(f"{type(e).__name__}: {e}", file=sys.stderr)
@@ -238,8 +310,12 @@ def main(argv=None) -> int:
         c = doc["r_g5"][stage]
         print(f"R-G5 {stage}: n {c['n']} (846 - K_val {c['k_val']}); max |nested - flat| "
               f"{c['max_abs_difference']!r}; holds {c['holds']}")
+    if doc["r_g6"] is not None:
+        g = doc["r_g6"]
+        print(f"R-G6 E1: dataset_miou_c {g['computed']!r}; the report's Q3 {g['report_q3']!r}; "
+              f"bitwise equal {g['equal']}")
     print(doc["banner"])
-    return EXIT_DONE if doc["r_g5"]["holds"] else EXIT_RG5_FAILED
+    return EXIT_DONE if checks_hold(doc) else EXIT_CHECKS_FAILED
 
 
 if __name__ == "__main__":

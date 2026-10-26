@@ -29,6 +29,9 @@ set it.
   C  the cache gates (LE3)
   R  the grid runner scripts/run_corruption_grid.py (LE2, LE3, LE10; IF section 1: physical
      cores, the INT8 interim rule, the teacher slot; the DL-24 start gates, lock and STOPs)
+  RG4 scripts/rehearse_wrapper_identity_val.py (R-G4, LE26) on a second, 846-pair VAL root of
+     tiny real JPEGs and PNG masks, with a manifest-only provisional cache of its 846 source
+     records (the generator's own reader); equal, mismatches, and its refusals
   M  mutations: every new refusal gate disabled one code at a time, and the plan's eight; each is
      killed by its named case. A case that raised is no kill (its checks never ran); a refusal case
      that sees an outcome other than its code has run its checks.
@@ -63,8 +66,10 @@ from PIL import Image  # noqa: E402
 
 import scripts.evaluate_corruptions as EC  # noqa: E402
 import scripts.evaluate_model as EM  # noqa: E402
+import scripts.rehearse_wrapper_identity_val as RW  # noqa: E402
 import scripts.run_corruption_grid as RG  # noqa: E402
 import src.corruption_cache as cc  # noqa: E402
+import src.corruption_source as cs  # noqa: E402
 import src.eval.adapters as AD  # noqa: E402
 import src.eval.corrupted as CO  # noqa: E402
 import src.eval.eval_runtime as ER  # noqa: E402
@@ -2555,6 +2560,260 @@ def r15():
         f"rc {rc}: {err[-100:]}"
 
 
+# ---------------------------------------------------------------- RG4. the R-G4 tool (LE26)
+def make_val846_root(root: Path) -> None:
+    """R-G4's root: 5,367 TRAIN names (counted only) and 846 real VAL pairs, tiny JPEGs of varied
+    sizes with PNG masks, and the main root's six special images (EXIF, modes, the floor) at their
+    indices."""
+    rs = np.random.RandomState(20261026)
+    for split in ("train", "val"):
+        (root / "images" / split).mkdir(parents=True)
+        (root / "annotations" / split).mkdir(parents=True)
+    for i in range(5367):
+        (root / "images" / "train" / f"syn_train_{i:05d}.jpg").touch()
+        (root / "annotations" / "train" / f"syn_train_{i:05d}.png").touch()
+    for i in range(846):
+        name = f"syn_val_{i:05d}"
+        img = root / "images" / "val" / f"{name}.jpg"
+        msk = root / "annotations" / "val" / f"{name}.png"
+        if i in SPECIALS:
+            shutil.copy2(S["val"] / "images" / "val" / f"{name}.jpg", img)
+            shutil.copy2(S["val"] / "annotations" / "val" / f"{name}.png", msk)
+            continue
+        h, w = 6 + i % 7, 9 + i % 5
+        Image.fromarray((rs.rand(h, w, 3) * 255).astype(np.uint8)).save(img, format="JPEG",
+                                                                         quality=90)
+        mask = np.zeros((h, w), np.uint8)
+        mask[h // 3:, w // 3:] = 1 + i % 115
+        Image.fromarray(mask).save(msk)
+
+
+def val846() -> Path:
+    """The R-G4 root and the 846 source records the generator's own reader computes for it, built
+    once."""
+    if "val846" not in S:
+        root = S["work"] / "val846_root"
+        make_val846_root(root)
+        S["val846_sources"] = [cs.read_source(s).record for s in cs.list_split(root, "val")]
+        S["val846"] = root
+    return S["val846"]
+
+
+def val846_cache(tag: str, mutate=None) -> tuple[Path, dict, Path]:
+    """A manifest-only provisional VAL cache (forged and re-sealed, as the G cases forge theirs)
+    whose sources are the R-G4 root's 846 records; it holds no entry, and the tool never reads an
+    item. Returns (root, manifest, a matching verification record)."""
+    val846()
+    m = json.loads(json.dumps(S["m_prov"]))
+    m["sources"] = [dict(r) for r in S["val846_sources"]]
+    m["source_image_count"] = len(m["sources"])
+    m["entries"] = []
+    if mutate is not None:
+        mutate(m)
+    reseal(m)
+    root = S["work"] / "forged" / f"{tag}_{next(_SEQ)}"
+    write_manifest(root, m)
+    return root, m, record_for(root, m)
+
+
+def rg4(tag: str, **over) -> tuple[int, str, Path, dict | None]:
+    """scripts/rehearse_wrapper_identity_val.py in this process, on the R-G4 root and its cache
+    unless overridden. Returns (exit code, stderr, out-dir, the written record or None)."""
+    if "cache" not in over:
+        if "rg4_cache" not in S:
+            S["rg4_cache"] = val846_cache("rg4")
+        root, m, rec = S["rg4_cache"]
+        over = {"cache": root, "expected": m["canonical_manifest_sha256"], "record": rec, **over}
+    out = over.get("out") or fresh(tag)
+    argv = ["--split", over.get("split", "val"), "--data-root", over.get("data_root") or val846(),
+            "--corruption-cache", over["cache"], "--out", out]
+    if over.get("expected") is not None:
+        argv += ["--expected-cache-sha256", over["expected"]]
+    if over.get("record") is not None:
+        argv += ["--verification-record", over["record"]]
+    err = io.StringIO()
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+        rc = RW.main([str(a) for a in argv])
+    path = Path(out) / RW.OUT_NAME
+    doc = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None
+    return rc, err.getvalue(), Path(out), doc
+
+
+class FilesystemCallBlocked(Exception):
+    """A filesystem call reached under blocked_filesystem(): recorded, never performed."""
+
+
+@contextlib.contextmanager
+def blocked_filesystem():
+    """The zero-call tracer: os's path entry points and builtins.open record the call and raise
+    instead of touching the disk."""
+    import builtins
+    calls = []
+    names = ("stat", "lstat", "open", "listdir", "scandir", "mkdir", "makedirs", "access",
+             "getcwd", "rename", "replace", "remove", "unlink", "rmdir")
+
+    def blocked(name):
+        def fn(*a, **k):
+            calls.append((name, str(a[0]) if a else ""))
+            raise FilesystemCallBlocked(name)
+        return fn
+    saved = {n: getattr(os, n) for n in names}
+    saved_open = builtins.open
+    try:
+        for n in names:
+            setattr(os, n, blocked(n))
+        builtins.open = blocked("builtins.open")
+        yield calls
+    finally:
+        for n, fn in saved.items():
+            setattr(os, n, fn)
+        builtins.open = saved_open
+
+
+@case("RG4a")
+def rg4a():
+    """R-G4 on the synthetic 846-pair root: every wrapper sample, its item the clean resized
+    pixels, equals the clean evaluator's sample bitwise with the listing's identity; exit 0; the
+    record holds exactly LE26's keys, the cache's checksum and HEAD; SHA256SUMS verifies."""
+    rc, err, out, doc = rg4("rg4a")
+    if doc is None:
+        return False, f"rc {rc}: {err.strip()[:160]}"
+    _, m, _ = S["rg4_cache"]
+    keys = {"schema", "split", "n_checked", "n_equal", "mismatches",
+            "cache_canonical_manifest_sha256", "commit", "started_utc", "written_utc"}
+    sums = (out / "SHA256SUMS").read_text(encoding="utf-8").split("  ")
+    return (rc == 0 and set(doc) == keys and doc["schema"] == RW.SCHEMA and doc["split"] == "val"
+            and doc["n_checked"] == doc["n_equal"] == 846 and doc["mismatches"] == []
+            and doc["cache_canonical_manifest_sha256"] == m["canonical_manifest_sha256"]
+            and doc["commit"] == S["head"] and doc["started_utc"] <= doc["written_utc"]
+            and sums[0] == sha256_file(out / RW.OUT_NAME)
+            and sorted(os.listdir(out)) == sorted([RW.OUT_NAME, "SHA256SUMS"])), \
+        f"rc {rc}; {doc['n_equal']}/{doc['n_checked']} equal; mismatches {doc['mismatches'][:1]}"
+
+
+def zero_padding_canvas(real):
+    def zero_padding(stem, idx, clean, cell):
+        out = real(stem, idx, clean, cell)
+        top, left, h, w = CO.window(cell.source(stem)["resized_shape"])
+        z = np.zeros_like(out)
+        z[top:top + h, left:left + w] = out[top:top + h, left:left + w]
+        return z
+    return zero_padding
+
+
+@case("RG4b")
+def rg4b():
+    """A wrapper that pads with zeros: every padded sample's image differs from the clean one, and
+    only the square ones (resized to 512 x 512, no padding) stay equal; exit 1, the record written
+    with the first five mismatches."""
+    with patched(CO, "corrupted_canvas", zero_padding_canvas(CO.corrupted_canvas)):
+        rc, err, out, doc = rg4("rg4b")
+    if doc is None:
+        return False, f"rc {rc}: {err.strip()[:160]}"
+    padded = sorted(s["manifest_index"] for s in S["val846_sources"]
+                    if tuple(s["resized_shape"]) != (SIZE, SIZE))
+    first = doc["mismatches"]
+    return (rc == 1 and doc["n_checked"] == 846 and 0 < len(padded) < 846
+            and doc["n_equal"] == 846 - len(padded)
+            and [x["manifest_index"] for x in first] == padded[:5]
+            and all(x["problems"] == ["image"] for x in first)), \
+        f"rc {rc}; {doc['n_equal']}/{doc['n_checked']} equal, {846 - len(padded)} unpadded; " \
+        f"first {first[:1]}"
+
+
+@case("RG4c")
+def rg4c():
+    """A wrapper whose image_id is suffixed: every sample's identity differs; exit 1."""
+    real = CO.PlantSegCorruptedEvalDataset.__getitem__
+
+    def suffixed(self, i):
+        sample = real(self, i)
+        sample["image_id"] = f"{sample['image_id']}__fog_s3"
+        return sample
+    with patched(CO.PlantSegCorruptedEvalDataset, "__getitem__", suffixed):
+        rc, err, out, doc = rg4("rg4c")
+    if doc is None:
+        return False, f"rc {rc}: {err.strip()[:160]}"
+    return (rc == 1 and doc["n_equal"] == 0
+            and all(x["problems"] == ["identity"] for x in doc["mismatches"])), \
+        f"rc {rc}; {doc['n_equal']}/{doc['n_checked']} equal; first {doc['mismatches'][:1]}"
+
+
+@case("RG4d")
+def rg4d():
+    """--split test -> split_not_val before any path is read: on never-created paths, under the
+    zero-call tracer; exit 2, nothing created."""
+    argv = [str(a) for a in ("--split", "test", "--data-root", never("rg4d_root"),
+                             "--corruption-cache", never("rg4d_cache"), "--expected-cache-sha256",
+                             "0" * 64, "--verification-record", never("rg4d_record"), "--out",
+                             never("rg4d_out"))]
+    err = io.StringIO()
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err), \
+            blocked_filesystem() as calls:
+        rc = RW.main(argv)
+    return (rc == 2 and err.getvalue().startswith("[split_not_val] ") and calls == []
+            and not (S["work"] / "never_created").exists()), \
+        f"rc {rc}: {err.getvalue().strip()[:90]}; filesystem calls {calls[:2]}"
+
+
+@case("RG4e")
+def rg4e():
+    """A data root that fails the M11 isolation check (never created: data_root_missing); exit 2,
+    nothing written."""
+    out = fresh("rg4e")
+    rc, err, _, doc = rg4("rg4e", data_root=never("rg4e_root"), out=out)
+    return (rc == 2 and err.startswith("[data_root_missing] ") and doc is None
+            and not out.exists()), f"rc {rc}: {err.strip()[:100]}"
+
+
+@case("RG4f")
+def rg4f():
+    """The evaluator's cache gates for status provisional, and the checksum's form: a smoke cache ->
+    cache_status_insufficient; another checksum -> cache_checksum_mismatch; no record ->
+    verification_record_required; 'XYZ' -> expected_cache_sha256_format; each exit 2, nothing
+    written."""
+    rows = {"cache_status_insufficient": dict(cache=S["c_smoke"],
+                                              expected=S["m_smoke"]["canonical_manifest_sha256"],
+                                              record=record_for(S["c_smoke"], S["m_smoke"])),
+            "cache_checksum_mismatch": dict(expected="8" * 64),
+            "verification_record_required": dict(record=None),
+            "expected_cache_sha256_format": dict(expected="XYZ")}
+    bad = []
+    for code, kw in rows.items():
+        out = fresh("rg4f")
+        rc, err, _, doc = rg4("rg4f", out=out, **kw)
+        if not (rc == 2 and err.startswith(f"[{code}] ") and doc is None and not out.exists()):
+            bad.append((code, rc, err.strip()[:70]))
+    return not bad, f"failing rows {bad}" if bad else f"{len(rows)} rows refused"
+
+
+@case("RG4g")
+def rg4g():
+    """A cache whose sources are not the VAL listing (one stem changed) -> cache_sources_mismatch;
+    exit 2, nothing written."""
+    def renamed(m):
+        m["sources"][3]["image_id"] = f"{m['sources'][3]['image_id']}x"
+    root, m, rec = val846_cache("rg4g", renamed)
+    out = fresh("rg4g")
+    rc, err, _, doc = rg4("rg4g", cache=root, expected=m["canonical_manifest_sha256"], record=rec,
+                          out=out)
+    return (rc == 2 and err.startswith("[cache_sources_mismatch] ") and doc is None
+            and not out.exists()), f"rc {rc}: {err.strip()[:100]}"
+
+
+@case("RG4h")
+def rg4h():
+    """The out-dir is checked before any input is read (the data root is never created): one inside
+    the repository -> out_dir_inside_repo; one holding 'TeSt' -> out_dir_name_invalid; exit 2,
+    nothing created."""
+    inside = REPO / f"never_created_lcorr_rg4_{next(_SEQ)}"
+    named = S["work"] / "never_created" / f"rg4_TeSt_{next(_SEQ)}"
+    got = [rg4("rg4h", out=o, data_root=never("rg4h_root"))[:2] for o in (inside, named)]
+    return ([rc for rc, _ in got] == [2, 2] and got[0][1].startswith("[out_dir_inside_repo] ")
+            and got[1][1].startswith("[out_dir_name_invalid] ") and not inside.exists()
+            and not (S["work"] / "never_created").exists()), str([e.strip()[:70] for _, e in got])
+
+
 # ---------------------------------------------------------------- mutations
 def mutations() -> None:
     sk = lambda code: skip(EC, "_refuse", code)        # noqa: E731
@@ -2758,6 +3017,20 @@ def mutations() -> None:
     for flag in ("--expected-checkpoint-sha256", "--expected-converted-sha256", "--threads",
                  "--teacher-ckpt-sha256"):
         mutant(f"M-cell argv without {flag}", ["R10"], drop_flag(flag))
+    # LE26: the R-G4 tool
+    mutant("M-RG4 tensors never compared", ["RG4b"], (RW, "same_tensor", lambda a, b: True))
+    mutant("M-RG4 identity never compared", ["RG4c"],
+           (RW, "identity_problems", lambda got, want, entry: []))
+    mutant("M-split_not_val (the R-G4 tool)", ["RG4d"], skip(RW, "_refuse", "split_not_val"))
+    mutant("M-RG4 M11 isolation skipped", ["RG4e"],
+           (RW, "assert_trainval_only_root", lambda root: None))
+    mutant("M-RG4 cache gates run for status smoke", ["RG4f"], (RW, "STATUS", "smoke"))
+    mutant("M-expected_cache_sha256_format (the R-G4 tool)", ["RG4f"],
+           skip(RW, "_refuse", "expected_cache_sha256_format"))
+    mutant("M-RG4 sources never compared with the listing", ["RG4g"],
+           (RW, "check_cache_sources", lambda *a, **k: None))
+    mutant("M-RG4 out-dir checked only at the write", ["RG4h"],
+           (RW, "check_out_dir", lambda out: None))
 
 
 LABELS = {
@@ -2895,6 +3168,14 @@ LABELS = {
     "R13": "R13 a held out-root lock -> out_root_locked, nothing started",
     "R14": "R14 HEAD moves during the session -> STOP head_changed",
     "R15": "R15 an error in the run loop -> STOP runner_error, recorded",
+    "RG4a": "RG4a R-G4 tool, 846-pair root: every sample equals the clean one bitwise; exit 0; LE26's record",
+    "RG4b": "RG4b R-G4 tool, a zero-padding wrapper: every padded sample differs; exit 1",
+    "RG4c": "RG4c R-G4 tool, a suffixed image_id: identity mismatches; exit 1",
+    "RG4d": "RG4d R-G4 tool, --split test -> split_not_val before any path is read (zero-call tracer)",
+    "RG4e": "RG4e R-G4 tool, a data root failing M11 -> data_root_missing; exit 2",
+    "RG4f": "RG4f R-G4 tool, the provisional cache gates and the checksum's form (4 rows); exit 2",
+    "RG4g": "RG4g R-G4 tool, cache sources not the listing -> cache_sources_mismatch; exit 2",
+    "RG4h": "RG4h R-G4 tool, the out-dir checked before any input (inside the repo; 'TeSt'); exit 2",
 }
 
 

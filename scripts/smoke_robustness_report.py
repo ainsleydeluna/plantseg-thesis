@@ -23,7 +23,7 @@ creates has "test" in its name; TEST-named refusals use never-created paths.
   O   the outputs: strict canonical JSON, the md banner and no significance value, SHA256SUMS, the
       CLI (smoke and official), descriptive code only, the writer's failure paths (RE-9)
   H   scripts/rehearse_robustness_val.py (R-G5; the stand-in mapping; its branch refusals, RE-7;
-      exit 4, RE-8)
+      exit 4, RE-8; R-G6 with --descriptive-json against B-4's report of fixture H, LE26)
   RC  the cell-record codes of src/eval/corrupted.py that B-4 reads
   M   mutations: the plan's five (M1-M5), LE2/LE4/LE7/LE13 (M6-M10), the DL-24 defects (M11-M18,
       the per-key record mutants, MH7-MH10, MO7), the rehearsal's two, and one per refusal code,
@@ -39,10 +39,12 @@ import hashlib
 import io
 import itertools
 import json
+import math
 import os
 import re
 import secrets
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -1426,10 +1428,11 @@ def o8():
 
 
 # ---------------------------------------------------------------- H: the rehearsal script
-def rehearse(root, e1="e1v", stand_in="e1s44v", out=None):
+def rehearse(root, e1="e1v", stand_in="e1s44v", out=None, descriptive=None):
     out = out or fresh("rehearsal")
+    extra = [] if descriptive is None else ["--descriptive-json", descriptive]
     code, rc, stdout, stderr = cli(RH.main, ["--artifacts-root", root, "--e1", e1, "--stand-in",
-                                             stand_in, "--out", out])
+                                             stand_in, "--out", out, *extra])
     doc = (json.loads((out / RH.OUT_NAME).read_text(encoding="utf-8"))
            if out.exists() and (out / RH.OUT_NAME).exists() else None)
     return code, rc, stdout, stderr, out, doc
@@ -1591,6 +1594,73 @@ def h10():
     return ok and not out.exists(), f"rc {rc}: {stderr.strip()[:120]}"
 
 
+def same64(a, b) -> bool:
+    """The case's own bitwise float64 comparison."""
+    return struct.pack("<d", float(a)) == struct.pack("<d", float(b))
+
+
+def h_descriptive(tag: str, mutate=None) -> Path:
+    """B-4's robustness_descriptive.json for fixture H (policy rehearsal, split val), as its writer
+    serialises it, optionally edited; written under the work folder."""
+    if "h_report" not in S:
+        code, doc = outcome(RR.build_report, S["export_h"], S["h"], split="val", policy="rehearsal",
+                            expected_cache=CACHE)
+        if code != "ok":
+            raise AssertionError(f"build_report on fixture H: {code}: {doc}")
+        S["h_report"] = doc
+    doc = json.loads(json.dumps(S["h_report"]))
+    if mutate is not None:
+        mutate(doc)
+    path = S["work"] / f"{tag}_{next(_SEQ)}.json"
+    path.write_bytes(RR.json_bytes(doc))
+    return path
+
+
+@case("H11")
+def h11():
+    """R-G6 (LE26): given B-4's report of these artifacts, src/stats/report.dataset_miou_c on the E1
+    runs the rehearsal loads equals the report's Q3 for E1 bitwise; exit 0, written, R-G5 holds."""
+    path = h_descriptive("h11")
+    code, rc, stdout, stderr, out, doc = rehearse(S["h"], descriptive=path)
+    if doc is None:
+        return False, f"rc {rc} {code}: {stderr.strip()[:160]}"
+    g6 = doc["r_g6"]
+    q3 = json.loads(path.read_text(encoding="utf-8"))["q3_miou_c"]["e1v"]
+    direct = SR.dataset_miou_c(views_for({"E1": RR.load_model(S["h"], "val", row_for(
+        "e1v", H_MODELS["e1v"]), "rehearsal")}), "E1")
+    return (rc == 0 and sorted(g6) == ["computed", "equal", "report_q3"] and g6["equal"] is True
+            and same64(g6["computed"], direct) and same64(g6["report_q3"], q3)
+            and same64(g6["computed"], g6["report_q3"]) and doc["r_g5"]["holds"]), \
+        f"rc {rc}; r_g6 {g6}"
+
+
+@case("H12")
+def h12():
+    """R-G6 fails when the report's Q3 for E1 is one ulp away: exit 1, written, R-G5 still holds."""
+    def nudge(doc):
+        doc["q3_miou_c"]["e1v"] = math.nextafter(doc["q3_miou_c"]["e1v"], math.inf)
+    code, rc, stdout, stderr, out, doc = rehearse(S["h"], descriptive=h_descriptive("h12", nudge))
+    if doc is None:
+        return False, f"rc {rc} {code}: {stderr.strip()[:160]}"
+    g6 = doc["r_g6"]
+    return (rc == 1 and g6["equal"] is False and not same64(g6["computed"], g6["report_q3"])
+            and doc["r_g5"]["holds"] and (out / RH.OUT_NAME).is_file()), f"rc {rc}; r_g6 {g6}"
+
+
+@case("H13")
+def h13():
+    """R-G6's report must describe the artifacts the rehearsal loads: one whose E1 fog_s1 names
+    another file hash is refused (rehearsal_input_refused); exit 2, nothing written."""
+    def other_files(doc):
+        files = next(m for m in doc["models"] if m["file_id"] == "e1v")["artifacts"]["fog_s1"][
+            "file_sha256"]
+        files[sorted(files)[0]] = "0" * 64
+    code, rc, _, stderr, out, _ = rehearse(S["h"], descriptive=h_descriptive("h13", other_files))
+    ok = (rc == 2 and "[rehearsal_input_refused] the descriptive report's e1v is not these "
+                      "artifacts" in stderr)
+    return ok and not out.exists(), f"rc {rc}: {stderr.strip()[:140]}"
+
+
 LABELS = {
     "Q1": "Q1 per cell: the all-class pooled values and the disease-only column equal their closed "
           "forms for every cell of E1 and E6 (seed 42), the teacher and E1 seed 43",
@@ -1712,6 +1782,9 @@ LABELS = {
     "H9": "H9 (RE-7) an analysis error of the frozen path (two AM-5 sets) is a refusal with exit 2 "
           "(rehearsal_input_refused)",
     "H10": "H10 (RE-8) an unexpected error exits 4 with nothing written",
+    "H11": "H11 (LE26) R-G6: dataset_miou_c on the loaded E1 runs equals B-4's Q3 bitwise; exit 0",
+    "H12": "H12 (LE26) R-G6 fails on a Q3 one ulp away: exit 1, written, R-G5 still holds",
+    "H13": "H13 (LE26) a report of other artifacts -> rehearsal_input_refused; nothing written",
 }
 
 
@@ -1838,6 +1911,12 @@ def mutations() -> None:
     mutant("MH9 the frozen path's analysis errors not caught (RE-7)", ["H9"],
            (RH, "analysis_errors", lambda: ()))
     mutant("MH10 an unexpected error exits 1 (RE-8)", ["H10"], (RH, "EXIT_UNEXPECTED", 1))
+    mutant("MH11 R-G6 compared within a tolerance (LE26)", ["H12"],
+           (RH, "same_float", lambda a, b: math.isclose(a, b)))
+    mutant("MH12 R-G6's failure left out of the exit code (LE26)", ["H12"],
+           (RH, "checks_hold", lambda doc: doc["r_g5"]["holds"]))
+    mutant("MH13 the report not bound to the loaded artifacts (LE26)", ["H13"],
+           (RH, "check_report_binding", lambda doc, e1_id, e1: None))
     mutant("MO7 a failed write keeps its temporary directory (RE-9)", ["O7", "O8"],
            (RR, "_discard_dir", lambda tmp: None))
     for code, targets in (
