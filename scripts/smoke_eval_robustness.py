@@ -71,7 +71,13 @@ def test_vocabulary() -> None:
     c4 = validate_condition("fog", 4, official=True)
     check("severity_4_descriptive_only",
           c4["role"] == "descriptive_only" and not is_primary_severity(4))
-    expect("severity_5_rejected", RobustnessError, validate_condition, "fog", 5, official=True)
+    expect("gaussian_noise_s5_rejected", RobustnessError, validate_condition, "gaussian_noise", 5,
+           official=True)
+    c5 = [validate_condition(c, 5, official=True)
+          for c in ("motion_blur", "jpeg_compression", "brightness", "fog")]
+    check("severity_5_non_noise_descriptive",
+          all(c["role"] == "descriptive_only" for c in c5) and not is_primary_severity(5),
+          "AM-16 item 6: severity 5 is descriptive for the four non-noise corruptions")
     expect("severity_0_rejected", RobustnessError, validate_condition, "fog", 0, official=True)
     check("condition_schema_shape",
           set(validate_condition("fog", 2, official=True)) >=
@@ -140,8 +146,8 @@ def test_vendored_corruption_paths() -> None:
     check("path_a_binds_image_id",
           not np.array_equal(real_corruption_transform("fog", 2, image_id="img_001")(img), out),
           "the per-item seed is fixed before any pixel is touched")
-    expect("path_a_still_gates_severity", RobustnessError, real_corruption_transform, "fog", 5,
-           image_id="img_000")
+    expect("path_a_still_gates_severity", RobustnessError, real_corruption_transform,
+           "gaussian_noise", 5, image_id="img_000")
     expect("path_a_still_gates_vocabulary", RobustnessError, real_corruption_transform, "snow", 1,
            image_id="img_000")
 
@@ -231,7 +237,11 @@ def test_runner_gates() -> None:
 
     expect("runner_rejects_unknown_corruption", RobustnessError, validate_args,
            parse(corruption="snow"))
-    expect("runner_rejects_severity_5", RobustnessError, validate_args, parse(severity=5))
+    expect("runner_rejects_gaussian_noise_s5", RobustnessError, validate_args,
+           parse(corruption="gaussian_noise", severity=5))
+    cond5 = validate_args(parse(severity=5, split="val"))
+    check("runner_accepts_fog_s5_descriptive",
+          cond5["name"] == "fog" and cond5["severity"] == 5 and cond5["role"] == "descriptive_only")
     expect("runner_test_requires_confirmation", CorruptionCliError, validate_args,
            parse(split="test", artifact_status="official"))
     expect("runner_test_refuses_smoke_status", CorruptionCliError, validate_args,

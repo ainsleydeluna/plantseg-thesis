@@ -9,7 +9,8 @@ epoch whose not-convertible record disagrees refuses the selection; the fake-qua
 run of record with no convertible epoch selects nothing and is refused (exit 2) with the decision-log entry
 "non-finite: no model" (item 2(b)); a rejected U4 pilot run needs no selection and is refused (exit 2, item
 3(d)), naming its grounds and any deviation of the trainer (item 3(a)). The rules are
-configs/qat_selection_rules.json (src/quant/qat_select.py). The output defaults to E/qat_selection.json and is
+configs/qat_selection_rules.json, or configs/qat_selection_rules_am23.json for AM-23's E6-E2, E6-R1 and E6-R2, by
+the run's stage (src/quant/qat_select.py RULES_FILES). The output defaults to E/qat_selection.json and is
 written once, on exit 0 only. Exit codes: 0 selected, 1 STOP, 2 refused, 3 incomplete, 4 error.
 """
 from __future__ import annotations
@@ -44,7 +45,7 @@ def main(argv=None) -> int:
         A.refuse_test_path(out, "out")
         if out.exists():
             raise QATRefused("output_exists", f"{out} exists; a selection is written once")
-        rules, rules_sha = S.load_rules()
+        rules, rules_sha = S.load_rules(S.rules_path_for_run(args.run_dir))
         sel = S.epoch_selection(args.run_dir, args.eval_dir, expect_telemetry_sha256=args.expect_telemetry_sha256,
                                 rules=rules, rules_sha256=rules_sha, allow_smoke_inputs=args.allow_smoke_inputs)
         from src.quant.ptq import write_exclusive

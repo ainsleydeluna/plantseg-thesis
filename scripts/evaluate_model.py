@@ -67,9 +67,9 @@ class Counters:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    from src.eval.artifacts import STAGES                # the artifact schema's stages are the choices (AQ25)
     p = argparse.ArgumentParser(description="Stage-neutral PlantSeg evaluation runner.")
-    p.add_argument("--stage", default="E1",
-                   choices=["teacher", "E1", "E2", "E3", "A", "F", "G", "E4", "E5", "E6", "E7"])
+    p.add_argument("--stage", default="E1", choices=list(STAGES))
     p.add_argument("--model-role", default="student", choices=["teacher", "student"])
     p.add_argument("--precision", default="fp32", choices=["fp32", "int8_ptq", "int8_qat"])
     p.add_argument("--split", default="val", choices=["val", "test"])
@@ -261,12 +261,13 @@ def run(args, *, counters: Counters | None = None, teacher_builder=None) -> Path
         # A tampered artifact, a wrong source stage or a stage mismatch fails HERE.
         resolved = resolve_evaluation_source(args.stage, provenance=args.provenance)
         if args.artifact_status == "official":
-            # an official E4/E7 needs the committed AM-10 list of record (L-AM10); sensitivity and
-            # synthetic calibration lists are scored descriptively only
-            from src.eval.stage_artifacts import int8_official_calibration_error
-            calibration_error = int8_official_calibration_error(resolved, repo_root=REPO)
-            if calibration_error:
-                raise CliError(calibration_error)
+            # an official E4/E7 needs the committed AM-10 list of record (L-AM10) and its PTQ record of
+            # role of_record (LQP); sensitivity and synthetic lists, d3 replicates, arm directories and
+            # legacy state_dict PTQ artifacts are scored descriptively only
+            from src.eval.stage_artifacts import int8_official_error
+            official_error = int8_official_error(resolved, repo_root=REPO)
+            if official_error:
+                raise CliError(official_error)
         quant_backend = select_int8_backend(require_qnnpack=True)   # refuses a non-QNNPACK build
         ckpt_path = str(resolved["artifact_path"])
         ckpt_sha = resolved["artifact_sha256"]

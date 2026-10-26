@@ -70,7 +70,7 @@ def main() -> int:  # noqa: C901
         check("1 strict JSON parses", isinstance(doc, dict), f"{len(raw)} bytes")
 
         p = load_corruption_protocol(PROTOCOL)
-        check("2 exact schema version", p.schema_version == "plantseg-corruptions/1.0.0",
+        check("2 exact schema version", p.schema_version == "plantseg-corruptions/2.0.0",
               p.schema_version)
         check("3 exact five-ID order",
               p.order == ("motion_blur", "gaussian_noise", "jpeg_compression", "brightness", "fog"),
@@ -85,12 +85,23 @@ def main() -> int:  # noqa: C901
         check("7 reference_function == machine id for all five",
               all(e.reference_function == e.id for e in p.entries))
         check("8 inferential severities [1,2,3]", p.inferential_severities == (1, 2, 3))
-        check("9 descriptive-only severity [4]", p.descriptive_only_severities == (4,))
-        check("10 excluded severity [5]", p.excluded_severities == (5,))
-        check("11 severity groups disjoint",
-              not (set(p.inferential_severities) & set(p.descriptive_only_severities))
-              and not (set(p.inferential_severities) & set(p.excluded_severities))
-              and not (set(p.descriptive_only_severities) & set(p.excluded_severities)))
+        non_noise = ("motion_blur", "jpeg_compression", "brightness", "fog")
+        check("9 descriptive-only severities per corruption: [4, 5], gaussian_noise [4]",
+              dict(p.descriptive_only_by_corruption)
+              == {**{c: (4, 5) for c in non_noise}, "gaussian_noise": (4,)},
+              str(dict(p.descriptive_only_by_corruption)))
+        check("10 excluded severity [5] for gaussian_noise only",
+              dict(p.excluded_by_corruption)
+              == {**{c: () for c in non_noise}, "gaussian_noise": (5,)},
+              str(dict(p.excluded_by_corruption)))
+        check("11 severity groups disjoint per corruption and covering 1-5",
+              all(not (set(p.inferential_severities) & set(p.descriptive_only_by_corruption[c]))
+                  and not (set(p.inferential_severities) & set(p.excluded_by_corruption[c]))
+                  and not (set(p.descriptive_only_by_corruption[c])
+                           & set(p.excluded_by_corruption[c]))
+                  and sorted(p.inferential_severities + p.descriptive_only_by_corruption[c]
+                             + p.excluded_by_corruption[c]) == [1, 2, 3, 4, 5]
+                  for c in p.order))
         check("11b protocol severities agree with the frozen mIoU-C rule",
               p.inferential_severities == tuple(INFERENTIAL_SEVERITIES))
         check("12 protocol object is immutable and carries a vocabulary hash",
@@ -168,12 +179,30 @@ def main() -> int:  # noqa: C901
                                                                "brightness"}), "alias"))
         check("22c alias map rejected", "alias maps are rejected" in str(e), str(e)[:100])
 
-        # ---- severity 4 / 5 rejected by the frozen mIoU-C assembler ----
-        check("23 severity 4 is NOT an inferential severity",
-              not p.is_inferential_severity(4) and 4 in p.descriptive_only_severities)
-        check("24 severity 5 is excluded entirely",
-              5 in p.excluded_severities and not p.is_inferential_severity(5)
-              and 5 not in p.descriptive_only_severities)
+        def set_roles(cid, descriptive, excluded):
+            def _m(d):
+                for entry in d["corruptions"]:
+                    if entry["id"] == cid:
+                        entry["descriptive_only_severities"] = descriptive
+                        entry["excluded_severities"] = excluded
+            return _m
+        e = expect(CorruptionProtocolError, load_corruption_protocol,
+                   variant(set_roles("gaussian_noise", [4, 5], []), "gn_desc"))
+        check("22d a copy with gaussian_noise descriptive at 5 rejected",
+              "gaussian_noise" in str(e) and "AM-16 item 6" in str(e), str(e)[:100])
+        e = expect(CorruptionProtocolError, load_corruption_protocol,
+                   variant(set_roles("fog", [4], []), "fog_no5"))
+        check("22e a copy with fog without severity 5 rejected",
+              "fog" in str(e) and "cover exactly" in str(e), str(e)[:100])
+
+        # ---- severity 4 / 5 roles; the frozen mIoU-C assembler keeps severities 1-3 ----
+        check("23 severity 4 is NOT inferential; descriptive-only for all five",
+              not p.is_inferential_severity(4)
+              and all(p.severity_role(c, 4) == "descriptive_only" for c in p.order))
+        check("24 severity 5 descriptive-only for the four non-noise, excluded for gaussian_noise",
+              not p.is_inferential_severity(5)
+              and p.severity_role("gaussian_noise", 5) == "excluded"
+              and all(p.severity_role(c, 5) == "descriptive_only" for c in non_noise))
 
         # ---- synthetic grid still usable ONLY through the injected nonofficial path ----
         from src.stats import CorruptionGrid                    # noqa: E402

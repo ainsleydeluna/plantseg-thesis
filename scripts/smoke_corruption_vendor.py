@@ -12,9 +12,11 @@ before and after the corruption/cache work, and greps the module sources for the
 
 Reference equivalence builds an ISOLATED namespace from the verified upstream source segments —
 upstream `corruptions.py` imports cv2/scipy at module scope for unrelated corruptions, so it cannot
-simply be imported here. Both sides are canonicalised identically and compared for byte equality
-with zero tolerance. No KMP_DUPLICATE_LIB_OK: an OpenMP workaround that "may silently produce
-incorrect results" cannot underwrite a byte-equivalence claim.
+simply be imported here. That source is read IN MEMORY from the hash-pinned upstream sdist named by
+PLANTSEG_UPSTREAM_SDIST (imagecorruptions-1.1.2.tar.gz), never extracted to disk. Both sides are
+canonicalised identically and compared for byte equality with zero tolerance. No
+KMP_DUPLICATE_LIB_OK: an OpenMP workaround that "may silently produce incorrect results" cannot
+underwrite a byte-equivalence claim.
 
 The evaluator-side wiring (paths A and B through `src.eval.robustness`) is deliberately NOT checked
 here — importing `src.eval` pulls torch, which would defeat the isolation this file exists to prove.
@@ -23,13 +25,13 @@ here — importing `src.eval` pulls torch, which would defeat the isolation this
 from __future__ import annotations
 
 import ast
-import glob
 import hashlib
 import io
 import json
 import math
 import os
 import sys
+import tarfile
 import tempfile
 from pathlib import Path
 
@@ -43,13 +45,17 @@ TORCH_FREE_BEFORE = "torch" not in sys.modules and "torchvision" not in sys.modu
 
 from src.corruption_cache import CorruptionCacheError  # noqa: E402
 from src import corruption_cache as cache  # noqa: E402
-from src.vendor.imagecorruptions import (CORRUPTION_IDS, GENERATED_SEVERITIES,  # noqa: E402
-                                         CorruptionInputError, apply_corruption,
-                                         canonical_seed_payload, item_seed, numpy_seed)
+from src import corruption_roles  # noqa: E402
+from src.vendor.imagecorruptions import (CORRUPTION_IDS, EXCLUDED_CELLS,  # noqa: E402
+                                         SEVERITIES_BY_CORRUPTION, CorruptionInputError,
+                                         apply_corruption, canonical_seed_payload, item_seed,
+                                         numpy_seed)
 from src.vendor.imagecorruptions import provenance as prov  # noqa: E402
 
 TMP = Path(tempfile.mkdtemp(prefix="smoke_corruption_"))
 UPSTREAM_SHA = "adb5944eccfafe0118e777e3300c94420eab486556ca805ea101d3374d130cbb"
+UPSTREAM_MEMBER = "imagecorruptions-1.1.2/imagecorruptions/corruptions.py"
+NON_NOISE = tuple(c for c in CORRUPTION_IDS if c != "gaussian_noise")
 FORBIDDEN_IMPORTS = ("import torch", "from torch", "import torchvision", "from torchvision",
                      "from src.data", "import src.data")
 results: list[tuple[str, bool, str]] = []
@@ -69,28 +75,38 @@ def expect(name: str, exc, fn, *a, **kw) -> None:
         check(name, False, f"wrong exception {type(e).__name__}: {e}")
 
 
-def upstream_path():
-    """The byte-verified pinned upstream source. Env override keeps this runnable off this box."""
-    override = os.environ.get("PLANTSEG_UPSTREAM_CORRUPTIONS")
-    if override:
-        return override if os.path.isfile(override) else None
-    # tempfile.gettempdir() rather than os.environ["TEMP"]: TEMP is a Windows variable and indexing
-    # it raised KeyError on Linux, where this suite also has to run.
-    dirs = sorted(glob.glob(os.path.join(tempfile.gettempdir(), "iccvendor_*")))
-    if not dirs:
-        return None
-    p = os.path.join(dirs[-1], "imagecorruptions-1.1.2", "imagecorruptions", "corruptions.py")
-    return p if os.path.isfile(p) else None
+def upstream_source():
+    """The pinned upstream corruptions.py, read IN MEMORY from the hash-pinned sdist.
+
+    PLANTSEG_UPSTREAM_SDIST names imagecorruptions-1.1.2.tar.gz. The archive's sha256 must equal
+    provenance.UPSTREAM_SDIST_SHA256 and the member's must equal UPSTREAM_CORRUPTIONS_SHA256; the
+    member is never extracted to disk. Returns (bytes or None, detail).
+    """
+    path = os.environ.get("PLANTSEG_UPSTREAM_SDIST")
+    if not path or not os.path.isfile(path):
+        return None, "PLANTSEG_UPSTREAM_SDIST is unset or not a file"
+    blob = io.open(path, "rb").read()
+    if hashlib.sha256(blob).hexdigest() != prov.UPSTREAM_SDIST_SHA256:
+        return None, "the sdist's sha256 differs from UPSTREAM_SDIST_SHA256"
+    with tarfile.open(fileobj=io.BytesIO(blob), mode="r:gz") as tf:
+        try:
+            member = tf.extractfile(UPSTREAM_MEMBER)
+        except KeyError:
+            member = None
+        raw = member.read() if member is not None else b""
+    if hashlib.sha256(raw).hexdigest() != UPSTREAM_SHA:
+        return None, f"{UPSTREAM_MEMBER} is missing or its sha256 differs"
+    return raw, (f"sdist {prov.UPSTREAM_SDIST_SHA256[:16]}…, member {UPSTREAM_SHA[:16]}…, "
+                 "read in memory")
 
 
-def build_reference_namespace(path):
+def build_reference_namespace(raw: bytes):
     """Exec ONLY the closure's pristine upstream segments with the minimal real dependencies."""
     from io import BytesIO
 
     import skimage as sk
     from PIL import Image
 
-    raw = io.open(path, "rb").read()
     if hashlib.sha256(raw).hexdigest() != UPSTREAM_SHA:
         return None
     src = raw.decode("utf-8")
@@ -212,39 +228,67 @@ def test_source() -> None:
 
 # ---------------------------------------------------------------- 2. reference equivalence
 def test_reference_equivalence() -> None:
-    path = upstream_path()
-    if path is None:
-        check("upstream_source_available", False, "verified pinned source missing")
-        return
-    ref = build_reference_namespace(path)
+    raw, detail = upstream_source()
+    check("upstream_sdist_hash_verified", raw is not None, detail)
+    ref = build_reference_namespace(raw) if raw is not None else None
     if ref is None:
-        check("upstream_source_available", False, "upstream hash mismatch")
+        check("upstream_source_available", False, "verified pinned source missing")
         return
     check("upstream_source_available", True, "isolated reference namespace built")
 
     rng = np.random.RandomState(0)
-    images = {"square": rng.randint(0, 256, (64, 64, 3), dtype=np.uint8),
-              "nonsquare": rng.randint(0, 256, (40, 72, 3), dtype=np.uint8)}
+    small = {"square": rng.randint(0, 256, (64, 64, 3), dtype=np.uint8),
+             "nonsquare": rng.randint(0, 256, (40, 72, 3), dtype=np.uint8)}
+    # Severity 5 again at the cache's real sizes (long side 512): motion_blur's widest kernel stops
+    # hitting the border-break branch, and fog's plasma map is 512 rather than 64.
+    large = {"w512h512": rng.randint(0, 256, (512, 512, 3), dtype=np.uint8),
+             "w512h384": rng.randint(0, 256, (384, 512, 3), dtype=np.uint8)}
+    plan = [(label, img, cid, sev) for label, img in small.items() for cid in CORRUPTION_IDS
+            for sev in SEVERITIES_BY_CORRUPTION[cid]]
+    plan += [(label, img, cid, 5) for label, img in large.items() for cid in NON_NOISE]
     mismatches = []
-    cases = 0
-    for label, img in images.items():
-        for cid in CORRUPTION_IDS:
-            for sev in GENERATED_SEVERITIES:
-                seed = item_seed(f"img_{label}", cid, sev)
-                with numpy_seed(seed):
-                    r = canon(ref[cid](Image.fromarray(img.copy()), sev), img.shape)
-                v, vseed = apply_corruption(img.copy(), cid, sev, image_id=f"img_{label}")
-                cases += 1
-                if vseed != seed or not np.array_equal(r, v):
-                    diff = (r.astype(int) - v.astype(int))
-                    mismatches.append((label, cid, sev, img.shape, int((diff != 0).sum()),
-                                       int(np.abs(diff).max())))
+    for label, img, cid, sev in plan:
+        seed = item_seed(f"img_{label}", cid, sev)
+        with numpy_seed(seed):
+            r = canon(ref[cid](Image.fromarray(img.copy()), sev), img.shape)
+        v, vseed = apply_corruption(img.copy(), cid, sev, image_id=f"img_{label}")
+        if vseed != seed or not np.array_equal(r, v):
+            diff = (r.astype(int) - v.astype(int))
+            mismatches.append((label, cid, sev, img.shape, int((diff != 0).sum()),
+                               int(np.abs(diff).max())))
+    for label in list(small) + list(large):
+        for cid in (CORRUPTION_IDS if label in small else NON_NOISE):
+            sevs = [s for lb, _, c, s in plan if lb == label and c == cid]
             check(f"equiv_{label}_{cid}",
                   not [m for m in mismatches if m[0] == label and m[1] == cid],
-                  "severities 1-4 byte-identical")
-    check("reference_equivalence_all_cases", mismatches == [] and cases == 40,
-          f"{cases} cases: 5 corruptions x severities 1-4 x {{square, non-square}}"
+                  f"severities {sevs} byte-identical")
+    check("reference_equivalence_all_cases", mismatches == [] and len(plan) == 56,
+          f"{len(plan)} cases: 5 corruptions x their severities (1-5; gaussian_noise 1-4) x "
+          "{square, non-square} + 4 non-noise x severity 5 x {512x512, 512x384}"
           if not mismatches else str(mismatches[:3]))
+    planned = {(c, s) for _, _, c, s in plan}
+    check("gaussian_noise_s5_not_in_grid",
+          ("gaussian_noise", 5) not in planned and not set(EXCLUDED_CELLS) & planned,
+          "the excluded cell is never generated, even as a reference case")
+
+
+# ---------------------------------------------------------------- 2b. protocol roles
+def test_protocol_roles() -> None:
+    try:
+        roles = corruption_roles.load()
+        ok = (roles.schema_version == "plantseg-corruptions/2.0.0" and len(roles.cells) == 24
+              and roles.cell_ids == corruption_roles.CELL_IDS)
+        detail = f"{len(roles.cells)} cells under {roles.schema_version}"
+    except corruption_roles.CorruptionRolesError as e:
+        roles, ok, detail = None, False, str(e)[:120]
+    check("protocol_roles_parsed", ok, detail)
+    check("vendor_sets_equal_protocol",
+          roles is not None and tuple(roles.order) == CORRUPTION_IDS
+          and roles.severities_by_corruption
+          == {c: tuple(SEVERITIES_BY_CORRUPTION[c]) for c in CORRUPTION_IDS}
+          and tuple(EXCLUDED_CELLS)
+          == tuple((c, s) for c in roles.order for s in roles.excluded_by_corruption[c]),
+          "torch-free protocol loader == vendored dispatch, per corruption")
 
 
 # ---------------------------------------------------------------- 3. seed policy
@@ -278,7 +322,16 @@ def test_seed_policy() -> None:
 # ---------------------------------------------------------------- 4. input contract
 def test_input_contract() -> None:
     img = np.zeros((32, 32, 3), dtype=np.uint8)
-    expect("severity_5_rejected", CorruptionInputError, apply_corruption, img, "fog", 5,
+    expect("gaussian_noise_s5_rejected", CorruptionInputError, apply_corruption, img,
+           "gaussian_noise", 5, image_id="x")
+    try:
+        outs = [apply_corruption(img, c, 5, image_id="x")[0] for c in NON_NOISE]
+        ok = all(o.dtype == np.uint8 and o.shape == img.shape for o in outs)
+        detail = "AM-16 item 6: severity 5 of the four non-noise corruptions"
+    except Exception as e:  # noqa: BLE001
+        ok, detail = False, f"{type(e).__name__}: {e}"
+    check("non_noise_s5_accepted", ok, detail)
+    expect("severity_6_rejected", CorruptionInputError, apply_corruption, img, "fog", 6,
            image_id="x")
     expect("severity_0_rejected", CorruptionInputError, apply_corruption, img, "fog", 0,
            image_id="x")
@@ -302,9 +355,16 @@ def test_cache() -> None:
     images = {f"img_{i:03d}": rng.randint(0, 256, (32, 48, 3), dtype=np.uint8) for i in range(3)}
     root = TMP / "cache"
     m = cache.generate(root, images, split="test")
-    check("cache_grid_size", len(m["entries"]) == 3 * 5 * 4, f"{len(m['entries'])} entries")
-    check("cache_never_generates_severity_5",
-          all(e["severity"] in GENERATED_SEVERITIES for e in m["entries"]))
+    check("cache_grid_size", len(m["entries"]) == 3 * 24, f"{len(m['entries'])} entries")
+    cells = {(e["corruption_id"], e["severity"]) for e in m["entries"]}
+    check("cache_never_generates_gaussian_noise_s5",
+          ("gaussian_noise", 5) not in cells
+          and all(e["severity"] in SEVERITIES_BY_CORRUPTION[e["corruption_id"]]
+                  for e in m["entries"]))
+    check("cache_generates_non_noise_s5",
+          all((c, 5) in cells for c in NON_NOISE)
+          and sum(1 for e in m["entries"] if e["severity"] == 5) == 3 * len(NON_NOISE),
+          "severity 5 for the four non-noise corruptions only")
     check("cache_records_versions",
           {"numpy", "pillow", "scikit_image", "python"} <= set(m["versions"]),
           str(m["versions"]["numpy"]))
@@ -495,8 +555,9 @@ def main() -> int:
     print(f"numpy {np.__version__} | Pillow {PIL.__version__} | scikit-image {skimage.__version__}")
     print(f"temp: {TMP}")
     print("=" * 78)
-    for fn in (test_isolation, test_source, test_reference_equivalence, test_seed_policy,
-               test_input_contract, test_cache, test_dependency_pins, test_pipeline_position):
+    for fn in (test_isolation, test_source, test_protocol_roles, test_reference_equivalence,
+               test_seed_policy, test_input_contract, test_cache, test_dependency_pins,
+               test_pipeline_position):
         print(f"\n--- {fn.__name__} ---")
         fn()
 
