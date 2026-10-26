@@ -21,7 +21,8 @@ set it.
   E  runs of scripts/evaluate_corruptions.py, in-process (fog s3 on the 3-image subset 0, 282, 564)
   X  LE1: scoring never generates (a call tracer)
   T  the teacher (M4-V; LE5, LE11)
-  ST stages, sources and identity (LE2, LE15)
+  ST stages, sources and identity (LE2, LE15); the artifact schema's descriptive stages (LE23);
+     the official INT8 gate, int8_official_error, under R (LE22)
   G  the section 7 guards (G4 dropped: there is no random-init path, LE12) and the out-dir names
      (TL section 2 over every component, as given and resolved: N1, N1b, N1c)
   P  LE2's printed line
@@ -67,10 +68,12 @@ import src.corruption_cache as cc  # noqa: E402
 import src.eval.adapters as AD  # noqa: E402
 import src.eval.corrupted as CO  # noqa: E402
 import src.eval.eval_runtime as ER  # noqa: E402
+import src.eval.stage_artifacts as SA  # noqa: E402
 from configs.data import DATA  # noqa: E402
 from src import corruption_roles  # noqa: E402
 from src.data.transforms import IMAGENET_MEAN_8BIT, SIZE, core_preprocess, finalize  # noqa: E402
 from src.eval.artifacts import ARTIFACT_SCHEMA_VERSION, verify_artifact  # noqa: E402
+from src.eval.artifacts import STAGES as ARTIFACT_STAGES  # noqa: E402
 from src.eval.eval_runtime import RECORD_KEYS  # noqa: E402
 from src.eval.metrics import per_image_miou  # noqa: E402
 from src.models.student import build_student  # noqa: E402
@@ -1058,17 +1061,33 @@ def t8():
 
 
 # ---------------------------------------------------------------- ST. stages, sources, identity
+#: LE23: the clause that makes each artifact-schema stage outside STAGES descriptive (the case's own
+#: copy, never read from the module under check); A, F and G are NOT_IN_ROBUSTNESS's arms.
+LE23_CLAUSES = {"E6-E2": "AM-23", "E7-E2": "AM-23", "E6-R1": "AM-23", "E6-R2": "AM-23",
+                "E6-KD": "AM-3"}
+
+
 @case("ST1")
 def st1():
-    """A, F and G -> stage_not_in_robustness; an unknown stage -> stage_unknown; before any file
-    is read."""
+    """A, F and G -> stage_not_in_robustness; the artifact schema's other stages outside STAGES,
+    E6-E2, E7-E2, E6-R1, E6-R2 (AM-23) and E6-KD (AM-3), -> stage_not_in_robustness naming their
+    clause and TL section 9, these five being every such stage (LE23); an unknown stage ->
+    stage_unknown; before any file is read."""
     codes = [outcome(EC.validate_args, ec_args(never("st1"), stage=s, checkpoint=never("ck")))[0]
              for s in ("A", "F", "G")]
+    bad = []
+    for s, clause in LE23_CLAUSES.items():
+        code, e = outcome(EC.validate_args, ec_args(never("st1"), stage=s, provenance=never("pv")))
+        if not (code == "stage_not_in_robustness" and f"({clause}:" in str(e)
+                and "TL interface section 9" in str(e)):
+            bad.append((s, code))
+    every = set(ARTIFACT_STAGES) - set(EC.STAGES) == set(EC.NOT_IN_ROBUSTNESS) | set(LE23_CLAUSES)
     unknown, _ = outcome(EC.validate_args, ec_args(never("st1"), stage="E9", checkpoint="x"))
     # 'TEACHER' is a stage-artifact key outside STAGES: without the gate the checks would go on
     upper, _ = outcome(EC.validate_args, ec_args(never("st1"), stage="TEACHER", checkpoint="x"))
-    return (codes == ["stage_not_in_robustness"] * 3 and unknown == upper == "stage_unknown"), \
-        f"{codes} {unknown} {upper}"
+    return (codes == ["stage_not_in_robustness"] * 3 and not bad and every
+            and unknown == upper == "stage_unknown"), \
+        f"{codes} {unknown} {upper}; descriptive rows failing {bad}; every such stage {every}"
 
 
 @case("ST2")
@@ -1408,6 +1427,118 @@ def st10():
     """A malformed --expected-cache-sha256 -> expected_cache_sha256_format."""
     code, _ = outcome(EC.validate_args, ec_args(never("st10"), expected_cache_sha256="12ab"))
     return code == "expected_cache_sha256_format", code
+
+
+# ---------------------------------------------------------------- ST11. the INT8 gate (LE22)
+#: The function the official INT8 path calls, held before any mutant patches it: the cases' own
+#: expectation.
+REAL_INT8_OFFICIAL_ERROR = SA.int8_official_error
+
+
+class CacheGateReached(Exception):
+    """Raised by the stand-in for resolve_corruption_cache: the run passed every model-source gate
+    and reached the cache step, which reads nothing."""
+    code = "cache_gate_reached"
+
+
+def ptq_ts_fixture(tag: str) -> tuple[Path, Path]:
+    """An E4 run folder as scripts/smoke_ptq_record.py's case_s8_e2e leaves it: a TorchScript
+    artifact and its run provenance (artifact_format torchscript), whose calibration block claims
+    the committed list of record (configs/calibration/ptq_calibration_seed42.json's checksum, seed
+    42, role am10_list_of_record, list_artifact_status registered), and no e4_ptq_record.json. The
+    artifact is never loaded: the official gate refuses first."""
+    from src.quant.ptq import artifact_names
+    names = artifact_names("e4")
+    run_dir = S["work"] / f"{tag}_{next(_SEQ)}"
+    run_dir.mkdir(parents=True)
+    ts = run_dir / names["torchscript"]
+    torch.jit.save(torch.jit.script(nn.Identity()), str(ts))
+    listed = json.loads((REPO / "configs" / "calibration" / "ptq_calibration_seed42.json")
+                        .read_text(encoding="utf-8"))
+    prov = run_dir / names["run_meta"]
+    prov.write_text(json.dumps({
+        "stage": "E4", "source_stage": "E1", "quantization_method": "ptq", "random_init": False,
+        "num_classes": NC, "backend": "qnnpack", "artifact_format": "torchscript",
+        "converted_artifact": ts.name, "converted_artifact_sha256": sha256_file(ts),
+        "calibration": {"checksum_sha256": listed["checksum_sha256"], "seed": 42,
+                        "role": "am10_list_of_record", "list_artifact_status": "registered"}},
+        indent=2), encoding="utf-8")
+    return ts, prov
+
+
+def qat_fixture(tag: str) -> tuple[Path, Path]:
+    """A QAT E5 (from E1, QNNPACK) provenance naming a converted artifact."""
+    run_dir = S["work"] / f"{tag}_{next(_SEQ)}"
+    run_dir.mkdir(parents=True)
+    art = run_dir / "e5_int8.pt"
+    shutil.copy2(S["int8_art"], art)
+    prov = run_dir / "e5_provenance.json"
+    prov.write_text(json.dumps({"stage": "E5", "source_stage": "E1", "quantization_method": "qat",
+                                "random_init": False, "num_classes": NC, "backend": "qnnpack",
+                                "converted_artifact": str(art),
+                                "converted_artifact_sha256": sha256_file(art)}, indent=2),
+                    encoding="utf-8")
+    return art, prov
+
+
+def le22_run(tag: str, stage: str, prov: Path, art: Path):
+    """One cell under R (--split test --confirm-test-split --artifact-status official) for an INT8
+    stage, every earlier gate passing (H, H2, T, a fresh out-dir); the cache step is a stand-in that
+    reads nothing. Returns ((code, exception), stand-in calls, nothing built or written)."""
+    out = fresh(tag)
+    reached = []
+
+    def stand_in(*a, **k):
+        reached.append(1)
+        raise CacheGateReached()
+    args = ec_args(out, **{**official_argv(None, never(f"{tag}_cache")), "stage": stage,
+                           "provenance": prov, "expected_checkpoint_sha256": sha256_file(prov),
+                           "expected_converted_sha256": sha256_file(art)})
+    counters = EM.Counters(dataset=[], model=[])
+    with patched(EC, "resolve_corruption_cache", stand_in):
+        got = ec_outcome(args, counters=counters)
+    clean = (not out.exists() and not CO.record_path(out).exists()
+             and counters.dataset == [] and counters.model == [])
+    return got, reached, clean
+
+
+@case("ST11a")
+def st11a():
+    """LE22: an official E4 as case_s8_e2e leaves it: int8_official_calibration_error passes, and
+    the run is refused under R, before any cache or dataset is read, with int8_official_error's
+    [ptq_record_missing] text unchanged."""
+    art, prov = ptq_ts_fixture("st11a")
+    resolved = SA.resolve_evaluation_source("E4", provenance=prov)
+    calibration = SA.int8_official_calibration_error(resolved, repo_root=EC.REPO)
+    want = REAL_INT8_OFFICIAL_ERROR(resolved, repo_root=EC.REPO)
+    (code, e), reached, clean = le22_run("st11a", "E4", prov, art)
+    return (calibration is None and want is not None and "[ptq_record_missing]" in want
+            and code == "CorruptionCliError" and str(e) == want and not reached and clean), \
+        f"{code}: {str(e)[:110]}; calibration gate {calibration!r}; cache reached {len(reached)}"
+
+
+@case("ST11b")
+def st11b():
+    """LE22: the src/quant/runner.py state_dict E4 under R -> int8_official_error's
+    [legacy_ptq_artifact] text unchanged, before any cache or dataset is read."""
+    resolved = SA.resolve_evaluation_source("E4", provenance=S["int8_prov"])
+    want = REAL_INT8_OFFICIAL_ERROR(resolved, repo_root=EC.REPO)
+    (code, e), reached, clean = le22_run("st11b", "E4", S["int8_prov"], S["int8_art"])
+    return (want is not None and "[legacy_ptq_artifact]" in want and code == "CorruptionCliError"
+            and str(e) == want and not reached and clean), \
+        f"{code}: {str(e)[:110]}; cache reached {len(reached)}"
+
+
+@case("ST11c")
+def st11c():
+    """LE22: a QAT E5 under R passes the official INT8 gate: the run reaches the cache step (the
+    stand-in), with nothing built or written."""
+    art, prov = qat_fixture("st11c")
+    resolved = SA.resolve_evaluation_source("E5", provenance=prov)
+    gate = REAL_INT8_OFFICIAL_ERROR(resolved, repo_root=EC.REPO)
+    (code, e), reached, clean = le22_run("st11c", "E5", prov, art)
+    return (gate is None and code == "cache_gate_reached" and reached == [1] and clean), \
+        f"gate {gate!r}; {code}; cache reached {len(reached)}"
 
 
 # ---------------------------------------------------------------- G. section 7 guards and names
@@ -2556,6 +2687,11 @@ def mutations() -> None:
         return rec
     mutant("M-record carries another inferential digest", ["E8"],
            (EC, "build_cell_record", wrong_digest))
+    # LE22, LE23
+    mutant("M-the old official INT8 gate, calibration only (LE22)", ["ST11a"],
+           (SA, "int8_official_error", SA.int8_official_calibration_error))
+    mutant("M-descriptive stages left to stage_unknown (LE23)", ["ST1"],
+           (EC, "ARTIFACT_STAGES", EC.STAGES + EC.NOT_IN_ROBUSTNESS))
     # every new refusal code of src/eval/corrupted.py
     for code, targets in (("cache_cell_absent", ["W7"]), ("cache_source_absent", ["W11"]),
                           ("cache_source_index_mismatch", ["W9"]),
@@ -2657,7 +2793,7 @@ LABELS = {
     "T6a": "T6a H and --teacher-ckpt-sha256 differ -> expected_checkpoint_sha256_teacher_disagrees",
     "T6b": "T6b the teacher's file not H (H == t) -> expected_checkpoint_sha256_mismatch, unparsed",
     "T7": "T7 two NMF draws per image -> nmf_draws_mismatch, nothing written",
-    "ST1": "ST1 A, F, G -> stage_not_in_robustness; E9 and TEACHER -> stage_unknown",
+    "ST1": "ST1 A, F, G and E6-E2, E7-E2, E6-R1, E6-R2 (AM-23), E6-KD (AM-3) -> stage_not_in_robustness (LE23); E9 and TEACHER -> stage_unknown",
     "ST2": "ST2 INT8 without --provenance -> refused (evaluate_model.py's text)",
     "ST3": "ST3 INT8 on cuda -> refused (CPU only)",
     "ST4": "ST4 E3 handed a checkpoint without its stage -> stage_undeclared",
@@ -2680,6 +2816,9 @@ LABELS = {
     "ST8b": "ST8b a precision not the stage's -> precision_stage_mismatch",
     "ST9": "ST9 FP32 without --checkpoint -> checkpoint_required",
     "ST10": "ST10 a malformed --expected-cache-sha256 -> expected_cache_sha256_format",
+    "ST11a": "ST11a under R, an E4 TorchScript artifact without its PTQ record -> [ptq_record_missing], before any cache read (LE22)",
+    "ST11b": "ST11b under R, the state_dict E4 -> [legacy_ptq_artifact], before any cache read (LE22)",
+    "ST11c": "ST11c under R, a QAT E5 passes the official INT8 gate and reaches the cache step (LE22)",
     "G1": "G1 --split test without --confirm-test-split, before any path is read",
     "G2": "G2 --split test refuses smoke",
     "G3": "G3 --split test refuses --max-samples",

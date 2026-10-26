@@ -47,9 +47,14 @@ repository is refused (inputs are never copied in, LE14); G9 the cache's split (
 be the requested split; G10 the protocol file must be the one the cache was generated under; G11
 the canvas protocol only. The out-dir follows TL section 2 (no "test" in any case, none of
 :<>"\\|?* in any component), checked as a string before any filesystem call and again resolved.
-Stages A, F and G are refused by name before any file is read, and precision qat_fakequant_off
-(AM-4's clean-only score, lane L-FQOFF) is refused by name (LE15). The teacher's NMF stream must
-be M4-V with seed 42 and draw once per row (LE11; `nmf_stream_mismatch`, `nmf_draws_mismatch`).
+Stages A, F and G, and the artifact schema's other stages outside STAGES (E6-E2, E7-E2, E6-R1 and
+E6-R2 of AM-23; E6-KD of AM-3), which TL interface section 9 gives no corrupted scope, are refused
+by name before any file is read (LE23), and precision qat_fakequant_off (AM-4's clean-only score,
+lane L-FQOFF) is refused by name (LE15). An official INT8 stage must pass
+src.eval.stage_artifacts.int8_official_error, the one function an official INT8 path calls (the
+AM-10 list of record, then the PTQ record of record; LQP ruling R2), as scripts/evaluate_model.py
+does (LE22). The teacher's NMF stream must be M4-V with seed 42 and draw once per row (LE11;
+`nmf_stream_mismatch`, `nmf_draws_mismatch`).
 
 Exit 0: the artifact and its record were written. Exit 2: refused. Nothing was written, except when
 the cell record's write fails after the artifact: the artifact is then left without its record,
@@ -74,6 +79,7 @@ from src import corruption_roles  # noqa: E402
 from src.corruption_cache import (MANIFEST_NAME, CorruptionCacheError, _strict_json,  # noqa: E402
                                   load_manifest, protocol_block)
 from src.distill.teacher import sha256_format_error  # noqa: E402
+from src.eval.artifacts import STAGES as ARTIFACT_STAGES  # noqa: E402
 from src.eval.corrupted import (CacheCell, CorruptedEvalError,  # noqa: E402
                                 PlantSegCorruptedEvalDataset, build_cell_record,
                                 created_path_problem, record_path, utc_iso, write_cell_record)
@@ -86,6 +92,12 @@ from scripts.verify_corruption_cache import VERIFICATION_SCHEMA  # noqa: E402
 
 STAGES = ("teacher", "E1", "E2", "E3", "E4", "E5", "E6", "E7")
 NOT_IN_ROBUSTNESS = ("A", "F", "G")
+#: LE23: the clause that makes each other stage of the artifact schema (src.eval.artifacts.STAGES)
+#: descriptive; TL interface section 9 gives none of them a corrupted scope.
+NO_CORRUPTED_SCOPE = {
+    **dict.fromkeys(("E6-E2", "E7-E2", "E6-R1", "E6-R2"), "AM-23: a descriptive INT8 stage"),
+    "E6-KD": "AM-3: the descriptive E6-KD",
+}
 INT8_PRECISIONS = ("int8_ptq", "int8_qat")
 FQ_OFF_PRECISION = "qat_fakequant_off"
 EXPECTED_SPLIT_ROWS = {"val": 846, "test": 1561}
@@ -117,7 +129,9 @@ def _refuse(code: str, message: str, kind=None):
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Corrupted-condition PlantSeg evaluation runner.")
     p.add_argument("--stage", required=True,
-                   help="teacher or E1-E7 (A, F and G are refused: not in the robustness analyses)")
+                   help="teacher or E1-E7 (refused: A, F and G, not in the robustness analyses; "
+                        "E6-E2, E7-E2, E6-R1 and E6-R2 (AM-23) and E6-KD (AM-3), which carry no "
+                        "corrupted scope)")
     p.add_argument("--precision", default=None,
                    help="optional; must be the stage's precision (fp32, int8_ptq, int8_qat)")
     p.add_argument("--corruption", required=True)
@@ -180,6 +194,11 @@ def validate_args(args) -> dict:
         _refuse("stage_not_in_robustness",
                 f"stage {stage!r} is not in the robustness analyses (AM-17 item 7; AM-17b item "
                 "1(e)): the arms A, F and G are never scored under corruption")
+    if stage in ARTIFACT_STAGES and stage not in STAGES:
+        _refuse("stage_not_in_robustness",
+                f"stage {stage!r} is not in the robustness analyses "
+                f"({NO_CORRUPTED_SCOPE.get(stage, 'a stage of the artifact schema')}; TL interface "
+                "section 9 gives it no corrupted scope): it is never scored under corruption")
     if stage not in STAGES:
         _refuse("stage_unknown", f"stage {stage!r} is not one of {list(STAGES)}")
     precision = stage_precision(stage)
@@ -615,11 +634,13 @@ def run(args, *, teacher_builder=None, counters=None, started_utc=None) -> Path:
     quant_backend = None
     if precision in INT8_PRECISIONS:
         from src.eval.model_loading import select_int8_backend
-        from src.eval.stage_artifacts import int8_official_calibration_error
+        from src.eval.stage_artifacts import int8_official_error
         if args.artifact_status == "official":
-            calibration_error = int8_official_calibration_error(resolved, repo_root=REPO)
-            if calibration_error:
-                raise CorruptionCliError(calibration_error)
+            # LQP ruling R2: the one function an official INT8 path calls (the committed AM-10 list
+            # of record, then the PTQ record of record), its text unchanged (evaluate_model.py)
+            official_error = int8_official_error(resolved, repo_root=REPO)
+            if official_error:
+                raise CorruptionCliError(official_error)
         expected_converted = getattr(args, "expected_converted_sha256", None)
         if expected_converted is not None and resolved["artifact_sha256"] != expected_converted:
             _refuse("expected_converted_sha256_mismatch",
