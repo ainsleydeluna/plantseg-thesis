@@ -11,10 +11,12 @@ Parts, in order (`--parts` selects a subset; plan §1.6, §2.4, §3.3):
   defaults  Default candidates on TEST (AM-17 item 6) -- src.stats.default_candidates
   am6       GT-present on TEST for every model of record (AM-6; AM-17 item 1(b)) -- src.stats.am6_tables
   fqoff     AM-4's fake-quant-off TEST score of each selected QAT model of record beside its int8_qat
-            value (TL-12; LRB7): the qat_fakequant_off rows of family/per_seed E5/E6 slots, and
-            E6-KD's if it exists; "not available: no fq_off artifact" for a slot with no such row. A
-            row must be the same model as the slot's int8_qat row, and the seed-42 int8_qat value
-            from the 37 must be the family slot's model (R-11)
+            value (TL-12; LRB7): the qat_fakequant_off rows of family/per_seed E5/E6 slots, E6-KD's
+            if it exists, and those of AM-23's quant_descriptive QAT slots E6-E2, E6-R1 and E6-R2
+            (B-5 (c); IF§9), each with its IF§11.2 label from TMAN's entries when it has no model;
+            "not available: no fq_off artifact" for a slot with no such row. A row must be the same
+            model as the slot's int8_qat row, and the seed-42 int8_qat value from the 37 must be the
+            family slot's model (R-11)
   mde       the committed MDE entry's mde_w, tau_p, power_caveat, label and each pair's share_ties and
             n_zero (AM-17 item 3(c), (e), (f); DL-99; LRB18)
 
@@ -95,18 +97,23 @@ def fqoff_row(inv: H.Inventory, slot: str, stage: str) -> dict:
 
 def build_fqoff(stats: H.StatsArtifact, inv: H.Inventory, cells: H.PlannedCells, *,
                 input_root: Path) -> dict:
-    """One row per family/per_seed E5/E6 run of record, and E6-KD's if the export lists it."""
+    """One row per family/per_seed E5/E6 run of record, E6-KD's if the export lists it, and each of
+    AM-23's quant_descriptive QAT slots (E6-E2, E6-R1, E6-R2; B-5 (c))."""
+    from .quant_rows import quant_slots
     H.check_seed42_identity(inv, cells, stats, stages=H.QAT_STAGES)
     rows, clean, others = [], {}, {}
-    targets = [(stage, seed, cells.slots[(stage, seed)], False) for stage in H.QAT_STAGES
+    targets = [(stage, seed, cells.slots[(stage, seed)], "planned") for stage in H.QAT_STAGES
                for seed in H.SEEDS]
     kd = sorted({r["slot"] for r in inv.doc["models"] if r.get("stage") == "E6-KD"})
-    targets += [("E6-KD", None, slot, True) for slot in kd]
-    for stage, seed, slot, is_kd in targets:
+    targets += [("E6-KD", None, slot, "kd") for slot in kd]
+    quant = quant_slots(inv)
+    targets += [(stage, None, quant[stage], "quant") for stage in H.QUANT_STAGES
+                if stage in quant and H.stage_spec(stage)[2] == "int8_qat"]
+    for stage, seed, slot, kind in targets:
         out = {"stage": stage, "seed": seed, "slot": slot, "int8_qat": None, "fq_off": None,
                "difference_m": None, "note": None}
         rows.append(out)
-        if not is_kd:
+        if kind == "planned":
             st = cells.status[(stage, seed)]
             if not st.has_model:
                 out["note"] = st.label
@@ -115,6 +122,11 @@ def build_fqoff(stats: H.StatsArtifact, inv: H.Inventory, cells: H.PlannedCells,
                     H.load_clean_of_record(inv, cells, stage, seed, input_root=input_root,
                                            policy=stats.policy).loaded)
         else:
+            if kind == "quant":
+                st = H.b5_status(inv, slot)
+                if not st.has_model:
+                    out.update(seed=st.seed, note=st.label)
+                    continue
             out["seed"] = H.model_row(inv, slot, "int8_qat")["seed"]
             int8 = H.load_bound(inv, slot=slot, stage=stage, precision="int8_qat", scope="clean",
                                 input_root=input_root, policy=stats.policy).loaded

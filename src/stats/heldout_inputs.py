@@ -220,6 +220,9 @@ CODES = {
                         "outside the three, two slots for one (X, stage))",
     "arm_record_invalid": "B5-S3: a teacher or seed-noise record that is missing, unreadable or not at its "
                           "DL sha256, or whose √2·s differs from its band",
+    # AM-23's rows (items 5-6; B5-S3)
+    "quant_slot_invalid": "B5-S3: a quant_descriptive slot outside E6-E2, E7-E2, E6-R1 and E6-R2, or two "
+                          "slots for one stage",
 }
 
 

@@ -16,7 +16,8 @@ new directory in TMPDIR (left in place); none contains "test".
      unbound binding under Policy.OFFICIAL is seed R2f's); the inputs' split in the banner
   C  each of the six parts present and populated
   Q  the fq_off table (LRB7): its values, driver.load_input on a qat_fakequant_off artifact, a slot
-     without one, E6-KD's row; a row without its record, a row of another seed, the 37's identities
+     without one, E6-KD's row; a row without its record, a row of another seed, the 37's identities;
+     AM-23's quant_descriptive QAT slots' rows and a cut one's label (B-5 (c))
   M  the MDE part from the committed entry (LRB18)
   N  no regression: report.build_report keeps its three extension points unpopulated, and no LREP
      file imports rehearsal.py or writes report.py's names (K1)
@@ -312,6 +313,41 @@ def q_row_other_seed():
     return refused("seed_inconsistent", lambda: build(inventory=variant("fqoff_seed", edit), parts="fqoff"))
 
 
+def q_quant():
+    """B-5 (c): AM-23's quant_descriptive QAT slots (E6-E2, E6-R1, E6-R2) join the fq_off table at seed
+    42, each fq_off m beside its int8_qat m, both loaded here at the evaluator's own stage."""
+    w = CTX.world
+    rows = {r["stage"]: r for r in part(CTX.doc, "fqoff")["rows"]
+            if r["stage"] in ("E6-E2", "E6-R1", "E6-R2")}
+    bad = []
+    for stage, slot in (("E6-E2", "E6-E2:s42:sel"), ("E6-R1", "E6-R1:s42:sel"), ("E6-R2", "E6-R2:s42:sel")):
+        mi = SS.m_of(D.load_input(stage, D.CLEAN, w.written[(slot, "int8_qat", "clean", None)].rel,
+                                  w.input_root, Policy.NONOFFICIAL_SMOKE).run.stats)
+        mf = SS.m_of(D.load_input(stage, D.CLEAN, w.written[(slot, H.PRECISION_FQOFF, "fq_off", None)].rel,
+                                  w.input_root, Policy.NONOFFICIAL_SMOKE).run.stats)
+        r = rows.get(stage)
+        if not (r and r["seed"] == 42 and r["slot"] == slot and r["int8_qat"]["m"] == mi
+                and r["fq_off"]["m"] == mf and r["difference_m"] == mf - mi and r["note"] is None):
+            bad.append(stage)
+    return not bad and list(rows) == ["E6-E2", "E6-R1", "E6-R2"], str(bad)
+
+
+def q_quant_label():
+    """A quant_descriptive QAT run that was cut (DL-137's shape for E6-R1) reads its IF§11.2 label from
+    TMAN's entries in the fq_off table, with no value and no refusal."""
+    def edit(export, binding):
+        e = next(e for e in export["entries"] if e["slot"] == "E6-R1:s42")
+        e.update(kind="cut", cut_date="2026-10-24", rule="AM-22 item 2(a): the launch cutoff",
+                 comparator=None)
+        next(e for e in export["entries"] if e["slot"] == "E6-R1:s42:sel")["kind"] = None
+        export["models"] = [r for r in export["models"] if r["slot"] != "E6-R1:s42:sel"]
+        binding["artifacts"] = [r for r in binding["artifacts"] if r["slot"] != "E6-R1:s42:sel"]
+    doc = build(inventory=variant("e6r1_cut", edit), parts="fqoff")
+    r = next(r for r in part(doc, "fqoff")["rows"] if r["stage"] == "E6-R1")
+    return (r["note"] == "cut (2026-10-24, AM-22 item 2(a): the launch cutoff)" and r["int8_qat"] is None
+            and r["fq_off"] is None and r["seed"] == 42), str(r)
+
+
 def q_seed42_identity():
     """--parts fqoff alone checks the 37's E5 and E6 identities against the family slots (R-11;
     R1r1-01)."""
@@ -487,7 +523,8 @@ def cases():
             ("C3", "defaults: D1 and D2", c_part("defaults", lambda p: [r["row"] for r in p["rows"]]
                                                  == ["D1", "D2"])),
             ("C4", "am6: 21 rows", c_part("am6", lambda p: len(p["rows"]) == 21)),
-            ("C5", "fqoff: six E5/E6 rows and E6-KD", c_part("fqoff", lambda p: len(p["rows"]) == 7)),
+            ("C5", "fqoff: six E5/E6 rows, E6-KD and the three quant_descriptive QAT slots (B-5 (c))",
+             c_part("fqoff", lambda p: len(p["rows"]) == 10)),
             ("C6", "mde: the three pairs", c_part("mde", lambda p: sorted(p["pairs"]) == ["43-42", "44-42",
                                                                                          "44-43"])),
             ("Q1", "fq_off values beside int8_qat (m and the difference)", q_values),
@@ -499,6 +536,9 @@ def cases():
              q_row_other_seed),
             ("Q7", "--parts fqoff: an E6 family identity that is not the 37's: seed42_mismatch",
              q_seed42_identity),
+            ("Q8", "B-5 (c): the quant_descriptive QAT slots' fq_off rows beside their int8_qat", q_quant),
+            ("Q9", "B-5 (c): a cut quant_descriptive QAT run reads its label in the fq_off table",
+             q_quant_label),
             ("M1", "the MDE label line, and share_ties and n_zero per pair from the committed entry (LRB18)",
              m_mde),
             ("N1", "report.build_report keeps three unpopulated extension points (K1)", n_report_points),

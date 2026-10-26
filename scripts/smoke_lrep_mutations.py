@@ -40,6 +40,7 @@ for p in (REPO, REPO / "scripts"):
 import lrep_fixtures as LF                                               # noqa: E402
 import smoke_am6_tables as S_AM6                                         # noqa: E402
 import smoke_arm_tables as S_ARM                                         # noqa: E402
+import smoke_quant_rows as S_QR                                          # noqa: E402
 import smoke_default_candidates as S_DC                                  # noqa: E402
 import smoke_report_extensions as S_RX                                   # noqa: E402
 import smoke_seed_stability as S_SEED                                    # noqa: E402
@@ -48,6 +49,7 @@ from src.stats import am6_tables as AM6                                  # noqa:
 from src.stats import arm_tables as AT                                   # noqa: E402
 from src.stats import default_candidates as DC                           # noqa: E402
 from src.stats import heldout_inputs as H                                # noqa: E402
+from src.stats import quant_rows as QR                                   # noqa: E402
 from src.stats import report_extensions as RX                            # noqa: E402
 from src.stats import seed_stability as SS                               # noqa: E402
 from src.stats import strata_tables as ST                                # noqa: E402
@@ -161,7 +163,7 @@ LOCAL = {"mut:out_dir": m_out_dir, "mut:mde": m_mde, "mut:usage": m_usage,
 def all_cases() -> dict:
     out = dict(LOCAL)
     for tag, mod in (("seed", S_SEED), ("strata", S_ST), ("defaults", S_DC), ("am6", S_AM6),
-                     ("report", S_RX), ("arms", S_ARM)):
+                     ("report", S_RX), ("arms", S_ARM), ("quant", S_QR)):
         for cid, _, fn in mod.cases():
             out[f"{tag}:{cid}"] = fn
     return out
@@ -264,6 +266,8 @@ MUTATIONS = [
      [(AT, "arm_slots", [off_h("arm_slot_invalid", ' f"two slots for one')])], "arms:P3"),
     ("C45", "arm_record_invalid not raised (a go-rule record not at its sha256)",
      [(AT, "read_record", [off_h("arm_record_invalid", ' f"{what} {rel}: sha256')])], "arms:T3"),
+    ("C46", "quant_slot_invalid not raised (two slots for one stage)",
+     [(QR, "quant_slots", [off_h("quant_slot_invalid", ' f"two quant_descriptive')])], "quant:R2"),
     # R: further raise sites (DL-24)
     ("R01", "binding_invalid not raised (a bound export without binding.artifacts)",
      [(H, "open_inventory", [off("binding_invalid", ' f"{path}: a bound export')])], "seed:R2h"),
@@ -470,7 +474,7 @@ def run_mutated(targets, fn):
 def setup(root: Path) -> None:
     w = LF.build_world(root)
     CTX.world = w
-    for mod in (S_SEED, S_ST, S_DC, S_AM6, S_RX, S_ARM):
+    for mod in (S_SEED, S_ST, S_DC, S_AM6, S_RX, S_ARM, S_QR):
         mod.setup(root, world=w)
 
 

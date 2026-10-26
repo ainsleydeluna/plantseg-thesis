@@ -32,9 +32,10 @@ A teacher's artifact (stage "teacher") gets `run.model_role` teacher the same wa
 stats_fixtures.write_fixture writes every artifact as a student's (scripts/stats_fixtures.py:218).
 
 Names (LRB20; IF§2): runs/heldout/<stage>_s<seed>_<tail> (B-5's: runs/heldout/<file_id>_<tail>),
-telemetry/<file_id>.jsonl, tman/, stats/, strata/. stats_fixtures.rel_name is never used (it names folders by split), the JSON split value is
-"val", and no created path contains "test". `make_root` follows scripts/smoke_mde.py: TMPDIR must be
-set and free of "test", and the root's name ends in hex digits, which cannot spell it.
+telemetry/<file_id>.jsonl, tman/, stats/, strata/. stats_fixtures.rel_name is never used (it names
+folders by split), the JSON split value is "val", and no created path contains "test". `make_root`
+follows scripts/smoke_mde.py: TMPDIR must be set and free of "test", and the root's name ends in hex
+digits, which cannot spell it.
 
 Not a smoke itself: imported by lane LREP's scripts/smoke_*.py.
 """
