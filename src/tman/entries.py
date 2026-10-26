@@ -20,6 +20,7 @@ equality fits.
 from __future__ import annotations
 
 import math
+import re
 from pathlib import Path, PurePosixPath
 
 from src.training import sweep_select as ss
@@ -116,41 +117,64 @@ def arithmetic_error(a: dict, in_force: str) -> str | None:
     return None
 
 
-def reference_telemetry(runs_root: Path, run_id: str, record_kind: str, stage: str = "") -> dict:
-    """A reference figure from a finished run (AM-19 item 3(b): the most recently finished run of its stage): its
-    completion reader must find it complete; the figure is the median of every train row's iter_seconds (as
-    preflight_arms.reference_telemetry, :511-534; KD, E1 and QAT train rows carry iter_seconds)."""
+HORIZON_RE = re.compile(r":(?P<k>\d+)k$")         # a run slot's key ends with its horizon, <n>k iterations
+
+
+def slot_iterations(slot: dict, reference_steps: int | None = None) -> int | None:
+    """AM-19 item 3(b)'s iterations of a run slot: its registered horizon, the key's <n>k (n x 1000; preflight_arms
+    takes spec.horizon, :769); a QAT run's, its 15 epochs' steps as its reference run counted them (None without)."""
+    m = HORIZON_RE.search(slot["slot"])
+    if m:
+        return int(m.group("k")) * 1000
+    return reference_steps if slot["record_kind"] == "qat_epoch15" else None
+
+
+def reference_telemetry(runs_root: Path, run_id: str, slot: dict) -> dict:
+    """A reference figure from a finished run of the cut slot's stage (AM-19 item 3(b): the most recently finished
+    run of its stage; the caller checks which one is), read as the slot's own runs are read (its record kind and
+    stage; DL-24 #11, #111): its completion reader must find it complete; the figure is the median of every train
+    row's iter_seconds (as preflight_arms.reference_telemetry, :511-534; KD, E1 and QAT train rows carry
+    iter_seconds). The detail records the run's end and, for a QAT run, its steps (its last epoch_end row's)."""
     d = Path(runs_root) / run_id
     S.refuse_test_path(d)
-    if record_kind not in ("kd_run_end", "e1_val_result", "qat_epoch15"):
-        raise S.TmanRefused("cut_arithmetic_invalid", f"a {record_kind} run gives no iter_seconds figure")
-    st = C.run_state({"slot": run_id, "record_kind": record_kind, "stage": stage}, d)
+    kind = slot["record_kind"]
+    if kind not in ("kd_run_end", "e1_val_result", "qat_epoch15"):
+        raise S.TmanRefused("cut_arithmetic_invalid", f"a {kind} run gives no iter_seconds figure")
+    st = C.run_state(slot, d)
     if st.status != C.COMPLETE:
-        raise S.TmanRefused("cut_arithmetic_invalid", f"{run_id}: not a finished run ({st.status})")
+        raise S.TmanRefused("cut_arithmetic_invalid", f"{run_id}: not a finished run of {slot['stage']} ({st.status})")
     rel = st.completion.record
-    rows, _, sha = R.read_jsonl(d / rel, {"train": {"event": True, "iter_seconds": True}},
-                                code="cut_arithmetic_invalid")
+    rows, _, sha = R.read_jsonl(d / rel, {"train": {"event": True, "iter_seconds": True},
+                                          "epoch_end": {"event": True, "step": True}}, code="cut_arithmetic_invalid")
     vals = [r["iter_seconds"] for r in rows if r.get("event") == "train" and S.TYPES["number"](r.get("iter_seconds"))
             and math.isfinite(r["iter_seconds"]) and r["iter_seconds"] > 0]
     if not vals:
         raise S.TmanRefused("cut_arithmetic_invalid", f"{run_id}/{rel}: no train row with a finite iter_seconds")
+    detail = {"rows": len(vals), "end_utc": C.utc_text(st.completion.at)}
+    if kind == "qat_epoch15":
+        steps = [r.get("step") for r in rows if r.get("event") == "epoch_end"]
+        if not (steps and S.TYPES["int"](steps[-1]) and steps[-1] > 0):
+            raise S.TmanRefused("cut_arithmetic_invalid", f"{run_id}/{rel}: its last epoch_end row has no step count")
+        detail["steps"] = steps[-1]
     return {"source": "telemetry", "path": f"{run_id}/{rel}", "sha256": sha, "field": "every train row's iter_seconds",
-            "median": float(_pa().MEDIAN(vals)), "detail": {"rows": len(vals)}}
+            "median": float(_pa().MEDIAN(vals)), "detail": detail}
 
 
-def reference_smoke(path: Path, key: str) -> dict:
-    """A reference figure from a pod smoke's JSON: throughput[<key>]["iter_seconds"]["median"] (preflight_arms's
-    one reader, smoke_figure :485-491)."""
-    p = Path(path)
+def reference_smoke(runs_root: Path, rel: str, key: str) -> dict:
+    """A reference figure from a pod smoke's JSON kept under the run directories, recorded by its path there so it
+    can be verified again (DL-24 #11): throughput[<key>]["iter_seconds"]["median"] (preflight_arms's one reader,
+    smoke_figure :485-491). A JSON value that is not an object is refused, never crashed on (#68)."""
+    S.refuse_test_path(rel)
+    p = Path(runs_root) / rel
     S.refuse_test_path(p)
     pa = _pa()
     try:
         median = pa.smoke_figure(p, key)
-    except (pa.GateError, OSError, ValueError) as e:
-        raise S.TmanRefused("cut_arithmetic_invalid", f"--reference-smoke {p}: {e}") from None
+    except (pa.GateError, OSError, ValueError, AttributeError, TypeError) as e:
+        raise S.TmanRefused("cut_arithmetic_invalid", f"--reference-smoke {rel}: {type(e).__name__}: {e}") from None
     data = p.read_bytes()
     fmt = R.strict_json(data, str(p), code="cut_arithmetic_invalid").get("format")
-    return {"source": "smoke", "path": p.name, "sha256": S.sha256_bytes(data),
+    return {"source": "smoke", "path": str(PurePosixPath(rel)), "sha256": S.sha256_bytes(data),
             "field": f"throughput[{key!r}]['iter_seconds']['median']", "median": median,
             "detail": {"format": fmt, "key": key}}
 
@@ -171,7 +195,8 @@ class CutContext:
     whether a record was committed by the end of a day."""
 
     def __init__(self, catalogue, freeze, *, registry=None, decision_records=None, attempts=None, run_slot=None,
-                 stopped=None, status=None, rule_record=None, e3x=None, entered=None, known_by=None):
+                 stopped=None, status=None, rule_record=None, e3x=None, entered=None, known_by=None,
+                 reference_error=None):
         self.cat, self.freeze = catalogue, freeze
         self.registry = registry or {}                      # run stage -> kd_arms.ArmSpec
         self.decision_records = decision_records or {}      # sweep key -> projected decision record
@@ -184,6 +209,8 @@ class CutContext:
         self.entered = entered or (lambda doc: None)         # cut entry -> its entered day (decision (xv)), or None
         # (path, sha256 or None: any content, day) -> committed by the end of that Manila day; None: not read
         self.known_by = known_by or (lambda rel, sha256, day: None)
+        # (an arithmetic's reference, the cut slot, the arithmetic) -> why it does not read again, or None
+        self.reference_error = reference_error or (lambda ref, slot, arithmetic: None)
 
 
 def rule_record_reader(records: R.Records):
@@ -328,10 +355,23 @@ def chk_date(doc, ctx):
 
 
 def chk_arithmetic(doc, ctx):
+    """The recorded arithmetic recomputed from its own references and time; its iterations the cut slots'
+    (slot_iterations); each reference read again, where the context reads the run directories (ctx.reference_error:
+    the same file and figure, from the most recently finished run of the slot's stage; DL-24 #11)."""
     a = doc["arithmetic"]
     if doc["rule"] == "arithmetic" and not (a and a["measured"] and a["cut"] and not doc["launched"]):
         return "an arithmetic cut is a measured arithmetic that cuts a run before its launch (AM-19 item 3(b))"
-    return None if a is None else arithmetic_error(a, ctx.freeze.schedule["in_force"])
+    if a is None:
+        return None
+    err = arithmetic_error(a, ctx.freeze.schedule["in_force"])
+    if err:
+        return err
+    steps = next((r["detail"].get("steps") for r in a["references"] if r["source"] == "telemetry"), None)
+    want = sorted({slot_iterations(s, steps) for s in _slots(doc, ctx)}, key=str)
+    if want != [a["iterations"]]:
+        return f"arithmetic: {a['iterations']} iterations; the cut slots' horizons are {want} (AM-19 item 3(b))"
+    errs = [e for r in a["references"] for s in _slots(doc, ctx)[:1] for e in [ctx.reference_error(r, s, a)] if e]
+    return "; ".join(errs) if errs else None
 
 
 def chk_val_records(doc, ctx):

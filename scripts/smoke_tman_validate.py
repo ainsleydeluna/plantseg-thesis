@@ -1256,6 +1256,51 @@ def case_moved_freeze():
                                                                  "sha256": w.S.sha256_bytes(data)})),
         detail="runs")
     check("freeze_delay_row_recorded", w.dl[dl][0] == "RECORDED")
+    arithmetic_inputs(w)
+
+
+def arithmetic_inputs(w: World) -> None:
+    """AM-19 item 3(b)'s arithmetic, its inputs the slot's (DL-24 #11, #111): E6 seed 43 is cut by an arithmetic on
+    2026-11-05, after E6 seed 42's late run finished on 11-04 -- the most recently finished run of E6. The validator
+    reads each reference again under --runs; the printer takes the iterations and the stage from the slot."""
+    from src.tman import entries as E
+    slot, now = w.cat.slots["E6:s43:15ep"], "2026-11-05T01:00:00Z"
+
+    def cut(rid, iterations=None, **over):
+        ref = dict(E.reference_telemetry(w.runs, rid, slot), **over)
+        a = E.cut_arithmetic(iterations or ref["detail"]["steps"], [ref], "T", FX.utc(now))
+        return dict(w.cut_fields("E5E6-s4344", ["E6:s43:15ep"], "it does not fit", False), rule="arithmetic",
+                    since=None, arithmetic=a, cut_order_position=None)
+    for nn, (name, fields, detail) in enumerate((
+            ("arithmetic_reference_not_the_most_recent_run_B11", cut("e6_s42_15ep"),
+             "is not the most recently finished run of E6"),
+            ("arithmetic_reference_read_again_differs_B11", cut("e6_s42_late", sha256="0" * 64),
+             "does not read again as recorded"),
+            ("arithmetic_iterations_not_the_slot_s_B11", cut("e6_s42_late", iterations=1500),
+             "the cut slots' horizons are [150]")), 40):
+        ref = w.entry_file("cut", ["E6:s43:15ep"], fields, nn=nn, date="2026-11-05")
+        w.commit({ref["path"]: w.files[ref["path"]]}, f"cut {name}", date="2026-11-05T08:00:00+00:00")
+        expect_gate(w, name, "cut_arithmetic_invalid", doc=mutated(w, lambda d, r=ref: cite_cut(w, d, r,
+                                                                                              ["E6:s43:15ep"])),
+                    detail=detail)
+    base = ["--root", str(w.repo), "arithmetic", "--runs", str(w.runs)]
+    for name, args, want in (
+            ("printer_arithmetic_of_the_most_recent_run_passes", ["--slot", "E6:s43:15ep", "--reference-telemetry",
+                                                                  "e6_s42_late", "--now", now], None),
+            ("printer_arithmetic_reference_not_the_most_recent_B11", ["--slot", "E6:s43:15ep", "--reference-telemetry",
+                                                                      "e6_s42_15ep", "--now", now],
+             "not the most recently finished run of E6"),
+            ("printer_arithmetic_iterations_not_the_horizon_B11", ["--slot", "E2:s43:lambda0.5:80k", "--iterations",
+                                                                   "800000", "--reference-telemetry",
+                                                                   "e2_s42_lambda0.5_80k_a1", "--now",
+                                                                   "2026-10-21T00:00:00Z"], "its horizon, 80000"),
+            ("printer_arithmetic_reference_of_another_stage_B111", ["--slot", "G:s42:80k", "--reference-telemetry",
+                                                                    "e2_s42_lambda0.5_80k_a1", "--now",
+                                                                    "2026-10-21T00:00:00Z"],
+             "not the most recently finished run of G")):
+        rc, txt = _cli(base + args)
+        check(name, rc == 0 if want is None else rc == 2 and "REFUSED [cut_arithmetic_invalid]" in txt and want in txt,
+              f"rc {rc}: {txt.strip()[-200:]}")
 
 
 def _cli(argv) -> tuple[int, str]:

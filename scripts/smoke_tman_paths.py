@@ -320,8 +320,8 @@ def case_cli_outputs():
                                    str(w.runs)]),
                 ("isolation-record", base + ["isolation-record", "--data-root", str(root), "--out",
                                              str(dirs["isolation"])]),
-                ("arithmetic", base + ["arithmetic", "--slot", "G:s42:80k", "--iterations", "80000",
-                                       "--reference-telemetry", "e2_s42_lambda0.5_80k_a1", "--reference-stage", "E2",
+                ("arithmetic", base + ["arithmetic", "--slot", "E2:s43:lambda0.5:80k", "--iterations", "80000",
+                                       "--reference-telemetry", "e2_s42_lambda0.5_80k_a1",
                                        "--runs", str(w.runs), "--now", "2026-10-21T00:00:00Z", "--out",
                                        str(dirs["arith"])])]
         import src.data.isolation as ISO

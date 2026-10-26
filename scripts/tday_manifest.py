@@ -300,20 +300,37 @@ def printer_cut_context(records: R.Records, cat, freeze, doc: dict, runs) -> E.C
 
 # -------------------------------------------------------------------------------------------- arithmetic
 def cmd_arithmetic(args) -> int:
+    """AM-19 item 3(b)'s arithmetic for --slot, its inputs taken from the slot (DL-24 #11, #111): its iterations, its
+    horizon (a QAT run's, its reference run's steps); its telemetry references, the most recently finished run of its
+    stage under --runs, read as the slot's runs are read; its smoke references, pod smokes kept under --runs."""
     records = records_at(args)
     cat = catalogue(records)
-    if args.slot not in cat.slots:
-        raise S.TmanRefused("slot_unknown", f"{args.slot} is not a catalogue slot")
-    figures = []
-    for rid in args.reference_telemetry or []:
-        if args.runs is None:
-            raise S.TmanRefused("cut_arithmetic_invalid", "--reference-telemetry reads --runs")
-        figures.append(E.reference_telemetry(Path(args.runs), rid, args.reference_kind, args.reference_stage))
-    if args.reference_smoke:
-        figures.append(E.reference_smoke(Path(args.reference_smoke), args.smoke_key))
-    sch = D.schedule_block(records.src)
+    if args.slot not in cat.slots or cat.slots[args.slot]["class"] != "run":
+        raise S.TmanRefused("slot_unknown", f"{args.slot} is not a catalogue run slot")
+    slot = cat.slots[args.slot]
     now = time.time() if args.now is None else D.parse_utc_any(args.now)
-    a = E.cut_arithmetic(args.iterations, figures, sch["in_force"], now)
+    if (args.reference_telemetry or args.reference_smoke) and args.runs is None:
+        raise S.TmanRefused("cut_arithmetic_invalid", "the references are read under the run directories (--runs)")
+    figures = []
+    if args.reference_telemetry:
+        from src.training import sweep_select as ss
+        log = records.launch_log(code="completion_record_invalid") if records.has(ss.LAUNCH_LOG_REL) else None
+        latest = V.latest_finished(cat, C.RunIndex(cat, log, args.runs), slot["stage"], now)
+        for rid in args.reference_telemetry:
+            if rid not in latest:
+                raise S.TmanRefused("cut_arithmetic_invalid", f"{rid} is not the most recently finished run of "
+                                                              f"{slot['stage']} ({sorted(latest)}; AM-19 item 3(b))")
+            figures.append(E.reference_telemetry(Path(args.runs), rid, slot))
+    if args.reference_smoke:
+        figures.append(E.reference_smoke(Path(args.runs), args.reference_smoke, args.smoke_key))
+    steps = next((f["detail"].get("steps") for f in figures if f["source"] == "telemetry"), None)
+    iterations = E.slot_iterations(slot, steps)
+    if iterations is None or args.iterations not in (None, iterations):
+        raise S.TmanRefused("cut_arithmetic_invalid", f"{args.slot}: its iterations are its horizon, {iterations} "
+                                                      f"(a QAT run's from its telemetry reference), not "
+                                                      f"{args.iterations}")
+    sch = D.schedule_block(records.src)
+    a = E.cut_arithmetic(iterations, figures, sch["in_force"], now)
     print(a["text"])
     if a["cut"] and args.out:
         doc = E.make_entry("cut", [args.slot], D.manila_day(now), {
@@ -423,11 +440,11 @@ def parser() -> argparse.ArgumentParser:
     e.add_argument("--manifest")
     a = sub.add_parser("arithmetic")
     a.add_argument("--slot", required=True)
-    a.add_argument("--iterations", type=int, required=True)
-    a.add_argument("--reference-telemetry", action="append")
-    a.add_argument("--reference-kind", default="kd_run_end")
-    a.add_argument("--reference-stage", default="")
-    a.add_argument("--reference-smoke")
+    a.add_argument("--iterations", type=int, help="optional: the slot's horizon (checked); a QAT run's, its "
+                                                     "reference run's steps")
+    a.add_argument("--reference-telemetry", action="append", help="a run_id under --runs: the most recently "
+                                                                   "finished run of the slot's stage")
+    a.add_argument("--reference-smoke", help="a pod smoke's JSON, its path under --runs")
     a.add_argument("--smoke-key", default="e3")
     a.add_argument("--runs")
     a.add_argument("--now")

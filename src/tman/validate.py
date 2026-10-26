@@ -856,6 +856,26 @@ def cut_context(x: Ctx, docs: dict | None = None) -> E.CutContext:
         e = x.by_slot.get(x.slot(f"E6-{arm}:s42:15ep")["parent"]) if f"E6-{arm}:s42:15ep" in x.cat.slots else None
         return {"run_id": e["run_id"], "checkpoint_sha256": e["checkpoint"]["sha256"]} \
             if e is not None and e["kind"] == "scored_run" else False
+
+    def reference_error(ref, slot, a):
+        """An arithmetic's reference read again under --runs: the same file, figure and detail; a telemetry
+        reference, the most recently finished run of the slot's stage at the arithmetic's time (DL-24 #11)."""
+        if x.runs_root is None:
+            return None
+        try:
+            if ref["source"] == "smoke":
+                got = E.reference_smoke(x.runs_root, ref["path"], ref["detail"].get("key"))
+            else:
+                rid = ref["path"].split("/")[0]
+                latest = latest_finished(x.cat, idx, slot["stage"], D.parse_utc_any(a["now_utc"]))
+                if rid not in latest:
+                    return f"{rid} is not the most recently finished run of {slot['stage']} ({sorted(latest)})"
+                got = E.reference_telemetry(x.runs_root, rid, slot)
+        except S.TmanRefused as e:
+            return e.detail
+        if any(got[k] != ref[k] for k in ("path", "sha256", "median", "detail")):
+            return f"{ref['path']}: the reference does not read again as recorded (its sha256, figure or detail)"
+        return None
     recs = {}
     for key, rel in ss.DECISION_RECORD_REL.items():
         if x.records.has(rel):
@@ -863,7 +883,22 @@ def cut_context(x: Ctx, docs: dict | None = None) -> E.CutContext:
     return E.CutContext(x.cat, x.freeze, registry={s.run_stage: s for s in kd_arms.load_arms().values()},
                         decision_records=recs, attempts=idx.attempts, run_slot=idx.slot_of.get,
                         stopped=idx.stopped_ids(), status=x.slot_status, rule_record=E.rule_record_reader(x.records),
-                        e3x=e3x, entered=entered, known_by=E.known_by_reader(x.records))
+                        e3x=e3x, entered=entered, known_by=E.known_by_reader(x.records),
+                        reference_error=reference_error)
+
+
+def latest_finished(cat, index: C.RunIndex, stage: str, now) -> set:
+    """The launched runs of `stage` most recently finished by `now` (AM-19 item 3(b): the arithmetic's reference),
+    from their own completion records (completion.RunIndex); the latest instant's runs, ties kept."""
+    done = {}
+    for slot, attempts in index.by_slot.items():
+        if cat.slots[slot]["stage"] == stage:
+            for r in attempts:
+                c = index.state(r).completion
+                if c is not None and c.at <= now:
+                    done[r] = c.at
+    last = max(done.values(), default=None)
+    return {r for r, t in done.items() if t == last}
 
 
 def _cut_gate(code: str):

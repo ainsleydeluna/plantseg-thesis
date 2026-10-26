@@ -150,7 +150,7 @@ def outputs(w) -> dict:
         out[mode] = (code, passed)
     out["inventory"] = S.json_file_bytes(M.build_inventory(doc, data, w.records, w.cat, runs_root=w.runs,
                                                            registered=PINS.IF6_CELLS, freeze_dl="DL-300"))
-    ref = E.reference_telemetry(w.runs, "e2_s42_lambda0.5_80k_a1", "kd_run_end", "E2")
+    ref = E.reference_telemetry(w.runs, "e2_s42_lambda0.5_80k_a1", w.cat.slots["E2:s42:lambda0.5:80k"])
     out["arithmetic"] = S.json_file_bytes(E.cut_arithmetic(80000, [ref], "T", FX.utc(NOW)))
     return out
 

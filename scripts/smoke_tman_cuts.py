@@ -318,25 +318,44 @@ def case_arithmetic():
 
 
 def case_references():
+    """A reference is read as the cut slot's runs are read (its record kind and stage; DL-24 #111), and a smoke is
+    kept under the run directories, its path recorded there (#11)."""
     from src.tman import entries as E
+    cat = catalogue()
     root = FX.scratch_dir()
+    e3 = cat.slots[E3S42]
     FX.kd_run(root, "e3_s42", stage_key="e3")
-    fig = E.reference_telemetry(root, "e3_s42", "kd_run_end", "E3")
-    check("reference_telemetry_median_of_train_rows", fig["median"] == 0.7 + 0.02 and fig["detail"] == {"rows": 3}
+    fig = E.reference_telemetry(root, "e3_s42", e3)
+    check("reference_telemetry_median_of_train_rows", fig["median"] == 0.7 + 0.02
+          and fig["detail"] == {"rows": 3, "end_utc": "2026-10-20T10:00:00Z"}
           and fig["path"] == "e3_s42/e3_telemetry.jsonl" and len(fig["sha256"]) == 64, str(fig))
     FX.kd_run(root, "e3_s43", stage_key="e3", end=None)
     expect_refused("reference_unfinished_run_refused", "cut_arithmetic_invalid", E.reference_telemetry, root,
-                   "e3_s43", "kd_run_end", "E3")
+                   "e3_s43", e3)
+    expect_refused("reference_of_another_stage_unread_B111", "completion_record_invalid", E.reference_telemetry, root,
+                   "e3_s42", cat.slots["E2:s42:lambda0.5:80k"])
     FX.qat_run(root, "e6_s42_15ep")
-    check("reference_qat_telemetry", E.reference_telemetry(root, "e6_s42_15ep", "qat_epoch15")["median"] == 0.3)
+    q = E.reference_telemetry(root, "e6_s42_15ep", cat.slots["E6:s42:15ep"])
+    check("reference_qat_telemetry_and_its_steps", q["median"] == 0.3 and q["detail"]["steps"] == 150, str(q))
     expect_refused("reference_teacher_gives_no_figure", "cut_arithmetic_invalid", E.reference_telemetry, root,
-                   "teacher_s42", "teacher_m12")
+                   "teacher_s42", cat.slots["teacher:s42:40k"])
     smoke = root / "kd_smoke.json"
     smoke.write_text(json.dumps({"format": "kd_smoke/1", "throughput": {"e3": {"iter_seconds": {"median": 1.5}},
                                                                        "loss": 2.0}}), encoding="utf-8")
-    fig = E.reference_smoke(smoke, "e3")
-    check("reference_smoke_figure", fig["median"] == 1.5 and fig["detail"] == {"format": "kd_smoke/1", "key": "e3"})
-    expect_refused("reference_smoke_without_the_key_refused", "cut_arithmetic_invalid", E.reference_smoke, smoke, "a")
+    fig = E.reference_smoke(root, "kd_smoke.json", "e3")
+    check("reference_smoke_figure_and_its_path_under_the_runs", fig["median"] == 1.5 and fig["path"] == "kd_smoke.json"
+          and fig["detail"] == {"format": "kd_smoke/1", "key": "e3"})
+    expect_refused("reference_smoke_without_the_key_refused", "cut_arithmetic_invalid", E.reference_smoke, root,
+                   "kd_smoke.json", "a")
+    (root / "list_smoke.json").write_text("[1, 2]\n", encoding="utf-8")
+    try:
+        got = FX.refused_code(E.reference_smoke, root, "list_smoke.json", "e3")
+    except Exception as e:  # noqa: BLE001 -- a crash where a refusal is due fails the check
+        got = type(e).__name__
+    check("reference_smoke_holding_a_list_B68", got == "cut_arithmetic_invalid", str(got))
+    check("iterations_are_the_slot_s_horizon_B11", [E.slot_iterations(cat.slots[k]) for k in (
+        "G:s42:80k", "E1:s42:160k", "teacher:s42:40k", "E6:s42:15ep")] == [80000, 160000, 40000, None]
+          and E.slot_iterations(cat.slots["E6:s42:15ep"], 150) == 150)
 
 
 def case_freeze_delay_and_new_freeze():
