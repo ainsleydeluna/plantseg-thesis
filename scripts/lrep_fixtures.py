@@ -14,7 +14,9 @@ The world also writes what TMAN will supply (IF§11 v2):
     pilot, a 160k control, a calibration-sensitivity E4, an arm, an arm teacher, the teacher, a
     quant_descriptive selection and the QAT run slots), whose records name directories that do not
     exist;
-  * a bound binding `tday_binding/1` with one record per (row, scope, cell);
+  * a bound binding `tday_binding/1` with one record per (row, scope, cell), including records no
+    B-1 to B-3 table reads (upstream, seed 42's corrupted cells of E2-E5 and E7, the corrupted_sev45
+    cells; IF§9), which name directories that do not exist;
   * telemetry JSONL files for the run entries, in the trainers' VAL-row formats (iterations for the KD
     and E1 trainers, epochs for QAT).
 Checkpoint identities: E1 carries DL-99's three checkpoints, E2 and E3 at seed 42 the selections of
@@ -393,25 +395,47 @@ def _record(world: World, w: Written) -> dict:
             "split_manifest_sha256": w.split_manifest_sha256}
 
 
-def _ghost_record(world: World, slot: str, precision: str) -> dict:
-    """A record of an ignored slot, naming a directory that does not exist."""
-    return {"slot": slot, "precision": precision, "scope": "clean", "cell": None, "protocol": "canvas",
-            "repo_relative_path": f"runs/heldout/never_written_{file_id(slot)}",
-            "files_sha256": {n: syn_sha("ghost", slot, n) for n in H.ARTIFACT_FILE_NAMES},
+def _ghost_record(world: World, slot: str, precision: str, scope: str | None = None,
+                  cell: str | None = None) -> dict:
+    """A record LREP's B-1 to B-3 tables never read, naming a directory that does not exist: an ignored
+    slot's row (scope fq_off for a qat_fakequant_off row, else clean), or a scope of a planned row that
+    no table of B-1 to B-3 reads (upstream, seed 42's corrupted cells of E2-E5 and E7, every
+    corrupted_sev45 cell; IF§9)."""
+    scope = scope or ("fq_off" if precision == H.PRECISION_FQOFF else "clean")
+    tail = "_".join(x for x in (file_id(slot), scope, cell) if x)
+    return {"slot": slot, "precision": precision, "scope": scope, "cell": cell,
+            "protocol": "upstream" if scope == "upstream" else "canvas",
+            "repo_relative_path": f"runs/heldout/never_written_{tail}",
+            "files_sha256": {n: syn_sha("ghost", slot, scope, cell, n) for n in H.ARTIFACT_FILE_NAMES},
             "checkpoint_sha256": syn_sha("ghost checkpoint", slot), "repo_commit": world.commit,
             "split_manifest_sha256": syn_sha("ghost manifest")}
 
 
+def sev45_cells() -> list[str]:
+    """IF§6's nine corrupted_sev45 cells: gaussian_noise at 4, the other four corruptions at 4 and 5."""
+    return [H.cell_id(n, s) for n in H.corruption_names() for s in (4, 5)
+            if not (n == "gaussian_noise" and s == 5)]
+
+
 def build_export(world: World) -> tuple[dict, dict]:
-    """(export, binding) for the complete world: every planned run has a model."""
+    """(export, binding) for the complete world: every planned run has a model. Seed 42's rows carry
+    the 15 inferential and 9 severity-4/5 cells, E1 and E6 at seeds 43/44 the 15 (IF§9)."""
     grid_ids = [cid for cid, _, _ in H.inferential_cells()]
+    sev45 = sev45_cells()
     entries, models, records = [], [], []
     for seed in H.SEEDS:
         role = "family" if seed == 42 else "per_seed"
         for stage in D.STAGES:
             ids = identities(stage, seed)
             rslot = record_slot(stage, seed)
-            cells = grid_ids if stage in D.CORRUPTION_STAGES else []
+            prec = D.STAGE_PRECISION[stage]
+            cells = (grid_ids + sev45 if seed == 42 else
+                     grid_ids if stage in D.CORRUPTION_STAGES else [])
+            records.append(_ghost_record(world, rslot, prec, "upstream"))
+            if seed == 42:
+                records += [_ghost_record(world, rslot, prec, "corrupted", cid) for cid in grid_ids
+                            if stage not in D.CORRUPTION_STAGES]
+                records += [_ghost_record(world, rslot, prec, "corrupted_sev45", cid) for cid in sev45]
             if stage in H.RUN_STAGES:
                 entries.append(_entry(rslot, "scored_run", stage, seed, [role],
                                       telemetry=world.telemetry[rslot]))
@@ -429,7 +453,7 @@ def build_export(world: World) -> tuple[dict, dict]:
                 entries.append(_entry(rslot, "derived", stage, seed, [role], parent=qrun,
                                       cls="derived"))
                 kind, run_id = "derived", training_run_id(stage, seed)
-            models.append(_row(rslot, stage, seed, D.STAGE_PRECISION[stage],
+            models.append(_row(rslot, stage, seed, prec,
                                source_kind=ids["source_kind"], source_sha=ids["source"],
                                converted=ids["converted"], cells=cells, entry_kind=kind,
                                roles=[role], run_id=run_id))
@@ -478,7 +502,8 @@ def build_export(world: World) -> tuple[dict, dict]:
     records.extend(_record(world, w) for w in world.written.values())
     manifest = syn_sha("TEST-day manifest")
     export = {"schema": H.INVENTORY_SCHEMA, "evaluator_commit": world.commit,
-              "execution_context": {"device": "cpu", "batch_size": 1, "num_workers": 0,
+              "execution_context": {"model_device": "cpu", "input_devices": ["cpu"],
+                                    "determinism_policy_applied": False, "batch_size": 1, "num_workers": 0,
                                     "torch_num_threads": 1, "image_digest": "sha256:" + syn_sha("image")},
               "manifest_sha256": manifest, "models": models, "entries": entries, "dedup": None,
               "binding": {"state": "bound", "path": BINDING_NAME, "sha256": None},
@@ -557,4 +582,4 @@ __all__ = ["WORLD_SEED", "N_IMAGES", "STATS_B", "QUALITY", "SEED_SHIFT", "E2_SEL
            "E2_DEFAULT", "E3_DEFAULT", "make_root", "new_dir", "syn_sha", "run_slot", "record_slot",
            "file_id", "training_run_id", "fp32_checkpoint", "identities", "Written", "World",
            "edited_copy", "write_telemetry", "kd_curve", "qat_curve", "write_stats_artifact",
-           "build_export", "write_inventory", "write_strata", "build_world"]
+           "sev45_cells", "build_export", "write_inventory", "write_strata", "build_world"]

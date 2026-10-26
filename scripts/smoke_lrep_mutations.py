@@ -4,13 +4,15 @@
 Each mutation rewrites one LREP function from its own source (an exact, unique text replacement,
 compiled into the module's namespace and restored afterwards; scripts/smoke_teacher_diag_mutations.py's
 harness) and runs its named case, which must pass unmutated and fail under the mutation (a failed
-check or an unexpected error both count as killed). Two kinds:
+check or an unexpected error both count as killed). Three kinds:
 
   C  one per refusal code of src.stats.heldout_inputs.CODES: its raise site disabled
      (`raise refusal(` -> `if False: raise refusal(`), killed by the case that reaches that code with
-     every earlier gate passing (the cases of the lane's smokes, or the four in-process cases below)
+     every earlier gate passing (the cases of the lane's smokes, or the in-process cases below)
+  R  a further raise site of a code, added by the DL-24 review's fixes, disabled the same way and
+     killed by the case that reaches that site
   S  semantic mutations of the formulas, states, labels and rules (the plan's §7.1 list as LRB2-LRB13
-     amend it), each killed by its named case
+     amend it, and the DL-24 fixes), each killed by its named case
 
 The cases run on one synthetic world (scripts/lrep_fixtures.py) under a new directory in TMPDIR (left
 in place); no created path contains "test".
@@ -230,6 +232,27 @@ MUTATIONS = [
      [(RX, "build_mde", [off_h("mde_entry_invalid", ' f"cannot be read')])], "mut:mde"),
     ("C41", "usage_invalid not raised (--repo-root without --synthetic-inputs)",
      [(RX, "run", [off_h("usage_invalid", ' "--repo-root is accepted')])], "mut:usage"),
+    # R: further raise sites (DL-24)
+    ("R01", "binding_invalid not raised (a bound export without binding.artifacts)",
+     [(H, "open_inventory", [off("binding_invalid", ' f"{path}: a bound export')])], "seed:R2h"),
+    ("R02", "status_invalid not raised (two entries for one planned slot)",
+     [(H, "record_slots", [off("status_invalid")])], "seed:R4c"),
+    ("R03", "status_invalid not raised (a divergence in the wrong unit)",
+     [(H, "_check_unit", [off("status_invalid")])], "seed:R4d"),
+    ("R04", "parent_rule not raised (a selection whose parent is not its QAT run)",
+     [(H, "resolve_status", [off("parent_rule", ' f"selection {slot!r}: its parent')])], "seed:R12c"),
+    ("R05", "parent_rule not raised (a PTQ model with kind null whose parent is another stage)",
+     [(H, "resolve_status", [off("parent_rule", ' f"PTQ slot {slot!r}: its parent')])], "seed:R12e"),
+    ("R06", "seed_inconsistent not raised (a PTQ model with kind null whose parent is at another seed)",
+     [(H, "resolve_status", [off("seed_inconsistent")])], "seed:R14b"),
+    ("R07", "parent_rule not raised (a descendant of a cut run that is not 'not run')",
+     [(H, "check_parentage", [off("parent_rule", ' f"{stage} seed {seed} ({slot!r}) reads')])],
+     "seed:R12d"),
+    ("R08", "parent_rule not raised (a model that descends from the wrong run)",
+     [(H, "check_parentage", [off("parent_rule", ' f"{stage} seed {seed} ({slot!r}) descends')])],
+     "seed:R12b"),
+    ("R09", "precision_mismatch not raised (a model row whose model_role is not student)",
+     [(H, "check_rows", [off("precision_mismatch")])], "seed:R18b"),
     # S: semantic mutations
     ("S01", "condition 1: g > 0 becomes g >= 0",
      [(SS, "condition_1", [("not g[k] > 0.0", "not g[k] >= 0.0")])], "seed:S2"),
@@ -302,6 +325,17 @@ MUTATIONS = [
     ("S29", "GT-present float64 values computed with the union rule",
      [(AM6, "gt_present_row", [('_float64": rv[rule][space].value_float64',
                                 '_float64": rv["union_present"][space].value_float64')])], "am6:F4"),
+    ("S30", "a model row's entry_kind no longer checked against its slot's entry (IF§11.1)",
+     [(H, "model_row", [('row.get("entry_kind") in SCORED_ENTRY_KINDS and row.get("entry_kind") == '
+                         'e.get("kind")', "True")])], "seed:R2i"),
+    ("S31", "a telemetry item's path no longer required before it is read (LRB2)",
+     [(H, "read_telemetry", [(' or not _is_text(it.get("path"))', "")])], "seed:R17b"),
+    ("S32", "the strict parse accepts a repeated JSON key",
+     [(H, "strict_json_text", [("if len(set(keys)) != len(keys):", "if False:")])], "seed:R2j"),
+    ("S33", "R-12 checked before R-13 (a seed-42 run of record without a model named parent_rule)",
+     [(H, "planned_cells", [("check_seed42(status)\n    check_parentage(inv, slots, status)",
+                             "check_parentage(inv, slots, status)\n    check_seed42(status)")])],
+     "seed:R13b"),
 ]
 
 
@@ -337,7 +371,6 @@ def main() -> int:
     setup(root)
     cases = all_cases()
     results = []
-    codes = {m[0]: m for m in MUTATIONS if m[0].startswith("C")}
     covered = set()
     for mid, desc, targets, killer in MUTATIONS:
         for owner, name, pairs in targets:
@@ -366,10 +399,11 @@ def main() -> int:
         if not ok:
             print(f"         {detail[:400]}")
     good = sum(1 for r in results if r[2])
-    n_mut = sum(1 for r in results if r[0][0] in "CS" and r[2])
+    ids = {m[0] for m in MUTATIONS}
+    n_mut = sum(1 for r in results if r[0] in ids and r[2])
     print(f"\nRESULT: {'LREP MUTATIONS OK' if good == len(results) else 'LREP MUTATIONS FAILED'} "
           f"({good}/{len(results)}; mutations killed {n_mut}/{len(MUTATIONS)}; refusal codes "
-          f"{len(codes)}/{len(H.CODES)}); {time.time() - t0:.0f} s")
+          f"covered {len(covered & set(H.CODES))}/{len(H.CODES)}); {time.time() - t0:.0f} s")
     return 0 if good == len(results) else 1
 
 

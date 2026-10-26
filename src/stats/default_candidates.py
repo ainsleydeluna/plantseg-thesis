@@ -98,13 +98,14 @@ def default_slots(inv: H.Inventory, record=SELECTION_RECORD) -> dict:
             raise H.refusal("default_candidate_missing", f"no default_candidate slot for {stage} "
                                                          f"({rec['parameter']} = {rec['default_value']})")
         slot, kind = got[0]
-        row = H.model_row(inv, slot, "fp32") if inv.has_row(slot, "fp32") else None
         problems = []
         if len(got) > 1:
             problems.append(f"{len(got)} default_candidate slots; no other candidate is evaluated on "
                             "TEST (PA:441)")
         if kind != "default_candidate":
             problems.append(f"kind {kind!r}: a default is complete and never cut (AM-19 item 2(d))")
+        # a default that is not complete is refused as such, before its model row is read
+        row = H.model_row(inv, slot, "fp32") if not problems and inv.has_row(slot, "fp32") else None
         if row is not None and row["source"]["sha256"] != rec["default_checkpoint"]:
             problems.append(f"checkpoint {row['source']['sha256'][:12]}... is not {rec['decision']}'s "
                             f"default {rec['default_checkpoint'][:12]}...")

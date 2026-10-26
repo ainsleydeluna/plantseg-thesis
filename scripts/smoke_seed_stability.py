@@ -15,7 +15,9 @@ model or GPU; no created path contains "test".
   W  the world end to end: ten labelled rows, robustness at every seed, ignored slots never refused,
      cut-run VAL curves (iterations for KD, epochs for QAT, the cut entry's comparator, never
      interpolated), divergences and the verdict sentence
-  R  refusals: one case per code, each reached with every earlier gate passing (R-15 is an assertion)
+  R  refusals: one case per code, each reached with every earlier gate passing (R-15 is an assertion),
+     and one per further raise site the DL-24 review added (R2h-R2j, R4c-R4d, R12b-R12e, R13b, R14b,
+     R17b, R18b)
   D  determinism
   X  hygiene: no test or p-value object imported, repr floats, pp only in markdown, no 'test' path
 
@@ -84,9 +86,12 @@ def entry(export, slot):
 
 
 def set_kind(export, slot, kind, **fields):
+    """Set a slot's kind and its record fields; a run that never ran lists no telemetry (IF§11.3)."""
     e = entry(export, slot)
     e["kind"] = kind
     e.update(fields)
+    if kind in ("not_run", "not_made"):
+        e.pop("telemetry", None)
 
 
 def drop(export, binding, slot):
@@ -834,6 +839,113 @@ def r_robustness_cells():
     return refused("robustness_cells_missing", lambda: seed_doc(variant("no_cell", edit)))
 
 
+def r_binding_no_artifacts():
+    """A reader (not the stub) that returns a bound export without binding.artifacts (IF§11.6)."""
+    def reader(path, *, expect_sha256=None):
+        doc = H.read_inventory(path, expect_sha256=expect_sha256)
+        doc["binding"] = {k: v for k, v in doc["binding"].items() if k != "artifacts"}
+        return doc
+    return refused("binding_invalid", lambda: inventory(CTX.world.inventory_path, reader=reader))
+
+
+def r_row_entry_kind():
+    def edit(export, binding):
+        row(export, "E2:s43", "fp32")["entry_kind"] = "cut"
+    return refused("inventory_invalid", lambda: seed_doc(variant("row_entry_kind", edit)))
+
+
+def r_duplicate_key():
+    """The export's text repeats a key; the strict parse refuses it (a plain parse would keep the
+    later, valid value)."""
+    d = CTX.world.fresh("dup_key")
+    src = CTX.world.inventory_path
+    (d / LF.BINDING_NAME).write_bytes((src.parent / LF.BINDING_NAME).read_bytes())
+    p = d / LF.EXPORT_NAME
+    p.write_text(src.read_text(encoding="utf-8").replace("{", '{"schema": "tday-inventory/0", ', 1),
+                 encoding="utf-8", newline="\n")
+    return refused("inventory_unreadable", lambda: inventory(p))
+
+
+def r_two_entries():
+    def edit(export, binding):
+        e = copy.deepcopy(entry(export, "E2:s43"))
+        e.update(kind="cut", cut_date=CUT_DATE, rule=CUT_RULE, comparator=None)
+        export["entries"].append(e)
+    return refused("status_invalid", lambda: seed_doc(variant("two_entries", edit)))
+
+
+def r_divergence_unit():
+    """E3 at seed 44 diverged, recorded at an epoch: a KD run diverges at an iteration (IF§11.2)."""
+    def edit(export, binding):
+        v_div_e3(export, binding)
+        e = entry(export, "E3:s44")
+        del e["iteration"]
+        e["epoch"] = 9
+    return refused("status_invalid", lambda: seed_doc(variant("div_unit", edit)))
+
+
+def r_parent_run():
+    def edit(export, binding):
+        entry(export, "E4:s43")["catalogue"]["parent"] = "E2:s43"
+    return refused("parent_rule", lambda: seed_doc(variant("parent_e2", edit)))
+
+
+def r_parent_selection():
+    def edit(export, binding):
+        set_kind(export, "E6:s43:sel", None)
+        entry(export, "E6:s43:sel")["catalogue"]["parent"] = "E3:s43"
+        drop(export, binding, "E6:s43:sel")
+    return refused("parent_rule", lambda: seed_doc(variant("sel_parent_e3", edit)))
+
+
+def r_parent_not_run():
+    def edit(export, binding):
+        set_kind(export, "E3:s43", "cut", cut_date=CUT_DATE, rule=CUT_RULE, comparator=None)
+        drop(export, binding, "E3:s43")
+        set_kind(export, "E7:s43", None)
+        drop(export, binding, "E7:s43")
+        set_kind(export, "E6:s43", "aborted", rule="AM-19 item 3(a)", cause="non-finite loss")
+        set_kind(export, "E6:s43:sel", None)
+        drop(export, binding, "E6:s43:sel")
+    return refused("parent_rule", lambda: seed_doc(variant("abort_under_cut", edit)))
+
+
+def r_ptq_parent_stage():
+    def edit(export, binding):
+        set_kind(export, "E7:s43", None)
+        entry(export, "E7:s43")["catalogue"]["parent"] = "E2:s43"
+        drop(export, binding, "E7:s43")
+    return refused("parent_rule", lambda: seed_doc(variant("ptq_parent_e2", edit)))
+
+
+def r_seed42_before_parentage():
+    def edit(export, binding):
+        set_kind(export, "E3:s42", "cut", cut_date="2026-10-19", rule="AM-19 item 2", comparator=None)
+    return refused("seed42_not_complete", lambda: seed_doc(variant("s42_e3_cut", edit)))
+
+
+def r_ptq_parent_seed():
+    def edit(export, binding):
+        set_kind(export, "E7:s43", None)
+        entry(export, "E7:s43")["catalogue"]["parent"] = "E3:s44"
+        drop(export, binding, "E7:s43")
+    return refused("seed_inconsistent", lambda: seed_doc(variant("ptq_parent_s44", edit)))
+
+
+def r_telemetry_path():
+    def edit(export, binding):
+        v_cut_e2(export, binding)
+        entry(export, "E2:s43")["telemetry"] = [{k: v for k, v in CTX.tel["e2_s43_cut"].items()
+                                                 if k != "path"}]
+    return refused("telemetry_invalid", lambda: seed_doc(variant("tel_no_path", edit)))
+
+
+def r_row_role():
+    def edit(export, binding):
+        row(export, "E2:s43", "fp32")["model_role"] = "teacher"
+    return refused("precision_mismatch", lambda: seed_doc(variant("row_teacher", edit)))
+
+
 # --------------------------------------------------------------------------------------------------
 # D and X
 # --------------------------------------------------------------------------------------------------
@@ -998,11 +1110,18 @@ def cases():
         ("R2e", "R-2 binding_invalid (sha256)", r_binding_invalid),
         ("R2f", "binding_unbound under Policy.OFFICIAL (a non-stub reader)", r_binding_unbound),
         ("R2g", "freeze_mismatch", r_freeze),
+        ("R2h", "R-2 binding_invalid (a bound export without binding.artifacts; IF§11.6)",
+         r_binding_no_artifacts),
+        ("R2i", "R-2 inventory_invalid (a model row's entry_kind is not its slot's; IF§11.1)",
+         r_row_entry_kind),
+        ("R2j", "R-2 inventory_unreadable (a repeated JSON key; the strict parse)", r_duplicate_key),
         ("R3a", "R-3 planned_slot_missing", r_slot_missing),
         ("R3b", "R-3 planned_slot_duplicate", r_slot_duplicate),
         ("R3c", "R-3 unplanned_slot (a per_seed slot at seed 45)", r_unplanned),
         ("R4a", "R-4 status_invalid (a kind outside the vocabulary)", r_status_vocab),
         ("R4b", "R-4 status_invalid (a cut without its rule)", r_status_field),
+        ("R4c", "R-4 status_invalid (two entries for one planned slot)", r_two_entries),
+        ("R4d", "R-4 status_invalid (a KD run diverged at an epoch; IF§11.2)", r_divergence_unit),
         ("R5", "R-5 superseded", r_superseded),
         ("R6a", "R-6 artifact_missing (a complete run without its record)", r_artifact_missing),
         ("R6b", "R-6 artifact_for_missing_run", r_artifact_for_missing),
@@ -1015,12 +1134,25 @@ def cases():
         ("R10b", "R-10 e1_checkpoint_record (E1 seeds 43 and 44 swapped)", r_e1_record),
         ("R11", "R-11 seed42_mismatch (the 37's identity against the family slot)", r_seed42),
         ("R12", "R-12 parent_rule (E6 not run while E3 is complete)", r_parent),
+        ("R12b", "R-12 parent_rule (E4 descends from E2's run; LRB5)", r_parent_run),
+        ("R12c", "R-12 parent_rule (a selection without a model whose parent is the E3 run; LRB5)",
+         r_parent_selection),
+        ("R12d", "R-12 parent_rule (E6's QAT run aborted under a cut E3; AM-19 item 4(a))",
+         r_parent_not_run),
+        ("R12e", "R-12 parent_rule (a PTQ model with kind null whose parent is E2's run)",
+         r_ptq_parent_stage),
         ("R13", "R-13 seed42_not_complete", r_seed42_complete),
+        ("R13b", "R-13 seed42_not_complete before R-12 (E3 cut at seed 42, E6/E7 with models)",
+         r_seed42_before_parentage),
         ("R14", "R-14 seed_inconsistent", r_seed_inconsistent),
+        ("R14b", "R-14 seed_inconsistent (a PTQ model with kind null whose parent is at seed 44)",
+         r_ptq_parent_seed),
         ("R15", "R-15 an assertion: no mean or SD over two seeds", r_assert_two_seeds),
         ("R16", "telemetry_sha256_mismatch (LRB2)", r_telemetry_sha),
         ("R17", "telemetry_invalid: no attempt of the run of record (LRB2)", r_telemetry_invalid),
+        ("R17b", "telemetry_invalid: a telemetry item without its path (LRB2)", r_telemetry_path),
         ("R18", "precision_mismatch (LRB7)", r_precision),
+        ("R18b", "precision_mismatch: a model row whose model_role is teacher (LRB7)", r_row_role),
         ("R19", "path_unsafe", r_path),
         ("R20", "robustness_cells_missing (LRB11)", r_robustness_cells),
         ("D1", "byte-identical JSON on repeated runs", d_identical),

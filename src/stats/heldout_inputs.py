@@ -24,8 +24,9 @@ writes them, never parses the TEST-day manifest and never builds its path (IF§1
   * Telemetry files are hashed before they are parsed; only their VAL rows are read (LRB2).
 
 Every refusal is an `LrepRefusal` with a code from CODES, raised at a site that reads
-`raise refusal("<code>", ...)` (scripts/smoke_lrep_mutations.py mutates those sites). Nothing here
-writes a file. Import-time behaviour is side-effect free.
+`raise refusal("<code>", ...)` (scripts/smoke_lrep_mutations.py mutates those sites), except the three
+raises of `strict_json_text`, which carry their caller's code (inventory_unreadable or binding_invalid).
+Nothing here writes a file. Import-time behaviour is side-effect free.
 """
 from __future__ import annotations
 
@@ -51,6 +52,8 @@ KINDS = ("scored_run", "default_candidate", "arm_teacher", "listed_run", "derive
          "non_finite", "cut", "superseded", "diverged", "aborted", "measurement", "not_made")
 ROLES = ("family", "per_seed", "teacher_reference", "default_candidate", "arm", "arm_teacher",
          "control", "calibration_sensitivity", "listed", "quant_descriptive")
+#: IF§11.1: a scored row's entry_kind.
+SCORED_ENTRY_KINDS = ("scored_run", "default_candidate", "arm_teacher", "derived")
 SCOPES = ("clean", "upstream", "corrupted", "corrupted_sev45", "fq_off")
 PROTOCOLS = ("canvas", "upstream")
 PRECISIONS = ("fp32", "int8_ptq", "int8_qat", "qat_fakequant_off")
@@ -59,8 +62,9 @@ PRECISION_FQOFF = "qat_fakequant_off"
 BINDING_STATES = ("bound", "unbound")
 ARTIFACT_FILE_NAMES = tuple(sorted(D.INPUT_FILES))
 
-#: The 21 planned runs: E1-E7 at seeds 42, 43 and 44 (AM-1; AM-16 item 1; AM-17 item 4), keyed by the
-#: role of their model-of-record slot (IF§11.1).
+#: The 21 planned cells: E1-E7 at seeds 42, 43 and 44 (AM-1; AM-16 item 1; AM-17 item 4), runs for
+#: E1-E3 and derived slots for E4-E7 (LRB19 L-18), keyed by the role of their model-of-record slot
+#: (IF§11.1).
 STAGES = D.STAGES
 SEEDS = (42, 43, 44)
 RECORD_ROLES = {"family": (42,), "per_seed": (43, 44)}
@@ -107,7 +111,8 @@ CODES = {
     "inventory_unreadable": "R-2: the export cannot be read as strict JSON",
     "inventory_sha256_mismatch": "R-2: the export's sha256 is not the expected one",
     "inventory_invalid": "R-2: the export lacks, repeats or mistypes a field LREP reads",
-    "binding_invalid": "R-2: the binding file is missing, differs from binding.sha256 or is malformed",
+    "binding_invalid": "R-2: the binding file is missing, differs from binding.sha256 or is malformed, "
+                       "or a bound export carries no binding.artifacts",
     "binding_unbound": "IF§11.5: under Policy.OFFICIAL the binding must be bound",
     "freeze_mismatch": "IF§11.5: freeze.manifest_sha256 is not manifest_sha256 (or no freeze, OFFICIAL)",
     # planned cells (R-3; D-3 as LRB4 amends it)
@@ -115,7 +120,8 @@ CODES = {
     "planned_slot_duplicate": "R-3: two family/per_seed slots claim one planned (stage, seed)",
     "unplanned_slot": "R-3/LRB4: a family/per_seed slot outside the 21 planned cells",
     # status (R-4, R-5, R-12 to R-14; IF§11.2; LRB5)
-    "status_invalid": "R-4: a kind outside the stage's kinds, or a missing or malformed record field",
+    "status_invalid": "R-4: two entries for one planned slot, a kind outside the stage's kinds, or a "
+                      "missing or malformed record field",
     "superseded": "R-5: kind superseded is refused, never mapped",
     "parent_rule": "R-12: a parentage or not-run inconsistency (AM-19 item 4(a); LRB5)",
     "seed42_not_complete": "R-13: a seed-42 run of record without a model",
@@ -124,9 +130,11 @@ CODES = {
     "artifact_missing": "R-6: a model of record without its model row or bound artifact",
     "artifact_for_missing_run": "R-6: a bound clean artifact for a planned run without a model",
     "artifact_record_mismatch": "R-7/LRB3: an artifact differs from its binding record or model row",
-    "not_canvas": "R-8: a record or artifact that is not canvas",
+    "not_canvas": "R-8: a binding record whose protocol is not canvas (an artifact whose protocol "
+                  "differs from its record is R-7; LRB3)",
     "artifact_unreadable": "R-9: an artifact the driver refuses (files, manifest, the row rules)",
-    "precision_mismatch": "LRB7: (model_role, precision) is not (student, the row's precision)",
+    "precision_mismatch": "LRB7: (model_role, precision) of an artifact or a model row is not (student, "
+                          "the row's precision)",
     "path_unsafe": "IF§2: a path that is not plain relative POSIX, or contains 'test'",
     # cross-artifact and seed-42 checks (R-10, R-11)
     "cross_artifact_mismatch": "R-10: manifest, class map, metric code, commit, AM-5, GT, run_id or "
@@ -412,7 +420,10 @@ def open_inventory(path, *, policy: Policy, expect_sha256=None, reader=None) -> 
             or (freeze is not None and freeze["manifest_sha256"] != doc["manifest_sha256"])):
         raise refusal("freeze_mismatch", f"{path}: freeze {freeze!r} does not record manifest_sha256 "
                                          f"{doc['manifest_sha256']} (IF§11.5)")
-    records = doc["binding"].get("artifacts", []) if doc["binding"]["state"] == "bound" else []
+    if doc["binding"]["state"] == "bound" and "artifacts" not in doc["binding"]:
+        raise refusal("binding_invalid", f"{path}: a bound export carries no binding.artifacts; the reader "
+                                         "returns the binding's records under it (IF§11.6)")
+    records = doc["binding"]["artifacts"] if doc["binding"]["state"] == "bound" else []
     if not isinstance(records, list) or not all(isinstance(r, dict) for r in records):
         raise refusal("binding_invalid", f"{path}: binding.artifacts is not a list of objects")
     for i, r in enumerate(records):
@@ -457,7 +468,10 @@ def record_slots(inv: Inventory) -> dict[tuple[str, int], str]:
         roles = sorted({r for e in items for r in e["role"] if r in RECORD_ROLES})
         if not roles:
             continue
-        e = inv.entry(slot)
+        if len(items) != 1:
+            raise refusal("status_invalid", f"slot {slot!r} has {len(items)} entries: a planned run has one "
+                                            "status (R-4)")
+        e = items[0]
         stage, seed = e.get("stage"), e.get("seed")
         planned = (len(roles) == 1 and stage in STAGES and _is_int(seed)
                    and seed in RECORD_ROLES[roles[0]])
@@ -574,6 +588,13 @@ def _not_run_status(inv: Inventory, slot: str, e: dict, seed: int, depth: int = 
                                  "neither cut nor diverged (AM-19 item 4(a))")
 
 
+def _check_unit(slot: str, e: dict, unit: str) -> None:
+    """IF§11.2: a KD or E1 run diverges at an iteration, a QAT run at an epoch (R-4)."""
+    if e.get("kind") == "diverged" and unit not in e:
+        raise refusal("status_invalid", f"slot {slot!r}: this run's divergence is recorded by {unit} "
+                                        "(IF§11.2: iteration for a KD or E1 run, epoch for a QAT run)")
+
+
 def resolve_status(inv: Inventory, slot: str, stage: str, seed: int) -> SlotStatus:
     """IF§11.2's map for one planned cell's slot (LRB5)."""
     e, kind = _checked_kind(inv, slot)
@@ -585,6 +606,7 @@ def resolve_status(inv: Inventory, slot: str, stage: str, seed: int) -> SlotStat
         if kind == "scored_run":
             return SlotStatus(slot, stage, seed, kind, True, None, slot, _record_of(e))
         if kind in RUN_NO_MODEL_KINDS:
+            _check_unit(slot, e, "iteration")
             return no_model(_label(e), slot, _record_of(e), kind)
         raise refusal("status_invalid", f"slot {slot!r}: kind {kind!r} is not a status of an {stage} "
                                         f"run (scored_run or {RUN_NO_MODEL_KINDS})")
@@ -592,16 +614,28 @@ def resolve_status(inv: Inventory, slot: str, stage: str, seed: int) -> SlotStat
         return SlotStatus(slot, stage, seed, kind, True, None, slot, _record_of(e))
     if stage in QAT_STAGES:                    # the selection reads its QAT run's kind (IF§11.2)
         run_slot = _parent_of(inv, e, slot)
+        run = inv.entry(run_slot)
+        if run.get("stage") != stage or run.get("seed") != seed:
+            raise refusal("parent_rule", f"selection {slot!r}: its parent {run_slot!r} is not the {stage} "
+                                         f"QAT run at seed {seed} (LRB5)")
         re_, rk = _checked_kind(inv, run_slot)
         if rk == "not_run":
             label, src, rec = _not_run_status(inv, run_slot, re_, seed)
             return no_model(label, src, rec, rk)
         if rk in QAT_RUN_NO_MODEL_KINDS:
+            _check_unit(run_slot, re_, "epoch")
             return no_model(_label(re_), run_slot, _record_of(re_), rk)
         raise refusal("status_invalid", f"selection {slot!r} has no model (kind {kind!r}) but its QAT "
                                         f"run {run_slot!r} is {rk!r}")
     if kind is None:                           # a PTQ model with kind null: its parent's state
         parent = _parent_of(inv, e, slot)
+        pe = inv.entry(parent)
+        if pe.get("stage") != PARENT_STAGE[stage]:
+            raise refusal("parent_rule", f"PTQ slot {slot!r}: its parent {parent!r} is not an "
+                                         f"{PARENT_STAGE[stage]} run (LRB5)")
+        if pe.get("seed") != seed:
+            raise refusal("seed_inconsistent", f"PTQ slot {slot!r} (seed {seed}) has parent {parent!r} at "
+                                               f"seed {pe.get('seed')!r}")
         pe, pk = _checked_kind(inv, parent)
         if pk in ("cut", "diverged"):
             return no_model(LABEL_PARENT_CUT if pk == "cut" else LABEL_PARENT_DIVERGED, parent,
@@ -628,7 +662,8 @@ class PlannedCells:
 
 def check_parentage(inv: Inventory, slots, status) -> None:
     """R-12 (LRB5): a PTQ model's parent is its E1/E3 run of record at that seed; a QAT selection's
-    parent is its QAT run, whose parent is that run; a model never descends from a run without one."""
+    parent is its QAT run, whose parent is that run; a model never descends from a run without one; and
+    the descendants of a cut or diverged run are not run (AM-19 item 4(a))."""
     for (stage, seed), slot in sorted(slots.items()):
         if stage not in PARENT_STAGE:
             continue
@@ -646,14 +681,19 @@ def check_parentage(inv: Inventory, slots, status) -> None:
         if got != want:
             raise refusal("parent_rule", f"{stage} seed {seed} ({slot!r}) descends from {got!r}, not "
                                          f"the {PARENT_STAGE[stage]} run of record {want!r}")
-        parent = status[(PARENT_STAGE[stage], seed)]
-        if status[(stage, seed)].has_model and not parent.has_model:
+        parent, own = status[(PARENT_STAGE[stage], seed)], status[(stage, seed)]
+        if own.has_model and not parent.has_model:
             raise refusal("parent_rule", f"{stage} seed {seed} has a model, but its parent "
                                          f"{parent.stage} has none ({parent.label})")
+        if not parent.has_model and parent.kind in ("cut", "diverged") and own.kind != "not_run":
+            raise refusal("parent_rule", f"{stage} seed {seed} ({slot!r}) reads {own.label!r}, but its "
+                                         f"parent {parent.stage} is {parent.kind}: it is not run (AM-19 "
+                                         "item 4(a))")
 
 
 def model_row(inv: Inventory, slot: str, precision: str) -> dict:
-    """The one model row of (slot, precision), with the IF§8/IF§11.1 fields LREP reads checked."""
+    """The one model row of (slot, precision), with the IF§8/IF§11.1 fields LREP reads checked: its
+    entry_kind is a scored kind and its slot's entry kind, and its role is its slot's role set."""
     items = inv.rows.get((slot, precision), ())
     if not items:
         raise refusal("artifact_missing", f"slot {slot!r} has no model row of precision {precision}")
@@ -661,6 +701,7 @@ def model_row(inv: Inventory, slot: str, precision: str) -> dict:
         raise refusal("inventory_invalid", f"slot {slot!r}: {len(items)} model rows of precision "
                                            f"{precision}; rows are unique by (slot, precision)")
     row = items[0]
+    e = inv.entry(slot)
     src = row.get("source")
     conv = row.get("converted_artifact_sha256")
     problems = [what for ok, what in (
@@ -674,8 +715,10 @@ def model_row(inv: Inventory, slot: str, precision: str) -> dict:
         ((isinstance(conv, str) and bool(_HEX64.fullmatch(conv))) if precision in INT8_PRECISIONS
          else conv is None, "converted_artifact_sha256 (INT8 rows only)"),
         (isinstance(row.get("cells"), list), "cells"),
-        (row.get("entry_kind") in KINDS, "entry_kind"),
-        (isinstance(row.get("role"), list), "role"),
+        (row.get("entry_kind") in SCORED_ENTRY_KINDS and row.get("entry_kind") == e.get("kind"),
+         "entry_kind (IF§11.1: a scored kind, the slot's entry kind)"),
+        (isinstance(row.get("role"), list) and set(row["role"]) <= set(ROLES)
+         and set(row["role"]) == set(e.get("role") or ()), "role (IF§11.1: the slot's role set)"),
         (_is_text(row.get("training_run_id")), "training_run_id")) if not ok]
     if problems:
         raise refusal("inventory_invalid", f"model row ({slot!r}, {precision}): malformed {problems}")
@@ -691,15 +734,18 @@ def row_identity(row: dict) -> str:
 
 
 def check_rows(inv: Inventory, slots, status) -> None:
-    """R-14: each model of record's row of its stage precision carries the slot's stage and seed."""
+    """R-14: each model of record's row of its stage precision carries the slot's stage and seed; and
+    it is a student's row (LRB7)."""
     for (stage, seed), slot in sorted(slots.items()):
         if not status[(stage, seed)].has_model:
             continue
         row = model_row(inv, slot, D.STAGE_PRECISION[stage])
-        if row["stage"] != stage or row["seed"] != seed or row["model_role"] != "student":
+        if row["stage"] != stage or row["seed"] != seed:
             raise refusal("seed_inconsistent", f"slot {slot!r} ({stage}, seed {seed}): its model row "
-                                               f"is ({row['stage']}, seed {row['seed']}, "
-                                               f"{row['model_role']})")
+                                               f"is ({row['stage']}, seed {row['seed']})")
+        if row["model_role"] != "student":
+            raise refusal("precision_mismatch", f"slot {slot!r} ({stage}, seed {seed}): its model row's "
+                                                f"model_role is {row['model_role']!r}, not student (LRB7)")
 
 
 def check_missing_runs(inv: Inventory, slots, status) -> None:
@@ -723,8 +769,8 @@ def planned_cells(inv: Inventory) -> PlannedCells:
     """The 21 planned cells with their status, every R-3 to R-6 and R-12 to R-14 check applied."""
     slots = record_slots(inv)
     status = {key: resolve_status(inv, slot, *key) for key, slot in sorted(slots.items())}
-    check_parentage(inv, slots, status)
     check_seed42(status)
+    check_parentage(inv, slots, status)
     check_rows(inv, slots, status)
     check_missing_runs(inv, slots, status)
     return PlannedCells(slots=slots, status=status)
@@ -1024,22 +1070,23 @@ def read_telemetry(inv: Inventory, slot: str, input_root: Path, *, unit: str) ->
     out = []
     for i, it in enumerate(items):
         where = f"slot {slot!r} telemetry[{i}]"
-        if (not isinstance(it, dict) or not _is_text(it.get("run_id"))
+        if (not isinstance(it, dict) or not _is_text(it.get("run_id")) or not _is_text(it.get("path"))
                 or not isinstance(it.get("sha256"), str) or not _HEX64.fullmatch(it["sha256"])):
             raise refusal("telemetry_invalid", f"{where}: needs run_id, path and a 64-hex sha256")
         rel = safe_relative_path(it.get("path"), where)
         p = Path(input_root) / rel
         try:
-            digest = sha256_file(p)
+            raw = p.read_bytes()             # read once: the rows parsed are the bytes hashed (LRB2)
         except OSError as e:
             raise refusal("telemetry_invalid", f"{where}: {p} cannot be read ({type(e).__name__})") from e
+        digest = hashlib.sha256(raw).hexdigest()
         if digest != it["sha256"]:
             raise refusal("telemetry_sha256_mismatch", f"{where}: {rel} has sha256 {digest}, the export "
                                                        f"says {it['sha256']} (LRB2)")
         points, seen = [], set()
         try:
-            text = p.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError) as e:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError as e:
             raise refusal("telemetry_invalid", f"{where}: {rel} is not UTF-8 text") from e
         for n, line in enumerate(text.splitlines(), start=1):
             if not line.strip():
@@ -1062,8 +1109,8 @@ def read_telemetry(inv: Inventory, slot: str, input_root: Path, *, unit: str) ->
 
 __all__ = [
     "INVENTORY_SCHEMA", "BINDING_SCHEMA", "KINDS", "ROLES", "SCOPES", "PROTOCOLS", "PRECISIONS",
-    "INT8_PRECISIONS", "PRECISION_FQOFF", "STAGES", "SEEDS", "RECORD_ROLES", "RUN_STAGES",
-    "PTQ_STAGES", "QAT_STAGES", "PARENT_STAGE", "EVALUATOR_STAGE", "E1_CHECKPOINT_RECORD",
+    "INT8_PRECISIONS", "PRECISION_FQOFF", "SCORED_ENTRY_KINDS", "STAGES", "SEEDS", "RECORD_ROLES",
+    "RUN_STAGES", "PTQ_STAGES", "QAT_STAGES", "PARENT_STAGE", "EVALUATOR_STAGE", "E1_CHECKPOINT_RECORD",
     "LABEL_NON_FINITE", "LABEL_PARENT_CUT", "LABEL_PARENT_DIVERGED", "TELEMETRY_UNITS", "CODES",
     "LrepRefusal", "refusal", "sha256_file", "strict_json_text", "path_problem", "safe_relative_path",
     "cell_id", "corruption_names", "inferential_cells", "evaluator_stage", "read_inventory",
