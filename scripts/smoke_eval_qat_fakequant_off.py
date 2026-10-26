@@ -37,6 +37,7 @@ import functools
 import io
 import json
 import os
+import re
 import shutil
 import sys
 import time
@@ -769,7 +770,11 @@ def c08_selection_run_id():
 # ---- 9 fqoff_stage_mismatch
 @case("binding")
 def c09_selection_stage():
-    return refused("fqoff_stage_mismatch", bind, bound("run_e5"), stage="E6")
+    """The selection alone names another stage (E6, whose rules file is E5's) while the run and the payload are E5's;
+    and an E5 binding requested as E6 is refused all the same."""
+    ok1, d1 = forged_refusal("fqoff_stage_mismatch", "sel_stage", sel=sel_edit(stage="E6"))
+    ok2, d2 = refused("fqoff_stage_mismatch", bind, bound("run_e5"), stage="E6")
+    return ok1 and ok2, f"{d1}; {d2}"
 
 
 def first_row(**kv):
@@ -1153,6 +1158,27 @@ def parity_toggle_bites():
     with torch.no_grad():
         diff = float((fq(x) - off(x)).abs().max())
     return diff > 10 * PARITY_TOL, f"max |logit difference| fake quant on vs off {diff:.3e} (> {10 * PARITY_TOL:g})"
+
+
+# ================================================================ finder (FQR12, FQR15a)
+@case("finder")
+def finder_finds_phase1_sites():
+    """The mutation harness's site finder, over its SCOPE files, finds every fqoff raise form of the files (counted
+    as text), each with a literal code; their codes are phase 1's, first met in FQR12's order; and its refusal table
+    names exactly the sites found."""
+    import scripts.smoke_eval_qat_fakequant_off_mutations as MH
+    forms = re.compile(r"\b(_fail|_fqoff_refuse|_fqoff_cli)\(\s*\"fqoff_")
+    sites, raw = [], 0
+    for rel in MH.SCOPE:
+        text = (REPO / rel).read_text(encoding="utf-8")
+        sites += MH.fqoff_refusal_sites(text, rel)
+        raw += len(forms.findall(text))
+    codes = [s["code"] for s in sites]
+    first = sorted(set(codes), key=codes.index)
+    keys = {(s["rel"], s["func"], s["code"], s["k"]) for s in sites}
+    ok = (set(codes) == set(PHASE1_CODES) and all(s["literal"] for s in sites) and len(sites) == raw
+          and first == list(PHASE1_CODES) and keys == set(MH.KILLS))
+    return ok, f"{len(sites)} sites of {len(set(codes))} codes; {raw} raise forms in the files"
 
 
 # ================================================================ never_selects (FQR4, F4)
