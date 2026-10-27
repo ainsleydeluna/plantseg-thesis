@@ -56,6 +56,11 @@ def meets(ts, cutoff) -> bool:
     return ss.meets(ts, cutoff)
 
 
+def day_start(d: str) -> int:
+    """The first instant of the Asia/Manila day `d`: the cutoff instant of the day before."""
+    return cutoff_instant(iso(day(d) - timedelta(days=1)))
+
+
 @dataclass(frozen=True)
 class FreezeInstant:
     schedule: dict                      # {in_force, file, file_sha256, decision_log_entry}

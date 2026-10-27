@@ -43,6 +43,7 @@ CATALOGUE_FORMAT = "tday_catalogue/1"
 INVENTORY_FORMAT = "tday-inventory/1"
 BINDING_FORMAT = "tday_binding/1"
 ISOLATION_FORMAT = "tday_isolation/1"
+PUSH_LIST_FORMAT = "tday_push_list/1"           # the session's push list (TB11; sweep_select.push_list_doc's form)
 
 MANIFEST_REL = "reports/derived/tday_manifest.json"
 ENTRIES_DIR_REL = "reports/derived/tday_entries"

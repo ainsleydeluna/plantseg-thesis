@@ -32,6 +32,7 @@ import scripts.smoke_tman_validate as VW  # noqa: E402  (the fixture world)
 
 check, expect_refused = FX.check, FX.expect_refused
 UNLOCK_DAY, SESSION_UTC = "2026-11-04", "2026-11-05T02:00:00Z"
+T_LO = "2026-11-03T16:00:00Z"                   # the first instant of UNLOCK_DAY in Asia/Manila (TB11's lower bound)
 WANTED: set = set()
 
 
@@ -126,26 +127,21 @@ class Unlock:
                       clock_host: str | None = None, edit=None) -> bytes:
         """The session part, committed once (`edit` changes it first): on `host` (the frozen execution context's
         by default), the clock-offset record of that host (or `clock_host`; its decision-log row of
-        `clock_status`) and the push evidence of the unlock entry's commit."""
+        `clock_status`) and the push evidence: GitHub's activity response with the unlock entry's commit pushed at
+        `push_utc`, and the list made from it (TB11)."""
         S, w = self.S, self.w
         host = host or dict(self.doc["body"]["execution_context"]["host"])
         clock = w.entry_file("clock_offset", [], {"host": clock_host or host["name"], "source": "chronyc tracking",
                                                   "offset_seconds": offset, "measured_utc": "2026-11-05T01:50:00Z"},
                              date="2026-11-05", nn=_nn(w, "clock_offset"))
         w.dl[clock["dl"]] = (clock_status, w.dl[clock["dl"]][1])
-        adding = FX.git(w.repo, "log", "--format=%H", "-1", "--", self.unlock["path"])
-        resp = S.json_file_bytes({"fixture": "the remote's activity response, saved verbatim"})
-        lst = S.json_file_bytes({"format": "tday_push_list/1", "pushes": [
-            {"ref": "refs/heads/claude/keen-curie-u4a8ig", "after": adding, "timestamp": push_utc}]})
-        tag = push_utc.replace(":", "").replace("-", "")
-        rr, lr = f"reports/derived/tday_unlock_push_{tag}.json", f"reports/derived/tday_unlock_push_list_{tag}.json"
-        w.commit({clock["path"]: w.files[clock["path"]], rr: resp, lr: lst}, "clock offset and push evidence")
+        pe = commit_pair(self, push_utc.replace(":", "").replace("-", ""), activity(self, push_utc),
+                         files={clock["path"]: w.files[clock["path"]]})
         doc = copy.deepcopy(self.doc)
         doc["session"] = {"unlock_entry": {"path": self.unlock["path"], "sha256": self.unlock["sha256"]},
                           "clock_offset": {"path": clock["path"], "sha256": clock["sha256"]},
                           "started_utc": started, "host": host, "values": {},
-                          "push_evidence": {"response": {"path": rr, "sha256": S.sha256_bytes(resp)},
-                                            "list": {"path": lr, "sha256": S.sha256_bytes(lst)}}}
+                          "push_evidence": pe}
         if edit is not None:
             edit(doc)
         return self.commit_manifest(doc)
@@ -161,6 +157,57 @@ def _nn(w, kind: str) -> int:
     _nn.count = getattr(_nn, "count", {})
     _nn.count[kind] = _nn.count.get(kind, 0) + 1
     return _nn.count[kind]
+
+
+def activity(u: Unlock, push_utc: str, *, older: str | None = "2026-11-03T10:00:00Z", after: str | None = None) -> list:
+    """GitHub's activity response for the repository, newest first, in its entries' form: `after` (the unlock
+    entry's commit by default) pushed to master and to the working branch at `push_utc`, a branch deletion, and,
+    unless `older` is None, a push of E at `older`, before T_lo."""
+    before = FX.git(u.w.repo, "rev-parse", f"{u.H}^")
+    after = after or u.H
+
+    def entry(n, ref, a, b, ts, kind="push"):
+        return {"id": n, "node_id": f"PA_fixture{n}", "before": b, "after": a, "ref": ref, "timestamp": ts,
+                "activity_type": kind, "actor": {"login": "fixture"}}
+    out = [entry(4004, "refs/heads/master", after, before, push_utc),
+           entry(4003, "refs/heads/claude/keen-curie-u4a8ig", after, before, push_utc),
+           entry(4002, "refs/heads/lane/fixture", "0" * 40, u.w.E, "2026-11-04T08:00:00Z", "branch_deletion")]
+    return out + ([entry(4001, "refs/heads/master", u.w.E, "0" * 40, older)] if older else [])
+
+
+def push_list(u: Unlock, rr: str, resp: bytes, entries: list, served: bool = True) -> dict:
+    """The tday_push_list/1 made from the response on the day it was saved (sweep_select.push_list_doc's form):
+    each push at or after T_lo, in the response's order, with its answer (`served`: the remote serves the pushed
+    commit; a served push carries the unlock entry when it pushed the unlock entry's commit)."""
+    pushes = [{**{k: e[k] for k in ("id", "ref", "before", "after", "timestamp", "activity_type")},
+               "served": served, "carries_file": not served or e["after"] == u.H,
+               "remote_answer": "fetched (fixture)" if served else "not served (fixture)"}
+              for e in entries if e["activity_type"] != "branch_deletion" and e["timestamp"] >= T_LO]
+    return {"format": "tday_push_list/1", "response": {"path": rr, "sha256": u.S.sha256_bytes(resp)},
+            "unlock_entry": {"path": u.unlock["path"], "sha256": u.unlock["sha256"]}, "adding_commit": u.H,
+            "t_lo_utc": T_LO, "remote": "https://github.com/fixture/plantseg-thesis", "pushes": pushes}
+
+
+def commit_pair(u: Unlock, tag: str, entries: list, *, raw: bytes | None = None, edit=None,
+                list_raw: bytes | None = None, served: bool = True, apart: bool = False,
+                files: dict | None = None) -> dict:
+    """The activity response (`entries` as GitHub serves them, or `raw`) and the list made from it (`edit` changes
+    it first; `list_raw` replaces it), committed under `tag` with `files` in one commit (two when `apart`); the
+    session's push_evidence block citing them."""
+    S, w = u.S, u.w
+    rr, lr = f"reports/derived/tday_unlock_push_{tag}.json", f"reports/derived/tday_unlock_push_list_{tag}.json"
+    resp = raw if raw is not None else (json.dumps(entries, indent=2) + "\n").encode()
+    doc = push_list(u, rr, resp, entries, served)
+    if edit is not None:
+        edit(doc)
+    lst = list_raw if list_raw is not None else S.json_file_bytes(doc)
+    if apart:
+        w.commit({**(files or {}), rr: resp}, "the activity response")
+        w.commit({lr: lst}, "its list, a commit later")
+    else:
+        w.commit({**(files or {}), rr: resp, lr: lst}, "the activity response and its list")
+    return {"response": {"path": rr, "sha256": S.sha256_bytes(resp)},
+            "list": {"path": lr, "sha256": S.sha256_bytes(lst)}}
 
 
 def gate_codes(mode: str) -> list:
@@ -488,7 +535,7 @@ def case_session():
             ("clock_offset_entry_not_DL_recorded_B102", {"offset": 0.6, "clock_status": "DECIDED"}, "dl_row_missing",
              "clock_offset__session__20261105"),
             ("unlock_pushed_after_the_session_started_TB11", {"push_utc": "2026-11-05T03:00:00Z"},
-             "push_evidence_invalid", "no listed push carries the unlock entry"),
+             "push_evidence_invalid", "is not in [T_lo"),
             ("session_host_not_the_frozen_host_B37", {"host": {"name": "another-host", "cpu_model": "x86-64 fixture"}},
              "clock_offset_invalid", "is not the frozen execution context's host"),
             ("clock_offset_record_of_another_host_B37", {"clock_host": "another-host"}, "clock_offset_invalid",
@@ -513,6 +560,78 @@ def case_session():
         expect_gate(w, name, "clock_offset_invalid", mode="session", data=w.start_session(edit=edit), detail="session")
 
 
+def case_push_evidence():
+    """TB11, the DL-109 pattern (DL-24 #57): validate.push_evidence_error on response-and-list pairs committed in the
+    unlock world and read at its HEAD (a session part is committed once: case_session reaches the gate itself)."""
+    from src.tman import validate as V
+    u, at = UW, "2026-11-04T09:00:00Z"
+    ref = {"path": u.unlock["path"], "sha256": u.unlock["sha256"]}
+    not_list, unlisted, other = ("not the tday_push_list/1 list", "is not listed as the response holds it",
+                                 "names pushes that are not the response's")
+
+    def verdict(pe: dict) -> str | None:
+        try:
+            return V.push_evidence_error(u.w.records, pe, ref, UNLOCK_DAY, SESSION_UTC)
+        except Exception as e:  # noqa: BLE001 -- a refusal raised (strict JSON) or a crash fails the check by name
+            return f"{type(e).__name__}: {getattr(e, 'detail', e)}"
+
+    def expect(name: str, pe: dict, detail: str) -> None:
+        got = verdict(pe)
+        check(name, got is not None and detail in got, str(got)[:200])
+
+    got = verdict(commit_pair(u, "p01", activity(u, at)))
+    check("push_evidence_of_record_passes", got is None, str(got)[:200])
+    got = verdict(commit_pair(u, "p02", activity(u, at), served=False))
+    check("unserved_push_the_clone_holds_counts", got is None, str(got)[:200])
+    pe = commit_pair(u, "p03", activity(u, at))
+    expect("push_evidence_list_not_the_cited_file", dict(pe, list=dict(pe["list"], sha256="0" * 64)),
+           "push evidence list is not the cited file")
+    expect("push_response_not_an_activity_response_B57", commit_pair(
+        u, "p04", activity(u, at), raw=u.S.json_file_bytes({"fixture": "not GitHub's response"})),
+        "is not a raw activity response")
+    expect("push_list_added_apart_from_its_response", commit_pair(u, "p05", activity(u, at), apart=True),
+           "were not added in one commit")
+    pe = commit_pair(u, "p06", activity(u, at))
+    data = u.S.json_file_bytes(dict(json.loads(_blob(u.w.repo, "HEAD", pe["list"]["path"])),
+                                    remote="https://github.com/fixture/another"))
+    u.w.commit({pe["list"]["path"]: data}, "the push list rewritten")
+    expect("push_list_rewritten_after_it_was_added", dict(pe, list=dict(pe["list"], sha256=u.S.sha256_bytes(data))),
+           "add, change or delete it")
+    for name, tag, edit, detail in (
+            ("push_list_of_another_format", "p07", lambda d: d.update(format="lambda_push_list/1"), not_list),
+            ("push_list_of_another_response", "p08", lambda d: d["response"].update(sha256="0" * 64), not_list),
+            ("push_list_of_another_unlock_entry", "p09", lambda d: d["unlock_entry"].update(sha256="0" * 64),
+             not_list),
+            ("push_list_of_another_commit", "p10", lambda d: d.update(adding_commit=u.w.E), not_list),
+            ("push_list_t_lo_not_the_first_instant_of_the_unlock_day", "p11",
+             lambda d: d.update(t_lo_utc="2026-11-04T16:00:00Z"), not_list),
+            ("push_list_remote_not_a_string", "p12", lambda d: d.update(remote=None), not_list),
+            ("push_list_entry_malformed", "p13", lambda d: d["pushes"][0].update(id="4004"), not_list),
+            ("push_after_t_lo_unlisted", "p14", lambda d: d["pushes"].pop(0), unlisted),
+            ("push_listed_unlike_the_response", "p15",
+             lambda d: d["pushes"][0].update(timestamp="2026-11-04T08:59:59Z"), unlisted),
+            ("push_listed_not_in_the_response", "p16", lambda d: d["pushes"].append(dict(d["pushes"][0], id=4999)),
+             other),
+            ("push_listed_twice", "p17", lambda d: d["pushes"].append(dict(d["pushes"][0])), other),
+            ("push_carries_file_against_the_clone", "p18",
+             lambda d: [x.update(carries_file=False) for x in d["pushes"]], "the clone's commit says otherwise")):
+        expect(name, commit_pair(u, tag, activity(u, at), edit=edit), detail)
+    expect("push_list_not_an_object_B57", commit_pair(u, "p19", activity(u, at), list_raw=json.dumps(
+        sorted(V.PUSH_LIST_KEYS)).encode()), not_list)
+    expect("push_response_not_reaching_back_before_t_lo", commit_pair(u, "p20", activity(u, at, older=None)),
+           "does not reach back far enough")
+    expect("no_push_carries_the_unlock_B57", commit_pair(u, "p21", activity(u, at, after=u.w.E)),
+           "no push carries the unlock entry's commit")
+    hand = {"id": 4005, "ref": "refs/heads/master", "before": u.w.E, "after": u.H, "timestamp": at,
+            "activity_type": "push", "served": True, "carries_file": True, "remote_answer": "asserted (fixture)"}
+    expect("hand_made_push_of_the_unlock_not_in_the_response_B57", commit_pair(
+        u, "p22", activity(u, at, after=u.w.E), edit=lambda d: d["pushes"].append(hand)), other)
+    early = dict(activity(u, at)[0], id=4000, node_id="PA_fixture4000", timestamp="2026-11-03T12:00:00Z")
+    expect("unlock_pushed_before_its_own_day", commit_pair(u, "p23", activity(u, at) + [early]), "is not in [T_lo")
+    expect("unserved_push_the_clone_lacks_carries_nothing", commit_pair(
+        u, "p24", activity(u, at, after="f" * 40), served=False), "no push carries the unlock entry's commit")
+
+
 def case_coverage():
     want = [c for c in gate_codes("session") if c not in gate_codes("freeze")]
     missing = [c for c in want if c not in WANTED]
@@ -532,7 +651,7 @@ def main() -> int:
     try:
         return FX.run_cases("TMAN UNLOCK SMOKE (lane TMAN, B-1, C5)",
                             (case_unlock_world, case_cli, case_unlock_printer, case_unlock_gates, case_session,
-                             case_coverage))
+                             case_push_evidence, case_coverage))
     finally:
         if VW.REAL_TEACHER is not None:
             UW.w.M.TEACHER_OF_RECORD.clear()

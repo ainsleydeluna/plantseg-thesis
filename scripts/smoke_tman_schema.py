@@ -348,9 +348,9 @@ def ptq_reader_stub(doc: dict, *, sentinel: bool = True):
 def case_formats():
     from src.tman import schema as S
     check("formats_named", (S.MANIFEST_FORMAT, S.ENTRY_FORMAT, S.LANES_FORMAT, S.CATALOGUE_FORMAT,
-                            S.INVENTORY_FORMAT, S.BINDING_FORMAT, S.ISOLATION_FORMAT) ==
+                            S.INVENTORY_FORMAT, S.BINDING_FORMAT, S.ISOLATION_FORMAT, S.PUSH_LIST_FORMAT) ==
           ("tday_manifest/1", "tday_entry/1", "tday_lanes/1", "tday_catalogue/1", "tday-inventory/1", "tday_binding/1",
-           "tday_isolation/1"))
+           "tday_isolation/1", "tday_push_list/1"))
     check("binding_reserves_mde_entry_TB11_and_artifacts_A1",
           S.BINDING_RESERVED == {"references": ("mde_entry",), "artifacts": (
               "cell", "checkpoint_sha256", "files_sha256", "precision", "protocol", "repo_commit",

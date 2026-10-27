@@ -48,6 +48,7 @@ SESSION_SPEC = {"unlock_entry": S.REF, "clock_offset": S.REF, "started_utc": "ut
                 "host": ("obj", {"name": "str", "cpu_model": "str"}),            # the execution context's (DL-24 #37)
                 "values": ("map", "any"), "push_evidence": ("obj", {"response": S.REF, "list": S.REF})}
 SESSION_IDENTITY = ("unlock_entry", "clock_offset", "started_utc", "host", "push_evidence")
+PUSH_LIST_KEYS = ("format", "response", "unlock_entry", "adding_commit", "t_lo_utc", "remote", "pushes")   # TB11
 BINDING_REL = "reports/derived/tday_binding.json"
 
 
@@ -1396,28 +1397,84 @@ def g_clock_offset_invalid(x: Ctx):
         return "the clock-offset record is not the session host's, within 60 s, before any scoring record (AM-19a r21)"
 
 
-def g_push_evidence_invalid(x: Ctx):
-    """TB11 (the DL-109 pattern): the session's push evidence -- the remote's activity response and the list made
-    from it, committed -- shows a push carrying the unlock entry's commit before the session started."""
-    pe = x.doc["session"]["push_evidence"]
-    if x.unlock_rel is None or x.doc["session"]["unlock_entry"]["path"] != x.unlock_rel:
-        return "the session reads the unlock entry it names (--unlock-entry)"
+def push_evidence_error(records: R.Records, pe: dict, unlock_ref: dict, unlock_day: str,
+                        started_utc: str) -> str | None:
+    """TB11, the DL-109 pattern: AM-19a reading 10 as sweep_select.push_evidence reads it (DL-24 #57). The remote's
+    activity response, saved verbatim, and the tday_push_list/1 list made from it were added in one commit, once,
+    and are unchanged since. The list names that response, the unlock entry, the commit that added it, and T_lo,
+    the first instant of the unlock entry's day (a record: no clock is the record). The response reaches back
+    before T_lo. The list holds each push after T_lo (a branch deletion pushes nothing) as the response holds it,
+    and nothing else. The earliest push carrying the commit lies in [T_lo, the session's start). A push carries
+    the commit when its own commit is or descends from it: by the clone wherever the clone holds the pushed commit
+    (a served push's listed answer is checked there), by the listed answer for a served push the clone lacks. An
+    unserved push the clone lacks carries nothing here: the reading counts it toward the lambda push day, which it
+    can only move earlier, and here it would vouch for an unlock that no record shows on the remote."""
+    rr, lr = pe["response"]["path"], pe["list"]["path"]
+    data = {k: records.read(pe[k]["path"]) for k in ("response", "list")}
     for k in ("response", "list"):
-        if S.sha256_bytes(x.records.read(pe[k]["path"])) != pe[k]["sha256"]:
+        if S.sha256_bytes(data[k]) != pe[k]["sha256"]:
             return f"push evidence {k} is not the cited file"
-    lst, _ = x.records.json(pe["list"]["path"], True, code="push_evidence_invalid")
-    adds = x.records.adding_commits(x.unlock_rel)
-    started = D.parse_utc_any(x.doc["session"]["started_utc"])
-    src = x.records.src
+    err = records.written_once_error(rr) or records.written_once_error(lr)
+    if err is None and records.adding_commits(rr) != records.adding_commits(lr):
+        err = f"{rr} and {lr} were not added in one commit"
+    if err:
+        return f"{err}: the push evidence is settled once, its list committed with the response (AM-19a reading 10)"
+    src = records.src
+    commit = ss.adding_commit(src, unlock_ref["path"])
+    t_lo, started = D.day_start(unlock_day), D.parse_utc_any(started_utc)
+    try:
+        timed = ss._activity_times(ss.activity_entries(data["response"], rr), what=rr)
+    except ss.SelectionRefused as e:
+        return f"{e} (TB11)"
+    lst = R.strict_json(data["list"], lr, code="push_evidence_invalid")
+    if not (isinstance(lst, dict) and sorted(lst) == sorted(PUSH_LIST_KEYS) and lst["format"] == S.PUSH_LIST_FORMAT
+            and lst["response"] == pe["response"] and lst["unlock_entry"] == unlock_ref
+            and commit is not None and lst["adding_commit"] == commit and lst["t_lo_utc"] == ss.iso_utc(t_lo)
+            and isinstance(lst["remote"], str) and isinstance(lst["pushes"], list)
+            and all(ss._push_entry_ok(p) for p in lst["pushes"])):
+        return f"{lr}: not the {S.PUSH_LIST_FORMAT} list of this response, of the unlock entry and the commit that " \
+               f"added it, and of T_lo {ss.iso_utc(t_lo)}, the first instant of its day (AM-19a reading 10)"
+    if not any(t < t_lo for _, t in timed):
+        return f"{rr}: no entry is older than T_lo {ss.iso_utc(t_lo)}: the response does not reach back far enough " \
+               "(AM-19a reading 10)"
+    pushes = ss._activity_pushes(timed)
+    listed = {p["id"]: p for p in lst["pushes"]}
+    after_lo = [e for e, t in pushes if t >= t_lo]
+    for e in after_lo:
+        p = listed.get(e.get("id")) if ss._is_int(e.get("id")) else None
+        if p is None or any(p[k] != e.get(k) for k in ("ref", "before", "after", "timestamp", "activity_type")):
+            return f"{lr}: the push {e.get('id')!r} at {e.get('timestamp')} (after T_lo) is not listed as the " \
+                   "response holds it (AM-19a reading 10)"
+    if len(listed) != len(lst["pushes"]) or sorted(listed) != sorted(e["id"] for e in after_lo):
+        return f"{lr}: the list names pushes that are not the response's pushes after T_lo, each once"
+    hits = []
+    for e, t in pushes:
+        after = e.get("after")
+        held = isinstance(after, str) and ss._COMMIT_ID.fullmatch(after) is not None and src.commit_exists(after)
+        carries = held and src.is_ancestor(commit, after)
+        if t >= t_lo and listed[e["id"]]["served"]:
+            if held and carries != listed[e["id"]]["carries_file"]:
+                return f"{lr}: push {e['id']!r} ({after[:12]}): the list says carries_file=" \
+                       f"{listed[e['id']]['carries_file']}, and the clone's commit says otherwise"
+            carries = listed[e["id"]]["carries_file"]
+        if carries:
+            hits.append(t)
+    if not hits:
+        return f"{rr}: no push carries the unlock entry's commit {commit[:12]} (TB11)"
+    if not t_lo <= min(hits) < started:
+        return f"{rr}: the earliest push carrying the unlock entry, at {ss.iso_utc(min(hits))}, is not in [T_lo " \
+               f"{ss.iso_utc(t_lo)}, the session's start {started_utc}) (TB11)"
+    return None
 
-    def carries(p) -> bool:
-        try:
-            return bool(adds) and src.commit_exists(p.get("after")) and src.is_ancestor(adds[-1], p["after"]) \
-                and D.parse_utc_any(p.get("timestamp")) < started
-        except (TypeError, ValueError, AttributeError):
-            return False
-    if not any(carries(p) for p in (lst.get("pushes") or []) if isinstance(p, dict)):
-        return "no listed push carries the unlock entry before the session started (TB11)"
+
+def g_push_evidence_invalid(x: Ctx):
+    """TB11 (the DL-109 pattern): the session's push evidence shows the unlock entry's commit on the remote before
+    the session started (push_evidence_error)."""
+    s = x.doc["session"]
+    if x.unlock_rel is None or s["unlock_entry"]["path"] != x.unlock_rel:
+        return "the session reads the unlock entry it names (--unlock-entry)"
+    return push_evidence_error(x.records, s["push_evidence"], s["unlock_entry"], _unlock_doc(x)["date"],
+                               s["started_utc"])
 
 
 # ======================================================================================== the gate order
