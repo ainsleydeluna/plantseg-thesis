@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Lane L-FQOFF: the mutation smoke of AM-4's fake-quant-off path (precision qat_fakequant_off). The FQ mutations
-(phase 1: FQ1-FQ7, FQ9, FQ10, FQ12 and FQ15) and the refusal table of the fqoff codes (phase 1: FQR12's 6-22, in
-src/eval/stage_artifacts.py and src/eval/model_loading.py), each killed by a named check of
-scripts/smoke_eval_qat_fakequant_off.py.
+(phase 1: FQ1-FQ7, FQ9, FQ10, FQ12 and FQ15; phase 2: FQ8, FQ11, FQ14a and FQ14b) and the refusal table of the fqoff
+codes (FQR12's 1-22: phase 2's 1-5 in scripts/evaluate_model.py, phase 1's 6-22 in src/eval/stage_artifacts.py and
+src/eval/model_loading.py), each killed by a named check of scripts/smoke_eval_qat_fakequant_off.py. FQ13 has no row:
+LEFF B-1b sets --threads right after validate_cli_args, before any precision branch, so this precision's path never
+applies it itself (the GO's rule for FQ13 and FQ14); the smoke's run_threads_recorded shows it holds.
 
 Q2's harness, scripts/smoke_qat_mutations.py, runs it unchanged, as scripts/smoke_e6kd_mutations.py has it run:
 - its self-check (ruling Q2-F/2's job handling, measured, with harness processes of its own);
@@ -97,13 +99,30 @@ MUTATIONS = [
     M("FQ15", "the loader's re-hash of the eNN.pt's bytes before it loads them removed", ML,
       '    if digest != fqoff["checkpoint_sha256"]:\n', "    if False:\n",
       case("load_file_changed_after_validation"), "load_file_changed_after_validation"),
+    # ---- phase 2: scripts/evaluate_model.py
+    M("FQ8", "a quantization backend recorded for this precision", EM,
+      '        ckpt_sha = fqoff["checkpoint_sha256"]\n',
+      '        ckpt_sha = fqoff["checkpoint_sha256"]\n        quant_backend = "x86"\n',
+      case("summary_precision_and_backend"), "summary_precision_and_backend"),
+    M("FQ11", "the load dispatch's branch of this precision removed: the eNN.pt reaches load_student_checkpoint", EM,
+      '    elif args.precision == "qat_fakequant_off":\n'
+      "        from src.eval.model_loading import load_qat_fakequant_off_student\n"
+      "        model = load_qat_fakequant_off_student(fqoff)        # lane L-FQOFF (FQR9, FQR11): ck_info stays None\n",
+      "", case("run_loads_through_fqoff_loader"), "run_loads_through_fqoff_loader"),
+    M("FQ14a", "LEFF B-1b's identity flag skipped at P1 for this precision: its handed-file case names the run dir",
+      EM, "        return Path(args.checkpoint)\n", "        return Path(args.qat_run_dir)\n",
+      case("run_h_mismatch_refused_before_parse"), "run_h_mismatch_refused_before_parse"),
+    M("FQ14b", "LEFF B-1b's identity flag skipped at P2 for this precision: the carrier's sha256 never compared",
+      EM, '            after = fqoff["checkpoint_sha256"]\n', "            after = expected\n",
+      case("run_h_changed_during_validation"), "run_h_changed_during_validation"),
 ]
 
 # ------------------------------------------------------------------ the refusal table and its finder (FQR12)
-# file -> the raise form of its fqoff refusals, and the functions that hold them (evaluate_model.py's from phase 2;
-# artifacts.py's rule has no code of its own, FQR3)
+# file -> the raise form of its fqoff refusals, and the functions that hold them, in FQR12's order of their codes
+# (artifacts.py's rule has no code of its own, FQR3)
 FORMS = {SAF: "_fail", ML: "_fqoff_refuse", EM: "_fqoff_cli"}
-SCOPE = {SAF: {"validate_qat_fakequant_off_source"}, ML: {"load_qat_fakequant_off_student"}, EM: set(), ART: set()}
+SCOPE = {EM: {"validate_qat_fakequant_off_cli"}, SAF: {"validate_qat_fakequant_off_source"},
+         ML: {"load_qat_fakequant_off_student"}, ART: set()}
 
 
 def fqoff_refusal_sites(text: str, rel: str) -> list[dict]:
@@ -155,10 +174,25 @@ def L(code: str, *checks: str, k: int = 0) -> tuple:
     return K(ML, "load_qat_fakequant_off_student", code, *checks, k=k)
 
 
+def C(code: str, *checks: str, k: int = 0) -> tuple:
+    """A site of scripts/evaluate_model.py's validate_qat_fakequant_off_cli (codes 1-5)."""
+    return K(EM, "validate_qat_fakequant_off_cli", code, *checks, k=k)
+
+
 FINALIZE_CASES = ("c14_finalize_unreadable", "c14_finalize_format", "c14_finalize_status",
                   "c14_finalize_selection_sha256", "c14_finalize_checkpoint", "c14_finalize_run_id",
                   "c14_finalize_telemetry", "c14_finalize_stage")
 KILLS = dict([
+    C("fqoff_stage_not_in_scope", "c01_stage_not_in_scope"),
+    C("fqoff_stage_not_in_scope", "c01_role_not_student", k=1),
+    C("fqoff_provenance_forbidden", "c02_provenance_forbidden"),
+    C("fqoff_source_flags", "c03_checkpoint_missing"),
+    C("fqoff_source_flags", "c03_binding_flag_missing", k=1),
+    C("fqoff_source_flags", "c03_random_init", k=2),
+    C("fqoff_source_flags", "c03_sha256_malformed", k=3),
+    C("fqoff_not_cpu", "c04_not_cpu"),
+    C("fqoff_protocol", "c05_protocol_upstream"),
+    C("fqoff_source_flags", "c03_qat_flag_off_precision", k=4),
     V("fqoff_forbidden_path", "c06_forbidden_checkpoint", "c06_forbidden_run_dir", "c06_forbidden_selection"),
     V("fqoff_selection_sha256_mismatch", "c07_selection_absent", "c07_selection_pin_differs"),
     V("fqoff_selection_not_of_record", "c08_selection_not_named_of_record"),
@@ -226,8 +260,8 @@ def main() -> int:
             shutil.rmtree(root, ignore_errors=True)
         raise
     print("=" * 78)
-    print("L-FQOFF MUTATION SMOKE (phase 1) -- the FQ mutations and the fqoff refusal table, each killed by a named "
-          "check")
+    print("L-FQOFF MUTATION SMOKE (phases 1 and 2) -- the FQ mutations and the fqoff refusal table, each killed by a "
+          "named check")
     print(f"{len(jobs)} edits | {len(SHADOW_PATHS)} shadow files x {len(shadows)} at {head} | temp {root}")
     print("=" * 78)
     H.run_jobs(jobs, shadows, root / "cache")
