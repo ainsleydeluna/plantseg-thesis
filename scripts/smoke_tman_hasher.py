@@ -519,13 +519,15 @@ def case_step6_outputs():
     inside = w.repo / "reports"
     rc, txt = run(w.argv(out=str(inside)))
     check("step6_out_inside_the_repository_refused", refused(rc, txt, "output_location")
-          and not (inside / D.HASH_LIST_NAME).exists() and not (inside / D.DEDUP_NAME).exists(), txt[-200:])
+          and "inside the repository" in txt and not (inside / D.HASH_LIST_NAME).exists()
+          and not (inside / D.DEDUP_NAME).exists(), txt[-200:])
     here = REPO / "nonexistent_tman_hout"
     rc, txt = run(w.argv(out=str(here)))
     check("step6_out_inside_this_checkout_refused", refused(rc, txt, "output_location")
-          and not os.path.lexists(here), txt[-200:])
+          and "inside the repository" in txt and not os.path.lexists(here), txt[-200:])
     rc, txt = run(w.argv(out=str(w.lists / "absent_out")))
-    check("step6_out_not_an_existing_folder_refused", refused(rc, txt, "output_location"), txt[-200:])
+    check("step6_out_not_an_existing_folder_refused", refused(rc, txt, "output_location")
+          and "not an existing folder" in txt, txt[-200:])
     rc, txt = run(w.argv())
     first = {p.name: p.read_bytes() for p in w.out.iterdir()}
     rc2, txt2 = run(w.argv())

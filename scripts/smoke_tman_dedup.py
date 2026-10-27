@@ -206,20 +206,22 @@ def case_list_parser():
     got = outcome(D.parse_train_val_list, garbage, sha256=sha(tvb), rows=6, train=3, val=3)
     check("list_wrong_sha256_refused_before_parsing", got[0] == "refused" and got[1] == "train_val_list_mismatch"
           and "not parsed" in got[2], str(got))
-    for name, data, kw in (
-            ("list_not_utf8_refused", garbage, {}),
-            ("list_without_final_lf_refused", tv_bytes(TRAIN, VAL, tail=""), {}),
-            ("list_wrong_header_refused", tv_bytes(TRAIN, VAL, header=HSF_HEADER.replace("sha1", "sha_1")), {}),
-            ("list_row_count_refused", tvb, {"rows": 7}),
-            ("list_split_counts_refused", tvb, {"train": 4, "val": 2}),
-            ("list_row_of_five_fields_refused", tvb.replace(b"\tva_c.jpg", b""), {}),
+    for name, data, kw, want in (
+            ("list_not_utf8_refused", garbage, {}, "not UTF-8"),
+            ("list_without_final_lf_refused", tv_bytes(TRAIN, VAL, tail=""), {}, "does not end with LF"),
+            ("list_wrong_header_refused", tv_bytes(TRAIN, VAL, header=HSF_HEADER.replace("sha1", "sha_1")), {},
+             "header"),
+            ("list_row_count_refused", tvb, {"rows": 7}, "data rows after the header"),
+            ("list_split_counts_refused", tvb, {"train": 4, "val": 2}, "split counts"),
+            ("list_row_of_five_fields_refused", tvb.replace(b"\tva_c.jpg", b""), {}, "line 7 is not a"),
             ("list_row_with_an_upper_case_sha256_refused", tvb.replace(sha(b"V2").encode(),
-                                                                        sha(b"V2").upper().encode()), {}),
-            ("list_row_of_another_split_refused", tvb.replace(b"val\tva_c", b"eval\tva_c"), {})):
+                                                                        sha(b"V2").upper().encode()), {},
+             "line 7 is not a"),
+            ("list_row_of_another_split_refused", tvb.replace(b"val\tva_c", b"eval\tva_c"), {}, "line 7 is not a")):
         args = {"rows": 6, "train": 3, "val": 3}
         args.update(kw)
         got = outcome(D.parse_train_val_list, data, sha256=sha(data), **args)
-        check(name, got[0] == "refused" and got[1] == "train_val_list_invalid", str(got))
+        check(name, got[0] == "refused" and got[1] == "train_val_list_invalid" and want in got[2], str(got))
     hsf = REPO / "scripts/hash_split_files.py"
     tree = ast.parse(hsf.read_text(encoding="utf-8"))
     lines = [n.lineno for n in ast.walk(tree) if isinstance(n, ast.Constant) and n.value == HSF_HEADER + "\n"]

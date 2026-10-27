@@ -8,8 +8,8 @@ scripts/tday_manifest.py.
                                   embeds it before the freeze (manifest.py :861; part 2 wires hasher_pin in).
   hash                            the session's run, after the unlock record, in Ice's block outside Claude Code
                                   (TB19 Q5). Each step passes before the next starts:
-    1. paths: --repo, --unlock-entry, --root, --train-val-list and --out go through B-1's path guard (schema.py :248)
-       as given and then resolved: a refused string gets no call.
+    1. paths: --repo, --root, --train-val-list and --out go through B-1's path guard (schema.py :248) as given and
+       then resolved, and --unlock-entry as given and then resolved under --repo: a refused string gets no call.
     2. records, at HEAD of --repo through B-1's readers: the unlock entry at --unlock-entry (a repository path;
        nothing is listed) is committed, written once, of kind unlock, its sha256 in a RECORDED or IMPLEMENTED row
        (entries.read_entry_file, :753); the manifest it names is the committed one, by its file, body and appends
@@ -126,8 +126,9 @@ def pin_errors(pin) -> list[str]:
 
 # ------------------------------------------------------------------------------------------ steps 1 and 2
 def check_paths(args) -> None:
-    """Step 1: every path argument through B-1's guard (schema.py :248), as given and then resolved; the unlock
-    entry resolved under --repo."""
+    """Step 1: --repo, --root, --train-val-list and --out through B-1's guard (schema.py :248), as given and then
+    resolved; --unlock-entry, a repository path, resolved under --repo, where it is read. (B-1's reader resolves it
+    against the working folder first, entries.py :757, and under the records' root only after, records.py :212.)"""
     for p in (args.repo, args.root, args.train_val_list, args.out):
         S.refuse_test_path(p)
     S.refuse_test_path(args.unlock_entry, args.repo)
