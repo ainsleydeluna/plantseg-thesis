@@ -5,11 +5,13 @@ repository outside it, must make its named check of scripts/smoke_efficiency_rec
 The shadow holds SHADOW_PATHS only: every file under the repository that the smoke and its child processes open,
 recorded once with an audit hook on `open`. They are copied by explicit path (nothing is listed), and none names
 "test"; a file missing from the list fails the control run, never a mutation. The smoke runs in the shadow with its
-`--only` filter, so its child processes import the mutated copy too. Per mutation:
+`--only` filter, so its child processes import the mutated copy too, and its TMPDIR inside the runner's temporary
+tree, so every root a shadow smoke creates is walked at the end. Per mutation:
   <id>_anchor   each FIND occurs exactly once in its file (the edit goes into the shadow's copy only)
-  <id>_killed   each named check FAILS (or never reports PASS) in the mutated shadow
-and once: control_checks_pass (every named check passes in an unmutated shadow), repo_state_unchanged and
-no_forbidden_named_path_created over the runner's temporary tree.
+  <id>_killed   each named check reports FAIL in the mutated shadow (a check that never reports is not killed)
+and once: control_checks_pass (every named check passes in an unmutated shadow), shadow_roots_walked (the shadow
+smokes' temporary roots lie inside the walked tree), repo_state_unchanged and no_forbidden_named_path_created over the
+runner's temporary tree.
 
     python -B scripts/smoke_efficiency_record_mutations.py [--only M01,M02]
 
@@ -77,8 +79,8 @@ MUTATIONS = [
     ("M01", EFF, [('STAGES = ("teacher", "E1", "E2", "E3", "A", "F", "G", "E4", "E5", "E6", "E7")',
                    'STAGES = ("teacher", "E1", "E2", "E3", "E4", "E5", "E6", "E7")')],
      ("stages_include_arms",), "A, F and G dropped from STAGES"),
-    ("M02", PE, [("        if teacher_sha is None:\n", "        if False:\n")],
-     ("teacher_sha_required",), "a missing teacher sha256 accepted"),
+    ("M02", PE, [("        if teacher_sha is None:\n", "        if teacher_sha is None:\n            return\n        if False:\n")],
+     ("teacher_sha_required",), "a missing teacher sha256 accepted (the run goes on to write its record)"),
     ("M03", PE, [("                                         expected_sha256=args.teacher_ckpt_sha256)",
                   "                                         expected_sha256=None)")],
      ("teacher_hash_before_parse",), "the resolver handed no expected sha256: the file parsed before any compare"),
@@ -165,6 +167,12 @@ MUTATIONS = [
     ("M33", PE, [('    if not rec.get("path") or not rec.get("sha256"):\n        raise EfficiencyError("state_dict_companion_'
                   'mismatch",\n', '    if False:\n        raise EfficiencyError("state_dict_companion_mismatch",\n')],
      ("state_dict_companion_mismatch",), "a run provenance recording no companion not refused"),
+    ("M31", EFF, [('PROC_CLEAR_REFS = "/proc/self/clear_refs"', 'PROC_CLEAR_REFS = "/proc/self/clear_ref"')],
+     ("memory_sees_forward_allocation", "hwm_reset_effective"),
+     "the code's clear_refs path wrong: refused 'is absent' where the smoke's probe writes clear_refs"),
+    ("M32", PE, [("        reported, source = from_artifact, FOOTPRINT_SOURCE_ARTIFACT",
+                  "        reported, source = from_companion, FOOTPRINT_SOURCE_ARTIFACT")],
+     ("int8_footprint_from_artifact_equals_companion",), "the companion's count reported under the artifact's label"),
 ]
 
 RESULTS: list[tuple[str, bool, str]] = []
@@ -188,6 +196,7 @@ def make_shadow(tag: str) -> Path:
 def run_smoke(root: Path, checks) -> tuple[dict, str]:
     env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
     env["PYTHONDONTWRITEBYTECODE"] = "1"
+    env["TMPDIR"] = str(TMP / "smoke_tmp")     # the shadow smoke's safe_tmpdir roots, walked by the last check
     p = subprocess.run([sys.executable, "-B", str(root / SMOKE), "--only", ",".join(checks)], cwd=str(root),
                        env=env, capture_output=True, text=True, timeout=3600)
     verdicts = {}
@@ -206,6 +215,7 @@ def main(argv=None) -> int:
     chosen = [m for m in MUTATIONS if args.only is None or m[0] in args.only.split(",")]
     before = repo_state(REPO)
     TMP = safe_tmpdir("leff_b1_mut_")
+    (TMP / "smoke_tmp").mkdir()
     print("=" * 78)
     print(f"LEFF B-1 mutation runner: {len(chosen)} mutations of {len(MUTATIONS)}; shadow {len(SHADOW_PATHS)} files")
     print(f"temp {TMP}")
@@ -233,9 +243,12 @@ def main(argv=None) -> int:
         target.write_text(text, encoding="utf-8")
         verdicts, tail = run_smoke(root, checks)
         got = {c: verdicts.get(c, "absent") for c in checks}
-        ok = all(v != "PASS" for v in got.values())
+        ok = all(v == "FAIL" for v in got.values())
         killed += ok
         check(f"{mid}_killed", ok, f"{what}: {got}" + ("" if ok else f" -- {tail}"))
+    roots = [n for n in os.listdir(TMP / "smoke_tmp") if n.startswith("leff_b1_")]
+    check("shadow_roots_walked", len(roots) == len(chosen) + 1,
+          f"{len(roots)} shadow smoke roots under {TMP / 'smoke_tmp'} ({len(chosen) + 1} runs)")
     check("repo_state_unchanged", state_verdict(before, repo_state(REPO)) == "unchanged",
           state_verdict(before, repo_state(REPO)))
     bad_names = [os.path.join(r, n) for r, ds, fs in os.walk(TMP) for n in ds + fs

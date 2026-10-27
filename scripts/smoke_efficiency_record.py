@@ -606,7 +606,8 @@ def _footprint():
                                             stage="E4", method="ptq")
     independent = EFF.weight_footprint(eager)
     keys = ("int8_weight_elements", "fp32_weight_elements", "metadata_elements")
-    ok = (fp["footprint_source"] == "artifact" and fp["artifact_count"]["packed_params_unreadable"] == []
+    ok = (fp["footprint_source"] == "artifact" and fp["counted_from"] == "artifact_packed_params"
+          and fp["artifact_count"]["packed_params_unreadable"] == []
           and fp["artifact_count"]["packed_params_unpacked"] > 0 and fp["int8_weight_elements"] > 0
           and all(fp["artifact_count"][k] == fp["companion_count"][k] == independent[k] == fp[k] for k in keys))
     return ok, (f"source {fp['footprint_source']}; INT8 {fp['int8_weight_elements']}, FP32 "
@@ -701,7 +702,18 @@ def _companion_before_parse():
 
 # ---------------------------------------------------------------- 5. peak memory (LF28; §3; A6)
 CHILD_TAG = "CHILD_JSON:"
-ENV_CAUSES = ("is absent", "is not writable")    # LF28: environment-caused only when clear_refs cannot be written
+# LF28: a refusal is environment-caused only when clear_refs cannot be written. The smoke probes the kernel's file
+# itself, by its own literal path: a fault in the code's clear_refs handling must fail, never pass as the environment.
+CLEAR_REFS = "/proc/self/clear_refs"
+
+
+def clear_refs_unavailable() -> str | None:
+    """Why this host's clear_refs cannot be written ("is absent", "is not writable"), by the smoke's own probe."""
+    if not os.path.lexists(CLEAR_REFS):
+        return "is absent"
+    if not os.access(CLEAR_REFS, os.W_OK):
+        return "is not writable"
+    return None
 
 
 def child_forward() -> dict:
@@ -760,9 +772,12 @@ def run_child(name: str, *argv) -> dict:
 
 
 def environment_caused(res: dict) -> str | None:
-    if res.get("refused") == "memory_hwm_reset_unavailable" and any(c in res.get("message", "") for c in ENV_CAUSES):
-        return (f"ENVIRONMENT-CAUSED [memory_hwm_reset_unavailable] {res['message'][:160]} (LB-0 proves it in the "
-                "KD image)")
+    """The environment-caused reading of a refused measurement: only [memory_hwm_reset_unavailable] for the cause the
+    smoke's own probe finds. Where the smoke can write clear_refs, every memory check measures."""
+    cause = clear_refs_unavailable()
+    if cause and res.get("refused") == "memory_hwm_reset_unavailable" and cause in res.get("message", ""):
+        return (f"ENVIRONMENT-CAUSED [memory_hwm_reset_unavailable] {res['message'][:160]} (the smoke's probe: "
+                f"{CLEAR_REFS} {cause}; LB-0 proves it in the KD image)")
     return None
 
 
