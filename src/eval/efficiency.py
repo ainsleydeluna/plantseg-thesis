@@ -33,8 +33,10 @@ from __future__ import annotations
 import gc
 import hashlib
 import io
+import json
 import os
 import platform
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -58,6 +60,11 @@ WARMUP_FORWARDS = 20
 MEASURED_FORWARDS = 100
 PERCENTILE_METHOD = "linear"          # numpy method='linear'; stated so the reducer is unambiguous
 FVCORE_PINNED = "0.1.5.post20221221"  # IMPLEMENTATION_CONTRACT pinned-stack table
+# The thread count of record: LEFF-AUDIT-RULE-1 Q1; its DL row is proposed in docs/lane_reports/leff.md. Fixed from
+# hardware facts, never from a timing (the LEFF Phase A plan §1): one intra-op and one inter-op thread on every host.
+THREADS_OF_RECORD = 1
+INTEROP_THREADS_OF_RECORD = 1
+TIMER = "torch.utils.benchmark.Timer.timeit(1)"
 
 # ---- byte accounting (contract line 406-407) -------------------------------------------------
 INT8_WEIGHT_BYTES = 1
@@ -444,20 +451,47 @@ def latency_statistics(samples_seconds, *, expected: int | None = MEASURED_FORWA
     }
 
 
-def _benchmark_sampler(model, inputs, measured: int):
-    """Default sampler: `torch.utils.benchmark`, one observation per measured forward."""
+def _thread_probe(store: list) -> None:
+    """The Timer's `setup`: the intra-op thread count in effect, recorded outside every timed region (A15)."""
+    store.append(torch.get_num_threads())
+
+
+def timer_untimed_executions(num_threads: int) -> int:
+    """How many untimed executions Timer.timeit(1) runs before its timed one, counted on this torch build (A23):
+    a counting statement, never the model's, so no timed region is touched."""
+    import torch.utils.benchmark as benchmark
+
+    count = [0]
+    benchmark.Timer(stmt="count[0] += 1", globals={"count": count}, num_threads=num_threads).timeit(1)
+    return count[0] - 1
+
+
+def _benchmark_sampler(model, inputs, measured: int, *, num_threads: int, probe: list):
+    """Default sampler: `torch.utils.benchmark`, one observation per measured forward.
+
+    The Timer runs at `num_threads` (its default is 1 whatever the process uses, F2); the probe runs in its `setup`,
+    outside the timed region, once per timing pass (Timer.timeit(1) makes two: its warm-up pass and the timed one),
+    so every observation records the count it ran at (A15).
+    """
     import torch.utils.benchmark as benchmark
 
     timer = benchmark.Timer(
         stmt="with torch.inference_mode():\n    model(x)",
-        globals={"model": model, "x": inputs, "torch": torch})
+        setup="thread_probe(probe)",
+        globals={"model": model, "x": inputs, "torch": torch, "thread_probe": _thread_probe, "probe": probe},
+        num_threads=num_threads)
     return [timer.timeit(1).median for _ in range(measured)]
 
 
 def measure_latency(model, *, input_shape=INPUT_SHAPE, warmup: int = WARMUP_FORWARDS,
                     measured: int = MEASURED_FORWARDS, sampler=None,
                     thread_count: int | None = None) -> dict:
-    """CPU-proxy latency under the registered protocol. Never a device/ARM claim."""
+    """CPU-proxy latency under the registered protocol. Never a device/ARM claim.
+
+    The Timer runs at `thread_count` when it is given, else at torch.get_num_threads() at the call, never at the
+    Timer's default of 1 (F2). `intra_op_observed` is what the probe saw; the run of record refuses any value other
+    than the thread count of record (scripts/profile_efficiency.py, [timed_threads_mismatch]).
+    """
     if warmup != WARMUP_FORWARDS or measured != MEASURED_FORWARDS:
         _fail("latency_protocol_violation",
               f"the registered protocol is {WARMUP_FORWARDS} warm-up + {MEASURED_FORWARDS} "
@@ -467,6 +501,7 @@ def measure_latency(model, *, input_shape=INPUT_SHAPE, warmup: int = WARMUP_FORW
 
     if thread_count is not None:
         torch.set_num_threads(int(thread_count))
+    num_threads = torch.get_num_threads()
 
     model.eval()                       # required by the protocol; AMP is never enabled here
     inputs = torch.zeros(*input_shape)
@@ -475,18 +510,29 @@ def measure_latency(model, *, input_shape=INPUT_SHAPE, warmup: int = WARMUP_FORW
         for _ in range(warmup):
             model(inputs)
 
-    samples = (sampler or _benchmark_sampler)(model, inputs, measured)
+    probe: list = []
+    if sampler is None:
+        untimed = timer_untimed_executions(num_threads)
+        samples = _benchmark_sampler(model, inputs, measured, num_threads=num_threads, probe=probe)
+    else:
+        untimed, samples = None, sampler(model, inputs, measured)
     stats = latency_statistics(samples, expected=measured)
+    seen = sorted(set(probe))
     stats.update({
         "warmup_forwards": warmup,
         "batch_size": input_shape[0],
         "input_shape": list(input_shape),
-        "thread_count": torch.get_num_threads(),
+        "thread_count": num_threads,
         "interop_thread_count": torch.get_num_interop_threads(),
         "timer": "torch.utils.benchmark" if sampler is None else "injected",
         "amp": False,
         "inference_mode": True,
         "eval_mode": not model.training,
+        "intra_op_observed": (seen[0] if len(seen) == 1 else seen) if seen else None,
+        "thread_probe": {"values": seen, "probes": len(probe), "where": "Timer setup, untimed"},
+        "protocol": {"warmup": warmup, "measured": measured, "untimed_executions_per_observation": untimed,
+                     "forwards_executed": (warmup + measured * (1 + untimed)) if untimed is not None else None,
+                     "timer": TIMER if sampler is None else "injected", "num_threads": num_threads},
     })
     return stats
 
@@ -693,6 +739,161 @@ def measure_peak_memory(model, *, input_shape=INPUT_SHAPE, forwards: int = MEMOR
         "reset": reset,
     })
     return out
+
+
+# ------------------------------------------------------------------ the host and the threads (§1; LF30, LF31)
+X86_MACHINES = ("x86_64", "amd64")
+X86_VENDORS = ("GenuineIntel", "AuthenticAMD")
+HOST_ISA_FLAGS = ("sse4_2", "avx", "avx2", "fma", "f16c", "avx_vnni")
+HOST_ISA_PREFIXES = ("avx512", "amx")
+THREAD_ENV_PREFIXES = ("OMP_", "MKL_", "OPENBLAS_", "KMP_", "GOMP_")
+THREAD_COUNT_ENV = ("OMP_NUM_THREADS", "MKL_NUM_THREADS")
+# The host TYPE (LF31): two pods of one type, in two sittings, share it (A2). Hostname, kernel, MemTotal and the
+# physical topology are recorded, never fingerprinted.
+HOST_TYPE_KEYS = ("machine", "vendor", "model_name", "isa_flags", "threads_per_core", "usable_cpus")
+
+
+def _read_text(path) -> str | None:
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            return fh.read()
+    except OSError:
+        return None
+
+
+def _cpu_list(text: str | None) -> list:
+    """The sysfs list format: "0-3,6" is [0, 1, 2, 3, 6]."""
+    cpus = []
+    for part in (text or "").strip().split(","):
+        if part:
+            low, _, high = part.partition("-")
+            cpus.extend(range(int(low), int(high or low) + 1))
+    return cpus
+
+
+def cgroup_cpu_quota(sys_root="/sys") -> float | None:
+    """The cgroup CPU quota in CPUs (v2 cpu.max, else v1 cfs_quota_us / cfs_period_us); None when unlimited or
+    unreadable."""
+    try:
+        v2 = _read_text(f"{sys_root}/fs/cgroup/cpu.max")
+        if v2 is not None:
+            parts = v2.split()
+            if parts[0] == "max":
+                return None
+            return int(parts[0]) / int(parts[1] if len(parts) > 1 else 100000)
+        q = _read_text(f"{sys_root}/fs/cgroup/cpu/cpu.cfs_quota_us")
+        p = _read_text(f"{sys_root}/fs/cgroup/cpu/cpu.cfs_period_us")
+        if q is None or p is None or int(q) <= 0:
+            return None
+        return int(q) / int(p)
+    except (ValueError, IndexError, ZeroDivisionError):
+        return None
+
+
+def host_facts(*, proc="/proc", sys_root="/sys", etc="/etc", root="/") -> dict:
+    """The host of the measurement (LF31), read from /proc and sysfs in the measuring process (no lscpu): machine,
+    vendor, model name, the ISA flags subset, the hypervisor flag, logical CPUs, physical cores (distinct package and
+    core pairs), threads per core, the affinity count, the cgroup quota, usable CPUs (the affinity count, or the
+    quota in whole CPUs when it is set and smaller), MemTotal, kernel, os-release, /.dockerenv, the scaling governor,
+    the OMP/MKL/OPENBLAS/KMP/GOMP variables and torch's parallel_info(); then host_type_fingerprint."""
+    first = {}
+    for line in (_read_text(f"{proc}/cpuinfo") or "").split("\n\n")[0].splitlines():
+        key, _, value = line.partition(":")
+        first.setdefault(key.strip(), value.strip())
+    flags = set(first.get("flags", "").split())
+    online = _cpu_list(_read_text(f"{sys_root}/devices/system/cpu/online"))
+    pairs = set()
+    for cpu in online:
+        topo = f"{sys_root}/devices/system/cpu/cpu{cpu}/topology"
+        package, core = _read_text(f"{topo}/physical_package_id"), _read_text(f"{topo}/core_id")
+        if package is not None and core is not None:
+            pairs.add((package.strip(), core.strip()))
+    logical = len(online) or os.cpu_count()
+    physical = len(pairs) or None
+    affinity = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else logical
+    quota = cgroup_cpu_quota(sys_root)
+    mem = re.search(r"^MemTotal:\s+(\d+) kB", _read_text(f"{proc}/meminfo") or "", re.M)
+    release = re.search(r'^PRETTY_NAME="?([^"\n]*)"?', _read_text(f"{etc}/os-release") or "", re.M)
+    governor = _read_text(f"{sys_root}/devices/system/cpu/cpu0/cpufreq/scaling_governor")
+    facts = {
+        "machine": platform.machine(),
+        "vendor": first.get("vendor_id"),
+        "model_name": first.get("model name"),
+        "isa_flags": sorted(f for f in flags if f in HOST_ISA_FLAGS or f.startswith(HOST_ISA_PREFIXES)),
+        "hypervisor": "hypervisor" in flags,
+        "logical_cpus": logical,
+        "physical_cores": physical,
+        "threads_per_core": (logical // physical) if physical else None,
+        "affinity_cpus": affinity,
+        "cgroup_cpu_quota": quota,
+        "usable_cpus": affinity if quota is None or quota >= affinity else int(quota),
+        "mem_total_bytes": int(mem.group(1)) * 1024 if mem else None,
+        "kernel": platform.release(),
+        "os_release": release.group(1) if release else None,
+        "dockerenv": os.path.exists(os.path.join(root, ".dockerenv")),
+        "scaling_governor": governor.strip() if governor else None,
+        "thread_env": {k: v for k, v in sorted(os.environ.items()) if k.startswith(THREAD_ENV_PREFIXES)},
+        "parallel_info": torch.__config__.parallel_info(),
+        "hostname": platform.node(),
+    }
+    facts["host_type_fingerprint"] = host_type_fingerprint(facts)
+    return facts
+
+
+def host_type_fingerprint(facts: dict) -> str:
+    """sha256 of the canonical JSON (sorted keys, compact) of the host TYPE: HOST_TYPE_KEYS, the ISA subset sorted."""
+    doc = {k: facts.get(k) for k in HOST_TYPE_KEYS}
+    doc["isa_flags"] = sorted(doc["isa_flags"] or [])
+    raw = json.dumps(doc, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def host_thread_error(facts: dict, threads: int, env=None) -> tuple[str, str] | None:
+    """The run of record's host and thread gates (§1), in this order; None when every one passes. Pure over `facts`
+    and `env`, so the guards that cannot fire at T = 1 are proven by injection (A14)."""
+    env = os.environ if env is None else env
+    for name in THREAD_COUNT_ENV:
+        value = env.get(name)
+        if value not in (None, "") and value.strip() != str(threads):
+            return ("thread_env_conflict", f"{name}={value!r} while the thread count of record is {threads}; unset "
+                                           f"it or set it to {threads}")
+    if facts["affinity_cpus"] < threads:
+        return ("affinity_below_threads", f"this process may run on {facts['affinity_cpus']} CPUs "
+                                          f"(sched_getaffinity), fewer than its {threads} threads")
+    if facts["cgroup_cpu_quota"] is not None and facts["cgroup_cpu_quota"] < threads:
+        return ("cpu_quota_below_threads", f"the cgroup CPU quota is {facts['cgroup_cpu_quota']} CPUs, fewer than "
+                                           f"{threads} threads")
+    if facts["physical_cores"] is not None and facts["physical_cores"] < threads:
+        return ("host_below_threads", f"the host has {facts['physical_cores']} physical cores (sysfs topology), "
+                                      f"fewer than {threads} threads")
+    if str(facts["machine"]).lower() not in X86_MACHINES or facts["vendor"] not in X86_VENDORS:
+        return ("host_not_x86", f"machine {facts['machine']!r}, vendor {facts['vendor']!r}: the latency of record "
+                                f"is an x86 CPU proxy ({list(X86_VENDORS)})")
+    return None
+
+
+_INTEROP_CALLS: list = []      # this process's one torch.set_num_interop_threads call, as it went
+
+
+def set_interop_threads(n: int = INTEROP_THREADS_OF_RECORD) -> dict:
+    """torch.set_num_interop_threads(n), once per process, first in main() (LF30).
+
+    torch takes the call once. On torch 2.1.0 a second call, or a call once inter-op work has started, does not raise:
+    its c10::Error ends the process with SIGABRT (MEASURED; scripts/smoke_latency_threads.py
+    torch_second_interop_call_aborts), where the plan inferred a RuntimeError. So torch is called at most once here: a
+    later call in the same process never reaches torch and is recorded "already called in this process", and a
+    RuntimeError (a build that raises) is recorded "locked" with torch's text. The run of record refuses any status
+    but "set" ([interop_threads_locked])."""
+    if _INTEROP_CALLS:
+        return {"requested": int(n), "status": "already called in this process", "error": None,
+                "first_call": dict(_INTEROP_CALLS[0])}
+    try:
+        torch.set_num_interop_threads(int(n))
+        status, error = "set", None
+    except RuntimeError as e:
+        status, error = "locked", str(e).splitlines()[0][:200]
+    _INTEROP_CALLS.append({"requested": int(n), "status": status, "error": error})
+    return dict(_INTEROP_CALLS[0])
 
 
 # ------------------------------------------------------------------ INT8 artifact roles
@@ -952,13 +1153,14 @@ def efficiency_record(*, provenance_block: dict, parameters: dict | None = None,
                       compute: dict | None = None, latency: dict | None = None,
                       memory: dict | None = None, deferred: dict | None = None,
                       of_record: bool = False, metric_group: str | None = None,
-                      wall_clock: tuple | None = None) -> dict:
+                      wall_clock: tuple | None = None, thread_policy: dict | None = None,
+                      host: dict | None = None, code: dict | None = None, image: dict | None = None) -> dict:
     """One structured efficiency result for one stage/artifact.
 
     Written to its OWN schema: the frozen evaluation/statistics artifact schemas are not widened to
     carry efficiency fields. 2.0.0 (the LEFF Phase A plan §2): `of_record`, `efficiency_analysis_member`,
     `metric_group`, `footprint_source`, `created_utc` and the wall clock of the measurement; the run of record's
-    blocks (thread policy, host, code, image, binding) join under the same version (LF28).
+    blocks (thread policy, host, code, image, and the provenance's binding) under the same version (LF28).
     """
     start, end = wall_clock if wall_clock else (None, None)
     return {
@@ -970,6 +1172,10 @@ def efficiency_record(*, provenance_block: dict, parameters: dict | None = None,
         "of_record": bool(of_record),
         "efficiency_analysis_member": provenance_block.get("stage") in EFFICIENCY_ANALYSIS_STAGES,
         "metric_group": metric_group,
+        "thread_policy": thread_policy,
+        "host": host,
+        "code": code,
+        "image": image,
         "provenance": provenance_block,
         "parameters": parameters,
         "footprint": footprint,
