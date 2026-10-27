@@ -29,8 +29,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
+from datetime import datetime
 from pathlib import PurePosixPath
 
 from src.eval.artifacts import canonical_json_bytes
@@ -277,8 +279,14 @@ def strict_json(data: bytes, what: str, *, code: str, object_type=dict):
 
     def constant(c):
         raise ValueError(f"non-finite constant {c}")
+
+    def finite(s):                                   # a literal that overflows to +-inf (DL-24 #85)
+        v = float(s)
+        if not math.isfinite(v):
+            raise ValueError(f"number {s} overflows")
+        return v
     try:
-        return json.loads(data.decode("utf-8"), object_pairs_hook=pairs, parse_constant=constant)
+        return json.loads(data.decode("utf-8"), object_pairs_hook=pairs, parse_constant=constant, parse_float=finite)
     except (UnicodeDecodeError, ValueError, RecursionError) as e:
         raise TmanRefused(code, f"{what}: not strict UTF-8 JSON ({type(e).__name__}: {e})") from None
 
@@ -290,12 +298,21 @@ def _is_int(x) -> bool:
     return isinstance(x, int) and not isinstance(x, bool)
 
 
+def _parses(x: str, fmt: str) -> bool:
+    """A day or instant of the calendar, not only of its pattern (DL-24 #86)."""
+    try:
+        datetime.strptime(x, fmt)
+    except ValueError:
+        return False
+    return True
+
+
 TYPES = {
     "str": lambda x: isinstance(x, str) and x != "",
     "int": _is_int,
     "bool": lambda x: isinstance(x, bool),
-    "day": lambda x: isinstance(x, str) and ISO_DAY_RE.fullmatch(x) is not None,
-    "utc": lambda x: isinstance(x, str) and ISO_UTC_RE.fullmatch(x) is not None,
+    "day": lambda x: isinstance(x, str) and ISO_DAY_RE.fullmatch(x) is not None and _parses(x, "%Y-%m-%d"),
+    "utc": lambda x: isinstance(x, str) and ISO_UTC_RE.fullmatch(x) is not None and _parses(x, "%Y-%m-%dT%H:%M:%SZ"),
     "sha256": lambda x: isinstance(x, str) and SHA256_RE.fullmatch(x) is not None,
     "commit": lambda x: isinstance(x, str) and COMMIT_RE.fullmatch(x) is not None,
     "dl": lambda x: isinstance(x, str) and DL_ID_RE.fullmatch(x) is not None,

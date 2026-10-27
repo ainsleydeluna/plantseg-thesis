@@ -208,7 +208,7 @@ def qat_state(run_dir: Path) -> RunState:
     if not rows or rows[0].get("event") != "run_meta" or sum(r.get("event") == "run_meta" for r in rows) != 1:
         _invalid(f"{QAT_TELEMETRY}: exactly one run_meta row, first, is required")
     ends = [r.get("epoch") for r in rows if r.get("event") == "epoch_end"]
-    if ends != list(range(1, len(ends) + 1)):
+    if not all(S.TYPES["int"](e) for e in ends) or ends != list(range(1, len(ends) + 1)):
         _invalid(f"{QAT_TELEMETRY}: epoch_end rows for epochs {ends}, not 1..n in order")
     stops = [r for r in rows if r.get("event") in ("run_stop", "run_abort")]
     if stops:
@@ -287,6 +287,8 @@ def teacher_state(work_dir: Path, log_rel: str | None = None) -> RunState:
     it)."""
     work = Path(work_dir)
     S.refuse_test_path(work)
+    if not work.is_dir():
+        _invalid(f"{work}: the teacher's work dir is not a folder")
     logs = [log_rel] if log_rel else sorted(
         f"{d.name}/{d.name}.log" for d in work.iterdir() if M12_LOG_DIR_RE.match(d.name) and d.is_dir())
     for rel in logs:
@@ -311,6 +313,8 @@ def arm_state(out_dir: Path, output_rel: str, agreement_rel: str, at_utc: str) -
         S.refuse_test_path(p)
     if not (o.is_file() and a.is_file()):
         return RunState(RUNNING)
+    if not S.TYPES["utc"](at_utc):
+        _invalid(f"the measurement's instant {at_utc!r} is not a UTC instant")
     at = parse_utc(at_utc)
     return RunState(COMPLETE, Completion("arm_output", agreement_rel, S.sha256_bytes(a.read_bytes()), at, None),
                     ended_at=at)
@@ -470,5 +474,8 @@ def run_state(slot: dict, run_dir: Path, **kw) -> RunState:
     if kind == "teacher_m12":
         return teacher_state(run_dir, kw.get("log_rel"))
     if kind == "arm_output":
+        if any(k not in kw for k in ("output_rel", "agreement_rel", "at_utc")):
+            raise S.TmanRefused("completion_record_invalid", f"slot {slot['slot']}: an ARM measurement is read from "
+                                                             "its output and agreement record, not a run directory")
         return arm_state(run_dir, kw["output_rel"], kw["agreement_rel"], kw["at_utc"])
     raise S.TmanRefused("completion_record_invalid", f"slot {slot['slot']}: record kind {kind!r} has no run reader")

@@ -1997,6 +1997,62 @@ def case_printers():
     check("printers_leave_the_records_unchanged", w.run("freeze")[0] is None)
 
 
+def case_malformed_inputs_refused():
+    """A malformed input is a named refusal, never a crash (DL-24 #67, #83, #85, #86, #88, #90, #96, #100)."""
+    from src.tman import completion as C
+    w = WORLD
+    S = w.S
+
+    def code_of(fn, *a, **kw):
+        try:
+            return FX.refused_code(fn, *a, **kw)
+        except Exception as e:  # noqa: BLE001 -- a crash fails the check by name
+            return type(e).__name__
+
+    def refused_as(name, want, detail, doc=None):
+        """A reader's refusal, raised in whichever gate first reads the record."""
+        code, _, e = w.run("freeze", doc=doc)
+        check(name, code == want and detail in (e.detail if e else ""), f"{code} {(e.detail[:160] if e else '')}")
+    expect_gate(w, "freeze_source_not_an_object_B90", "schedule_invalid", mode="draft",
+                doc=mutated(w, lambda d: d["body"]["schedule"].update(freeze_source="x")))
+    expect_gate(w, "schedule_file_not_a_path_B90", "manifest_format", mode="draft",
+                doc=mutated(w, lambda d: d["body"]["schedule"].update(file=[1])), detail="body.schedule.file")
+    expect_gate(w, "append_slot_not_a_key_B96", "append_invalid", doc=mutated(w, lambda d: d["appends"].append(
+        {"slot": ["E4:s42:list43"], "hashed": {}, "ptq_record": None})))
+    f = w.runs / "e1_s42_80k" / "e1_telemetry.jsonl"
+    saved = f.read_bytes()
+    try:
+        f.write_bytes(saved + b"[1]\n")
+        refused_as("telemetry_row_not_an_object_B83", "completion_record_invalid", "a row is a JSON object")
+    finally:
+        f.write_bytes(saved)
+    refused_as("teacher_work_dir_absent_B67_B100", "completion_record_invalid", "not a folder", doc=mutated(
+        w, lambda d: w.entry(d, "teacher:s42:40k").update(run_id="teacher_s42_40k_x")))
+    check("number_overflowing_to_infinity_refused_B85", code_of(
+        S.strict_json, b'{"a": 1e999}', "x", code="manifest_unreadable") == "manifest_unreadable")
+    check("days_and_instants_of_the_calendar_B86", not S.TYPES["day"]("2026-02-30")
+          and not S.TYPES["utc"]("2026-02-30T10:00:00Z") and not S.TYPES["utc"]("2026-11-04T24:00:00Z")
+          and S.TYPES["day"]("2026-11-04") and S.TYPES["utc"]("2026-11-04T23:59:59Z"))
+    check("arm_slot_read_as_a_run_directory_refused_B67", code_of(
+        C.run_state, w.cat.slots["ARM:latency"], w.runs / "arm_latency_a1") == "completion_record_invalid")
+    out = FX.scratch_dir("tmanarm")
+    (out / "out.json").write_text("{}\n", encoding="utf-8")
+    (out / "agree.json").write_text("{}\n", encoding="utf-8")
+    check("arm_instant_off_the_calendar_refused_B67", code_of(
+        C.arm_state, out, "out.json", "agree.json", "2026-13-01T00:00:00Z") == "completion_record_invalid")
+    q = w.runs / "e6_s42_15ep" / "qat_telemetry.jsonl"
+    saved = q.read_bytes()
+    lines = saved.split(b"\n")
+    i = next(n for n, ln in enumerate(lines) if ln.startswith(b'{"event": "epoch_end"'))
+    lines[i] = lines[i].replace(b'"epoch": 1,', b'"epoch": true,', 1)     # the first epoch_end row's epoch
+    try:
+        q.write_bytes(b"\n".join(lines))
+        check("qat_epoch_not_an_int_refused_B67", b'"epoch": true,' in lines[i] and code_of(
+            C.qat_state, q.parent) == "completion_record_invalid")
+    finally:
+        q.write_bytes(saved)
+
+
 def case_coverage():
     missing = [c for c in gate_codes("freeze") if c not in WANTED]
     check("every_freeze_gate_has_a_case", not missing, str(missing))
@@ -2236,7 +2292,8 @@ def main() -> int:
                              case_cut_gates, case_cut_attribution, case_parent_and_derived_gates, case_appends,
                              case_derived_sources, case_appends_history, case_checkpoint_sources, case_arm_teacher,
                              case_run_identity, case_measurement, case_aborted, case_non_finite_gate, case_scope_gates,
-                             case_moved_freeze, case_printers, case_draft_and_cli, case_inventory, case_coverage))
+                             case_moved_freeze, case_printers, case_draft_and_cli, case_inventory,
+                             case_malformed_inputs_refused, case_coverage))
     finally:
         if REAL_TEACHER is not None:
             WORLD.M.TEACHER_OF_RECORD.clear()

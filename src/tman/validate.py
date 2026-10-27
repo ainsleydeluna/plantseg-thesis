@@ -50,7 +50,10 @@ SESSION_SPEC = {"unlock_entry": S.REF, "clock_offset": S.REF, "started_utc": "ut
 SESSION_IDENTITY = ("unlock_entry", "clock_offset", "started_utc", "host", "push_evidence")
 # Each body block the gates do not compare whole, held to its exact keys (DL-24 #29, #78): a value only TEST files
 # can give has no place beside them. The values are the later gates' to check.
-BODY_SPECS = {"evaluator": ("obj", {"commit": "any", "files": "any"}),
+BODY_SPECS = {"schedule": ("obj", {k: "any" for k in ("in_force", "file_sha256", "decision_log_entry",
+                                                     "original_freeze_date", "original_freeze_utc", "moved_freeze_date",
+                                                     "freeze_source", "test_deadline")} | {"file": "?str"}),
+              "evaluator": ("obj", {"commit": "any", "files": "any"}),
               "expected_rows": ("obj", {"value": "any", "cites": ("list", "str")}),
               "generator_pins": ("obj", {"corrupted_cache": ("obj", {"pin": "any", "value": "any"}),
                                          "image_hasher": ("obj", {"pin": "any", "value": "any"})}),
@@ -245,8 +248,8 @@ class Ctx:
         and append_invalid's)."""
         frozen = {e["slot"]: e for e in self.entries}
         out = [e.get("hashed") for e in self.entries if e["kind"] == "derived" and e.get("method") == "qat_selection"]
-        out += [a.get("hashed") for a in self.doc["appends"] if isinstance(a, dict)
-                and (frozen.get(a.get("slot")) or {}).get("method") == "qat_selection"]
+        out += [a.get("hashed") for a in self.doc["appends"]
+                if (frozen.get(_append_slot(a)) or {}).get("method") == "qat_selection"]
         return [h for h in out if isinstance(h, dict)]
 
     def fault_reports(self) -> list[dict]:
@@ -548,8 +551,12 @@ def g_image_digest_not_of_record(x: Ctx):
 
 
 def _freeze_docs(x: Ctx) -> tuple[list, list]:
-    src = x.body["schedule"].get("freeze_source") or {}
+    """The freeze-source entry files the schedule block cites; a malformed citation cites none (schedule_invalid
+    compares the whole block; DL-24 #90)."""
+    src = x.body["schedule"].get("freeze_source")
     delays, news = [], []
+    if not (isinstance(src, dict) and isinstance(src.get("path"), str)):
+        return delays, news
     if src.get("provider") == "new_freeze":
         doc, sha = x.entry_file(src["path"])
         news.append({"doc": doc, "path": src["path"], "sha256": sha})
@@ -1039,6 +1046,12 @@ def _derived(x: Ctx) -> list:
     return [e for e in x.entries if e["kind"] == "derived"]
 
 
+def _append_slot(a) -> str | None:
+    """An append's slot when it is a slot key (any other is append_invalid's to refuse; DL-24 #96)."""
+    s = a.get("slot") if isinstance(a, dict) else None
+    return s if isinstance(s, str) else None
+
+
 def g_derived_parent_incomplete(x: Ctx):
     return _err([err for e in _derived(x) for err in M.derived_parent_errors(e, x.by_slot, x.cat)])
 
@@ -1070,7 +1083,7 @@ def g_ptq_record_invalid(x: Ctx):
             errs += M.ptq_record_errors(e, x.cat, x.by_slot.get(e["parent"]), checksum, runs_root=x.runs_root,
                                         reader=x.ptq_reader)
     for a in x.doc["appends"]:
-        frozen = x.by_slot.get(a.get("slot")) if isinstance(a, dict) else None
+        frozen = x.by_slot.get(_append_slot(a))
         if not M.appendable(a, frozen):
             continue                                                  # append_invalid refuses it
         got, ok = M.append_ptq_record(a, frozen, x.cat, x.by_slot, checksum, runs_root=x.runs_root,
@@ -1117,7 +1130,7 @@ def g_derived_selection_conflict(x: Ctx):
     """AM-21 item 2(c) on every QAT selection, in the body and appended (DL-24 #24)."""
     errs = [err for e in _derived(x) for err in M.selection_conflict_errors(e)]
     for app in x.doc["appends"]:
-        listed = x.by_slot.get(app.get("slot")) if isinstance(app, dict) else None
+        listed = x.by_slot.get(_append_slot(app))
         if M.appendable(app, listed):
             errs += M.selection_conflict_errors(M.appended_entry(app, listed))
     return _err(errs)
@@ -1140,11 +1153,12 @@ def g_append_invalid(x: Ctx):
     then with the records it cites (DL-24 #26)."""
     errs, slots = M.appends_history_errors(x.records, x.doc["appends"]), set()
     for a in x.doc["appends"]:
-        if not isinstance(a, dict) or a.get("slot") in slots:
+        s = _append_slot(a)
+        if not isinstance(a, dict) or (s is not None and s in slots):
             errs.append(f"append {a!r:.60}: malformed or a second append of its slot")
             continue
-        slots.add(a.get("slot"))
-        frozen = x.by_slot.get(a.get("slot"))
+        slots.add(s)
+        frozen = x.by_slot.get(s)
         first = M.append_errors(a, frozen, x.freeze.original_utc, structural=True)
         if first:
             errs += first
@@ -1162,7 +1176,7 @@ def g_derived_hash_mismatch(x: Ctx):
         return None
     made = [e for e in _derived(x) if e["hashed"] is not None]
     for app in x.doc["appends"]:
-        listed = x.by_slot.get(app.get("slot")) if isinstance(app, dict) else None
+        listed = x.by_slot.get(_append_slot(app))
         if M.appendable(app, listed):
             made.append(M.appended_entry(app, listed))
     ci = x.body["calibration_index"]

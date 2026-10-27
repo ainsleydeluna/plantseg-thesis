@@ -68,10 +68,18 @@ def write_new(folder: Path, name: str, data: bytes) -> Path:
     return out
 
 
-def read_json(path, code: str):
+def read_bytes(path, code: str) -> bytes:
+    """A file named on the command line, refused for "test" before any call on it; unreadable: refused as `code`
+    (DL-24 #90)."""
     S.refuse_test_path(path)
-    p = Path(path)
-    return S.strict_json(p.read_bytes(), str(p), code=code)
+    try:
+        return Path(path).read_bytes()
+    except OSError as e:
+        raise S.TmanRefused(code, f"{path}: unreadable ({type(e).__name__})") from None
+
+
+def read_json(path, code: str):
+    return S.strict_json(read_bytes(path, code), str(path), code=code)
 
 
 def records_at(args) -> R.Records:
@@ -113,8 +121,7 @@ def cmd_build(args) -> int:
 def cmd_validate(args) -> int:
     """Draft and freeze read the records at HEAD of --root; unlock and session run at the session checkout S = E
     (--root) and read the records from --records, a folder written from --records-commit (PL-28; TB16)."""
-    S.refuse_test_path(args.manifest)
-    data = Path(args.manifest).read_bytes()
+    data = read_bytes(args.manifest, "manifest_unreadable")
     if (args.records is None) != (args.records_commit is None):
         raise S.TmanRefused("record_uncommitted", "--records and --records-commit go together (PL-28)")
     if args.mode in ("unlock", "session") and args.records is None:
@@ -351,8 +358,7 @@ def cmd_append(args) -> int:
     """The validator's append checks on the one new append: append_invalid (the appends' history, then the append
     structurally), ptq_record_invalid, append_invalid with the records it cites, and under --runs
     derived_hash_mismatch."""
-    S.refuse_test_path(args.manifest)
-    data = Path(args.manifest).read_bytes()
+    data = read_bytes(args.manifest, "manifest_unreadable")
     doc = S.strict_json(data, args.manifest, code="manifest_unreadable")
     if not (isinstance(doc, dict) and isinstance(doc.get("body"), dict) and isinstance(doc["body"].get("entries"), list)
             and all(isinstance(e, dict) and isinstance(e.get("slot"), str) for e in doc["body"]["entries"])
@@ -412,8 +418,7 @@ def cmd_isolation(args) -> int:
 
 # --------------------------------------------------------------------------------------------- inventory
 def cmd_inventory(args) -> int:
-    S.refuse_test_path(args.manifest)
-    data = Path(args.manifest).read_bytes()
+    data = read_bytes(args.manifest, "manifest_unreadable")
     doc = S.strict_json(data, args.manifest, code="manifest_unreadable")
     records = records_at(args)
     cat = catalogue(records)

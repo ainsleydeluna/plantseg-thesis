@@ -296,7 +296,9 @@ def read_jsonl(path: Path, rows_allow: dict, *, code: str) -> tuple[list[dict], 
         if torn and i == len(lines) - 1:
             break
         doc = strict_json(raw, f"{path} line {i + 1}", code=code)
-        ev = doc["event"] if hasattr(doc, "keys") and "event" in doc else None
+        if not hasattr(doc, "keys"):
+            raise S.TmanRefused(code, f"{path} line {i + 1}: a row is a JSON object (DL-24 #83)")
+        ev = doc["event"] if "event" in doc else None
         rows.append(project(doc, rows_allow.get(ev, {"event": True})))
     return rows, torn, S.sha256_bytes(data)
 

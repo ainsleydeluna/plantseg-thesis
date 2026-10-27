@@ -617,6 +617,15 @@ def case_cli_outputs():
                                    str(w.runs), "--registered-cells", str(out / "cells.json")] + extra)
             check(name, rc == 2 and "REFUSED [inventory_invalid]" in txt and not any(folder.iterdir()),
                   txt.strip()[-160:])
+        for name, argv, want in (
+                ("cli_validate_manifest_absent_B90", ["validate", "--manifest", str(out / "absent_m.json"), "--mode",
+                                                      "draft"], "manifest_unreadable"),
+                ("cli_inventory_manifest_absent_B90", ["inventory", "--manifest", str(out / "absent_m.json"), "--out",
+                                                       str(out)], "manifest_unreadable"),
+                ("cli_build_sources_absent_B90", ["build", "--sources", str(out / "absent_s.json"), "--out", str(out)],
+                 "manifest_format")):
+            rc, txt = _cli(base + argv)
+            check(name, rc == 2 and f"REFUSED [{want}]" in txt, txt.strip()[-160:])
         cli_append_history(w, out, base, dirs["append"] / "tday_manifest.json")       # last: it commits an append
         check("the_scratch_repository_is_unchanged", FX.git(w.repo, "status", "--porcelain",
                                                              "--untracked-files=all") == status0 == "")

@@ -445,8 +445,8 @@ M = [
                                'want = {"stage": s["evaluator_stage"], "role": want_role, '
                                '"descriptive": not of_record}')],
      "derived", "case_ptq_record", "ptq_record_other_seed_refused_A2", ["ptq_record_invalid"], None),
-    ("append_ptq_record_read", VAL, [('    for a in x.doc["appends"]:\n        frozen = x.by_slot.get(a.get("slot"))',
-                                      '    for a in []:\n        frozen = x.by_slot.get(a.get("slot"))')],
+    ("append_ptq_record_read", VAL, [('    for a in x.doc["appends"]:\n        frozen = x.by_slot.get(_append_slot(a))',
+                                      '    for a in []:\n        frozen = x.by_slot.get(_append_slot(a))')],
      "validate", "case_appends", "post_freeze_append_of_record_without_its_ptq_record_A2", ["ptq_record_invalid"],
      None),
     ("required_derived", MAN, [('        if kind == "derived" or (kind == "not_made" and code_gated(k, cat)):\n'
@@ -750,8 +750,7 @@ M = [
     ("body_blocks_held_to_their_keys", VAL, [('    errs = [err for k, spec in BODY_SPECS.items() for err in '
                                               'S.value_errors(b[k], spec, f"body.{k}")]', "    errs = []")],
      "validate", "case_input_gates", "evaluator_holding_a_dedup_list_B29", ["manifest_format"], None),
-    ("body_spec_evaluator", VAL, [('BODY_SPECS = {"evaluator": ("obj", {"commit": "any", "files": "any"}),',
-                                   'BODY_SPECS = {"evaluator": "any",')],
+    ("body_spec_evaluator", VAL, [('"evaluator": ("obj", {"commit": "any", "files": "any"}),', '"evaluator": "any",')],
      "validate", "case_input_gates", "evaluator_holding_a_dedup_list_B29", ["manifest_format"], None),
     ("body_spec_expected_rows", VAL, [('"expected_rows": ("obj", {"value": "any", "cites": ("list", "str")}),',
                                        '"expected_rows": "any",')],
@@ -836,6 +835,49 @@ M = [
                                                    '    except KeyError as e:\n        raise S.TmanRefused('
                                                    '"inventory_invalid", f"{p}: unreadable')],
      "validate", "case_inventory", "read_inventory_absent_export_B106", ["inventory_invalid"], None),
+    ("strict_json_finite_numbers", SCH, [("parse_constant=constant, parse_float=finite)", "parse_constant=constant)")],
+     "validate", "case_malformed_inputs_refused", "number_overflowing_to_infinity_refused_B85",
+     ["manifest_unreadable"], None),
+    ("day_of_the_calendar", SCH, [('ISO_DAY_RE.fullmatch(x) is not None and _parses(x, "%Y-%m-%d"),',
+                                   "ISO_DAY_RE.fullmatch(x) is not None,")],
+     "validate", "case_malformed_inputs_refused", "days_and_instants_of_the_calendar_B86", ["entry_field"], None),
+    ("instant_of_the_calendar", SCH, [('ISO_UTC_RE.fullmatch(x) is not None and _parses(x, "%Y-%m-%dT%H:%M:%SZ"),',
+                                       "ISO_UTC_RE.fullmatch(x) is not None,")],
+     "validate", "case_malformed_inputs_refused", "days_and_instants_of_the_calendar_B86", ["entry_field"], None),
+    ("telemetry_rows_are_objects", REC, [('        if not hasattr(doc, "keys"):\n            raise S.TmanRefused(code, '
+                                          'f"{path} line {i + 1}: a row is a JSON object',
+                                          '        if False:\n            raise S.TmanRefused(code, '
+                                          'f"{path} line {i + 1}: a row is a JSON object')],
+     "validate", "case_malformed_inputs_refused", "telemetry_row_not_an_object_B83", ["completion_record_invalid"],
+     None),
+    ("arm_measured_from_its_record", COM, [('if any(k not in kw for k in ("output_rel", "agreement_rel", "at_utc")):',
+                                            "if False:")],
+     "validate", "case_malformed_inputs_refused", "arm_slot_read_as_a_run_directory_refused_B67",
+     ["completion_record_invalid"], None),
+    ("teacher_work_dir_a_folder", COM, [("    if not work.is_dir():\n        _invalid(",
+                                         "    if False:\n        _invalid(")],
+     "validate", "case_malformed_inputs_refused", "teacher_work_dir_absent_B67_B100", ["completion_record_invalid"],
+     None),
+    ("arm_instant_of_the_calendar", COM, [('    if not S.TYPES["utc"](at_utc):', "    if False:")],
+     "validate", "case_malformed_inputs_refused", "arm_instant_off_the_calendar_refused_B67",
+     ["completion_record_invalid"], None),
+    ("qat_epochs_are_ints", COM, [('if not all(S.TYPES["int"](e) for e in ends) or '
+                                   "ends != list(range(1, len(ends) + 1)):",
+                                   "if ends != list(range(1, len(ends) + 1)):")],
+     "validate", "case_malformed_inputs_refused", "qat_epoch_not_an_int_refused_B67", ["completion_record_invalid"],
+     None),
+    ("schedule_file_a_path", VAL, [('| {"file": "?str"}', '| {"file": "any"}')],
+     "validate", "case_malformed_inputs_refused", "schedule_file_not_a_path_B90", ["manifest_format"], None),
+    ("append_slot_a_key", VAL, [('    return s if isinstance(s, str) else None', "    return s")],
+     "validate", "case_malformed_inputs_refused", "append_slot_not_a_key_B96", ["append_invalid"], None),
+    ("freeze_source_cited_by_path", VAL, [('    if not (isinstance(src, dict) and isinstance(src.get("path"), '
+                                           'str)):\n        return delays, news',
+                                           "    if False:\n        return delays, news")],
+     "validate", "case_malformed_inputs_refused", "freeze_source_not_an_object_B90", ["schedule_invalid"], None),
+    ("cli_unreadable_file_refused", CLI, [("    try:\n        return Path(path).read_bytes()\n    except "
+                                           "OSError as e:", "    try:\n        return Path(path).read_bytes()\n"
+                                           "    except KeyError as e:")],
+     "paths", "case_cli_outputs", "cli_validate_manifest_absent_B90", ["manifest_unreadable"], None),
     ("inventory_checked_before_it_is_written", CLI, [("    if errs:                                                 "
                                                       "     # a refusal writes nothing (DL-24 #61)", "    if False:")],
      "paths", "case_cli_outputs", "cli_inventory_refused_writes_nothing_B61", ["inventory_invalid"], None),
