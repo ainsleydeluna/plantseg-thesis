@@ -1570,21 +1570,28 @@ def load_slot(stats, inv: Inventory, *, slot: str, stage: str, precision: str, i
     the statistics artifact's policy, as before, so that under Policy.OFFICIAL a provisional artifact of an
     official-capable slot is refused there (artifact_unreadable) with no downgrade path. In the smoke profile
     a descriptive_test slot is read as before and still reads descriptive_test: its read comes from its
-    role and precision, never from its status."""
+    role and precision, never from its status. A descriptive_test slot whose evaluator stage has no family
+    slot among the 37 (no reference for (d)) is descriptive_input_invalid at (d)."""
     read = slot_read(inv.entry(slot))
     if dt_read(stats.policy, read):
+        ev_stage = stage_spec(stage)[0]
+        if ev_stage not in D.STAGES:
+            raise refusal("descriptive_input_invalid", f"the DT read of {stage} ({slot!r}, {precision}): "
+                                                       f"(d) {DT_STEPS['d']}: its evaluator stage "
+                                                       f"{ev_stage!r} has no family slot among the 37")
         return read_descriptive_test(inv, slot=slot, stage=stage, precision=precision, input_root=input_root,
-                                     reference=stats.clean(stage_spec(stage)[0]))
+                                     reference=stats.clean(ev_stage))
     ba = load_bound(inv, slot=slot, stage=stage, precision=precision, scope="clean", input_root=input_root,
                     policy=stats.policy)
     return dataclasses.replace(ba, read=read)
 
 
 def require_official_inputs(stats: StatsArtifact, inputs: Mapping[str, object], where: str) -> None:
-    """R4-1 item 5: an official computation (here the eight contrasts and NI that the duplicate-free part
-    recomputes, dedup_subset (ii)-(iii)) takes the 37 inputs of the verified statistics artifact only. Each
-    input -- a driver.LoadedInput or its EvaluationRun -- must be one of stats.views' own objects (identity,
-    not equality); anything else, a DT run among them, is descriptive_input_in_official."""
+    """R4-1 item 5: an official computation takes the 37 inputs of the verified statistics artifact only.
+    Within B-5b's SCOPE it guards the eight contrasts and NI that the duplicate-free part recomputes
+    (dedup_subset (ii)-(iii)) and am6's seed-42 rows, which must equal report.gt_present_rows (an official
+    row). Each input -- a driver.LoadedInput or its EvaluationRun -- must be one of stats.views' own objects
+    (identity, not equality); anything else, a DT run among them, is descriptive_input_in_official."""
     ours = {id(x) for li in stats.views.loaded.values() for x in (li, li.run)}
     bad = sorted(label for label, x in inputs.items() if id(x) not in ours)
     if bad:

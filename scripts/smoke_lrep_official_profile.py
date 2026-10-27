@@ -15,7 +15,8 @@ Policy.OFFICIAL).
 
   G  R4-1 item 2: slot_read over the catalogue's 49 scored slots gives exactly the nine; the DT read is
      reached only through load_slot, which only the arm tables and am6's coverage call; dt_pair only by
-     the arm tables; the official-input guard sits where dedup's (ii) and (iii) take their inputs
+     the arm tables; the official-input guard sits where dedup's (ii) and (iii) and am6's seed-42 rows
+     take their inputs
   H  the happy paths: each of the world's nine DT slots reads descriptive_test through the DT read (its
      run non-official, its rows the official AM-5 rule's); a DT pair with E7 is non-official, its delta
      the rows' own; every other B-5 slot reads official under Policy.OFFICIAL; the arm rows and am6's
@@ -24,8 +25,9 @@ Policy.OFFICIAL).
      A (a) an artifact its loader refuses; B (b) a smoke, official, VAL, random_init or 1560-row DT
      artifact; C (c) an undefined primary value AM-5 does not exclude; D (d) a reference that is not the
      37's E7 read officially, another metric implementation (assert_compatible), another AM-5 set
-     (am5_pair); E (e) a reference whose files changed after its official read, a clean_image_id that
-     differs (align_runs); F (f) a record whose files differ from the artifact's
+     (am5_pair), a DT-classed slot whose evaluator stage has no family slot among the 37; E (e) a
+     reference whose files changed after its official read, a clean_image_id that differs (align_runs);
+     F (f) a record whose files differ from the artifact's
   K  item 4: an official-capable slot's provisional artifact is refused under Policy.OFFICIAL
      (artifact_unreadable), never read as descriptive
   X  the world: its artifacts' dataset name, split value and statuses; no created path contains 'test'
@@ -300,13 +302,15 @@ def _callers(name: str) -> set:
 def g_plumbing():
     """R4-1 items 3-5: the DT read is reached through load_slot only, which only the arm tables' rows and
     am6's coverage call; dt_pair only by the arm rows; the official-input guard where dedup's (ii) and (iii)
-    take their inputs (load_bound itself is not the DT read: its other callers read official slots)."""
+    and am6's seed-42 rows take their inputs (load_bound itself is not the DT read: its other callers read
+    official slots)."""
     got = {n: _callers(n)
            for n in ("read_descriptive_test", "load_slot", "dt_pair", "require_official_inputs")}
     want = {"read_descriptive_test": {("heldout_inputs.py", "load_slot")},
             "load_slot": {("arm_tables.py", "arm_row"), ("am6_tables.py", "coverage_items")},
             "dt_pair": {("arm_tables.py", "arm_row")},
-            "require_official_inputs": {("dedup_subset.py", "build_dedup")}}
+            "require_official_inputs": {("dedup_subset.py", "build_dedup"),
+                                        ("am6_tables.py", "build_am6_tables")}}
     return got == want, str(got)
 
 
@@ -439,6 +443,21 @@ def d_reference():
     out = [refused_at("d", lambda r=r: dt_read(ref=r), "the reference is not")
            for r in (reference("E7", Policy.NONOFFICIAL_SMOKE), reference("E3"), bound)]
     return all(ok for ok, _ in out), str([d for ok, d in out if not ok])[:600]
+
+
+def d_no_reference():
+    """(d): a DT-classed slot whose evaluator stage has no family slot among the 37 -- A with role
+    calibration_sensitivity (entry and model row), contradicting TMAN's catalogue -- is refused at (d) by
+    load_slot, coded, before any reference is looked up."""
+    def edit(export, binding):
+        for x in (*export["entries"], *export["models"]):
+            if x["slot"] == "A:s42:alpha25:80k":
+                x["role"] = ["calibration_sensitivity"]
+    inv = inventory(variant("a_calibration", edit))
+    return refused_at("d", lambda: H.load_slot(stats_stand_in(), inv, slot="A:s42:alpha25:80k", stage="A",
+                                               precision=H.stage_spec("A")[2],
+                                               input_root=CTX.world.input_root),
+                      "its evaluator stage 'A' has no family slot among the 37")
 
 
 def d_metric():
@@ -728,6 +747,8 @@ def cases():
             ("D2", "descriptive_input_invalid (d): another metric implementation (assert_compatible)",
              d_metric),
             ("D3", "descriptive_input_invalid (d): another AM-5 set (am5_pair)", d_am5),
+            ("D4", "descriptive_input_invalid (d): a DT-classed slot with no family reference among the 37",
+             d_no_reference),
             ("E1", "descriptive_input_invalid (e): the reference's files changed after its official read",
              e_reference_changed),
             ("E2", "descriptive_input_invalid (e): a clean_image_id that differs (align_runs)", e_clean_id),

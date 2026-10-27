@@ -28,6 +28,7 @@ TMPDIR (left in place); none contains "test" or ":".
   V8 B-5b (ruling LREP-B5-RULE-4 R4-1 items 2 and 6): the coverage rows' `read` -- the world's five
      descriptive_test slots (E7-X, E4 and E7 at list 43) print the DT label in their stage cell, the
      others read official -- and the planned rows carry none
+  R11 B-5b (R4-1 item 5): a DT run given as E7's seed-42 input is descriptive_input_in_official
   D  determinism, repr floats, no 'test' path
 
 Run:  TMPDIR=<a scratch directory without 'test'> python -B scripts/smoke_am6_tables.py
@@ -35,6 +36,7 @@ Run:  TMPDIR=<a scratch directory without 'test'> python -B scripts/smoke_am6_ta
 from __future__ import annotations
 
 import copy
+import dataclasses
 import hashlib
 import json
 import math
@@ -554,6 +556,28 @@ def r_cov_row_role():
     return refused("precision_mismatch", lambda: doc_of(variant("teacher_row_student", edit), coverage=True))
 
 
+class _Injected(H.StatsArtifact):
+    """The verified statistics artifact (its family, views and the 37 unchanged), except that its clean E7
+    input is another run: the injection R4-1 item 5 guards against."""
+    def clean(self, stage):
+        return CTX.copies.get("injected_e7") if stage == "E7" else H.StatsArtifact.clean(self, stage)
+
+
+def r_dt_in_official():
+    """R4-1 item 5: a DT run -- E7-R1's (role arm, int8_ptq), read by load_slot -- given as E7's seed-42
+    input is refused before am6's seed-42 rows, which must equal report.gt_present_rows, take it
+    (descriptive_input_in_official, ahead of R-11's identity check)."""
+    st = stats_artifact()
+    inv = H.open_inventory(CTX.world.inventory_path, policy=st.policy)
+    ba = H.load_slot(st, inv, slot="E7-R1:s42:list42", stage="E7-R1", precision="int8_ptq",
+                     input_root=CTX.world.input_root)
+    CTX.copies["injected_e7"] = ba.loaded
+    fake = _Injected(**{f.name: getattr(st, f.name) for f in dataclasses.fields(st)})
+    ok, detail = refused("descriptive_input_in_official", lambda: AM6.build_am6_tables(
+        fake, inv, H.planned_cells(inv), input_root=CTX.world.input_root))
+    return ok and "['E7 seed 42']" in detail and ba.read == "descriptive_test", detail
+
+
 def own_subset(stats, kept):
     """The kept rows' totals, rebuilt here: image_index -> manifest_ids, then class_totals."""
     keep = {i for i, m in enumerate(stats.manifest_ids) if m in set(kept)}
@@ -688,6 +712,8 @@ def cases():
             ("R8", "seed_inconsistent: a coverage row's model row at another seed (R-14)", r_cov_seed),
             ("R9", "stage_unmapped: a coverage slot at a stage outside the map", r_cov_unmapped),
             ("R10", "precision_mismatch: the teacher's model row says student (B5-S1)", r_cov_row_role),
+            ("R11", "R4-1 item 5: descriptive_input_in_official: a DT run given as E7's seed-42 input",
+             r_dt_in_official),
             ("S1", "subset: the four numbers recomputed on the kept rows, the changes, the fingerprint",
              s_subset_values),
             ("S2", "subset, guard 1 (i): nothing removed gives the full values bitwise", s_zero_removed),

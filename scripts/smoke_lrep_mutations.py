@@ -402,6 +402,9 @@ MUTATIONS = [
      [(H, "read_descriptive_test", [off("descriptive_input_invalid", ' f"{where}: (d)')])], "official:D2"),
     ("R42", "descriptive_input_invalid not raised at (e) (the reference's files changed)",
      [(H, "dt_pair", [off("descriptive_input_invalid", ' f"{where}: (e)')])], "official:E1"),
+    # R: B-5b's DL-24 fixes (B5b-F1)
+    ("R43", "descriptive_input_invalid not raised at (d) (a DT-classed slot with no family reference)",
+     [(H, "load_slot", [off("descriptive_input_invalid", ' f"the DT read of')])], "official:D4"),
     # S: semantic mutations
     ("S01", "condition 1: g > 0 becomes g >= 0",
      [(SS, "condition_1", [("not g[k] > 0.0", "not g[k] >= 0.0")])], "seed:S2"),
@@ -790,7 +793,7 @@ MUTATIONS = [
     ("S145", "R4-1 item 3: a DT slot under Policy.OFFICIAL read by load_bound, never the DT read",
      [(H, "load_slot", [("if dt_read(stats.policy, read):", "if False:")])], "official:H1"),
     ("S146", "R4-1 (d): every DT slot's reference the 37's E7 (the E4 lists' too)",
-     [(H, "load_slot", [("reference=stats.clean(stage_spec(stage)[0]))", 'reference=stats.clean("E7"))')])],
+     [(H, "load_slot", [("reference=stats.clean(ev_stage))", 'reference=stats.clean("E7"))')])],
      "official:H1"),
     ("S147", "R4-1 item 2: load_slot drops the slot's read (a DT slot reads official in the smoke profile)",
      [(H, "load_slot", [("return dataclasses.replace(ba, read=read)", "return ba")])], "arms:G1"),
@@ -886,6 +889,10 @@ MUTATIONS = [
                        "except (D.DriverRefusal, IngestError) as e:")])], "official:E2"),
     ("S183", "R4-1: am6's coverage read by load_bound under Policy.OFFICIAL (its DT slots refused)",
      [(AM6, "coverage_items", [COVERAGE_BY_LOAD_BOUND])], "official:H5"),
+    # S: B-5b's DL-24 fixes (B5b-F1)
+    ("S184", "R4-1 item 5: am6's seed-42 rows take their inputs unguarded (a DT run as E7's)",
+     [(AM6, "build_am6_tables", [("H.require_official_inputs(stats, {", "(lambda *a: None)(stats, {")])],
+     "am6:R11"),
 ]
 
 

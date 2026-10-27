@@ -26,7 +26,8 @@ values reproducing summary.json bitwise, float64 beside them; ERR E-24: canvas a
     slot's `read`. A descriptive_test slot (E7-X; the calibration-sensitivity E4 and E7 at lists 43-45)
     reads under Policy.OFFICIAL through the DT read, its reference the 37's input of its evaluator stage,
     and its row prints DT_LABEL in its stage cell; every other slot reads under the statistics artifact's
-    policy as before.
+    policy as before. The seed-42 rows, which must equal report.gt_present_rows (an official row), take the
+    37's inputs only (heldout_inputs.require_official_inputs, before R-11; R4-1 item 5).
   * Per row (scripts/eligibility_variants.py's computation, reused through src.stats.eligibility):
     union-present and GT-present, all-class and disease-only, each as `value` (float32, the
     evaluator's arithmetic) and `value_float64`, with the class counts and the classes that are
@@ -210,6 +211,8 @@ def build_am6_tables(stats: H.StatsArtifact, inv: H.Inventory, cells: H.PlannedC
     every other clean canvas record too (B-5 (d)), or with `roles` only those of these roles or `stages`
     (dedup_subset's (i)); with `subset`, each row's values on those image ids (AM-18 item 8(c))."""
     from .report import gt_present_rows
+    H.require_official_inputs(stats, {f"{stage} seed 42": stats.clean(stage) for stage in D.STAGES},
+                              "am6's seed-42 rows, which equal report.gt_present_rows (an official row)")
     H.check_seed42_identity(inv, cells, stats)
     rec_slots = {slot: key for key, slot in cells.slots.items()}
     items, labels, loaded = [], [], {}
