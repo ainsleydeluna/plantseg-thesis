@@ -1962,3 +1962,600 @@ its merge.
 - **The measured fixture time of (b)'s 32 tasks:** 14.8 s at B = 10,000 on the fixture's 26 kept images
   (STEP 6, dedup:D5; MEASURED). TEST's cost is n-dependent: the GO's 45–60 min is INFERRED, not measured
   here.
+
+## Part 3 (B-5b)
+
+Session LREP-B5 (cloud, the 5x account, the same session) ran B-5b under the orchestrator's ADDENDUM B-5b
+of 27 Oct 2026 (LREP-B5-RULE-4; lrepb5b_addendum_20261027.md, 16,081 B, sha256 84788c22…, equal to the
+sha256 the message gave; MEASURED at STEP 0). Every rule, hard limit, SCOPE rule and STEP form of the B-5
+GO stands unless the addendum changes it; Part 2's precedence holds below the addendum. Labels:
+MEASURED, DOCUMENTED, REPOSITORY-PROVEN, INFERRED.
+
+Every file:line below was re-read at 9e7ee50, the last code commit. This report's commit changes only
+this file, so the lines hold at the final commit.
+
+### 1. Base, commits and the scoped diff
+
+**Base** = 6c222c957deb647257aae3103b97fe929f9947eb, Part 2's report commit. At STEP 0 (27 Oct 07:20
+UTC; MEASURED) HEAD was 6c222c9 on refs/heads/lane/lrep, `git ls-remote --heads origin lane/lrep`
+printed it, and the scoped status was empty.
+
+Commits on lane/lrep since the base. Each is by explicit path with `git commit --only -- <paths>` (the
+new smoke first staged by its path); none has a trailer (each message checked: 0 trailer lines) and none
+is a merge. Each was followed by `git push -u origin lane/lrep` and `git ls-remote --heads origin
+lane/lrep`, which printed its tip.
+
+| | commit | paths | subject |
+|---|---|---|---|
+| B5b-1 | 084aadb5541a5aac0ae11d10c0862a047120e52e | 14 | LREP B5b-1: TMAN's catalogue keys, stages, roles, seeds and diverged shape |
+| B5b-2 | 6cce201ae95ae680a38e089f293dec4a0726cb46 | 10 | LREP B5b-2: the descriptive TEST read (R4-1 items 1-7), its two codes and cases |
+| B5b-3 | 970c92017ad004d7f75a3b81409ccf753d07a0ea | 7 | LREP B5b-3: an AM-23 slot absent from the export is refused (R4-2) |
+| B5b-4 | b6ccbabc3d58ddf502e25fb655322420c8007a25 | 2 | LREP B5b-4: the official profile end to end (R4-1 item 8, R4-6(ii)) |
+| B5b-5 | bf52dc0dd0f58617af25d3ee9433137bcc11547b | 4 | LREP B5b-5: the mutation harness covers B5b-1 to B5b-4 |
+| B5b-F1 | 3f844a451848300db75afdf8cc5edc9467e08c29 | 5 | LREP B5b-F1: DL-24 R1-01, R1-02: am6 seed-42 guard; a DT slot with no reference refused at (d) |
+| B5b-F2 | 2246497f6f5ba9af6af1ac1cf8fd44d97d813eca | 5 | LREP B5b-F2: DL-24 R2-01, V2-01, R2-02: the E5 pilot parent named for B-4; coherent mutants; last path walks |
+| B5b-F3 | 9e7ee50d6cf04fcf69ba1f7c2085d598b12fe15a | 3 | LREP B5b-F3: DL-24 R3-01, R3-03, R3-04, R3-05: official mutations in the official smoke's process; P5; (e)'s re-load; skipped kinds |
+
+B5b-F3 is the last code commit. This report is the next commit and changes only this file.
+
+`git diff --stat 6c222c957deb647257aae3103b97fe929f9947eb HEAD -- . ':(exclude)docs/reference/reference.pdf'
+':(exclude)docs/reference' ':(exclude,icase)*test*'` at 9e7ee50 (MEASURED 27 Oct 14:15 UTC; the report
+commit adds this file):
+
+```
+ scripts/lrep_fixtures.py               | 347 ++++++++++---
+ scripts/smoke_am6_tables.py            | 192 +++++--
+ scripts/smoke_arm_tables.py            | 288 +++++++++--
+ scripts/smoke_dedup_subset.py          |  77 ++-
+ scripts/smoke_default_candidates.py    |  23 +-
+ scripts/smoke_lrep_descriptive.py      |  16 +-
+ scripts/smoke_lrep_mutations.py        | 332 ++++++++++--
+ scripts/smoke_lrep_official_profile.py | 899 +++++++++++++++++++++++++++++++++
+ scripts/smoke_quant_rows.py            |  76 +--
+ scripts/smoke_report_extensions.py     |  77 ++-
+ scripts/smoke_seed_stability.py        | 221 ++++----
+ scripts/smoke_strata_tables.py         |   8 +-
+ src/stats/am6_tables.py                |  26 +-
+ src/stats/arm_tables.py                | 124 +++--
+ src/stats/dedup_subset.py              |  14 +-
+ src/stats/heldout_inputs.py            | 269 +++++++++-
+ src/stats/quant_rows.py                |  40 +-
+ src/stats/report_extensions.py         |  40 +-
+ src/stats/seed_stability.py            |   4 +-
+ 19 files changed, 2581 insertions(+), 492 deletions(-)
+```
+
+`--name-status`: 1 file added (A), 18 changed (M).
+- Added: scripts/smoke_lrep_official_profile.py, SCOPE's one "may create".
+- Changed, on SCOPE's "may edit" list (14): src/stats/heldout_inputs.py, arm_tables.py,
+  dedup_subset.py, quant_rows.py, am6_tables.py and report_extensions.py; scripts/lrep_fixtures.py,
+  smoke_arm_tables.py, smoke_dedup_subset.py, smoke_quant_rows.py, smoke_am6_tables.py,
+  smoke_report_extensions.py, smoke_lrep_descriptive.py and smoke_lrep_mutations.py.
+- Changed, LREP files of Part 1's scoped diff that R4-5's fixture changes and R4-6's path check force
+  (4), each with its reason (MEASURED from the diff):
+  - src/stats/seed_stability.py:357-358: a diverged run's unit is the non-null one, not the key that is
+    present (R4-5(f): TMAN's shape holds both keys, the other null);
+  - scripts/smoke_seed_stability.py: the catalogue's slot keys (R4-5(e)); TMAN's diverged shape in its
+    world edits (:184, :201, :222; R4-5(f)); case W15, a QAT run's divergence read at its epoch and a KD
+    run's at its iteration (R4-5(f)); the ':' path check X4 (R4-6);
+  - scripts/smoke_default_candidates.py: the catalogue's keys of the two default candidates (R4-5(e));
+    the ':' path check D5 (R4-6);
+  - scripts/smoke_strata_tables.py: one catalogue key (:370-371; R4-5(e)); the ':' path check E10 (R4-6).
+- Not edited, though on the list: src/stats/lrep_descriptive.py and scripts/report_extensions.py.
+- Outside the diff: ingest.py, align.py, driver.py and every other non-LREP file under src/stats;
+  src/eval/, src/quant/ and src/tman/; the non-LREP scripts; configs/; docs/ apart from this file;
+  .claude/, AGENTS.md, CLAUDE.md and requirements*.
+- No added or changed path contains "test" or ":".
+
+The unscoped `git diff 6c222c9 HEAD` was not run: L-PROT G refuses a diff over the tree without the
+GO's excludes (slip 1, §9). It names the same 19 files (REPOSITORY-PROVEN): every commit is `--only`
+with the paths above, none of them under docs/reference/ or with "test" in its name.
+
+### 2. STEP 0: the venv and TMAN's files
+
+- The venv is Part 2 §2's ($SCR/lrepvenv, Python 3.11.17). `pip check`: "No broken requirements
+  found."; the import check: "2.1.0+cpu 0.16.0+cpu" (MEASURED 27 Oct 07:2x UTC). PLANTSEG_DATA_ROOT was
+  unset, with PYTHONDONTWRITEBYTECODE=1 and `python -B` for every run.
+- R4-5(g): `git fetch origin lane/tman` gave 13ddad9..ee5593e; the tip
+  ee5593e9bd1f36d23b2ea2136120ae7890ed0728 is the addendum's. TMAN's two files were read by exact path
+  with `git show`, never imported (MEASURED):
+  - configs/tday_catalogue.json: blob 3cc45846d215964dbcda75669dd9185cf76e8b4b (13ddad9's too), sha256
+    6c05a78ec34fd440999c939ea76d56779f891013c89668f4a0a5cfecca3438bd, 47,307 B;
+  - src/tman/schema.py: blob d07b4952b736a35ca819d367426439f4c1da0007, sha256
+    0b87a3a089f15a8193b59846ae25deaeb20b5c6ee2e69d436103355bf1663fce, 30,568 B.
+- Re-checked at STEP 4 (27 Oct 14:18 UTC; MEASURED). lane/tman had moved to
+  c8587b96316e5bfb0d5083f0013423c1fe0bc0ab, four commits (TMAN B-1 C6g5 to C7); `git fetch origin
+  lane/tman` gave ee5593e..c8587b9. At c8587b9 both files have the same blobs, and `git log
+  ee5593e..c8587b9 -- configs/tday_catalogue.json src/tman/schema.py` is empty. The tip changes nothing
+  LREP reads: no STOP, and no difference to name. The range's scoped stat (12 files) touches
+  src/tman/validate.py, entries.py, manifest.py and records.py, scripts/tday_manifest.py and TMAN's
+  smokes; validate.py is the reader B-4 swaps in, so B-4 reads it at the merged tip (§10).
+
+### 3. Final RESULT lines (STEP 3)
+
+STEP 3 ran at 9e7ee50 as one sequential chain ($SCR/b5bfin/chain.sh), 27 Oct 13:06:29–14:08:48 UTC.
+Each smoke ran alone with the venv's python and `-B`, its TMPDIR a new folder $SCR/b5bfin/<name> whose
+path holds no "test"; logs in $SCR/b5bfin/<name>.log, times in $SCR/b5bfin/times.log. The chain's only
+git calls were HEAD at its start and end (9e7ee50 both) and the scoped status counts at the start,
+before and after smoke_stats_official_fullsize, and at the end: all 0. Every return code was 0. No tool
+call of this session fell inside the chain's window, nor inside any of B-5b's five background
+official-smoke runs (SLIP-LREPB5-1; MEASURED from this session's transcript).
+
+| smoke | Part 2 STEP 6 at 1618112 | STEP 3 at 9e7ee50 |
+|---|---|---|
+| smoke_frozen_blobs | SUMMARY 10/10 checks passed; RESULT: FROZEN BLOBS OK (10/10) | the same |
+| smoke_stats_driver | SUMMARY 55/55 checks passed; RESULT: STATS DRIVER CORE OK (55/55) | the same |
+| smoke_stats_bootstrap | SUMMARY 155/155 checks passed; RESULT: A3b SMOKE OK | the same |
+| smoke_stats_paired | SUMMARY 45/45 checks passed; RESULT: A3a OK -- PAIRED INFERENCE CORE PROVEN | the same |
+| smoke_eligibility_variants | SUMMARY 34/34 checks passed; RESULT: L-AM17-GTPRESENT OK (34/34) | the same |
+| smoke_teacher_d4 | RESULT: PASS (32/32) | the same |
+| smoke_eval_contract | SUMMARY 63/63 checks passed; RESULT: A2a OK -- CORE CONTRACT PROVEN | the same |
+| smoke_metrics_contract | SUMMARY PASS=21 EXPECTED_RED=0 UNEXPECTED_GREEN=0 UNEXPECTED_FAILURE=0 (total 21); RESULT: OK -- every case matched its declared state | the same |
+| smoke_mde | PASS 129/129 (mutations killed 35/35); 861 s | PASS 129/129 (mutations killed 35/35); 686 s |
+| smoke_am5_exclusion (EXEMPT-1) | SUMMARY 50/50 checks passed; RESULT: L-AM5 OK (50/50) | the same |
+| smoke_stats_rehearsal (EXEMPT-1) | SUMMARY 41/41 checks passed; RESULT: STATS REHEARSAL OK (41/41) | the same |
+| smoke_stats_report (EXEMPT-1) | SUMMARY 63/63 checks passed; RESULT: STATS REPORT OK (63/63) | the same |
+| smoke_stats_official_fullsize (EXEMPT-1) | SUMMARY 37/37 checks passed; RESULT: STATS OFFICIAL FULL-SIZE OK (37/37; pinned stack, (a) run) | the same; 13:24:54–13:50:05 UTC |
+
+The expected inner lines appear as in Part 2: eligibility case E4-9's "RESULT: ERROR -- see above", and
+the am5 log's inner "D4 FAIL" and "D5 FAIL" lines of its expected-fail cases. Each smoke's own SUMMARY
+and RESULT pass, at Part 2's counts.
+
+**The lane smokes:**
+
+| smoke | Part 2 STEP 6 at 1618112 | STEP 3 at 9e7ee50 |
+|---|---|---|
+| smoke_seed_stability | RESULT: L-AM8 SEED STABILITY OK (115/115); 29 s | RESULT: L-AM8 SEED STABILITY OK (116/116); 23 s |
+| smoke_strata_tables | RESULT: STRATA TABLES OK (37/37); 5 s | RESULT: STRATA TABLES OK (37/37); 4 s |
+| smoke_default_candidates | RESULT: DEFAULT CANDIDATES OK (24/24); 6 s | RESULT: DEFAULT CANDIDATES OK (24/24); 5 s |
+| smoke_am6_tables | RESULT: L-AM6 TABLES OK (40/40); 12 s | RESULT: L-AM6 TABLES OK (43/43); 10 s |
+| smoke_report_extensions | RESULT: REPORT EXTENSIONS OK (59/59); 80 s | RESULT: REPORT EXTENSIONS OK (60/60); 72 s |
+| smoke_lrep_descriptive | RESULT: LREP DESCRIPTIVE OK (16/16); 3 s | RESULT: LREP DESCRIPTIVE OK (17/17); 2 s |
+| smoke_arm_tables | RESULT: ARM TABLES OK (40/40); 6 s | RESULT: ARM TABLES OK (49/49); 6 s |
+| smoke_dedup_subset | RESULT: DEDUP SUBSET OK (37/37); 22 s | RESULT: DEDUP SUBSET OK (39/39); 19 s |
+| smoke_quant_rows | RESULT: QUANT ROWS OK (20/20); 5 s | RESULT: QUANT ROWS OK (20/20); 4 s |
+| smoke_lrep_mutations | RESULT: LREP MUTATIONS OK (387/387; mutations killed 210/210; refusal codes covered 46/46); 96 s | RESULT: LREP MUTATIONS OK (484/484; mutations killed 277/277; refusal codes covered 48/48); 115 s |
+| smoke_lrep_official_profile (new) | — | RESULT: LREP OFFICIAL PROFILE OK (32/32); 832 s |
+
+Every change from Part 2's STEP 6, with its cases:
+- **smoke_seed_stability 115 → 116.** B5b-1: W15 (R4-5(f)). Its keys, its world's divergences and X4's
+  path check changed with R4-5(e), (f) and R4-6 (§1).
+- **smoke_strata_tables 37 and smoke_default_candidates 24**: counts unchanged; keys and the ':' check
+  (§1).
+- **smoke_am6_tables 40 → 43.**
+  - B5b-1: M2 (R4-5: the world's keys, the map, the unscored stages and the teachers' seed against TMAN's
+    catalogue) gives 41.
+  - B5b-2: V8 (R4-1 items 2 and 6: the DT slots' rows read descriptive_test and print the DT label) gives
+    42.
+  - B5b-F1: R11 (R4-1 item 5: descriptive_input_in_official, a DT run given as E7's seed-42 input; DL-24
+    R1-01) gives 43.
+- **smoke_report_extensions 59 → 60.**
+  - B5b-3: Q10 rewritten (R4-2: quant_slot_invalid for each AM-23 QAT slot absent from the export;
+    without E7-E2, which the table does not read, the table is built).
+  - B5b-5: S11 (report_extensions.run passes its B to the B-5 parts) gives 60.
+  - B5b-F2: H7, the path check, moved to the last case (DL-24 R2-02).
+- **smoke_lrep_descriptive 16 → 17.** B5b-1: D4, LRB20's path check with ':' (R4-6), which this smoke
+  lacked.
+- **smoke_arm_tables 40 → 49.**
+  - B5b-1 gives 46: P12 (R4-5(b): A, F, G and the L slots skipped with their labels; ARM:latency no row),
+    P13 (R4-5(a), (d): the arm teachers at teacher-R1 and teacher-R2, seed 42, X from the stage), L7
+    (an arm run diverged in TMAN's shape), L8 (the shape before B-5b refused), L9 (both units null, both
+    non-null, no telemetry_sha256 refused) and L10 (a QAT run diverged at an epoch). P2 (an arm slot at
+    E3-K8) and P4 (an arm teacher outside teacher-R1 and teacher-R2) changed from arm_slot_invalid
+    refusals to skips (R4-5(b)).
+  - B5b-2: G1 (R4-1 items 2 and 6: E7-X rows read descriptive_test and print the DT label) gives 47.
+  - B5b-3: P14 (R4-2: E6-R1's or E6-R2's selection absent is arm_slot_invalid; E6-E2's or E7-E2's absent
+    leaves the eight rows) gives 48.
+  - B5b-5: L9 gained the no-run_id and no-cause variants (48).
+  - B5b-F3: P15 (R4-5(b): skipped slots of other kinds labelled from their entries; DL-24 R3-05) gives 49.
+- **smoke_dedup_subset 37 → 39.** B5b-1: V1 and V5 count 38 rows (the catalogue's slots). B5b-2: O1
+  (R4-1 item 5: descriptive_input_in_official, a DT run given to (ii)-(iii) as E7's input) and O2 (R4-1
+  items 2 and 6: the E7-X rows read descriptive_test and print the DT label) give 39.
+- **smoke_quant_rows 20.** B5b-3: R7 (R4-2: quant_slot_invalid for each of the four AM-23 slots absent)
+  replaces L3 (NO_SLOT's note, retired).
+- **smoke_lrep_mutations 387 → 484.** The harness counts X1, one K line per distinct killing case, and
+  one line per mutation. Final: 1 + 206 + 277 = 484. By commit (mutations; killers; lines):
+  - B5b-1: R23 and R24 retired (their raise sites are gone: R4-5(b) skips those slots): 208; 174; 383;
+  - B5b-2: C47 and C48: 210; 176; 387;
+  - B5b-3: S121 retired (NO_SLOT's row is gone), R37, S129 and S130: 212; 177; 390;
+  - B5b-4: no change: 212; 177; 390;
+  - B5b-5: R38–R42 and S131–S183: 270; 201; 472;
+  - B5b-F1: R43 and S184, S146 re-anchored: 272; 203; 476;
+  - B5b-F2: R44; S129, S130, S165, S166 and S176 rewritten as coherent mutants: 273; 204; 478;
+  - B5b-F3: S185–S188; the official cases' mutations moved into the official smoke's process: 277; 206;
+    484.
+  - The codes covered grew from 46 to 48.
+- **smoke_lrep_official_profile (new), 32.**
+  - B5b-2: G1, G2, H1–H3, A1, B1, C1, D1–D3, E1, E2, F1, K1, X1, X2 (17).
+  - B5b-4: P1–P8 (25). B5b-5: H4, H5 (27).
+  - B5b-F1: D4 (28). B5b-F2: N1, P9, P10 (31). B5b-F3: E3 (32).
+
+### 4. R4-1 to R4-6: where each is met (file:line at 9e7ee50)
+
+**R4-1 (the descriptive TEST read).** heldout_inputs.py section 9 (:1464-1606).
+1. *Nothing frozen changes; Policy gains no member.* §1's diff names no frozen file. Each step of the DT
+   read calls a frozen function: driver.load_input through load_bound (:1510-1511), ingest.apply_am5_policy
+   (:1526), align.assert_compatible (:1538), ingest.am5_pair (:1539), driver.load_input again
+   (:1557-1558) and align.align_runs (:1563).
+2. *The DT slots.* B5-S1's map is per stage; `read` is per slot, from its role and its stage's precision
+   in the map: slot_read (:1469-1478), descriptive_test for role calibration_sensitivity (DT_ROLE, :137)
+   or role arm at int8_ptq (DT_ARM_PRECISION, :138), never from an artifact's status. Each row carries
+   it: arm_tables.py:232, :242; am6_tables.py:195-196; dedup_subset.py:254. A not_built slot is never
+   read: it is outside the map (heldout_inputs.py:102-103) and the arm tables skip it
+   (arm_tables.py:175-177, :189-191). Official G1: slot_read over the catalogue's 49 scored slots gives
+   exactly the nine. §5 checks each against the evaluator's gate.
+3. *The read, steps a–f*, read_descriptive_test (:1492-1545); each refusal is descriptive_input_invalid,
+   naming its step and the step's rule text (DT_STEPS, :142):
+   - (a) load_bound under NONOFFICIAL_SMOKE, whose driver.load_input applies the canvas guard
+     (driver.py:272); any refusal other than (f)'s is (a) (:1509-1515);
+   - (b) provisional, split test, not random_init, expected_rows == actual_rows == EXPECTED_ROWS_TEST
+     (:1516-1524);
+   - (c) apply_am5_policy(rows, OFFICIAL), set with dataclasses.replace (:1525-1529);
+   - (d) the reference is a driver.LoadedInput of the slot's evaluator stage read under OFFICIAL, then
+     assert_compatible(OFFICIAL) and am5_pair (:1530-1544); load_slot passes the 37's input of that stage
+     (stats.clean, :1586-1587) and refuses at (d) a DT slot whose evaluator stage has no family slot
+     among the 37 (:1581-1585; DL-24 R1-02);
+   - (e) dt_pair (:1548-1566): the reference re-loaded by driver.load_input under NONOFFICIAL_SMOKE, its
+     files those of its official read (:1557-1560), its rows (c)'s (:1562), the pair through align_runs
+     under NONOFFICIAL_SMOKE (:1563); a DriverRefusal, IngestError or AlignmentError is (e) (:1564-1566);
+   - (f) the artifact's files, checkpoint, commit and split manifest against its binding record, inside
+     load_bound; its artifact_record_mismatch is (f) (:1513-1514).
+4. *Official-capable slots.* load_slot reads every other slot by load_bound under the statistics
+   artifact's policy (:1588-1590); under OFFICIAL a provisional artifact is artifact_unreadable, with no
+   downgrade path (official K1, P7). dt_read (:1486-1489) sends only descriptive_test slots to the DT
+   read, and only under OFFICIAL.
+5. *No DT run in an official computation.* require_official_inputs (:1593-1605): each input must be one
+   of stats.views' own LoadedInputs or runs, by identity; otherwise descriptive_input_in_official. It
+   guards dedup's (ii)-(iii), the eight contrasts and NI on the subset (dedup_subset.py:311-313), and
+   am6's seed-42 rows, which must equal report.gt_present_rows (am6_tables.py:214-215; DL-24 R1-01).
+   Cases: dedup O1, am6 R11, official P8; official G2 pins the call sites. The reading and the points
+   outside SCOPE: §10 item 2.
+6. *The label.* DT_LABEL (:140) is the addendum's text; BoundArtifact.read and read_label (:976, :983).
+   Printed in the arms' candidate cell (arm_tables.py:314), am6's stage cell (am6_tables.py:300) and
+   dedup's (dedup_subset.py:401); official P4 counts 15 in the report's markdown (3 + 9 + 3).
+7. *Cases and mutations* (§6): (a) official A1 / R38; (b) B1 / C47; (c) C1 / R40; (d) D1 / S136–S138, D2
+   / R41 and S139, D3 / S140, D4 / R43; (e) E1 / R42, E2 / S182, E3 / S185; (f) F1 / R39; item 4: K1 /
+   S181; item 5: dedup O1 / C48, am6 R11 / S184.
+8. *The official-profile smoke*: §7.
+
+**R4-2 (a missing AM-23 slot).** quant_rows.quant_slots(inv, required=…) (quant_rows.py:57-79) refuses a
+required stage the export has no slot for (:74-78). The quant part requires all four
+(build_quant_rows, :98); the fq_off table the three QAT ones (report_extensions.py:75, :125-127); the arm
+tables keep arm_slot_invalid for E6-R1 and E6-R2 (arm_tables.py:196-200). quant_slot_invalid's text
+gains the clause (heldout_inputs.py:266-268). NO_SLOT is retired: it served this case only. Each part
+refuses only the AM-23 slots it reads (quant R7; report Q10; arms P14): an export without E7-E2 still
+builds the fq_off table and the arm tables, and without E6-E2 the arm tables, while the quant part
+refuses both.
+
+**R4-3 (no code).** A no-model B-5 child keeps TMAN's label and is never refused by LREP: _b5_with_model
+(heldout_inputs.py:1322-1331) labels a B-5 slot without a model from its entry and does not apply
+check_parentage's not-run rule. Consistency is TMAN's parent rule (lane/tman 7095914; src/tman/schema.py
+NOT_RUN_REASONS :132; DOCUMENTED by the addendum). B-4's conformance smoke adds its two cases (§10).
+
+**R4-4 (no code).** "Disagrees" is a three-valued OR. A not-evaluable subset decision (p None) is
+neither a different decision nor a different label, so such a contrast disagrees on an opposite sign of
+the dataset-level difference and is otherwise null (dedup_subset.compare, :202-207). An evaluable one
+disagrees on a different decision, label or sign, and agrees otherwise (:208-215). NI disagrees when its
+`passed` differs (:362). So "disagrees" is True on a sign flip or a different NI `passed`, and null
+otherwise where the subset is not evaluable.
+
+**R4-5 (TMAN's committed catalogue).**
+- (a) TEACHER_STAGES = teacher, teacher-R1, teacher-R2 (heldout_inputs.py:109), mapped at the evaluator's
+  teacher stage with model_role teacher and the teacher's precision (:110, :121-122); B5-S1's "R1" and
+  "R2" are retired. The arm tables take X from the stage name (arm_tables.py:67, :99). Arms P13;
+  mutations S163, S174, S175.
+- (b) arm_slots (arm_tables.py:161-201) places exactly E3-X and E7-X (role arm), teacher-R1 and
+  teacher-R2 (role arm_teacher) and E6-R1 and E6-R2 (quant_descriptive, :182-185). Every other arm or
+  arm_teacher slot is skipped (:175-177, :189-191) and listed with its entry's label (:283-284;
+  heldout_inputs.entry_label :670-681), never refused or mapped: arms P2, P4, P12, P15. ARM:latency is
+  no model row (P12). arm_slot_invalid keeps its other cases (P3, P5, P7, P10, P14).
+- (c) ROLES gains e6kd (heldout_inputs.py:71-72); E6-KD:s42:sel reads under the model-row role check
+  (:864-865). Mutation S164.
+- (d) The teacher of record, teacher-R1 and teacher-R2 carry seed 42, as the catalogue does
+  (lrep_fixtures.py:116, :138, :143). am6's sort key still takes a null seed (am6 V5).
+- (e) CATALOGUE is typed from the catalogue at ee5593e (lrep_fixtures.py:110-205; CATALOGUE_SOURCE names
+  its blob and sha256, :112-114); SLOT_KEY_RE is schema.py:182's (:207); build_export refuses a fixture
+  slot key outside the catalogue (:800-802).
+- (f) _kind_fields_problem: both keys present, exactly one non-null non-negative integer, with run_id,
+  rule, cause and telemetry_sha256 (heldout_inputs.py:627-638); _check_unit: a KD or E1 run at an
+  iteration, a QAT run at an epoch (:734-739); _label prints the non-null unit (:652-654);
+  seed_stability.py:357-358. The fixture's shape: lrep_fixtures.diverged_fields (:643). Arms L7–L10;
+  seed W15.
+- (g) §2: TMAN's files by exact path at ee5593e, re-checked at c8587b9 with no difference.
+- The world departs from the catalogue in one entry, E5:s42:sel's catalogue.parent (§10 item 1).
+
+**R4-6 (LRB20 amended).**
+- (i) A slot key's ':' stays a JSON string value: file_id maps a key to a path-safe id
+  (lrep_fixtures.py:334-336); make_root and new_dir refuse "test" and ":" (:281-301), as do the copy
+  helpers (:545, :566); a model row's file_id must be path-safe (heldout_inputs.py:852-853); B5-D4's
+  contract ids admit no ':' (lrep_descriptive.py:47-49, unchanged).
+- (ii) dataset.split "test" as a JSON value only in smoke_lrep_official_profile: build_world's
+  official_split (lrep_fixtures.py:868-885), which only that smoke passes (smoke_lrep_official_profile.py
+  :101, :241-242). The mutation harness runs that smoke's cases in that smoke's own process (DL-24 R3-01,
+  §8). MEASURED at B5b-F3 by a stdlib census of the synthetic summaries: the harness's root held
+  {'val': 152}; the official process's root {'test': 161, 'val': 1} (case B1's VAL copy).
+- Every lane smoke's path check covers ':': seed X4 (smoke_seed_stability.py:1254), strata E10
+  (smoke_strata_tables.py:290), defaults D5 (smoke_default_candidates.py:274), am6 D4
+  (smoke_am6_tables.py:323), report H7 (smoke_report_extensions.py:536, run last), descriptive D4
+  (smoke_lrep_descriptive.py:245), arms D5 (smoke_arm_tables.py:661), dedup D4 (smoke_dedup_subset.py:701),
+  quant D4 (smoke_quant_rows.py:303), official X2 and P10 (smoke_lrep_official_profile.py:586, :790). The
+  harness has no walk of its own; its folders come from make_root and new_dir.
+
+### 5. The DT set against the evaluator's official gate (R4-1 item 2)
+
+The evaluator's gate (MEASURED at 9e7ee50; src/eval/ and scripts/evaluate_model.py are outside the
+diff): scripts/evaluate_model.py:258-270 calls int8_official_error for an INT8 run with
+`--artifact-status official` and refuses on any error. int8_official_error
+(src/eval/stage_artifacts.py:199-206) is int8_official_calibration_error (:181-196: a TorchScript PTQ
+artifact's list must be the AM-10 list of record; the AM-16 item 5 sensitivity lists stay descriptive)
+or _ptq_record_error (:209-251: a PTQ stage's directory holds its PTQ record of the stage's role of
+record, of_record for E4 and E7 and quant_descriptive for E7-E2; ptq_record_missing for an arm
+directory, :231-233; ptq_record_role for another role, :239-242). A QAT artifact passes (:204, :220-221).
+FP32 and teacher artifacts meet no INT8 gate (evaluate_model.py:258).
+
+Every scored catalogue slot (evaluator_stage not null; 49), against that gate and LREP's `read`:
+
+| slots | precision | the gate | read |
+|---|---|---|---|
+| teacher:s42:40k, teacher-R1:s42:40k, teacher-R2:s42:40k; E1:s42/s43/s44:80k; E2:s42:lambda0.5:80k, E2:s43/s44:lambda0.5:80k, E2:s42:lambda1:80k; E3:s42:lambda0.5:alpha25:80k, E3:s43/s44:lambda0.5:alpha25:80k, E3:s42:lambda0.5:alpha50:80k; E1:s42:160k, E2:s42:lambda0.5:160k, E3:s42:lambda0.5:alpha25:160k; A:s42:alpha25:80k, F:s42:alpha25:80k, G:s42:80k; E3-R1, E3-R2, E3-flip:s42:lambda0.5:alpha25:80k (23) | fp32 | no INT8 gate (evaluate_model.py:258) | official |
+| E5:s42/s43/s44:sel, E6:s42/s43/s44:sel, E6-KD:s42:sel, E6-E2:s42:sel, E6-R1:s42:sel, E6-R2:s42:sel (10) | int8_qat | passes (stage_artifacts.py:204, :220-221) | official |
+| E4:s42/s43/s44:list42, E7:s42/s43/s44:list42 (6) | int8_ptq | official with the list and a record of role of_record (:181-196, :209-251) | official |
+| E7-E2:s42:list42 (1) | int8_ptq | official with a record of role quant_descriptive, its role of record (:210-212, :239) | official |
+| E7-R1, E7-R2, E7-flip:s42:list42 (3) | int8_ptq | refused: an arm directory, ptq_record_missing (:213-214, :231-233) | descriptive_test |
+| E4:s42:list43/44/45, E7:s42:list43/44/45 (6) | int8_ptq | refused: a sensitivity list (:181-196) and ptq_record_role calibration_sensitivity (:215, :239-242) | descriptive_test |
+
+The gate refuses exactly the nine; no slot joins the DT set. The not_built L slots, the listed runs,
+the QAT run slots and ARM:latency have evaluator_stage null and are never scored or read.
+
+### 6. Refusal codes and mutations
+
+CODES grew from 46 to 48 (heldout_inputs.py:270-276): descriptive_input_invalid (C47, killer official:B1)
+and descriptive_input_in_official (C48, killer dedup:O1). X1 passes: every code has a C mutation.
+
+B-5b's raise sites, each with its case and mutation:
+
+| site | refusal | case | mutation |
+|---|---|---|---|
+| read_descriptive_test (a), heldout_inputs.py:1515 | descriptive_input_invalid | official A1 | R38 |
+| (f), :1514 | descriptive_input_invalid | official F1 | R39 |
+| (b), :1524 | descriptive_input_invalid | official B1 | C47 |
+| (c), :1528 | descriptive_input_invalid | official C1 | R40 |
+| (d), :1544 | descriptive_input_invalid | official D1, D2, D3 | R41 and S139 (D2); S136–S138 (D1); S140 (D3) |
+| dt_pair (e), :1566 | descriptive_input_invalid | official E1, E2, E3 | R42 (E1); S182 (E2); S185 (E3) |
+| load_slot (d), :1583 | descriptive_input_invalid | official D4 | R43 |
+| require_official_inputs, :1602 | descriptive_input_in_official | dedup O1; am6 R11; official P8 | C48 (O1); S184 (R11) |
+| quant_slots, quant_rows.py:76 | quant_slot_invalid | quant R7; report Q10 | R37 (R7); S129 (R7); S130 (Q10) |
+| _parent_of, heldout_inputs.py:707 | parent_rule (pinned for B-4) | official N1, P9 | R44 (N1) |
+
+The semantic mutations S131–S188 cover the DT read's conditions and guards, load_slot's routing,
+reference and read, dt_read, slot_read, read_label, the guard's identity and calls, the arm row's DT
+branch, pair policy and label, the renders, am6's and dedup's read fields, R4-5's map, roles, diverged
+checks, labels and skips, RX.run's B, item 4's downgrade and the coverage read. Retired: R23 and R24
+(B5b-1: their sites are gone, arms P2 and P4 pin the skip) and S121 (B5b-3: NO_SLOT's row is gone).
+
+**How each kill happened** (DL-24 V2-01). From B5b-F2 the harness prints, under every killed mutation,
+how its case failed. In STEP 3's log (MEASURED):
+- 187 S mutations: 185 fail their case's own check or end in a named refusal; S113 and S163 end in the
+  case's own lookup of the row or stage the mutant drops (StopIteration, KeyError in the smoke), each
+  mutant running to the behaviour it names.
+- 48 C and 42 R mutations disable a raise site: 13 C and 11 R of them are killed by an error downstream
+  of the disabled raise, the pattern Part 2 accepted (R25), R43 among them (the KeyError F1 removed).
+- S129, S130, S165 and S176 were killed by a KeyError inside the mutant (DL-24 V2-01), and S166 by an
+  IndexError inside it on one variant (found by the printout). All five were rewritten as coherent
+  mutants at B5b-F2: an absent AM-23 slot skipped, the old divergence shape read by e.get, the retired
+  arm_slot_invalid, both-null units accepted. Each is now killed by its case's check or a named refusal.
+
+### 7. The official profile end to end (R4-1 item 8)
+
+scripts/smoke_lrep_official_profile.py, STEP 3's run (MEASURED; 832 s). The world: lrep_fixtures'
+official world (n 1561, k 7, FIXTURE_DATASET_NAME, split value "test"; 149 artifacts, official but the
+nine DT slots', provisional), written through the evaluator writer in 12 s; X1 checks it.
+- P1: scripts/run_stats.py --mode official --confirm-official-test-analysis --synthetic-inputs on the
+  world's 37 (B = 200, --jobs 4) writes the statistics artifact in 241 s; it reads back under
+  Policy.OFFICIAL with status nonofficial: unmet synthetic_input_data, bootstrap_replicates_nonproduction
+  and test_manifest_binding_unbound. While the TEST-manifest binding is unbound, official mode runs only
+  on synthetic inputs and writes no official artifact (driver.py:540-545).
+- P2: LREP's CLI (scripts/report_extensions.py) on it exits 2, writing nothing, at its first refusal:
+  **stub_reader_official, src/stats/heldout_inputs.py:522** (LREP's stub under Policy.OFFICIAL; B-4's
+  reader swap). Named for B-4.
+- P3: the CLI's body (report_extensions.run) with a stand-in for TMAN's reader (the stub's checks
+  without its stub mark) writes every part, Part 1's and B-5's, in 543 s; profile nonofficial, unmet
+  bootstrap_replicates_nonproduction, statistics_artifact_nonofficial and strata_not_of_record.
+- P4: the DT rows: the arms' E7-X rows read descriptive_test, print DT_LABEL and pair under
+  NONOFFICIAL_SMOKE on 1561 − 7 images; E3-X and E6-X read official and pair under OFFICIAL; am6's
+  coverage reads the nine DT slots descriptive_test and the others official; dedup's E7-X rows read
+  descriptive_test; the markdown prints DT_LABEL 15 times.
+- P5: dedup's eight contrasts and NI ran on the 37 under OFFICIAL; the seven clean contrasts carry the
+  kept rows' Am5Pair (7 AM-5 images kept, 1550 included, each n_paired 1550), and NI's official block
+  stands beside the subset's (DL-24 R3-03).
+- P6–P8, one mixed run per refusal family, nothing written: an official DT artifact →
+  descriptive_input_invalid at (b); an official-capable slot's provisional artifact → artifact_unreadable;
+  a DT run given to the eight contrasts as E7's input → descriptive_input_in_official.
+- P9 (DL-24 R2-01): on an export that differs from the world's only in E5:s42:sel, as TMAN's catalogue
+  gives it (catalogue.parent null), the report stops at **parent_rule, src/stats/heldout_inputs.py:707**,
+  writing nothing. Named for B-4 (§10 item 1).
+- P10: no path that P1–P9 created contains "test" or ":".
+
+The profile cannot be official before TMAN's binding exists, as the addendum foresaw: the statistics
+artifact is nonofficial by the driver's rule. official_unmet (report_extensions.py:241-263) adds no
+condition for DT rows: they are labelled, their pairs are non-official, and the guard keeps them out of
+the official computations (§11, the D-13 line).
+
+### 8. The DL-24 workflow
+
+One read-only workflow (wf_f839023c-bc1) over the scoped `git diff 6c222c9 HEAD` at bf52dc0, in the B-5
+GO's STEP 5 form: R1 (R4-1, the DT read, its guards and the official/descriptive separation), R2 (R4-2,
+R4-5 and R4-6 against the catalogue and schema read by exact path) and R3 (the smokes, the fixtures and
+the harness), each followed by one adversarial verifier. The agents ran no smoke and wrote nothing.
+- BEFORE 09:39:31 UTC and AFTER 11:45:20 UTC: HEAD bf52dc0 on refs/heads/lane/lrep, scoped status 0
+  lines, `sha256sum -c` of the 19 diff files 19/19 OK, no python process (MEASURED). The workflow changed
+  nothing.
+- The first launch reached the session's usage limit: 2 of 5 agents finished, 3 errored ("resets
+  10:20am UTC"). After Ice's "Try again" it was resumed from its run id: a usage-limit pause, resumed, not
+  a STOP. The resumed run finished 6/6 agents with 0 errors (2,027,940 subagent tokens, 370 tool uses,
+  2,888 s; the first 1,798,879, 331 and 1,826 s).
+
+| id | severity | verdict | outcome |
+|---|---|---|---|
+| R1-01 | minor | partly | B5b-F1: am6's seed-42 rows guarded (R11, S184); the rest is §10 item 2 |
+| R1-02 | minor | partly | B5b-F1: load_slot refuses at (d) a DT slot with no family reference (D4, R43) |
+| R2-01 | major | confirmed | B5b-F2: named for B-4, not coded (N1, P9, R44; docstrings); §10 item 1 |
+| R2-02 | minor | partly | B5b-F2: the official smoke's walk runs again last (P10); report H7 runs last |
+| V2-01 | minor | (R2's verifier) | B5b-F2: S129, S130, S165, S176 coherent; S166 too (§6) |
+| R3-01 | minor | confirmed | B5b-F3: the official cases' mutations run in the official smoke's process |
+| R3-02 | minor | partly | = R2-02 (B5b-F2) |
+| R3-03 | minor | partly | B5b-F3: P5 checks the kept rows' Am5Pair and NI's official block |
+| R3-04 | minor | partly | B5b-F3: official E3 (the re-load's DriverRefusal at (e)) and S185 |
+| R3-05 | minor | confirmed | B5b-F3: arms P15 and S186–S188 |
+
+**The parts refuted, with each verifier's reason:**
+- R1-01, the reach of the rule: two of the four unguarded points (default_candidates.py:159,
+  seed_stability.py:229-235) are outside B-5b's SCOPE for an R4-1 edit, so a fix there is a STOP to ask;
+  the addendum never defines "official computation"; the narrower reading is written at
+  dedup_subset.py:57-60; no DT run can reach those points.
+- R1-02, "the CLI then exits 4": scripts/report_extensions.py passes no reader, so under OFFICIAL
+  open_inventory refuses the stub (heldout_inputs.py:522) before any slot is read, and with a
+  non-OFFICIAL statistics artifact dt_read is false. Only report_extensions.run with a non-stub reader
+  and an export whose roles contradict the catalogue reaches the path; every slot the catalogue classes
+  DT has evaluator stage E4 or E7.
+- R2-01, the R4-5(g) citation: (g) is about lane/tman moving past ee5593e, and (e) covers slot keys
+  only. The requirement holds through R4-5's "conform now", IF§11.6 and the B-5 GO's "a difference is
+  reported, not coded".
+- R2-02 and R3-02, the report smoke: H7 before path-creating cases dates from 6c222c9 (R2, R3, S9), and
+  S11 is B5b-5's, not B5b-4's. smoke_strata_tables' E10 has the same pattern from Part 1; every name
+  created after these checks is a fixed literal without "test" or ":" (and new_dir and check_out_dir
+  refuse both at creation).
+- R3-01's remedy: the verifier proposed a ruling and docstrings. B5b-F3 instead moved the official
+  cases' mutations into the official smoke's own process, so R4-6(ii) holds as written and no ruling is
+  needed.
+- R3-03, "a NaN subset difference would pass P5": P3 sets the document only after write_report, which
+  serializes with artifact.canonical_json (allow_nan=False), so a NaN fails P3 first.
+- R3-04, mutations for :1523 and :1537: R40, R41 and S140 already kill those branches.
+
+### 9. The SL-1 log, slips and tooling conflicts
+
+`tail -n 80 ~/.claude/sl1_guard.log` (MEASURED 27 Oct 14:10 UTC): lines 24–35 are B-5b's, all logged and
+none denied (log mode). Each line was matched to its command in this session's transcript or in the
+workflow agents' transcripts (MEASURED). Classes as the log gives them; SL1-B2's meaning is not read
+here (INFERRED: a compound git command).
+
+| time (UTC) | tool | class | what | source |
+|---|---|---|---|---|
+| 07:39:47 | Grep | SL1-G1 | src/stats, glob {eight lane modules}.py | this session, B5b-1 (slip 2) |
+| 07:44:10 | Bash | SL1-B1 | `for f in` five named code files: an awk line-length check | this session, B5b-1 (slip 3) |
+| 07:50:00 | Grep | SL1-G1 | scripts, glob smoke_{ten lane smokes}.py | this session, B5b-1 (slip 2) |
+| 09:38:44 | Bash | SL1-B2 | the scoped `git diff --stat` and `--name-only` of 6c222c9..HEAD, then `git diff --name-only 6c222c9 HEAD \| sort \| diff - …` without a pathspec; L-PROT G refused the whole command | this session, STEP 2 prep (slip 1) |
+| 09:41:37 | Bash | SL1-B2 | `git diff --name-status 6c222c9 HEAD -- src/eval`; `git ls-tree -r … -- src/eval \| wc -l` | agent review:R1 (agents' slip 1) |
+| 09:49:06 | Bash | SL1-B1 | `for f in scripts/smoke_seed_stability.py; do grep -n …` | agent review:R2 (agents' slip 2) |
+| 10:10:37 | Bash | SL1-B1 | `for f in` ten named lane smokes `; do …` | agent review:R3, first run (agents' slip 2) |
+| 11:06:40 | Bash | SL1-B1 | `for f in` ten named lane smokes `; do …` | agent review:R3, resumed (agents' slip 2) |
+| 11:07:41 | Bash | SL1-B1 | `for f in` nineteen named src/stats files `; do …` | agent verify:R1 (agents' slip 2) |
+| 11:53:30 | Grep | SL1-G1 | scripts, glob `!*[Tt][Ee][Ss][Tt]*` | this session, B5b-F1 (slip 2) |
+| 12:14:20 | Grep | SL1-G1 | scripts, glob `!*[Tt][Ee][Ss][Tt]*` | this session, B5b-F2 (slip 2) |
+| 14:09:00 | Bash | SL1-B1 | `for n in` the 24 STEP 3 log names `; do grep …` (logs in $SCR) | this session, STEP 4 (slip 6) |
+
+No line is a read of a test-named path, TEST data or docs/reference/. Not logged, though of the same
+forms: the agents' 11:23:54 and 11:25:26 loops, and this session's `python -I -B` check loops (slip 3).
+
+**Slips (this session's own; none opened a test-named path, TEST data or docs/reference/; none wrote
+into the tree outside the commits):**
+1. **L-PROT refusals; nothing ran; each re-run in an allowed form or dropped.**
+   - STEP 2 prep, 09:38:44: a scoped diff joined to `git diff --name-only 6c222c9 HEAD | sort | diff - …`
+     without a pathspec (L-PROT G refused the whole command). The unscoped part was dropped; the scoped
+     part was re-run alone at 09:39:22.
+   - STEP 4, 14:10:44: `ls -la` on a variable path (L-PROT S). Re-run with the literal path, without ls.
+   - STEP 4, 14:12:18 and again 14:28:39: an inline `python -I` whose search strings held the word "git"
+     (L-PROT S: inline interpreter code that runs git is not analysed). Neither would have run git; each
+     was re-run without that word (14:12:30, 14:28:52).
+2. **Grep-tool searches with a directory path and a glob, not named files**: 07:39:47, 07:50:00 (brace
+   lists of lane files), 11:53:30 and 12:14:20 (the GO's glob). Each matched only non-test files.
+3. **Code read or checked outside the Read and Grep tools, by exact path, read-only:** `wc -l` of code
+   files (07:23, 08:14, 08:23); awk line-length checks (07:44 in a `for` loop over five files, 07:55,
+   08:28, 08:32, 08:48 three times, 08:56, 08:57); `sed -n` and `grep -n` peeks at lane code (08:23,
+   08:32 a `for` loop of nine `sed -n` lines, 08:33 twice, 08:45–08:48 four, 09:15–09:17 four, 11:50:20
+   and 11:50:46, 12:44 src/stats/driver.py's load_input, 12:48 the official smoke's first 20 lines); and
+   `python -I -B` syntax and line-length checks over named files, some in a Bash `for` loop (08:32–08:57,
+   11:54 twice, 12:19, 12:47, 12:48).
+4. **A `python -B -m py_compile`** (08:28:17) wrote bytecode into src/stats/__pycache__/ and
+   scripts/__pycache__/ (both gitignored; born 08:28:19). Not removed (no deletes); the scoped status was
+   unaffected. Every later syntax check parsed with ast.
+5. **Docs lookups outside the exact form, one file per command, all on this file:** three piped
+   `grep -n … | head` or `| tail` lookups (09:38:57, 09:39:00, 13:05:15), one `wc -lc` (14:09:44), a
+   `grep -c ''` with `tail -c 1` of its last byte before the append (14:27:47), and a `wc -c` after the
+   first append's cmp checks (14:29:55; the file was then rebuilt from HEAD plus this part and checked
+   again).
+6. **A Bash `for` loop of grep over the 24 STEP 3 logs** in $SCR (14:09:00).
+7. **The state notes were incomplete until STEP 4.** They named seven of this session's slips (SLIP
+   B5b-1 to B5b-7: here slips 1 to 4) and two of the agents'. The SL-1 log and an audit of this session's
+   transcript from the addendum's arrival (07:19 UTC) and of the agents' transcripts found the rest,
+   listed here.
+
+**The workflow agents' slips** (MEASURED from their transcripts; read-only, nothing written):
+1. review:R1 (09:41:35): `git diff --name-status` and `git ls-tree -r` over src/eval, a directory
+   without the GO's excludes; its output was a count and no file name.
+2. Bash `for` loops of grep over named files: review:R2 (one smoke, 09:49:06), review:R3 (ten smokes,
+   10:10:37 and 11:06:40), verify:R1 (nineteen src/stats files, 11:07:41), verify:R2 (twelve files,
+   11:23:54).
+3. verify:R3 (11:25:26): a `for c in` five commit ids loop with a variable commit id in a scoped
+   `git show --stat`.
+
+**Tooling conflicts, reported once (Part 2 §9) and not complied with:**
+- The stop hook (~/.claude/stop-hook-git-check.sh) asked to commit and push uncommitted changes while
+  runs were pending (B5b-4, B5b-5, F1, F2, F3 and STEP 3). Each commit followed its runs, as STEP 1 and
+  STEP 2 order.
+- The harness's attribution reminder (Co-Authored-By and Claude-Session trailers) and its designated
+  branch claude/clever-curie-h187v4. No commit has a trailer, and only lane/lrep was touched.
+
+### 10. Open items
+
+1. **E5:s42:sel's parent (DL-24 R2-01; for B-4, and a ruling).** TMAN's catalogue gives E5:s42:sel
+   catalogue.parent null (its pilot decides; pilot runs E5:s42:clip1:15ep and E5:s42:clip5:15ep), and
+   its entry block copies that null; a derived entry also carries its own `parent` (schema.py :392,
+   :461-464 at ee5593e). LREP's R-12 reads catalogue.parent only (_parent_of, heldout_inputs.py:699-709;
+   check_parentage :816 and :822, resolve_status :760 and :775, _not_run_status :721, parent_slot
+   :712-714, B-5's _b5_parent :1308 and b5_status :1347, and seed_stability.py:386). The world names the
+   pilot of record there (lrep_fixtures.py:211).
+   On TMAN's export every report would stop at parent_rule, heldout_inputs.py:707 (official N1, P9). The
+   ruling: LREP reads a QAT selection's run from the derived entry's own parent when catalogue.parent is
+   null (heldout_inputs and seed_stability.py, the latter outside B-5b's SCOPE), or TMAN's export carries
+   the pilot of record in catalogue.parent.
+2. **R4-1 item 5's reach (DL-24 R1-01; a ruling).** The guard sits where the eight contrasts and NI
+   take the 37 on the subset (dedup_subset.py:311-313) and at am6's seed-42 rows (am6_tables.py:214-215).
+   default_candidates.record_row (default_candidates.py:159) and seed_stability's seed-42 cross-checks
+   (seed_stability.py:229-235) take the 37 unguarded, outside B-5b's SCOPE. The fq_off table's seed-42
+   int8 values (report_extensions.py:137) are stats.clean of a QAT stage, never a DT slot (every DT slot
+   is int8_ptq at E4 or E7). No DT run reaches these points (INFERRED from the code: they read the 37 by
+   stage). The ruling: accept this reading, or extend the guard in a later GO.
+3. **B-4 (after TMAN's merge).** As the addendum lists: the reader swap (the CLI's first refusal is
+   stub_reader_official, heldout_inputs.py:522; TMAN's validate.py changed in ee5593e..c8587b9, so B-4
+   reads it at the merged tip); what binding.path and dedup.path resolve against; tday_dedup.json's
+   schema; the model-row fields slot, entry_kind, role and training_run_id; and the conformance smoke
+   on the merged catalogue and schema: B5-S1's map against every scored slot's evaluator_stage,
+   model_role and precision; R4-1's DT selection (§5's table); R4-3's two cases (an arm descendant and a
+   quant_descriptive descendant whose entry contradicts its parent's: TMAN's validator refuses). Also:
+   item 1's E5 parent; the fixtures' catalogue.never_cut and cut_place are not TMAN's entry-block values
+   (cut_place always null), which no LREP module reads (MEASURED: none of the ten LREP src/stats modules
+   names either field).
+4. **Not done, as ruled or recorded**: Part 2 §9's item 5 stands (R4-18, R4-20, the four §7.3 smokes).
+
+### 11. Records proposed (the addendum's RECORDS)
+
+The lane writes none of these. `<sha>` is the commit the orchestrator's records cite: the lane tip, or
+its merge.
+- **DL-c gains R4-1 to R4-6** ("as LREP-B5-RULE-4 rules them"): the DT read of the nine DT slots (role
+  arm at int8_ptq; role calibration_sensitivity), steps a–f, descriptive_input_invalid; no downgrade path
+  for an official-capable slot; descriptive_input_in_official where an official computation takes its
+  inputs (the reading of §10 item 2); DT_LABEL; R4-2's quant_slot_invalid for an absent AM-23 slot in
+  each part that reads it; R4-3 and R4-4 as stated in §4; R4-5's conformance to the catalogue at ee5593e
+  (unchanged at c8587b9); R4-6's ':' and split rules. Status: "DECIDED; IMPLEMENTED <sha> (lane/lrep)".
+- **A contract §10 NOTE** (documentation only): "The descriptive TEST tables may read provisional TEST
+  artifacts of the stages the evaluator scores descriptively only, through LREP's DT read. Such an
+  artifact never contributes to an official result."
+- **IF errata:** §8: the teachers' seed is 42; §11.1: role e6kd; the arm teachers' stage names,
+  teacher-R1 and teacher-R2.
+- **A TEST-day plan line:** every official-capable slot is scored with `--artifact-status official`;
+  only the nine DT slots are scored as provisional.
+- **A plan D-13 line** (proposed by this lane, for the orchestrator to accept or not): a DT row does
+  not by itself make the extension report non-official. It is labelled, its pair is non-official, and
+  it never reaches an official computation (§7).
+- **For B-4** (§10 items 1 and 3): the E5:s42:sel parent ruling, and the conformance smoke's cases.
