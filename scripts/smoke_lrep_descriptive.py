@@ -2,7 +2,8 @@
 """LREP's descriptive bootstrap namespace (lane LREP, B-5: B5-D4 and B5-D2): src/stats/lrep_descriptive.py.
 
 SYNTHETIC ONLY (DL-41): the loop-fidelity cases run on scripts/lrep_fixtures.py's world (its seed-42
-inputs), written under a new directory in TMPDIR (left in place); no created path contains "test".
+inputs), written under a new directory in TMPDIR (left in place); no created path contains "test" or
+":".
 
   N  the namespace: the analysis id is outside bootstrap.ANALYSIS_IDS; no contrast id is one of the ten
      official ids; bootstrap.canonical_seed_bytes refuses the id; the seed prefix differs from the
@@ -15,7 +16,7 @@ inputs), written under a new directory in TMPDIR (left in place); no created pat
   M  B5-D2: the observed value is the A3a primitive's mean_delta, the interval two-sided, and B is
      bootstrap.PRODUCTION_B by default, imported and never typed
   D  determinism; distinct streams per contrast and statistic, none an official stream; the JSON keeps
-     the statistic in a field of its own and the banner
+     the statistic in a field of its own and the banner; no created path holds "test" or ":" (R4-6)
 
 Cases are importable (setup / cases) so that scripts/smoke_lrep_mutations.py can run them mutated.
 
@@ -27,6 +28,7 @@ import ast
 import hashlib
 import inspect
 import json
+import os
 import sys
 import time
 import traceback
@@ -240,6 +242,13 @@ def d_json():
             and json.loads(canonical_json(j)) == j), str(sorted(j))
 
 
+def d_no_test_path():
+    """LRB20, with ':' (R4-6): no path created under the world's root contains 'test' or ':'."""
+    bad = [os.path.join(d, n) for d, dirs, files in os.walk(CTX.world.root) for n in dirs + files
+           if "test" in n.lower() or ":" in n]
+    return not bad, str(bad[:3])
+
+
 def setup(root: Path, world=None) -> None:
     CTX.world = world or LF.build_world(root, stats=False, strata=False)
     CTX.runs = {}
@@ -261,7 +270,8 @@ def cases():
             ("M2", "B5-D2: B defaults to bootstrap.PRODUCTION_B, never typed", m_default_b),
             ("D1", "two runs give identical replicates, jackknife, interval and JSON", d_deterministic),
             ("D2", "distinct streams per contrast and statistic, none an official stream", d_distinct_streams),
-            ("D3", "the JSON keeps the statistic in its own field, with the banner", d_json)]
+            ("D3", "the JSON keeps the statistic in its own field, with the banner", d_json),
+            ("D4", "no created path contains 'test' or ':' (LRB20; R4-6)", d_no_test_path)]
 
 
 def run_case(fn):

@@ -79,8 +79,8 @@ def m(stats):
 
 
 def default_run(stage):
-    tail = "lambda1" if stage == "E2" else "alpha50"
-    w = CTX.world.written[(f"{stage}:s42:{tail}", "fp32", "clean", None)]
+    slot = "E2:s42:lambda1:80k" if stage == "E2" else "E3:s42:lambda0.5:alpha50:80k"
+    w = CTX.world.written[(slot, "fp32", "clean", None)]
     from src.stats import driver as D
     from src.stats.ingest import Policy
     return D.load_input(stage, D.CLEAN, w.rel, CTX.world.input_root, Policy.NONOFFICIAL_SMOKE).run
@@ -159,7 +159,7 @@ def v_coincide():
     rec["E3"]["default_checkpoint"] = rec["E3"]["selected_checkpoint"]
 
     def edit(export, binding):
-        export["entries"] = [e for e in export["entries"] if e["slot"] != "E3:s42:alpha50"]
+        export["entries"] = [e for e in export["entries"] if e["slot"] != "E3:s42:lambda0.5:alpha50:80k"]
     d = doc_of(variant("no_e3_default", edit), record=rec)
     r = {x["row"]: x for x in d["rows"]}
     md = DC.render_markdown(d)
@@ -171,7 +171,7 @@ def v_coincide():
 def v_gt_present():
     v = rows()["D1"]["values"]
     run = default_run("E2")
-    w = CTX.world.written[("E2:s42:lambda1", "fp32", "clean", None)]
+    w = CTX.world.written[("E2:s42:lambda1:80k", "fp32", "clean", None)]
     summary = json.loads((CTX.world.input_root / w.rel / "summary.json").read_text(encoding="utf-8"))
     g = AM6.gt_present_row(run.stats, summary, with_classes=False)
     return v["candidate_gt_present_all_class"] == g["gt_present_all_class_float64"], ""
@@ -180,7 +180,7 @@ def v_gt_present():
 def v_disease_only():
     v = rows()["D2"]["values"]
     run = default_run("E3")
-    w = CTX.world.written[("E3:s42:alpha50", "fp32", "clean", None)]
+    w = CTX.world.written[("E3:s42:lambda0.5:alpha50:80k", "fp32", "clean", None)]
     summary = json.loads((CTX.world.input_root / w.rel / "summary.json").read_text(encoding="utf-8"))
     g = AM6.gt_present_row(run.stats, summary, with_classes=False)
     return v["candidate_union_present_disease_only"] == g["union_present_disease_only_float64"], ""
@@ -207,21 +207,21 @@ def v_candidate_rules():
 # --------------------------------------------------------------------------------------------------
 def r_other_candidate():
     def edit(export, binding):
-        row = next(r for r in export["models"] if r["slot"] == "E2:s42:lambda1")
+        row = next(r for r in export["models"] if r["slot"] == "E2:s42:lambda1:80k")
         row["source"]["sha256"] = DC.SELECTION_RECORD["E2"]["other_checkpoints"]["0.25"]
     return refused("default_candidate_invalid", lambda: doc_of(variant("other_lambda", edit)))
 
 
 def r_not_complete():
     def edit(export, binding):
-        e = next(e for e in export["entries"] if e["slot"] == "E3:s42:alpha50")
+        e = next(e for e in export["entries"] if e["slot"] == "E3:s42:lambda0.5:alpha50:80k")
         e.update(kind="cut", cut_date="2026-10-22", rule="AM-19 item 2", comparator=None)
     return refused("default_candidate_invalid", lambda: doc_of(variant("default_cut", edit)))
 
 
 def r_missing():
     def edit(export, binding):
-        export["entries"] = [e for e in export["entries"] if e["slot"] != "E3:s42:alpha50"]
+        export["entries"] = [e for e in export["entries"] if e["slot"] != "E3:s42:lambda0.5:alpha50:80k"]
     return refused("default_candidate_missing", lambda: doc_of(variant("no_e3_default", edit)))
 
 
@@ -233,7 +233,7 @@ def r_selection():
 
 def r_not_canvas():
     def edit(export, binding):
-        r = next(r for r in binding["artifacts"] if r["slot"] == "E2:s42:lambda1")
+        r = next(r for r in binding["artifacts"] if r["slot"] == "E2:s42:lambda1:80k")
         r["protocol"] = "upstream"
     return refused("not_canvas", lambda: doc_of(variant("default_upstream", edit)))
 
@@ -272,8 +272,9 @@ def d_sentence():
 
 
 def d_no_test_path():
+    """LRB20, with ':' (R4-6): no created path contains 'test' or ':'."""
     bad = [os.path.join(d, n) for d, dirs, files in os.walk(CTX.world.root) for n in dirs + files
-           if "test" in n.lower()]
+           if "test" in n.lower() or ":" in n]
     return not bad, str(bad[:3])
 
 
@@ -310,7 +311,7 @@ def cases():
             ("D2", "byte-identical JSON on repeated runs", d_deterministic),
             ("D3", "identical markdown on repeated runs", d_deterministic_md),
             ("D4", "the record sentence is present", d_sentence),
-            ("D5", "no created path contains 'test'", d_no_test_path)]
+            ("D5", "no created path contains 'test' or ':' (LRB20; R4-6)", d_no_test_path)]
 
 
 def run_case(fn):

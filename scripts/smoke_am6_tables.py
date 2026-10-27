@@ -5,7 +5,7 @@ LRB7 / LRB10 / LRB17 and rulings B5-S1 and (d) (DL-24 R3-14).
 
 SYNTHETIC ONLY (DL-41): scripts/lrep_fixtures.py's world, plus edited or re-scored copies of one
 seed-43 artifact and of the teacher's for the refusals. Created paths live under a new directory in
-TMPDIR (left in place); none contains "test".
+TMPDIR (left in place); none contains "test" or ":".
 
   N  the four numbers, both arithmetics, against eligibility.rule_variants
   F  R1 bitwise and R3, the union-present-only classes, the per-class table
@@ -17,7 +17,9 @@ TMPDIR (left in place); none contains "test".
      under the teacher's record, a teacher scored as a student (precision_mismatch), a model row at
      another seed (seed_inconsistent), a stage outside the map (stage_unmapped), a teacher's model row
      that says student (precision_mismatch)
-  M  B5-S1's stage map, static, against STAGE_ARTIFACTS and the evaluator's STAGES
+  M  B5-S1's stage map, static, against STAGE_ARTIFACTS and the evaluator's STAGES; B-5b (ruling
+     LREP-B5-RULE-4 R4-5): the arm teachers' stages teacher-R1 and teacher-R2, and the world against TMAN's
+     catalogue (its keys, the map of every scored slot, the unscored stages, the teachers at seed 42)
   V  (d): every other clean canvas record as a row (23 here), each with its slot's roles, kind, stage,
      seed and label, its twelve numbers and R1/R3, the stages it is scored at, the sort, the markdown;
      never an fq_off record, even one filed under scope clean
@@ -34,6 +36,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import sys
 import time
 import traceback
@@ -61,13 +64,18 @@ from src.stats.eligibility import GT_PRESENT, UNION_PRESENT, class_totals, rule_
 
 CTX = types.SimpleNamespace(world=None, stats=None, paths={}, copies={}, cov=None)
 #: B5-S1, typed out from the ruling: the TMAN stages in the map's order and the evaluator stages that
-#: differ from their own name (E3-X, E7-X, the teachers).
+#: differ from their own name (E3-X, E7-X, the teachers); the arm teachers are TMAN's teacher-R1 and
+#: teacher-R2 (R4-5(a)), and B5-S1's "R1" and "R2" are retired.
 TMAN_STAGES = ("E1", "E2", "E3", "E4", "E5", "E6", "E7", "E3-R1", "E3-R2", "E3-flip", "E7-R1", "E7-R2",
-               "E7-flip", "E6-E2", "E7-E2", "E6-R1", "E6-R2", "E6-KD", "A", "F", "G", "teacher", "R1", "R2")
+               "E7-flip", "E6-E2", "E7-E2", "E6-R1", "E6-R2", "E6-KD", "A", "F", "G", "teacher", "teacher-R1",
+               "teacher-R2")
 EVALUATED_AS = {"E3-R1": "E3", "E3-R2": "E3", "E3-flip": "E3", "E7-R1": "E7", "E7-R2": "E7", "E7-flip": "E7",
-                "R1": "teacher", "R2": "teacher"}
+                "teacher-R1": "teacher", "teacher-R2": "teacher"}
+#: src/tman/schema.py:182 at lane/tman ee5593e, typed out here (R4-5(e); src.tman is never imported).
+SLOT_KEY_RE = re.compile(r"^[A-Za-z][A-Za-z0-9-]*(?::[A-Za-z0-9.]+)+$")
 #: (d)'s rows beyond B-5's slots: the default candidates and E6-KD (Part 1's world).
-PART1_COVERAGE = (("E2:s42:lambda1", "fp32"), ("E3:s42:alpha50", "fp32"), ("E6-KD:s42:sel", "int8_qat"))
+PART1_COVERAGE = (("E2:s42:lambda1:80k", "fp32"), ("E3:s42:lambda0.5:alpha50:80k", "fp32"),
+                  ("E6-KD:s42:sel", "int8_qat"))
 #: A coverage row's source, typed out (R4-03).
 COVERAGE_SOURCE = "binding: every clean canvas record (B-5 (d); R3-14)"
 SPACES = ("all_class", "disease_only")
@@ -232,12 +240,12 @@ def t_seed42_equals_report():
 
 def t_missing_listed():
     def edit(export, binding):
-        e = next(e for e in export["entries"] if e["slot"] == "E2:s44")
+        e = next(e for e in export["entries"] if e["slot"] == "E2:s44:lambda0.5:80k")
         e.update(kind="cut", cut_date="2026-11-02", rule="AM-19 item 3(b): original freeze", comparator=None)
-        export["models"] = [r for r in export["models"] if r["slot"] != "E2:s44"]
-        binding["artifacts"] = [r for r in binding["artifacts"] if r["slot"] != "E2:s44"]
+        export["models"] = [r for r in export["models"] if r["slot"] != "E2:s44:lambda0.5:80k"]
+        binding["artifacts"] = [r for r in binding["artifacts"] if r["slot"] != "E2:s44:lambda0.5:80k"]
     doc = doc_of(variant("e2_cut", edit))
-    return (doc["missing"] == [{"slot": "E2:s44", "stage": "E2", "seed": 44,
+    return (doc["missing"] == [{"slot": "E2:s44:lambda0.5:80k", "stage": "E2", "seed": 44,
                                 "label": "cut (2026-11-02, AM-19 item 3(b): original freeze)"}]
             and len(doc["rows"]) == 20), str(doc["missing"])
 
@@ -245,20 +253,20 @@ def t_missing_listed():
 # --------------------------------------------------------------------------------------------------
 def r_unfaithful():
     def edit(export, binding):
-        point_record(binding, "E2:s43", "fp32", CTX.copies["nudged"])
+        point_record(binding, "E2:s43:lambda0.5:80k", "fp32", CTX.copies["nudged"])
     return refused("gt_present_unfaithful", lambda: doc_of(variant("nudged", edit)))
 
 
 def r_other_gt():
     def edit(export, binding):
-        point_record(binding, "E2:s43", "fp32", CTX.copies["other_gt"])
+        point_record(binding, "E2:s43:lambda0.5:80k", "fp32", CTX.copies["other_gt"])
     return refused("cross_artifact_mismatch", lambda: doc_of(variant("other_gt", edit)))
 
 
 def r_upstream():
     def edit(export, binding):
         r = next(r for r in binding["artifacts"]
-                 if (r["slot"], r["precision"], r["scope"]) == ("E7:s44", "int8_ptq", "clean"))
+                 if (r["slot"], r["precision"], r["scope"]) == ("E7:s44:list42", "int8_ptq", "clean"))
         r["protocol"] = "upstream"
     return refused("not_canvas", lambda: doc_of(variant("upstream", edit)))
 
@@ -266,7 +274,7 @@ def r_upstream():
 def r_no_record():
     def edit(export, binding):
         binding["artifacts"] = [r for r in binding["artifacts"]
-                                if (r["slot"], r["scope"]) != ("E4:s43", "clean")]
+                                if (r["slot"], r["scope"]) != ("E4:s43:list42", "clean")]
     return refused("artifact_missing", lambda: doc_of(variant("no_record", edit)))
 
 
@@ -294,7 +302,7 @@ def r_e1_swap():
     """E1's seed-43 and seed-44 records and identities exchanged: every other check passes, and DL-99's
     record names the swap (R-10; R1-13)."""
     def edit(export, binding):
-        a, b = "E1:s43", "E1:s44"
+        a, b = "E1:s43:80k", "E1:s44:80k"
         for r in binding["artifacts"]:
             if r["slot"] in (a, b):
                 r["slot"] = b if r["slot"] == a else a
@@ -305,8 +313,9 @@ def r_e1_swap():
 
 
 def d_no_test_path():
+    """LRB20, with ':' (R4-6): no created path contains 'test' or ':'."""
     bad = [os.path.join(d, n) for d, dirs, files in os.walk(CTX.world.root) for n in dirs + files
-           if "test" in n.lower()]
+           if "test" in n.lower() or ":" in n]
     return not bad, str(bad[:3])
 
 
@@ -331,7 +340,29 @@ def m_stage_map():
         "roles": all(spec[1] == ("teacher" if spec[0] == "teacher" else "student") for spec in m.values()),
         "E6-KD": m["E6-KD"] == ("E6-KD", "student", "int8_qat"),
         "unmapped": all(refused("stage_unmapped", lambda s=s: H.stage_spec(s))[0]
-                        for s in ("E3-K8", "E3-avg", "E6-flip", "e3-r1", None))}
+                        for s in ("E3-K8", "E3-avg", "E6-flip", "e3-r1", None, "R1", "R2"))}
+    return all(checks.values()), str({k: v for k, v in checks.items() if not v})
+
+
+def m_catalogue():
+    """R4-5 against TMAN's catalogue (typed in lrep_fixtures from configs/tday_catalogue.json at lane/tman
+    ee5593e): every slot key of the world (entries, model rows, binding records) is the catalogue's own and
+    matches SLOT_KEY_RE (schema.py:182); every scored catalogue slot's stage maps to its evaluator_stage,
+    model_role and precision (B5-S1); every stage the catalogue leaves unscored and outside the planned
+    stages (the not-built L arm, ARM) is stage_unmapped; and the teachers carry seed 42 (R4-5(d))."""
+    w = CTX.world
+    keys = ({e["slot"] for e in w.export["entries"]} | {r["slot"] for r in w.export["models"]}
+            | {r["slot"] for r in w.binding["artifacts"]})
+    scored = {s: v for s, v in LF.CATALOGUE.items() if v[4] is not None}
+    unscored = sorted({v[0] for v in LF.CATALOGUE.values() if v[4] is None} - set(H.STAGE_MAP))
+    checks = {
+        "keys": keys <= set(LF.CATALOGUE) and all(SLOT_KEY_RE.fullmatch(k) for k in keys),
+        "catalogue keys": all(SLOT_KEY_RE.fullmatch(k) for k in LF.CATALOGUE) and len(LF.CATALOGUE) == 69,
+        "map": len(scored) == 49 and all(H.STAGE_MAP.get(v[0]) == (v[4], v[5], v[6])
+                                          for v in scored.values()),
+        "unmapped": unscored == ["ARM", "E2-L", "E3-L", "E7-L", "teacher-L"]
+        and all(refused("stage_unmapped", lambda s=s: H.stage_spec(s))[0] for s in unscored),
+        "teachers": all(e["seed"] == 42 for e in w.export["entries"] if e["stage"] in H.TEACHER_STAGES)}
     return all(checks.values()), str({k: v for k, v in checks.items() if not v})
 
 
@@ -387,29 +418,45 @@ def v_values():
 
 
 def v_stages():
-    """B5-S1 in the rows: E6-KD's artifact is scored at E6-KD, the arms' at E3 and E7, the teachers' at
-    "teacher" with model_role teacher and a null seed; the row's stage is TMAN's."""
+    """B5-S1 in the rows: E6-KD's artifact is scored at E6-KD under its role e6kd (R4-5(c)), the arms' at E3
+    and E7, the teachers' at "teacher" with model_role teacher and seed 42 (R4-5(a), (d)); the row's stage
+    is TMAN's."""
     rows = {r["slot"]: r for r in cov_doc()["rows"] if not AM6.is_planned(r)}
     run = {slot: summary_of(CTX.world.written[(slot, rows[slot]["precision"], "clean", None)])["run"]
            for slot in rows}
-    want = {"E6-KD:s42:sel": ("E6-KD", "student"), "E3-R1:s42": ("E3", "student"),
-            "E3-flip:s42": ("E3", "student"), "E7-R2:s42": ("E7", "student"), "A:s42": ("A", "student"),
-            "E7-E2:s42": ("E7-E2", "student"), "teacher": ("teacher", "teacher"),
-            "R1": ("teacher", "teacher"), "R2": ("teacher", "teacher")}
+    want = {"E6-KD:s42:sel": ("E6-KD", "student"), "E3-R1:s42:lambda0.5:alpha25:80k": ("E3", "student"),
+            "E3-flip:s42:lambda0.5:alpha25:80k": ("E3", "student"), "E7-R2:s42:list42": ("E7", "student"),
+            "A:s42:alpha25:80k": ("A", "student"), "E7-E2:s42:list42": ("E7-E2", "student"),
+            "teacher:s42:40k": ("teacher", "teacher"), "teacher-R1:s42:40k": ("teacher", "teacher"),
+            "teacher-R2:s42:40k": ("teacher", "teacher")}
     got = {slot: (run[slot]["stage"], run[slot]["model_role"]) for slot in want}
     nulls = sorted(slot for slot, r in rows.items() if r["seed"] is None)
-    return (got == want and nulls == ["R1", "R2", "teacher"] and rows["E6-KD:s42:sel"]["stage"] == "E6-KD"
-            and rows["R1"]["stage"] == "R1"), str(got)
+    teachers = [rows[s]["seed"] for s in ("teacher:s42:40k", "teacher-R1:s42:40k", "teacher-R2:s42:40k")]
+    return (got == want and nulls == [] and teachers == [42] * 3
+            and rows["E6-KD:s42:sel"]["stage"] == "E6-KD" and rows["E6-KD:s42:sel"]["roles"] == ["e6kd"]
+            and rows["teacher-R1:s42:40k"]["stage"] == "teacher-R1"), str(got)
+
+
+def _teacher_seed_null(export, binding):
+    """IF§8's former form: the teacher of record's entry and model row at a null seed (R4-5(d) keeps the
+    sort able to take one)."""
+    next(e for e in export["entries"] if e["slot"] == "teacher:s42:40k")["seed"] = None
+    next(r for r in export["models"] if r["slot"] == "teacher:s42:40k")["seed"] = None
 
 
 def v_sort():
-    """The sort covers every stage and a null seed: seed (null last), then the map's stage order, then
-    the slot."""
+    """The sort covers every stage and a null seed: seed (null last), then the map's stage order, then the
+    slot -- on the world (the teachers at seed 42) and on a variant whose teacher of record has a null seed,
+    its row then last (R4-5(d))."""
     rows = cov_doc()["rows"]
-    keys = [(r["seed"] is None, r["seed"] or 0, TMAN_STAGES.index(r["stage"]), r["slot"]) for r in rows]
-    tail = [r["seed"] for r in rows[-3:]]
-    return keys == sorted(keys) and tail == [None] * 3 and rows[0]["slot"] == "E1:s42", \
-        str([r["slot"] for r in rows[:4]])
+    null = doc_of(variant("teacher_seed_null", _teacher_seed_null), coverage=True)["rows"]
+    keys = [[(r["seed"] is None, r["seed"] or 0, TMAN_STAGES.index(r["stage"]), r["slot"]) for r in d]
+            for d in (rows, null)]
+    return (all(k == sorted(k) for k in keys)
+            and [r["slot"] for r in rows[:2]] == ["E1:s42:160k", "E1:s42:80k"]
+            and all(r["seed"] is not None for r in rows)
+            and (null[-1]["slot"], null[-1]["seed"]) == ("teacher:s42:40k", None)
+            and all(r["seed"] is not None for r in null[:-1])), str([r["slot"] for r in null[-2:]])
 
 
 def v_markdown():
@@ -421,10 +468,13 @@ def v_markdown():
     rows = [line for line in md[i:] if line.startswith("| ") and not line.startswith("| stage")]
     slots = {e["slot"] for e in CTX.world.export["entries"] if ":" in e["slot"]}
     text = "\n".join(md)
+    null = "\n".join(AM6.render_markdown(doc_of(variant("teacher_seed_null", _teacher_seed_null),
+                                                 coverage=True), "BANNER"))
     return (md[:len(head)] == head and md[i + 1:i + 3] == ["", "BANNER"] and len(rows) == 23
-            and "| teacher | — | teacher_reference | fp32 |" in text
-            and "| R2 | — | arm_teacher | fp32 |" in text
+            and "| teacher | 42 | teacher_reference | fp32 |" in text
+            and "| teacher-R2 | 42 | arm_teacher | fp32 |" in text
             and "| E6-E2 | 42 | quant_descriptive | int8_qat |" in text
+            and "| teacher | — | teacher_reference | fp32 |" in null
             and not any(s in text for s in slots)), str(rows[:2])
 
 
@@ -445,7 +495,7 @@ def r_cov_other_gt():
     """With coverage, the teacher's record pointed at an artifact scored on another ground truth (its
     checkpoint, stage and model_role the teacher's): one ground truth holds across every row (R-10)."""
     def edit(export, binding):
-        point_record(binding, "teacher", "fp32", CTX.copies["teacher_other_gt"])
+        point_record(binding, "teacher:s42:40k", "fp32", CTX.copies["teacher_other_gt"])
     return refused("cross_artifact_mismatch",
                    lambda: doc_of(variant("teacher_other_gt", edit), coverage=True))
 
@@ -453,22 +503,24 @@ def r_cov_other_gt():
 def r_cov_role():
     """B5-S1: the teacher's artifact recording model_role student is refused (precision_mismatch)."""
     def edit(export, binding):
-        point_record(binding, "teacher", "fp32", CTX.copies["teacher_as_student"])
+        point_record(binding, "teacher:s42:40k", "fp32", CTX.copies["teacher_as_student"])
     return refused("precision_mismatch", lambda: doc_of(variant("teacher_as_student", edit), coverage=True))
 
 
 def r_cov_seed():
     """R-14 for a coverage row: A's model row at seed 43 while its entry is at 42."""
     def edit(export, binding):
-        next(r for r in export["models"] if (r["slot"], r["precision"]) == ("A:s42", "fp32"))["seed"] = 43
+        next(r for r in export["models"]
+             if (r["slot"], r["precision"]) == ("A:s42:alpha25:80k", "fp32"))["seed"] = 43
     return refused("seed_inconsistent", lambda: doc_of(variant("a_row_s43", edit), coverage=True))
 
 
 def r_cov_unmapped():
     """B5-S1 through (d): a slot whose stage is outside the map (E3-K8) is refused, never skipped."""
     def edit(export, binding):
-        next(e for e in export["entries"] if e["slot"] == "E3-R1:s42")["stage"] = "E3-K8"
-        next(r for r in export["models"] if r["slot"] == "E3-R1:s42")["stage"] = "E3-K8"
+        slot = "E3-R1:s42:lambda0.5:alpha25:80k"
+        next(e for e in export["entries"] if e["slot"] == slot)["stage"] = "E3-K8"
+        next(r for r in export["models"] if r["slot"] == slot)["stage"] = "E3-K8"
     return refused("stage_unmapped", lambda: doc_of(variant("e3r1_k8", edit), coverage=True))
 
 
@@ -476,7 +528,7 @@ def r_cov_row_role():
     """B5-S1 for the model row: the teacher's fp32 row says model_role student while its artifact is the
     teacher's (precision_mismatch; DL-24 B5R1-05)."""
     def edit(export, binding):
-        row = next(r for r in export["models"] if (r["slot"], r["precision"]) == ("teacher", "fp32"))
+        row = next(r for r in export["models"] if (r["slot"], r["precision"]) == ("teacher:s42:40k", "fp32"))
         row["model_role"] = "student"
     return refused("precision_mismatch", lambda: doc_of(variant("teacher_row_student", edit), coverage=True))
 
@@ -556,7 +608,7 @@ def setup(root: Path, world=None) -> None:
         run_id="lrep-e2-s43-othergt",
         split_manifest_sha256=summary["dataset"]["split_manifest_sha256"])
     # B-5 (d): the teacher's artifact on another ground truth, and the teacher scored as a student
-    tw = w.written[("teacher", "fp32", "clean", None)]
+    tw = w.written[("teacher:s42:40k", "fp32", "clean", None)]
     rel_t = "runs/heldout/teacher_clean_othergt"
     scored = F.score(other, F.predict(other, quality=0.8, seed=F.int_seed(LF.WORLD_SEED, rel_t)),
                      Condition(*D.CLEAN))
@@ -566,7 +618,8 @@ def setup(root: Path, world=None) -> None:
     F.edit_summary(w.input_root / rel_t, lambda s: {**s, "run": {**s["run"], "model_role": "teacher"}})
     summary = json.loads((w.input_root / rel_t / "summary.json").read_text(encoding="utf-8"))
     CTX.copies["teacher_other_gt"] = LF.Written(
-        slot="teacher", stage="teacher", seed=None, precision="fp32", scope="clean", cell=None, rel=rel_t,
+        slot="teacher:s42:40k", stage="teacher", seed=42, precision="fp32", scope="clean", cell=None,
+        rel=rel_t,
         checkpoint=tw.checkpoint, files_sha256=D.input_file_sha256(w.input_root / rel_t),
         run_id="lrep-teacher-othergt", split_manifest_sha256=summary["dataset"]["split_manifest_sha256"])
     CTX.copies["teacher_as_student"] = LF.edited_copy(
@@ -596,13 +649,15 @@ def cases():
             ("R4", "artifact_missing: a model of record whose record the binding lacks", r_no_record),
             ("R5", "e1_checkpoint_record: E1's seed-43/44 records swapped (DL-99)", r_e1_swap),
             ("M1", "B5-S1: the stage map against STAGE_ARTIFACTS and the evaluator's STAGES", m_stage_map),
+            ("M2", "R4-5: the world's keys, the map, the unscored stages and the teachers' seed against "
+                   "TMAN's catalogue", m_catalogue),
             ("V1", "(d): the 23 other clean canvas records are rows; the 21 planned rows unchanged",
              v_coverage_rows),
             ("V2", "(d): each row's roles, kind, stage, seed, label, run_id and checkpoint", v_identity),
             ("V3", "(d): each row's twelve numbers equal rule_variants'; R1 and R3 hold", v_values),
-            ("V4", "(d): E6-KD scored at E6-KD, the arms at E3/E7, the teachers at teacher (B5-S1)",
+            ("V4", "(d): E6-KD at E6-KD (role e6kd), the arms at E3/E7, the teachers at teacher, seed 42",
              v_stages),
-            ("V5", "(d): the sort covers every stage and a null seed", v_sort),
+            ("V5", "(d): the sort covers every stage and a null seed (a variant's teacher; R4-5(d))", v_sort),
             ("V6", "(d): the second table, its banner, a null seed as —, no slot key", v_markdown),
             ("V7", "(d): an fq_off record filed under scope clean is never a row", v_no_fqoff_row),
             ("R6", "cross_artifact_mismatch: the teacher's record on another ground truth", r_cov_other_gt),
@@ -617,7 +672,7 @@ def cases():
             ("D1", "byte-identical JSON on repeated runs", d_deterministic),
             ("D2", "identical markdown on repeated runs", d_deterministic_md),
             ("D3", "JSON floats unrounded: the seed-42 float64 values equal rule_variants'", d_repr),
-            ("D4", "no created path contains 'test'", d_no_test_path)]
+            ("D4", "no created path contains 'test' or ':' (LRB20; R4-6)", d_no_test_path)]
     return out
 
 

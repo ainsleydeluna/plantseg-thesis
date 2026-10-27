@@ -152,8 +152,8 @@ def m_stage_unmapped():
     w = CTX.world
     inv = H.open_inventory(w.inventory_path, policy=Policy.NONOFFICIAL_SMOKE)
     return refused("stage_unmapped", lambda: H.load_bound(
-        inv, slot="E3-R1:s42", stage="E3-K8", precision="fp32", scope="clean", input_root=w.input_root,
-        policy=Policy.NONOFFICIAL_SMOKE))
+        inv, slot="E3-R1:s42:lambda0.5:alpha25:80k", stage="E3-K8", precision="fp32", scope="clean",
+        input_root=w.input_root, policy=Policy.NONOFFICIAL_SMOKE))
 
 
 def m_dedup_invalid():
@@ -342,10 +342,8 @@ MUTATIONS = [
      [(AM6, "subset_values", [off_h("dedup_invalid", ' f"{len(missing)} kept id(s)')])], "am6:S3"),
     ("R22", "seed_inconsistent not raised (a coverage row's model row at another seed; R-14)",
      [(H, "check_row_at_entry", [off("seed_inconsistent")])], "am6:R8"),
-    ("R23", "arm_slot_invalid not raised (an arm slot at E3-K8)",
-     [(AT, "arm_slots", [off_h("arm_slot_invalid", ' f"arm slot {slot!r} at stage')])], "arms:P2"),
-    ("R24", "arm_slot_invalid not raised (an arm teacher outside R1 and R2)",
-     [(AT, "arm_slots", [off_h("arm_slot_invalid", ' f"arm_teacher slot')])], "arms:P4"),
+    # R23 and R24 retired at B5b-1: R4-5(b) skips an arm slot at E3-K8 and an arm teacher outside
+    # teacher-R1 and teacher-R2 (LRB4), so their raise sites are gone (arms:P2 and P4 now pin the skip)
     ("R25", "arm_slot_invalid not raised (a row the export has no slot for)",
      [(AT, "arm_slots", [off_h("arm_slot_invalid", ' f"the export has no slot')])], "arms:P5"),
     ("R26", "arm_slot_invalid not raised (an arm candidate at seed 43)",

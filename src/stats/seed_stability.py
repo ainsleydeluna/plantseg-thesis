@@ -354,8 +354,8 @@ def divergences(inputs: SeedInputs) -> list[Divergence]:
     for stage in D.STAGES:
         for k in SEEDS[1:]:
             st = inputs.cells.status[(stage, k)]
-            if not st.has_model and st.kind == "diverged":
-                unit = "iteration" if "iteration" in st.record else "epoch"
+            if not st.has_model and st.kind == "diverged":       # TMAN's shape: the other unit null
+                unit = "iteration" if st.record.get("iteration") is not None else "epoch"
                 out.append(Divergence(stage, k, unit, st.record[unit], st.record["rule"]))
     return out
 

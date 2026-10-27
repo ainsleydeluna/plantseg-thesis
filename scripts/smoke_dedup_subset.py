@@ -5,9 +5,9 @@ item 8(c) (PA :1215-1231), TL-13, LRB17, rulings B5-D3, B5-D4 and B5-S2 and LREP
 SYNTHETIC ONLY (DL-41): scripts/lrep_fixtures.py's world with its dedup file (four of thirty images
 removed, the per-reason counts overlapping by one), variants of the export and the dedup file under new
 directories in TMPDIR, and one pair of artifacts with three AM-5 images for the Am5Pair (all left in
-place); none contains "test". Every expected value is recomputed here from the artifacts with the frozen
-functions (never read from the module under test), except that T4 applies dedup_subset's label_of and
-compare to the part's rows, rules that T2 and T3 pin on typed hand rows.
+place); none contains "test" or ":". Every expected value is recomputed here from the artifacts with the
+frozen functions (never read from the module under test), except that T4 applies dedup_subset's label_of
+and compare to the part's rows, rules that T2 and T3 pin on typed hand rows.
 
   I  B5-S2: the reader (path, sha256 first, strict JSON, T4's fields) and dedup_invalid on each failure;
      the invariants against the scored artifacts (one id set, kept inside it, |all| - |kept| <= the sum)
@@ -299,15 +299,18 @@ def i_short_count():
 # V: (i)
 # --------------------------------------------------------------------------------------------------
 def v_rows():
-    """The rows read: the 21 planned, the arms' students and teachers, the teacher of record, AM-23's
-    quant_descriptive slots and E6-KD -- 35 in this world; never a default candidate, a control, A, F,
-    G or a calibration-sensitivity model."""
+    """The rows read: the 21 planned, the arms' students and teachers (A, F and G among them: their
+    catalogue role is arm, R4-5(b)), the teacher of record, AM-23's quant_descriptive slots and E6-KD (role
+    e6kd) -- 38 in this world; never a default candidate, a control or a calibration-sensitivity model, and
+    never a not-built L slot (no model)."""
     roles = ("family", "per_seed", "arm", "arm_teacher", "quant_descriptive", "teacher_reference")
     want = sorted(e["slot"] for e in CTX.world.export["entries"]
                   if (set(e["role"]) & set(roles) or e["stage"] == "E6-KD")
                   and e["kind"] in ("scored_run", "derived", "arm_teacher"))
     got = sorted(m["slot"] for m in the_doc()["models"])
-    return got == want and len(got) == 35, str(sorted(set(got) ^ set(want)))
+    return (got == want and len(got) == 38
+            and {"A:s42:alpha25:80k", "F:s42:alpha25:80k", "G:s42:80k"} <= set(got)), \
+        str(sorted(set(got) ^ set(want)))
 
 
 def v_values():
@@ -360,17 +363,17 @@ def v_counts():
 def v_unreported_slot():
     """LRB4: the part reads only the rows it reports. The 160k E2 control's binding record off its files
     (an R-7 defect in a slot (b) does not report) refuses the am6 part with coverage
-    (artifact_record_mismatch), while the duplicate-free part is built with its 35 rows (DL-24 B5R3-02)."""
+    (artifact_record_mismatch), while the duplicate-free part is built with its 38 rows (DL-24 B5R3-02)."""
     def edit(export, binding):
         r = next(r for r in binding["artifacts"]
-                 if (r["slot"], r["precision"], r["scope"]) == ("E2:s42:160k", "fp32", "clean"))
+                 if (r["slot"], r["precision"], r["scope"]) == ("E2:s42:lambda0.5:160k", "fp32", "clean"))
         r["files_sha256"][sorted(r["files_sha256"])[0]] = LF.syn_sha("not the control's file")
     path = variant("control_off_record", edit)
     inv = inventory(path)
     am6 = refused("artifact_record_mismatch", lambda: DS.AM6.build_am6_tables(
         stats_artifact(), inv, H.planned_cells(inv), input_root=CTX.world.input_root, coverage=True))
     doc = doc_of(path)
-    return am6[0] and len(doc["models"]) == 35, am6[1]
+    return am6[0] and len(doc["models"]) == 38, am6[1]
 
 
 # --------------------------------------------------------------------------------------------------
@@ -692,8 +695,9 @@ def d_banner():
 
 
 def d_no_test_path():
+    """LRB20, with ':' (R4-6): no created path contains 'test' or ':'."""
     bad = [os.path.join(d, n) for d, dirs, files in os.walk(CTX.world.root) for n in dirs + files
-           if "test" in n.lower()]
+           if "test" in n.lower() or ":" in n]
     return not bad, str(bad[:3])
 
 
@@ -746,7 +750,8 @@ def cases():
             ("I11", "a field LREP does not read is reported, not refused", i_extra),
             ("I12", "the invariants: one id set, kept inside it, |all| - |kept| <= the sum", i_invariants),
             ("I13", "dedup_invalid through the part: fewer counted than removed", i_short_count),
-            ("V1", "(i): the 35 rows read (models of record, arms, quant_descriptive, E6-KD)", v_rows),
+            ("V1", "(i): the 38 rows read (models of record, arms with A, F, G, quant_descriptive, E6-KD)",
+             v_rows),
             ("V2", "(i): twelve numbers on the subset recomputed here; full values the artifact's", v_values),
             ("V3", "(i): the eligibility changes (:159's form); 26 kept, 4 removed", v_changes),
             ("V4", "(i): the counts, the overlap and the fingerprints", v_counts),
@@ -773,7 +778,7 @@ def cases():
             ("D1", "byte-identical JSON on repeated runs", d_deterministic),
             ("D2", "no Holm object on the subset side", d_no_holm),
             ("D3", "the banner, the analysis id and the footnote", d_banner),
-            ("D4", "no created path contains 'test'", d_no_test_path),
+            ("D4", "no created path contains 'test' or ':' (LRB20; R4-6)", d_no_test_path),
             ("D5", "the part at B = PRODUCTION_B, timed", d_production_time)]
 
 

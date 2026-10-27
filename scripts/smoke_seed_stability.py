@@ -5,7 +5,8 @@ input layer src/stats/heldout_inputs.py, against the plan of record's §1 and ru
 SYNTHETIC ONLY (DL-41): scripts/lrep_fixtures.py writes the world (the 37 seed-42 inputs and their
 statistics artifact, seeds 43/44, an inventory export and a bound binding in the IF§11 v2 layout,
 telemetry) under a new directory in TMPDIR, which is left in place. No PlantSeg data, checkpoint,
-model or GPU; no created path contains "test".
+model or GPU; no created path contains "test" or ":". B-5b (ruling LREP-B5-RULE-4 R4-5): the slot keys
+are TMAN's catalogue's and a divergence is in TMAN's shape (both units present, one null).
 
   F  formulas against hand values: m(S,k) on hand totals, the effect directions, the nested mC (and
      its equality with report.dataset_miou_c), g and d, the mean gain by math.fsum, statistics.stdev
@@ -16,7 +17,8 @@ model or GPU; no created path contains "test".
      cut-run VAL curves (iterations for KD, epochs for QAT, the cut entry's comparator, never
      interpolated), divergences and the verdict sentence; B-5 (e): an attempt with no VAL row (R2-04)
      and a non-finite comparator row (R2-09), each also on the paths DL-24 named (the attempt of record;
-     a comparator without a model, in the trainer's tagged form)
+     a comparator without a model, in the trainer's tagged form); B-5b: a QAT run's divergence read at its
+     epoch in TMAN's shape (W15)
   R  refusals: one case per code, each reached with every earlier gate passing (R-15 is an assertion),
      and one per further raise site the DL-24 review added (R2h-R2j, R4c-R4d, R12b-R12e, R13b, R14b,
      R17b, R18b); B-5 (e): a null freeze under Policy.OFFICIAL (R2k; R1-12); B-5's DL-24: a seed-42
@@ -164,67 +166,74 @@ def standin_reader(path, *, expect_sha256=None):
 # world variants
 # --------------------------------------------------------------------------------------------------
 def v_cut_e2(export, binding):
-    set_kind(export, "E2:s43", "cut", cut_date=CUT_DATE, rule=CUT_RULE, comparator="E1:s43")
-    entry(export, "E2:s43")["telemetry"] = [CTX.tel["e2_s43_cut"]]
-    drop(export, binding, "E2:s43")
+    set_kind(export, "E2:s43:lambda0.5:80k", "cut", cut_date=CUT_DATE, rule=CUT_RULE,
+             comparator="E1:s43:80k")
+    entry(export, "E2:s43:lambda0.5:80k")["telemetry"] = [CTX.tel["e2_s43_cut"]]
+    drop(export, binding, "E2:s43:lambda0.5:80k")
 
 
 def v_cut_e6(export, binding):
-    set_kind(export, "E6:s43", "cut", cut_date=CUT_DATE, rule=CUT_RULE, comparator=None)
-    entry(export, "E6:s43")["telemetry"] = [CTX.tel["e6_s43_cut"]]
+    set_kind(export, "E6:s43:15ep", "cut", cut_date=CUT_DATE, rule=CUT_RULE, comparator=None)
+    entry(export, "E6:s43:15ep")["telemetry"] = [CTX.tel["e6_s43_cut"]]
     set_kind(export, "E6:s43:sel", None)
     drop(export, binding, "E6:s43:sel")
 
 
 def v_div_e3(export, binding):
-    set_kind(export, "E3:s44", "diverged", iteration=41000, rule="AM-7a item 1")
-    drop(export, binding, "E3:s44")
-    set_kind(export, "E7:s44", None)
-    drop(export, binding, "E7:s44")
-    set_kind(export, "E6:s44", "not_run", reason="parent diverged")
+    set_kind(export, "E3:s44:lambda0.5:alpha25:80k", "diverged",
+             **LF.diverged_fields(iteration=41000, rule="AM-7a item 1", run_id=LF.training_run_id("E3", 44)))
+    drop(export, binding, "E3:s44:lambda0.5:alpha25:80k")
+    set_kind(export, "E7:s44:list42", None)
+    drop(export, binding, "E7:s44:list42")
+    set_kind(export, "E6:s44:15ep", "not_run", reason="parent diverged")
     set_kind(export, "E6:s44:sel", None)
     drop(export, binding, "E6:s44:sel")
 
 
 def v_nonfinite_e6(export, binding):
-    set_kind(export, "E6:s43", "non_finite")
+    set_kind(export, "E6:s43:15ep", "non_finite")
     set_kind(export, "E6:s43:sel", None)
     drop(export, binding, "E6:s43:sel")
 
 
 def v_div_e2(export, binding):
-    set_kind(export, "E2:s43", "diverged", iteration=30000, rule="AM-7a item 1")
-    drop(export, binding, "E2:s43")
+    set_kind(export, "E2:s43:lambda0.5:80k", "diverged",
+             **LF.diverged_fields(iteration=30000, rule="AM-7a item 1", run_id=LF.training_run_id("E2", 43)))
+    drop(export, binding, "E2:s43:lambda0.5:80k")
 
 
 def v_labels(export, binding):
     """An aborted E2 at 44, a not-made E7 at 44, a cut E3 at 43 with both descendants not run, and a
     QAT run diverged at an epoch (E5 at 44)."""
-    set_kind(export, "E2:s44", "aborted", rule="AM-19 item 3(a)", cause="non-finite VAL score")
-    drop(export, binding, "E2:s44")
-    set_kind(export, "E7:s44", "not_made", reason="code not merged")
-    drop(export, binding, "E7:s44")
-    set_kind(export, "E3:s43", "cut", cut_date=CUT_DATE, rule=CUT_RULE, comparator=None)
-    drop(export, binding, "E3:s43")
-    set_kind(export, "E7:s43", None)
-    drop(export, binding, "E7:s43")
-    set_kind(export, "E6:s43", "not_run", reason="parent cut")
+    set_kind(export, "E2:s44:lambda0.5:80k", "aborted", rule="AM-19 item 3(a)",
+             cause="non-finite VAL score")
+    drop(export, binding, "E2:s44:lambda0.5:80k")
+    set_kind(export, "E7:s44:list42", "not_made", reason="code not merged")
+    drop(export, binding, "E7:s44:list42")
+    set_kind(export, "E3:s43:lambda0.5:alpha25:80k", "cut", cut_date=CUT_DATE, rule=CUT_RULE,
+             comparator=None)
+    drop(export, binding, "E3:s43:lambda0.5:alpha25:80k")
+    set_kind(export, "E7:s43:list42", None)
+    drop(export, binding, "E7:s43:list42")
+    set_kind(export, "E6:s43:15ep", "not_run", reason="parent cut")
     set_kind(export, "E6:s43:sel", None)
     drop(export, binding, "E6:s43:sel")
-    set_kind(export, "E5:s44", "diverged", epoch=7, rule="AM-21 item 1")
+    set_kind(export, "E5:s44:15ep", "diverged",
+             **LF.diverged_fields(epoch=7, rule="AM-21 item 1", run_id=LF.training_run_id("E5", 44)))
     set_kind(export, "E5:s44:sel", None)
     drop(export, binding, "E5:s44:sel")
 
 
 def v_ghosts(export, binding):
     """Every slot no seed-stability table reads gets a kind LREP would refuse on a planned cell."""
-    for slot in ("E2:s42:lambda0.25", "U4:pilot", "E2:s42:160k", "E4:s42:cal43", "E3-R1:s42", "R1",
-                 "teacher", "E6-E2:s42:sel", "E5:s42", "E6-KD:s42:sel", "E2:s42:lambda1"):
+    for slot in ("E2:s42:lambda0.25:80k", "E5:s42:clip5:15ep", "E2:s42:lambda0.5:160k", "E4:s42:list43",
+                 "E3-R1:s42:lambda0.5:alpha25:80k", "teacher-R1:s42:40k", "teacher:s42:40k", "E6-E2:s42:sel",
+                 "E5:s42:clip1:15ep", "E6-KD:s42:sel", "E2:s42:lambda1:80k"):
         set_kind(export, slot, "superseded")
 
 
 def v_swap_e1(export, binding):
-    a, b = "E1:s43", "E1:s44"
+    a, b = "E1:s43:80k", "E1:s44:80k"
     for r in binding["artifacts"]:
         if r["slot"] in (a, b):
             r["slot"] = b if r["slot"] == a else a
@@ -495,7 +504,7 @@ def s_reason_entry():
     decided it."""
     def edit(export, binding):
         v_nonfinite_e6(export, binding)
-        entry(export, "E6:s43")["dl_rows"] = ["DL-140"]
+        entry(export, "E6:s43:15ep")["dl_rows"] = ["DL-140"]
     doc = seed_doc(variant("nonfinite_dl", edit))
     want = f"not evaluable: runs missing — E6 seed 43: {LABEL_NON_FINITE} [DL-140]"
     return doc["reasons"] == [want], str(doc["reasons"])
@@ -545,8 +554,8 @@ def l_two_missing():
 
 def l_date():
     def bad_date(export, binding):
-        set_kind(export, "E2:s43", "cut", cut_date="2026-11-2", rule=CUT_RULE, comparator=None)
-        drop(export, binding, "E2:s43")
+        set_kind(export, "E2:s43:lambda0.5:80k", "cut", cut_date="2026-11-2", rule=CUT_RULE, comparator=None)
+        drop(export, binding, "E2:s43:lambda0.5:80k")
     ok_label = cell(seed_doc(variant("cut_e2", v_cut_e2)), "accuracy_e2_e3", 43)["missing"][0]
     ok, det = refused("status_invalid", lambda: seed_doc(variant("bad_date", bad_date)))
     return ok and f"({CUT_DATE}," in ok_label, det
@@ -606,7 +615,7 @@ def w_cut_kd_curve():
     pts = [p["iter"] for p in b["attempts"][0]["points"]]
     e1 = comps.get("E1", {})
     vals = {v["iter"]: v["all_class_miou"] for v in e1.get("values", [])}
-    tel = CTX.world.telemetry["E1:s43"][0]
+    tel = CTX.world.telemetry["E1:s43:80k"][0]
     want = dict(LF.kd_curve(0.36 + 0.001))
     return (b["stage"] == "E2" and b["unit"] == "iter" and sorted(comps) == ["E1", "E3"]
             and e1["cut_entry_comparator"] is True and comps["E3"]["cut_entry_comparator"] is False
@@ -622,8 +631,8 @@ def w_cut_qat_curve():
         return False, str(doc["cut_runs"])
     b = b[0]
     c = b["comparators"]
-    return (b["unit"] == "epoch" and b["cut_slot"] == "E6:s43" and len(c) == 1
-            and (c[0]["stage"], c[0]["seed"], c[0]["run_slot"]) == ("E6", 42, "E6:s42")
+    return (b["unit"] == "epoch" and b["cut_slot"] == "E6:s43:15ep" and len(c) == 1
+            and (c[0]["stage"], c[0]["seed"], c[0]["run_slot"]) == ("E6", 42, "E6:s42:15ep")
             and c[0]["shared_points"] == 9 and doc["conditions"]["3"]["status"] == SS.NOT_EVALUABLE
             and cell(doc, D.ROBUSTNESS_ID, 43)["missing"] == [f"E6: cut ({CUT_DATE}, {CUT_RULE})"]), \
         str(b)[:400]
@@ -659,13 +668,13 @@ def w_cut_e3_comparators():
 def v_cut_e2_e3(export, binding):
     """E2 and E3 both cut at seed 43, each with its own VAL rows; E3's descendants not run."""
     v_cut_e2(export, binding)
-    entry(export, "E2:s43")["comparator"] = None
-    set_kind(export, "E3:s43", "cut", cut_date=CUT_DATE, rule=CUT_RULE, comparator=None)
-    entry(export, "E3:s43")["telemetry"] = [CTX.tel["e3_s43_cut"]]
-    drop(export, binding, "E3:s43")
-    set_kind(export, "E7:s43", None)
-    drop(export, binding, "E7:s43")
-    set_kind(export, "E6:s43", "not_run", reason="parent cut")
+    entry(export, "E2:s43:lambda0.5:80k")["comparator"] = None
+    set_kind(export, "E3:s43:lambda0.5:alpha25:80k", "cut", cut_date=CUT_DATE, rule=CUT_RULE, comparator=None)
+    entry(export, "E3:s43:lambda0.5:alpha25:80k")["telemetry"] = [CTX.tel["e3_s43_cut"]]
+    drop(export, binding, "E3:s43:lambda0.5:alpha25:80k")
+    set_kind(export, "E7:s43:list42", None)
+    drop(export, binding, "E7:s43:list42")
+    set_kind(export, "E6:s43:15ep", "not_run", reason="parent cut")
     set_kind(export, "E6:s43:sel", None)
     drop(export, binding, "E6:s43:sel")
 
@@ -694,15 +703,15 @@ def w_cut_pair():
 
 def v_cut_e2_odd(export, binding):
     v_cut_e2(export, binding)
-    entry(export, "E2:s43")["comparator"] = None
-    entry(export, "E2:s43")["telemetry"] = [CTX.tel["e2_s43_odd"]]
+    entry(export, "E2:s43:lambda0.5:80k")["comparator"] = None
+    entry(export, "E2:s43:lambda0.5:80k")["telemetry"] = [CTX.tel["e2_s43_odd"]]
 
 
 def v_cut_e2_e3_empty(export, binding):
     """W9's pair, each cut run with a second attempt whose telemetry holds no VAL row."""
     v_cut_e2_e3(export, binding)
-    entry(export, "E2:s43")["telemetry"].append(CTX.tel["e2_s43_empty"])
-    entry(export, "E3:s43")["telemetry"].append(CTX.tel["e3_s43_empty"])
+    entry(export, "E2:s43:lambda0.5:80k")["telemetry"].append(CTX.tel["e2_s43_empty"])
+    entry(export, "E3:s43:lambda0.5:alpha25:80k")["telemetry"].append(CTX.tel["e3_s43_empty"])
 
 
 def w_no_val_rows():
@@ -724,7 +733,7 @@ def w_no_val_rows():
 def v_cut_e2_nan(export, binding):
     """E2 cut at 43; its comparator E1 at 43 (the run of record) wrote a NaN VAL score at 8000."""
     v_cut_e2(export, binding)
-    entry(export, "E1:s43")["telemetry"] = [CTX.tel["e1_s43_nan"]]
+    entry(export, "E1:s43:80k")["telemetry"] = [CTX.tel["e1_s43_nan"]]
 
 
 def w_nonfinite_comparator():
@@ -745,7 +754,7 @@ def v_cut_e2_empty_of_record(export, binding):
     """E2 cut at 43; its comparator E1 at 43 (the run of record) lists a telemetry file with no VAL row
     under its training_run_id."""
     v_cut_e2(export, binding)
-    entry(export, "E1:s43")["telemetry"] = [CTX.tel["e1_s43_empty"]]
+    entry(export, "E1:s43:80k")["telemetry"] = [CTX.tel["e1_s43_empty"]]
 
 
 def w_empty_of_record():
@@ -763,7 +772,7 @@ def v_cut_e2_e3_tagged(export, binding):
     """W9's pair (E2 and E3 cut at 43), E3's telemetry holding a VAL row at 20000 in the KD trainer's
     non-finite form (all_class_miou null, its tag in `nonfinite`)."""
     v_cut_e2_e3(export, binding)
-    entry(export, "E3:s43")["telemetry"] = [CTX.tel["e3_s43_tagged"]]
+    entry(export, "E3:s43:lambda0.5:alpha25:80k")["telemetry"] = [CTX.tel["e3_s43_tagged"]]
 
 
 def w_tagged_no_model_comparator():
@@ -785,6 +794,16 @@ def w_tagged_no_model_comparator():
             and own[20000]["nonfinite"] == "nan" and own[20000]["all_class_miou"] is None
             and "20000: non-finite (nan)" in comp_line and "20000: non-finite (nan)" in own_line), \
         comp_line[:300]
+
+
+def w_epoch_divergence():
+    """A QAT run diverged at an epoch in TMAN's shape (iteration present and null; R4-5(f)): the divergences
+    list reads its epoch, and the KD runs' divergences their iteration."""
+    a = seed_doc(variant("labels", v_labels))["divergences_43_44"]
+    b = seed_doc(variant("div_e3", v_div_e3))["divergences_43_44"]
+    return ([(x["stage"], x["seed"], x["unit"], x["at"]) for x in a] == [("E5", 44, "epoch", 7)]
+            and [(x["stage"], x["seed"], x["unit"], x["at"]) for x in b]
+            == [("E3", 44, "iteration", 41000)]), f"{a} {b}"[:300]
 
 
 def w_no_shared_point():
@@ -859,59 +878,59 @@ def r_freeze_null_official():
 
 def r_slot_missing():
     def edit(export, binding):
-        entry(export, "E2:s43")["role"] = []
+        entry(export, "E2:s43:lambda0.5:80k")["role"] = []
     return refused("planned_slot_missing", lambda: seed_doc(variant("slot_missing", edit)))
 
 
 def r_slot_duplicate():
     def edit(export, binding):
-        e = copy.deepcopy(entry(export, "E2:s43"))
-        e["slot"] = "E2:s43:b"
+        e = copy.deepcopy(entry(export, "E2:s43:lambda0.5:80k"))
+        e["slot"] = "E2:s43:lambda0.5:80k:b"
         export["entries"].append(e)
     return refused("planned_slot_duplicate", lambda: seed_doc(variant("slot_dup", edit)))
 
 
 def r_unplanned():
     def edit(export, binding):
-        e = copy.deepcopy(entry(export, "E2:s43"))
-        e.update(slot="E2:s45", seed=45)
+        e = copy.deepcopy(entry(export, "E2:s43:lambda0.5:80k"))
+        e.update(slot="E2:s45:lambda0.5:80k", seed=45)
         export["entries"].append(e)
     return refused("unplanned_slot", lambda: seed_doc(variant("unplanned", edit)))
 
 
 def r_status_vocab():
     def edit(export, binding):
-        set_kind(export, "E2:s43", "complete")
+        set_kind(export, "E2:s43:lambda0.5:80k", "complete")
     return refused("status_invalid", lambda: seed_doc(variant("vocab", edit)))
 
 
 def r_status_field():
     def edit(export, binding):
-        set_kind(export, "E2:s43", "cut", cut_date=CUT_DATE, comparator=None)
+        set_kind(export, "E2:s43:lambda0.5:80k", "cut", cut_date=CUT_DATE, comparator=None)
     return refused("status_invalid", lambda: seed_doc(variant("no_rule", edit)))
 
 
 def r_superseded():
     def edit(export, binding):
-        set_kind(export, "E2:s43", "superseded")
+        set_kind(export, "E2:s43:lambda0.5:80k", "superseded")
     return refused("superseded", lambda: seed_doc(variant("superseded", edit)))
 
 
 def r_artifact_missing():
     def edit(export, binding):
-        binding["artifacts"].remove(record(binding, "E2:s43", "fp32"))
+        binding["artifacts"].remove(record(binding, "E2:s43:lambda0.5:80k", "fp32"))
     return refused("artifact_missing", lambda: seed_doc(variant("no_record", edit)))
 
 
 def r_artifact_for_missing():
     def edit(export, binding):
-        set_kind(export, "E2:s43", "cut", cut_date=CUT_DATE, rule=CUT_RULE, comparator=None)
+        set_kind(export, "E2:s43:lambda0.5:80k", "cut", cut_date=CUT_DATE, rule=CUT_RULE, comparator=None)
     return refused("artifact_for_missing_run", lambda: seed_doc(variant("cut_kept_record", edit)))
 
 
 def r_record_files():
     def edit(export, binding):
-        record(binding, "E2:s43", "fp32")["files_sha256"]["summary.json"] = "0" * 64
+        record(binding, "E2:s43:lambda0.5:80k", "fp32")["files_sha256"]["summary.json"] = "0" * 64
     return refused("artifact_record_mismatch", lambda: seed_doc(variant("rec_files", edit)))
 
 
@@ -919,26 +938,27 @@ def r_record_protocol():
     up = CTX.copies["upstream"]
 
     def edit(export, binding):
-        rec = record(binding, "E2:s43", "fp32")
+        rec = record(binding, "E2:s43:lambda0.5:80k", "fp32")
         rec["repo_relative_path"], rec["files_sha256"] = up.rel, dict(up.files_sha256)
     return refused("artifact_record_mismatch", lambda: seed_doc(variant("rec_protocol", edit)))
 
 
 def r_record_identity():
     def edit(export, binding):
-        row(export, "E2:s43", "fp32")["source"]["sha256"] = LF.syn_sha("another checkpoint")
+        row(export, "E2:s43:lambda0.5:80k", "fp32")["source"]["sha256"] = LF.syn_sha("another checkpoint")
     return refused("artifact_record_mismatch", lambda: seed_doc(variant("row_identity", edit)))
 
 
 def r_not_canvas():
     def edit(export, binding):
-        record(binding, "E2:s43", "fp32")["protocol"] = "upstream"
+        record(binding, "E2:s43:lambda0.5:80k", "fp32")["protocol"] = "upstream"
     return refused("not_canvas", lambda: seed_doc(variant("rec_upstream", edit)))
 
 
 def r_unreadable():
     def edit(export, binding):
-        record(binding, "E2:s43", "fp32")["repo_relative_path"] = "runs/heldout/never_written_case"
+        rec = record(binding, "E2:s43:lambda0.5:80k", "fp32")
+        rec["repo_relative_path"] = "runs/heldout/never_written_case"
     return refused("artifact_unreadable", lambda: seed_doc(variant("rec_nodir", edit)))
 
 
@@ -946,7 +966,7 @@ def r_cross():
     om = CTX.copies["other_metric"]
 
     def edit(export, binding):
-        rec = record(binding, "E3:s43", "fp32")
+        rec = record(binding, "E3:s43:lambda0.5:alpha25:80k", "fp32")
         rec["repo_relative_path"], rec["files_sha256"] = om.rel, dict(om.files_sha256)
     return refused("cross_artifact_mismatch", lambda: seed_doc(variant("rec_metric", edit)))
 
@@ -957,13 +977,13 @@ def r_e1_record():
 
 def r_seed42():
     def edit(export, binding):
-        row(export, "E2:s42", "fp32")["source"]["sha256"] = LF.syn_sha("another checkpoint")
+        row(export, "E2:s42:lambda0.5:80k", "fp32")["source"]["sha256"] = LF.syn_sha("another checkpoint")
     return refused("seed42_mismatch", lambda: seed_doc(variant("s42_identity", edit)))
 
 
 def r_parent():
     def edit(export, binding):
-        set_kind(export, "E6:s43", "not_run", reason="parent cut")
+        set_kind(export, "E6:s43:15ep", "not_run", reason="parent cut")
         set_kind(export, "E6:s43:sel", None)
         drop(export, binding, "E6:s43:sel")
     return refused("parent_rule", lambda: seed_doc(variant("parent_complete", edit)))
@@ -971,13 +991,14 @@ def r_parent():
 
 def r_seed42_complete():
     def edit(export, binding):
-        set_kind(export, "E2:s42", "cut", cut_date="2026-10-19", rule="AM-19 item 2", comparator=None)
+        set_kind(export, "E2:s42:lambda0.5:80k", "cut", cut_date="2026-10-19", rule="AM-19 item 2",
+                 comparator=None)
     return refused("seed42_not_complete", lambda: seed_doc(variant("s42_cut", edit)))
 
 
 def r_seed_inconsistent():
     def edit(export, binding):
-        row(export, "E2:s43", "fp32")["seed"] = 44
+        row(export, "E2:s43:lambda0.5:80k", "fp32")["seed"] = 44
     return refused("seed_inconsistent", lambda: seed_doc(variant("row_seed", edit)))
 
 
@@ -992,14 +1013,14 @@ def r_assert_two_seeds():
 def r_telemetry_sha():
     def edit(export, binding):
         v_cut_e2(export, binding)
-        entry(export, "E2:s43")["telemetry"] = [dict(CTX.tel["e2_s43_cut"], sha256="0" * 64)]
+        entry(export, "E2:s43:lambda0.5:80k")["telemetry"] = [dict(CTX.tel["e2_s43_cut"], sha256="0" * 64)]
     return refused("telemetry_sha256_mismatch", lambda: seed_doc(variant("tel_sha", edit)))
 
 
 def r_telemetry_invalid():
     def edit(export, binding):
         v_cut_e2(export, binding)
-        entry(export, "E1:s43")["telemetry"][0]["run_id"] = "e1_s43_80k_a9"
+        entry(export, "E1:s43:80k")["telemetry"][0]["run_id"] = "e1_s43_80k_a9"
     return refused("telemetry_invalid", lambda: seed_doc(variant("tel_attempt", edit)))
 
 
@@ -1013,7 +1034,8 @@ def r_precision():
 
 def r_path():
     def edit(export, binding):
-        record(binding, "E2:s43", "fp32")["repo_relative_path"] = "runs/heldout/../heldout/e2_s43_clean"
+        rec = record(binding, "E2:s43:lambda0.5:80k", "fp32")
+        rec["repo_relative_path"] = "runs/heldout/../heldout/e2_s43_clean"
     return refused("path_unsafe", lambda: seed_doc(variant("dotdot", edit)))
 
 
@@ -1034,7 +1056,7 @@ def r_binding_no_artifacts():
 
 def r_row_entry_kind():
     def edit(export, binding):
-        row(export, "E2:s43", "fp32")["entry_kind"] = "cut"
+        row(export, "E2:s43:lambda0.5:80k", "fp32")["entry_kind"] = "cut"
     return refused("inventory_invalid", lambda: seed_doc(variant("row_entry_kind", edit)))
 
 
@@ -1052,43 +1074,44 @@ def r_duplicate_key():
 
 def r_two_entries():
     def edit(export, binding):
-        e = copy.deepcopy(entry(export, "E2:s43"))
+        e = copy.deepcopy(entry(export, "E2:s43:lambda0.5:80k"))
         e.update(kind="cut", cut_date=CUT_DATE, rule=CUT_RULE, comparator=None)
         export["entries"].append(e)
     return refused("status_invalid", lambda: seed_doc(variant("two_entries", edit)))
 
 
 def r_divergence_unit():
-    """E3 at seed 44 diverged, recorded at an epoch: a KD run diverges at an iteration (IF§11.2)."""
+    """E3 at seed 44 diverged, recorded at an epoch (TMAN's shape, iteration null; R4-5(f)): a KD run
+    diverges at an iteration (IF§11.2)."""
     def edit(export, binding):
         v_div_e3(export, binding)
-        e = entry(export, "E3:s44")
-        del e["iteration"]
-        e["epoch"] = 9
+        e = entry(export, "E3:s44:lambda0.5:alpha25:80k")
+        e["iteration"], e["epoch"] = None, 9
     return refused("status_invalid", lambda: seed_doc(variant("div_unit", edit)))
 
 
 def r_parent_run():
     def edit(export, binding):
-        entry(export, "E4:s43")["catalogue"]["parent"] = "E2:s43"
+        entry(export, "E4:s43:list42")["catalogue"]["parent"] = "E2:s43:lambda0.5:80k"
     return refused("parent_rule", lambda: seed_doc(variant("parent_e2", edit)))
 
 
 def r_parent_selection():
     def edit(export, binding):
         set_kind(export, "E6:s43:sel", None)
-        entry(export, "E6:s43:sel")["catalogue"]["parent"] = "E3:s43"
+        entry(export, "E6:s43:sel")["catalogue"]["parent"] = "E3:s43:lambda0.5:alpha25:80k"
         drop(export, binding, "E6:s43:sel")
     return refused("parent_rule", lambda: seed_doc(variant("sel_parent_e3", edit)))
 
 
 def r_parent_not_run():
     def edit(export, binding):
-        set_kind(export, "E3:s43", "cut", cut_date=CUT_DATE, rule=CUT_RULE, comparator=None)
-        drop(export, binding, "E3:s43")
-        set_kind(export, "E7:s43", None)
-        drop(export, binding, "E7:s43")
-        set_kind(export, "E6:s43", "aborted", rule="AM-19 item 3(a)", cause="non-finite loss")
+        set_kind(export, "E3:s43:lambda0.5:alpha25:80k", "cut", cut_date=CUT_DATE, rule=CUT_RULE,
+                 comparator=None)
+        drop(export, binding, "E3:s43:lambda0.5:alpha25:80k")
+        set_kind(export, "E7:s43:list42", None)
+        drop(export, binding, "E7:s43:list42")
+        set_kind(export, "E6:s43:15ep", "aborted", rule="AM-19 item 3(a)", cause="non-finite loss")
         set_kind(export, "E6:s43:sel", None)
         drop(export, binding, "E6:s43:sel")
     return refused("parent_rule", lambda: seed_doc(variant("abort_under_cut", edit)))
@@ -1096,37 +1119,38 @@ def r_parent_not_run():
 
 def r_ptq_parent_stage():
     def edit(export, binding):
-        set_kind(export, "E7:s43", None)
-        entry(export, "E7:s43")["catalogue"]["parent"] = "E2:s43"
-        drop(export, binding, "E7:s43")
+        set_kind(export, "E7:s43:list42", None)
+        entry(export, "E7:s43:list42")["catalogue"]["parent"] = "E2:s43:lambda0.5:80k"
+        drop(export, binding, "E7:s43:list42")
     return refused("parent_rule", lambda: seed_doc(variant("ptq_parent_e2", edit)))
 
 
 def r_seed42_before_parentage():
     def edit(export, binding):
-        set_kind(export, "E3:s42", "cut", cut_date="2026-10-19", rule="AM-19 item 2", comparator=None)
+        set_kind(export, "E3:s42:lambda0.5:alpha25:80k", "cut", cut_date="2026-10-19", rule="AM-19 item 2",
+                 comparator=None)
     return refused("seed42_not_complete", lambda: seed_doc(variant("s42_e3_cut", edit)))
 
 
 def r_ptq_parent_seed():
     def edit(export, binding):
-        set_kind(export, "E7:s43", None)
-        entry(export, "E7:s43")["catalogue"]["parent"] = "E3:s44"
-        drop(export, binding, "E7:s43")
+        set_kind(export, "E7:s43:list42", None)
+        entry(export, "E7:s43:list42")["catalogue"]["parent"] = "E3:s44:lambda0.5:alpha25:80k"
+        drop(export, binding, "E7:s43:list42")
     return refused("seed_inconsistent", lambda: seed_doc(variant("ptq_parent_s44", edit)))
 
 
 def r_telemetry_path():
     def edit(export, binding):
         v_cut_e2(export, binding)
-        entry(export, "E2:s43")["telemetry"] = [{k: v for k, v in CTX.tel["e2_s43_cut"].items()
+        entry(export, "E2:s43:lambda0.5:80k")["telemetry"] = [{k: v for k, v in CTX.tel["e2_s43_cut"].items()
                                                  if k != "path"}]
     return refused("telemetry_invalid", lambda: seed_doc(variant("tel_no_path", edit)))
 
 
 def r_row_role():
     def edit(export, binding):
-        row(export, "E2:s43", "fp32")["model_role"] = "teacher"
+        row(export, "E2:s43:lambda0.5:80k", "fp32")["model_role"] = "teacher"
     return refused("precision_mismatch", lambda: seed_doc(variant("row_teacher", edit)))
 
 
@@ -1135,7 +1159,7 @@ def r_row_role_s42():
     load_bound, so check_rows (LRB7) is the only gate for this row (B-5 DL-24: load_bound now checks the
     model_role of every row it reads, which also refuses R18b's seed-43 row)."""
     def edit(export, binding):
-        row(export, "E2:s42", "fp32")["model_role"] = "teacher"
+        row(export, "E2:s42:lambda0.5:80k", "fp32")["model_role"] = "teacher"
     return refused("precision_mismatch", lambda: seed_doc(variant("row_teacher_s42", edit)))
 
 
@@ -1228,10 +1252,11 @@ def x_pp_markdown_only():
 
 
 def x_no_test_path():
+    """LRB20, with ':' (R4-6): no created path contains 'test' or ':'."""
     root = CTX.world.root
     bad = [os.path.join(d, n) for d, dirs, files in os.walk(root) for n in dirs + files
-           if "test" in n.lower()]
-    return not bad and "test" not in str(root).lower(), str(bad[:3])
+           if "test" in n.lower() or ":" in n]
+    return not bad and "test" not in str(root).lower() and ":" not in str(root), str(bad[:3])
 
 
 def x_path_rule():
@@ -1396,6 +1421,8 @@ def cases():
         ("W13", "B-5 (e) R2-04: the comparator's attempt of record wrote no VAL rows", w_empty_of_record),
         ("W14", "B-5 (e) R2-09: a no-model comparator's tagged VAL row, and the cut run's own",
          w_tagged_no_model_comparator),
+        ("W15", "R4-5(f): a QAT run's divergence read at its epoch (TMAN's shape), a KD run's at its "
+                "iteration", w_epoch_divergence),
         ("R1", "R-1 stats_artifact_unverified (its inputs missing)", r_stats_unverified),
         ("R2a", "stub_reader_official", r_stub_official),
         ("R2b", "R-2 inventory_unreadable", r_inventory_unreadable),
@@ -1459,7 +1486,7 @@ def cases():
          x_no_test_objects),
         ("X2", "JSON floats round-trip by repr; m(S,42) equals a float64 recomputation", x_repr_floats),
         ("X3", "pp appears in the markdown only", x_pp_markdown_only),
-        ("X4", "no created path contains 'test'", x_no_test_path),
+        ("X4", "no created path contains 'test' or ':' (LRB20; R4-6)", x_no_test_path),
         ("X5", "path_problem: 'test' in any case, absolute, '..' and backslash", x_path_rule),
         ("X6", "no slot key with ':' in the markdown; the JSON keeps them (IF§2)", x_no_slot_in_markdown),
     ]

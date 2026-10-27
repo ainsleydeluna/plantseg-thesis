@@ -14,7 +14,11 @@ The world also writes what TMAN will supply (IF§11 v2):
     record, A, F, G, AM-23's quant_descriptive selections and their QAT runs, the 160k controls and the
     calibration-sensitivity E4 and E7), each scored model with a real clean artifact at the evaluator
     stage B5-S1's map gives it, and slots every LREP table must ignore (a listed sweep run, the losing
-    pilot and the QAT run slots), whose records name directories that do not exist;
+    pilot and the QAT run slots, the not-built L slots and ARM's measurement), whose records name
+    directories that do not exist. Every slot key, stage, seed, role and parent is TMAN's committed
+    catalogue's (CATALOGUE, typed from configs/tday_catalogue.json at lane/tman ee5593e; ruling
+    LREP-B5-RULE-4 R4-5); the catalogue leaves E5:s42:sel's parent to its pilot (null), and the world
+    names E5:s42:clip1:15ep, the pilot it takes as the winner;
   * B5-S2's duplicate-free TEST list tman/tday_dedup.json in T4's wording (kept_ids, removed_by_reason;
     four of the thirty images removed, the per-reason counts overlapping by one), named by the export's
     `dedup` {path, sha256, removed_by_reason};
@@ -33,9 +37,9 @@ stats_fixtures.write_fixture writes every artifact as a student's (scripts/stats
 
 Names (LRB20; IF§2): runs/heldout/<stage>_s<seed>_<tail> (B-5's: runs/heldout/<file_id>_<tail>),
 telemetry/<file_id>.jsonl, tman/, stats/, strata/. stats_fixtures.rel_name is never used (it names
-folders by split), the JSON split value is "val", and no created path contains "test". `make_root`
-follows scripts/smoke_mde.py: TMPDIR must be set and free of "test", and the root's name ends in hex
-digits, which cannot spell it.
+folders by split), the JSON split value is "val", and no created path contains "test" or ":" (a slot
+key's ":" stays a JSON string value; R4-6(i)). `make_root` follows scripts/smoke_mde.py: TMPDIR must be
+set and free of "test" and ":", and the root's name ends in hex digits, which cannot spell it.
 
 Not a smoke itself: imported by lane LREP's scripts/smoke_*.py.
 """
@@ -46,6 +50,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import secrets
 import shutil
 import subprocess
@@ -87,42 +92,158 @@ E2_DEFAULT = "7e082eae3aaba14cf7c098bdfc92c5e0c09393dbbab77fedcc4a071df234c4bf"
 E3_DEFAULT = "b891406c5e734a48fece00fce8d3f978bb2bc762833b604214cf3f0df5afaea6"
 KD_VAL_ITERS = tuple(range(4000, 80001, 4000))
 QAT_VAL_EPOCHS = tuple(range(1, 16))
+#: The default candidates' slots (the catalogue's keys; AM-17 item 6).
+DEFAULT_SLOTS = {"E2": "E2:s42:lambda1:80k", "E3": "E3:s42:lambda0.5:alpha50:80k"}
 EXPORT_NAME = "tday_inventory.json"
 BINDING_NAME = "tday_binding.json"
 DEDUP_NAME = "tday_dedup.json"
+#: TMAN's committed catalogue, typed out (never imported; R4-5(e), (g)): slot -> (stage, seed, class, roles,
+#: evaluator_stage, model_role, precision, parent), from configs/tday_catalogue.json at lane/tman ee5593e.
+CATALOGUE_SOURCE = {"commit": "ee5593e9bd1f36d23b2ea2136120ae7890ed0728",
+                    "path": "configs/tday_catalogue.json", "blob": "3cc45846d215964dbcda75669dd9185cf76e8b4b",
+                    "sha256": "6c05a78ec34fd440999c939ea76d56779f891013c89668f4a0a5cfecca3438bd"}
+CATALOGUE = {
+    "teacher:s42:40k": ("teacher", 42, "run", ("teacher_reference",), "teacher", "teacher", "fp32", None),
+    "E1:s42:80k": ("E1", 42, "run", ("family",), "E1", "student", "fp32", None),
+    "E1:s43:80k": ("E1", 43, "run", ("per_seed",), "E1", "student", "fp32", None),
+    "E1:s44:80k": ("E1", 44, "run", ("per_seed",), "E1", "student", "fp32", None),
+    "E2:s42:lambda0.25:80k": ("E2", 42, "run", ("listed",), None, "student", "fp32", None),
+    "E2:s42:lambda0.5:80k": ("E2", 42, "run", ("family",), "E2", "student", "fp32", None),
+    "E2:s42:lambda1:80k": ("E2", 42, "run", ("default_candidate",), "E2", "student", "fp32", None),
+    "E2:s42:lambda2:80k": ("E2", 42, "run", ("listed",), None, "student", "fp32", None),
+    "E2:s42:lambda4:80k": ("E2", 42, "run", ("listed",), None, "student", "fp32", None),
+    "E3:s42:lambda0.5:alpha25:80k": ("E3", 42, "run", ("family",), "E3", "student", "fp32", None),
+    "E3:s42:lambda0.5:alpha50:80k": ("E3", 42, "run", ("default_candidate",), "E3", "student", "fp32", None),
+    "E3:s42:lambda0.5:alpha100:80k": ("E3", 42, "run", ("listed",), None, "student", "fp32", None),
+    "E2:s43:lambda0.5:80k": ("E2", 43, "run", ("per_seed",), "E2", "student", "fp32", None),
+    "E2:s44:lambda0.5:80k": ("E2", 44, "run", ("per_seed",), "E2", "student", "fp32", None),
+    "E3:s43:lambda0.5:alpha25:80k": ("E3", 43, "run", ("per_seed",), "E3", "student", "fp32", None),
+    "E3:s44:lambda0.5:alpha25:80k": ("E3", 44, "run", ("per_seed",), "E3", "student", "fp32", None),
+    "E1:s42:160k": ("E1", 42, "run", ("control",), "E1", "student", "fp32", None),
+    "E2:s42:lambda0.5:160k": ("E2", 42, "run", ("control",), "E2", "student", "fp32", None),
+    "E3:s42:lambda0.5:alpha25:160k": ("E3", 42, "run", ("control",), "E3", "student", "fp32", None),
+    "A:s42:alpha25:80k": ("A", 42, "run", ("arm",), "A", "student", "fp32", None),
+    "F:s42:alpha25:80k": ("F", 42, "run", ("arm",), "F", "student", "fp32", None),
+    "G:s42:80k": ("G", 42, "run", ("arm",), "G", "student", "fp32", None),
+    "teacher-R2:s42:40k": ("teacher-R2", 42, "run", ("arm_teacher",), "teacher", "teacher", "fp32", None),
+    "E3-R2:s42:lambda0.5:alpha25:80k": ("E3-R2", 42, "run", ("arm",),
+                                        "E3", "student", "fp32", "teacher-R2:s42:40k"),
+    "E7-R2:s42:list42": ("E7-R2", 42, "derived", ("arm",),
+                         "E7", "student", "int8_ptq", "E3-R2:s42:lambda0.5:alpha25:80k"),
+    "teacher-R1:s42:40k": ("teacher-R1", 42, "run", ("arm_teacher",), "teacher", "teacher", "fp32", None),
+    "E3-R1:s42:lambda0.5:alpha25:80k": ("E3-R1", 42, "run", ("arm",),
+                                        "E3", "student", "fp32", "teacher-R1:s42:40k"),
+    "E7-R1:s42:list42": ("E7-R1", 42, "derived", ("arm",),
+                         "E7", "student", "int8_ptq", "E3-R1:s42:lambda0.5:alpha25:80k"),
+    "E3-flip:s42:lambda0.5:alpha25:80k": ("E3-flip", 42, "run", ("arm",), "E3", "student", "fp32", None),
+    "E7-flip:s42:list42": ("E7-flip", 42, "derived", ("arm",),
+                           "E7", "student", "int8_ptq", "E3-flip:s42:lambda0.5:alpha25:80k"),
+    "teacher-L:s42:40k": ("teacher-L", 42, "run", ("arm_teacher",), None, "teacher", "fp32", None),
+    "E2-L:s42:lambda0.5:80k": ("E2-L", 42, "run", ("arm",), None, "student", "fp32", "teacher-L:s42:40k"),
+    "E3-L:s42:lambda0.5:alpha25:80k": ("E3-L", 42, "run", ("arm",),
+                                       None, "student", "fp32", "teacher-L:s42:40k"),
+    "E7-L:s42:list42": ("E7-L", 42, "derived", ("arm",),
+                        None, "student", "int8_ptq", "E3-L:s42:lambda0.5:alpha25:80k"),
+    "E5:s42:clip1:15ep": ("E5", 42, "run", ("listed",), None, None, None, "E1:s42:80k"),
+    "E5:s42:clip5:15ep": ("E5", 42, "run", ("listed",), None, None, None, "E1:s42:80k"),
+    "E5:s42:sel": ("E5", 42, "derived", ("family",), "E5", "student", "int8_qat", None),
+    "E6:s42:15ep": ("E6", 42, "run", ("listed",), None, None, None, "E3:s42:lambda0.5:alpha25:80k"),
+    "E6:s42:sel": ("E6", 42, "derived", ("family",), "E6", "student", "int8_qat", "E6:s42:15ep"),
+    "E5:s43:15ep": ("E5", 43, "run", ("listed",), None, None, None, "E1:s43:80k"),
+    "E5:s43:sel": ("E5", 43, "derived", ("per_seed",), "E5", "student", "int8_qat", "E5:s43:15ep"),
+    "E5:s44:15ep": ("E5", 44, "run", ("listed",), None, None, None, "E1:s44:80k"),
+    "E5:s44:sel": ("E5", 44, "derived", ("per_seed",), "E5", "student", "int8_qat", "E5:s44:15ep"),
+    "E6:s43:15ep": ("E6", 43, "run", ("listed",), None, None, None, "E3:s43:lambda0.5:alpha25:80k"),
+    "E6:s43:sel": ("E6", 43, "derived", ("per_seed",), "E6", "student", "int8_qat", "E6:s43:15ep"),
+    "E6:s44:15ep": ("E6", 44, "run", ("listed",), None, None, None, "E3:s44:lambda0.5:alpha25:80k"),
+    "E6:s44:sel": ("E6", 44, "derived", ("per_seed",), "E6", "student", "int8_qat", "E6:s44:15ep"),
+    "E6-KD:s42:15ep": ("E6-KD", 42, "run", ("listed",), None, None, None, "E3:s42:lambda0.5:alpha25:80k"),
+    "E6-KD:s42:sel": ("E6-KD", 42, "derived", ("e6kd",), "E6-KD", "student", "int8_qat", "E6-KD:s42:15ep"),
+    "E6-E2:s42:15ep": ("E6-E2", 42, "run", ("listed",), None, None, None, "E2:s42:lambda0.5:80k"),
+    "E6-E2:s42:sel": ("E6-E2", 42, "derived", ("quant_descriptive",),
+                      "E6-E2", "student", "int8_qat", "E6-E2:s42:15ep"),
+    "E7-E2:s42:list42": ("E7-E2", 42, "derived", ("quant_descriptive",),
+                         "E7-E2", "student", "int8_ptq", "E2:s42:lambda0.5:80k"),
+    "E6-R1:s42:15ep": ("E6-R1", 42, "run", ("listed",), None, None, None, "E3-R1:s42:lambda0.5:alpha25:80k"),
+    "E6-R1:s42:sel": ("E6-R1", 42, "derived", ("quant_descriptive",),
+                      "E6-R1", "student", "int8_qat", "E6-R1:s42:15ep"),
+    "E6-R2:s42:15ep": ("E6-R2", 42, "run", ("listed",), None, None, None, "E3-R2:s42:lambda0.5:alpha25:80k"),
+    "E6-R2:s42:sel": ("E6-R2", 42, "derived", ("quant_descriptive",),
+                      "E6-R2", "student", "int8_qat", "E6-R2:s42:15ep"),
+    "E4:s42:list42": ("E4", 42, "derived", ("family",), "E4", "student", "int8_ptq", "E1:s42:80k"),
+    "E4:s43:list42": ("E4", 43, "derived", ("per_seed",), "E4", "student", "int8_ptq", "E1:s43:80k"),
+    "E4:s44:list42": ("E4", 44, "derived", ("per_seed",), "E4", "student", "int8_ptq", "E1:s44:80k"),
+    "E7:s42:list42": ("E7", 42, "derived", ("family",),
+                      "E7", "student", "int8_ptq", "E3:s42:lambda0.5:alpha25:80k"),
+    "E7:s43:list42": ("E7", 43, "derived", ("per_seed",),
+                      "E7", "student", "int8_ptq", "E3:s43:lambda0.5:alpha25:80k"),
+    "E7:s44:list42": ("E7", 44, "derived", ("per_seed",),
+                      "E7", "student", "int8_ptq", "E3:s44:lambda0.5:alpha25:80k"),
+    "E4:s42:list43": ("E4", 42, "derived", ("calibration_sensitivity",),
+                      "E4", "student", "int8_ptq", "E1:s42:80k"),
+    "E4:s42:list44": ("E4", 42, "derived", ("calibration_sensitivity",),
+                      "E4", "student", "int8_ptq", "E1:s42:80k"),
+    "E4:s42:list45": ("E4", 42, "derived", ("calibration_sensitivity",),
+                      "E4", "student", "int8_ptq", "E1:s42:80k"),
+    "E7:s42:list43": ("E7", 42, "derived", ("calibration_sensitivity",),
+                      "E7", "student", "int8_ptq", "E3:s42:lambda0.5:alpha25:80k"),
+    "E7:s42:list44": ("E7", 42, "derived", ("calibration_sensitivity",),
+                      "E7", "student", "int8_ptq", "E3:s42:lambda0.5:alpha25:80k"),
+    "E7:s42:list45": ("E7", 42, "derived", ("calibration_sensitivity",),
+                      "E7", "student", "int8_ptq", "E3:s42:lambda0.5:alpha25:80k"),
+    "ARM:latency": ("ARM", None, "measurement", (), None, None, None, None),
+}
+#: src/tman/schema.py:182 at ee5593e, typed out (R4-5(e)): every fixture slot key matches it.
+SLOT_KEY_RE = re.compile(r"^[A-Za-z][A-Za-z0-9-]*(?::[A-Za-z0-9.]+)+$")
+#: The catalogue leaves E5:s42:sel's QAT run to the pilot decision (parent null, pilot runs clip1 and clip5);
+#: the world takes clip1 as the winner, its run of record, and enters clip5 as the losing pilot.
+E5_PILOT_OF_RECORD, E5_PILOT_LOST = "E5:s42:clip1:15ep", "E5:s42:clip5:15ep"
+
+
+def _b5(slot: str, precisions: tuple, kind: str, quality):
+    """A B-5 slot of the world: its stage, seed, class, roles and parent are the catalogue's."""
+    stage, seed, cls, roles, _, _, _, parent = CATALOGUE[slot]
+    return (slot, stage, seed, precisions, kind, cls, roles, parent, quality)
+
+
 #: B-5's slots (IF§9; AM-18 item 3; AM-23 items 1-3; AM-3; AM-17 items 6-7; AM-16 item 5), each scored
 #: model written as a real clean canvas artifact: (slot, stage, seed, precisions, kind, class, roles,
-#: parent, quality). The stages are IF§9's names (B5-S1 maps them); the slot keys of Part 1's ignored
-#: slots are kept (scripts/smoke_seed_stability.py's W3 names them). A, F and G carry role `listed`.
+#: parent, quality), every field but precisions, kind and quality the catalogue's (R4-5).
 B5_SLOTS = (
-    ("E3-R1:s42", "E3-R1", 42, ("fp32",), "scored_run", "run", ("arm",), None, 0.768),
-    ("E3-R2:s42", "E3-R2", 42, ("fp32",), "scored_run", "run", ("arm",), None, 0.790),
-    ("E3-flip:s42", "E3-flip", 42, ("fp32",), "scored_run", "run", ("arm",), None, 0.757),
-    ("E7-R1:s42", "E7-R1", 42, ("int8_ptq",), "derived", "derived", ("arm",), "E3-R1:s42", 0.760),
-    ("E7-R2:s42", "E7-R2", 42, ("int8_ptq",), "derived", "derived", ("arm",), "E3-R2:s42", 0.781),
-    ("E7-flip:s42", "E7-flip", 42, ("int8_ptq",), "derived", "derived", ("arm",), "E3-flip:s42", 0.749),
-    ("E6-R1:s42", "E6-R1", 42, (), "listed_run", "run", (), "E3-R1:s42", None),
-    ("E6-R1:s42:sel", "E6-R1", 42, ("int8_qat", "qat_fakequant_off"), "derived", "derived",
-     ("quant_descriptive",), "E6-R1:s42", 0.765),
-    ("E6-R2:s42", "E6-R2", 42, (), "listed_run", "run", (), "E3-R2:s42", None),
-    ("E6-R2:s42:sel", "E6-R2", 42, ("int8_qat", "qat_fakequant_off"), "derived", "derived",
-     ("quant_descriptive",), "E6-R2:s42", 0.786),
-    ("E6-E2:s42", "E6-E2", 42, (), "listed_run", "run", (), "E2:s42", None),
-    ("E6-E2:s42:sel", "E6-E2", 42, ("int8_qat", "qat_fakequant_off"), "derived", "derived",
-     ("quant_descriptive",), "E6-E2:s42", 0.716),
-    ("E7-E2:s42", "E7-E2", 42, ("int8_ptq",), "derived", "derived", ("quant_descriptive",), "E2:s42", 0.713),
-    ("R1", "R1", None, ("fp32",), "arm_teacher", "run", ("arm_teacher",), None, 0.812),
-    ("R2", "R2", None, ("fp32",), "arm_teacher", "run", ("arm_teacher",), None, 0.821),
-    ("teacher", "teacher", None, ("fp32",), "scored_run", "run", ("teacher_reference",), None, 0.805),
-    ("A:s42", "A", 42, ("fp32",), "scored_run", "run", ("listed",), None, 0.741),
-    ("F:s42", "F", 42, ("fp32",), "scored_run", "run", ("listed",), None, 0.744),
-    ("G:s42", "G", 42, ("fp32",), "scored_run", "run", ("listed",), None, 0.738),
-    ("E1:s42:160k", "E1", 42, ("fp32",), "scored_run", "run", ("control",), None, 0.706),
-    ("E2:s42:160k", "E2", 42, ("fp32",), "scored_run", "run", ("control",), None, 0.727),
-    ("E4:s42:cal43", "E4", 42, ("int8_ptq",), "derived", "derived", ("calibration_sensitivity",), "E1:s42",
-     0.691),
-    ("E7:s42:cal43", "E7", 42, ("int8_ptq",), "derived", "derived", ("calibration_sensitivity",), "E3:s42",
-     0.751),
+    _b5("E3-R1:s42:lambda0.5:alpha25:80k", ("fp32",), "scored_run", 0.768),
+    _b5("E3-R2:s42:lambda0.5:alpha25:80k", ("fp32",), "scored_run", 0.790),
+    _b5("E3-flip:s42:lambda0.5:alpha25:80k", ("fp32",), "scored_run", 0.757),
+    _b5("E7-R1:s42:list42", ("int8_ptq",), "derived", 0.760),
+    _b5("E7-R2:s42:list42", ("int8_ptq",), "derived", 0.781),
+    _b5("E7-flip:s42:list42", ("int8_ptq",), "derived", 0.749),
+    _b5("E6-R1:s42:15ep", (), "listed_run", None),
+    _b5("E6-R1:s42:sel", ("int8_qat", "qat_fakequant_off"), "derived", 0.765),
+    _b5("E6-R2:s42:15ep", (), "listed_run", None),
+    _b5("E6-R2:s42:sel", ("int8_qat", "qat_fakequant_off"), "derived", 0.786),
+    _b5("E6-E2:s42:15ep", (), "listed_run", None),
+    _b5("E6-E2:s42:sel", ("int8_qat", "qat_fakequant_off"), "derived", 0.716),
+    _b5("E7-E2:s42:list42", ("int8_ptq",), "derived", 0.713),
+    _b5("teacher-R1:s42:40k", ("fp32",), "arm_teacher", 0.812),
+    _b5("teacher-R2:s42:40k", ("fp32",), "arm_teacher", 0.821),
+    _b5("teacher:s42:40k", ("fp32",), "scored_run", 0.805),
+    _b5("A:s42:alpha25:80k", ("fp32",), "scored_run", 0.741),
+    _b5("F:s42:alpha25:80k", ("fp32",), "scored_run", 0.744),
+    _b5("G:s42:80k", ("fp32",), "scored_run", 0.738),
+    _b5("E1:s42:160k", ("fp32",), "scored_run", 0.706),
+    _b5("E2:s42:lambda0.5:160k", ("fp32",), "scored_run", 0.727),
+    _b5("E4:s42:list43", ("int8_ptq",), "derived", 0.691),
+    _b5("E7:s42:list43", ("int8_ptq",), "derived", 0.751),
+)
+#: The catalogue's not-built L arm (scope class not_built: never scored, evaluator_stage null) and ARM's
+#: measurement (no role), entered without a model row or record: (slot, kind, the kind's fields). No LREP
+#: table maps or loads them (R4-5(b)).
+UNSCORED_SLOTS = (
+    ("teacher-L:s42:40k", "cut", {"cut_date": "2026-11-02", "rule": "AM-19 item 3(b): code not merged",
+                                  "comparator": None}),
+    ("E2-L:s42:lambda0.5:80k", "not_run", {"reason": "parent cut"}),
+    ("E3-L:s42:lambda0.5:alpha25:80k", "not_run", {"reason": "parent cut"}),
+    ("E7-L:s42:list42", "not_run", {"reason": "parent cut"}),
+    ("ARM:latency", "measurement", {}),
 )
 #: B5-S2's fixture: the images TMAN's hash list would remove (AM-18 item 8(c)), and per-reason counts that
 #: overlap by one (an image equal to both a TRAIN and a VAL image), which the reader reports.
@@ -136,13 +257,13 @@ def make_root(prefix: str) -> tuple[Path | None, str | None]:
     base = os.environ.get("TMPDIR")
     if not base:
         return None, "TMPDIR is not set; run with TMPDIR=<a scratch directory without 'test'>"
-    if "test" in base.lower():
-        return None, "TMPDIR contains 'test'"
+    if "test" in base.lower() or ":" in base:
+        return None, "TMPDIR contains 'test' or ':'"
     real = os.path.realpath(base)
-    if "test" in real.lower() or not os.path.isdir(real):
-        return None, f"TMPDIR resolves to {real!r}, which contains 'test' or is not a directory"
-    if "test" in prefix.lower():
-        return None, f"prefix {prefix!r} contains 'test'"
+    if "test" in real.lower() or ":" in real or not os.path.isdir(real):
+        return None, f"TMPDIR resolves to {real!r}, which contains 'test' or ':' or is not a directory"
+    if "test" in prefix.lower() or ":" in prefix:
+        return None, f"prefix {prefix!r} contains 'test' or ':'"
     root = Path(real) / f"{prefix}{secrets.token_hex(4)}"
     root.mkdir(exist_ok=False)
     return root, None
@@ -161,17 +282,30 @@ def syn_sha(*parts) -> str:
     return hashlib.sha256(("lrep synthetic " + " ".join(map(str, parts))).encode("utf-8")).hexdigest()
 
 
+#: The catalogue's key tail of a planned stage's run (its QAT run for E5 and E6).
+RUN_TAILS = {"E1": "80k", "E2": "lambda0.5:80k", "E3": "lambda0.5:alpha25:80k", "E5": "15ep", "E6": "15ep"}
+
+
 def run_slot(stage: str, seed: int) -> str:
-    return f"{stage}:s{seed}"
+    """The catalogue's key of a planned stage's run: E1-E3's run, E5's and E6's QAT run (E5 at seed 42: the
+    pilot of record)."""
+    if (stage, seed) == ("E5", 42):
+        return E5_PILOT_OF_RECORD
+    return f"{stage}:s{seed}:{RUN_TAILS[stage]}"
 
 
 def record_slot(stage: str, seed: int) -> str:
-    """The model-of-record slot: a run for E1-E4 and E7 (E4/E7 are derived slots of the same form),
-    a QAT run's selection for E5 and E6 (TB9)."""
-    return f"{stage}:s{seed}:sel" if stage in H.QAT_STAGES else run_slot(stage, seed)
+    """The model-of-record slot (the catalogue's key): a run for E1-E3, the PTQ model on list 42 for E4 and
+    E7, a QAT run's selection for E5 and E6 (TB9)."""
+    if stage in H.QAT_STAGES:
+        return f"{stage}:s{seed}:sel"
+    if stage in H.PTQ_STAGES:
+        return f"{stage}:s{seed}:list42"
+    return run_slot(stage, seed)
 
 
 def file_id(slot: str) -> str:
+    """A slot's file id: its ':' never becomes part of a path or file name (R4-6(i))."""
     return slot.lower().replace(":", "_").replace("-", "")
 
 
@@ -317,7 +451,7 @@ def write_artifacts(world: World) -> None:
                        run_id=f"lrep-{stage.lower()}-s{seed}-fqoff")
     for stage, ckpt in (("E2", E2_DEFAULT), ("E3", E3_DEFAULT)):
         tail = "lambda1" if stage == "E2" else "alpha50"
-        _write(world, f"runs/heldout/{stage.lower()}_s42_{tail}_clean", slot=f"{stage}:s42:{tail}",
+        _write(world, f"runs/heldout/{stage.lower()}_s42_{tail}_clean", slot=DEFAULT_SLOTS[stage],
                stage=stage, seed=42, precision="fp32", scope="clean", cell=None, cond=D.CLEAN,
                quality=DEFAULT_QUALITY[stage], checkpoint=ckpt, run_id=f"lrep-{stage.lower()}-s42-{tail}")
     kd = "E6-KD:s42:sel"
@@ -370,7 +504,7 @@ def write_b5_artifacts(world: World) -> None:
 def edited_copy(world: World, src: Written, name: str, fn) -> Written:
     """A copy of an artifact under runs/heldout/<name>, its summary.json edited by `fn` and its
     MANIFEST rehashed; the copy is not in the binding (cases point records at it)."""
-    if "test" in name.lower():
+    if "test" in name.lower() or ":" in name or "/" in name:
         raise ValueError(name)
     d = world.input_root / "runs" / "heldout" / name
     shutil.copytree(world.input_root / src.rel, d)
@@ -391,7 +525,7 @@ def write_telemetry(world: World, name: str, *, run_id: str, unit: str, points) 
     src/training/train_distill.py:1262-1270, src/quant/qat.py:1060-1069), with non-VAL rows between
     the VAL rows. Returns the export's telemetry item {run_id, path, sha256}."""
     rel = f"telemetry/{name}.jsonl"
-    if "test" in rel.lower():
+    if "test" in rel.lower() or ":" in rel:
         raise ValueError(rel)
     tdir = world.input_root / "telemetry"
     if not tdir.exists():
@@ -434,8 +568,8 @@ def write_all_telemetry(world: World) -> None:
             world.telemetry[slot] = [write_telemetry(
                 world, file_id(slot), run_id=training_run_id(stage, seed), unit="epoch",
                 points=qat_curve(0.35 + 0.01 * H.QAT_STAGES.index(stage) + 0.001 * (seed - 42)))]
-    for slot, rid in (("E2:s42:lambda1", "e2_s42_lambda1_80k_a1"),
-                      ("E3:s42:alpha50", "e3_s42_lambda0.5_alpha50_80k_a1")):
+    for slot, rid in ((DEFAULT_SLOTS["E2"], "e2_s42_lambda1_80k_a1"),
+                      (DEFAULT_SLOTS["E3"], "e3_s42_lambda0.5_alpha50_80k_a1")):
         world.telemetry[slot] = [write_telemetry(world, file_id(slot), run_id=rid, unit="iter",
                                                  points=kd_curve(0.355))]
 
@@ -466,6 +600,14 @@ def _entry(slot, kind, stage, seed, roles, *, parent=None, cls="run", never_cut=
     return {"slot": slot, "kind": kind, "class": cls, "stage": stage, "seed": seed,
             "catalogue": {"never_cut": never_cut, "cut_place": None, "parent": parent},
             "dl_rows": [], "scope": ["clean", "upstream", "dedup"], "role": list(roles), **fields}
+
+
+def diverged_fields(*, rule: str, run_id: str, iteration=None, epoch=None,
+                    cause: str = "non-finite loss") -> dict:
+    """A diverged entry's fields in TMAN's shape (src/tman/schema.py:398 and :413-414 at ee5593e; R4-5(f)):
+    both iteration and epoch present, exactly one non-null, with run_id, rule, cause and telemetry_sha256."""
+    return {"run_id": run_id, "rule": rule, "cause": cause, "iteration": iteration, "epoch": epoch,
+            "telemetry_sha256": syn_sha("telemetry", run_id)}
 
 
 def _row(slot, stage, seed, precision, *, source_kind, source_sha, converted=None, cells=(),
@@ -505,8 +647,9 @@ def _ghost_record(world: World, slot: str, precision: str, scope: str | None = N
 
 
 def b5_export_parts(world: World) -> tuple[list, list, list]:
-    """(entries, model rows, upstream ghost records) of B-5's slots; their scored records come from
-    world.written. A teacher's row carries model_role teacher (B5-S1); an fq_off row a student's."""
+    """(entries, model rows, upstream ghost records) of B-5's slots and the unscored ones (UNSCORED_SLOTS);
+    their scored records come from world.written. A teacher's row carries model_role teacher (B5-S1); an
+    fq_off row a student's."""
     entries, models, ghosts = [], [], []
     for slot, stage, seed, precisions, kind, cls, roles, parent, _ in B5_SLOTS:
         entries.append(_entry(slot, kind, stage, seed, list(roles), parent=parent, cls=cls,
@@ -517,9 +660,13 @@ def b5_export_parts(world: World) -> tuple[list, list, list]:
             models.append(_row(slot, stage, seed, precision, source_kind=ids["source_kind"],
                                source_sha=ids["source"], converted=ids["converted"], entry_kind=kind,
                                roles=list(roles), run_id=b5_run_id(slot, kind, parent), model_role=role))
-            if (precision != H.PRECISION_FQOFF and stage not in ("R1", "R2")
+            if (precision != H.PRECISION_FQOFF and "arm_teacher" not in roles
                     and "calibration_sensitivity" not in roles):
                 ghosts.append(_ghost_record(world, slot, precision, "upstream"))
+    for slot, kind, fields in UNSCORED_SLOTS:
+        stage, seed, cls, roles, _, _, _, parent = CATALOGUE[slot]
+        entries.append(_entry(slot, kind, stage, seed, list(roles), parent=parent, cls=cls, never_cut=False,
+                              **fields))
     return entries, models, ghosts
 
 
@@ -570,7 +717,7 @@ def build_export(world: World) -> tuple[dict, dict]:
                 kind, run_id = "derived", training_run_id(H.PARENT_STAGE[stage], seed)
             else:
                 qrun = run_slot(stage, seed)
-                entries.append(_entry(qrun, "listed_run", stage, seed, [], never_cut=False,
+                entries.append(_entry(qrun, "listed_run", stage, seed, ["listed"], never_cut=False,
                                       parent=run_slot(H.PARENT_STAGE[stage], seed),
                                       telemetry=world.telemetry[qrun]))
                 entries.append(_entry(rslot, "derived", stage, seed, [role], parent=qrun,
@@ -584,32 +731,37 @@ def build_export(world: World) -> tuple[dict, dict]:
                 models.append(_row(rslot, stage, seed, H.PRECISION_FQOFF, source_kind="checkpoint",
                                    source_sha=ids["source"], entry_kind=kind, roles=[role],
                                    run_id=run_id))
-    for stage, tail, ckpt in (("E2", "lambda1", E2_DEFAULT), ("E3", "alpha50", E3_DEFAULT)):
-        slot = f"{stage}:s42:{tail}"
+    for stage, ckpt in (("E2", E2_DEFAULT), ("E3", E3_DEFAULT)):
+        slot = DEFAULT_SLOTS[stage]
         entries.append(_entry(slot, "default_candidate", stage, 42, ["default_candidate"],
                               never_cut=True, telemetry=world.telemetry[slot]))
         models.append(_row(slot, stage, 42, "fp32", source_kind="checkpoint", source_sha=ckpt,
                            entry_kind="default_candidate", roles=["default_candidate"],
                            run_id=world.telemetry[slot][0]["run_id"]))
-    entries.append(_entry("E6-KD:s42", "listed_run", "E6-KD", 42, [], never_cut=False,
-                          parent="E3:s42"))
-    entries.append(_entry("E6-KD:s42:sel", "derived", "E6-KD", 42, ["listed"], parent="E6-KD:s42",
+    entries.append(_entry("E6-KD:s42:15ep", "listed_run", "E6-KD", 42, ["listed"], never_cut=False,
+                          parent=run_slot("E3", 42)))
+    entries.append(_entry("E6-KD:s42:sel", "derived", "E6-KD", 42, ["e6kd"], parent="E6-KD:s42:15ep",
                           cls="derived"))
     for prec, sha, conv in (("int8_qat", syn_sha("qat checkpoint", "E6-KD", 42),
                              syn_sha("converted", "E6-KD", 42)),
                             (H.PRECISION_FQOFF, syn_sha("qat checkpoint", "E6-KD", 42), None)):
         models.append(_row("E6-KD:s42:sel", "E6-KD", 42, prec, source_kind="checkpoint",
-                           source_sha=sha, converted=conv, entry_kind="derived", roles=["listed"],
+                           source_sha=sha, converted=conv, entry_kind="derived", roles=["e6kd"],
                            run_id="e6kd_s42_qat_a1"))
-    # B-5's slots (B5_SLOTS), with real clean artifacts
+    # B-5's slots (B5_SLOTS), with real clean artifacts, and the unscored ones (UNSCORED_SLOTS)
     b5_entries, b5_models, b5_ghosts = b5_export_parts(world)
     entries += b5_entries
     models += b5_models
     records += b5_ghosts
-    # slots every LREP table ignores (IF§11.1; LRB4): listed runs without a model row
-    for slot, stage in (("E2:s42:lambda0.25", "E2"), ("U4:pilot", "E5")):
-        entries.append(_entry(slot, "listed_run", stage, 42, ["listed"], never_cut=False))
+    # slots every LREP table ignores (IF§11.1; LRB4): a listed sweep run and the losing pilot, no model row
+    for slot in ("E2:s42:lambda0.25:80k", E5_PILOT_LOST):
+        stage, seed, cls, roles, _, _, _, parent = CATALOGUE[slot]
+        entries.append(_entry(slot, "listed_run", stage, seed, list(roles), parent=parent, cls=cls,
+                              never_cut=False))
     records.extend(_record(world, w) for w in world.written.values())
+    bad = sorted({x["slot"] for x in (*entries, *models, *records)} - set(CATALOGUE))
+    if bad or not all(SLOT_KEY_RE.fullmatch(e["slot"]) for e in entries):
+        raise ValueError(f"fixture slot keys outside TMAN's catalogue (R4-5(e)): {bad}")
     manifest = syn_sha("TEST-day manifest")
     export = {"schema": H.INVENTORY_SCHEMA, "evaluator_commit": world.commit,
               "execution_context": {"model_device": "cpu", "input_devices": ["cpu"],
@@ -703,4 +855,6 @@ __all__ = ["WORLD_SEED", "N_IMAGES", "STATS_B", "QUALITY", "SEED_SHIFT", "E2_SEL
            "edited_copy", "write_telemetry", "kd_curve", "qat_curve", "write_stats_artifact",
            "sev45_cells", "build_export", "write_inventory", "write_strata", "build_world", "DEDUP_NAME",
            "B5_SLOTS", "DEDUP_REMOVED", "DEDUP_REASONS", "b5_identity", "b5_run_id", "write_b5_artifacts",
-           "b5_export_parts", "dedup_doc", "dedup_bytes"]
+           "b5_export_parts", "dedup_doc", "dedup_bytes", "CATALOGUE_SOURCE", "CATALOGUE", "SLOT_KEY_RE",
+           "E5_PILOT_OF_RECORD", "E5_PILOT_LOST", "UNSCORED_SLOTS", "DEFAULT_SLOTS", "RUN_TAILS",
+           "diverged_fields"]

@@ -5,7 +5,7 @@
 SYNTHETIC ONLY (DL-41): scripts/lrep_fixtures.py's world, plus edited copies of the committed DL-99,
 DL-124 and DL-125 records under a new directory for the record refusals (the committed records are read
 by exact path and never changed). Created paths live under a new directory in TMPDIR (left in place);
-none contains "test".
+none contains "test" or ":".
 
   S  B5-D1: √2·s from DL-99's record, equal to its band and 0.015621041685101825 bitwise; the inclusive
      boundary in float64
@@ -13,11 +13,15 @@ none contains "test".
      refusals (arm_record_invalid)
   P  placement: the eight rows in order and no E6-flip row; the refusals of arm_slot_invalid; a model
      under a cut arm run (parent_rule, R-12); a model row at another seed (R-14); each role in its place
-     (an arm slot at E6-R1, a quant_descriptive slot at E3-R1)
+     (an arm slot at E6-R1, a quant_descriptive slot at E3-R1); B-5b (ruling LREP-B5-RULE-4 R4-5): every
+     other arm or arm_teacher slot skipped and listed with its label (K8, an avg teacher, A, F, G, the
+     not-built L slots), the arm teachers at TMAN's teacher-R1 and teacher-R2 at seed 42
   V  values: both sides' m and rule_variants' values, Δ and its reading, the 37 as comparators (R-11),
      the per-image mean Δ and its interval (B5-D2), B5-S1's evaluator stages
   L  a candidate without a model: its IF§11.2 label, no value, never a refusal (unless the binding lists
-     its clean artifact anyway)
+     its clean artifact anyway); B-5b R4-5(f): a divergence in TMAN's shape (both units present, one
+     non-null, with run_id, cause and telemetry_sha256) at an iteration and at an epoch, and the other
+     shapes refused (status_invalid)
   D  determinism, no test or p-value key, the banner, no test object imported, the markdown's cells, no
      'test' path
 
@@ -225,33 +229,45 @@ def p_order():
 
 
 def p_k8():
+    """LRB4 (R4-5(b)): an arm slot at E3-K8 (K8 is out, DL-96) is skipped, never refused or placed: the
+    eight rows stand and the part lists it among the skipped slots."""
     def edit(export, binding):
-        e = copy.deepcopy(entry(export, "E3-flip:s42"))
-        e.update(slot="E3-K8:s42", stage="E3-K8")
+        e = copy.deepcopy(entry(export, "E3-flip:s42:lambda0.5:alpha25:80k"))
+        e.update(slot="E3-K8:s42:lambda0.5:alpha25:80k", stage="E3-K8")
         export["entries"].append(e)
-    return refused("arm_slot_invalid", lambda: doc_of(variant("k8", edit)))
+    doc = doc_of(variant("k8", edit))
+    skipped = {s["slot"]: s for s in doc["skipped"]}
+    k8 = skipped.get("E3-K8:s42:lambda0.5:alpha25:80k")
+    return ([(r["x"], r["stage"]) for r in doc["rows"]] == ORDER and k8 is not None
+            and (k8["stage"], k8["label"]) == ("E3-K8", None)
+            and all(r["candidate_stage"] != "E3-K8" for r in doc["rows"])), str(k8)
 
 
 def p_two():
     def edit(export, binding):
-        e = copy.deepcopy(entry(export, "E3-R1:s42"))
-        e["slot"] = "E3-R1:s42:b"
+        e = copy.deepcopy(entry(export, "E3-R1:s42:lambda0.5:alpha25:80k"))
+        e["slot"] = "E3-R1:s42:lambda0.5:alpha25:80k:b"
         export["entries"].append(e)
     return refused("arm_slot_invalid", lambda: doc_of(variant("two_r1", edit)))
 
 
 def p_teacher_avg():
+    """LRB4 (R4-5(b)): an arm_teacher slot at a stage other than teacher-R1 and teacher-R2 is skipped: R1's
+    and R2's teacher rows stand and the part lists it among the skipped slots."""
     def edit(export, binding):
-        e = copy.deepcopy(entry(export, "R1"))
-        e.update(slot="Bavg", stage="B-avg")
+        e = copy.deepcopy(entry(export, "teacher-R1:s42:40k"))
+        e.update(slot="teacher-avg:s42:40k", stage="teacher-avg")
         export["entries"].append(e)
-    return refused("arm_slot_invalid", lambda: doc_of(variant("avg_teacher", edit)))
+    doc = doc_of(variant("avg_teacher", edit))
+    t = {x["x"]: x["slot"] for x in doc["teachers"]}
+    return (t == {"R1": "teacher-R1:s42:40k", "R2": "teacher-R2:s42:40k", "flip": None}
+            and "teacher-avg:s42:40k" in [s["slot"] for s in doc["skipped"]]), str(t)
 
 
 def p_missing():
     def edit(export, binding):
-        export["entries"] = [e for e in export["entries"] if e["slot"] != "E7-flip:s42"]
-        drop_rows(export, binding, "E7-flip:s42")
+        export["entries"] = [e for e in export["entries"] if e["slot"] != "E7-flip:s42:list42"]
+        drop_rows(export, binding, "E7-flip:s42:list42")
     return refused("arm_slot_invalid", lambda: doc_of(variant("no_e7flip", edit)))
 
 
@@ -264,7 +280,7 @@ def p_other_quant():
 def p_seed():
     """arm_slot_invalid: E3-R1's slot at seed 43 (the arm tables place seed 42 only)."""
     def edit(export, binding):
-        entry(export, "E3-R1:s42")["seed"] = 43
+        entry(export, "E3-R1:s42:lambda0.5:alpha25:80k")["seed"] = 43
     return refused("arm_slot_invalid", lambda: doc_of(variant("e3r1_s43", edit)))
 
 
@@ -272,13 +288,13 @@ def p_parent_without_model():
     """parent_rule (R-12): E3-R1 cut while a model descends from it -- E7-R1 still a derived PTQ model, or
     (E7-R1 not run) E6-R1's selection still a derived QAT model, its artifact bound."""
     def cut_e3r1(export, binding):
-        entry(export, "E3-R1:s42").update(kind="cut", **CUT)
-        drop_rows(export, binding, "E3-R1:s42")
+        entry(export, "E3-R1:s42:lambda0.5:alpha25:80k").update(kind="cut", **CUT)
+        drop_rows(export, binding, "E3-R1:s42:lambda0.5:alpha25:80k")
 
     def cut_e3r1_e7r1(export, binding):
         cut_e3r1(export, binding)
-        entry(export, "E7-R1:s42")["kind"] = None
-        drop_rows(export, binding, "E7-R1:s42")
+        entry(export, "E7-R1:s42:list42")["kind"] = None
+        drop_rows(export, binding, "E7-R1:s42:list42")
     out = [refused("parent_rule", lambda n=n, f=f: doc_of(variant(n, f)))
            for n, f in (("e3r1_cut_e7r1_model", cut_e3r1), ("e3r1_cut_e6r1_model", cut_e3r1_e7r1))]
     return all(ok for ok, _ in out), str([d for _, d in out])
@@ -287,12 +303,14 @@ def p_parent_without_model():
 def p_row_seed():
     """seed_inconsistent (R-14): E3-R1's fp32 model row at seed 43 while its entry is at 42."""
     def edit(export, binding):
-        next(r for r in export["models"] if (r["slot"], r["precision"]) == ("E3-R1:s42", "fp32"))["seed"] = 43
+        next(r for r in export["models"]
+             if (r["slot"], r["precision"]) == ("E3-R1:s42:lambda0.5:alpha25:80k", "fp32"))["seed"] = 43
     return refused("seed_inconsistent", lambda: doc_of(variant("e3r1_row_s43", edit)))
 
 
 def p_arm_at_e6():
-    """arm_slot_invalid: E6-R1's selection with role arm (its entry and rows), not quant_descriptive."""
+    """arm_slot_invalid: E6-R1's selection with role arm (its entry and rows), not quant_descriptive: the arm
+    slot at E6-R1 is skipped (LRB4; R4-5(b)), so E6-R1's row has no quant_descriptive slot (R4-2)."""
     def edit(export, binding):
         entry(export, "E6-R1:s42:sel")["role"] = ["arm"]
         for r in export["models"]:
@@ -304,17 +322,52 @@ def p_arm_at_e6():
 def p_quant_at_e3():
     """quant_slot_invalid (quant_rows' rule): a quant_descriptive slot at E3-R1."""
     def edit(export, binding):
-        e = copy.deepcopy(entry(export, "E3-R1:s42"))
-        e.update(slot="E3-R1:s42:q", role=["quant_descriptive"])
+        e = copy.deepcopy(entry(export, "E3-R1:s42:lambda0.5:alpha25:80k"))
+        e.update(slot="E3-R1:s42:lambda0.5:alpha25:80k:q", role=["quant_descriptive"])
         export["entries"].append(e)
     return refused("quant_slot_invalid", lambda: doc_of(variant("e3r1_quant", edit)))
+
+
+#: The world's arm and arm_teacher slots outside the arm tables, with the labels their entries give
+#: (LF.UNSCORED_SLOTS's L slots; A, F and G scored, so no label) -- typed out (R4-03).
+SKIPPED = {"A:s42:alpha25:80k": ("A", None), "F:s42:alpha25:80k": ("F", None), "G:s42:80k": ("G", None),
+           "E2-L:s42:lambda0.5:80k": ("E2-L", "not run: parent cut"),
+           "E3-L:s42:lambda0.5:alpha25:80k": ("E3-L", "not run: parent cut"),
+           "E7-L:s42:list42": ("E7-L", "not run: parent cut"),
+           "teacher-L:s42:40k": ("teacher-L", "cut (2026-11-02, AM-19 item 3(b): code not merged)")}
+
+
+def p_skipped():
+    """R4-5(b): the world's A, F and G (role arm, scored) and the not-built L slots (role arm or
+    arm_teacher, no model, outside B5-S1's map) are skipped by the arm tables, never refused or mapped, and
+    listed with their entries' labels; the markdown names them by stage; ARM:latency (a measurement, no
+    role) is no row of the part."""
+    doc = the_doc()
+    got = {s["slot"]: (s["stage"], s["label"]) for s in doc["skipped"]}
+    md = "\n".join(AT.render_markdown(doc, ""))
+    text = A.canonical_json(doc)
+    return (got == SKIPPED and "teacher-L (cut (2026-11-02" in md and "A (scored)" in md
+            and "ARM:latency" not in text and not any(s in md for s in got)), str(got)[:300]
+
+
+def p_teacher_stages():
+    """R4-5(a): the arm teachers are TMAN's teacher-R1 and teacher-R2 at seed 42 (R4-5(d)), X taken from the
+    stage name; their artifacts are scored at the evaluator's teacher stage with model_role teacher."""
+    doc = the_doc()
+    t = {x["x"]: x for x in doc["teachers"]}
+    inv = H.open_inventory(CTX.world.inventory_path, policy=stats_artifact().policy)
+    seeds = [inv.entry(t[x]["slot"])["seed"] for x in ("R1", "R2")]
+    runs = [load("teacher", t[x]["slot"], "fp32").summary["run"]["model_role"] for x in ("R1", "R2")]
+    return ((t["R1"]["slot"], t["R2"]["slot"]) == ("teacher-R1:s42:40k", "teacher-R2:s42:40k")
+            and seeds == [42, 42] and runs == ["teacher", "teacher"] and AT.teacher_x("teacher-R2") == "R2"
+            and H.stage_spec("teacher-R1") == ("teacher", "teacher", "fp32")), str(t)[:300]
 
 
 def v_m():
     doc = the_doc()
     from src.stats.seed_stability import m_of
     r = row(doc, "R1", "E3")
-    c = load("E3", "E3-R1:s42", "fp32")
+    c = load("E3", "E3-R1:s42:lambda0.5:alpha25:80k", "fp32")
     b = stats_artifact().clean("E3")
     return (r["candidate"]["m"] == m_of(c.run.stats)
             and r["baseline"]["m"] == m_of(b.run.stats)), str(r["candidate"])
@@ -323,7 +376,7 @@ def v_m():
 def v_rule_variants():
     doc = the_doc()
     r = row(doc, "R2", "E7")
-    c = load("E7", "E7-R2:s42", "int8_ptq")
+    c = load("E7", "E7-R2:s42:list42", "int8_ptq")
     rv = rule_variants(c.run.stats)
     want = {"all_class": rv[UNION_PRESENT]["all_class"], "gt_present": rv[GT_PRESENT]["all_class"],
             "disease_only": rv[UNION_PRESENT]["disease_only"]}
@@ -349,7 +402,7 @@ def v_per_image():
     """B5-D2: the mean on the disease-only per-image vector, its interval recomputed here."""
     doc = the_doc()
     r = row(doc, "flip", "E7")
-    c = load("E7", "E7-flip:s42", "int8_ptq")
+    c = load("E7", "E7-flip:s42:list42", "int8_ptq")
     pv = align_runs(stats_artifact().clean("E7").run, c.run, policy=Policy.NONOFFICIAL_SMOKE,
                     metric=METRIC_DISEASE_ONLY)
     ref = LD.mean_delta_task("arm__flip__e7", pv.delta, B=SMOKE_B)
@@ -373,7 +426,8 @@ def v_stage_map():
     st = stats_artifact()
     inv = H.open_inventory(w.inventory_path, policy=st.policy)
     got = {}
-    for slot, stage in (("E3-R1:s42", "E3-R1"), ("E7-R2:s42", "E7-R2"), ("E6-R1:s42:sel", "E6-R1")):
+    for slot, stage in (("E3-R1:s42:lambda0.5:alpha25:80k", "E3-R1"), ("E7-R2:s42:list42", "E7-R2"),
+                        ("E6-R1:s42:sel", "E6-R1")):
         ba = H.load_bound(inv, slot=slot, stage=stage, precision=H.stage_spec(stage)[2], scope="clean",
                           input_root=w.input_root, policy=st.policy)
         run = ba.summary["run"]
@@ -385,7 +439,8 @@ def v_stage_map():
 def v_identity():
     """R-11: an E3 family slot whose identity is not the 37's E3 is refused."""
     def edit(export, binding):
-        r = next(r for r in export["models"] if (r["slot"], r["precision"]) == ("E3:s42", "fp32"))
+        r = next(r for r in export["models"]
+                 if (r["slot"], r["precision"]) == ("E3:s42:lambda0.5:alpha25:80k", "fp32"))
         r["source"]["sha256"] = LF.syn_sha("another E3")
     return refused("seed42_mismatch", lambda: doc_of(variant("e3_identity", edit)))
 
@@ -393,19 +448,19 @@ def v_identity():
 def _cut_r2(export, binding):
     """E3-R2 cut, so its descendants are not run (AM-19 item 4(a); AM-23 item 3(b)): E7-R2 with kind null
     (its parent's cut) and E6-R2's QAT run not_run."""
-    e = entry(export, "E3-R2:s42")
+    e = entry(export, "E3-R2:s42:lambda0.5:alpha25:80k")
     e.update(kind="cut", **CUT)
-    drop_rows(export, binding, "E3-R2:s42")
-    entry(export, "E7-R2:s42")["kind"] = None
-    drop_rows(export, binding, "E7-R2:s42")
-    entry(export, "E6-R2:s42").update(kind="not_run", reason="parent cut")
+    drop_rows(export, binding, "E3-R2:s42:lambda0.5:alpha25:80k")
+    entry(export, "E7-R2:s42:list42")["kind"] = None
+    drop_rows(export, binding, "E7-R2:s42:list42")
+    entry(export, "E6-R2:s42:15ep").update(kind="not_run", reason="parent cut")
     entry(export, "E6-R2:s42:sel")["kind"] = None
     drop_rows(export, binding, "E6-R2:s42:sel")
 
 
 def _cut_e6r2(export, binding):
     """DL-136 and DL-138's shape: E3-R2 complete, E6-R2's QAT run cut."""
-    entry(export, "E6-R2:s42").update(kind="cut", **CUT)
+    entry(export, "E6-R2:s42:15ep").update(kind="cut", **CUT)
     entry(export, "E6-R2:s42:sel")["kind"] = None
     drop_rows(export, binding, "E6-R2:s42:sel")
 
@@ -430,9 +485,9 @@ def l_cut_e6():
 
 def l_not_made():
     def edit(export, binding):
-        e = entry(export, "E7-flip:s42")
+        e = entry(export, "E7-flip:s42:list42")
         e.update(kind="not_made", reason="code not merged")
-        drop_rows(export, binding, "E7-flip:s42")
+        drop_rows(export, binding, "E7-flip:s42:list42")
     doc = doc_of(variant("e7flip_not_made", edit))
     return row(doc, "flip", "E7")["label"] == "not made: code not merged", row(doc, "flip", "E7")["label"]
 
@@ -447,18 +502,73 @@ def l_no_values():
 def l_teacher_status():
     doc = the_doc()
     t = {x["x"]: x for x in doc["teachers"]}
-    return (t["R1"]["slot"] == "R1" and t["R1"]["kind"] == "arm_teacher" and t["R1"]["label"] is None
-            and t["flip"]["slot"] is None), str(t)[:300]
+    return (t["R1"]["slot"] == "teacher-R1:s42:40k" and t["R1"]["kind"] == "arm_teacher"
+            and t["R1"]["label"] is None and t["flip"]["slot"] is None), str(t)[:300]
+
+
+def _div_flip(export, binding):
+    """E3-flip diverged at iteration 41000 in TMAN's shape (R4-5(f)), so E7-flip (kind null) is not run."""
+    entry(export, "E3-flip:s42:lambda0.5:alpha25:80k").update(
+        kind="diverged", **LF.diverged_fields(iteration=41000, rule="AM-7a item 1",
+                                              run_id="e3flip_s42_lambda0.5_alpha25_80k_a1"))
+    drop_rows(export, binding, "E3-flip:s42:lambda0.5:alpha25:80k")
+    entry(export, "E7-flip:s42:list42")["kind"] = None
+    drop_rows(export, binding, "E7-flip:s42:list42")
+
+
+def l_diverged():
+    """R4-5(f): an arm run diverged in TMAN's shape (both units present, iteration non-null) reads
+    'diverged (iteration 41000, ...)', and its PTQ child 'not run: parent diverged'."""
+    doc = doc_of(variant("div_flip", _div_flip))
+    labels = {st: row(doc, "flip", st)["label"] for st in ("E3", "E7")}
+    return labels == {"E3": "diverged (iteration 41000, AM-7a item 1)",
+                      "E7": "not run: parent diverged"}, str(labels)
+
+
+def l_diverged_old_shape():
+    """status_invalid: the same divergence in the shape before B-5b (iteration only, no epoch key): TMAN's
+    shape has both keys (schema.py:398, :413-414 at ee5593e)."""
+    def edit(export, binding):
+        _div_flip(export, binding)
+        del entry(export, "E3-flip:s42:lambda0.5:alpha25:80k")["epoch"]
+    return refused("status_invalid", lambda: doc_of(variant("div_flip_old", edit)))
+
+
+def l_diverged_fields():
+    """status_invalid: TMAN's diverged entry with both units null, with both non-null, or without its
+    telemetry_sha256 (each the only defect)."""
+    def make(change):
+        def edit(export, binding):
+            _div_flip(export, binding)
+            change(entry(export, "E3-flip:s42:lambda0.5:alpha25:80k"))
+        return edit
+    out = [refused("status_invalid", lambda n=n, c=c: doc_of(variant(n, make(c))))
+           for n, c in (("div_flip_null", lambda e: e.update(iteration=None)),
+                        ("div_flip_both", lambda e: e.update(epoch=3)),
+                        ("div_flip_no_tel", lambda e: e.pop("telemetry_sha256")))]
+    return all(ok for ok, _ in out), str([d for _, d in out])
+
+
+def l_diverged_epoch():
+    """R4-5(f): E6-R2's QAT run diverged at epoch 7 in TMAN's shape (iteration null): E6-R2's row reads
+    'diverged (epoch 7, AM-21 item 1)'."""
+    def edit(export, binding):
+        entry(export, "E6-R2:s42:15ep").update(
+            kind="diverged", **LF.diverged_fields(epoch=7, rule="AM-21 item 1", run_id="e6r2_s42_15ep_a1"))
+        entry(export, "E6-R2:s42:sel")["kind"] = None
+        drop_rows(export, binding, "E6-R2:s42:sel")
+    label = row(doc_of(variant("div_e6r2", edit)), "R2", "E6")["label"]
+    return label == "diverged (epoch 7, AM-21 item 1)", str(label)
 
 
 def l_record_of_missing():
     """R-6: E3-flip reads 'cut' while the binding still lists its clean artifact
     (artifact_for_missing_run)."""
     def edit(export, binding):
-        entry(export, "E3-flip:s42").update(kind="cut", **CUT)
-        export["models"] = [r for r in export["models"] if r["slot"] != "E3-flip:s42"]
-        entry(export, "E7-flip:s42")["kind"] = None
-        drop_rows(export, binding, "E7-flip:s42")
+        entry(export, "E3-flip:s42:lambda0.5:alpha25:80k").update(kind="cut", **CUT)
+        export["models"] = [r for r in export["models"] if r["slot"] != "E3-flip:s42:lambda0.5:alpha25:80k"]
+        entry(export, "E7-flip:s42:list42")["kind"] = None
+        drop_rows(export, binding, "E7-flip:s42:list42")
     return refused("artifact_for_missing_run", lambda: doc_of(variant("flip_cut_bound", edit)))
 
 
@@ -503,8 +613,9 @@ def d_no_test_import():
 
 
 def d_no_test_path():
+    """LRB20, with ':' (R4-6): no created path contains 'test' or ':'."""
     bad = [os.path.join(d, n) for d, dirs, files in os.walk(CTX.world.root) for n in dirs + files
-           if "test" in n.lower()]
+           if "test" in n.lower() or ":" in n]
     return not bad, str(bad[:3])
 
 
@@ -539,17 +650,23 @@ def cases():
             ("T5", "arm_record_invalid: a record that is missing", t_missing),
             ("T6", "arm_record_invalid: a record at its sha256 whose fields are not R1's", t_malformed),
             ("P1", "the eight rows in order, no E6-flip row, the arm__ ids", p_order),
-            ("P2", "arm_slot_invalid: an arm slot at E3-K8 (DL-96)", p_k8),
+            ("P2", "LRB4 (R4-5(b)): an arm slot at E3-K8 (DL-96) is skipped and listed, never refused", p_k8),
             ("P3", "arm_slot_invalid: two slots for one (X, stage)", p_two),
-            ("P4", "arm_slot_invalid: an arm teacher outside R1 and R2", p_teacher_avg),
+            ("P4", "LRB4 (R4-5(b)): an arm teacher outside teacher-R1 and teacher-R2 is skipped and listed",
+             p_teacher_avg),
             ("P5", "arm_slot_invalid: a row the export has no slot for", p_missing),
             ("P6", "E6-E2 and E7-E2 are not arm rows and are not refused here", p_other_quant),
             ("P7", "arm_slot_invalid: an arm candidate at seed 43", p_seed),
             ("P8", "parent_rule: a model under a cut arm run (E7-R1, E6-R1's selection; R-12)",
              p_parent_without_model),
             ("P9", "seed_inconsistent: a candidate's model row at another seed (R-14)", p_row_seed),
-            ("P10", "arm_slot_invalid: an arm slot at E6-R1 (E6-X is quant_descriptive)", p_arm_at_e6),
+            ("P10", "arm_slot_invalid: E6-R1 with role arm is skipped, leaving its row without a slot",
+             p_arm_at_e6),
             ("P11", "quant_slot_invalid: a quant_descriptive slot at E3-R1", p_quant_at_e3),
+            ("P12", "R4-5(b): A, F, G and the L slots skipped with their labels; ARM:latency no row",
+             p_skipped),
+            ("P13", "R4-5(a), (d): the arm teachers at teacher-R1 and teacher-R2, seed 42, X from the stage",
+             p_teacher_stages),
             ("V1", "both sides' m equal seed_stability.m_of on the artifacts", v_m),
             ("V2", "rule_variants' all-class, GT-present and disease-only values", v_rule_variants),
             ("V3", "Δ = m(candidate) - m(baseline) on all eight rows", v_delta),
@@ -565,11 +682,17 @@ def cases():
             ("L5", "artifact_for_missing_run: a cut arm whose clean artifact is still bound",
              l_record_of_missing),
             ("L6", "E6-R2's QAT run cut under a complete E3-R2 (DL-138's shape)", l_cut_e6),
+            ("L7", "R4-5(f): an arm run diverged in TMAN's shape, its PTQ child not run", l_diverged),
+            ("L8", "status_invalid: a divergence in the shape before B-5b (no epoch key)",
+             l_diverged_old_shape),
+            ("L9", "status_invalid: both units null, both non-null, or no telemetry_sha256",
+             l_diverged_fields),
+            ("L10", "R4-5(f): a QAT run diverged at an epoch in TMAN's shape", l_diverged_epoch),
             ("D1", "byte-identical JSON on repeated runs", d_deterministic),
             ("D2", "no test or p-value key, no '__' key", d_no_test_keys),
             ("D3", "the banner 'descriptive; outside protocol 1.0.0'", d_banner),
             ("D4", "arm_tables imports no test object (AST)", d_no_test_import),
-            ("D5", "no created path contains 'test'", d_no_test_path),
+            ("D5", "no created path contains 'test' or ':' (LRB20; R4-6)", d_no_test_path),
             ("D6", "the markdown's lines have the header's cells, with and without a model", d_cells)]
 
 

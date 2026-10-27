@@ -4,7 +4,7 @@
 
 SYNTHETIC ONLY (DL-41): scripts/lrep_fixtures.py's world (its quant_descriptive slots E6-E2, E7-E2,
 E6-R1 and E6-R2) and variants of its export under a new directory in TMPDIR (left in place); none
-contains "test". Expected values are recomputed here from the artifacts.
+contains "test" or ":". Expected values are recomputed here from the artifacts.
 
   Q  the rows: E6-E2 − E6 and E7-E2 − E7 (all-class from m, GT-present and disease-only), E2 − E3 beside
      them as the negative of the official accuracy_e2_e3 delta, B5-S1's evaluator stages, the E6-X rows
@@ -119,7 +119,7 @@ def q_rows():
     st = stats_artifact()
     ok = []
     for cand, base, slot, prec in (("E6-E2", "E6", "E6-E2:s42:sel", "int8_qat"),
-                                   ("E7-E2", "E7", "E7-E2:s42", "int8_ptq")):
+                                   ("E7-E2", "E7", "E7-E2:s42:list42", "int8_ptq")):
         c = values_of(load(cand, slot, prec).run.stats)
         b = values_of(st.clean(base).run.stats)
         d = row(doc, cand)["differences"]
@@ -146,7 +146,7 @@ def q_stage_map():
     st = stats_artifact()
     inv = H.open_inventory(w.inventory_path, policy=st.policy)
     got = {}
-    for slot, stage in (("E6-E2:s42:sel", "E6-E2"), ("E7-E2:s42", "E7-E2")):
+    for slot, stage in (("E6-E2:s42:sel", "E6-E2"), ("E7-E2:s42:list42", "E7-E2")):
         ba = H.load_bound(inv, slot=slot, stage=stage, precision=H.stage_spec(stage)[2], scope="clean",
                           input_root=w.input_root, policy=st.policy)
         got[stage] = (ba.summary["run"]["stage"], ba.summary["run"]["precision"])
@@ -166,7 +166,7 @@ def q_converted_val():
 
 def l_cut():
     def edit(export, binding):
-        entry(export, "E6-E2:s42").update(kind="cut", **CUT)
+        entry(export, "E6-E2:s42:15ep").update(kind="cut", **CUT)
         entry(export, "E6-E2:s42:sel")["kind"] = None
         drop_rows(export, binding, "E6-E2:s42:sel")
     r = row(doc_of(variant("e6e2_cut", edit)), "E6-E2")
@@ -176,24 +176,24 @@ def l_cut():
 
 def l_not_made():
     def edit(export, binding):
-        entry(export, "E7-E2:s42").update(kind="not_made", reason="code not merged")
-        drop_rows(export, binding, "E7-E2:s42")
+        entry(export, "E7-E2:s42:list42").update(kind="not_made", reason="code not merged")
+        drop_rows(export, binding, "E7-E2:s42:list42")
     r = row(doc_of(variant("e7e2_not_made", edit)), "E7-E2")
     return r["label"] == "not made: code not merged" and r["candidate"] is None, str(r)[:300]
 
 
 def l_no_slot():
     def edit(export, binding):
-        export["entries"] = [e for e in export["entries"] if e["slot"] != "E7-E2:s42"]
-        drop_rows(export, binding, "E7-E2:s42")
+        export["entries"] = [e for e in export["entries"] if e["slot"] != "E7-E2:s42:list42"]
+        drop_rows(export, binding, "E7-E2:s42:list42")
     r = row(doc_of(variant("no_e7e2", edit)), "E7-E2")
     return r["label"] == "no quant_descriptive slot in the export" and r["slot"] is None, str(r)[:300]
 
 
 def r_outside():
     def edit(export, binding):
-        e = copy.deepcopy(entry(export, "E7-E2:s42"))
-        e.update(slot="E7-E3:s42", stage="E7-E3")
+        e = copy.deepcopy(entry(export, "E7-E2:s42:list42"))
+        e.update(slot="E7-E3:s42:list42", stage="E7-E3")
         export["entries"].append(e)
     return refused("quant_slot_invalid", lambda: doc_of(variant("quant_outside", edit)))
 
@@ -209,15 +209,15 @@ def r_two():
 def r_seed():
     """quant_slot_invalid: E7-E2's slot at seed 43 (AM-23's rows are seed 42's)."""
     def edit(export, binding):
-        entry(export, "E7-E2:s42")["seed"] = 43
+        entry(export, "E7-E2:s42:list42")["seed"] = 43
     return refused("quant_slot_invalid", lambda: doc_of(variant("e7e2_s43", edit)))
 
 
 def l_bound_without_model():
     """R-6: E7-E2 reads 'not made' while the binding still lists its clean artifact."""
     def edit(export, binding):
-        entry(export, "E7-E2:s42").update(kind="not_made", reason="code not merged")
-        export["models"] = [r for r in export["models"] if r["slot"] != "E7-E2:s42"]
+        entry(export, "E7-E2:s42:list42").update(kind="not_made", reason="code not merged")
+        export["models"] = [r for r in export["models"] if r["slot"] != "E7-E2:s42:list42"]
     return refused("artifact_for_missing_run", lambda: doc_of(variant("e7e2_bound", edit)))
 
 
@@ -233,23 +233,25 @@ def d_markdown():
 
 def r_identity():
     def edit(export, binding):
-        r = next(r for r in export["models"] if (r["slot"], r["precision"]) == ("E2:s42", "fp32"))
+        r = next(r for r in export["models"]
+                 if (r["slot"], r["precision"]) == ("E2:s42:lambda0.5:80k", "fp32"))
         r["source"]["sha256"] = LF.syn_sha("another E2")
     return refused("seed42_mismatch", lambda: doc_of(variant("e2_identity", edit)))
 
 
 def r_parent_not_family():
-    """parent_rule (R-12): E7-E2 descends from the seed-42 E2 default candidate (E2:s42:lambda1), not
+    """parent_rule (R-12): E7-E2 descends from the seed-42 E2 default candidate (E2:s42:lambda1:80k), not
     the family slot, the E2 of record (AM-23 item 2; IF§11.1)."""
     def edit(export, binding):
-        entry(export, "E7-E2:s42")["catalogue"]["parent"] = "E2:s42:lambda1"
+        entry(export, "E7-E2:s42:list42")["catalogue"]["parent"] = "E2:s42:lambda1:80k"
     return refused("parent_rule", lambda: doc_of(variant("e7e2_parent_lambda1", edit)))
 
 
 def r_row_seed():
     """seed_inconsistent (R-14): E7-E2's int8_ptq model row at seed 43 while its entry is at 42."""
     def edit(export, binding):
-        r = next(r for r in export["models"] if (r["slot"], r["precision"]) == ("E7-E2:s42", "int8_ptq"))
+        r = next(r for r in export["models"]
+                 if (r["slot"], r["precision"]) == ("E7-E2:s42:list42", "int8_ptq"))
         r["seed"] = 43
     return refused("seed_inconsistent", lambda: doc_of(variant("e7e2_row_s43", edit)))
 
@@ -284,8 +286,9 @@ def d_no_test_import():
 
 
 def d_no_test_path():
+    """LRB20, with ':' (R4-6): no created path contains 'test' or ':'."""
     bad = [os.path.join(d, n) for d, dirs, files in os.walk(CTX.world.root) for n in dirs + files
-           if "test" in n.lower()]
+           if "test" in n.lower() or ":" in n]
     return not bad, str(bad[:3])
 
 
@@ -315,7 +318,7 @@ def cases():
             ("D1", "no interval, test or '__' key", d_no_interval),
             ("D2", "byte-identical JSON on repeated runs", d_deterministic),
             ("D3", "quant_rows imports no test object and no bootstrap (AST)", d_no_test_import),
-            ("D4", "no created path contains 'test'", d_no_test_path),
+            ("D4", "no created path contains 'test' or ':' (LRB20; R4-6)", d_no_test_path),
             ("D5", "the markdown's rows, E6-X line and VAL note", d_markdown)]
 
 

@@ -5,7 +5,7 @@ scripts/report_extensions.py against the plan of record's §1.6, §2.4, §3.3, D
 
 SYNTHETIC ONLY (DL-41): scripts/lrep_fixtures.py's world; the committed MDE entry
 (reports/derived/mde_entry_20261009T034825Z.json) is read as the MDE input. Created paths live under a
-new directory in TMPDIR (left in place); none contains "test".
+new directory in TMPDIR (left in place); none contains "test" or ":".
 
   W  writing through the CLI: exit 0, exactly three files, SHA256SUMS verifies, the markdown is the
      rendering of the JSON
@@ -353,7 +353,7 @@ def q_quant_label():
     """A quant_descriptive QAT run that was cut (DL-137's shape for E6-R1) reads its IF§11.2 label from
     TMAN's entries in the fq_off table, with no value and no refusal."""
     def edit(export, binding):
-        e = next(e for e in export["entries"] if e["slot"] == "E6-R1:s42")
+        e = next(e for e in export["entries"] if e["slot"] == "E6-R1:s42:15ep")
         e.update(kind="cut", cut_date="2026-10-24", rule="AM-22 item 2(a): the launch cutoff",
                  comparator=None)
         next(e for e in export["entries"] if e["slot"] == "E6-R1:s42:sel")["kind"] = None
@@ -393,7 +393,7 @@ def q_quant_bound_without_model():
     """artifact_for_missing_run (R-6): E6-R1's QAT run cut and its selection without a model, while the
     binding still lists the selection's clean artifact."""
     def edit(export, binding):
-        e = next(e for e in export["entries"] if e["slot"] == "E6-R1:s42")
+        e = next(e for e in export["entries"] if e["slot"] == "E6-R1:s42:15ep")
         e.update(kind="cut", cut_date="2026-10-24", rule="AM-22 item 2(a): the launch cutoff",
                  comparator=None)
         next(e for e in export["entries"] if e["slot"] == "E6-R1:s42:sel")["kind"] = None
@@ -524,8 +524,9 @@ def h_deterministic():
 
 
 def h_no_test_path():
+    """LRB20, with ':' (R4-6): no created path contains 'test' or ':'."""
     bad = [os.path.join(d, n) for d, dirs, files in os.walk(CTX.world.root) for n in dirs + files
-           if "test" in n.lower()]
+           if "test" in n.lower() or ":" in n]
     return not bad, str(bad[:3])
 
 
@@ -583,14 +584,14 @@ def s_banner():
 
 
 def s_am6():
-    """The am6 part (with coverage) holds the 21 planned rows and (d)'s 23, the teacher's with a null seed
-    and its roles; the markdown's second table follows the planned one. Built here."""
+    """The am6 part (with coverage) holds the 21 planned rows and (d)'s 23, the teacher's at seed 42 (R4-5(d))
+    with its roles; the markdown's second table follows the planned one. Built here."""
     doc = build(parts="am6")
     p = part(doc, "am6")
     others = [r for r in p["rows"] if r.get("role") not in ("family", "per_seed")]
     teacher = [r for r in others if r["stage"] == "teacher"]
     md = RX.render_markdown(doc)
-    return (len(p["rows"]) == 44 and len(others) == 23 and len(teacher) == 1 and teacher[0]["seed"] is None
+    return (len(p["rows"]) == 44 and len(others) == 23 and len(teacher) == 1 and teacher[0]["seed"] == 42
             and teacher[0]["roles"] == ["teacher_reference"]
             and "### Every other clean canvas TEST record" in section(md, p["title"])), str(len(others))
 
@@ -723,7 +724,7 @@ def cases():
             ("H4", "--parts selects parts", h_parts),
             ("H5", "no temporary directory left after a failure", h_no_tmp_left),
             ("H6", "byte-identical JSON from two runs", h_deterministic),
-            ("H7", "no created path contains 'test'", h_no_test_path),
+            ("H7", "no created path contains 'test' or ':' (LRB20; R4-6)", h_no_test_path),
             ("H8", "the frozen code and the CLI are recorded and gate the profile (O3)", h_report_code),
             ("R1", "parts_invalid", r_parts),
             ("R2", "mde_entry_invalid (an MDE path that does not exist)", r_mde),

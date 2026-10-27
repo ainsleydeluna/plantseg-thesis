@@ -288,8 +288,9 @@ def e_pp_markdown():
 
 
 def e_no_test_path():
+    """LRB20, with ':' (R4-6): no created path contains 'test' or ':'."""
     bad = [os.path.join(d, n) for d, dirs, files in os.walk(CTX.world.root) for n in dirs + files
-           if "test" in n.lower()]
+           if "test" in n.lower() or ":" in n]
     return not bad, str(bad[:3])
 
 
@@ -366,7 +367,8 @@ def r_seed43_model():
     """A family slot whose identity is another model (a seed-43 checkpoint) is refused (R-11)."""
     if "s43" not in CTX.paths:
         export, binding = copy.deepcopy(CTX.world.export), copy.deepcopy(CTX.world.binding)
-        row = next(r for r in export["models"] if (r["slot"], r["precision"]) == ("E3:s42", "fp32"))
+        row = next(r for r in export["models"]
+                   if (r["slot"], r["precision"]) == ("E3:s42:lambda0.5:alpha25:80k", "fp32"))
         row["source"]["sha256"] = LF.fp32_checkpoint("E3", 43)
         CTX.paths["s43"] = LF.write_inventory(CTX.world.fresh("strata_s43"), export, binding)
     return refused("seed42_mismatch", lambda: world_doc(CTX.paths["s43"]))
@@ -407,7 +409,7 @@ def cases():
             ("E8", "JSON floats unrounded: the deltas and the mean equal the exact float64 values",
              e_repr_floats),
             ("E9", "the pp column is in the markdown only", e_pp_markdown),
-            ("E10", "no created path contains 'test'", e_no_test_path),
+            ("E10", "no created path contains 'test' or ':' (LRB20; R4-6)", e_no_test_path),
             ("E11", "the markdown appendix: each pair's 115 classes and background line (plan §2.4)",
              e_appendix),
             ("R1", "strata_gt_mismatch (one model's gt_support differs)", r_gt_differs),

@@ -52,11 +52,12 @@ from .ingest import IngestError, Policy, verify_run_manifest
 
 INVENTORY_SCHEMA = "tday-inventory/1"
 BINDING_SCHEMA = "tday_binding/1"
-#: TMAN's kinds and roles, verbatim (IF§11.1-11.2; TL-14).
+#: TMAN's kinds and roles, verbatim (IF§11.1-11.2; TL-14); role e6kd is E6-KD's (src/tman/schema.py:81-82 at
+#: lane/tman ee5593e; ruling LREP-B5-RULE-4 R4-5(c)).
 KINDS = ("scored_run", "default_candidate", "arm_teacher", "listed_run", "derived", "not_run",
          "non_finite", "cut", "superseded", "diverged", "aborted", "measurement", "not_made")
 ROLES = ("family", "per_seed", "teacher_reference", "default_candidate", "arm", "arm_teacher",
-         "control", "calibration_sensitivity", "listed", "quant_descriptive")
+         "control", "calibration_sensitivity", "listed", "quant_descriptive", "e6kd")
 #: IF§11.1: a scored row's entry_kind.
 SCORED_ENTRY_KINDS = ("scored_run", "default_candidate", "arm_teacher", "derived")
 SCOPES = ("clean", "upstream", "corrupted", "corrupted_sev45", "fq_off")
@@ -83,15 +84,17 @@ PARENT_STAGE = {"E4": "E1", "E5": "E1", "E6": "E3", "E7": "E3"}
 #: precision); load_bound reads it for every row. Each precision comes from the frozen tables
 #: (driver.STAGE_PRECISION, src/eval/stage_artifacts.STAGE_ARTIFACTS), never typed. B-4's second
 #: assumption (E6-KD scored as E6) is retired: the evaluator names E6-KD (src/eval/artifacts.py:58-59;
-#: stage_artifacts.py:56-58). The arm and teacher stages are IF§9's names, used as fixtures and listed for
-#: B-4; E3-X and E7-X are evaluator stages E3 and E7 (stage_artifacts.py:50-51 proves "E3" for E3-R1 and
-#: E3-R2; E3-flip's "E3" and E7-X's "E7" are INFERRED).
+#: stage_artifacts.py:56-58). The stages are TMAN's committed catalogue's (configs/tday_catalogue.json at
+#: lane/tman ee5593e, blob 3cc45846; R4-5(a)): E3-X and E7-X at evaluator stages E3 and E7, and the arm
+#: teachers teacher-R1 and teacher-R2 at "teacher" (their evaluator_stage there); B5-S1's teacher stages
+#: "R1" and "R2" are retired. A stage the catalogue leaves unscored (evaluator_stage null: the not-built L
+#: slots, ARM's measurement) is outside the map and never mapped.
 ARM_XS = ("R1", "R2", "flip")
 ARM_STUDENT_STAGES = tuple(f"E3-{x}" for x in ARM_XS) + tuple(f"E7-{x}" for x in ARM_XS)
 QUANT_STAGES = ("E6-E2", "E7-E2", "E6-R1", "E6-R2")          # AM-23 items 1-3 (quant_descriptive)
 EXPLORATORY_STAGES = ("A", "F", "G")
 E6KD_STAGE = "E6-KD"
-TEACHER_STAGES = ("teacher", "R1", "R2")                     # the teacher of record; R1 and R2
+TEACHER_STAGES = ("teacher", "teacher-R1", "teacher-R2")     # the teacher of record; the arm teachers
 EVALUATOR_TEACHER_STAGE = "teacher"                          # src/eval/artifacts.py:58
 
 
@@ -217,8 +220,9 @@ CODES = {
     "dedup_invalid": "B5-S2: the export's dedup or the file it names is null, unreadable, not at its "
                      "sha256 or malformed, or its ids break the invariants against the scored artifacts",
     # the arm tables (AM-18 items 3(d) and 11; B5-S3)
-    "arm_slot_invalid": "B5-S3: an arm or arm_teacher slot or row that the arm tables cannot place (an X "
-                        "outside the three, two slots for one (X, stage))",
+    "arm_slot_invalid": "B5-S3: an arm or arm_teacher slot or row that the arm tables cannot place (two "
+                        "slots for one (X, stage), a candidate at a seed other than 42, a row the export "
+                        "has no slot for); every other arm or arm_teacher slot is skipped (LRB4; R4-5(b))",
     "arm_record_invalid": "B5-S3: a teacher or seed-noise record that is missing, unreadable or not at its "
                           "DL sha256, or whose √2·s differs from its band",
     # AM-23's rows (items 5-6; B5-S3)
@@ -575,11 +579,17 @@ def _kind_fields_problem(e: dict) -> str | None:
         if not (e.get("comparator", None) is None or _is_text(e["comparator"])):
             return "comparator is neither null nor a slot"
     elif kind == "diverged":
-        units = [u for u in ("iteration", "epoch") if u in e]
+        # TMAN's shape (src/tman/schema.py:398 and :413-414 at ee5593e; R4-5(f)): both keys present, exactly
+        # one of them non-null, with the kind's other fields
+        if "iteration" not in e or "epoch" not in e:
+            return "a divergence carries both iteration and epoch, the unused one null"
+        units = [u for u in ("iteration", "epoch") if e[u] is not None]
         if len(units) != 1 or not _is_int(e[units[0]]) or e[units[0]] < 0:
-            return "a divergence needs exactly one of iteration or epoch, a non-negative integer"
-        if not _is_text(e.get("rule")):
-            return "a divergence needs its rule"
+            return "a divergence needs exactly one of iteration or epoch non-null, a non-negative integer"
+        if not all(_is_text(e.get(k)) for k in ("run_id", "rule", "cause")):
+            return "a divergence needs its run_id, rule and cause"
+        if not (isinstance(e.get("telemetry_sha256"), str) and _HEX64.fullmatch(e["telemetry_sha256"])):
+            return "a divergence needs its telemetry_sha256 (64 lowercase hex)"
     elif kind == "aborted":
         if not (_is_text(e.get("rule")) and _is_text(e.get("cause"))):
             return "an abort needs its rule and cause"
@@ -594,7 +604,7 @@ def _label(e: dict) -> str:
     if kind == "cut":
         return f"cut ({e['cut_date']}, {e['rule']})"
     if kind == "diverged":
-        unit = "iteration" if "iteration" in e else "epoch"
+        unit = "iteration" if e["iteration"] is not None else "epoch"
         return f"diverged ({unit} {e[unit]}, {e['rule']})"
     if kind == "aborted":
         return f"aborted ({e['rule']}, {e['cause']})"
@@ -609,6 +619,20 @@ def _record_of(e: dict) -> dict:
     keep = ("kind", "cut_date", "rule", "comparator", "iteration", "epoch", "cause", "reason",
             "dl_rows")
     return {k: e[k] for k in keep if k in e}
+
+
+def entry_label(e: dict) -> str | None:
+    """The IF§11.2 cell text of a slot a table skips, from its own entry and never a refusal (LRB4; R4-5(b)):
+    None for a kind that carries a model or names none, "not run: <reason>" for not_run, the kind's label
+    when its record fields are well formed, else the kind as written. Nothing else is read."""
+    kind = e.get("kind")
+    if kind in (*SCORED_ENTRY_KINDS, "listed_run", "measurement"):
+        return None
+    if kind == "not_run":
+        return f"not run: {e.get('reason')}"
+    if kind in ("cut", "diverged", "aborted", "not_made", "non_finite") and _kind_fields_problem(e) is None:
+        return _label(e)
+    return f"kind {kind!r}"
 
 
 def _checked_kind(inv: Inventory, slot: str) -> tuple[dict, str | None]:
@@ -658,8 +682,9 @@ def _not_run_status(inv: Inventory, slot: str, e: dict, seed: int, depth: int = 
 
 
 def _check_unit(slot: str, e: dict, unit: str) -> None:
-    """IF§11.2: a KD or E1 run diverges at an iteration, a QAT run at an epoch (R-4)."""
-    if e.get("kind") == "diverged" and unit not in e:
+    """IF§11.2: a KD or E1 run diverges at an iteration, a QAT run at an epoch (R-4); in TMAN's shape the
+    other unit is null (R4-5(f))."""
+    if e.get("kind") == "diverged" and e.get(unit) is None:
         raise refusal("status_invalid", f"slot {slot!r}: this run's divergence is recorded by {unit} "
                                         "(IF§11.2: iteration for a KD or E1 run, epoch for a QAT run)")
 
@@ -1390,7 +1415,7 @@ __all__ = [
     "LrepRefusal", "refusal", "sha256_file", "strict_json_text", "path_problem", "safe_relative_path",
     "cell_id", "corruption_names", "inferential_cells", "stage_spec", "read_inventory",
     "Inventory", "open_inventory", "SlotStatus", "record_slots", "parent_slot", "resolve_status",
-    "PlannedCells", "check_parentage", "model_row",
+    "entry_label", "PlannedCells", "check_parentage", "model_row",
     "row_identity", "check_rows", "check_missing_runs", "check_seed42", "planned_cells",
     "binding_record", "cell_condition", "BoundArtifact", "load_bound", "load_clean_of_record",
     "check_row_at_entry", "metrics_sha256", "cross_check", "check_e1_record", "StatsArtifact",

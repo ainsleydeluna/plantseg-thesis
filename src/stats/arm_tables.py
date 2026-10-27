@@ -12,12 +12,16 @@ contrasts, read the same way.
   * X ∈ {R1, R2, flip}: K8 is out (DL-96; PA :1116) and avg is out (DL-66; PA :2561). Rows at seed 42:
     E3-X − E3 and E7-X − E7 for every X, E6-X − E6 for R1 and R2 only; no E6-flip row is made. The
     candidates are the `arm` slots at E3-X and E7-X and AM-23's `quant_descriptive` slots at E6-R1 and
-    E6-R2 (IF§11.1 :25); the comparators E3, E7 and E6 are the family slots, read from the 37 inputs of
-    the verified statistics artifact with their identity checked (R-11). An arm or arm_teacher slot or a
-    row the tables cannot place -- an arm at a stage other than E3-X or E7-X for the three X, a candidate
-    at a seed other than 42, an arm teacher other than R1 and R2, two slots for one (X, stage), or a row
-    the export has no slot for -- is arm_slot_invalid; the E6-X candidates follow quant_rows.quant_slots'
-    rule (quant_slot_invalid). A candidate's model row is at its entry's stage and seed (R-14).
+    E6-R2 (IF§11.1 :25); the arm teachers are the `arm_teacher` slots at TMAN's stages teacher-R1 and
+    teacher-R2, X taken from the stage name (R4-5(a)); the comparators E3, E7 and E6 are the family slots,
+    read from the 37 inputs of the verified statistics artifact with their identity checked (R-11). Every
+    other arm or arm_teacher slot -- A, F and G, the not-built L slots, any stage the tables do not place --
+    is skipped, never mapped, read or refused (LRB4; R4-5(b)), and listed with its entry's IF§11.2 label;
+    A, F and G are reported where their role puts them, in the am6 coverage and the duplicate-free parts.
+    A row the tables cannot place -- a candidate at a seed other than 42, two slots for one (X, stage), or
+    a row the export has no slot for -- is arm_slot_invalid; the E6-X candidates follow
+    quant_rows.quant_slots' rule (quant_slot_invalid). A candidate's model row is at its entry's stage and
+    seed (R-14).
   * Each row: both sides' clean dataset-level mIoU, m (Part 1's float64 m, seed_stability.m_of) and
     eligibility.rule_variants' all-class, GT-present and disease-only values; the all-class difference
     Δ = m(candidate) - m(baseline) beside √2·s with B5-D1's reading; the per-image mean Δ on
@@ -54,6 +58,8 @@ from . import lrep_descriptive as LD
 CODE_REPO = Path(__file__).resolve().parents[2]
 ARM_XS = H.ARM_XS
 ARM_TEACHERS = ("R1", "R2")
+#: TMAN's stages of the arm teachers (configs/tday_catalogue.json at lane/tman ee5593e; R4-5(a)).
+ARM_TEACHER_STAGES = tuple(f"teacher-{x}" for x in ARM_TEACHERS)
 ARM_SEED = 42
 #: The rows, in order: per X, E3-X, E7-X and (R1, R2) E6-X (AM-18 item 3(d); AM-23 item 6).
 ROWS = tuple((x, st) for x in ARM_XS for st in ("E3", "E7", "E6") if not (st == "E6" and x == "flip"))
@@ -83,6 +89,11 @@ HEADER = ("X", "stage", "candidate", "m baseline", "m candidate", "Δ all-class"
 def candidate_stage(x: str, stage: str) -> str:
     """The TMAN stage of row (x, stage): E3-X, E7-X or E6-X (IF§9's names; B5-S1)."""
     return f"{stage}-{x}"
+
+
+def teacher_x(stage: str) -> str:
+    """X of an arm teacher's TMAN stage teacher-X (R4-5(a): the arm tables take X from the stage name)."""
+    return stage.split("-", 1)[1]
 
 
 def read_record(rel: str, sha256: str, what: str, *, repo=CODE_REPO) -> dict:
@@ -142,27 +153,27 @@ def teacher_values(x: str, *, repo=CODE_REPO, records=TEACHER_RECORDS) -> dict:
             "record": {"path": rec["path"], "sha256": rec["sha256"], "dl": rec["dl"]}, "note": None}
 
 
-def arm_slots(inv: H.Inventory) -> tuple[dict, dict]:
-    """({(x, stage): slot} of the rows' candidates, {x: slot} of the arm teachers R1 and R2): the `arm`
-    slots at E3-X or E7-X, at seed 42, and the `quant_descriptive` slots at E6-R1 and E6-R2 by
-    quant_rows.quant_slots' rule (IF§11.1 :25). Each role has its own place: an arm slot at any other stage
-    (E6-X among them) is arm_slot_invalid, and a quant_descriptive slot outside AM-23's four stages is
-    quant_rows' quant_slot_invalid."""
+def arm_slots(inv: H.Inventory) -> tuple[dict, dict, list]:
+    """({(x, stage): slot} of the rows' candidates, {x: slot} of the arm teachers R1 and R2, [slot] skipped):
+    the `arm` slots at E3-X or E7-X, at seed 42, the `quant_descriptive` slots at E6-R1 and E6-R2 by
+    quant_rows.quant_slots' rule (IF§11.1 :25), and the `arm_teacher` slots at teacher-R1 and teacher-R2
+    (X from the stage name; R4-5(a)). Every other arm or arm_teacher slot (A, F, G, the not-built L slots,
+    an arm at E6-X or K8) is skipped and never refused (LRB4; R4-5(b)); a quant_descriptive slot outside
+    AM-23's four stages is quant_rows' quant_slot_invalid."""
     from .quant_rows import quant_slots
     want = {candidate_stage(x, st): (x, st) for x, st in ROWS if st != "E6"}
     found: dict = {}
+    skipped: list = []
     for slot in H.role_slots(inv, "arm"):
         e = inv.entry(slot)
         stage = e.get("stage")
-        if stage in want and e.get("seed") != ARM_SEED:
+        if stage not in want:
+            skipped.append(slot)
+            continue
+        if e.get("seed") != ARM_SEED:
             raise H.refusal("arm_slot_invalid", f"slot {slot!r} at {stage} has seed {e.get('seed')!r}; the "
                                                 f"arm tables place seed {ARM_SEED} only (AM-18 item 3(d))")
-        if stage in want:
-            found.setdefault(want[stage], []).append(slot)
-        else:
-            raise H.refusal("arm_slot_invalid", f"arm slot {slot!r} at stage {stage!r}: the arm tables place "
-                                                f"E3-X and E7-X for X in {list(ARM_XS)} only (K8 is out, "
-                                                "DL-96; avg is out, DL-66; E6-X is a quant_descriptive slot)")
+        found.setdefault(want[stage], []).append(slot)
     quant = quant_slots(inv)
     for x, st in ROWS:
         if st == "E6" and candidate_stage(x, st) in quant:
@@ -170,19 +181,19 @@ def arm_slots(inv: H.Inventory) -> tuple[dict, dict]:
     teachers: dict = {}
     for slot in H.role_slots(inv, "arm_teacher"):
         stage = inv.entry(slot).get("stage")
-        if stage not in ARM_TEACHERS:
-            raise H.refusal("arm_slot_invalid", f"arm_teacher slot {slot!r} at stage {stage!r}: the arm "
-                                                f"teachers are {list(ARM_TEACHERS)}")
-        teachers.setdefault(stage, []).append(slot)
+        if stage not in ARM_TEACHER_STAGES:
+            skipped.append(slot)
+            continue
+        teachers.setdefault(teacher_x(stage), []).append(slot)
     two = {str(k): v for k, v in {**found, **teachers}.items() if len(v) > 1}
     if two:
         raise H.refusal("arm_slot_invalid", f"two slots for one (X, stage): {two}")
     missing = [candidate_stage(x, st) for x, st in ROWS if (x, st) not in found]
-    missing += [x for x in ARM_TEACHERS if x not in teachers]
+    missing += [f"teacher-{x}" for x in ARM_TEACHERS if x not in teachers]
     if missing:
         raise H.refusal("arm_slot_invalid", f"the export has no slot for {missing}: a row the arm tables "
                                             "cannot place (IF§11.1: every catalogue slot is exported)")
-    return {k: v[0] for k, v in found.items()}, {k: v[0] for k, v in teachers.items()}
+    return {k: v[0] for k, v in found.items()}, {k: v[0] for k, v in teachers.items()}, skipped
 
 
 def side_values(stats, summary: dict) -> dict:
@@ -241,7 +252,7 @@ def build_arm_tables(stats: H.StatsArtifact, inv: H.Inventory, cells: H.PlannedC
     """The "AM-18 arm tables" part."""
     noise = seed_noise(repo=repo)
     family = H.family_inputs(stats, inv, cells, stages=("E3", "E6", "E7"))
-    candidates, teacher_slots = arm_slots(inv)
+    candidates, teacher_slots, skipped_slots = arm_slots(inv)
     teachers = {x: teacher_values(x, repo=repo) for x in ARM_XS}
     rows, loaded = [], {f"{st} seed 42": family[st] for st in ("E3", "E6", "E7")}
     for x, st in ROWS:
@@ -256,9 +267,15 @@ def build_arm_tables(stats: H.StatsArtifact, inv: H.Inventory, cells: H.PlannedC
         st = H.b5_status(inv, slot) if slot is not None else None
         teacher_rows.append({**teachers[x], "slot": slot, "kind": st.kind if st else None,
                              "label": st.label if st else None})
+    skipped = []
+    for slot in skipped_slots:
+        e = inv.entry(slot)
+        skipped.append({"slot": slot, "stage": e.get("stage"), "roles": list(e["role"]),
+                        "kind": e.get("kind"), "label": H.entry_label(e)})
     H.cross_check(loaded, {}, evaluator_commit=inv.evaluator_commit, official=stats.profile == "official")
     return {"part": "arms", "title": TITLE, "banner": LD.BANNER, "analysis_id": LD.ANALYSIS_ID, "B": B,
-            "seed_noise": noise, "rows": rows, "teachers": teacher_rows, "footnote": FOOTNOTE}
+            "seed_noise": noise, "rows": rows, "teachers": teacher_rows, "skipped": skipped,
+            "footnote": FOOTNOTE}
 
 
 def _fmt(v) -> str:
@@ -292,11 +309,16 @@ def render_markdown(doc: dict, banner: str = "") -> list[str]:
         rec = t["record"]["dl"] if t["record"] else t["note"]
         out.append(_line([t["x"], _fmt(t["val_x"]), _fmt(t["ece_x"]), _fmt(t["go"]), rec,
                           t["label"] or ("scored" if t["slot"] else "—")]))
+    if doc["skipped"]:
+        names = "; ".join(f"{s['stage']} ({s['label'] or 'scored'})" for s in doc["skipped"])
+        out += ["", f"Not arm-table rows (LRB4; R4-5(b)), by stage: {names}. A scored one is reported "
+                    "where its role puts it (the am6 coverage and duplicate-free parts)."]
     out += ["", f"_{doc['footnote']}_", ""]
     return out
 
 
-__all__ = ["ARM_XS", "ARM_TEACHERS", "ARM_SEED", "ROWS", "SEED_NOISE_RECORD", "TEACHER_RECORDS",
-           "RECORD_FORMAT", "VERDICTS", "NOT_ON_RECORD", "READING_INSIDE", "READING_OUTSIDE", "HEADER",
-           "candidate_stage", "read_record", "seed_noise", "reading", "teacher_values", "arm_slots",
-           "side_values", "arm_row", "build_arm_tables", "render_markdown"]
+__all__ = ["ARM_XS", "ARM_TEACHERS", "ARM_TEACHER_STAGES", "ARM_SEED", "ROWS", "SEED_NOISE_RECORD",
+           "TEACHER_RECORDS", "RECORD_FORMAT", "VERDICTS", "NOT_ON_RECORD", "READING_INSIDE",
+           "READING_OUTSIDE", "HEADER", "candidate_stage", "teacher_x", "read_record", "seed_noise",
+           "reading", "teacher_values", "arm_slots", "side_values", "arm_row", "build_arm_tables",
+           "render_markdown"]
