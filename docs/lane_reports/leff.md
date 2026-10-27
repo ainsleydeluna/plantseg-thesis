@@ -427,3 +427,836 @@ was not followed: the GO forbids trailers and names lane/leff; no commit carries
 4. C1's commit message says every refusal prints `[code] message`; D1 corrected the code and its docstring, and the
    message stays as history.
 5. is_quantized's FloatFunctional fix (B-1.8) goes beyond the plan's text; it is reported here for the orchestrator.
+
+## B-2: L-LAT-THREADS, the run-of-record mode and the table
+
+Every file:line below is at the B-2 final code commit 594257b unless another commit is named.
+
+### B-2.1 Base, commits, scope and environment
+
+- **O** and the venv are B-1.1's (5838c80e4f68f65ebc6294f1400035c2173b7a7b; the cloud venv against the lock, torch
+  2.1.0+cpu, fvcore 0.1.5.post20221221). The lane never merged; B-1b's lane is untouched (LF22).
+- **Commits** (no trailers; each pushed with `git push origin refs/heads/lane/leff:refs/heads/lane/leff` and its tip
+  confirmed by `git ls-remote --heads origin lane/leff`):
+
+| commit | UTC | what | files |
+|---|---|---|---|
+| C4 50f375a6581131e6fd077aae087351b5f0232d7e | 27 Oct 02:42 | the thread policy, the Timer's probe, the host's facts | efficiency.py |
+| C5 9364afdc945b9def93842a95ef25ce1c57502815 | 27 Oct 02:57 | the run of record, the identity flags, the x86 binding | profile_efficiency.py; smoke_efficiency_record_mutations.py (B-1's M28 anchor) |
+| C6 9ceab91d8704100c9cd0e7f1b8e683e5cf72b660 | 27 Oct 03:20 | the table builder, the B-2 smoke and its runner | efficiency_table.py, smoke_latency_threads.py, smoke_latency_threads_mutations.py (all new) |
+| F1 44ff65be7b4d8cf70efcc5bbc01bafc5fe15989c | 27 Oct 08:06 | DL-24 fixes (1/2): the inter-op evidence, the image gate's coded failures, the lane's own cases | efficiency.py (docstrings), profile_efficiency.py, smoke_latency_threads.py, smoke_latency_threads_mutations.py |
+| F2 594257ba08a3982bc8f5d13fd96be0a9b53d1620 | 27 Oct 09:23 | DL-24 fixes (2/2): the table builder's refusals, the cgroup quota, the SL-1 guards, the record's key sets | efficiency.py, efficiency_table.py, smoke_latency_threads.py, smoke_latency_threads_mutations.py |
+| C7 (this section) | | the B-2 report | docs/lane_reports/leff.md |
+
+- **Scoped diff, C3..594257b** (`git diff --stat` with the GO's excludes):
+
+```
+ scripts/efficiency_table.py                  |  307 +++++
+ scripts/profile_efficiency.py                |  541 ++++++++-
+ scripts/smoke_efficiency_record_mutations.py |    3 +-
+ scripts/smoke_latency_threads.py             | 1649 ++++++++++++++++++++++++++
+ scripts/smoke_latency_threads_mutations.py   |  290 +++++
+ src/eval/efficiency.py                       |  270 ++++-
+ 6 files changed, 3005 insertions(+), 55 deletions(-)
+```
+
+- **Name-status, O..594257b** (STEP 10 (f), the GO's command): LF21's paths only, A for the new files and M for the
+  edited ones. STEP 10 (g)'s name-only diff over the frozen list printed nothing.
+
+```
+A	docs/lane_reports/leff.md
+A	scripts/efficiency_table.py
+M	scripts/profile_efficiency.py
+M	scripts/smoke_efficiency.py
+A	scripts/smoke_efficiency_record.py
+A	scripts/smoke_efficiency_record_mutations.py
+A	scripts/smoke_latency_threads.py
+A	scripts/smoke_latency_threads_mutations.py
+M	src/eval/efficiency.py
+```
+
+- **STEP 4's re-read** for B-2 is B-1.4's table: one re-read at O served both parts. Its B-2 rows are:
+  - preflight_distill's PL-26 fingerprint;
+  - governed_paths_error and git_porcelain_bytes;
+  - int8_official_error (new on master, used here);
+  - ptq.py's x86_latency_copy record and qat_epoch_eval's finalize;
+  - select_x86_backend, load_int8_torchscript and ptq_val_checks._companion;
+  - evaluate_backend_parity's imports and smoke_quant_x86_efficiency.
+
+  No change at O alters a behaviour B-2 relies on.
+- **Imports.** efficiency.py's repository imports, read by AST at O and at 594257b, are the same five modules
+  (src.eval.artifacts, src.eval.model_loading, src.eval.stage_artifacts, src.quant.qconfig and src.quant.x86_latency;
+  LF21). profile_efficiency.py imports scripts/preflight_distill.py only inside image_fingerprint and image_gate
+  (LF32); its module-level imports add torch, src.eval.model_loading's sha256_file and stage_artifacts'
+  resolve_stage_artifact, which efficiency.py already loads.
+
+### B-2.2 STEP 10's RESULT lines (the final code commit 594257b; each run alone, in the GO's order)
+
+(a) and (b) ran as one detached batch, 2026-10-27T09:23:59Z to 2026-10-27T13:50:21Z (15,982 s), each smoke alone with the lane venv's python -B from the repository root. Every one of the 57 rows gives its expected line and exit code (0 differ).
+
+**(a) the 53 STEP 3 smokes**, each with its STEP 3 line (B-1.2; the seconds now and at STEP 3):
+
+| id | smoke | RESULT line (or last line) | exit | s (STEP 3) |
+|---|---|---|---|---|
+| a01 | smoke_frozen_blobs | RESULT: FROZEN BLOBS OK (10/10) | 0 | 0 (0) |
+| a02 | smoke_run_ptq | RESULT: PASS (69/69) | 0 | 604 (504) |
+| a03 | smoke_calibration_lists | RESULT: PASS (42/42) | 0 | 3 (3) |
+| a04 | smoke_qnnpack_ops | RESULT: PASS (8/8) synthetic artifact | 0 | 280 (229) |
+| a05 | smoke_eval_int8 | RESULT: PASS (32/32) | 0 | 9 (8) |
+| a06 | smoke_efficiency | RESULT: PASS (82/82) | 0 | 5 (4) |
+| a07 | smoke_quant_e4_e5 | RESULT: PASS (58/58) | 0 | 6 (4) |
+| a08 | smoke_quant_e6_e7 | RESULT: PASS (37/37) | 0 | 6 (4) |
+| a09 | smoke_quant_runners | RESULT: PASS (78/78) | 0 | 4 (3) |
+| a10 | smoke_realrun_decisions | RESULT: PASS (76/76) | 0 | 2 (2) |
+| a11 | smoke_qat_runner | RESULT: PASS (214/214) | 0 | 187 (136) |
+| a12 | smoke_qat_seeding | RESULT: PASS (9/9) | 0 | 48 (34) |
+| a13 | smoke_quant_x86_efficiency | RESULT: PASS (103/103) | 0 | 4 (3) |
+| a14 | smoke_eval_determinism | RESULT: EVAL-DET OK (74/74) | 0 | 35 (27) |
+| a15 | smoke_am13_upstream | RESULT: L-AM13 OK (79/79) | 0 | 24 (19) |
+| a16 | smoke_teacher_d1 | RESULT: PASS (145/145) | 0 | 127 (106) |
+| a17 | smoke_arms_kd | RESULT: PASS (61/61) | 0 | 79 (57) |
+| a18 | smoke_qat_selection | RESULT: PASS (174/174) | 0 | 1371 (983) |
+| a19 | smoke_qat_artifacts | RESULT: PASS (94/94) | 0 | 4048 (3124) |
+| a20 | smoke_teacher_diag_drift | RESULT: PASS (8/8) | 0 | 5 (3) |
+| a21 | smoke_ptq_record | RESULT: PASS (203/203) | 0 | 1084 (846) |
+| a22 | smoke_eval_stage_artifacts | RESULT: PASS (66/66) | 0 | 6 (4) |
+| a23 | smoke_eval_teacher | RESULT: PASS (59/59) | 0 | 7 (4) |
+| b1 | smoke_e6x_condition | RESULT: PASS (172/172) | 0 | 10 (7) |
+| b2 | smoke_e6x_condition_mutations | RESULT: PASS (428/428) | 0 | 14 (10) |
+| b3 | smoke_e6kd_trigger | RESULT: PASS (101/101) | 0 | 485 (338) |
+| n1 | smoke_e6kd_runner | RESULT: PASS (215/215) | 0 | 235 (147) |
+| n2 | smoke_e6kd_selection | RESULT: PASS (37/37) | 0 | 508 (378) |
+| n3 | smoke_e6kd_invariance | RESULT: PASS (11/11) | 0 | 52 (34) |
+| n4 | smoke_e6kd_step --selfcheck | RESULT: PASS (23/23) | 0 | 19 (13) |
+| x1 | smoke_am23_quant | RESULT: PASS (187/187) | 0 | 544 (430) |
+| f1 | smoke_am23_mutations | RESULT: PASS (311/311) | 0 | 402 (328) |
+| c02 | smoke_am5_exclusion | RESULT: L-AM5 OK (50/50) | 0 | 8 (6) |
+| c03 | smoke_eligibility_variants | RESULT: L-AM17-GTPRESENT OK (34/34) | 0 | 7 (5) |
+| c04 | smoke_eval_contract | RESULT: A2a OK -- CORE CONTRACT PROVEN | 0 | 2 (2) |
+| c06 | smoke_gap_bootstrap_val | RESULT: L-AM17B-GAP OK (77/77) | 0 | 56 (35) |
+| c07 | smoke_mde | (no RESULT) PASS 129/129 (mutations killed 35/35); 1036 s | 0 | 1040 (687) |
+| c11 | smoke_split_censuses | (no RESULT) PASS 81/81 (mutations killed 18/18); 2 s | 0 | 4 (2) |
+| c08 | smoke_perclass_gap_table | RESULT: L-AM17-PERCLASS OK (38/38) | 0 | 9 (7) |
+| c09 | smoke_plantseg_class_map | RESULT: CLASS MAP VALID (offline) | 0 | 0 (0) |
+| c10 | smoke_preflight_e1_trainval | RESULT: PASS (125/125) | 0 | 9 (6) |
+| c12 | smoke_stats_driver | RESULT: STATS DRIVER CORE OK (55/55) | 0 | 14 (10) |
+| c13 | smoke_stats_integrity | RESULT: STATS INTEGRITY OK (129/129) | 0 | 69 (49) |
+| c14 | smoke_stats_paired | RESULT: A3a OK -- PAIRED INFERENCE CORE PROVEN | 0 | 7 (5) |
+| c15 | smoke_teacher_calibration | RESULT: PASS (52/52) | 0 | 20 (17) |
+| c16 | smoke_teacher_d4 | RESULT: PASS (32/32) | 0 | 13 (10) |
+| l1 | smoke_ptq_record_mutations --check-edits | RESULT: PASS (143/143 checks; 0/0 edits killed) | 0 | 1 (1) |
+| a24 | smoke_teacher_arms | RESULT: NOT RUN (teacher stack missing: mmengine: ModuleNotFoundError; mmseg: ModuleNotFoundError; mmcv: ModuleNotFoundError) | 2 | 0 (0) |
+| c01 | smoke_am13_teacher | RESULT: L-AM13 TEACHER NOT RUN (0/0) | 2 | 2 (2) |
+| c17 | smoke_teacher_selection | (no RESULT) ENVIRONMENT: teacher stack not importable (No module named 'mmengine'); run in the plantseg-teacher image. | 2 | 2 (1) |
+| b5 | smoke_evaluate_corruptions | (no RESULT) ModuleNotFoundError: No module named 'skimage' | 1 | 0 (0) |
+| b6 | smoke_eval_robustness | (no RESULT) ModuleNotFoundError: No module named 'skimage' | 1 | 2 (2) |
+| c05 | smoke_eval_plantseg | RESULT: A2b BLOCKED | 1 | 4 (3) |
+
+**(b) the two new smokes and their runners:**
+
+| id | run | RESULT line | exit | s |
+|---|---|---|---|---|
+| b01 | smoke_efficiency_record | RESULT: PASS (49/49) | 0 | 110 |
+| b02 | smoke_latency_threads | RESULT: PASS (97/97) | 0 | 1250 |
+| b03 | smoke_efficiency_record_mutations | RESULT: PASS (71/71 checks; 33/33 edits killed) | 0 | 401 |
+| b04 | smoke_latency_threads_mutations | RESULT: PASS (71/71 checks; 33/33 edits killed) | 0 | 2735 |
+
+**(c) Q2's harness**, scripts/smoke_qat_mutations.py: one full run of record, alone and detached (setsid). The command
+was `timeout -k 60 18000 python -B scripts/smoke_qat_mutations.py --workers 2`; session 8639, `timeout` 8642, harness
+8643.
+- **Time:** 2026-10-27T13:50:29Z to 17:46:48Z, `[time] 14179s`, under the 18,000 s cap; exit 0.
+- **RESULT:** `RESULT: PASS (381/381)`.
+- **Shadows:** 69 files × 2 at shadow commit d724aefda7f5.
+- **Baselines:** 142, all PASS.
+- **Edits:** 351 selected, 351 started, 351 KILLED, none void, none survived.
+- **The run's own checks:** self_check_measured PASS (26 checks), refusal_table_names_only_real_sites PASS ([]),
+  every_job_has_a_verdict PASS (351 jobs) and harness_ran_unsignalled PASS.
+- **Processes left:** none after the exit marker.
+
+The single run of record holds; q2-qat.md §17.4's two-run form was not needed.
+
+(d) and (e) ran as one detached batch after (c)'s exit, 2026-10-27T17:47:09Z to 18:37:12Z (3,003 s), each alone.
+
+**(d) E6-KD's harness**, scripts/smoke_e6kd_mutations.py: one full run.
+- **Time:** 17:47:09Z to 18:30:44Z, `[time] 2614s` (LF46 cites 2,679 s); exit 0.
+- **RESULT:** `RESULT: PASS (225/225)`.
+- **Shadows:** 86 files × 2 at shadow commit d07c0c5f96ca.
+- **Baselines:** 184, all PASS.
+- **Edits:** 195 (MT1–MT19, MK1–MK58 and 118 refusal-table edits), each KILLED by its named check; none void, none
+  survived.
+- **The run's own checks:** self_check_measured PASS (26 checks), refusal_table_names_only_real_sites PASS ([]),
+  every_job_has_a_verdict PASS (195 jobs) and harness_ran_unsignalled PASS.
+
+**(e) AM-23's mutation runner**, scripts/smoke_am23_mutations.py: 18:30:44Z to 18:37:12Z (389 s); exit 0;
+`RESULT: PASS (311/311)`. Mutations killed 102/102 over 122 (mutation, case) pairs; every_code_killed, every_case_named
+and the three hygiene checks (no forbidden-named path created, no forbidden path opened, the repository untouched) PASS.
+
+**(f) and (g)** at 18:37:26Z, HEAD 594257ba08a3982bc8f5d13fd96be0a9b53d1620, scoped status `## lane/leff` (clean):
+(f) printed LF21's nine paths only (B-2.1: six A, three M), and (g) printed nothing. Both were run again for this
+report, with the same output.
+
+Every STEP 10 run gives its expected line (ACCEPTANCE 2 and 3).
+
+### B-2.3 The rulings at the final commit
+
+| ruling | met at 594257b |
+|---|---|
+| LF30 thread policy | efficiency.py:65 THREADS_OF_RECORD = 1 and:66 INTEROP_THREADS_OF_RECORD = 1, the comment citing the ruling:63; set_interop_threads:919, called first in profile_efficiency.py's main():910 and at most once per process (the lane's MEASURED abort, B-2.7); the sampler passes num_threads to the Timer:482, the thread count given or torch.get_num_threads() at the call:504, recorded:535; the probe in the Timer's setup:480; intra_op_observed, the probe's values and latency.protocol (untimed_executions_per_observation measured:459, forwards_executed):531; [timed_threads_mismatch] of record before anything is written (profile_efficiency.py:824); the guards that cannot fire at T = 1 proven by injection (affinity_below_threads_by_injection, host_below_threads_by_injection, interop_threads_locked_by_injection); timer_runs_at_requested_threads and untimed_executions_counted decided F2 and A23 (B-2.7) |
+| LF31 host | host_facts:832 from /proc/cpuinfo and sysfs, no lscpu: the ISA subset:747, threads per core, logical CPUs, physical cores, the affinity count, the cgroup quota (v2 cpu.max, v1 cfs; the smallest on the process's own cgroup path and its ancestors, with the directory it came from, DL-24 R3-3):815, usable CPUs, MemTotal, kernel, os-release, /.dockerenv, the hypervisor flag, the governor, the thread variables:749 and parallel_info(); host_type_fingerprint:884 over HOST_TYPE_KEYS:753 only (hostname, kernel, MemTotal and topology recorded, not fingerprinted); [host_label_required] (profile_efficiency.py:404); [host_not_x86] (efficiency.py:911); no IMDS fact; the SMT disclosure in DL-a (B-2.10) |
+| LF32 run of record | the flags:147; B-1b's codes and texts verbatim, "--of-record requires" in the two required codes:393:397; P1 before the resolver's parse:460; P2:474; the governed gate:310 ([governed_paths_unavailable] refuses, never raises); int8_official_error right after the resolver and B-1's name guard:491, [int8_not_official], no fallback code; the image gate:356, preflight_distill imported inside it and image_fingerprint:342 only, a child that times out or prints a line that does not parse coded [image_fingerprint_mismatch] with its cause:369 (DL-24 R2-N5); no digest literal in either file (a 32-hex scan prints nothing); smoke_efficiency's banned words absent (82/82); one metric group of record:212; the record created exclusively:855 |
+| LF33 binding | bind_x86_copy:522: E4/E7 through the run provenance's x86_latency_copy, resolved against the provenance's directory as ptq_val_checks' _companion resolves it:535; E5/E6 through qat_finalize.json:538; the codes in the plan's order; load_x86_copy:591 through load_int8_torchscript under x86_latency_copy_gate's engine (select_x86_backend) with artifact_role x86_cpu_proxy_latency, [x86_copy_identity]; ptq_val_checks.py not edited; validate_artifact_role and x86_latency_copy_gate unchanged (smoke_am23_quant 187, smoke_efficiency 82) |
+| LF34 table | efficiency_table.py build:188: two sittings at most:190; §2's [table_*] codes, an absent or empty sitting [table_stage_missing]:201 and non-object pins or record blocks coded:162 (DL-24 R3-1, R3-6); [table_host_mixed] on host_type_fingerprint:209, every record's label listed; [table_image_mixed] and [table_commit_mixed] across the sittings; one row per stage of EFFICIENCY_ANALYSIS_STAGES, every quantity with its record's sha256:241; efficiency_table.json written exclusively outside the repository:278; a RESULT line:301 |
+| LF35 smokes | B-2.5 and B-2.6: 97 checks against the target 69; 33 mutations, each killed by its named check; no "test" in any new name, code or created path; never-created paths for every "test" refusal; safe_tmpdir roots; repo_state unchanged; no_forbidden_named_path_created last; the thread count restored after each check |
+| LF36 existing smokes | smoke_efficiency 82 with every source check; smoke_quant_x86_efficiency 103 (the two tokens stay, profile_efficiency.py:666); smoke_run_ptq 69 and smoke_am23_quant 187; evaluate_backend_parity.py's five imports in efficiency.py unchanged; Q2's harness and smoke_e6kd_mutations (B-2.2) |
+| LF37, LF38 | this section; B-2.11 |
+| LF39 B-3 | not built: no ARM file, no requirements-arm.txt (the name-status list, B-2.1) |
+| LF40 LB-0 | B-2.11 |
+| LF41 | no TEST-manifest entry; no efficiency path reads a TEST byte |
+| LF42 | evaluate_backend_parity.py not edited (STEP 10 (g)) |
+| LF43 | inter-op fixed for the profiler only; the evaluators are not touched |
+| LF44 | LB-1 as soon as B-2 is merged and the artifacts exist, in up to two sittings (B-2.11) |
+| LF45, LF46 | the plan's other B-2 answers stand as S7 and A4–A13 amend them; the time is in B-2.13 |
+
+### B-2.4 Every refusal code, its line, and the cases that reach it
+
+New in B-2, in the order a run meets them (profile_efficiency.py unless named; each case reaches its code with every
+earlier gate passing; the mutation, where there is one, removes or weakens the refusal and its case kills it):
+
+| code | line(s) | case(s) | mutation |
+|---|---|---|---|
+| [metric_group_not_of_record] | :212 | metric_group_not_of_record | |
+| [fp32_has_no_x86_copy] | :219 | fp32_has_no_x86_copy | |
+| [int8_latency_needs_x86_copy] | :223 | int8_latency_needs_x86_copy | |
+| [int8_static_needs_accuracy_artifact] | :227 | int8_static_needs_accuracy_artifact | |
+| [expected_checkpoint_sha256_format] | :235 | expected_checkpoint_sha256_format | |
+| [expected_checkpoint_sha256_teacher_disagrees] | :237 | expected_checkpoint_sha256_teacher_disagrees | |
+| [qat_finalize_not_qat] | :241 | qat_finalize_not_qat | |
+| [qat_finalize_required] | :244 | qat_finalize_required | |
+| [expected_converted_sha256_not_int8] | :249 | expected_converted_sha256_not_int8 | |
+| [expected_converted_sha256_format] | :255 | expected_converted_sha256_format | |
+| [expected_x86_sha256_not_applicable] | :258 | expected_x86_sha256_not_applicable | |
+| [expected_x86_sha256_format] | :264 | expected_x86_sha256_format | |
+| [threads_invalid] | :266 | threads_invalid | |
+| [threads_not_applied] | :449 | threads_not_applied_by_injection | |
+| [stage_not_in_efficiency_analysis] | :387 | stage_not_in_efficiency_analysis (A, F, G) | M10 |
+| [expected_checkpoint_sha256_required] | :392 | expected_checkpoint_sha256_required | |
+| [expected_converted_sha256_required] | :396 | expected_converted_sha256_required | |
+| [expected_x86_sha256_required] | :400 | expected_x86_sha256_required | |
+| [host_label_required] | :404 | host_label_required | |
+| [governed_paths_unavailable] | :326 | governed_paths_unavailable | M14 |
+| [governed_paths_dirty] | :331; the porcelain re-check :335 | governed_paths_dirty; governed_porcelain_recheck_by_injection | M11; M21 |
+| [image_not_of_record] | :364 | image_not_of_record | |
+| [image_fingerprint_mismatch] | :374 (a child's timeout or unparseable line :369) | image_fingerprint_mismatch; image_fingerprint_child_failure_coded | M23 |
+| [fvcore_not_pinned] | :377 | fvcore_not_pinned | |
+| [threads_required_of_record] | :410 | threads_required_of_record | M03 |
+| [threads_not_of_record] | :413 | threads_not_of_record | |
+| [interop_threads_locked] | :416 | interop_threads_locked_by_injection; interop_second_call_refused | M18 |
+| [interop_threads_not_of_record] | :421 | interop_threads_not_of_record | |
+| [thread_env_conflict] | efficiency.py:899 | thread_env_conflict | M04 |
+| [affinity_below_threads] | efficiency.py:902 | affinity_below_threads_by_injection | |
+| [cpu_quota_below_threads] | efficiency.py:905 | cpu_quota_below_threads | |
+| [host_below_threads] | efficiency.py:908 | host_below_threads_by_injection | |
+| [host_not_x86] | efficiency.py:911 | host_not_x86 | |
+| [memory_parent_contaminated] | :434 | memory_parent_contaminated | |
+| [expected_checkpoint_sha256_mismatch] | :469 | expected_checkpoint_sha256_mismatch (no torch.load before it) | |
+| [int8_not_official] | :493 | int8_not_official | |
+| [expected_converted_sha256_mismatch] | :497 | expected_converted_sha256_mismatch | |
+| [arm_artifact_not_of_record] | :503 | arm_artifact_not_of_record | |
+| [source_changed_during_validation] | :480 | source_changed_during_validation | M13 |
+| [x86_copy_unrecorded] | :532 (E4/E7), :563 (E5/E6) | x86_copy_unrecorded; x86_copy_unrecorded_in_finalize | |
+| [qat_finalize_mismatch] | :543, :545, :554 | qat_finalize_mismatch; qat_finalize_unreadable_or_other_stage | M12 |
+| [qat_finalize_not_finalized] | :549 | qat_finalize_not_finalized | |
+| [x86_copy_checks_failed] | :561 | x86_copy_checks_failed | |
+| [x86_copy_missing] | :573 | x86_copy_missing | |
+| [x86_copy_hash_mismatch] | :576 | x86_copy_hash_mismatch | M06 |
+| [expected_x86_sha256_mismatch] | :579 | expected_x86_sha256_mismatch | |
+| [x86_copy_role] | :583 | x86_copy_role; x86_copy_role_reads_every_usable_flag | M20 |
+| [x86_copy_identity] | :601 | x86_copy_identity | |
+| [timed_threads_mismatch] | :824 | timed_threads_mismatch | |
+| [metric_deferred_of_record] | :828 | metric_deferred_of_record | |
+
+Kept from earlier commits and now reached of record:
+- [memory_sampler_unavailable] at the parent test (:431;
+  memory_start_unavailable_by_injection);
+- [path_forbidden_name] for the x86 copy that an E4/E7 run record or an E5/E6 finalize record names
+  (:569; x86_copy_forbidden_name_refused; M19);
+- [path_forbidden_name] for --qat-finalize (PATH_FLAGS:109; qat_finalize_forbidden_name_refused; M31);
+- [checkpoint_changed_after_validation] at the arm-key read
+  (:516; arm_key_read_rehash_refused; M22).
+
+The table builder (efficiency_table.py):
+- [table_too_many_sessions]:190 (table_too_many_sessions).
+- [path_forbidden_name], each before the path is opened:
+  - --session, --pins and --out-dir (:80; table_paths_refused,
+    table_session_or_pins_forbidden_name_refused; M32);
+  - a sitting's stage and group directories (:121;
+    table_session_directory_forbidden_name_refused; M26);
+  - the session records (:128;
+    table_record_forbidden_name_refused; M17).
+- [out_dir_inside_repository]:85 and [out_dir_not_empty]:87
+  (table_paths_refused).
+- [table_pins_invalid]:106 (table_pins_invalid), and for a pins
+  entry that is not an object:103
+  (table_malformed_pins_or_record_refused; M27).
+- [table_record_not_of_record]:198
+  (table_record_not_of_record; and for blocks that are not objects, table_malformed_pins_or_record_refused, M28).
+- [table_threads_mixed]:206 (M08),
+  [table_interop_mixed], [table_host_mixed] (M09), [table_image_mixed] and [table_commit_mixed] (one case each); "mixed"
+  needs two values that differ:183.
+- [table_stage_missing], for a stage and group with no record:221
+  (table_stage_missing_or_duplicate), and for a --session that is not a directory:116
+  or a sitting that holds no record:201
+  (table_session_missing_or_empty_refused; M25, M24).
+- [table_stage_duplicate]:223 (table_stage_missing_or_duplicate).
+- [table_artifact_not_pinned]:236 (table_artifact_not_pinned).
+- [table_sha256_mismatch]:239 (table_sha256_mismatch).
+
+Every refusal of the profiler exits 2 and prints `[code] message` (an EfficiencyCliError or EfficiencyError); the table
+builder exits 2 and prints `RESULT: REFUSED [code] message`.
+
+### B-2.5 The smoke: 97 checks against the plan's 61 and the GO's 69
+
+scripts/smoke_latency_threads.py, `RESULT: PASS (97/97)` (82 at C6). The plan's 58 (§9) as D28–D31 make them 61 are all
+present: policy 8, run-of-record refusals 25, binding 14, table 10, host and repository 4. Renamed, as the GO rules:
+interop_locked_refused → interop_threads_locked_by_injection (LF30), affinity_below_threads →
+affinity_below_threads_by_injection and host_below_threads → host_below_threads_by_injection (A14),
+no_test_named_paths_created → no_forbidden_named_path_created (LF35); x86_sha256_mismatch →
+expected_x86_sha256_mismatch and the three artifact_sha256 checks → expected_checkpoint_sha256_required,
+expected_checkpoint_sha256_mismatch and the B-1b set (D30, D31); int8_not_official stays one check with no fallback name
+(A21). LF35 adds eight: source_changed_during_validation, governed_paths_unavailable, expected_x86_sha256_not_applicable,
+host_label_required, table_two_sittings_same_type_accepted, table_too_many_sessions,
+host_type_fingerprint_ignores_kernel_and_memtotal and timer_probe_in_setup_untimed, for the target 69. The other 28 are
+C6's 13 and DL-24's 15. C6's 13, each with what it covers:
+- threads_not_applied_by_injection and threads_invalid: B-1b's read-back and range codes on the profiler's --threads.
+- expected_checkpoint_sha256_format, expected_converted_sha256_format, expected_converted_sha256_not_int8 and
+  expected_x86_sha256_format: the remaining identity-flag codes, each reached.
+- record_of_record_complete: a run of record that passes, static and latency, with the key set of every block of §2's
+  field list (the top level, thread_policy, code, image, host and its facts, provenance.environment, latency.protocol)
+  and the values the run of record fixes.
+- restated_constants_equal_their_sources: the profiler's X86_PTQ_STAGES, X86_QAT_STAGES and QAT_FINALIZE_FORMAT equal
+  src.quant.x86_latency's and scripts/qat_epoch_eval.py's (restated to keep the profiler's import light).
+- table_pins_invalid, table_record_forbidden_name_refused and table_paths_refused: the table builder's own refusals.
+- interop_second_call_refused and torch_second_interop_call_aborts: the lane's finding (B-2.7).
+
+The count went from 82 at C6 to 97 at F2, with these 15 cases (B-2.8):
+- F1 (9):
+  - torch_interop_call_after_work_aborts (R1-1);
+  - image_fingerprint_child_failure_coded (R2-N5);
+  - the lane's own seven for C5's gates, planned before the workflow: governed_porcelain_recheck_by_injection,
+    memory_start_unavailable_by_injection, arm_key_read_rehash_refused, x86_copy_forbidden_name_refused,
+    qat_finalize_unreadable_or_other_stage, x86_copy_unrecorded_in_finalize and x86_copy_role_reads_every_usable_flag.
+- F2 (6):
+  - table_session_missing_or_empty_refused (R3-1);
+  - table_session_directory_forbidden_name_refused (R3-2);
+  - table_malformed_pins_or_record_refused (R3-6);
+  - cgroup_quota_read_on_the_process_cgroup_path (R3-3);
+  - qat_finalize_forbidden_name_refused and table_session_or_pins_forbidden_name_refused (R4-2).
+- Four C6 cases changed:
+  - torch_second_interop_call_aborts requires the first call's marker (R1-2);
+  - x86_copy_forbidden_name_refused covers an E5 finalize record too (R4-2);
+  - record_of_record_complete checks the key sets (R4-6);
+  - cpu_quota_below_threads reads its cpu.max with no cgroup file, so the fixed resolver stays hermetic (R3-3).
+
+Fixtures:
+- random-weight students and the stub teacher of smoke_eval_teacher.py;
+- one real unbound scripts/run_ptq.py PTQ of a random E1 student on a synthetic TRAIN tree, with
+  build_calibration_lists' synthetic list, in its own process; its run record names the x86 copy (E4);
+- a hand-built E5 eval directory: converted/e07's QNNPACK TorchScript, its state_dict and run provenance,
+  final/e07_int8_x86_latency.torchscript.pt, and a qat_finalize/1 record with finalize's fields;
+- synthetic checkouts as the governed root: one clean, one with an untracked governed file, and a plain folder with no
+  .git. The governed-path gate never reaches the real checkout. The E4 fixture's calibration lists and its run_ptq child
+  record their code provenance from the real checkout, as every PTQ fixture does: rev-parse HEAD and a status over
+  explicit paths, none naming "test" (R4-5);
+- the KD image's PL-26 fingerprint, injected (this venv is not the image).
+
+Every "test"-path refusal uses a never-created path, or a symlink whose never-created target names it. The inter-op
+cases run in fresh child processes. The thread count is restored after each check, repo_state is unchanged, and
+no_forbidden_named_path_created walks the temporary root last.
+
+### B-2.6 The mutations and their killing checks
+
+scripts/smoke_latency_threads_mutations.py: each mutation is written into a shadow copy of its file outside the
+repository; the shadow holds SHADOW_PATHS only (50 explicit paths, none naming "test": the files the smoke and
+its children, scripts/run_ptq.py's PTQ run among them, opened under an `open` audit hook, and
+scripts/efficiency_table.py, which the recording took from a bytecode cache, B-2.13); the shadow smoke runs with `--only`
+and TMPDIR inside the runner's tree. `RESULT: PASS (71/71 checks; 33/33 edits killed)` (STEP 10, b04): per mutation its anchor (the FIND occurs exactly once) and its
+kill (every named check reports FAIL), plus control_checks_pass, shadow_roots_walked, repo_state_unchanged and
+no_forbidden_named_path_created.
+
+| id | the edit | killed by |
+|---|---|---|
+| M01 | the Timer without num_threads (its default 1; plan M1) | timer_runs_at_requested_threads |
+| M02 | THREADS_OF_RECORD = 2 (plan M2) | threads_of_record_constants |
+| M03 | --threads None accepted of record (plan M3) | threads_required_of_record |
+| M04 | the thread-variable check skipped (plan M4) | thread_env_conflict |
+| M05 | the requested count recorded as the observed one (plan M5) | observed_threads_recorded |
+| M06 | the x86 copy bound by its path only (plan M6) | x86_copy_hash_mismatch |
+| M07 | the QNNPACK artifact timed for role x86 (plan M7) | e4_x86_copy_bound |
+| M08 | the table builder ignores the thread count (plan M8) | table_threads_mixed |
+| M09 | the table builder ignores the host fingerprint (plan M9) | table_host_mixed |
+| M10 | arm A admitted of record (plan M10) | stage_not_in_efficiency_analysis |
+| M11 | the governed-path gate skipped (plan M11) | governed_paths_dirty |
+| M12 | the finalize record's binding to the artifact of record skipped (plan M12) | qat_finalize_mismatch |
+| M13 | the handed file not re-hashed after validation (LF35 M13) | source_changed_during_validation |
+| M14 | a missing worktree raises instead of refusing (LF35 M14) | governed_paths_unavailable |
+| M15 | the kernel fingerprinted (LF35 M15) | host_type_fingerprint_ignores_kernel_and_memtotal |
+| M16 | the probe in the timed statement (LF35 M16) | timer_probe_in_setup_untimed |
+| M17 | a session record's "test" guard dropped | table_record_forbidden_name_refused |
+| M18 | the inter-op once-guard dropped (torch called again; torch 2.1.0 aborts) | interop_second_call_refused |
+| M19 | the x86 latency copy's "test" guard dropped (the lane's; R4-2 for E5) | x86_copy_forbidden_name_refused |
+| M20 | the finalize copy's provenance usable flag not read (the lane's) | x86_copy_role_reads_every_usable_flag |
+| M21 | the recorded porcelain not checked against the gate (the lane's) | governed_porcelain_recheck_by_injection |
+| M22 | the arm-key read parses bytes it did not compare (the lane's) | arm_key_read_rehash_refused |
+| M23 | a fingerprint child that times out or prints garble left uncoded (R2-N5) | image_fingerprint_child_failure_coded |
+| M24 | an empty sitting next to a full one makes a table (R3-1) | table_session_missing_or_empty_refused |
+| M25 | a --session that is not a directory not named as such (R3-1) | table_session_missing_or_empty_refused |
+| M26 | a sitting's stage or group directory's "test" guard dropped (R3-2) | table_session_directory_forbidden_name_refused |
+| M27 | a pins entry that is not an object reaches .get (R3-6) | table_malformed_pins_or_record_refused |
+| M28 | a record's blocks not checked as objects (R3-6) | table_malformed_pins_or_record_refused |
+| M29 | the quota read at the process's own cgroup only, no ancestor (R3-3) | cgroup_quota_read_on_the_process_cgroup_path |
+| M30 | the largest quota on the path taken (R3-3) | cgroup_quota_read_on_the_process_cgroup_path |
+| M31 | --qat-finalize's "test" guard dropped (R4-2) | qat_finalize_forbidden_name_refused |
+| M32 | --session's and --pins' "test" guard dropped (R4-2) | table_session_or_pins_forbidden_name_refused |
+| M33 | a 2.0.0 field dropped from the record (R4-6) | record_of_record_complete |
+
+R1-1 and R1-2 have cases and no mutation: both cases measure torch's own behaviour, which no edit of the lane's code
+reaches.
+
+B-1's runner (scripts/smoke_efficiency_record_mutations.py) keeps its 33 mutations; its M28 now removes apply_threads'
+set and read-back (C5), and every FIND still occurs exactly once at the final commit (STEP 10, b03: `RESULT: PASS (71/71 checks; 33/33 edits killed)`).
+
+### B-2.7 Findings and differences from the plan
+
+- **torch 2.1.0's set_num_interop_threads aborts, it does not raise (the lane's finding; MEASURED).** LF30 (and the
+  plan's §1) expect a second call, or a call after inter-op work has started, to raise. On torch 2.1.0+cpu it ends the
+  process: `terminate called after throwing an instance of 'c10::Error' … Error: cannot set number of interop threads
+  after parallel work has started or set_num_interop_threads called` (ATen/ParallelThreadPoolNative.cpp:54), SIGABRT,
+  exit 134 (−6 under subprocess). The first development run of smoke_efficiency_record died this way when its second
+  in-process main() call reached torch again. As LF30 says ("fit the code to what is measured"), efficiency.py's
+  set_interop_threads calls torch at most once per process (efficiency.py:929): a later call in the same process
+  never reaches torch and is recorded "already called in this process", which the run of record refuses
+  ([interop_threads_locked]; so a second run of record in one process is refused, which "one stage per fresh process"
+  wants anyway), and a RuntimeError, should a build raise, is recorded "locked". A first call made after inter-op work
+  has started ends the process the same way (MEASURED, F1; DL-24 R1-1: at C6 the docstring said so with only the
+  second-call case behind it). It cannot be detected without calling torch, so main() calls it first, before any
+  model; a process that started inter-op work before main() would end on SIGABRT and write nothing. Cases:
+  torch_second_interop_call_aborts pins torch's own behaviour (a fresh child calls it twice: the first call's marker
+  is printed, then SIGABRT), torch_interop_call_after_work_aborts the other half (a fresh child runs a scripted
+  torch.jit.fork on the inter-op pool, prints its marker, then one call: SIGABRT), interop_second_call_refused the guard
+  (main() twice in one fresh child: exit 0, then exit 2 with [interop_threads_locked] and no second torch call; M18
+  drops the guard), interop_threads_locked_by_injection the refusal through an injected raising torch.
+- **timer_runs_at_requested_threads and untimed_executions_counted decide F2 and A23 on torch 2.1.0** (MEASURED): the
+  Timer ran at the requested count once num_threads was passed (the probe read 2 in all 200 setup passes at
+  thread_count 2; the plan's "1 on the unfixed code" is M01's kill), and Timer.timeit(1) ran 2 untimed executions per
+  observation (u = 2; a counting model saw 20 + 100 × 3 = 320 forwards). The plan's inference holds; nothing was fitted.
+- **The probe runs once per timing pass, not once per execution.** Timer.timeit(1) makes two timeit passes per
+  observation (the warm-up pass of two executions and the timed pass of one), and setup runs once per pass, so a
+  latency record holds 200 probe values for its 100 observations, all outside the timed region (A15;
+  timer_probe_in_setup_untimed: a 50 ms probe in setup left the median at 0.57 ms in STEP 10's run).
+- **§2's order.** The checks follow the plan's step order: step 1 (the which-artifact refusals, then the teacher's
+  identity and D14's [expected_checkpoint_sha256_teacher_disagrees], the finalize flag's stages, the identity flags'
+  form), --threads applied and read back, step 3 (the stage, the three identity flags and --host-label required, the
+  governed paths, the image, then §1's thread, inter-op and host checks, then §3's parent test), step 4 (P1, the
+  resolver, B-1's converted-artifact name guard, the arm key or int8_official_error, H2, then P2), step 5 (the binding).
+- **The which-artifact refusals apply on every run, not only of record** (the plan's step 1 is not "of record"): an
+  INT8 stage's latency or memory with role accuracy is refused ([int8_latency_needs_x86_copy]); at O such a run timed the
+  QNNPACK artifact. No existing smoke ran it (smoke_efficiency 82, smoke_quant_x86_efficiency 103 and smoke_am23_quant
+  187 keep their lines).
+- **Binding keys.** provenance.binding always holds §2's five keys (run_provenance_sha256, qat_finalize_sha256,
+  x86_copy, state_dict_companion_sha256, int8_official) and qat_finalize_path, None where they do not apply.
+  thread_policy names the ruling under the plan's key dl_row ("LEFF-AUDIT-RULE-1 Q1; its DL row is proposed in
+  docs/lane_reports/leff.md"): no DL row exists before the docs session enters DL-a.
+- **x86_copy_role reads every usable flag a record carries**: an E5/E6 finalize record holds usable_for_accuracy both
+  in x86_latency_copy and in its provenance (qat_epoch_eval.py :452–490); both must be False
+  (x86_copy_role_reads_every_usable_flag; M20).
+- **The arm-key read uses B-1's FP32 code** ([checkpoint_changed_after_validation]) when the checkpoint's bytes differ
+  from the validated ones, as at the load and the size read; it parses nothing it did not compare
+  (arm_key_read_rehash_refused; M22). DL-24's R2-N2 asked for B-1b's code there; the verifier refuted it (B-2.8).
+- **The governed gate keeps the porcelain it gated**: after governed_paths_error passes, the porcelain recorded
+  (worktree_state_sha256, dirty_allowlisted) must show the same clean governed paths, or [governed_paths_dirty]
+  (governed_porcelain_recheck_by_injection; M21).
+- **DL-24's fixes** (B-2.8):
+  - the image gate codes a fingerprint child that times out or prints a line that does not parse, as it already coded
+    a non-zero exit;
+  - the table builder refuses an absent or empty sitting as [table_stage_missing], token-checks a sitting's stage and
+    group directories before it stats or lists them, and refuses malformed pins entries or record blocks with a coded
+    RESULT line;
+  - host_facts reads the cgroup CPU quota on the process's own cgroup path and its ancestors, and records the
+    directory it came from (cgroup_cpu_quota_source; under a private cgroup namespace this reads what the mount-root
+    read did);
+  - provenance()'s docstring now defines expected_sha256 as the teacher's flag only (uncertain, R2-N6; no behaviour
+    change).
+- **A session record's name is guarded in the table builder** (Acceptance 7): a record whose given or resolved path
+  names "test" is refused before it is read (table_record_forbidden_name_refused, on a never-created symlink target;
+  M17).
+- **B-1's runner follows the code** (C5): its M28 anchor (D1's three lines in run()) moved with the threads code into
+  apply_threads; it removes the set and the read-back, so the memory phase runs at the host's default.
+- **The x86 copies are slower than the FP32 student on this VM** (MEASURED, synthetic): at one thread and 512 × 512,
+  E4's and E5's x86 copies took a median 1,101 and 1,090 ms a forward against the FP32 student's 329 ms. The graph is the
+  real student's, so this is a property of the INT8 graph under torch 2.1.0's x86 engine on this VM, not of the random
+  weights; LB-1 measures the models of record on the pod of record (open item 2).
+
+### B-2.8 The DL-24 verification workflow (STEP 9)
+
+One read-only workflow over `git diff C3 C6 -- . <the GO's excludes>` (ad356aa..9ceab91): four independent reviewers
+(the thread policy; the run-of-record mode; the host and the table; the smokes and their mutations), each followed by
+one adversarial verifier told to refute. Every agent prompt carried the GO's Hard limits, Searches and Docs bullets
+verbatim, the "Git over the tree" and src/stats/tests.py rules, and the rule to read repository files only by
+`git show <commit>:<path>`, never fetching the web. The launch at 03:21Z (wf_745f6e8e-b8b) finished two reviewers;
+the other four agents of that launch ended on the account's session limit ("resets 4:40am (UTC)") and the worker
+restarted. The user wrote "continue", and the same run resumed from its journal at 05:30Z (resumeFromRunId, the same
+script and arguments; the two finished reviewers replayed from cache) and completed 8 of 8 agents at 06:25Z. Before
+the launch, between the attempts and after the run, HEAD (9ceab91), the scoped status (clean) and the sha256 of the
+six files under review were the same: no agent wrote.
+
+| id | sev | the finding | verdict | outcome |
+|---|---|---|---|---|
+| R1-1 | minor | set_interop_threads' docstring labelled MEASURED an abort after inter-op work, which no case measured | confirmed (R4-4 the same) | F1 44ff65b: torch_interop_call_after_work_aborts measures it (a scripted torch.jit.fork, then one call: SIGABRT); the docstring cites both cases |
+| R1-2 | nit | torch_second_interop_call_aborts could not tell an abort at the first call from one at the second | confirmed (R4-3 the same) | F1 44ff65b: the first call's marker is required |
+| R1-3 | nit | the probe count (200 for 100 observations) is not pinned | refuted | LF30 gives F2 to timer_runs_at_requested_threads (values [2]) and A23 to untimed_executions_counted; no ruling pins the count |
+| R1-4 | nit | a static or memory record's intra_op_observed is a read after the measurement, with no source label | refuted | LF30's probe fields govern the latency record; memory.threads cannot differ on any path (apply_threads runs before any model) |
+| R2-N1 | nit | the x86 copy is not re-hashed between its binding and its load | refuted | LF33 and §2 hash it at the binding (step 5) and load it in step 6; A5/LF24's re-hash is written for the INT8 artifact of record |
+| R2-N2 | nit | the arm-key read's refusal code depends on when the checkpoint changes | refuted | a change during validation reaches P2's [source_changed_during_validation]; one after it is LF24's [checkpoint_changed_after_validation] |
+| R2-N3 | nit | --qat-finalize is accepted and unused for the static role | refuted | §2 and LF33 put every finalize check under role x86; the static artifact binds through H2 (D13) |
+| R2-N4 | nit | a second source flag of the other kind is accepted | refuted | §2 step 1 says "refused as today": the resolver's lone-flag refusals, which smoke_efficiency pins |
+| R2-N5 | nit | a fingerprint child's timeout or unparseable line leaves the gate uncoded | confirmed | F1 44ff65b: [image_fingerprint_mismatch] with its cause, as a non-zero exit already was; image_fingerprint_child_failure_coded; M23 |
+| R2-N6 | nit | provenance.expected_sha256 is None for E1-E7 of record | uncertain | F1 44ff65b: provenance()'s docstring makes the teacher meaning a definition (B-1's checks pin it); no behaviour change |
+| R3-1 | minor | an absent or empty sitting is refused as [table_threads_mixed] | confirmed | F2 594257b: [table_stage_missing] naming the sitting; "mixed" needs two values; M24, M25 |
+| R3-2 | minor | a sitting's stage and group directories are stat'ed and listed before their "test" check | confirmed | F2 594257b: checked given and resolved first; M26 |
+| R3-3 | minor | the cgroup quota is read at the mount root only | uncertain | F2 594257b anyway: the process's cgroup path and each ancestor, the smallest; cgroup_cpu_quota_source; M29, M30 |
+| R3-4 | minor | the fingerprint's rules are not pinned key by key | refuted | LF35's declared checks and mutations are present, and no check's name claims the fingerprint's composition |
+| R3-5 | nit | a mixed refusal names no record or label | refuted | LF34's "every record's label is listed" is met by the table's records and sittings |
+| R3-6 | nit | a non-object pins entry or record block raises a traceback | confirmed | F2 594257b: [table_pins_invalid] / [table_record_not_of_record] with a RESULT line; M27, M28 |
+| R3-7 | nit | machine "amd64" is accepted as x86 | refuted | amd64 names x86-64; the vendor arm and the image gate leave no reachable run that reports it |
+| R3-8 | nit | no two-sitting refusal cases | refuted | one comparison over the pooled records of both sittings; there is no per-sitting path |
+| R4-1 | minor | measure_latency's thread_count None branch is never run | refuted | LF30's checks decide torch's behaviour; no check's name claims that branch |
+| R4-2 | minor | three "test" guards have no case or mutation | confirmed | F2 594257b: qat_finalize_forbidden_name_refused (M31), x86_copy_forbidden_name_refused for E5 too (M19), table_session_or_pins_forbidden_name_refused (M32) |
+| R4-3 | nit | R1-2 | confirmed | F1 44ff65b |
+| R4-4 | nit | R1-1 | confirmed | F1 44ff65b |
+| R4-5 | nit | the E4 fixture's code provenance runs git on the real checkout | refuted | explicit paths, none naming "test": the RULES' explicit-files form |
+| R4-6 | nit | record_of_record_complete asserts selected fields only | confirmed | F2 594257b: the key set of every block of both records; M33 |
+| R4-7 | nit | host_facts never runs on a synthetic /proc and /sys | refuted | the code meets LF31 and no ruling asks it (R3-3's case now runs it on a synthetic cgroup tree) |
+| R4-8 | nit | the table's command line is never run | refuted | main() implements the RESULT line and the exits; no ruling asks a CLI case (R3-6's case now runs main() on refusals) |
+
+### B-2.9 The clause map at the final commit (F6; A11, A25)
+
+The plan's §7 map, each row's check at Phase B's file:line (594257b); the documents' lines are at O, which this lane
+does not change (PA = docs/PREREGISTRATION_AMENDMENTS.md, IC = docs/IMPLEMENTATION_CONTRACT.md, EC =
+docs/EVALUATION_CONTRACT.md, DL = docs/DECISION_LOG.md, IF = the interface of record, tl_interface_20261016.md). A11's
+omitted rows follow the plan's, one line each.
+
+| clause | where | quote | check at 594257b |
+|---|---|---|---|
+| AM-9 | PA:198–202 | withdrawn slot; binding text DL-15, IC:738–739 | INT8 latency and memory only on the bound x86 copy (profile_efficiency.py:223, :522); records stay cpu_proxy |
+| AM-16 item 7 | PA:311–325 | "…c6g.xlarge (c6g.2xlarge if that thread count exceeds 4) … at the x86 path's fixed thread count …" | B-3 not built (LF39; Q6; DL-130); THREADS_OF_RECORD (efficiency.py:65) is the fixed count it would reuse |
+| AM-16 cut paragraph | PA:327 | "Cut order if the schedule slips: the longer-schedule E3, then ARM latency, …" | B-3 not built; its cut is AM-22 item 1(g)'s (below) |
+| AM-17 item 9 | PA:470–471 | "… and hashed at the freeze is cut in this order, each cut recorded in the decision log before TEST" | as above; no efficiency run is cut by this lane |
+| AM-19 Definitions, Complete | PA:1381–1382 | "the output with its agreement check for the ARM latency measurement" | B-3 not built |
+| AM-19 item 1(c) | PA:1431–1432 | "every cut rule 'the freeze' is the original freeze date" (as AM-22 item 1(b) replaces it, A8) | efficiency reads no TEST byte; no TEST-manifest entry (LF41) |
+| AM-19 item 3(b) | PA:1610 | "(b) Cuts. A run is cut only: …" | a review does not cut; B-3's cut is the freeze's (D33 with A8) |
+| AM-19 item 3(d) | PA:1632–1633 | "A lane that serves only cut runs and cut quantities is entered in the decision log as not required …" | L-AM16-ARM's plan line (B-2.10) |
+| IC Efficiency | IC:729–736 | "CPU-proxy latency via `torch.utils.benchmark` (… 20 warm-up + 100 measured, median / IQR / p95, … fixed thread count). Peak memory via `resource.getrusage` / psutil RSS delta." | T enforced and probed (efficiency.py:480, profile_efficiency.py:824); 20 + 100 unchanged; peak memory as DL-b (B-1) |
+| IC:738–739 | IC:737–739 | "The official runtime/memory results are **CPU PROXY** (x86)." | every record cpu_proxy, on_device False; INT8 memory on the x86 copy (DL-b) |
+| IC which-artifact | IC:751–768 | "INT8 (E4–E7) … CPU-proxy latency: separate **fbgemm/x86** copy (`reduce_range=True`)" | profile_efficiency.py:219, :223, :227; [x86_copy_role]:583 |
+| IC x86 copy | IC:770–782 | "the best pre-convert QAT state (`*_qat_state.pt` …) … by **translation only**" | E-a (B-2.10); the binding through qat_finalize.json:538 |
+| EC §10 | EC:756–780 (:779) | "`torch_cuda`, `torch_num_threads`, `pillow` — runtime versions and CPU threads" | the evaluator's record is untouched; every efficiency record carries its own thread_policy:834 |
+| E-35 | errata:39 | "`scripts/profile_efficiency.py` do[es] not yet require `--teacher-ckpt-sha256` for `--stage teacher` …" | B-1 (B-1.3 LF25) |
+| DL-15 | DL:123 | "Not adopted: … ARM latency as the official path (the approved x86 fbgemm-copy path stays; AM-9 withdrawn …)" | no ARM record exists; cpu_proxy and no_arm_claim stay |
+| DL-59 | DL:167 | the teacher of record hashed and compared before any parse or build | B-1 (B-1.3 LF25); of record the handed file's P1 too (:460) |
+| AM-17 item 1(b) | PA:367–368 | "On TEST day every model is scored under one evaluator commit and one execution context (item 9)." | DL-f: the one T = 1 for latency and scoring (B-2.10); the profiler's T at:65 |
+| AM-18 item 3(a) | PA:1057 | "No E2-X, no E4/E5/E6-X, no seeds 43/44, no robustness or efficiency scoring." | [arm_artifact_not_of_record]:503 |
+| AM-17b item 1(e) | PA:615–620 | F and G: "… not in the robustness or efficiency analyses." | [stage_not_in_efficiency_analysis]:387 (A, F, G) |
+| AM-22 item 1(a)4 | PA:2326–2327 | "every lane that serves a run or a quantity in TEST is IMPLEMENTED, or entered as not required (AM-19 item 3(d))" | the plan lines and DL-a's Status (B-2.10) |
+| AM-22 item 1(e) | PA:2351–2352 | "The single TEST evaluation takes place after the freeze … no later than 2026-11-08" | LB-1 is not tied to it (LF44; A2) |
+| AM-22 item 1(g) | PA:2358–2362 | "The ARM latency measurement … neither holds the trigger … If the measurement is not complete at the freeze, it is cut there" | B-3 not built; D33's line with A8 |
+| AM-23 items 1 and 3(f) | PA:2553–2554, :2588–2589 | "It is descriptive: never a parent, not in the Holm family, not in the robustness or efficiency analyses" | E6-E2, E7-E2, E6-R1 and E6-R2 are not in STAGES (smoke_am23_quant's s10 cases; efficiency.py:1011 refuses them) |
+| TL-1 | IF§1 | "threads: one value T in every process" | DL-f; THREADS_OF_RECORD |
+| TL §9 | IF§9 | E1–E7 at seed 42 "yes (x86 CPU proxy)"; the teacher "yes (x86, L-RESIDUAL-SHA)"; every other row "no" | EFFICIENCY_ANALYSIS_STAGES (efficiency.py:92) and the run of record's refusal |
+| EC §7 | EC:541–553 | the guard table ("Worktree: Scoped rule — see §7.1"; "Overwrite: Refuse to overwrite an existing artifact directory") | [governed_paths_dirty] through stage_artifacts.governed_paths_error (called at profile_efficiency.py:319); out-dirs created empty and records exclusively (B-1) |
+
+### B-2.10 The records proposed (the lane writes none; the docs session does)
+
+**DL-a** (DECIDED; entered before LB-1, the first latency measurement of record). The thread count of record is one
+intra-op and one inter-op thread for every stage and every host, fixed from hardware facts and never from a timing (the
+plan's §1; LEFF-AUDIT-RULE-1 Q1). The latency host of record is a RunPod CPU pod (Secure Cloud), its facts recorded by
+efficiency.host_facts() and gated by LAT-HOST-1 (a second sitting matches the first's CPU model and flags, through
+host_type_fingerprint); the fallback is the laptop, with the hybrid-core confound disclosed. One stage per fresh process;
+the order of §8 (x): teacher, E1 … E7, each stage's groups static → latency → memory; 60 s idle between processes; the
+order and the gaps recorded. Disclosure (INFERRED): a pod's vCPUs may be SMT siblings shared with other tenants; the
+record holds threads per core and the hypervisor flag, not the neighbours' load. Status: IMPLEMENTED <B-2 sha>
+(efficiency.py THREADS_OF_RECORD, INTEROP_THREADS_OF_RECORD; profile_efficiency.py --of-record).
+
+**DL-b** (DECIDED). Peak inference memory = VmHWM over the protocol's 120 untimed forwards minus VmRSS at the phase start,
+the high-water mark reset through /proc/self/clear_refs after the load and gc.collect(), in a fresh process per stage,
+with the recorded slack max(1 MiB, 64 pages × (threads + 1)); ru_maxrss recorded alongside, informational; a process
+whose start values show an inherited high-water mark (ru_maxrss − VmHWM > 64 MiB) is refused of record. INT8 peak memory
+is measured on the x86 latency copy. Binding text: DL-15 and IC:738–739 ("The official runtime/memory results are
+**CPU PROXY** (x86)"), not AM-9 (withdrawn before recording; A25).
+
+**DL-c** (DECIDED). The outputs and the table (the plan's §8 (v)): one record per stage, role and metric group, created
+exclusively outside the repository in one session directory per sitting; scripts/efficiency_table.py builds the table
+from up to two sittings of one host type, both pod ids (or host labels) recorded (A2); a docs commit copies the table to
+reports/derived/ with its DL row, and the committed table's sha256 goes in that completion row (Q9). Seed 42's models of
+record only. No efficiency quantity for A, F, G, the AM-18 arm students, E6-KD or AM-23's descriptive quantizations:
+A on TL §9 (IF§9) and this row, not on AM-17b item 1(e) or AM-18 item 3(a), which cover F and G and the arms (A9);
+AM-23's four stages on its items 1 and 3(f) and TL §9 (A10); E6-KD on TL §9 (A1); seeds 43/44 and the 160k controls on
+TL §9 ("efficiency no").
+
+**DL-d** (DECIDED). The FP32 serialized-size companion (Q7): an FP32 stage's size of record is its checkpoint file, and
+the model-only serialization of the same file (torch.save of model_state_dict, or the teacher's state_dict, to memory)
+is recorded beside it, labelled; the INT8 size is the QNNPACK TorchScript artifact. The Timer's disclosure (Q8):
+torch.utils.benchmark.Timer.timeit(1) runs each of the 100 observations after two untimed executions on torch 2.1.0
+(untimed_executions_per_observation, measured in every record), so each latency record executes 20 + 100 × 3 = 320
+forwards.
+
+**DL-f** (DECIDED; amends TL-1, Q1). One thread count T = 1 for every latency measurement and every TEST process, fixed
+from facts; the rehearsal fixes P only (P ≤ the host's physical cores, within the RAM it measures). The audit's escape,
+written into the row: if the rehearsal shows that P one-thread processes cannot finish the TEST block inside AM-22's
+window at the RAM available, the orchestrator sets the scoring T by a dated DL row before the freeze, the latency T
+stays 1, and Chapter 4 discloses the two counts.
+
+**Errata** (proposed):
+- **E-a** (IMPLEMENTATION_CONTRACT:773–782, the E5/E6 x86 copy): the plan's §10 text. A17's stale texts are listed,
+  report-only: src/quant/qconfig.py :151–153 ("It does NOT make an x86 copy …") and scripts/evaluate_backend_parity.py's
+  `--qat-sidecar` help (:50–51).
+- **E-b** (E-35's split): its efficiency half is closed by L-RESIDUAL-SHA (LEFF B-1), its corruption half by L-CORR;
+  E-35 closes when both are merged; Phase A also found F1–F4, which B-1 and B-2 fix.
+- **The IC erratum for A3 and Q5** (IMPLEMENTATION_CONTRACT:965–970: the parity is VAL-only), as ruled (F1): E4/E7's x86
+  parity is the VAL `ptq_val_checks backend` record. E5/E6's x86 copy is a re-quantization of the same trained weights:
+  reduce_range True, qparams recomputed, the x86 engine (x86_latency.py :133–148, :197–256). It is certified only by
+  the finalize translation check on synthetic inputs (qat_epoch_eval.py :472–479). Its accuracy parity with the QNNPACK
+  artifact is not measured.
+
+**The open item** (recorded, not built): "an optional parity tool for E5/E6 (L-PARITY-QAT: ptq_val_checks backend
+taking the finalize record; VAL only; descriptive) is the orchestrator's open item". LEFF builds no tool; LF33 and LF42
+stand.
+
+**The plan lines** (the supplement's D32 and D33, with A8's "the freeze (AM-22 item 1(b))"):
+- "before any teacher run of record through scripts/evaluate_corruptions.py or scripts/profile_efficiency.py,
+  L-RESIDUAL-SHA (backlog; E-35)" → "… L-RESIDUAL-SHA: efficiency half IMPLEMENTED <B-1b sha>, <B-1 sha> (merged <m>);
+  corruption half L-CORR" (D32).
+- "before the ARM latency run, L-AM16-ARM" → "not built on spare capacity (D4); cut at the freeze (AM-22 item 1(b)) if
+  not complete (AM-22 item 1(g))" (D33 with A8).
+- "before any latency measurement, L-LAT-THREADS" → "… L-LAT-THREADS (thread count of record 1 intra-op / 1 inter-op,
+  DL-a; host DL-a; IMPLEMENTED <B-2 sha>, merged <m>)" (§10).
+
+**The contract [UPDATED] lines** (IMPLEMENTATION_CONTRACT, Efficiency; §10 with LF28's slack):
+- "fixed thread count: 1 intra-op and 1 inter-op thread (DL-a), enforced by scripts/profile_efficiency.py --of-record
+  and recorded in every efficiency record";
+- "Peak memory: the RSS high-water mark over the 120 forwards minus the RSS after the model load, the high-water mark
+  reset at that point (/proc/self/clear_refs), in a fresh process per stage, with a recorded slack of max(1 MiB, 64
+  pages × (threads + 1)) between VmHWM and VmRSS after the reset; ru_maxrss (resource.getrusage) recorded alongside;
+  INT8 on the x86 copy (DL-b)";
+- (viii) and (ix) as DL-d: "FP32 serialized size: the checkpoint file of record, with its model-only serialization as a
+  labelled companion"; "CPU-proxy latency: Timer.timeit(1), each observation after two untimed executions (recorded)".
+- EVALUATION_CONTRACT: no change.
+
+**The Chapter 4 sentences** (proposed):
+1. "CPU-proxy latency was measured on one x86 host, a RunPod CPU pod (<CPU model>, <n> usable vCPUs, <t> threads per
+   core), in the pinned image with torch.utils.benchmark: batch 1 at 512 × 512, 20 warm-up and 100 measured forward
+   passes, one intra-op and one inter-op thread for every stage; we report the median, IQR and 95th percentile. These
+   are CPU-proxy numbers, not on-device latencies." (Fallback: "… on one x86 laptop (<CPU model>, a hybrid-core CPU whose
+   scheduling of one thread onto a performance or an efficiency core we did not control) …".)
+2. The plan's text, with: "The x86 copies' accuracy parity with the QNNPACK artifacts was measured on VAL for E4 and E7.
+   For E5 and E6 it was not measured: their x86 copies are re-quantizations of the same trained weights (reduce_range =
+   True, quantization parameters recomputed, the x86 engine), checked only by the translation's own checks on synthetic
+   inputs."
+3. The plan's text.
+4. "No efficiency quantity is reported for A, F, G, the AM-18 arm students, E6-KD or AM-23's descriptive quantizations
+   (TL §9; DL-c; AM-17b item 1(e); AM-18 item 3(a); AM-23 items 1 and 3(f))."
+5. The ARM cut text (Q6): "The supplementary ARM latency measurement (AM-16 item 7) was not built (DL-130: spare capacity
+   only) and was cut at the freeze (<date>, AM-22 item 1(g); AM-19 item 3(b))."
+6. "Each of the 100 observations is one forward pass preceded by two untimed ones (timeit(1))."
+7. "FP32 serialized sizes are the checkpoint files of record, which hold optimizer state; the model-only serialization is
+   given alongside."
+
+### B-2.11 LB-1's draft (LF38), LB-0 (LF40) and B-3 (LF39)
+
+**LB-1, the latency sitting of record** (a draft for the orchestrator's operator GO; never run here; LAT-HOST-1, A2,
+A7). It runs as soon as B-2 is merged and the artifacts of record exist, in up to two sittings; it is not tied to the
+freeze or the TEST week (LF44, A2), so the supplement's D40 "before TEST" timing is dropped.
+1. **Pod.** A RunPod CPU pod on Secure Cloud. Its type is chosen at deploy and gated, before any model is sent, on
+   `lscpu` in the pod: model name, cores, threads per core and the ISA flags (at least avx2 and fma; avx512_vnni or
+   avx_vnni recorded when present). The gate's output and the pod id, type name, region and price go into
+   `--host-note`. A second sitting runs on a pod whose lscpu model name and flags equal the first's; the profiler's
+   host_type_fingerprint then matches, and the table builder refuses otherwise ([table_host_mixed]).
+2. **Image.** The KD image of record by digest,
+   ghcr.io/ainsleydeluna/plantseg-thesis@sha256:cb413304e2445e5c8ac3786f7a370f2ed05a07d11843b11687bb9eb23dc32c2b,
+   as the pod's image, with `PLANTSEG_IMAGE_DIGEST=sha256:cb413304e2445e5c8ac3786f7a370f2ed05a07d11843b11687bb9eb23dc32c2b`
+   set in the pod's environment ([image_not_of_record] otherwise; the PL-26 fingerprint child must pass, and fvcore is
+   0.1.5.post20221221 in that image).
+3. **Checkout.** A clone of the pinned merge with its `.git`, made by DL-19's recipe (a partial clone with a sparse
+   checkout that never fetches the protected file; step 0 verifies HEAD = the pin, the protected file absent and the
+   status clean). `git status --porcelain` is then proven in the pod, from the clone, before any model is sent:
+   the run of record reads it ([governed_paths_unavailable] otherwise, A7). The profiler runs from that clone.
+4. **Models.** The models of record go up one transfer at a time (B66): the teacher of record (iter_24000.pth,
+   8c0e649a…79c4e) with its config; E1, E2 and E3 seed 42's best checkpoints; E4 and E7's run directories (the run
+   provenance, the QNNPACK TorchScript, its state_dict companion, the x86 copy and the PTQ record); E5 and E6's eval
+   directories (converted/eNN_run_meta.json and its files, final/eNN_int8_x86_latency.torchscript.pt and
+   qat_finalize.json). Each file is checked against the pins file (efficiency_pins/1: per stage the handed file's
+   sha256, and for an INT8 stage the converted artifact's and the x86 copy's), and the profiler checks each again
+   through its flags. No dataset is sent; the profiler reads none.
+5. **Runs.** 8 stages × 3 groups = 24 processes, one at a time, in the fixed order teacher, E1, E2, E3, E4, E5, E6, E7,
+   each stage's groups static → latency → memory, with 60 s idle between processes, each in a fresh process:
+   ```
+   python -B scripts/profile_efficiency.py --of-record --stage S <source flags> \
+     --expected-checkpoint-sha256 H [--expected-converted-sha256 H2] [--expected-x86-sha256 H86] \
+     --artifact-role R --metrics G --threads 1 --host-label <pod label> --host-note "<pod id, type, region, price>" \
+     --out-dir <session>/<S>/<group>
+   ```
+   with the source flags of the plan's §2 table (the teacher: `--checkpoint`, `--teacher-ckpt-sha256` equal to H, and
+   `--teacher-config`; E1–E3: `--checkpoint`; E4, E7: `--provenance <run>/eNN_ptq_run_meta.json`; E5, E6:
+   `--provenance <eval>/converted/eNN_run_meta.json --qat-finalize <eval>/qat_finalize.json`), R = accuracy for every
+   static group and for FP32 latency and memory, R = x86_cpu_proxy_latency for INT8 latency and memory, and G one of
+   `params,size,flops`, `latency`, `memory`. Each command's exit code, start and end time and record path are logged;
+   any refusal stops the sitting for the orchestrator.
+6. **Table.** `python -B scripts/efficiency_table.py build --session <session> [--session <second sitting>] --pins
+   <pins> --out-dir <table dir>`; its RESULT line and the table's sha256 are kept.
+7. **Copy-back and termination.** The session directories, the pins file and the table are copied back, and a second
+   copy goes to a separate medium within 24 h, checked by sha256 (DL-110's rule); then the pod is terminated and the
+   termination time recorded.
+
+**The laptop fallback** (disclosed): the plan's §1 form in the KD image by digest, `docker run --network none` with
+the clone and the models mounted read-only and the session directory the only writable mount, the same 24 commands,
+and `--host-note` naming the Windows build, the power mode (on AC, no other container running) and the hybrid-core
+confound (a one-thread process can be scheduled onto a performance or an efficiency core, and host_facts() cannot see
+which).
+
+**Expected time.** MEASURED on this lane's cloud VM (a 4-vCPU Xeon @ 2.80 GHz with AVX-512 VNNI), random-weight
+students at one thread, 512 × 512, in the B-2 smoke's development run: the FP32 student's latency group took 107 s
+(median 329 ms a forward, 320 forwards), the x86 INT8 copies' 355 s and 350 s (E4 and E5; median 1,101 and 1,090 ms),
+and the static group's measurement 1 s. INFERRED from these: the teacher's latency group about 10–20 min and its memory
+group about 4–8 min; each FP32 student about 4 min and each INT8 stage about 9 min over its three groups; with the 23
+gaps of 60 s, about 1.5–2 h for the 24 processes on a comparable pod, plus the transfers. The x86 copies' median above
+the FP32 student's on this VM is a synthetic, random-weight observation, not a result.
+
+**LB-0** (LF40; the KD-image acceptance on the laptop before LEFF's last merge; Q10). In the KD image by digest, from a
+clone of lane/leff's tip, each alone, with fvcore's real path:
+- scripts/smoke_efficiency_record.py: `RESULT: PASS (49/49)` (its memory checks need a writable /proc/self/clear_refs;
+  Docker Desktop's kernel decides it, and an environment-caused deferral is read from the smoke's own probe);
+- scripts/smoke_latency_threads.py: `RESULT: PASS (97/97)` (its torch_second_interop_call_aborts and
+  torch_interop_call_after_work_aborts re-measure torch's abort in the image's build, torch 2.1.0+cu121);
+- scripts/smoke_efficiency.py: `RESULT: PASS (82/82)`;
+- scripts/smoke_quant_x86_efficiency.py: `RESULT: PASS (103/103)`;
+- scripts/smoke_run_ptq.py: `RESULT: PASS (69/69)`;
+- scripts/smoke_am23_quant.py: `RESULT: PASS (187/187)`.
+
+**B-3 is not built** (LF39; Q6). The plan line for L-AM16-ARM reads "not built on spare capacity (D4); cut at the freeze
+if not complete (AM-22 item 1(g))".
+
+**No TEST-manifest entry** for efficiency (LF41; Q9): no efficiency path reads a TEST byte, and the table's sha256 enters
+its DL completion row instead.
+
+### B-2.12 The Phase A departures (A24; recorded here only, leff-b1b.md does not carry them)
+
+From the plan's report (its "SL-1 log", "Other departures", "Refused commands" and "Other" paragraphs) and the
+supplement's report (its reads list, SL-1 log and refusals), as A24 rules: all on allowed files, none on a forbidden
+path, no DL row.
+- **Two `for` loops over named, allowed doc files** (Phase A, 2026-10-16 05:50:09Z over docs/lane_specs/part1.md,
+  part2.md, part3.md and errata.md; 05:53:01Z over DECISION_LOG.md, PREREGISTRATION_AMENDMENTS.md and
+  EVALUATION_CONTRACT.md), both SL1-B1, both breaking "one file per command"; no loop after them.
+- **Command-form departures on the allowed files only:** three `awk` line-range locators on
+  PREREGISTRATION_AMENDMENTS.md; two multi-range `sed` commands (DECISION_LOG.md and IMPLEMENTATION_CONTRACT.md);
+  `grep` with `-o`/`-i` and pipes; `git log -1 -- <doc>` for commit ids (metadata only).
+- **Two refusals, neither retried:** `git diff --name-status 2b6000e… HEAD -- . <X>; git diff --name-only 2b6000e… HEAD |
+  wc -l` ([L-PROT G], a diff without a pathspec); `ls -la ~/.claude/ …; tail -n 40 ~/.claude/sl1_guard.log` ([L-PROT S]).
+  One `git grep` failed on its option order (a usage error, re-run with the options first).
+- **The supplement's session:** one SL1-B2 line (13:38:51Z, `git fetch origin refs/heads/lane/l-corr && … git diff
+  --stat …`), logged, not refused; the lane/l-corr and lqp fetches created remote-tracking refs only; the read of the
+  session's own transcript under ~/.claude/projects/ after a compaction (the harness's file, not a repository claude/
+  file; it could carry no forbidden content, and none was read); a Python AttributeError corrected (not retried); two
+  missed Edit calls on its own scratchpad file.
+
+### B-2.13 The SL-1 log, refused commands, slips, pauses, open items and the time
+
+**The SL-1 log** (`tail -n 80 ~/.claude/sl1_guard.log`, run before C7's commit; log mode, so nothing was denied):
+18 lines, every line, each cut at 200 characters by the guard. Lines 1–12 are B-1.10's twelve, unchanged,
+and are classed there. Lines 13–18 are new:
+
+```
+2026-10-27T01:50:33Z	Bash	SL1-B1	cat >> /tmp/claude-0/-home-user-plantseg-thesis/d272e01c-e606-5402-a96a-7bccdfa30eca/scratchpad/LANE_STATE.md <<'EOF' - SLIP (01:58Z): `python -B -m py_compile` on the four B-2 files wrote bytecode ca
+2026-10-27T03:36:47Z	Bash	SL1-B1	cd /root/.claude/projects/-home-user-plantseg-thesis/d272e01c-e606-5402-a96a-7bccdfa30eca/subagents/workflows/wf_745f6e8e-b8b/ && for f in agent-a656f2907de8d4db1.jsonl agent-ad089579db8967582.jsonl; 
+2026-10-27T06:26:47Z	Bash	SL1-B1	D=/tmp/claude-0/-home-user-plantseg-thesis/d272e01c-e606-5402-a96a-7bccdfa30eca/scratchpad/dev_b2; for f in r3b_smoke_full.txt f1_smoke_full.txt; do printf '%s: ' $f; grep -c ': PASS' $D/$f | tr '\n' 
+2026-10-27T06:28:50Z	Bash	SL1-B1	D=/tmp/claude-0/-home-user-plantseg-thesis/d272e01c-e606-5402-a96a-7bccdfa30eca/scratchpad/dev_b2; cp $D/f1/smoke_latency_threads_mutations.py $D/shadow_f1/scripts/smoke_latency_threads_mutations.py &
+2026-10-27T06:30:32Z	Bash	SL1-B1	D=/tmp/claude-0/-home-user-plantseg-thesis/d272e01c-e606-5402-a96a-7bccdfa30eca/scratchpad/dev_b2; for f in f1_smoke_full.txt f2_smoke_full.txt; do printf '%s: ' $f; grep -c ': PASS' $D/$f | tr '\n' '
+2026-10-27T17:47:18Z	Monitor	SL1-B1	O=/tmp/claude-0/-home-user-plantseg-thesis/d272e01c-e606-5402-a96a-7bccdfa30eca/scratchpad/step10; SUM=$O/de/summary.tsv; seen=0; t=0; while true; do n=$(grep -c -v '^#' "$SUM" 2>/dev/null); n=${n:-0}
+```
+
+The classes are the guard's (.claude/hooks/sl1_guard.py:86-93; B-1.10 quotes them). All six new lines are mine and
+SL1-B1 ("recursive, globbed or directory listing or search in a protected location"). DL-24 B-2's agents added none.
+- 01:50:33: one command appended the py_compile slip to LANE_STATE.md, then ran `ls -la` on src/eval/__pycache__ and
+  scripts/__pycache__. That is a listing inside scripts/, the second slip below. It printed the four .pyc files and
+  nothing else.
+- 03:36:47: a `for` loop over two named agent transcripts of DL-24 B-2's run (under ~/.claude/projects), reading the
+  commands they ran.
+- 06:26:47 and 06:30:32: `for` loops counting PASS and FAIL lines in two development logs in the scratchpad.
+- 06:28:50: a `cp` of the two runner drafts into their development shadows, through a variable scratchpad path.
+- 17:47:18 (Monitor): STEP 10 (d)'s first watch command, which L-PROT refused (below). The redone command, with
+  literal log paths, was not logged.
+
+Apart from the 01:50:33 listing, none lists or searches the repository, and none names a TEST path.
+
+**Refused commands** (each refused before it ran; none retried in the refused form; times from the session's
+transcript):
+- [the tool] 01:56Z and 06:03Z: a foreground `sleep` before reading a development log, which the tool blocks. The
+  first was redone without the sleep, the second as a Monitor watch.
+- [L-PROT S] 05:52Z: an `ls -la` of a scratchpad folder through a variable path. It was redone with the literal path.
+- [L-PROT G] 05:59Z: a `git show 9ceab91:$f` inside a `for` loop, a variable path. It was redone with literal paths.
+- [L-PROT S] two inline-interpreter edits of scratchpad drafts whose text named git: one in the DL-24 fixes' drafting
+  (06:09Z), one in the report's (09:25Z). Both were redone through the Write and Edit tools or a script file.
+- [L-PROT S] 17:47Z: STEP 10 (d)'s first watch command (a Monitor) ran `ls` on a variable path with a glob over a
+  scratchpad folder, which also breaks the GO's "no shell globs over a directory". It was redone with the two literal
+  log paths.
+
+**Slips** (each ran; none touched a forbidden path):
+- 01:50Z `python -B -m py_compile` on the four B-2 files. py_compile ignores -B and PYTHONDONTWRITEBYTECODE, so it wrote
+  bytecode caches: src/eval/__pycache__/ and scripts/__pycache__/. Both are git-ignored, their names are free of the
+  token, and no commit carries them. They were not deleted, under the GO's no-delete rule. Compile checks since then are
+  ast.parse.
+  - One consequence: the open-audit recording of SHADOW_PATHS missed scripts/efficiency_table.py, whose import was served
+    from that cache. It was added by hand, with a comment (B-2.6).
+- 01:50Z an `ls -la` of those two folders, in the command that logged the first slip (SL-1 01:50:33): a listing
+  inside scripts/, which the GO does not allow. (The STATUS-MD of 07:37Z gave its time as 01:59Z; the transcript says
+  01:50:33Z.)
+- 06:49Z fix 1's first shadow smoke ran with no timeout set, so the tool's 30-minute background limit stopped it at
+  61/91 (0 FAIL). Every later run sets its limit explicitly.
+- Two development smokes run at once oversubscribed the 4 vCPUs: each PTQ child ran about 6× slower. One was stopped
+  (06:39Z), and every run since is alone.
+
+**Pauses and tooling.**
+- The account's session limit stopped the session three times (MEASURED from the transcript):
+  - 26 Oct 20:02Z to 23:45Z, during B-1's DL-24 ("resets 10pm (UTC)"; B-1.9), until the user's "Try again";
+  - 27 Oct 03:52Z to 05:29Z, during DL-24 B-2's first launch (03:21Z; "resets 4:40am (UTC)"). The worker restarted,
+    the user wrote "continue", and the same run resumed from its journal at 05:30Z;
+  - 27 Oct 10:13Z to 10:20Z ("resets 10:20am (UTC)"), during STEP 10 (a). The detached batch ran on, and the session
+    resumed when the limit reset. No run was affected.
+- The stop hook (~/.claude/stop-hook-git-check.sh) asked many times to commit and push uncommitted development files. I
+  reported it once and did not comply (the GO's RULES); each commit followed the GO's procedure after its runs.
+- The harness's attribution reminder asked for trailers. No commit carries one.
+
+**Open items** (at most five):
+1. **DL-a before LB-1.** LB-1 is a draft here (B-2.11). The docs session enters DL-a before the first latency
+   measurement of record (LF29's order).
+2. **The x86 copies' speed.** On this VM the x86 INT8 copies ran slower than the FP32 student (synthetic, random
+   weights; B-2.7). LB-1 measures the models of record on the pod of record.
+3. **torch's abort in the image's build.** The abort of a second, or post-work, set_num_interop_threads is MEASURED on
+   torch 2.1.0+cpu. LB-0 re-measures it in the KD image (torch 2.1.0+cu121) through the two cases.
+4. **The cgroup quota** (DL-24 R3-3, uncertain, fixed) is proven on synthetic /proc and /sys trees. LB-1's pod records
+   cgroup_cpu_quota_source beside the quota, for the operator to read against `--host-note`.
+5. **provenance.expected_sha256** (DL-24 R2-N6, uncertain). It keeps the teacher meaning B-1 pinned. The docs session
+   may rule whether 2.0.0's field list meant H and H2 there. H, H2 and H86 are in provenance.expected either way.
+
+**The time** (LF46; the times MEASURED from the transcript and the commits, the comparison INFERRED):
+- From the GO (26 Oct 17:03:44Z) to STEP 10's end (27 Oct 18:37:26Z): 25 h 34 min of wall clock. Without the first two
+  limit pauses (3 h 43 min and 1 h 37 min) that is 20 h 13 min of work. The third pause fell inside STEP 10's detached
+  batch and is not subtracted. The report (STEP 11) adds about 1 h; C7's own time is in git.
+- By part:
+  - the start to B-1's checkpoint (C3, 01:32Z): 8 h 29 min, or 4 h 46 min net of the first pause (LF46: 13–15 h).
+    STEP 3's batch took 2 h 24 min (17:13Z to 19:37Z); the re-read and the first B-1 and B-2 drafts were written while
+    it ran;
+  - B-2, C3 to F2 (09:23Z): 7 h 51 min, or 6 h 14 min net of the second pause (LF46: 10–12 h). The code took 1 h 48 min
+    to C6 (03:20Z), DL-24 B-2 ran to 06:25Z, and its two fixes, each with its smoke and runner, ran to 09:23Z;
+  - STEP 10: 9 h 13 min (LF46: 8–9 h). Q2's harness took 14,179 s (LF46 cites 13,479 s) and E6-KD's 2,614 s
+    (2,679 s).
+- In all, about 21 h of work against LF46's 32–37 h. The main saving is that the drafts were written while STEP 3's
+  batch ran (INFERRED).
