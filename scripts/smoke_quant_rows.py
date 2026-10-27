@@ -12,7 +12,7 @@ contains "test". Expected values are recomputed here from the artifacts.
   L  labels: a cut QAT run, "not made: code not merged", a stage the export has no slot for; a slot
      without a model whose clean artifact is still bound (artifact_for_missing_run)
   R  quant_slot_invalid (a stage outside the four; a seed other than 42; two slots for one stage);
-     R-11 on the family slots
+     R-11 on the family slots; an E2 parent that is not the family slot (parent_rule, R-12)
   D  no interval or test key, determinism, no test object imported, no 'test' path, the markdown
 
 Cases are importable (setup / cases) so that scripts/smoke_lrep_mutations.py can run them mutated.
@@ -237,6 +237,14 @@ def r_identity():
     return refused("seed42_mismatch", lambda: doc_of(variant("e2_identity", edit)))
 
 
+def r_parent_not_family():
+    """parent_rule (R-12): E7-E2 descends from the seed-42 E2 default candidate (E2:s42:lambda1), not
+    the family slot, the E2 of record (AM-23 item 2; IF§11.1)."""
+    def edit(export, binding):
+        entry(export, "E7-E2:s42")["catalogue"]["parent"] = "E2:s42:lambda1"
+    return refused("parent_rule", lambda: doc_of(variant("e7e2_parent_lambda1", edit)))
+
+
 def d_no_interval():
     keys = set()
 
@@ -292,6 +300,8 @@ def cases():
             ("R2", "quant_slot_invalid: two slots for one stage", r_two),
             ("R4", "quant_slot_invalid: a slot at seed 43", r_seed),
             ("R3", "R-11: the E2 family identity is checked", r_identity),
+            ("R5", "parent_rule: E7-E2 under a seed-42 E2 that is not the family slot (R-12)",
+             r_parent_not_family),
             ("D1", "no interval, test or '__' key", d_no_interval),
             ("D2", "byte-identical JSON on repeated runs", d_deterministic),
             ("D3", "quant_rows imports no test object and no bootstrap (AST)", d_no_test_import),

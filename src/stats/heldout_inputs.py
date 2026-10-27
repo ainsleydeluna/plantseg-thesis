@@ -29,7 +29,8 @@ writes them, never parses the TEST-day manifest and never builds its path (IF§1
 
 Every refusal is an `LrepRefusal` with a code from CODES, raised at a site that reads
 `raise refusal("<code>", ...)` (scripts/smoke_lrep_mutations.py mutates those sites), except the three
-raises of `strict_json_text`, which carry their caller's code (inventory_unreadable or binding_invalid).
+raises of `strict_json_text`, which carry their caller's code (inventory_unreadable, binding_invalid,
+dedup_invalid or arm_record_invalid).
 Nothing here writes a file. Import-time behaviour is side-effect free.
 """
 from __future__ import annotations
@@ -945,6 +946,9 @@ def load_bound(inv: Inventory, *, slot: str, stage: str, precision: str, scope: 
     ev_stage, want_role, want_precision = stage_spec(stage)
     if precision == PRECISION_FQOFF:
         want_role, want_precision = "student", PRECISION_FQOFF
+    if row["model_role"] != want_role:
+        raise refusal("precision_mismatch", f"{label}: its model row's model_role is {row['model_role']!r}, "
+                                            f"not {want_role!r} (B5-S1)")
     try:
         loaded = D.load_input(ev_stage, condition, rel, Path(input_root), policy)
     except D.DriverRefusal as e:
@@ -1205,7 +1209,9 @@ def family_inputs(stats: StatsArtifact, inv: Inventory, cells: PlannedCells,
 
 
 def _b5_parent(inv: Inventory, slot: str, e: dict, stage: str, seed) -> str:
-    """A B-5 slot's catalogue.parent: a slot at B5_PARENT_STAGE[stage] and the same seed (R-12)."""
+    """A B-5 slot's catalogue.parent: a slot at B5_PARENT_STAGE[stage] and the same seed, and, when that
+    stage is a planned one (E2 for AM-23's E2 parents, E3 for E6-KD), its family slot, the model of record
+    (IF§11.1; R-12)."""
     parent = _parent_of(inv, e, slot)
     pe = inv.entry(parent)
     if pe.get("stage") != B5_PARENT_STAGE[stage]:
@@ -1214,14 +1220,29 @@ def _b5_parent(inv: Inventory, slot: str, e: dict, stage: str, seed) -> str:
     if pe.get("seed") != seed:
         raise refusal("seed_inconsistent", f"{slot!r} (seed {seed}) has parent {parent!r} at seed "
                                            f"{pe.get('seed')!r}")
+    if B5_PARENT_STAGE[stage] in STAGES and "family" not in (pe.get("role") or ()):
+        raise refusal("parent_rule", f"{slot!r} ({stage}): its parent {parent!r} is not the family slot of "
+                                     f"{B5_PARENT_STAGE[stage]} seed {seed}, the model of record (IF§11.1)")
     return parent
+
+
+def _b5_with_model(inv: Inventory, st: SlotStatus, parent: str) -> SlotStatus:
+    """R-12 for a B-5 model (check_parentage's first rule): a model never descends from a run without one.
+    A slot without a model keeps its IF§11.2 label, never a refusal (B-5 (a)), so check_parentage's not-run
+    rule is not applied to B-5's slots."""
+    ps = b5_status(inv, parent)
+    if not ps.has_model:
+        raise refusal("parent_rule", f"{st.slot!r} ({st.stage}) has a model, but its parent {parent!r} has "
+                                     f"none ({ps.label})")
+    return st
 
 
 def b5_status(inv: Inventory, slot: str) -> SlotStatus:
     """IF§11.2's map for a slot B-5's tables read (an arm's student or teacher, the teacher of record,
     A, F, G, AM-23's quant_descriptive slots, E6-KD), by its stage's kind (B5-S1): a QAT run's selection
     reads its QAT run's kind unless it is derived; a PTQ model with kind null takes its parent's cut or
-    divergence; a run reads its own. Parentage runs through B5_PARENT_STAGE at the same seed (R-12)."""
+    divergence; a run reads its own. Parentage runs through B5_PARENT_STAGE at the same seed (to the family
+    slot when that stage is planned), and a model's parent run has a model (R-12)."""
     e, kind = _checked_kind(inv, slot)
     stage, seed = e.get("stage"), e.get("seed")
     stage_spec(stage)
@@ -1235,9 +1256,9 @@ def b5_status(inv: Inventory, slot: str) -> SlotStatus:
         if run.get("stage") != stage or run.get("seed") != seed:
             raise refusal("parent_rule", f"selection {slot!r}: its parent {run_slot!r} is not the {stage} "
                                          f"QAT run at seed {seed} (LRB5)")
-        _b5_parent(inv, run_slot, run, stage, seed)
+        parent = _b5_parent(inv, run_slot, run, stage, seed)
         if kind == "derived":
-            return status(True, None, slot, _record_of(e), kind)
+            return _b5_with_model(inv, status(True, None, slot, _record_of(e), kind), parent)
         re_, rk = _checked_kind(inv, run_slot)
         if rk == "not_run":
             label, src, rec = _not_run_status(inv, run_slot, re_, seed)
@@ -1250,7 +1271,7 @@ def b5_status(inv: Inventory, slot: str) -> SlotStatus:
     if stage in B5_PTQ_STAGES:
         parent = _b5_parent(inv, slot, e, stage, seed)
         if kind == "derived":
-            return status(True, None, slot, _record_of(e), kind)
+            return _b5_with_model(inv, status(True, None, slot, _record_of(e), kind), parent)
         if kind is None:
             pe, pk = _checked_kind(inv, parent)
             if pk in ("cut", "diverged"):

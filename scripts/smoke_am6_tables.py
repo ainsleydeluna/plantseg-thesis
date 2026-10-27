@@ -15,7 +15,8 @@ TMPDIR (left in place); none contains "test".
      (cross_artifact_mismatch), a record that is not canvas, a model of record without its record,
      E1's seed-43/44 records swapped (e1_checkpoint_record); and, with coverage, another ground truth
      under the teacher's record, a teacher scored as a student (precision_mismatch), a model row at
-     another seed (seed_inconsistent), a stage outside the map (stage_unmapped)
+     another seed (seed_inconsistent), a stage outside the map (stage_unmapped), a teacher's model row
+     that says student (precision_mismatch)
   M  B5-S1's stage map, static, against STAGE_ARTIFACTS and the evaluator's STAGES
   V  (d): every other clean canvas record as a row (23 here), each with its slot's roles, kind, stage,
      seed and label, its twelve numbers and R1/R3, the stages it is scored at, the sort, the markdown
@@ -455,6 +456,15 @@ def r_cov_unmapped():
     return refused("stage_unmapped", lambda: doc_of(variant("e3r1_k8", edit), coverage=True))
 
 
+def r_cov_row_role():
+    """B5-S1 for the model row: the teacher's fp32 row says model_role student while its artifact is the
+    teacher's (precision_mismatch; DL-24 B5R1-05)."""
+    def edit(export, binding):
+        row = next(r for r in export["models"] if (r["slot"], r["precision"]) == ("teacher", "fp32"))
+        row["model_role"] = "student"
+    return refused("precision_mismatch", lambda: doc_of(variant("teacher_row_student", edit), coverage=True))
+
+
 def own_subset(stats, kept):
     """The kept rows' totals, rebuilt here: image_index -> manifest_ids, then class_totals."""
     keep = {i for i, m in enumerate(stats.manifest_ids) if m in set(kept)}
@@ -582,6 +592,7 @@ def cases():
             ("R7", "precision_mismatch: the teacher scored as a student (B5-S1)", r_cov_role),
             ("R8", "seed_inconsistent: a coverage row's model row at another seed (R-14)", r_cov_seed),
             ("R9", "stage_unmapped: a coverage slot at a stage outside the map", r_cov_unmapped),
+            ("R10", "precision_mismatch: the teacher's model row says student (B5-S1)", r_cov_row_role),
             ("S1", "subset: the four numbers recomputed on the kept rows, the changes, the fingerprint",
              s_subset_values),
             ("S2", "subset, guard 1 (i): nothing removed gives the full values bitwise", s_zero_removed),

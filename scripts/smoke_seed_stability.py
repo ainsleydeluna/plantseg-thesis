@@ -18,7 +18,8 @@ model or GPU; no created path contains "test".
      and a non-finite comparator row (R2-09)
   R  refusals: one case per code, each reached with every earlier gate passing (R-15 is an assertion),
      and one per further raise site the DL-24 review added (R2h-R2j, R4c-R4d, R12b-R12e, R13b, R14b,
-     R17b, R18b); B-5 (e): a null freeze under Policy.OFFICIAL (R2k; R1-12)
+     R17b, R18b); B-5 (e): a null freeze under Policy.OFFICIAL (R2k; R1-12); B-5's DL-24: a seed-42
+     model row that says teacher, which check_rows alone reads (R18c)
   D  determinism
   X  hygiene: no test or p-value object imported, repr floats, pp only in markdown, no 'test' path
 
@@ -1082,6 +1083,15 @@ def r_row_role():
     return refused("precision_mismatch", lambda: seed_doc(variant("row_teacher", edit)))
 
 
+def r_row_role_s42():
+    """The seed-42 E2 model row says teacher. The 37 are read from the statistics artifact, never through
+    load_bound, so check_rows (LRB7) is the only gate for this row (B-5 DL-24: load_bound now checks the
+    model_role of every row it reads, which also refuses R18b's seed-43 row)."""
+    def edit(export, binding):
+        row(export, "E2:s42", "fp32")["model_role"] = "teacher"
+    return refused("precision_mismatch", lambda: seed_doc(variant("row_teacher_s42", edit)))
+
+
 # --------------------------------------------------------------------------------------------------
 # D and X
 # --------------------------------------------------------------------------------------------------
@@ -1361,6 +1371,8 @@ def cases():
         ("R17b", "telemetry_invalid: a telemetry item without its path (LRB2)", r_telemetry_path),
         ("R18", "precision_mismatch (LRB7)", r_precision),
         ("R18b", "precision_mismatch: a model row whose model_role is teacher (LRB7)", r_row_role),
+        ("R18c", "precision_mismatch: the seed-42 E2 model row says teacher (check_rows alone)",
+         r_row_role_s42),
         ("R19", "path_unsafe", r_path),
         ("R20", "robustness_cells_missing (LRB11)", r_robustness_cells),
         ("D1", "byte-identical JSON on repeated runs", d_identical),

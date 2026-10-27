@@ -11,7 +11,8 @@ none contains "test".
      boundary in float64
   T  the teacher values: R1 and R2 from DL-124's and DL-125's records, flip "not on record"; the record
      refusals (arm_record_invalid)
-  P  placement: the eight rows in order and no E6-flip row; the refusals of arm_slot_invalid
+  P  placement: the eight rows in order and no E6-flip row; the refusals of arm_slot_invalid; a model
+     under a cut arm run (parent_rule, R-12)
   V  values: both sides' m and rule_variants' values, Δ and its reading, the 37 as comparators (R-11),
      the per-image mean Δ and its interval (B5-D2), B5-S1's evaluator stages
   L  a candidate without a model: its IF§11.2 label, no value, never a refusal (unless the binding lists
@@ -266,6 +267,22 @@ def p_seed():
     return refused("arm_slot_invalid", lambda: doc_of(variant("e3r1_s43", edit)))
 
 
+def p_parent_without_model():
+    """parent_rule (R-12): E3-R1 cut while a model descends from it -- E7-R1 still a derived PTQ model, or
+    (E7-R1 not run) E6-R1's selection still a derived QAT model, its artifact bound."""
+    def cut_e3r1(export, binding):
+        entry(export, "E3-R1:s42").update(kind="cut", **CUT)
+        drop_rows(export, binding, "E3-R1:s42")
+
+    def cut_e3r1_e7r1(export, binding):
+        cut_e3r1(export, binding)
+        entry(export, "E7-R1:s42")["kind"] = None
+        drop_rows(export, binding, "E7-R1:s42")
+    out = [refused("parent_rule", lambda n=n, f=f: doc_of(variant(n, f)))
+           for n, f in (("e3r1_cut_e7r1_model", cut_e3r1), ("e3r1_cut_e6r1_model", cut_e3r1_e7r1))]
+    return all(ok for ok, _ in out), str([d for _, d in out])
+
+
 def v_m():
     doc = the_doc()
     from src.stats.seed_stability import m_of
@@ -483,6 +500,8 @@ def cases():
             ("P5", "arm_slot_invalid: a row the export has no slot for", p_missing),
             ("P6", "E6-E2 and E7-E2 are not arm rows and are not refused here", p_other_quant),
             ("P7", "arm_slot_invalid: an arm candidate at seed 43", p_seed),
+            ("P8", "parent_rule: a model under a cut arm run (E7-R1, E6-R1's selection; R-12)",
+             p_parent_without_model),
             ("V1", "both sides' m equal seed_stability.m_of on the artifacts", v_m),
             ("V2", "rule_variants' all-class, GT-present and disease-only values", v_rule_variants),
             ("V3", "Δ = m(candidate) - m(baseline) on all eight rows", v_delta),
