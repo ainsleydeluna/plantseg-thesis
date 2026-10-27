@@ -673,6 +673,9 @@ def case_readers():
         walk(a)
     check("allowlists_hold_no_score_key", not [k for k in allow_keys if SCORE_KEY_RE.search(k)],
           str([k for k in allow_keys if SCORE_KEY_RE.search(k)]))
+    rec = {"first_nonfinite": {"iteration": 5, "source": "val", "key": "mIoU_" + "full", "value": "nan"}}
+    check("arm_teacher_record_keeps_the_first_non_finite_iteration_only_B112",
+          R.project(rec, R.ARM_TEACHER_RECORD) == {"first_nonfinite": {"iteration": 5}})
     d = scratch_dir()
     kd = kd_run(d, "e2_s42_lambda0.5_80k_a1")
     got, torn, sha = with_sentinel(lambda: R.read_jsonl(kd / "e2_telemetry.jsonl", R.KD_ROWS,

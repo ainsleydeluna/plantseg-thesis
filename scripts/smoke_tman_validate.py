@@ -44,7 +44,8 @@ CLIP_REL = "u4_clip/clip_selection.json"            # the U4 pilot's clip select
 LATE = "2026-11-04T10:00:00Z"                       # a derived model made after the freeze, appended
 REAL_FILES = ("configs/tday_catalogue.json", "configs/kd_schedule.json", "configs/qat_selection_rules.json",
               *[f"configs/calibration/ptq_calibration_seed{s}.json" for s in (42, 43, 44, 45)],
-              "reports/derived/mde_entry_20261009T034825Z.json", "reports/strata/train_strata_v1.json")
+              "reports/derived/mde_entry_20261009T034825Z.json", "reports/strata/train_strata_v1.json",
+              *[f"configs/kd_arms/{a}.json" for a in ("e3_flip", "e3_r1", "e3_r2")])      # the arm registry at S
 CODE_FIXTURES = {"scripts/evaluate_model.py": "import src.eval.fixture_scoring  # the evaluator's fixture root\n",
                  "src/eval/__init__.py": "", "src/eval/fixture_scoring.py": "VALUE = 1\n",
                  "configs/plantseg_class_map.json": "{}\n",
@@ -1060,6 +1061,22 @@ def case_cut_gates():
     finally:
         kd_arms.load_arms = saved
     check("world_still_passes_after_the_variants", w.run("freeze")[0] is None)
+    reg = w.repo / "configs/kd_arms/e3_r1.json"
+    saved = reg.read_bytes()
+    try:
+        reg.write_bytes(saved + b"\n")
+        code, _, e = w.run("freeze")                 # the cut gate reads the registry (record_uncommitted there)
+        check("arm_registry_file_uncommitted_at_S_B95", code == "record_uncommitted" and "kd_arms" in (
+            e.detail if e else ""), f"{code} {(e.detail[:160] if e else '')}")
+    finally:
+        reg.write_bytes(saved)
+    aside = w.repo / "configs/kd_arms_aside"
+    (w.repo / "configs/kd_arms").rename(aside)
+    try:
+        code, _, e = w.run("freeze")
+        check("arm_registry_absent_at_S_B95", code == "unregistered_arm", f"{code} {(e.detail[:160] if e else '')}")
+    finally:
+        aside.rename(w.repo / "configs/kd_arms")
     early = w.entry_file("cut", [A], dict(a, since=dict(a["since"], date="2026-10-19")), nn=30)
     w.commit({early["path"]: w.files[early["path"]]}, "an A cut entered early", date="2026-11-01T08:00:00+00:00")
     expect_gate(w, "cut_entered_before_its_rule_s_day_B75", "cut_date_mismatch",

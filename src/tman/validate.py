@@ -958,7 +958,6 @@ def cut_context(x: Ctx, docs: dict | None = None) -> E.CutContext:
     never from a cut entry), a named rule's record (entries.rule_record_reader) and E3-X's run of record (its
     manifest entry: a scored run, or none), the day each cut entry file of `docs` ({sha256: doc}) was entered in the
     decision log (decision (xv)), and the records committed by a day (decision (xvi))."""
-    from src.training import kd_arms
     idx = x.index()
     sha_of = {id(d): sha for sha, d in (docs or {}).items()}
 
@@ -993,7 +992,7 @@ def cut_context(x: Ctx, docs: dict | None = None) -> E.CutContext:
     for key, rel in ss.DECISION_RECORD_REL.items():
         if x.records.has(rel):
             recs[key] = x.records.json(rel, R.DECISION_RECORD, code="decision_date_cut_mismatch")[0]
-    return E.CutContext(x.cat, x.freeze, registry={s.run_stage: s for s in kd_arms.load_arms().values()},
+    return E.CutContext(x.cat, x.freeze, registry=E.arm_registry(x.records),
                         decision_records=recs, attempts=idx.attempts, run_slot=idx.slot_of.get,
                         stopped=idx.stopped_ids(), status=x.slot_status, rule_record=E.rule_record_reader(x.records),
                         e3x=e3x, entered=entered, known_by=E.known_by_reader(x.records),

@@ -750,6 +750,23 @@ def entry_file_errors(doc, kind: str, rel: str) -> list[str]:
     return [err] if err else []
 
 
+KD_ARMS_REL = "configs/kd_arms"
+
+
+def arm_registry(records: R.Records) -> dict:
+    """The KD arm registry at S, the checkout the records name (DL-24 #95): kd_arms.load_arms over its
+    configs/kd_arms/, each file committed and byte-equal to its blob there; {run_stage: ArmSpec}. A registry kd_arms
+    refuses is unregistered_arm."""
+    from src.training import kd_arms
+    try:
+        arms = kd_arms.load_arms(Path(records.src.root) / KD_ARMS_REL)
+    except kd_arms.ArmSpecError as e:
+        raise S.TmanRefused("unregistered_arm", f"the arm registry at S: {e}") from None
+    for spec in arms.values():
+        records.read(f"{KD_ARMS_REL}/{Path(spec.path).name}")
+    return {s.run_stage: s for s in arms.values()}
+
+
 def read_entry_file(records: R.Records, rel: str, kind: str | None = None) -> tuple[dict, str]:
     """A committed entry file: committed and byte-equal (record_uncommitted), written once (entry_file_rewritten),
     its sha256 in a RECORDED or IMPLEMENTED decision-log row (dl_row_missing), its fields and name (entry_field),

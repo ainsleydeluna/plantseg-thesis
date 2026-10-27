@@ -98,7 +98,8 @@ CLIP_SELECTION = {"format": True, "rules_sha256": True, "stage": True, "seed": T
                   "winner": _CLIP_SIDE, "loser": _CLIP_SIDE}
 # arm records (scripts/arm_teacher_record.py:219-223 selection, :236-258 the record; scripts/arm_go_rule.py:245-262;
 # scripts/run_ptq_arm.py:206-226; scripts/launch_teacher_arm.py:623-639)
-ARM_TEACHER_RECORD = {"format": True, "arm": True, "status": True, "first_nonfinite": True, "generated_utc": True,
+ARM_TEACHER_RECORD = {"format": True, "arm": True, "status": True, "first_nonfinite": {"iteration": True},  # DL-24 #112
+                      "generated_utc": True,
                       "work_dir": {"name": True, "attempt": True},
                       "selection": {"status": True, "selected_iteration": True, "recorded_checkpoint_sha256": True,
                                     "teacher_selection_json_sha256": True,

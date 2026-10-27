@@ -21,7 +21,10 @@ sys.dont_write_bytecode = True
 
 import json  # noqa: E402
 import os  # noqa: E402
+import shutil  # noqa: E402
+import signal  # noqa: E402
 import subprocess  # noqa: E402
+import tempfile  # noqa: E402
 from concurrent.futures import ThreadPoolExecutor  # noqa: E402
 from pathlib import Path  # noqa: E402
 
@@ -1168,6 +1171,31 @@ M = [
                                        'g_session_after_deadline),\n    ("clock_offset_invalid", SES, '
                                        'g_clock_offset_invalid), ')],
      "unlock", "case_session", "session_part_null_refused_B101", ["clock_offset_invalid"], None),
+    # ------------------------------------------------------------- the evaluator closure and the arm registry (C6g5)
+    ("closure_custom_imports", MAN, [('                if "custom_imports" in names:\n                    mods = found',
+                                      '                if "custom_imports" in names:\n                    mods = []')],
+     "paths", "case_evaluator_closure_never_reads_a_test_named_module",
+     "closure_follows_a_config_s_custom_imports_B81", [], None),
+    ("closure_bases", MAN, [('                if "_base_" in names:', "                if False:")],
+     "paths", "case_evaluator_closure_never_reads_a_test_named_module",
+     "closure_follows_a_config_s_bases_in_the_three_roots_B81", [], None),
+    ("closure_bases_in_the_three_roots", MAN, [('if b.split("/")[0] in ("src", "scripts", "configs")\n', "if True\n")],
+     "paths", "case_evaluator_closure_never_reads_a_test_named_module",
+     "closure_follows_a_config_s_bases_in_the_three_roots_B81", [], None),
+    ("closure_arm_teacher_configs", MAN, [(',\n                  "configs/teacher/arms/r1_bema.py", '
+                                           '"configs/teacher/arms/r2_bema_rare.py")', ")")],
+     "paths", "case_evaluator_closure_never_reads_a_test_named_module", "closure_holds_the_arm_teacher_configs_B81",
+     [], None),
+    ("arm_registry_at_s", ENT, [("kd_arms.load_arms(Path(records.src.root) / KD_ARMS_REL)", "kd_arms.load_arms()")],
+     "validate", "case_cut_gates", "arm_registry_absent_at_S_B95", ["unregistered_arm"], None),
+    ("arm_registry_files_committed", ENT, [('        records.read(f"{KD_ARMS_REL}/{Path(spec.path).name}")',
+                                            "        pass")],
+     "validate", "case_cut_gates", "arm_registry_file_uncommitted_at_S_B95", ["record_uncommitted"], None),
+    ("arm_registry_refusal_named", ENT, [("    except kd_arms.ArmSpecError as e:", "    except KeyError as e:")],
+     "validate", "case_cut_gates", "arm_registry_absent_at_S_B95", ["unregistered_arm"], None),
+    ("arm_teacher_first_nonfinite_iteration", REC, [('"first_nonfinite": {"iteration": True},',
+                                                     '"first_nonfinite": True,')],
+     "schema", "case_readers", "arm_teacher_record_keeps_the_first_non_finite_iteration_only_B112", [], None),
 ]
 REFUSAL_EXTRA = ("inventory_invalid", "inventory_sha256_mismatch", "binding_invalid",       # read_inventory's codes
                  "output_location", "output_exists")                                       # the CLI's outputs
@@ -1228,7 +1256,8 @@ def worker(spec: dict) -> dict:
     except Exception as e:  # noqa: BLE001 -- a case that raises fails by name
         raised = f"{type(e).__name__}: {e}"[:300]
     FX.remove_scratch()
-    return {"results": [(n, ok, d[:200]) for n, ok, d in FX.RESULTS], "raised": raised}
+    return {"results": [(n, ok, d[:200]) for n, ok, d in FX.RESULTS], "raised": raised,
+            "tmp": tempfile.gettempdir()}
 
 
 # ================================================================================================ the parent
@@ -1248,16 +1277,27 @@ def scratch_root(edits_by_file: dict, FX) -> Path:
     return root
 
 
-def run_worker(spec: dict) -> dict:
-    env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", PYTHONPATH=str(REPO))
+def run_worker(spec: dict, timeout: int = 900) -> dict:
+    """A worker in a fresh interpreter and its own session, its temp folder one the parent made: a worker killed at
+    its timeout is killed with its children, and the folder is removed however the worker ends (DL-24 #108)."""
+    import scripts.smoke_tman_schema as FX
+    tmp = FX.scratch_dir("tmanworker")
+    env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", PYTHONPATH=str(REPO), TMPDIR=str(tmp))
     try:
-        r = subprocess.run([sys.executable, "-B", str(Path(__file__).resolve()), "--worker", json.dumps(spec)],
-                           capture_output=True, text=True, env=env, cwd=str(REPO), timeout=900)
-    except subprocess.TimeoutExpired:
-        return {"error": "timeout"}
-    lines = [ln for ln in r.stdout.splitlines() if ln.startswith(RESULT_TAG)]
+        with subprocess.Popen([sys.executable, "-B", str(Path(__file__).resolve()), "--worker", json.dumps(spec)],
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env, cwd=str(REPO),
+                              start_new_session=True) as p:
+            try:
+                out, err = p.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                os.killpg(p.pid, signal.SIGKILL)
+                p.communicate()
+                return {"error": "timeout"}
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    lines = [ln for ln in out.splitlines() if ln.startswith(RESULT_TAG)]
     if not lines:
-        return {"error": (r.stderr or r.stdout)[-400:]}
+        return {"error": (err or out)[-400:]}
     return json.loads(lines[-1][len(RESULT_TAG):])
 
 
@@ -1320,6 +1360,25 @@ def case_mutations():
     check("the_repository_files_are_unchanged", files_sha256() == before)
 
 
+def case_worker_scratch():
+    """A worker's scratch is inside the temp folder its parent gave it, and that folder is removed when the worker
+    ends or is killed at its timeout (DL-24 #108). The harness mutates the lane's code only, so this case's own
+    mutations are made by hand (named in the report)."""
+    import scripts.smoke_tman_schema as FX
+    clean = scratch_root({}, FX)
+
+    def given():
+        return [p for p in FX.SCRATCH_DIRS if p.name.startswith("tmanworker_")][-1]
+    out = run_worker({"root": str(clean), "smoke": "schema", "case": "case_readers", "check": None})
+    tmp = given()
+    FX.check("worker_scratch_inside_the_folder_its_parent_gave_B108", out.get("tmp") == str(tmp)
+             and not tmp.exists(), f"{out.get('tmp') or out.get('error')} {tmp} {tmp.exists()}")
+    out = run_worker({"root": str(clean), "smoke": "validate", "case": "case_cut_gates", "check": None}, timeout=3)
+    tmp = given()
+    FX.check("killed_worker_leaves_no_scratch_B108", out == {"error": "timeout"} and not tmp.exists(),
+             f"{out} {tmp.exists()}")
+
+
 def main() -> int:
     if len(sys.argv) == 3 and sys.argv[1] == "--worker":
         print(RESULT_TAG + json.dumps(worker(json.loads(sys.argv[2]))))
@@ -1330,7 +1389,8 @@ def main() -> int:
         if unknown:
             raise SystemExit(f"--only names no mutation: {sorted(unknown)}")
     import scripts.smoke_tman_schema as FX
-    return FX.run_cases("TMAN MUTATIONS SMOKE (lane TMAN, B-1, C6)", (case_mutations,))
+    return FX.run_cases("TMAN MUTATIONS SMOKE (lane TMAN, B-1, C6)", (case_mutations,) if ONLY else (
+        case_mutations, case_worker_scratch))
 
 
 if __name__ == "__main__":

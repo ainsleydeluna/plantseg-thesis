@@ -345,6 +345,22 @@ def case_evaluator_closure_never_reads_a_test_named_module():
                                        "src/stats/artifact.py", hidden]), err or str(sorted(files)))
     check("hash_only_is_a_name_test", M.hash_only(hidden) and M.hash_only("x/TEST_y.py")
           and not M.hash_only("src/stats/artifact.py"))
+    teacher, r1, r2 = ("configs/teacher/segnext_mscan-b_1xb16-adamw-40k_plantseg116-512x512.py",
+                       "configs/teacher/arms/r1_bema.py", "configs/teacher/arms/r2_bema_rare.py")
+    src = ClosureSource({teacher: b"custom_imports = dict(imports=['src.training.teacher_components'])\n",
+                         r1: b"_base_ = ['../base_only.py']\n",
+                         "configs/teacher/base_only.py": b"_base_ = ['mmseg::x/y.py', '../../../outside.py']\n",
+                         "../outside.py": b"", r2: b"_base_ = ['./r1_bema.py']\ncustom_imports = "
+                                                  b"dict(imports=['src.training.arm_components'])\n",
+                         "src/__init__.py": b"", "src/training/__init__.py": b"",
+                         "src/training/teacher_components.py": b"", "src/training/arm_components.py": b""})
+    files = M.evaluator_files(src, "0" * 40)
+    check("closure_holds_the_arm_teacher_configs_B81", r1 in files and r2 in files, str(sorted(files)))
+    check("closure_follows_a_config_s_custom_imports_B81", "src/training/teacher_components.py" in files
+          and "src/training/arm_components.py" in files, str(sorted(files)))
+    check("closure_follows_a_config_s_bases_in_the_three_roots_B81", sorted(files) == sorted(
+        [teacher, r1, r2, "configs/teacher/base_only.py", "src/__init__.py", "src/training/__init__.py",
+         "src/training/teacher_components.py", "src/training/arm_components.py"]), str(sorted(files)))
 
 
 def post_freeze_ptq_append(w, out: Path, base: list) -> None:
