@@ -15,7 +15,8 @@ none contains "test" or ":".
      under a cut arm run (parent_rule, R-12); a model row at another seed (R-14); each role in its place
      (an arm slot at E6-R1, a quant_descriptive slot at E3-R1); B-5b (ruling LREP-B5-RULE-4 R4-5): every
      other arm or arm_teacher slot skipped and listed with its label (K8, an avg teacher, A, F, G, the
-     not-built L slots), the arm teachers at TMAN's teacher-R1 and teacher-R2 at seed 42; R4-2, an AM-23
+     not-built L slots; superseded, a malformed cut, listed_run and measurement: DL-24 R3-05), the arm
+     teachers at TMAN's teacher-R1 and teacher-R2 at seed 42; R4-2, an AM-23
      selection the arm tables read (E6-R1, E6-R2) absent from the export, arm_slot_invalid as before
   V  values: both sides' m and rule_variants' values, Δ and its reading, the 37 as comparators (R-11),
      the per-image mean Δ and its interval (B5-D2), B5-S1's evaluator stages
@@ -374,6 +375,25 @@ def p_skipped():
             and "ARM:latency" not in text and not any(s in md for s in got)), str(got)[:300]
 
 
+def p_skipped_kinds():
+    """R4-5(b) (DL-24 R3-05): a skipped slot is labelled from its own entry, never refused, whatever its
+    kind: E2-L superseded (a run ending TMAN's schema allows, src/tman/schema.py:101-124 at ee5593e) reads
+    "kind 'superseded'", teacher-L's cut without its rule "kind 'cut'", E3-L as a listed_run and E7-L as a
+    measurement no label; the part keeps its eight rows."""
+    def edit(export, binding):
+        entry(export, "E2-L:s42:lambda0.5:80k")["kind"] = "superseded"
+        entry(export, "E3-L:s42:lambda0.5:alpha25:80k")["kind"] = "listed_run"
+        entry(export, "E7-L:s42:list42")["kind"] = "measurement"
+        entry(export, "teacher-L:s42:40k").pop("rule")
+    doc = doc_of(variant("skipped_kinds", edit))
+    got = {s["slot"]: s["label"] for s in doc["skipped"]}
+    want = {"E2-L:s42:lambda0.5:80k": "kind 'superseded'", "E3-L:s42:lambda0.5:alpha25:80k": None,
+            "E7-L:s42:list42": None, "teacher-L:s42:40k": "kind 'cut'"}
+    return (len(doc["rows"]) == 8 and all(got.get(k, "absent") == v for k, v in want.items())
+            and all(got.get(k, "absent") is None for k in ("A:s42:alpha25:80k", "F:s42:alpha25:80k"))), \
+        str(got)[:300]
+
+
 def p_teacher_stages():
     """R4-5(a): the arm teachers are TMAN's teacher-R1 and teacher-R2 at seed 42 (R4-5(d)), X taken from the
     stage name; their artifacts are scored at the evaluator's teacher stage with model_role teacher."""
@@ -714,6 +734,8 @@ def cases():
              p_teacher_stages),
             ("P14", "R4-2: E6-R1's or E6-R2's selection absent: arm_slot_invalid; E6-E2's or E7-E2's: built",
              p_am23_absent),
+            ("P15", "R4-5(b): skipped slots of other kinds labelled from their entries, never refused",
+             p_skipped_kinds),
             ("V1", "both sides' m equal seed_stability.m_of on the artifacts", v_m),
             ("V2", "rule_variants' all-class, GT-present and disease-only values", v_rule_variants),
             ("V3", "Δ = m(candidate) - m(baseline) on all eight rows", v_delta),

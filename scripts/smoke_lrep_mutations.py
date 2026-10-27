@@ -19,10 +19,13 @@ mutant killed by an error of its own shows: DL-24 V2-01). Three kinds:
      case
 
 The cases run on one synthetic world (scripts/lrep_fixtures.py) under a new directory in TMPDIR (left
-in place), and scripts/smoke_lrep_official_profile.py's on its own official world in a sub-directory
-(B-5b); no created path contains "test" or ":". A smoke that keeps a document between its cases (the
-arms, dedup, quant and report smokes' the_doc, am6's cov_doc, the official smoke's inventory) has it
-dropped before a mutated run of one of its cases and restored after, so that the mutant builds its own.
+in place). The mutations that scripts/smoke_lrep_official_profile.py's cases kill run in that smoke's own
+process, on its own official world in another new directory in TMPDIR: main starts it with --mutations,
+it calls official_mutations, and main merges the results it writes, so that only that smoke writes
+dataset.split "test" (R4-6(ii); DL-24 R3-01). No created path contains "test" or ":". A smoke that keeps a
+document between its cases (the arms, dedup, quant and report smokes' the_doc, am6's cov_doc, the
+official smoke's inventory) has it dropped before a mutated run of one of its cases and restored after, so
+that the mutant builds its own.
 
 Run:  TMPDIR=<a scratch directory without 'test'> python -B scripts/smoke_lrep_mutations.py
 """
@@ -32,6 +35,9 @@ import __future__ as _future
 import contextlib
 import copy
 import inspect
+import json
+import os
+import subprocess
 import sys
 import textwrap
 import time
@@ -188,11 +194,16 @@ LOCAL = {"mut:out_dir": m_out_dir, "mut:mde": m_mde, "mut:usage": m_usage,
          "mut:dedup_invalid": m_dedup_invalid, "mut:stage_map": m_stage_map}
 
 
+#: The tag of scripts/smoke_lrep_official_profile.py's cases, which only that smoke's process runs.
+OFFICIAL = "official:"
+
+
 def all_cases() -> dict:
+    """The cases this process runs (never the official smoke's: official_mutations)."""
     out = dict(LOCAL)
     for tag, mod in (("seed", S_SEED), ("strata", S_ST), ("defaults", S_DC), ("am6", S_AM6),
                      ("report", S_RX), ("arms", S_ARM), ("quant", S_QR), ("dedup", S_DS),
-                     ("descriptive", S_LD), ("official", S_OFF)):
+                     ("descriptive", S_LD)):
         for cid, _, fn in mod.cases():
             out[f"{tag}:{cid}"] = fn
     return out
@@ -910,6 +921,18 @@ MUTATIONS = [
     ("S184", "R4-1 item 5: am6's seed-42 rows take their inputs unguarded (a DT run as E7's)",
      [(AM6, "build_am6_tables", [("H.require_official_inputs(stats, {", "(lambda *a: None)(stats, {")])],
      "am6:R11"),
+    # S: B-5b's DL-24 fixes (B5b-F3)
+    ("S185", "R4-1 (e): the reference's re-load refusal (DriverRefusal) escapes the DT pair unnamed",
+     [(H, "dt_pair", [("except (D.DriverRefusal, IngestError, AlignmentError)",
+                       "except (IngestError, AlignmentError)")])], "official:E3"),
+    ("S186", "R4-5(b): a skipped slot of another kind labelled None, not by its kind",
+     [(H, "entry_label", [('return f"kind {kind!r}"', "return None")])], "arms:P15"),
+    ("S187", "R4-5(b): a skipped listed_run labelled by its kind",
+     [(H, "entry_label", [('(*SCORED_ENTRY_KINDS, "listed_run", "measurement")',
+                           '(*SCORED_ENTRY_KINDS, "measurement")')])], "arms:P15"),
+    ("S188", "R4-5(b): a skipped measurement labelled by its kind",
+     [(H, "entry_label", [('(*SCORED_ENTRY_KINDS, "listed_run", "measurement")',
+                           '(*SCORED_ENTRY_KINDS, "listed_run")')])], "arms:P15"),
 ]
 
 
@@ -942,7 +965,55 @@ def setup(root: Path) -> None:
     CTX.world = w
     for mod in (S_SEED, S_ST, S_DC, S_AM6, S_RX, S_ARM, S_QR, S_DS, S_LD):
         mod.setup(root, world=w)
-    S_OFF.setup(LF.new_dir(root, "official"))          # its own official world (R4-1 item 8)
+
+
+def evaluate(mutations, cases) -> list:
+    """The result lines of `mutations`: each killing case run unmutated (K), then each mutation."""
+    results, base = [], {}
+    for k in sorted({m[3] for m in mutations}):
+        ok, detail = run_case(cases[k])
+        base[k] = ok
+        results.append((f"K {k}", "the killing case passes unmutated", ok, detail))
+    for mid, desc, targets, killer in mutations:
+        try:
+            ok, detail = run_mutated(targets, cases[killer], killer)
+        except AssertionError as e:                                    # an anchor that is not unique
+            results.append((mid, f"{desc} -- anchor", False, f"harness: {e}"))
+            continue
+        killed = base[killer] and not ok
+        results.append((mid, f"'{desc}' killed by {killer}", killed, detail))
+    return results
+
+
+def official_mutations(out: Path) -> int:
+    """Run by scripts/smoke_lrep_official_profile.py --mutations <out>, in that smoke's own process: the
+    mutations its cases kill, on its own official world in a new directory in TMPDIR (left in place),
+    their result lines written to `out` as JSON for main (R4-6(ii); DL-24 R3-01)."""
+    root, why = LF.make_root("lrep_official_")
+    if root is None:
+        print(f"ABORT: {why}", file=sys.stderr)
+        return 2
+    print(f"  the official cases' mutations, in smoke_lrep_official_profile's process: temporary root "
+          f"{root} (left in place)", flush=True)
+    S_OFF.setup(root)
+    cases = {f"{OFFICIAL}{cid}": fn for cid, _, fn in S_OFF.cases()}
+    results = evaluate([m for m in MUTATIONS if m[3].startswith(OFFICIAL)], cases)
+    Path(out).write_text(json.dumps(results), encoding="utf-8")
+    return 0
+
+
+def run_official_mutations(root: Path) -> list:
+    """The official:* mutations' result lines, from scripts/smoke_lrep_official_profile.py --mutations
+    (a fresh interpreter, this environment); one failed line if it fails."""
+    out = root / "official_mutations.json"
+    p = subprocess.run([sys.executable, "-B", str(REPO / "scripts" / "smoke_lrep_official_profile.py"),
+                        "--mutations", str(out)], cwd=str(REPO), capture_output=True, text=True,
+                       env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
+    print(p.stdout, end="", flush=True)
+    if p.returncode != 0 or not out.is_file():
+        return [("official", "the official cases' mutations in smoke_lrep_official_profile's process", False,
+                 f"exit {p.returncode}: {(p.stderr or p.stdout)[-400:]}")]
+    return [tuple(r) for r in json.loads(out.read_text(encoding="utf-8"))]
 
 
 def main() -> int:
@@ -953,7 +1024,6 @@ def main() -> int:
         return 2
     print(f"smoke_lrep_mutations: temporary root {root} (left in place)", flush=True)
     setup(root)
-    cases = all_cases()
     results = []
     covered = set()
     for mid, desc, targets, killer in MUTATIONS:
@@ -963,21 +1033,11 @@ def main() -> int:
                     covered.add(old.split('"')[1])
     results.append(("X1", "every refusal code has a mutation", set(H.CODES) == covered,
                     str(sorted(set(H.CODES) ^ covered))))
-    killers = sorted({m[3] for m in MUTATIONS})
-    base = {}
-    for k in killers:
-        ok, detail = run_case(cases[k])
-        base[k] = ok
-        results.append((f"K {k}", "the killing case passes unmutated", ok, detail))
-    for mid, desc, targets, killer in MUTATIONS:
-        try:
-            ok, detail = run_mutated(targets, cases[killer], killer)
-        except AssertionError as e:                                    # an anchor that is not unique
-            ok, detail = True, f"harness: {e}"
-            results.append((mid, f"{desc} -- anchor", False, detail))
-            continue
-        killed = base[killer] and not ok
-        results.append((mid, f"'{desc}' killed by {killer}", killed, detail))
+    got = {r[0]: r for r in evaluate([m for m in MUTATIONS if not m[3].startswith(OFFICIAL)], all_cases())}
+    got.update({r[0]: r for r in run_official_mutations(root)})
+    order = [f"K {k}" for k in sorted({m[3] for m in MUTATIONS})] + [m[0] for m in MUTATIONS]
+    results += [got.pop(k, (k, "no result", False, "not run")) for k in order]
+    results += list(got.values())                  # a failed official process's line
     ids = {m[0] for m in MUTATIONS}
     for cid, desc, ok, detail in results:
         print(f"  [{'PASS' if ok else 'FAIL'}] {cid} {desc}")

@@ -7,11 +7,12 @@ the fixture's synthetic dataset name (never PlantSeg), every artifact official b
 descriptive_test slots' (provisional) -- written through the unmodified evaluator writer into a clean
 fixture repository under a new directory in TMPDIR (left in place), plus edited or re-scored copies of
 one DT artifact, of E3-R1's and of E7's for the refusals. This is the only smoke whose artifacts hold
-dataset.split "test", as a JSON value (R4-6(ii)); no created path or file name contains "test" or ":", and
-no id, key or name contains "test". The export is read under Policy.OFFICIAL through a stand-in for TMAN's
-reader (the stub's checks without its stub mark; B-4 swaps in TMAN's), and a DT slot's reference is the
-family slot of its evaluator stage at seed 42, read as the 37's input is (driver.load_input under
-Policy.OFFICIAL).
+dataset.split "test", as a JSON value (R4-6(ii)), and the only process that writes them: the mutation
+harness runs this smoke's cases mutated in this smoke's own process (--mutations; DL-24 R3-01). No
+created path or file name contains "test" or ":", and no id, key or name contains "test". The export is
+read under Policy.OFFICIAL through a stand-in for TMAN's reader (the stub's checks without its stub mark;
+B-4 swaps in TMAN's), and a DT slot's reference is the family slot of its evaluator stage at seed 42, read
+as the 37's input is (driver.load_input under Policy.OFFICIAL).
 
   G  R4-1 item 2: slot_read over the catalogue's 49 scored slots gives exactly the nine; the DT read is
      reached only through load_slot, which only the arm tables and am6's coverage call; dt_pair only by
@@ -26,8 +27,9 @@ Policy.OFFICIAL).
      artifact; C (c) an undefined primary value AM-5 does not exclude; D (d) a reference that is not the
      37's E7 read officially, another metric implementation (assert_compatible), another AM-5 set
      (am5_pair), a DT-classed slot whose evaluator stage has no family slot among the 37; E (e) a
-     reference whose files changed after its official read, a clean_image_id that differs (align_runs);
-     F (f) a record whose files differ from the artifact's
+     reference whose files changed after its official read, a clean_image_id that differs (align_runs),
+     a reference whose re-load refuses (its summary changed without a rehash: driver.load_input's
+     DriverRefusal; DL-24 R3-04); F (f) a record whose files differ from the artifact's
   K  item 4: an official-capable slot's provisional artifact is refused under Policy.OFFICIAL
      (artifact_unreadable), never read as descriptive
   N  DL-24 R2-01, named for B-4 (a difference is reported, not coded): E5:s42:sel as TMAN's catalogue
@@ -46,7 +48,9 @@ Policy.OFFICIAL).
      P3 the CLI's body (report_extensions.run) with a stand-in for TMAN's reader writes the report with
         every part, Part 1's and B-5's, under Policy.OFFICIAL (B = SMOKE_B); its profile nonofficial
      P4 the DT rows of that report: read, label, the arms' non-official pairs, the markdown
-     P5 the official computations of that report (dedup (ii)-(iii)) under Policy.OFFICIAL with the 37
+     P5 the official computations of that report (dedup (ii)-(iii)) under Policy.OFFICIAL with the 37:
+        the kept rows' Am5Pair on the seven clean contrasts, NI's official block beside the subset's
+        (DL-24 R3-03)
      P6-P8 one mixed run per refusal family, nothing written: a DT artifact that is official
         (descriptive_input_invalid), an official-capable slot's provisional artifact (artifact_unreadable),
         a DT run given to an official computation (descriptive_input_in_official)
@@ -55,6 +59,8 @@ Policy.OFFICIAL).
      P10 the path walk again, after P1-P9 created theirs (DL-24 R2-02)
 
 Run:  TMPDIR=<a scratch directory without 'test'> python -B scripts/smoke_lrep_official_profile.py
+      (scripts/smoke_lrep_mutations.py alone runs it with --mutations <out.json>: the mutations its cases
+      kill, on its own official world, their results written to <out.json>)
 """
 from __future__ import annotations
 
@@ -268,6 +274,15 @@ def setup(root: Path, world=None) -> None:
     CTX.copies["ref_changed"] = D.load_input("E7", D.CLEAN, "runs/heldout/e7_s42_refcopy", w.input_root,
                                              Policy.OFFICIAL)
     F.edit_summary(d, lambda s: {**s, "run": {**s["run"], "run_id": "lrep-e7-s42-refcopy-changed"}})
+    # (e), DL-24 R3-04: another copy read officially, then its summary changed WITHOUT a rehash, so that the
+    # re-load itself refuses (driver.load_input: its payload hashes differ from its MANIFEST.sha256)
+    d = w.input_root / "runs" / "heldout" / "e7_s42_refunhashed"
+    shutil.copytree(w.input_root / src.rel, d)
+    CTX.copies["ref_unhashed"] = D.load_input("E7", D.CLEAN, "runs/heldout/e7_s42_refunhashed", w.input_root,
+                                              Policy.OFFICIAL)
+    s = json.loads((d / "summary.json").read_text(encoding="utf-8"))
+    s["run"]["run_id"] = "lrep-e7-s42-refunhashed-changed"
+    (d / "summary.json").write_text(json.dumps(s, indent=2) + "\n", encoding="utf-8", newline="\n")
 
 
 # --------------------------------------------------------------------------------------------------
@@ -486,6 +501,16 @@ def e_reference_changed():
                                              metric=METRIC_DISEASE_ONLY), "files differ")
 
 
+def e_reference_unloadable():
+    """(e), DL-24 R3-04: a reference whose summary changed after its official read without a rehash: its
+    re-load under Policy.NONOFFICIAL_SMOKE refuses (driver.load_input's DriverRefusal), named at (e)."""
+    ba = dt_read()
+    return refused_at("e", lambda: H.dt_pair(CTX.copies["ref_unhashed"], ba, input_root=CTX.world.input_root,
+                                             metric=METRIC_DISEASE_ONLY),
+                      "DriverRefusal: input 'runs/heldout/e7_s42_refunhashed' (E7, clean): payload hashes "
+                      "differ from its MANIFEST.sha256")
+
+
 def e_clean_id():
     """(e): a DT artifact whose clean_image_id differs from E7's on one image passes (a)-(d) and is refused
     at (e) by align.align_runs."""
@@ -682,15 +707,28 @@ def p_dt_rows():
 
 
 def p_official_computations():
-    """P5: dedup's (ii) and (iii), the eight contrasts and NI, ran on the 37 under Policy.OFFICIAL: the
-    seven clean contrasts carry the Am5Pair of the kept rows (a strict pair), every subset value is
-    finite or a not-evaluable None, and NI's subset check is reported beside the official one."""
+    """P5: dedup's (ii) and (iii), the eight contrasts and NI, ran on the 37 under Policy.OFFICIAL: each of
+    the seven clean contrasts carries the Am5Pair of the kept rows (a strict pair: n_excluded_am5 the AM-5
+    images among the kept ids, n_included the kept rows less those, equal to its n_paired; DL-24 R3-03),
+    every contrast pairs some images, and NI reports the official block (passed, lower_bound,
+    observed_delta, primary_margin) beside the subset's. That every value is finite or None is P3's: the
+    report is written with artifact.canonical_json, which refuses NaN and infinity."""
     p = _part(CTX.e2e["doc"], "dedup")
+    kept = set(CTX.world.dedup["kept_ids"])
+    e1 = reference("E1").run
+    excl = sum(1 for i in e1.am5.excluded_ids if i in kept)
+    incl = sum(1 for i in e1.stats.manifest_ids if i in kept) - excl
     clean = [c for c in p["contrasts"] if c["comparison_id"] != D.ROBUSTNESS_ID]
-    return (len(p["contrasts"]) == 8 and all(c["subset"]["am5"] is not None for c in clean)
+    am5 = [c["subset"]["am5"] for c in clean]
+    ni = p["noninferiority"]
+    return (len(p["contrasts"]) == 8 and len(clean) == 7
+            and all(a is not None and (a["n_excluded_am5"], a["n_included"]) == (excl, incl) for a in am5)
+            and all(c["subset"]["n_paired"] == incl for c in clean)
             and all(c["subset"]["n_paired"] > 0 for c in p["contrasts"])
-            and p["noninferiority"]["subset"]["passed"] in (True, False)), \
-        str([(c["comparison_id"], c["subset"]["n_paired"]) for c in p["contrasts"]])[:300]
+            and set(ni["official"]) == {"passed", "lower_bound", "observed_delta", "primary_margin"}
+            and ni["official"]["passed"] in (True, False) and ni["subset"]["passed"] in (True, False)), \
+        (f"kept AM-5 {excl}, included {incl}; "
+         + str([(c["comparison_id"], c["subset"]["n_paired"]) for c in p["contrasts"]])[:300])
 
 
 def p_mixed_dt():
@@ -802,6 +840,8 @@ def cases():
             ("E1", "descriptive_input_invalid (e): the reference's files changed after its official read",
              e_reference_changed),
             ("E2", "descriptive_input_invalid (e): a clean_image_id that differs (align_runs)", e_clean_id),
+            ("E3", "descriptive_input_invalid (e): the reference's re-load refuses (driver's DriverRefusal)",
+             e_reference_unloadable),
             ("F1", "descriptive_input_invalid (f): a record whose files differ from the artifact's",
              f_record),
             ("K1", "item 4: an official-capable slot's provisional artifact is refused (artifact_unreadable)",
@@ -850,4 +890,10 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    if sys.argv[1:2] == ["--mutations"]:
+        # DL-24 R3-01: the mutation harness's official:* mutations, in this smoke's own process (R4-6(ii));
+        # the harness imports this file as smoke_lrep_official_profile, which is this process's __main__
+        sys.modules["smoke_lrep_official_profile"] = sys.modules["__main__"]
+        import smoke_lrep_mutations
+        raise SystemExit(smoke_lrep_mutations.official_mutations(Path(sys.argv[2])))
     raise SystemExit(main())
