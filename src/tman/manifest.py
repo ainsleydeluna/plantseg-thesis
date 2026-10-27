@@ -913,7 +913,8 @@ def inventory_entries(body: dict, cat, records: R.Records, runs_root=None, appen
     """IF§11.2's entries, one per catalogue slot (kind null without an entry; an appended derived entry as its append
     makes it), and IF§11.3's export-only telemetry: per attempt {run_id, path relative to the input root, sha256 of
     its bytes, never parsed}; a copy-back hash that differs, or names a file that is absent, is refused
-    (completion_source_mismatch)."""
+    (completion_source_mismatch): the entry's own (its last attempt's, a diverged run's), and each a cut entry file
+    records, that file read at the sha256 the entry cites (DL-24 #32)."""
     by_slot = {e["slot"]: e for e in body["entries"]}
     appended = {a["slot"]: a for a in appends}
     out = []
@@ -925,44 +926,62 @@ def inventory_entries(body: dict, cat, records: R.Records, runs_root=None, appen
             continue
         item = appended_entry(appended[slot], e) if slot in appended else dict(e)
         name = telemetry_name(s)
-        run_ids, recorded = [], None
+        run_ids, recorded = [], {}                       # run_id -> the telemetry sha256 a record holds for it
         if e["kind"] in ("scored_run", "default_candidate", "listed_run", "non_finite"):
             run_ids = [a["run_id"] for a in e["attempts"]]
-            recorded = e["telemetry_sha256"] if e["kind"] == "non_finite" else (
+            last = e["telemetry_sha256"] if e["kind"] == "non_finite" else (
                 e["completion"]["sha256"] if e["completion"]["record"] == name else None)
+            recorded = {} if last is None else {run_ids[-1]: last}
         elif e["kind"] == "diverged":
-            run_ids, recorded = [e["run_id"]], e["telemetry_sha256"]
+            run_ids, recorded = [e["run_id"]], {e["run_id"]: e["telemetry_sha256"]}
         elif e["kind"] == "aborted":
             run_ids = list(e["run_ids"])
         elif e["kind"] == "cut":
-            run_ids = list(S.strict_json(records.read(e["entry"]["path"]), e["entry"]["path"],
-                                         code="entry_field").get("run_ids") or [])
+            data = records.read(e["entry"]["path"])
+            if S.sha256_bytes(data) != e["entry"]["sha256"]:
+                raise S.TmanRefused("record_uncommitted", f"{slot}: {e['entry']['path']} is not the cited sha256")
+            cut = S.strict_json(data, e["entry"]["path"], code="entry_field")
+            if not isinstance(cut, dict):
+                raise S.TmanRefused("entry_field", f"{e['entry']['path']}: not a JSON object")
+            run_ids = list(cut.get("run_ids") or [])
+            recorded = {t["run_id"]: t["sha256"] for t in cut.get("telemetry") or []
+                        if isinstance(t, dict) and t.get("path") == f"{t.get('run_id')}/{name}"}
         if name and run_ids and runs_root is not None:
             tel = []
             for rid in run_ids:
                 S.refuse_test_path(f"{rid}/{name}", runs_root)
                 f = Path(runs_root) / rid / name
-                if f.is_file():
-                    tel.append({"run_id": rid, "path": f"{rid}/{name}", "sha256": S.sha256_bytes(f.read_bytes())})
-            last = tel[-1] if tel and tel[-1]["run_id"] == run_ids[-1] else None
-            if recorded is not None and (last is None or last["sha256"] != recorded):
-                raise S.TmanRefused("completion_source_mismatch", f"{slot}: {run_ids[-1]}/{name} is absent or its "
-                                                                  "sha256 is not its record's")
+                sha = S.sha256_bytes(f.read_bytes()) if f.is_file() else None
+                if sha is not None:
+                    tel.append({"run_id": rid, "path": f"{rid}/{name}", "sha256": sha})
+                if rid in recorded and sha != recorded[rid]:
+                    raise S.TmanRefused("completion_source_mismatch", f"{slot}: {rid}/{name} is absent or its "
+                                                                      "sha256 is not its record's")
             item["telemetry"] = tel
         out.append(item)
     return out
 
 
 def build_inventory(doc: dict, manifest_bytes: bytes, records: R.Records, cat, *, runs_root=None, registered=None,
-                    freeze_dl: str | None = None) -> dict:
+                    freeze_record: str | None = None) -> dict:
     """tday-inventory/1 (IF§8; IF§11 v2): manifest_sha256 is the body's canonical sha256 (the freeze record's
-    body_sha256), manifest_file_sha256 the manifest file's; dedup null and binding unbound until B-3."""
+    body_sha256), manifest_file_sha256 the manifest file's; dedup null and binding unbound until B-3. `freeze` names
+    the decision-log row of `freeze_record`, the committed freeze entry file of this body (DL-24 #33, #82); null
+    before the freeze."""
+    from . import entries as E
     body = doc["body"]
     msha = S.canonical_sha256(body)
+    freeze = None
+    if freeze_record is not None:
+        fdoc, fsha = E.read_entry_file(records, freeze_record, "freeze")    # committed, written once, recorded
+        if fdoc["body_sha256"] != msha:
+            raise S.TmanRefused("inventory_invalid", f"{freeze_record}: its body_sha256 {fdoc['body_sha256'][:12]} is "
+                                                     f"not this manifest's {msha[:12]}")
+        freeze = {"dl_row": records.decision_log().recorded_rows_with(fsha)[0], "manifest_sha256": msha}
     return {"schema": S.INVENTORY_FORMAT, "evaluator_commit": body["evaluator"]["commit"],
             "execution_context": body["execution_context"], "manifest_sha256": msha,
             "manifest_file_sha256": S.sha256_bytes(manifest_bytes),
             "models": inventory_rows(body, doc["appends"], cat, registered),
             "entries": inventory_entries(body, cat, records, runs_root, doc["appends"]), "dedup": None,
-            "freeze": {"dl_row": freeze_dl, "manifest_sha256": msha} if freeze_dl else None,
+            "freeze": freeze,
             "binding": {"state": "unbound", "path": None, "sha256": None}}

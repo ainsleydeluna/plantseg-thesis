@@ -1601,8 +1601,11 @@ BINDING_FILE_SPEC = {"format": ("enum", (S.BINDING_FORMAT,)), "references": ("ma
                      "artifacts": ("list", ("obj", S.BINDING_ARTIFACT_FIELDS))}
 
 
-def inventory_errors(doc) -> list[str]:
-    """Every way `doc` breaks tday-inventory/1 (IF§8; IF§11 v2)."""
+def inventory_errors(doc, cat=None) -> list[str]:
+    """Every way `doc` breaks tday-inventory/1 (IF§8; IF§11 v2). With the catalogue `cat`: one entries item per
+    catalogue slot, in its order; each model row of a slot entered with a scored kind, under that slot's file_id,
+    unique by (file_id, precision); the execution context at TB1's fixed values (DL-24 #105, #107). A malformed value
+    is reported, never hashed (#104)."""
     if not isinstance(doc, dict) or sorted(doc) != list(INVENTORY_TOP):
         return [f"the export's keys are not {list(INVENTORY_TOP)}"]
     errs = [] if doc["schema"] == S.INVENTORY_FORMAT else [f"schema {doc['schema']!r}"]
@@ -1612,27 +1615,37 @@ def inventory_errors(doc) -> list[str]:
     ec = doc["execution_context"]
     if not (isinstance(ec, dict) and sorted(ec) == sorted(TUPLE_KEYS)):
         errs.append("execution_context is not TB1's tuple")
+    elif cat is not None and any(ec[k] != v for k, v in TUPLE_FIXED.items()):
+        errs.append(f"execution_context is not at TB1's fixed values {TUPLE_FIXED}")
     if not isinstance(doc["models"], list) or not isinstance(doc["entries"], list):
         return errs + ["models and entries are lists"]
+    kinds = {it.get("slot"): it.get("kind") for it in doc["entries"] if isinstance(it, dict)
+             and isinstance(it.get("slot"), str)}
     seen = set()
     for i, row in enumerate(doc["models"]):
-        errs += S.field_errors(row, ROW_SPEC, f"models[{i}]")
-        if isinstance(row, dict):
-            key = (row.get("slot"), row.get("precision"))
-            if key in seen:
-                errs.append(f"models[{i}]: a second row of {key} (rows are unique by slot and precision)")
-            seen.add(key)
+        bad = S.field_errors(row, ROW_SPEC, f"models[{i}]")
+        errs += bad
+        if isinstance(row, dict) and not bad:
+            for key, what in (((row["slot"], row["precision"]), "slot and precision"),
+                              (("file_id", row["file_id"], row["precision"]), "file_id and precision")):
+                if key in seen:
+                    errs.append(f"models[{i}]: a second row of {key} (rows are unique by {what})")
+                seen.add(key)
             int8 = row.get("precision") in ("int8_ptq", "int8_qat")
             if int8 != (row.get("converted_artifact_sha256") is not None):
                 errs.append(f"models[{i}]: converted_artifact_sha256 is for int8_ptq and int8_qat rows only")
             if row.get("precision") == "qat_fakequant_off" and row.get("cells"):
                 errs.append(f"models[{i}]: a qat_fakequant_off row has no cells")
+            if cat is not None and (row["slot"] not in cat.slots or row["file_id"] != cat.slots[row["slot"]]["file_id"]
+                                    or kinds.get(row["slot"]) not in M.SCORED_KINDS):
+                errs.append(f"models[{i}]: {row['slot']} is not a catalogue slot entered with a scored kind under "
+                            f"its file_id")
     slots = []
     for i, it in enumerate(doc["entries"]):
         if not isinstance(it, dict):
             errs.append(f"entries[{i}] is not an object")
             continue
-        slots.append(it.get("slot"))
+        slots.append(it.get("slot") if isinstance(it.get("slot"), str) else repr(it.get("slot")))
         if "kind" in it and it["kind"] is None:
             errs += S.field_errors({k: v for k, v in it.items() if k != "kind"}, NULL_ENTRY, f"entries[{i}]")
         else:
@@ -1642,6 +1655,8 @@ def inventory_errors(doc) -> list[str]:
                 errs += S.value_errors(it["telemetry"], ("list", TELEMETRY_ITEM), f"entries[{i}].telemetry")
     if len(set(slots)) != len(slots):
         errs.append("entries lists a slot twice")
+    elif cat is not None and slots != list(cat.slots):
+        errs.append("entries are not one item per catalogue slot, in its order (IF§11.2)")
     for k, spec in (("dedup", DEDUP_SPEC), ("freeze", FREEZE_SPEC)):
         if doc[k] is not None:
             errs += S.value_errors(doc[k], spec, k)
@@ -1660,11 +1675,14 @@ def read_inventory(path, *, expect_sha256: str | None = None) -> dict:
     its artifacts records are returned under binding.artifacts."""
     S.refuse_test_path(path)
     p = Path(path)
-    data = p.read_bytes()
+    try:
+        data = p.read_bytes()
+    except OSError as e:
+        raise S.TmanRefused("inventory_invalid", f"{p}: unreadable ({type(e).__name__})") from None
     if expect_sha256 is not None and S.sha256_bytes(data) != expect_sha256:
         raise S.TmanRefused("inventory_sha256_mismatch", f"{p}: sha256 {S.sha256_bytes(data)} != {expect_sha256}")
     doc = S.strict_json(data, str(p), code="inventory_invalid")
-    errs = inventory_errors(doc)
+    errs = inventory_errors(doc, S.load_catalogue((M.CODE_ROOT / S.CATALOGUE_REL).read_bytes(), S.CATALOGUE_REL))
     if errs:
         raise S.TmanRefused("inventory_invalid", f"{p}: " + "; ".join(errs[:6]))
     if doc["binding"]["state"] == "bound":

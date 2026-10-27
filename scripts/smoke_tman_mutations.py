@@ -223,8 +223,7 @@ M = [
     ("completion_block", VAL, [('if st.completion is None or e["completion"] != st.completion.as_entry():',
                                 "if st.completion is None:")],
      "validate", "case_completion_gates", "completion_block_other_line", ["completion_source_mismatch"], None),
-    ("telemetry_copy_back", MAN, [('if recorded is not None and (last is None or last["sha256"] != recorded):',
-                                   "if False:")],
+    ("telemetry_copy_back", MAN, [("recorded = {} if last is None else {run_ids[-1]: last}", "recorded = {}")],
      "validate", "case_inventory", "telemetry_copy_back_differs_IF11_3", ["completion_source_mismatch"], None),
     ("qat_checkpoint_flags", VAL, [('errs += C.qat_flag_errors(x.run_dir(e["run_id"]), rows)', "errs += []")],
      "validate", "case_completion_gates", "qat_checkpoint_flag_disagrees_TB13", ["checkpoint_state_flag"], None),
@@ -662,8 +661,8 @@ M = [
     ("push_not_before_the_unlock_day", VAL, [("if not t_lo <= min(hits) < started:", "if not min(hits) < started:")],
      "unlock", "case_push_evidence", "unlock_pushed_before_its_own_day", ["push_evidence_invalid"], None),
     # -------------------------------------------------------------------------------------- the inventory
-    ("rows_unique", VAL, [("            if key in seen:\n                errs.append",
-                           "            if False:\n                errs.append")],
+    ("rows_unique", VAL, [("                if key in seen:\n                    errs.append",
+                           "                if False:\n                    errs.append")],
      "validate", "case_inventory", "rows_unique_by_slot_and_precision_IF11_1", ["inventory_invalid"], None),
     ("inventory_sha256", VAL, [("if expect_sha256 is not None and S.sha256_bytes(data) != expect_sha256:",
                                 "if False:")],
@@ -790,6 +789,56 @@ M = [
                                                 '    res = V.validate(V.Ctx(mode="draft", manifest_bytes=data, '
                                                 'manifest_path=str(folder / "tday_manifest.json"),')],
      "paths", "case_cli_outputs", "cli_build_refused_writes_nothing_B61", ["entry_kind_unknown"], None),
+    ("inventory_recorded_telemetry_checked", MAN, [("                if rid in recorded and sha != recorded[rid]:",
+                                                    "                if False:")],
+     "validate", "case_inventory", "inventory_launched_cut_telemetry_unlike_its_entry_B32",
+     ["completion_source_mismatch"], None),
+    ("inventory_cut_records_its_telemetry", MAN, [('if isinstance(t, dict) and t.get("path") == '
+                                                   'f"{t.get(\'run_id\')}/{name}"}', "if False}")],
+     "validate", "case_inventory", "inventory_launched_cut_telemetry_unlike_its_entry_B32",
+     ["completion_source_mismatch"], None),
+    ("inventory_cut_entry_at_its_sha256", MAN, [('            if S.sha256_bytes(data) != e["entry"]["sha256"]:',
+                                                 "            if False:")],
+     "validate", "case_inventory", "inventory_cut_entry_of_another_sha256_B32", ["record_uncommitted"], None),
+    ("inventory_freeze_of_this_body", MAN, [('        if fdoc["body_sha256"] != msha:', "        if False:")],
+     "validate", "case_inventory", "inventory_freeze_record_of_another_body_B33", ["inventory_invalid"], None),
+    ("inventory_freeze_record_of_kind_freeze", MAN, [('E.read_entry_file(records, freeze_record, "freeze")',
+                                                      "E.read_entry_file(records, freeze_record)")],
+     "validate", "case_inventory", "inventory_freeze_record_of_another_kind_B82", ["entry_file_invalid"], None),
+    ("inventory_entries_cover_the_catalogue", VAL, [("    elif cat is not None and slots != list(cat.slots):",
+                                                     "    elif False:")],
+     "validate", "case_inventory", "entries_missing_a_catalogue_slot_B105", ["inventory_invalid"], None),
+    ("inventory_rows_of_scored_entries", VAL, [('\n                                    or kinds.get(row["slot"]) '
+                                                "not in M.SCORED_KINDS)", ")")],
+     "validate", "case_inventory", "model_row_of_a_slot_entered_cut_B105", ["inventory_invalid"], None),
+    ("inventory_rows_under_their_file_id", VAL, [('or row["file_id"] != cat.slots[row["slot"]]["file_id"]',
+                                                  "or False")],
+     "validate", "case_inventory", "model_row_file_id_not_its_slot_s_B107", ["inventory_invalid"], None),
+    ("inventory_rows_unique_by_file_id", VAL, [('(("file_id", row["file_id"], row["precision"]), "file_id and '
+                                                'precision")', '(("slot", row["slot"], row["precision"]), "file_id '
+                                                'and precision")')],
+     "validate", "case_inventory", "rows_unique_by_file_id_and_precision_B107", ["inventory_invalid"], None),
+    ("inventory_context_at_tb1_values", VAL, [("    elif cat is not None and any(ec[k] != v for k, v in "
+                                               "TUPLE_FIXED.items()):", "    elif False:")],
+     "validate", "case_inventory", "execution_context_off_tb1_s_values_B107", ["inventory_invalid"], None),
+    ("inventory_reader_reads_the_catalogue", VAL, [("errs = inventory_errors(doc, S.load_catalogue((M.CODE_ROOT / "
+                                                    "S.CATALOGUE_REL).read_bytes(), S.CATALOGUE_REL))",
+                                                    "errs = inventory_errors(doc)")],
+     "validate", "case_inventory", "entries_missing_a_catalogue_slot_B105", ["inventory_invalid"], None),
+    ("inventory_rows_hashed_when_well_formed", VAL, [("        if isinstance(row, dict) and not bad:",
+                                                      "        if isinstance(row, dict):")],
+     "validate", "case_inventory", "model_row_slot_unhashable_B104", ["inventory_invalid"], None),
+    ("inventory_entry_slots_hashable", VAL, [('slots.append(it.get("slot") if isinstance(it.get("slot"), str) else '
+                                              'repr(it.get("slot")))', 'slots.append(it.get("slot"))')],
+     "validate", "case_inventory", "entries_item_slot_an_object_B104", ["inventory_invalid"], None),
+    ("inventory_reader_unreadable_refused", VAL, [('    except OSError as e:\n        raise S.TmanRefused('
+                                                   '"inventory_invalid", f"{p}: unreadable',
+                                                   '    except KeyError as e:\n        raise S.TmanRefused('
+                                                   '"inventory_invalid", f"{p}: unreadable')],
+     "validate", "case_inventory", "read_inventory_absent_export_B106", ["inventory_invalid"], None),
+    ("inventory_checked_before_it_is_written", CLI, [("    if errs:                                                 "
+                                                      "     # a refusal writes nothing (DL-24 #61)", "    if False:")],
+     "paths", "case_cli_outputs", "cli_inventory_refused_writes_nothing_B61", ["inventory_invalid"], None),
     ("out_inside_the_repository", CLI, [("if p == repo or repo in p.parents:", "if p == repo:")],
      "paths", "case_cli_outputs", "out_in_the_repository_at_root_refused", ["output_location"], None),
     ("output_exists_code_of_the_cli", CLI, [('raise S.TmanRefused("output_exists", f"{out} exists: outputs are',

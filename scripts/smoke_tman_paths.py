@@ -602,6 +602,21 @@ def case_cli_outputs():
             with Tracer(MARKER) as t:
                 code = FX.refused_code(V.validate, ctx)
             check(name, code == "test_path" and not t.calls, f"{code} {t.calls[:2]}")
+        no_ec = json.loads(w.data)
+        no_ec["body"]["execution_context"] = None
+        (out / "m_no_context.json").write_bytes(S.json_file_bytes(no_ec))
+        other = w.entry_file("freeze", [], {"body_sha256": "0" * 64, "freeze_date": VW.FREEZE_DAY,
+                                            "source": "schedule"}, nn=30)
+        w.commit({other["path"]: w.files[other["path"]]}, "a freeze record of another body")   # after the log check
+        for name, manifest, extra in (("cli_inventory_refused_writes_nothing_B61", "m_no_context.json", []),
+                                      ("cli_inventory_freeze_record_of_another_body_B33", "m.json",
+                                       ["--freeze-record", other["path"]])):
+            folder = out / f"inv_{name[4:20]}"
+            folder.mkdir()
+            rc, txt = _cli(base + ["inventory", "--manifest", str(out / manifest), "--out", str(folder), "--runs",
+                                   str(w.runs), "--registered-cells", str(out / "cells.json")] + extra)
+            check(name, rc == 2 and "REFUSED [inventory_invalid]" in txt and not any(folder.iterdir()),
+                  txt.strip()[-160:])
         cli_append_history(w, out, base, dirs["append"] / "tday_manifest.json")       # last: it commits an append
         check("the_scratch_repository_is_unchanged", FX.git(w.repo, "status", "--porcelain",
                                                              "--untracked-files=all") == status0 == "")

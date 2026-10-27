@@ -516,6 +516,18 @@ class World:
         return {k: {"kind": "not_run", "dl_rows": [ref["dl"]], "reason": "parent cut", "parent": parent,
                     "parent_record": pref, "entry": {"path": ref["path"], "sha256": ref["sha256"]}} for k in slots}
 
+    def freeze_record(self, body: dict | None = None) -> dict:
+        """The freeze record of `body` (the world's by default), committed once with its RECORDED row: {path,
+        sha256, dl}."""
+        sha = self.S.canonical_sha256(self.doc["body"] if body is None else body)
+        self.freeze_records = getattr(self, "freeze_records", {})
+        if sha not in self.freeze_records:
+            ref = self.entry_file("freeze", [], {"body_sha256": sha, "freeze_date": FREEZE_DAY, "source": "schedule"},
+                                  nn=10 + len(self.freeze_records))
+            self.commit({ref["path"]: self.files[ref["path"]]}, "the freeze record")
+            self.freeze_records[sha] = ref
+        return self.freeze_records[sha]
+
     def launched_fields(self, runs: list, comparator: str = E3S42) -> dict:
         """A launched cut's own fields for `runs` [(slot, run_id)]: the run_ids, their telemetry hashed from the run
         directories, and a comparator with its telemetry (AM-19 item 3(c))."""
@@ -1998,6 +2010,8 @@ def inv_refused(name: str, want: str, path, detail: str = "", **kw) -> None:
         got, msg = None, ""
     except WORLD.S.TmanRefused as e:
         got, msg = e.code, e.detail
+    except Exception as e:  # noqa: BLE001 -- a crash fails the check by name (DL-24 #104)
+        got, msg = type(e).__name__, str(e)
     check(name, got == want and detail in msg, f"got {got} ({msg[:200]})")
 
 
@@ -2011,8 +2025,9 @@ def case_inventory():
     from src.tman import validate as V
     w = WORLD
     S = w.S
+    fr = w.freeze_record()
     inv = M.build_inventory(w.doc, w.data, w.records, w.cat, runs_root=w.runs, registered=PINS.IF6_CELLS,
-                            freeze_dl="DL-300")
+                            freeze_record=fr["path"])
     out = FX.scratch_dir("tmaninv")
     data = S.json_file_bytes(inv)
     (out / "inv.json").write_bytes(data)
@@ -2049,9 +2064,44 @@ def case_inventory():
         w.doc["body"]) and inv["manifest_file_sha256"] == S.sha256_bytes(w.data))
     check("dedup_null_binding_unbound_freeze_row_IF11_5", inv["dedup"] is None and inv["binding"] == {
         "state": "unbound", "path": None, "sha256": None} and inv["freeze"] == {
-        "dl_row": "DL-300", "manifest_sha256": inv["manifest_sha256"]})
+        "dl_row": fr["dl"], "manifest_sha256": inv["manifest_sha256"]})
     check("freeze_null_before_the_freeze", M.build_inventory(w.doc, w.data, w.records, w.cat, runs_root=w.runs,
                                                              registered=PINS.IF6_CELLS)["freeze"] is None)
+
+    def inv_code(doc=None, **kw):
+        """build_inventory's refusal code on `doc` (the world's by default); a crash gives its type name."""
+        doc = w.doc if doc is None else doc
+        try:
+            return FX.refused_code(M.build_inventory, doc, S.json_file_bytes(doc), w.records, w.cat,
+                                   runs_root=w.runs, registered=PINS.IF6_CELLS, **kw)
+        except Exception as e:  # noqa: BLE001 -- a crash fails the check by name
+            return type(e).__name__
+    body = S.canonical_sha256(w.doc["body"])
+    other = w.entry_file("freeze", [], {"body_sha256": "0" * 64, "freeze_date": FREEZE_DAY, "source": "schedule"},
+                         nn=30)
+    undecided = w.entry_file("freeze", [], {"body_sha256": body, "freeze_date": "2026-11-04", "source": "schedule"},
+                             nn=31)                         # bytes of its own: its sha256 only in a DECIDED row
+    w.dl[undecided["dl"]] = ("DECIDED", w.dl[undecided["dl"]][1])
+    w.commit({r["path"]: w.files[r["path"]] for r in (other, undecided)}, "freeze records: another body, undecided")
+    for name, rel, want in (("inventory_freeze_record_of_another_body_B33", other["path"], "inventory_invalid"),
+                            ("inventory_freeze_record_not_recorded_B82", undecided["path"], "dl_row_missing"),
+                            ("inventory_freeze_record_of_another_kind_B82", w.cut_refs["G:s42:80k"]["path"],
+                             "entry_file_invalid")):
+        check(name, inv_code(freeze_record=rel) == want, str(inv_code(freeze_record=rel)))
+    slot, rid = "E2:s43:lambda0.5:80k", "e2_s42_lambda0.5_80k_a1"
+    fields = dict(w.cut_fields("E2-s4344", [slot], "no card", False), **w.launched_fields([(slot, rid)]))
+    bad = copy.deepcopy(fields)
+    bad["telemetry"][0]["sha256"] = "0" * 64
+    cuts = {name: w.committed_cut([slot], f, nn=nn)[1] for name, f, nn in (("good", fields, 40), ("bad", bad, 41))}
+    other_sha = copy.deepcopy(cuts["good"])
+    other_sha[slot]["entry"]["sha256"] = "0" * 64
+    for name, entries, want in (("inventory_launched_cut_telemetry_of_its_entry_B32", cuts["good"], None),
+                                ("inventory_launched_cut_telemetry_unlike_its_entry_B32", cuts["bad"],
+                                 "completion_source_mismatch"),
+                                ("inventory_cut_entry_of_another_sha256_B32", other_sha, "record_uncommitted")):
+        doc = M.build_manifest(w.records, w.cat, dict(w.sources, entries=dict(w.sources["entries"], **entries)),
+                               runs_root=w.runs)
+        check(name, inv_code(doc) == want, str(inv_code(doc)))
     saved = f.read_bytes()
     try:
         f.write_bytes(saved + b"\n")
@@ -2097,8 +2147,23 @@ def case_inventory():
             ("freeze_manifest_sha256_differs_IF11_5", lambda d: d["freeze"].update(manifest_sha256="0" * 64),
              "freeze.manifest_sha256"),
             ("binding_bound_without_its_path", lambda d: d["binding"].update(state="bound"), "binding"),
-            ("binding_unbound_with_a_path", lambda d: d["binding"].update(path="b.json"), "binding")):
+            ("binding_unbound_with_a_path", lambda d: d["binding"].update(path="b.json"), "binding"),
+            ("entries_missing_a_catalogue_slot_B105", lambda d: d["entries"].pop(next(
+                i for i, it in enumerate(d["entries"]) if it["slot"] == "E6:s42:sel")), "one item per catalogue slot"),
+            ("model_row_of_a_slot_entered_cut_B105", lambda d: d["models"][0].update(slot="G:s42:80k",
+                                                                                     file_id="G_s42_80k"),
+             "a scored kind"),
+            ("model_row_file_id_not_its_slot_s_B107", lambda d: d["models"][0].update(file_id="E1_s42_80k_x"),
+             "under its file_id"),
+            ("rows_unique_by_file_id_and_precision_B107", lambda d: d["models"].append(
+                dict(copy.deepcopy(d["models"][0]), slot="G:s42:80k")), "file_id and precision"),
+            ("execution_context_off_tb1_s_values_B107", lambda d: d["execution_context"].update(model_device="cuda"),
+             "fixed values"),
+            ("model_row_slot_unhashable_B104", lambda d: d["models"][0].update(slot=["E1:s42:80k"]), "slot"),
+            ("model_row_precision_unhashable_B104", lambda d: d["models"][0].update(precision=["fp32"]), "precision"),
+            ("entries_item_slot_an_object_B104", lambda d: d["entries"][0].update(slot={"x": 1}), "slot")):
         inv_refused(name, "inventory_invalid", variant(fn), detail=detail)
+    inv_refused("read_inventory_absent_export_B106", "inventory_invalid", out / "absent_inv.json", detail="unreadable")
     art = {"slot": "E1:s42:80k", "precision": "fp32", "scope": "clean", "cell": None, "protocol": "canvas",
            "repo_relative_path": "reports/heldout/E1_s42_80k/clean", "files_sha256": {"summary.json": "a" * 64},
            "checkpoint_sha256": w.entries["E1:s42:80k"]["checkpoint"]["sha256"], "repo_commit": w.E,

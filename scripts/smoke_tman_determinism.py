@@ -41,8 +41,9 @@ def build(w) -> tuple[bytes, bytes]:
     S = w.S
     doc = M.build_manifest(w.records, w.cat, w.sources, runs_root=w.runs)
     data = S.json_file_bytes(doc)
+    fr = w.freeze_record(doc["body"])["path"]                  # committed first: w.records then reads it
     inv = M.build_inventory(doc, data, w.records, w.cat, runs_root=w.runs, registered=PINS.IF6_CELLS,
-                            freeze_dl="DL-300")
+                            freeze_record=fr)
     return data, S.json_file_bytes(inv)
 
 

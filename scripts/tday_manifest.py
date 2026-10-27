@@ -416,8 +416,12 @@ def cmd_inventory(args) -> int:
     data = Path(args.manifest).read_bytes()
     doc = S.strict_json(data, args.manifest, code="manifest_unreadable")
     records = records_at(args)
-    inv = M.build_inventory(doc, data, records, catalogue(records), runs_root=args.runs, registered=registered(args),
-                            freeze_dl=args.freeze_dl)
+    cat = catalogue(records)
+    inv = M.build_inventory(doc, data, records, cat, runs_root=args.runs, registered=registered(args),
+                            freeze_record=args.freeze_record)
+    errs = V.inventory_errors(S.strict_json(S.json_file_bytes(inv), "the inventory", code="inventory_invalid"), cat)
+    if errs:                                                      # a refusal writes nothing (DL-24 #61)
+        raise S.TmanRefused("inventory_invalid", "; ".join(errs[:6]))
     out = write_new(out_folder(args.out, args.root), "tday_inventory.json", S.json_file_bytes(inv))
     V.read_inventory(out)
     print(f"WROTE {out} sha256 {S.sha256_bytes(out.read_bytes())} ({len(inv['models'])} model rows, "
@@ -481,7 +485,7 @@ def parser() -> argparse.ArgumentParser:
     n.add_argument("--out", required=True)
     n.add_argument("--runs")
     n.add_argument("--registered-cells")
-    n.add_argument("--freeze-dl")
+    n.add_argument("--freeze-record", help="the freeze record: its committed entry file (DL-24 #33)")
     return p
 
 

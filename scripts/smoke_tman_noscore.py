@@ -157,8 +157,10 @@ def outputs(w) -> dict:
     for mode in ("freeze", "draft"):
         code, passed, e = w.run(mode, data=data)
         out[mode] = (code, passed)
+    fr = w.freeze_record(doc["body"])                          # committed first: w.records then reads it
+    out["freeze_dl"] = fr["dl"]
     out["inventory"] = S.json_file_bytes(M.build_inventory(doc, data, w.records, w.cat, runs_root=w.runs,
-                                                           registered=PINS.IF6_CELLS, freeze_dl="DL-300"))
+                                                           registered=PINS.IF6_CELLS, freeze_record=fr["path"]))
     ref = E.reference_telemetry(w.runs, "e2_s42_lambda0.5_80k_a1", w.cat.slots["E2:s42:lambda0.5:80k"])
     out["arithmetic"] = S.json_file_bytes(E.cut_arithmetic(80000, [ref], "T", FX.utc(NOW)))
     return out
@@ -272,8 +274,10 @@ def case_mutation_invariance():
         check(f"mutation_{mode}_verdicts_identical", (after["freeze"], after["draft"]) == (base["freeze"],
                                                                                           base["draft"])
               and base["freeze"] == (None, VW.gate_codes("freeze")), f"{after['freeze'][0]}, {after['draft'][0]}")
-        # the export cites the manifest itself: its file and body sha256 follow the files it cites
+        # the export cites the manifest itself: its file and body sha256 follow the files it cites, and its freeze
+        # row is the decision-log row of that body's freeze record
         shas.update(zip(after["hashes"], base["hashes"]))
+        shas[f'"dl_row": "{after["freeze_dl"]}"'] = f'"dl_row": "{base["freeze_dl"]}"'
         diffs = [k for k in ("manifest", "inventory", "arithmetic") if normalised(after[k], shas) != base[k]]
         check(f"mutation_{mode}_manifest_inventory_arithmetic_identical_but_hashes", not diffs, str(diffs))
         if n == 0:
