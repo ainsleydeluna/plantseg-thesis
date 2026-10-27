@@ -1244,6 +1244,9 @@ def g_cut_unentered_at_unlock(x: Ctx):
 
 
 def g_lane_unmet(x: Ctx):
+    """AM-19 item 3(d), decision (iii) (DL-24 #55): the committed lane register lists the TEST-serving lanes, one at
+    least; its sha256 sits in a RECORDED or IMPLEMENTED row (the current-plan line, plan §7); each lane is
+    IMPLEMENTED -- its row naming the lane and its merge commit, an ancestor of S -- or entered as not required."""
     doc, sha = x.records.json(S.LANES_REL, True, code="lane_unmet")
     errs = S.field_errors(doc, LANES_SPEC, S.LANES_REL)
     if errs:
@@ -1251,6 +1254,8 @@ def g_lane_unmet(x: Ctx):
     u = _unlock_doc(x)
     if u is not None and (u["lanes"]["path"], u["lanes"]["sha256"]) != (S.LANES_REL, sha):
         return f"{S.LANES_REL} is not the lane register the unlock entry cites"
+    if not doc["lanes"]:
+        return f"{S.LANES_REL} lists no lane: the lanes serving TEST are listed (plan §7)"
     src = x.records.src
     for lane in doc["lanes"]:
         st = lane["status"]
@@ -1258,8 +1263,13 @@ def g_lane_unmet(x: Ctx):
             if not (st["dl"] and (x.dl.status(st["dl"]) or "").startswith("IMPLEMENTED") and st["merge_commit"]
                     and src.commit_exists(st["merge_commit"]) and src.is_ancestor(st["merge_commit"], "HEAD")):
                 errs.append(f"lane {lane['lane']}: not IMPLEMENTED with a merge commit in S's history")
+            elif not all(n in x.dl.row_text(st["dl"]) for n in (lane["lane"], st["merge_commit"][:7])):
+                errs.append(f"lane {lane['lane']}: its IMPLEMENTED row {st['dl']} does not name the lane and its merge "
+                            "commit")
         elif not st["entry"]:
             errs.append(f"lane {lane['lane']}: not required without its entry")
+    if not x.dl.recorded_rows_with(sha):
+        errs.append(f"{S.LANES_REL}: sha256 {sha[:12]} is in no RECORDED or IMPLEMENTED row (plan §7)")
     return _err(errs)
 
 
@@ -1281,6 +1291,12 @@ def g_not_required_invalid(x: Ctx):
                 covered |= set(cd["slots"])
         if set(lane["serves"]) - covered:
             errs.append(f"lane {lane['lane']}: serves {sorted(set(lane['serves']) - covered)} with no cut entry")
+            continue
+        cuts = {r["path"] for r in nr["cut_entries"]}
+        scored = sorted(k for k in set(lane["serves"]) if (x.by_slot.get(k) or {}).get("kind") != "cut"
+                        or x.by_slot[k]["entry"]["path"] not in cuts)
+        if scored:
+            errs.append(f"lane {lane['lane']}: serves {scored}, not entered cut by its cut entries (DL-24 #55)")
     return _err(errs)
 
 

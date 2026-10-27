@@ -48,18 +48,17 @@ class Unlock:
         ref_arm = w.cut_refs["ARM:latency"]
         nr = w.entry_file("not_required", ["ARM:latency"], {"lane": "L-AM16-ARM", "cut_entries": [
             {"path": ref_arm["path"], "sha256": ref_arm["sha256"]}]})
-        impl = w.row("L-CORR IMPLEMENTED (merge of record)", status="IMPLEMENTED (fixture merge)")
+        impl = w.row(f"L-CORR IMPLEMENTED (merge of record {w.E[:12]})", status="IMPLEMENTED (fixture merge)")
         self.lanes = {"format": "tday_lanes/1", "lanes": [
             {"lane": "L-CORR", "serves": ["E1:s42:80k", "E6:s42:sel"],
              "status": {"kind": "implemented", "dl": impl, "merge_commit": w.E, "entry": None}},
             {"lane": "L-AM16-ARM", "serves": ["ARM:latency"],
              "status": {"kind": "not_required", "dl": None, "merge_commit": None,
                         "entry": {"path": nr["path"], "sha256": nr["sha256"]}}}]}
-        lanes = S.json_file_bytes(self.lanes)
         self.freeze = w.entry_file("freeze", [], {"body_sha256": S.canonical_sha256(w.doc["body"]),
                                                   "freeze_date": VW.FREEZE_DAY, "source": "schedule"})
-        w.commit({nr["path"]: w.files[nr["path"]], S.LANES_REL: lanes,
-                  self.freeze["path"]: w.files[self.freeze["path"]]}, "lanes, not-required entry, freeze record")
+        lanes = self.commit_lanes(self.lanes, "lanes, not-required entry, freeze record",
+                                  {nr["path"]: w.files[nr["path"]], self.freeze["path"]: w.files[self.freeze["path"]]})
         self.unlock = w.entry_file("unlock", [], {
             "manifest": {"path": S.MANIFEST_REL, "sha256": S.sha256_bytes(w.data),
                          "body_sha256": S.canonical_sha256(w.doc["body"]), "appends_sha256": S.canonical_sha256([])},
@@ -90,6 +89,16 @@ class Unlock:
     def commit_manifest(self, doc: dict) -> bytes:
         data = self.S.json_file_bytes(doc)
         self.w.commit({self.S.MANIFEST_REL: data}, "manifest")
+        return data
+
+    def commit_lanes(self, lanes: dict, msg: str, files: dict | None = None, status: str | None = "RECORDED") -> bytes:
+        """`lanes` committed as the lane register (with `files`), its sha256 in a decision-log row of `status` (the
+        current-plan line, plan §7; None: in no row)."""
+        S, w = self.S, self.w
+        data = S.json_file_bytes(lanes)
+        dl = w.row(f"TMAN current plan: lane register {S.LANES_REL} sha256 {S.sha256_bytes(data)}", status) \
+            if status else None
+        w.commit({**(files or {}), S.LANES_REL: data}, msg, rows={dl: w.dl[dl]} if dl else None)
         return data
 
     def ctx(self, mode="unlock", data=None, **kw):
@@ -305,21 +314,54 @@ def case_unlock_gates():
     u.commit_manifest(u.doc)
     lanes = copy.deepcopy(u.lanes)
     lanes["lanes"][0]["serves"].append("E1:s43:80k")
-    w.commit({S.LANES_REL: S.json_file_bytes(lanes)}, "a lane register changed after the unlock entry")
+    u.commit_lanes(lanes, "a lane register changed after the unlock entry")
     expect_gate(u, "lanes_not_the_unlock_entry_s", "lane_unmet", detail="not the lane register the unlock entry")
+    early = dict(unlock_entry=None, now=FX.utc("2026-11-04T09:00:00Z"))    # the unlock gates before the entry exists
+    u.commit_lanes({"format": "tday_lanes/1", "lanes": []}, "a lane register listing no lane")
+    expect_gate(u, "lane_register_listing_no_lane_B55a", "lane_unmet", detail="lists no lane", **early)
+    for name, status in (("lane_register_in_no_decision_log_row", None), ("lane_register_in_a_DECIDED_row", "DECIDED")):
+        lanes = copy.deepcopy(u.lanes)
+        if status:                                      # a register not yet recorded: its bytes are new
+            lanes["lanes"].reverse()
+        else:
+            lanes["lanes"][0]["serves"].reverse()
+        u.commit_lanes(lanes, f"lanes: {name}", status=status)
+        expect_gate(u, name, "lane_unmet", detail="is in no RECORDED or IMPLEMENTED row", **early)
     lanes = copy.deepcopy(u.lanes)
     lanes["lanes"][0]["status"]["dl"] = "DL-63"
-    w.commit({S.LANES_REL: S.json_file_bytes(lanes)}, "a lane not implemented")
-    expect_gate(u, "lane_neither_implemented_nor_not_required", "lane_unmet", unlock_entry=None,
-                now=FX.utc("2026-11-04T09:00:00Z"), detail="lane L-CORR: not IMPLEMENTED")
+    u.commit_lanes(lanes, "a lane not implemented")
+    expect_gate(u, "lane_neither_implemented_nor_not_required", "lane_unmet", detail="lane L-CORR: not IMPLEMENTED",
+                **early)
+    lanes = copy.deepcopy(u.lanes)
+    lanes["lanes"][0]["lane"] = "L-AM8"                 # L-CORR's IMPLEMENTED row and merge commit, cited for L-AM8
+    u.commit_lanes(lanes, "a lane citing another lane's IMPLEMENTED row")
+    expect_gate(u, "implemented_row_of_another_lane_B55b", "lane_unmet", detail="lane L-AM8: its IMPLEMENTED row",
+                **early)
+    lanes = copy.deepcopy(u.lanes)
+    lanes["lanes"][0]["status"]["dl"] = w.row("L-CORR IMPLEMENTED (merge of record 0123456789ab)",
+                                              status="IMPLEMENTED (fixture merge)")
+    u.commit_lanes(lanes, "a lane whose IMPLEMENTED row names another merge commit")
+    expect_gate(u, "implemented_row_naming_another_merge_commit", "lane_unmet",
+                detail="lane L-CORR: its IMPLEMENTED row", **early)
     lanes = copy.deepcopy(u.lanes)
     lanes["lanes"][1]["serves"].append("G:s42:80k")
-    w.commit({S.LANES_REL: S.json_file_bytes(lanes)}, "a not-required lane serving an uncut slot")
-    expect_gate(u, "not_required_lane_serving_an_uncut_slot", "not_required_invalid", unlock_entry=None,
-                now=FX.utc("2026-11-04T09:00:00Z"), detail="serves ['G:s42:80k'] with no cut entry")
+    u.commit_lanes(lanes, "a not-required lane serving an uncut slot")
+    expect_gate(u, "not_required_lane_serving_an_uncut_slot", "not_required_invalid",
+                detail="serves ['G:s42:80k'] with no cut entry", **early)
     ref_arm = w.cut_refs["ARM:latency"]
     arm_cut = w.entry_file("cut", ["ARM:latency"], dict(w.cut_fields("ARM", ["ARM:latency"], "code not merged", False),
                                                         reason="gate not met"), nn=2)
+    e1_cut = w.entry_file("cut", ["E1:s43:80k"], w.cut_fields(None, ["E1:s43:80k"], "gate not met", False))
+    for name, slot, cuts in (("not_required_lane_serving_a_scored_slot", "E1:s43:80k", (ref_arm, e1_cut)),
+                             ("not_required_lane_citing_another_cut_of_its_slot", "ARM:latency", (arm_cut,))):
+        nr = w.entry_file("not_required", sorted({"ARM:latency", slot}), {"lane": "L-AM16-ARM", "cut_entries": [
+            {"path": c["path"], "sha256": c["sha256"]} for c in cuts]}, nn=_nn(w, "not_required"), date=UNLOCK_DAY)
+        lanes = copy.deepcopy(u.lanes)
+        lanes["lanes"][1]["serves"] = sorted({"ARM:latency", slot})
+        lanes["lanes"][1]["status"]["entry"] = {"path": nr["path"], "sha256": nr["sha256"]}
+        u.commit_lanes(lanes, f"lanes: {name}", {c["path"]: w.files[c["path"]] for c in (nr, *cuts)})
+        expect_gate(u, name, "not_required_invalid", detail=f"serves ['{slot}'], not entered cut by its cut entries",
+                    **early)
     for name, cut_ref, status in (("not_required_entry_not_DL_recorded_B55c", ref_arm, "DECIDED"),
                                   ("not_required_cut_entry_not_DL_recorded_B55c", arm_cut, "RECORDED")):
         nr = w.entry_file("not_required", ["ARM:latency"], {"lane": "L-AM16-ARM", "cut_entries": [
