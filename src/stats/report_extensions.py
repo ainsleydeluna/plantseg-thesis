@@ -109,8 +109,10 @@ def fqoff_row(inv: H.Inventory, slot: str, stage: str) -> dict:
 def build_fqoff(stats: H.StatsArtifact, inv: H.Inventory, cells: H.PlannedCells, *,
                 input_root: Path) -> dict:
     """One row per family/per_seed E5/E6 run of record, E6-KD's if the export lists it, and each of
-    AM-23's quant_descriptive QAT slots (E6-E2, E6-R1, E6-R2; B-5 (c))."""
-    from .quant_rows import quant_slots
+    AM-23's quant_descriptive QAT stages (E6-E2, E6-R1, E6-R2; B-5 (c)): its slot's row, or, for a stage
+    the export has no slot for, quant_rows' note. An E6-KD or AM-23 model row is at its entry's stage and
+    seed (R-14), and an AM-23 slot without a model has no bound clean artifact (R-6)."""
+    from .quant_rows import NO_SLOT, QUANT_SEED, quant_slots
     H.check_seed42_identity(inv, cells, stats, stages=H.QAT_STAGES)
     rows, clean, others = [], {}, {}
     targets = [(stage, seed, cells.slots[(stage, seed)], "planned") for stage in H.QAT_STAGES
@@ -118,8 +120,8 @@ def build_fqoff(stats: H.StatsArtifact, inv: H.Inventory, cells: H.PlannedCells,
     kd = sorted({r["slot"] for r in inv.doc["models"] if r.get("stage") == "E6-KD"})
     targets += [("E6-KD", None, slot, "kd") for slot in kd]
     quant = quant_slots(inv)
-    targets += [(stage, None, quant[stage], "quant") for stage in H.QUANT_STAGES
-                if stage in quant and H.stage_spec(stage)[2] == "int8_qat"]
+    targets += [(stage, None, quant.get(stage), "quant") for stage in H.QUANT_STAGES
+                if H.stage_spec(stage)[2] == "int8_qat"]
     for stage, seed, slot, kind in targets:
         out = {"stage": stage, "seed": seed, "slot": slot, "int8_qat": None, "fq_off": None,
                "difference_m": None, "note": None}
@@ -134,13 +136,22 @@ def build_fqoff(stats: H.StatsArtifact, inv: H.Inventory, cells: H.PlannedCells,
                                            policy=stats.policy).loaded)
         else:
             if kind == "quant":
+                if slot is None:
+                    out.update(seed=QUANT_SEED, note=NO_SLOT)
+                    continue
                 st = H.b5_status(inv, slot)
                 if not st.has_model:
+                    if inv.has_record(slot, "int8_qat", "clean", None):
+                        raise H.refusal("artifact_for_missing_run", f"{stage} ({slot!r}) reads {st.label!r} "
+                                                                    "but the binding lists a clean artifact "
+                                                                    "for it (R-6)")
                     out.update(seed=st.seed, note=st.label)
                     continue
             out["seed"] = H.model_row(inv, slot, "int8_qat")["seed"]
-            int8 = H.load_bound(inv, slot=slot, stage=stage, precision="int8_qat", scope="clean",
-                                input_root=input_root, policy=stats.policy).loaded
+            ba = H.load_bound(inv, slot=slot, stage=stage, precision="int8_qat", scope="clean",
+                              input_root=input_root, policy=stats.policy)
+            H.check_row_at_entry(inv, ba)
+            int8 = ba.loaded
         label = f"{stage} {slot}"
         clean[label] = int8
         out["int8_qat"] = _score(int8)

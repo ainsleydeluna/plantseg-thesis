@@ -12,7 +12,8 @@ none contains "test".
   T  the teacher values: R1 and R2 from DL-124's and DL-125's records, flip "not on record"; the record
      refusals (arm_record_invalid)
   P  placement: the eight rows in order and no E6-flip row; the refusals of arm_slot_invalid; a model
-     under a cut arm run (parent_rule, R-12)
+     under a cut arm run (parent_rule, R-12); a model row at another seed (R-14); each role in its place
+     (an arm slot at E6-R1, a quant_descriptive slot at E3-R1)
   V  values: both sides' m and rule_variants' values, Δ and its reading, the 37 as comparators (R-11),
      the per-image mean Δ and its interval (B5-D2), B5-S1's evaluator stages
   L  a candidate without a model: its IF§11.2 label, no value, never a refusal (unless the binding lists
@@ -283,6 +284,32 @@ def p_parent_without_model():
     return all(ok for ok, _ in out), str([d for _, d in out])
 
 
+def p_row_seed():
+    """seed_inconsistent (R-14): E3-R1's fp32 model row at seed 43 while its entry is at 42."""
+    def edit(export, binding):
+        next(r for r in export["models"] if (r["slot"], r["precision"]) == ("E3-R1:s42", "fp32"))["seed"] = 43
+    return refused("seed_inconsistent", lambda: doc_of(variant("e3r1_row_s43", edit)))
+
+
+def p_arm_at_e6():
+    """arm_slot_invalid: E6-R1's selection with role arm (its entry and rows), not quant_descriptive."""
+    def edit(export, binding):
+        entry(export, "E6-R1:s42:sel")["role"] = ["arm"]
+        for r in export["models"]:
+            if r["slot"] == "E6-R1:s42:sel":
+                r["role"] = ["arm"]
+    return refused("arm_slot_invalid", lambda: doc_of(variant("e6r1_role_arm", edit)))
+
+
+def p_quant_at_e3():
+    """quant_slot_invalid (quant_rows' rule): a quant_descriptive slot at E3-R1."""
+    def edit(export, binding):
+        e = copy.deepcopy(entry(export, "E3-R1:s42"))
+        e.update(slot="E3-R1:s42:q", role=["quant_descriptive"])
+        export["entries"].append(e)
+    return refused("quant_slot_invalid", lambda: doc_of(variant("e3r1_quant", edit)))
+
+
 def v_m():
     doc = the_doc()
     from src.stats.seed_stability import m_of
@@ -364,12 +391,20 @@ def v_identity():
 
 
 def _cut_r2(export, binding):
-    """E3-R2 cut (and so E7-R2 not run: parent cut), E6-R2's QAT run cut (DL-138's shape)."""
+    """E3-R2 cut, so its descendants are not run (AM-19 item 4(a); AM-23 item 3(b)): E7-R2 with kind null
+    (its parent's cut) and E6-R2's QAT run not_run."""
     e = entry(export, "E3-R2:s42")
     e.update(kind="cut", **CUT)
     drop_rows(export, binding, "E3-R2:s42")
     entry(export, "E7-R2:s42")["kind"] = None
     drop_rows(export, binding, "E7-R2:s42")
+    entry(export, "E6-R2:s42").update(kind="not_run", reason="parent cut")
+    entry(export, "E6-R2:s42:sel")["kind"] = None
+    drop_rows(export, binding, "E6-R2:s42:sel")
+
+
+def _cut_e6r2(export, binding):
+    """DL-136 and DL-138's shape: E3-R2 complete, E6-R2's QAT run cut."""
     entry(export, "E6-R2:s42").update(kind="cut", **CUT)
     entry(export, "E6-R2:s42:sel")["kind"] = None
     drop_rows(export, binding, "E6-R2:s42:sel")
@@ -379,8 +414,18 @@ def l_cut():
     doc = doc_of(variant("cut_r2", _cut_r2))
     labels = {st: row(doc, "R2", st)["label"] for st in ("E3", "E7", "E6")}
     want = {"E3": f"cut ({CUT['cut_date']}, {CUT['rule']})", "E7": "not run: parent cut",
-            "E6": f"cut ({CUT['cut_date']}, {CUT['rule']})"}
+            "E6": "not run: parent cut"}
     return labels == want, str(labels)
+
+
+def l_cut_e6():
+    """E6-R2's QAT run cut under a complete E3-R2 (DL-138): its row reads the cut; E3-R2's and E7-R2's
+    rows are read."""
+    doc = doc_of(variant("cut_e6r2", _cut_e6r2))
+    r = {st: row(doc, "R2", st) for st in ("E3", "E7", "E6")}
+    return (r["E6"]["label"] == f"cut ({CUT['cut_date']}, {CUT['rule']})" and r["E6"]["candidate"] is None
+            and r["E3"]["candidate"] is not None and r["E7"]["candidate"] is not None
+            and r["E3"]["label"] is None), str({k: v["label"] for k, v in r.items()})
 
 
 def l_not_made():
@@ -502,6 +547,9 @@ def cases():
             ("P7", "arm_slot_invalid: an arm candidate at seed 43", p_seed),
             ("P8", "parent_rule: a model under a cut arm run (E7-R1, E6-R1's selection; R-12)",
              p_parent_without_model),
+            ("P9", "seed_inconsistent: a candidate's model row at another seed (R-14)", p_row_seed),
+            ("P10", "arm_slot_invalid: an arm slot at E6-R1 (E6-X is quant_descriptive)", p_arm_at_e6),
+            ("P11", "quant_slot_invalid: a quant_descriptive slot at E3-R1", p_quant_at_e3),
             ("V1", "both sides' m equal seed_stability.m_of on the artifacts", v_m),
             ("V2", "rule_variants' all-class, GT-present and disease-only values", v_rule_variants),
             ("V3", "Δ = m(candidate) - m(baseline) on all eight rows", v_delta),
@@ -510,12 +558,13 @@ def cases():
             ("V6", "every interval in lrep_descriptive_v1 under its row's contrast id", v_ids),
             ("V7", "B5-S1: E3-X at E3, E7-X at E7, E6-X at itself", v_stage_map),
             ("V8", "R-11: the E3 family identity is checked", v_identity),
-            ("L1", "a cut arm: 'cut', 'not run: parent cut', and E6-X's QAT run cut", l_cut),
+            ("L1", "a cut arm: 'cut', and its descendants 'not run: parent cut' (AM-23 item 3(b))", l_cut),
             ("L2", "'not made: code not merged'", l_not_made),
             ("L3", "a row without a model has no value and no interval, and is not refused", l_no_values),
             ("L4", "the arm teachers' slots and status", l_teacher_status),
             ("L5", "artifact_for_missing_run: a cut arm whose clean artifact is still bound",
              l_record_of_missing),
+            ("L6", "E6-R2's QAT run cut under a complete E3-R2 (DL-138's shape)", l_cut_e6),
             ("D1", "byte-identical JSON on repeated runs", d_deterministic),
             ("D2", "no test or p-value key, no '__' key", d_no_test_keys),
             ("D3", "the banner 'descriptive; outside protocol 1.0.0'", d_banner),

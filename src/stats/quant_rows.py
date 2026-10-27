@@ -20,8 +20,9 @@ the same way.
     another stage or seed, or two slots for one stage, is quant_slot_invalid. A slot without a model
     carries its IF§11.2 label from TMAN's entries (cut, not made, ...), never a refusal, unless the
     binding lists its clean artifact anyway (artifact_for_missing_run, R-6); a stage the export has no
-    slot for reads so ("when they exist", item 5). Their fq_off rows (E6-E2, E6-R1, E6-R2; IF§9) join
-    the extension report's fq_off table (report_extensions.build_fqoff).
+    slot for reads so ("when they exist", item 5), here and in the fq_off table. A candidate's model row
+    is at its entry's stage and seed (R-14). Their fq_off rows (E6-E2, E6-R1, E6-R2; IF§9) join the
+    extension report's fq_off table (report_extensions.build_fqoff).
   * TEST side only: item 6's VAL side goes to the LRB10 block with AM-18 item 3(d)'s, and item 5's
     converted VAL scores read "not on record" (no committed record at M; DL-146 is a draft until the
     records catch-up lands).
@@ -110,6 +111,7 @@ def build_quant_rows(stats: H.StatsArtifact, inv: H.Inventory, cells: H.PlannedC
             continue
         ba = H.load_bound(inv, slot=row["slot"], stage=cand, precision=precision, scope="clean",
                           input_root=input_root, policy=stats.policy)
+        H.check_row_at_entry(inv, ba)
         loaded[f"{cand} {ba.slot}"] = ba
         row["candidate"] = side_values(ba.run.stats, ba.summary)
         row["differences"] = differences(row["candidate"], row["baseline"])

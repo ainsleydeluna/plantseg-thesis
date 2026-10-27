@@ -980,6 +980,17 @@ def load_clean_of_record(inv: Inventory, cells: PlannedCells, stage: str, seed: 
                       input_root=input_root, policy=policy)
 
 
+def check_row_at_entry(inv: Inventory, ba: BoundArtifact) -> None:
+    """R-14 for a slot outside the 21 planned cells (am6's coverage rows, the arms' and AM-23's candidates,
+    the fq_off table's E6-KD and AM-23 rows): the model row read is at its entry's stage and seed
+    (check_rows applies the same rule to the planned cells)."""
+    e = inv.entry(ba.slot)
+    if ba.row["stage"] != e.get("stage") or ba.row["seed"] != e.get("seed"):
+        raise refusal("seed_inconsistent", f"{ba.slot!r}: its {ba.precision} model row is "
+                                           f"({ba.row['stage']}, seed {ba.row['seed']}), its entry "
+                                           f"({e.get('stage')}, seed {e.get('seed')}) (R-14)")
+
+
 # --------------------------------------------------------------------------------------------------
 # 5. cross-artifact checks (R-10)
 # --------------------------------------------------------------------------------------------------
@@ -1382,7 +1393,8 @@ __all__ = [
     "PlannedCells", "check_parentage", "model_row",
     "row_identity", "check_rows", "check_missing_runs", "check_seed42", "planned_cells",
     "binding_record", "cell_condition", "BoundArtifact", "load_bound", "load_clean_of_record",
-    "metrics_sha256", "cross_check", "check_e1_record", "StatsArtifact", "load_stats_artifact",
+    "check_row_at_entry", "metrics_sha256", "cross_check", "check_e1_record", "StatsArtifact",
+    "load_stats_artifact",
     "check_seed42_identity", "TelemetryAttempt", "read_telemetry", "role_slots", "family_inputs",
     "b5_status", "DedupRecord", "read_dedup",
 ]

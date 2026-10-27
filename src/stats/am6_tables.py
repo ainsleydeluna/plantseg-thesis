@@ -178,10 +178,7 @@ def coverage_items(stats: H.StatsArtifact, inv: H.Inventory, rec_slots, *, input
         stage, seed = e.get("stage"), e.get("seed")
         ba = H.load_bound(inv, slot=slot, stage=stage, precision=precision, scope="clean",
                           input_root=input_root, policy=stats.policy)
-        if ba.row["stage"] != stage or ba.row["seed"] != seed:
-            raise H.refusal("seed_inconsistent", f"{slot!r}: its {precision} model row is "
-                                                 f"({ba.row['stage']}, seed {ba.row['seed']}), its entry "
-                                                 f"({stage}, seed {seed}) (R-14)")
+        H.check_row_at_entry(inv, ba)
         loaded[f"{slot} {precision}"] = ba
         items.append(({"slot": slot, "stage": stage, "seed": seed, "roles": list(e["role"]),
                        "kind": e.get("kind"), "label": None, "precision": precision,

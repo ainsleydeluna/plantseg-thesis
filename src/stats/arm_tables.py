@@ -16,7 +16,8 @@ contrasts, read the same way.
     the verified statistics artifact with their identity checked (R-11). An arm or arm_teacher slot or a
     row the tables cannot place -- an arm at a stage other than E3-X or E7-X for the three X, a candidate
     at a seed other than 42, an arm teacher other than R1 and R2, two slots for one (X, stage), or a row
-    the export has no slot for -- is arm_slot_invalid.
+    the export has no slot for -- is arm_slot_invalid; the E6-X candidates follow quant_rows.quant_slots'
+    rule (quant_slot_invalid). A candidate's model row is at its entry's stage and seed (R-14).
   * Each row: both sides' clean dataset-level mIoU, m (Part 1's float64 m, seed_stability.m_of) and
     eligibility.rule_variants' all-class, GT-present and disease-only values; the all-class difference
     Δ = m(candidate) - m(baseline) beside √2·s with B5-D1's reading; the per-image mean Δ on
@@ -143,10 +144,14 @@ def teacher_values(x: str, *, repo=CODE_REPO, records=TEACHER_RECORDS) -> dict:
 
 def arm_slots(inv: H.Inventory) -> tuple[dict, dict]:
     """({(x, stage): slot} of the rows' candidates, {x: slot} of the arm teachers R1 and R2): the `arm`
-    slots at E3-X or E7-X and the `quant_descriptive` slots at E6-R1 and E6-R2 (IF§11.1 :25), at seed 42."""
-    want = {candidate_stage(x, st): (x, st) for x, st in ROWS}
+    slots at E3-X or E7-X, at seed 42, and the `quant_descriptive` slots at E6-R1 and E6-R2 by
+    quant_rows.quant_slots' rule (IF§11.1 :25). Each role has its own place: an arm slot at any other stage
+    (E6-X among them) is arm_slot_invalid, and a quant_descriptive slot outside AM-23's four stages is
+    quant_rows' quant_slot_invalid."""
+    from .quant_rows import quant_slots
+    want = {candidate_stage(x, st): (x, st) for x, st in ROWS if st != "E6"}
     found: dict = {}
-    for slot in dict.fromkeys(H.role_slots(inv, "arm") + H.role_slots(inv, "quant_descriptive")):
+    for slot in H.role_slots(inv, "arm"):
         e = inv.entry(slot)
         stage = e.get("stage")
         if stage in want and e.get("seed") != ARM_SEED:
@@ -154,10 +159,14 @@ def arm_slots(inv: H.Inventory) -> tuple[dict, dict]:
                                                 f"arm tables place seed {ARM_SEED} only (AM-18 item 3(d))")
         if stage in want:
             found.setdefault(want[stage], []).append(slot)
-        elif "arm" in e["role"]:
+        else:
             raise H.refusal("arm_slot_invalid", f"arm slot {slot!r} at stage {stage!r}: the arm tables place "
                                                 f"E3-X and E7-X for X in {list(ARM_XS)} only (K8 is out, "
-                                                "DL-96; avg is out, DL-66)")
+                                                "DL-96; avg is out, DL-66; E6-X is a quant_descriptive slot)")
+    quant = quant_slots(inv)
+    for x, st in ROWS:
+        if st == "E6" and candidate_stage(x, st) in quant:
+            found.setdefault((x, st), []).append(quant[candidate_stage(x, st)])
     teachers: dict = {}
     for slot in H.role_slots(inv, "arm_teacher"):
         stage = inv.entry(slot).get("stage")
@@ -212,6 +221,7 @@ def arm_row(stats: H.StatsArtifact, inv: H.Inventory, x: str, stage: str, slot: 
         return row, None
     ba = H.load_bound(inv, slot=slot, stage=cand, precision=precision, scope="clean", input_root=input_root,
                       policy=stats.policy)
+    H.check_row_at_entry(inv, ba)
     row["candidate"] = side_values(ba.run.stats, ba.summary)
     delta = row["candidate"]["m"] - row["baseline"]["m"]
     row.update(delta_all_class=delta, reading=reading(delta, scale))

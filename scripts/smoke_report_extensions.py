@@ -17,7 +17,8 @@ new directory in TMPDIR (left in place); none contains "test".
   C  each of the nine parts present and populated (the am6 part with (d)'s rows)
   Q  the fq_off table (LRB7): its values, driver.load_input on a qat_fakequant_off artifact, a slot
      without one, E6-KD's row; a row without its record, a row of another seed, the 37's identities;
-     AM-23's quant_descriptive QAT slots' rows and a cut one's label (B-5 (c))
+     AM-23's quant_descriptive QAT slots' rows, a cut one's label, a stage without a slot, an AM-23 row
+     at another seed (R-14) and one without a model still bound (R-6) (B-5 (c))
   M  the MDE part from the committed entry (LRB18)
   N  no regression: report.build_report keeps its three extension points unpopulated, and no LREP
      file imports rehearsal.py or writes report.py's names (K1)
@@ -364,6 +365,43 @@ def q_quant_label():
             and r["fq_off"] is None and r["seed"] == 42), str(r)
 
 
+def q_quant_no_slot():
+    """An AM-23 QAT stage the export has no slot for (E6-R1's selection left out) reads quant_rows' note
+    in the fq_off table, as in the quant part, never dropped (DL-24 B5R2-05)."""
+    def edit(export, binding):
+        export["entries"] = [e for e in export["entries"] if e["slot"] != "E6-R1:s42:sel"]
+        export["models"] = [r for r in export["models"] if r["slot"] != "E6-R1:s42:sel"]
+        binding["artifacts"] = [r for r in binding["artifacts"] if r["slot"] != "E6-R1:s42:sel"]
+    doc = build(inventory=variant("no_e6r1_sel", edit), parts="fqoff")
+    r = [r for r in part(doc, "fqoff")["rows"] if r["stage"] == "E6-R1"]
+    return (len(r) == 1 and r[0]["note"] == "no quant_descriptive slot in the export" and r[0]["slot"] is None
+            and r[0]["int8_qat"] is None and r[0]["fq_off"] is None and r[0]["seed"] == 42), str(r)
+
+
+def q_quant_row_seed():
+    """seed_inconsistent (R-14): E6-R1's selection's model rows (int8_qat and fq_off, one seed) at seed 43
+    while its entry is at 42."""
+    def edit(export, binding):
+        for r in export["models"]:
+            if r["slot"] == "E6-R1:s42:sel":
+                r["seed"] = 43
+    return refused("seed_inconsistent",
+                   lambda: build(inventory=variant("e6r1_rows_s43", edit), parts="fqoff"))
+
+
+def q_quant_bound_without_model():
+    """artifact_for_missing_run (R-6): E6-R1's QAT run cut and its selection without a model, while the
+    binding still lists the selection's clean artifact."""
+    def edit(export, binding):
+        e = next(e for e in export["entries"] if e["slot"] == "E6-R1:s42")
+        e.update(kind="cut", cut_date="2026-10-24", rule="AM-22 item 2(a): the launch cutoff",
+                 comparator=None)
+        next(e for e in export["entries"] if e["slot"] == "E6-R1:s42:sel")["kind"] = None
+        export["models"] = [r for r in export["models"] if r["slot"] != "E6-R1:s42:sel"]
+    return refused("artifact_for_missing_run",
+                   lambda: build(inventory=variant("e6r1_cut_bound", edit), parts="fqoff"))
+
+
 def q_seed42_identity():
     """--parts fqoff alone checks the 37's E5 and E6 identities against the family slots (R-11;
     R1r1-01)."""
@@ -669,6 +707,12 @@ def cases():
             ("Q8", "B-5 (c): the quant_descriptive QAT slots' fq_off rows beside their int8_qat", q_quant),
             ("Q9", "B-5 (c): a cut quant_descriptive QAT run reads its label in the fq_off table",
              q_quant_label),
+            ("Q10", "B-5 (c): an AM-23 QAT stage the export has no slot for reads quant_rows' note",
+             q_quant_no_slot),
+            ("Q11", "B-5 (c): seed_inconsistent for an AM-23 model row at another seed (R-14)",
+             q_quant_row_seed),
+            ("Q12", "B-5 (c): artifact_for_missing_run for an AM-23 slot without a model, still bound (R-6)",
+             q_quant_bound_without_model),
             ("M1", "the MDE label line, and share_ties and n_zero per pair from the committed entry (LRB18)",
              m_mde),
             ("N1", "report.build_report keeps three unpopulated extension points (K1)", n_report_points),
