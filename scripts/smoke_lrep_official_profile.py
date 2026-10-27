@@ -29,6 +29,21 @@ Policy.OFFICIAL).
      (artifact_unreadable), never read as descriptive
   X  the world: its artifacts' dataset name, split value and statuses; no created path contains 'test'
      or ':'
+  P  R4-1 item 8, the official profile end to end (run by main only, after the cases above; the mutation
+     harness runs the cases, never this section):
+     P1 the official driver (scripts/run_stats.py --mode official --synthetic-inputs, as
+        smoke_stats_official_fullsize runs it, at B = SMOKE_B) writes the statistics artifact of the
+        world's 37, read back under Policy.OFFICIAL, its status nonofficial (the TEST-manifest binding
+        is unbound: driver.py:540-545)
+     P2 LREP's CLI (scripts/report_extensions.py) on it stops at the first refusal, stub_reader_official
+        (named with file:line; B-4's reader swap), and writes nothing
+     P3 the CLI's body (report_extensions.run) with a stand-in for TMAN's reader writes the report with
+        every part, Part 1's and B-5's, under Policy.OFFICIAL (B = SMOKE_B); its profile nonofficial
+     P4 the DT rows of that report: read, label, the arms' non-official pairs, the markdown
+     P5 the official computations of that report (dedup (ii)-(iii)) under Policy.OFFICIAL with the 37
+     P6-P8 one mixed run per refusal family, nothing written: a DT artifact that is official
+        (descriptive_input_invalid), an official-capable slot's provisional artifact (artifact_unreadable),
+        a DT run given to an official computation (descriptive_input_in_official)
 
 Run:  TMPDIR=<a scratch directory without 'test'> python -B scripts/smoke_lrep_official_profile.py
 """
@@ -37,9 +52,11 @@ from __future__ import annotations
 import ast
 import copy
 import dataclasses
+import inspect
 import json
 import os
 import shutil
+import subprocess
 import sys
 import time
 import traceback
@@ -57,17 +74,27 @@ import lrep_fixtures as LF                                               # noqa:
 import stats_fixtures as F                                               # noqa: E402
 from src.eval.adapters import DATASET_NAME                               # noqa: E402
 from src.eval.evaluate import Condition                                  # noqa: E402
+from src.stats import artifact as A                                      # noqa: E402
+from src.stats import dedup_subset as DS                                 # noqa: E402
 from src.stats import driver as D                                        # noqa: E402
 from src.stats import heldout_inputs as H                                # noqa: E402
+from src.stats import report_extensions as RX                            # noqa: E402
 from src.stats.align import METRIC_DISEASE_ONLY                          # noqa: E402
 from src.stats.ingest import Policy                                      # noqa: E402
 
 #: R4-6(ii): the official world's dataset.split, a JSON value only (never a path, file name, id or key).
 TEST_SPLIT = "test"
-CTX = types.SimpleNamespace(world=None, paths={}, copies={}, refs={}, inv=None)
+CTX = types.SimpleNamespace(world=None, paths={}, copies={}, refs={}, inv=None, e2e={})
 DT_SLOT = "E7-R1:s42:list42"                     # the DT slot the refusal cases edit (role arm, int8_ptq)
 DT_PRECISION = "int8_ptq"
 N_INCLUDED = LF.OFFICIAL_N - LF.OFFICIAL_K      # the rows a DT run keeps under the official AM-5 rule
+#: The end-to-end section's B (the driver's tasks and B-5's intervals): at n = 1561 the production B of
+#: dedup's 32 recomputed tasks would take hours, so the report is nonofficial on this count too.
+SMOKE_B = 200
+JOBS = max(1, min(4, os.cpu_count() or 1))
+STATS_RUN_ID = "lrep-official-0001"
+#: R4-1 item 6, typed from the ruling: what every row built from a DT run prints.
+DT_LABEL = "descriptive TEST; provisional artifact (the evaluator scores this stage descriptively only)"
 
 
 def tman_reader(path, *, expect_sha256=None):
@@ -455,6 +482,195 @@ def x_no_test_path():
     return not bad, str(bad[:3])
 
 
+# --------------------------------------------------------------------------------------------------
+# P: the official profile end to end (R4-1 item 8; main only)
+# --------------------------------------------------------------------------------------------------
+def cli(script: str, *args, timeout=None):
+    """scripts/<script> in a fresh interpreter: (exit code, stdout, stderr)."""
+    p = subprocess.run([sys.executable, "-B", str(REPO / "scripts" / script), *map(str, args)],
+                       cwd=str(REPO), capture_output=True, text=True, timeout=timeout,
+                       env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
+    return p.returncode, p.stdout, p.stderr
+
+
+def raise_site(fn, code: str) -> str:
+    """repo-relative file:line of the `raise refusal("<code>"` site in `fn`."""
+    lines, first = inspect.getsourcelines(fn)
+    i = next(k for k, line in enumerate(lines) if f'raise refusal("{code}"' in line)
+    return f"{Path(inspect.getsourcefile(fn)).resolve().relative_to(REPO).as_posix()}:{first + i}"
+
+
+def e2e_stats():
+    """The official world's statistics artifact (written once by P1)."""
+    return CTX.e2e["stats_path"]
+
+
+def rx_run(name, inventory=None):
+    """The CLI's body under Policy.OFFICIAL with the stand-in reader, into a new out-dir <root>/<name>."""
+    w = CTX.world
+    from report_extensions import default_mde_entry                     # the CLI's own default
+    return RX.run(stats_artifact=e2e_stats(), inventory=inventory or w.inventory_path, out_dir=w.root / name,
+                  repo_root=w.input_root, synthetic=True, strata=w.strata_path, mde_entry=default_mde_entry(),
+                  parts=None, reader=tman_reader, B=SMOKE_B)
+
+
+def p_driver():
+    """P1: scripts/run_stats.py --mode official --confirm-official-test-analysis --synthetic-inputs on the
+    world's 37 (B = SMOKE_B, --jobs as fullsize's): exit 0; the artifact verifies with its inputs and reads
+    under Policy.OFFICIAL; its status nonofficial, warnings synthetic_input_data and
+    bootstrap_replicates_nonproduction (the TEST-manifest binding is unbound, driver.py:540-545)."""
+    w = CTX.world
+    LF.write_strata(w)
+    lst = F.write_input_list(w.root / "inputs.json", None, entries=w.entries37)
+    t0 = time.time()
+    code, so, se = cli("run_stats.py", "--mode", "official", "--confirm-official-test-analysis",
+                       "--synthetic-inputs", "--inputs", lst, "--out-dir", w.root / "stats", "--run-id",
+                       STATS_RUN_ID, "--repo-root", w.input_root, "--B", SMOKE_B, "--jobs", JOBS)
+    secs = time.time() - t0
+    if code != 0:
+        return False, f"exit {code}: {se[-500:]}"
+    lines = dict(ln.split(": ", 1) for ln in so.splitlines()
+                 if ln.startswith(("ARTIFACT: ", "UNMET_OFFICIAL: ")))
+    CTX.e2e["stats_path"] = Path(lines["ARTIFACT"])
+    st = H.load_stats_artifact(e2e_stats(), w.input_root)
+    return (st.policy is Policy.OFFICIAL and st.profile == "nonofficial"
+            and set(st.family["warnings"]) == {A.W_SYNTHETIC, A.W_B}
+            and st.views.am5_excluded_count == LF.OFFICIAL_K), \
+        f"{secs:.0f} s; warnings {st.family['warnings']}; unmet {lines.get('UNMET_OFFICIAL')}"
+
+
+def p_cli_first_refusal():
+    """P2: LREP's CLI on the official artifact (--synthetic-inputs --repo-root) reads the export with LREP's
+    stub, which Policy.OFFICIAL refuses: exit 2, stub_reader_official, nothing written. The first refusal
+    of the official profile, named for B-4 (the reader swap) with its file:line."""
+    w = CTX.world
+    out = w.root / "rx_cli"
+    code, so, se = cli("report_extensions.py", "--stats-artifact", e2e_stats(), "--inventory",
+                       w.inventory_path, "--out-dir", out, "--repo-root", w.input_root, "--synthetic-inputs",
+                       "--strata", w.strata_path)
+    site = raise_site(H.open_inventory, "stub_reader_official")
+    CTX.e2e["first_refusal"] = site
+    return (code == 2 and "RESULT: REFUSED (stub_reader_official); nothing written" in so
+            and "REFUSED stub_reader_official" in se and not out.exists()), \
+        f"exit {code}; first refusal at {site}"
+
+
+def p_report():
+    """P3: the CLI's body (report_extensions.run) with the stand-in for TMAN's reader writes the report with
+    every part (seed, strata, defaults, am6, fqoff, mde, arms, dedup, quant), the statistics artifact read
+    under Policy.OFFICIAL and the export by the stand-in; its profile nonofficial, unmet naming the
+    statistics artifact and the non-production B (and whatever else the checkout's state gives)."""
+    t0 = time.time()
+    out, doc = rx_run("rx_official")
+    CTX.e2e["doc"], CTX.e2e["out"] = doc, out
+    unmet = {u[0] for u in doc["unmet_official_conditions"]}
+    files = sorted(p.name for p in out.iterdir())
+    return ([p["part"] for p in doc["parts"]] == list(RX.PARTS) and doc["profile"] == "nonofficial"
+            and doc["statistics_artifact"]["policy"] == "official"
+            and doc["statistics_artifact"]["split"] == TEST_SPLIT
+            and doc["inventory"]["reader"].endswith("tman_reader")
+            and {"statistics_artifact_nonofficial", "bootstrap_replicates_nonproduction"} <= unmet
+            and files == sorted(RX.OUT_FILES)), f"{time.time() - t0:.0f} s; unmet {sorted(unmet)}"
+
+
+def _part(doc, name):
+    return next(p for p in doc["parts"] if p["part"] == name)
+
+
+def p_dt_rows():
+    """P4: in that report the arms' E7-X rows read descriptive_test, print DT_LABEL and pair under
+    Policy.NONOFFICIAL_SMOKE on 1561 - 7 images; E3-X and E6-X read official and pair under Policy.OFFICIAL;
+    am6's coverage reads the nine DT slots descriptive_test and the others official; dedup's (i) rows of
+    E7-X read descriptive_test; the markdown prints DT_LABEL once per DT row (3 + 9 + 3)."""
+    doc = CTX.e2e["doc"]
+    arms = _part(doc, "arms")["rows"]
+    am6 = [r for r in _part(doc, "am6")["rows"] if "read" in r]
+    dedup = _part(doc, "dedup")["models"]
+    arm_ok = all((r["read"], r["read_label"], r["per_image"]["pair_policy"], r["per_image"]["n_paired"]) ==
+                 (("descriptive_test", DT_LABEL, "nonofficial_smoke", N_INCLUDED) if r["stage"] == "E7" else
+                  ("official", None, "official", N_INCLUDED)) for r in arms)
+    am6_dt = sorted(r["slot"] for r in am6 if r["read"] == "descriptive_test")
+    dedup_dt = sorted(m["slot"] for m in dedup if m["read"] == "descriptive_test")
+    md = (CTX.e2e["out"] / "report_extensions.md").read_text(encoding="utf-8")
+    return (arm_ok and len(arms) == 8 and am6_dt == sorted(LF.DT_SLOTS) and len(am6) == 28
+            and all(r["read_label"] == (DT_LABEL if r["slot"] in LF.DT_SLOTS else None) for r in am6)
+            and dedup_dt == ["E7-R1:s42:list42", "E7-R2:s42:list42", "E7-flip:s42:list42"]
+            and md.count(DT_LABEL) == 15), f"am6 DT {am6_dt}; dedup DT {dedup_dt}; md {md.count(DT_LABEL)}"
+
+
+def p_official_computations():
+    """P5: dedup's (ii) and (iii), the eight contrasts and NI, ran on the 37 under Policy.OFFICIAL: the
+    seven clean contrasts carry the Am5Pair of the kept rows (a strict pair), every subset value is
+    finite or a not-evaluable None, and NI's subset check is reported beside the official one."""
+    p = _part(CTX.e2e["doc"], "dedup")
+    clean = [c for c in p["contrasts"] if c["comparison_id"] != D.ROBUSTNESS_ID]
+    return (len(p["contrasts"]) == 8 and all(c["subset"]["am5"] is not None for c in clean)
+            and all(c["subset"]["n_paired"] > 0 for c in p["contrasts"])
+            and p["noninferiority"]["subset"]["passed"] in (True, False)), \
+        str([(c["comparison_id"], c["subset"]["n_paired"]) for c in p["contrasts"]])[:300]
+
+
+def p_mixed_dt():
+    """P6: the report on an export whose E7-R1 record names an official DT artifact (everything else as P3):
+    descriptive_input_invalid at (b), nothing written."""
+    out = CTX.world.root / "rx_mixed_dt"
+    ok, detail = refused("descriptive_input_invalid", lambda: rx_run(
+        "rx_mixed_dt", variant("dt_official", lambda e, b: point_record(b, DT_SLOT, DT_PRECISION,
+                                                                        CTX.copies["dt_official"]))))
+    return ok and ": (b) " in detail and not out.exists(), detail
+
+
+def p_mixed_provisional():
+    """P7: the report on an export whose E3-R1 record names a provisional artifact: artifact_unreadable
+    (item 4: no downgrade path), nothing written."""
+    out = CTX.world.root / "rx_mixed_provisional"
+    slot = "E3-R1:s42:lambda0.5:alpha25:80k"
+    ok, detail = refused("artifact_unreadable", lambda: rx_run(
+        "rx_mixed_provisional", variant("e3r1_provisional", lambda e, b: point_record(
+            b, slot, "fp32", CTX.copies["e3r1_provisional"]))))
+    return ok and not out.exists(), detail
+
+
+class _Injected(H.StatsArtifact):
+    """The official statistics artifact (its family, views and the 37 unchanged), except that its clean
+    input of one stage is another run: the injection R4-1 item 5 guards against."""
+    def clean(self, stage):
+        return CTX.e2e.get("injected", {}).get(stage) or H.StatsArtifact.clean(self, stage)
+
+
+def p_mixed_injected():
+    """P8: the duplicate-free part on the official statistics artifact with E7's clean input replaced by
+    E7-R1's DT run (read by load_slot under Policy.OFFICIAL, through the DT read): refused where the eight
+    contrasts and NI take their inputs (descriptive_input_in_official)."""
+    w = CTX.world
+    st = H.load_stats_artifact(e2e_stats(), w.input_root)
+    inv = inventory()
+    ba = H.load_slot(st, inv, slot=DT_SLOT, stage="E7-R1", precision=DT_PRECISION, input_root=w.input_root)
+    CTX.e2e["injected"] = {"E7": ba.loaded}
+    fake = _Injected(**{f.name: getattr(st, f.name) for f in dataclasses.fields(st)})
+    ok, detail = refused("descriptive_input_in_official", lambda: DS.build_dedup(
+        fake, inv, H.planned_cells(inv), input_root=w.input_root, B=SMOKE_B))
+    return (ok and ba.read == H.READ_DESCRIPTIVE_TEST and ba.run.policy is Policy.NONOFFICIAL_SMOKE
+            and "['E7 clean']" in detail), detail
+
+
+def profile_cases():
+    return [("P1", "the official driver writes the 37's statistics artifact (Policy.OFFICIAL, nonofficial)",
+             p_driver),
+            ("P2", "LREP's CLI stops at its first refusal: stub_reader_official (B-4), nothing written",
+             p_cli_first_refusal),
+            ("P3", "the CLI's body with a stand-in reader writes every part under Policy.OFFICIAL", p_report),
+            ("P4", "the report's DT rows: read, label, non-official pairs, the markdown", p_dt_rows),
+            ("P5", "dedup's eight contrasts and NI ran on the 37 under Policy.OFFICIAL",
+             p_official_computations),
+            ("P6", "mixed run: an official DT artifact -> descriptive_input_invalid, nothing written",
+             p_mixed_dt),
+            ("P7", "mixed run: an official-capable slot's provisional artifact -> artifact_unreadable",
+             p_mixed_provisional),
+            ("P8", "mixed run: a DT run given to an official computation -> descriptive_input_in_official",
+             p_mixed_injected)]
+
+
 def cases():
     return [("G1", "R4-1 item 2: slot_read over the catalogue's 49 scored slots gives exactly the nine",
              g_dt_set),
@@ -506,6 +722,13 @@ def main() -> int:
         print(f"  [{'PASS' if ok else 'FAIL'}] {cid} {desc}")
         if not ok:
             print(f"         {detail[:600]}")
+    print("  -- the official profile end to end (R4-1 item 8)", flush=True)
+    for cid, desc, fn in profile_cases():
+        t1 = time.time()
+        ok, detail = run_case(fn)
+        results.append((cid, desc, ok, detail))
+        print(f"  [{'PASS' if ok else 'FAIL'}] {cid} {desc} ({time.time() - t1:.0f} s)")
+        print(f"         {detail[:600]}", flush=True)
     good = sum(1 for r in results if r[2])
     verdict = "LREP OFFICIAL PROFILE OK" if good == len(results) else "LREP OFFICIAL PROFILE FAILED"
     print(f"\nRESULT: {verdict} ({good}/{len(results)}); {time.time() - t0:.0f} s")

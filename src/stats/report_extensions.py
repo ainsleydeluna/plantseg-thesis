@@ -405,9 +405,11 @@ def write_report(out_dir, doc: dict) -> Path:
 
 
 def run(*, stats_artifact, inventory, out_dir, repo_root=None, synthetic: bool = False, strata=None,
-        mde_entry=None, parts=None, reader=None, expect_inventory_sha256=None):
+        mde_entry=None, parts=None, reader=None, expect_inventory_sha256=None, B: int = PRODUCTION_B):
     """The CLI's body (scripts/report_extensions.py): --repo-root only with --synthetic-inputs (P16's
-    rule, as report.run_report); the out-dir is checked before anything is read."""
+    rule, as report.run_report); the out-dir is checked before anything is read. The CLI passes no
+    reader (LREP's stub until B-4) and B-5's B = PRODUCTION_B; scripts/smoke_lrep_official_profile.py
+    passes a stand-in for TMAN's reader and a smaller B (B-5b, R4-1 item 8)."""
     from .artifact import CODE_REPO, W_SYNTHETIC
     if repo_root is not None and not synthetic:
         raise H.refusal("usage_invalid", "--repo-root is accepted only with --synthetic-inputs (P16)")
@@ -419,7 +421,7 @@ def run(*, stats_artifact, inventory, out_dir, repo_root=None, synthetic: bool =
                             Path(mde_entry).parent if mde_entry is not None else None])
     doc = build_report(stats_artifact=stats_artifact, inventory=inventory, input_root=input_root,
                        strata=strata, mde_entry=mde_entry, parts=parts, reader=reader,
-                       expect_inventory_sha256=expect_inventory_sha256)
+                       expect_inventory_sha256=expect_inventory_sha256, B=B)
     if synthetic and W_SYNTHETIC not in doc["statistics_artifact"]["warnings"]:
         raise H.refusal("usage_invalid", "--synthetic-inputs was declared but the statistics artifact "
                                          "does not carry synthetic_input_data")
