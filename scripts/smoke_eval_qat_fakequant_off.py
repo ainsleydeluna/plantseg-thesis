@@ -932,8 +932,8 @@ def c14_finalize_unreadable_file():
     """A finalize record beside the selection that cannot be read is code 14's "unreadable" (DL-24 R1-F2)."""
     fb = forge(bound("run_e5"), "fin_noread", finalize=finalize_record)
     with unreadable(fb.ev / SA.QAT_FINALIZE_NAME):
-        ok, detail = refused("fqoff_finalize_disagrees", bind, fb)
-    return ok and "unreadable" in detail, detail
+        code, msg = code_of(bind, fb)
+    return code == "fqoff_finalize_disagrees" and msg.endswith("['unreadable']"), f"{code}: ...{msg[-100:]}"
 
 
 # ---- 15 fqoff_not_the_winner
@@ -1785,6 +1785,20 @@ def hygiene_repository_untouched():
     return verdict == "unchanged", verdict
 
 
+@case("hygiene")
+def hygiene_temp_removed():
+    """A run of this smoke removes its temp directory when it ends (DL-24 R4-1): one cheap case in a child process
+    whose temp root is a fresh folder here, left empty after."""
+    import subprocess
+    root = TMP / "child_tmp"
+    root.mkdir()
+    env = {**os.environ, "TMPDIR": str(root), "PYTHONDONTWRITEBYTECODE": "1"}
+    p = subprocess.run([sys.executable, "-B", str(Path(__file__).resolve()), "--only", "stages_precision_in_schema"],
+                       capture_output=True, text=True, env=env, cwd=str(REPO), timeout=900, stdin=subprocess.DEVNULL)
+    left = sorted(n for n in os.listdir(root) if n.startswith("smoke_fqoff_"))
+    return p.returncode == 0 and not left, f"rc {p.returncode}; left {left}"
+
+
 # ================================================================ main
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -1825,6 +1839,7 @@ def main(argv=None) -> int:
     for name, ok, detail in results:
         print(f"  {name:58}: {'PASS' if ok else 'FAIL'}  {detail}")
     passed = sum(1 for _, ok, _ in results if ok)
+    shutil.rmtree(TMP, ignore_errors=True)               # its temp directory (DL-24 R4-1); a cache stays
     print(f"\n[time] {time.time() - t0:.0f}s")
     print(f"RESULT: {'PASS' if passed == len(results) and results else 'FAIL'} ({passed}/{len(results)})")
     return 0 if passed == len(results) and results else 1

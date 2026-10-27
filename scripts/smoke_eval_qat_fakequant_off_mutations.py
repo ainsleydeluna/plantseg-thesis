@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Lane L-FQOFF: the mutation smoke of AM-4's fake-quant-off path (precision qat_fakequant_off). The FQ mutations
-(phase 1: FQ1-FQ7, FQ9, FQ10, FQ12 and FQ15; phase 2: FQ8, FQ11, FQ14a and FQ14b; DL-24's fixes: FQ16, FQ17) and the
+(phase 1: FQ1-FQ7, FQ9, FQ10, FQ12 and FQ15; phase 2: FQ8, FQ11, FQ14a and FQ14b; DL-24's fixes: FQ16-FQ18) and the
 refusal table of the fqoff codes (FQR12's 1-22: phase 2's 1-5 in scripts/evaluate_model.py, phase 1's 6-22 in
 src/eval/stage_artifacts.py and src/eval/model_loading.py), each killed by a named check of
 scripts/smoke_eval_qat_fakequant_off.py. FQ13 has no row:
@@ -45,6 +45,7 @@ import scripts.smoke_qat_mutations as H  # noqa: E402
 SAF, ML, ART, EM = ("src/eval/stage_artifacts.py", "src/eval/model_loading.py", "src/eval/artifacts.py",
                     "scripts/evaluate_model.py")
 SMOKE = "smoke_eval_qat_fakequant_off"
+SMOKE_PATH = "scripts/smoke_eval_qat_fakequant_off.py"
 # the two lane files, and every other file a cold run of the smoke opens that Q2's shadow does not hold (measured with
 # an audit hook on open, imports included): among them AM-23's and E6-KD's rules files, src/stats/driver.py (read as
 # text, never imported) and E6-KD's trainer, src/quant/qat_kd.py
@@ -126,6 +127,9 @@ MUTATIONS = [
       "        except OSError:\n            fin_raw = None\n",
       "        fin_raw = fin_p.read_bytes() if fin_p.is_file() else None\n",
       case("c14_finalize_unreadable_file"), "c14_finalize_unreadable_file"),
+    M("FQ18", "the smoke leaves its temp directory behind (DL-24 R4-1)", SMOKE_PATH,
+      "    shutil.rmtree(TMP, ignore_errors=True)               # its temp directory (DL-24 R4-1); a cache stays\n",
+      "", case("hygiene_temp_removed"), "hygiene_temp_removed"),
 ]
 
 # ------------------------------------------------------------------ the refusal table and its finder (FQR12)
