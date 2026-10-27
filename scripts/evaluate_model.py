@@ -13,10 +13,15 @@ Drives the proven A2a flow in the frozen order:
 
 The CLI and its metadata are STAGE-NEUTRAL (any stage / role / precision / condition can be
 *described*). Implemented construction paths are the FP32 student (E1/E2/E3 and the descriptive arms
-A/F/G, `--checkpoint`), the converted INT8 student (E4-E7, `--provenance`, CPU/QNNPACK only) and the
+A/F/G, `--checkpoint`), the converted INT8 student (E4-E7, `--provenance`, CPU/QNNPACK only), the
 teacher (M4-V, CPU, `--checkpoint` + `--teacher-config` + `--teacher-ckpt-sha256`, the checkpoint's
-SHA-256, compared before the file is parsed; R6). Corruption construction remains rejected
-explicitly -- metadata neutrality is never misrepresented as runtime support.
+SHA-256, compared before the file is parsed; R6) and, for precision qat_fakequant_off (lane L-FQOFF,
+AM-4's fake-quant-off score, descriptive), a selected QAT model's pre-convert state (E5, E6, E6-E2,
+E6-KD; CPU, canvas): `--checkpoint` names its epoch_ckpts/eNN.pt, bound through the selection of
+record by `--qat-run-dir`, `--qat-selection`, `--qat-selection-sha256` and `--qat-telemetry-sha256`
+before any dataset or model exists, and every fake-quant and observer is disabled. Corruption
+construction remains rejected explicitly -- metadata neutrality is never misrepresented as runtime
+support.
 
 INT8 model-source validation (stage, source stage, artifact hash, backend) happens BEFORE the
 dataset adapter exists, so a tampered or mismatched artifact can never touch the test split.
@@ -55,8 +60,10 @@ if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
 SUPPORTED_ROLES = ("student", "teacher")
-SUPPORTED_PRECISIONS = ("fp32", "int8_ptq", "int8_qat")
+SUPPORTED_PRECISIONS = ("fp32", "int8_ptq", "int8_qat", "qat_fakequant_off")
 INT8_PRECISIONS = ("int8_ptq", "int8_qat")
+# lane L-FQOFF (FQR11): the binding flags of precision qat_fakequant_off, refused for every other precision
+QAT_FLAGS = ("qat_run_dir", "qat_selection", "qat_selection_sha256", "qat_telemetry_sha256")
 SUPPORTED_CONDITIONS = ("clean",)
 SUPPORTED_PROTOCOLS = ("canvas", "upstream")         # src/eval/protocols.py PROTOCOL_NAMES
 EXPECTED_SPLIT_ROWS = {"val": 846, "test": 1561}
@@ -78,7 +85,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Stage-neutral PlantSeg evaluation runner.")
     p.add_argument("--stage", default="E1", choices=list(STAGES))
     p.add_argument("--model-role", default="student", choices=["teacher", "student"])
-    p.add_argument("--precision", default="fp32", choices=["fp32", "int8_ptq", "int8_qat"])
+    p.add_argument("--precision", default="fp32", choices=["fp32", "int8_ptq", "int8_qat", "qat_fakequant_off"])
     p.add_argument("--split", default="val", choices=["val", "test"])
     p.add_argument("--condition", default="clean")
     p.add_argument("--corruption-severity", type=int, default=None)
@@ -107,6 +114,17 @@ def build_parser() -> argparse.ArgumentParser:
                         "(TL-1)")
     p.add_argument("--provenance", default=None,
                    help="E4-E7 run-provenance JSON written by src/quant/runner.py (INT8 stages)")
+    p.add_argument("--qat-run-dir", default=None,
+                   help="qat_fakequant_off: the QAT run directory, with its qat_telemetry.jsonl and "
+                        "epoch_ckpts/ (lane L-FQOFF)")
+    p.add_argument("--qat-selection", default=None,
+                   help="qat_fakequant_off: the selection of record, <eval>/qat_selection.json (lane L-FQOFF)")
+    p.add_argument("--qat-selection-sha256", default=None,
+                   help="qat_fakequant_off: the selection's sha256 from its decision-log row, 64 lowercase "
+                        "hex; compared before the selection is parsed (lane L-FQOFF)")
+    p.add_argument("--qat-telemetry-sha256", default=None,
+                   help="qat_fakequant_off: the run's qat_telemetry.jsonl sha256 (the pod's copy-back value), "
+                        "64 lowercase hex (lane L-FQOFF)")
     p.add_argument("--random-init", action="store_true")
     p.add_argument("--artifact-status", default="smoke",
                    choices=["official", "provisional", "smoke"])
@@ -123,6 +141,56 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _fqoff_cli(code: str, message: str):
+    """A refusal of precision qat_fakequant_off's CLI rules (lane L-FQOFF, FQR12 codes 1-5): a CliError whose
+    message reads "[code] ..."."""
+    raise CliError(f"[{code}] {message}")
+
+
+def validate_qat_fakequant_off_cli(args) -> None:
+    """Precision qat_fakequant_off's CLI rules (lane L-FQOFF; FQR11, FQR12 codes 1-5, FQR13), pure, before the
+    other guards. In order: the stage and the role (1), `--provenance` (2), the source flags (3), the device (4)
+    and the protocol (5); for every other precision, a `--qat-*` flag given (3). The flags are read defensively,
+    like `--provenance`, so an args object without them behaves as before."""
+    if args.precision == "qat_fakequant_off":
+        from src.eval.artifacts import FQOFF_STAGES
+        if args.stage not in FQOFF_STAGES:
+            _fqoff_cli("fqoff_stage_not_in_scope", f"precision qat_fakequant_off scores the selected QAT models "
+                                                   f"of {FQOFF_STAGES}; got stage {args.stage!r}")
+        if args.model_role != "student":
+            _fqoff_cli("fqoff_stage_not_in_scope", f"precision qat_fakequant_off scores a student; got "
+                                                   f"model_role {args.model_role!r}")
+        if getattr(args, "provenance", None):
+            _fqoff_cli("fqoff_provenance_forbidden", "precision qat_fakequant_off takes --checkpoint (the "
+                                                     "eNN.pt) and its four binding flags, never --provenance")
+        if not args.checkpoint:
+            _fqoff_cli("fqoff_source_flags", "precision qat_fakequant_off requires --checkpoint, the selected "
+                                             "epoch's epoch_ckpts/eNN.pt")
+        missing = [f"--{name.replace('_', '-')}" for name in QAT_FLAGS if getattr(args, name, None) is None]
+        if missing:
+            _fqoff_cli("fqoff_source_flags", f"precision qat_fakequant_off requires {', '.join(missing)}")
+        if args.random_init:
+            _fqoff_cli("fqoff_source_flags", "precision qat_fakequant_off forbids --random-init: it scores a "
+                                             "trained QAT model's state")
+        from src.distill.teacher import sha256_format_error
+        for name in ("qat_selection_sha256", "qat_telemetry_sha256"):
+            sha_error = sha256_format_error(getattr(args, name))
+            if sha_error is not None:
+                _fqoff_cli("fqoff_source_flags", f"--{name.replace('_', '-')} {sha_error}")
+        if args.device != "cpu":
+            _fqoff_cli("fqoff_not_cpu", f"precision qat_fakequant_off runs on the CPU; got --device "
+                                        f"{args.device!r}")
+        protocol = getattr(args, "protocol", "canvas")
+        if protocol != "canvas":
+            _fqoff_cli("fqoff_protocol", f"precision qat_fakequant_off is scored under the canvas protocol "
+                                         f"only (clean, canvas); got --protocol {protocol!r}")
+        return
+    given = [f"--{name.replace('_', '-')}" for name in QAT_FLAGS if getattr(args, name, None) is not None]
+    if given:
+        _fqoff_cli("fqoff_source_flags", f"{', '.join(given)}: the binding flags apply to precision "
+                                         f"qat_fakequant_off only; precision={args.precision!r} takes none")
+
+
 def validate_cli_args(args) -> None:
     """Pure validation. No filesystem, no dataset, no model -- safe to call in tests.
 
@@ -132,6 +200,9 @@ def validate_cli_args(args) -> None:
     if args.model_role not in SUPPORTED_ROLES:
         raise CliError(
             f"model_role={args.model_role!r} is not supported. Supported: {SUPPORTED_ROLES}.")
+    # --- precision qat_fakequant_off (lane L-FQOFF; FQR11-FQR13): its rules come first (codes 1-5), before
+    # the teacher, precision and source guards below; for any other precision a --qat-* flag is refused ---
+    validate_qat_fakequant_off_cli(args)
     # stage and role must agree: the teacher stage is the teacher model, and only that.
     is_teacher = args.stage == "teacher" or args.model_role == "teacher"
     if is_teacher and not (args.stage == "teacher" and args.model_role == "teacher"):
@@ -317,6 +388,8 @@ def apply_threads(args) -> int | None:
 def handed_file(args) -> Path:
     """IF-T1: the file this run is handed: --provenance for an INT8 stage, else --checkpoint. The one place
     that names it."""
+    if args.precision == "qat_fakequant_off":       # lane L-FQOFF: the selected epoch's eNN.pt (FQR11)
+        return Path(args.checkpoint)
     return Path(getattr(args, "provenance", None) if args.precision in INT8_PRECISIONS else args.checkpoint)
 
 
@@ -376,6 +449,7 @@ def run(args, *, counters: Counters | None = None, teacher_builder=None) -> Path
     # ---- model SOURCE validation: provenance/stage/hash, before any dataset or model exists ----
     resolved = quant_backend = None
     ckpt_path = ckpt_sha = None
+    fqoff = None                         # lane L-FQOFF: validate_qat_fakequant_off_source's carrier (FQR11)
     handed = hash_before_parse(args)     # IF-T1 P1: the handed file, before any validator parses it
     if args.precision in INT8_PRECISIONS:
         from src.eval.model_loading import select_int8_backend
@@ -393,6 +467,22 @@ def run(args, *, counters: Counters | None = None, teacher_builder=None) -> Path
         quant_backend = select_int8_backend(require_qnnpack=True)   # refuses a non-QNNPACK build
         ckpt_path = str(resolved["artifact_path"])
         ckpt_sha = resolved["artifact_sha256"]
+    elif args.precision == "qat_fakequant_off":
+        from src.eval.stage_artifacts import validate_qat_fakequant_off_source
+        # lane L-FQOFF (FQR2, FQR11): the selected epoch's eNN.pt, bound through its selection of record;
+        # every refusal comes here, before any dataset or model exists. quant_backend and resolved stay None,
+        # so the INT8 load can never take this source.
+        fqoff = validate_qat_fakequant_off_source(
+            args.stage, args.checkpoint, run_dir=getattr(args, "qat_run_dir", None),
+            selection=getattr(args, "qat_selection", None),
+            selection_sha256=getattr(args, "qat_selection_sha256", None),
+            telemetry_sha256=getattr(args, "qat_telemetry_sha256", None),
+            allow_smoke_inputs=args.artifact_status == "smoke")
+        ckpt_path = str(fqoff["checkpoint_path"])
+        ckpt_sha = fqoff["checkpoint_sha256"]
+        print(f"fqoff binding: stage {fqoff['spec']['stage']}, run {fqoff['run_id']}, epoch {fqoff['epoch']:02d}, "
+              f"checkpoint {fqoff['checkpoint_sha256']}, selection {fqoff['selection_sha256']}, telemetry "
+              f"{fqoff['telemetry_sha256']}, finalize {fqoff['finalize_sha256'] or 'absent'}")
     elif args.model_role == "teacher":
         from src.eval.stage_artifacts import validate_teacher_artifact
         # Teacher checkpoint identity (hash first, R6) and structure are proven before any dataset
@@ -415,6 +505,8 @@ def run(args, *, counters: Counters | None = None, teacher_builder=None) -> Path
     expected = getattr(args, "expected_checkpoint_sha256", None)
     if expected is not None:
         after = ckpt_sha if resolved is None else identity_sha256(handed)
+        if fqoff is not None:            # lane L-FQOFF: the carrier's sha256 of the eNN.pt, as FP32's ckpt_sha
+            after = fqoff["checkpoint_sha256"]
         if after != expected:
             raise CliError(f"[source_changed_during_validation] {handed} had sha256 {expected} before "
                            f"validation and {after} after it")
@@ -455,7 +547,8 @@ def run(args, *, counters: Counters | None = None, teacher_builder=None) -> Path
     # ---- evaluation determinism policy (contract section 10): an FP32 student on CUDA gets E1's
     # B6 settings, without a reseed, before anything can initialise CUDA. Everything else applies
     # nothing and records the inherited state.
-    cpu_only = args.model_role == "teacher" or args.precision in INT8_PRECISIONS
+    cpu_only = (args.model_role == "teacher" or args.precision in INT8_PRECISIONS
+                or args.precision == "qat_fakequant_off")             # lane L-FQOFF: CPU only (FQR11)
     policy_applied = determinism_required(args.model_role, args.precision, args.device)
     policy_info = apply_eval_determinism() if policy_applied else None
     ck_info = None
@@ -472,6 +565,9 @@ def run(args, *, counters: Counters | None = None, teacher_builder=None) -> Path
         model = load_teacher_model(resolved, builder=teacher_builder,
                                    config_path=getattr(args, "teacher_config", None),
                                    expected_sha256=getattr(args, "teacher_ckpt_sha256", None))[0]
+    elif args.precision == "qat_fakequant_off":
+        from src.eval.model_loading import load_qat_fakequant_off_student
+        model = load_qat_fakequant_off_student(fqoff)        # lane L-FQOFF (FQR9, FQR11): ck_info stays None
     elif resolved is not None:
         from src.eval.model_loading import load_int8_student
         if expected_converted is not None:          # IF-T1 P3: load_int8_student does not re-hash
