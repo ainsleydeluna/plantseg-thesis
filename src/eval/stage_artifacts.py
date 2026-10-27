@@ -313,12 +313,13 @@ def _no_json_constant(c):
     raise ValueError(f"non-strict JSON constant {c}")
 
 
-def _is_torchscript_archive(path: Path) -> bool:
-    """A TorchScript archive (torch.jit.save) holds constants.pkl and torch.save's archives never do. Read with zipfile:
-    nothing is deserialised."""
+def _is_torchscript_archive(raw: bytes) -> bool:
+    """A TorchScript archive (torch.jit.save) holds constants.pkl and torch.save's archives never do. Read with zipfile
+    from the file's bytes: nothing is deserialised."""
+    import io
     import zipfile
     try:
-        with zipfile.ZipFile(path) as z:
+        with zipfile.ZipFile(io.BytesIO(raw)) as z:
             return any(n == "constants.pkl" or n.endswith("/constants.pkl") for n in z.namelist())
     except (zipfile.BadZipFile, OSError):
         return False
@@ -334,7 +335,7 @@ def validate_qat_fakequant_off_source(stage: str, checkpoint: str | Path | None,
     to its decision-log row. A `qat_finalize.json` beside it is checked whenever it exists and is never required
     (E6-KD has none). In FQR12's order, each refusal a StageArtifactError with its fqoff code:
       6  fqoff_forbidden_path: a path this function would open names "test", in its given or resolved form (Q2's
-         names_test); nothing has been opened yet
+         names_test); this function has opened nothing yet (run()'s P1 may have hashed --checkpoint, FQR12)
       7  fqoff_selection_sha256_mismatch: the selection is absent, or its bytes differ from the pin
       8  fqoff_selection_not_of_record: its name; its format; its rules_sha256 against the committed rules file of its
          stage (rules_path_for_stage); smoke_inputs, outside smoke status; its winner's fields; and, once the run is
@@ -351,35 +352,40 @@ def validate_qat_fakequant_off_source(stage: str, checkpoint: str | Path | None,
       16 fqoff_checkpoint_missing
       17 fqoff_checkpoint_sha256_mismatch: the file against its epoch_end row and the selection's winner (with 15 and
          16, verified_checkpoint's checks)
-      18 fqoff_not_qat_train_state: a TorchScript archive (a converted artifact), a payload load_qat_sidecar refuses
-         (weights_only; its kind, state and role flags) or any unreadable file, or an artifact_role other than
-         preconvert_qat_state
+      18 fqoff_not_qat_train_state: a TorchScript archive (a converted artifact), a payload load_qat_sidecar's checks
+         refuse (validate_qat_sidecar on the bytes loaded weights_only; its kind, state and role flags) or any
+         unloadable bytes, or an artifact_role other than preconvert_qat_state
       19 fqoff_checkpoint_identity: the payload's epoch, run_id, seed or source checkpoint is not the run's
          (convert_epoch's identity)
       20 fqoff_state_not_finite: the stored state_finite is not True (AM-21 item 1(c))
     It reads the run's telemetry, the selection, the committed rules file of the stage, the finalize record when
-    present and the winner's eNN.pt; no other epoch's file. `allow_smoke_inputs` is for artifact_status smoke only: it
-    accepts a smoke-mode run and a selection made from smoke inputs.
+    present and the winner's eNN.pt, once (codes 17-20 judge the bytes it hashes); no other epoch's file.
+    `allow_smoke_inputs` is for artifact_status smoke only: it accepts a smoke-mode run and a selection made from
+    smoke inputs.
 
     Returns the carrier {spec, checkpoint_path, checkpoint_sha256, epoch, run_id, selection_sha256, telemetry_sha256,
     finalize_sha256 (None when absent)}, which src.eval.model_loading.load_qat_fakequant_off_student takes.
     """
+    import io
+
+    import torch
+
     from src.quant import qat as Q
     from src.quant import qat_artifacts as A
     from src.quant import qat_select as S
-    from src.quant.x86_latency import QAT_SIDECAR_ROLE, load_qat_sidecar
+    from src.quant.x86_latency import QAT_SIDECAR_ROLE, validate_qat_sidecar
 
     spec = resolve_stage_artifact(stage)
     want = spec["stage"]
     sel_p = Path(selection) if selection is not None else None
-    # 6. no path this function opens names "test", before any file is opened
+    # 6. no path this function opens names "test", before it opens any file
     paths = {"--checkpoint": checkpoint, "--qat-run-dir": run_dir, "--qat-selection": selection,
              "the run's telemetry": None if run_dir is None else Path(run_dir) / Q.TELEMETRY_NAME,
              "the finalize record": None if sel_p is None else sel_p.parent / QAT_FINALIZE_NAME}
     for what, value in paths.items():
         if value is not None and Q.names_test(value):
-            _fail("fqoff_forbidden_path", f"{what} {value} names 'test' in its given or resolved form; nothing was "
-                                          "opened")
+            _fail("fqoff_forbidden_path", f"{what} {value} names 'test' in its given or resolved form; this "
+                                          "validator opened nothing")
     # 7. the selection's bytes against the pin
     raw = sel_p.read_bytes() if sel_p is not None and sel_p.is_file() else None
     sel_sha = Q.sha256_bytes(raw) if raw is not None else None
@@ -442,7 +448,10 @@ def validate_qat_fakequant_off_source(stage: str, checkpoint: str | Path | None,
     fin_p = sel_p.parent / QAT_FINALIZE_NAME
     fin_sha = None
     if fin_p.exists() or fin_p.is_symlink():
-        fin_raw = fin_p.read_bytes() if fin_p.is_file() else None
+        try:
+            fin_raw = fin_p.read_bytes() if fin_p.is_file() else None
+        except OSError:
+            fin_raw = None
         try:
             fin = None if fin_raw is None else json.loads(fin_raw.decode("utf-8"), parse_constant=_no_json_constant)
         except ValueError:
@@ -473,17 +482,21 @@ def validate_qat_fakequant_off_source(stage: str, checkpoint: str | Path | None,
                                       f"(its epoch_end row names {end.get('checkpoint')!r})")
     if not ck.is_file():
         _fail("fqoff_checkpoint_missing", f"{ck} is missing")
-    ck_sha = Q.sha256_file(ck)
+    # read once: codes 17-20 judge these bytes, so the carrier's sha256 (IF-T1 P2's, and the loader's re-hash) is
+    # that of the bytes judged (DL-24 R3-F1)
+    ck_raw = ck.read_bytes()
+    ck_sha = Q.sha256_bytes(ck_raw)
     if ck_sha != end.get("checkpoint_sha256") or ck_sha != win["checkpoint_sha256"]:
         _fail("fqoff_checkpoint_sha256_mismatch", f"{ck} has sha256 {ck_sha}; its epoch_end row records "
                                                   f"{end.get('checkpoint_sha256')}, the selection's winner "
                                                   f"{win['checkpoint_sha256']}")
     # 18. a pre-convert QAT state in the x86 sidecar schema, never a converted TorchScript artifact
-    if _is_torchscript_archive(ck):
+    if _is_torchscript_archive(ck_raw):
         _fail("fqoff_not_qat_train_state", f"{ck} is a TorchScript archive (a converted artifact), not the epoch's "
                                            "pre-convert QAT state")
-    try:
-        payload = load_qat_sidecar(ck)
+    try:                                                     # load_qat_sidecar's load and checks, on the bytes
+        payload = validate_qat_sidecar(torch.load(io.BytesIO(ck_raw), map_location="cpu", weights_only=True),
+                                       origin=str(ck))
     except Exception as e:                                   # noqa: BLE001 -- any unreadable payload is refused
         _fail("fqoff_not_qat_train_state", f"{ck} is not a qat-train-state payload: "
                                            f"[{getattr(e, 'code', type(e).__name__)}] {str(e)[:300]}")

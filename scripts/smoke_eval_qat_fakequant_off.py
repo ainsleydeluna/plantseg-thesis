@@ -480,6 +480,20 @@ def never(*parts: str) -> Path:
     return TMP.joinpath("never_created", *parts)
 
 
+@contextlib.contextmanager
+def unreadable(path: Path):
+    """Path.read_bytes refuses `path` (a PermissionError, as for a file of another user); every other path reads as
+    before. The one surface is patched and restored."""
+    real = Path.read_bytes
+
+    def read_bytes(self):
+        if str(self) == str(path):
+            raise PermissionError(13, "Permission denied", str(self))
+        return real(self)
+    with patched(Path, "read_bytes", read_bytes):
+        yield
+
+
 # ================================================================ stages (FQR1, FQR3)
 def request(**run_over):
     """An artifact request of precision qat_fakequant_off (E5, student, no backend, trained); class_map empty, so a
@@ -643,6 +657,18 @@ def bind_reads_only_its_files():
     want = sorted({str(b.run / Q.TELEMETRY_NAME), str(b.sel), str(S.rules_path_for_stage("E5")),
                    str(b.ev / SA.QAT_FINALIZE_NAME), str(b.ck)})
     return got == want, f"opened {[Path(p).name for p in got]}"
+
+
+@case("binding")
+def bind_reads_the_checkpoint_once():
+    """The validator opens the winner's eNN.pt once: its sha256, the archive scan and the payload's checks (codes
+    17-20) are of the same bytes, so IF-T1's P2, which compares the carrier's sha256, holds for the bytes judged
+    (DL-24 R3-F1)."""
+    b = bound("run_e5")
+    with recording() as paths:
+        c = bind(b)
+    n = paths.count(str(b.ck))
+    return n == 1 and c["checkpoint_sha256"] == Q.sha256_file(b.ck), f"the eNN.pt opened {n} time(s)"
 
 
 @case("binding")
@@ -899,6 +925,15 @@ def c14_finalize_telemetry():
 @case("binding")
 def c14_finalize_stage():
     return forged_refusal("fqoff_finalize_disagrees", "fin_stage", finalize=finalize_with(stage="E6"))
+
+
+@case("binding")
+def c14_finalize_unreadable_file():
+    """A finalize record beside the selection that cannot be read is code 14's "unreadable" (DL-24 R1-F2)."""
+    fb = forge(bound("run_e5"), "fin_noread", finalize=finalize_record)
+    with unreadable(fb.ev / SA.QAT_FINALIZE_NAME):
+        ok, detail = refused("fqoff_finalize_disagrees", bind, fb)
+    return ok and "unreadable" in detail, detail
 
 
 # ---- 15 fqoff_not_the_winner

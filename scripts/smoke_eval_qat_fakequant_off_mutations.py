@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Lane L-FQOFF: the mutation smoke of AM-4's fake-quant-off path (precision qat_fakequant_off). The FQ mutations
-(phase 1: FQ1-FQ7, FQ9, FQ10, FQ12 and FQ15; phase 2: FQ8, FQ11, FQ14a and FQ14b) and the refusal table of the fqoff
-codes (FQR12's 1-22: phase 2's 1-5 in scripts/evaluate_model.py, phase 1's 6-22 in src/eval/stage_artifacts.py and
-src/eval/model_loading.py), each killed by a named check of scripts/smoke_eval_qat_fakequant_off.py. FQ13 has no row:
+(phase 1: FQ1-FQ7, FQ9, FQ10, FQ12 and FQ15; phase 2: FQ8, FQ11, FQ14a and FQ14b; DL-24's fixes: FQ16, FQ17) and the
+refusal table of the fqoff codes (FQR12's 1-22: phase 2's 1-5 in scripts/evaluate_model.py, phase 1's 6-22 in
+src/eval/stage_artifacts.py and src/eval/model_loading.py), each killed by a named check of
+scripts/smoke_eval_qat_fakequant_off.py. FQ13 has no row:
 LEFF B-1b sets --threads right after validate_cli_args, before any precision branch, so this precision's path never
 applies it itself (the GO's rule for FQ13 and FQ14); the smoke's run_threads_recorded shows it holds.
 
@@ -82,7 +83,7 @@ MUTATIONS = [
       '    if ck is None or end.get("checkpoint") != want_ck:\n',
       case("c15_checkpoint_other_epoch"), "c15_checkpoint_other_epoch"),
     M("FQ6", "a converted TorchScript archive passed to the payload load as if it were the eNN.pt", SAF,
-      "    if _is_torchscript_archive(ck):\n", "    if False:\n",
+      "    if _is_torchscript_archive(ck_raw):\n", "    if False:\n",
       case("c18_torchscript_archive"), "c18_torchscript_archive"),
     M("FQ7", "the stored state_finite unchecked", SAF,
       '    if payload.get("state_finite") is not True:\n', "    if False:\n",
@@ -115,6 +116,16 @@ MUTATIONS = [
     M("FQ14b", "LEFF B-1b's identity flag skipped at P2 for this precision: the carrier's sha256 never compared",
       EM, '            after = fqoff["checkpoint_sha256"]\n', "            after = expected\n",
       case("run_h_changed_during_validation"), "run_h_changed_during_validation"),
+    # ---- DL-24's confirmed findings (A5): each fix's mutation, killed by its case
+    M("FQ16", "the payload loaded from the path again, not from the bytes the validator hashed (DL-24 R3-F1)", SAF,
+      '        payload = validate_qat_sidecar(torch.load(io.BytesIO(ck_raw), map_location="cpu", weights_only=True),\n',
+      '        payload = validate_qat_sidecar(torch.load(ck, map_location="cpu", weights_only=True),\n',
+      case("bind_reads_the_checkpoint_once"), "bind_reads_the_checkpoint_once"),
+    M("FQ17", "an unreadable finalize record's OSError escapes code 14 (DL-24 R1-F2)", SAF,
+      "        try:\n            fin_raw = fin_p.read_bytes() if fin_p.is_file() else None\n"
+      "        except OSError:\n            fin_raw = None\n",
+      "        fin_raw = fin_p.read_bytes() if fin_p.is_file() else None\n",
+      case("c14_finalize_unreadable_file"), "c14_finalize_unreadable_file"),
 ]
 
 # ------------------------------------------------------------------ the refusal table and its finder (FQR12)
