@@ -5,8 +5,9 @@
 - Each step of the hash mode (H9), each refusal reached with every earlier gate passing: 1. the paths (B-1's guard;
   a string holding project rule 4's word gets no call: B-1's tracer form, smoke_tman_paths.py :55-81); 2. the
   records -- no unlock entry, an uncommitted, unrecorded, rewritten or other-kind entry, a manifest that is not the
-  one the entry records, and a pin that is not this code's (script, module, python, parameters) -- each refused
-  before any data call; 3. the listing; 4. the TRAIN/VAL list; 5. hashing; 6. the outputs.
+  one the entry records, a pin that is not this code's (script, module, python, parameters), a shallow clone and a
+  repository with no commit -- each refused before any data call; 3. the listing; 4. the TRAIN/VAL list; 5. hashing;
+  6. the outputs.
 - The call trace of a run: one os.scandir, one binary read per image and one of the list, two exclusive creates, no
   annotation path, no PIL or cv2 call (PIL.Image.open and the cv2 module raise). PIL and torch are in sys.modules
   through src.tman.schema -> src.eval.artifacts -> src.eval.protocols and src/eval/__init__.py: recorded, accepted.
@@ -493,6 +494,25 @@ def case_step2_records():
               and not any(w.out.iterdir()), f"{rc} {txt[-200:]} {w.data_calls(t)[:2]}")
 
 
+def case_step2_repository():
+    """--repo a depth-1 clone of the records (B-1's written-once check cannot see a rewrite in it) or a repository
+    with no commit: refused before the unlock entry is read and before any data call."""
+    w = World()
+    clone = FX.scratch_dir("tmanhclone")
+    FX.git(clone, "clone", "-q", "--depth", "1", w.repo.resolve().as_uri(), ".")
+    shallow = FX.git(clone, "rev-parse", "--is-shallow-repository")
+    t = Trace()
+    rc, txt = run(w.argv(repo=str(clone)), ctx=t)
+    check("step2_shallow_clone_refused_before_any_data_call", shallow == "true"
+          and refused(rc, txt, "repository_shallow") and not w.data_calls(t) and not any(w.out.iterdir()),
+          f"{shallow} {rc} {txt[-200:]}")
+    t = Trace()
+    rc, txt = run(w.argv(repo=str(FX.new_repo())), ctx=t)
+    check("step2_repository_without_a_commit_refused_before_any_data_call", refused(rc, txt, "record_uncommitted")
+          and "no git repository with a HEAD commit" in txt and not w.data_calls(t) and not any(w.out.iterdir()),
+          f"{rc} {txt[-200:]}")
+
+
 # ===================================================================================== step 3: the listing
 def case_step3_listing():
     from src.tman import dedup as D
@@ -797,6 +817,7 @@ def case_created_names():
 
 if __name__ == "__main__":
     raise SystemExit(FX.run_cases("TMAN HASHER SMOKE (lane TMAN, B-3a part 1, B3A-2)",
-                                  (case_pass_and_trace, case_step1_paths, case_step2_records, case_step3_listing,
+                                  (case_pass_and_trace, case_step1_paths, case_step2_records, case_step2_repository,
+                                   case_step3_listing,
                                    case_step4_list, case_step5_hashing, case_step6_outputs, case_shuffled_scandir,
                                    case_print_pin, case_static, case_created_names)))

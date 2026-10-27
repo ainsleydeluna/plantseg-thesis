@@ -10,8 +10,10 @@ scripts/tday_manifest.py.
                                   (TB19 Q5). Each step passes before the next starts:
     1. paths: --repo, --root, --train-val-list and --out go through B-1's path guard (schema.py :248) as given and
        then resolved, and --unlock-entry as given and then resolved under --repo: a refused string gets no call.
-    2. records, at HEAD of --repo through B-1's readers: the unlock entry at --unlock-entry (a repository path;
-       nothing is listed) is committed, written once, of kind unlock, its sha256 in a RECORDED or IMPLEMENTED row
+    2. records, at HEAD of --repo through B-1's readers, in a clone with its full history (a shallow clone, where
+       B-1's written-once check cannot see a rewrite, src/training/sweep_select.py :2400-2420, and a repository with
+       no commit are refused): the unlock entry at --unlock-entry (a repository path; nothing is listed) is
+       committed, written once, of kind unlock, its sha256 in a RECORDED or IMPLEMENTED row
        (entries.read_entry_file, :753); the manifest it names is the committed one, by its file, body and appends
        sha256; that manifest's image_hasher pin is this script's and this dedup module's (the sha256 of their bytes),
        with this interpreter's python major.minor.
@@ -48,6 +50,7 @@ from src.tman import entries as E  # noqa: E402
 from src.tman import manifest as M  # noqa: E402
 from src.tman import records as R  # noqa: E402
 from src.tman import schema as S  # noqa: E402
+from src.training.sweep_select import SelectionRefused  # noqa: E402
 
 SCRIPT_REL = "scripts/tday_hash_images.py"
 DEDUP_REL = "src/tman/dedup.py"
@@ -142,9 +145,18 @@ def _at(doc, *keys):
 
 
 def check_records(args) -> dict:
-    """Step 2, at HEAD of --repo: the unlock entry (B-1's reader), the manifest it names, and the pin; returns the
-    pin."""
+    """Step 2, at HEAD of --repo, a clone with its full history (in a shallow one, B-1's written-once check cannot see
+    a rewrite): the unlock entry (B-1's reader), the manifest it names, and the pin; returns the pin."""
     records = R.Records.at_head(args.repo)
+    try:
+        records.src.require_not_shallow()
+    except SelectionRefused as e:
+        if e.code == "repository_shallow":
+            raise S.TmanRefused("repository_shallow", f"--repo {records.src.root} is a shallow clone: whether the "
+                                                      "unlock entry was written once needs its full history (git "
+                                                      "fetch --unshallow)") from None
+        raise S.TmanRefused("record_uncommitted", f"--repo {records.src.root} is no git repository with a HEAD "
+                                                  "commit: the records are read at HEAD") from None
     doc, _ = E.read_entry_file(records, args.unlock_entry, "unlock")
     m = doc["manifest"]
     if m["path"] != S.MANIFEST_REL:

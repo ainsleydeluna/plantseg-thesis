@@ -161,6 +161,14 @@ M = [
                                             'split_of_record())).close()\n    params = check_records(args)'
                                             '["parameters"]')],
      "hasher", "case_step2_records", "step2_unlock_entry_absent_refused_before_any_data_call", []),
+    ("shallow_clone_allowed", HSH, [("        records.src.require_not_shallow()\n", "        pass\n")],
+     "hasher", "case_step2_repository", "step2_shallow_clone_refused_before_any_data_call", ["repository_shallow"]),
+    ("no_head_commit_unnamed", HSH, [('        raise S.TmanRefused("record_uncommitted", f"--repo '
+                                      '{records.src.root} is no git repository with a HEAD "\n'
+                                      '                                                  "commit: the records are '
+                                      'read at HEAD") from None\n', "        pass\n")],
+     "hasher", "case_step2_repository", "step2_repository_without_a_commit_refused_before_any_data_call",
+     ["record_uncommitted"]),
     ("unlock_kind_unchecked", HSH, [('    doc, _ = E.read_entry_file(records, args.unlock_entry, "unlock")',
                                      "    doc, _ = E.read_entry_file(records, args.unlock_entry)")],
      "hasher", "case_step2_records", "step2_unlock_entry_of_another_kind_refused_before_any_data_call",
@@ -284,7 +292,8 @@ M = [
 # killed mutation (a static case ties this list to the files)
 CODES = ("dedup_invalid", "generator_pin_incomplete", "hasher_pin_mismatch", "image_count_mismatch",
          "image_ids_invalid", "images_unreadable", "manifest_format", "manifest_unreadable", "output_exists",
-         "output_location", "train_val_list_invalid", "train_val_list_mismatch", "unlock_manifest_mismatch")
+         "output_location", "record_uncommitted", "repository_shallow", "train_val_list_invalid",
+         "train_val_list_mismatch", "unlock_manifest_mismatch")
 GUARD_CODES = (WORD + "_path",)                     # raised by B-1's guard from the hasher's step 1
 
 
@@ -424,7 +433,7 @@ def case_mutations():
             killed_codes |= set(m[6])
     if not ONLY:
         need = set(CODES) | set(GUARD_CODES)
-        check("every_refusal_code_has_a_killed_mutation", need <= killed_codes and len(need) == 14,
+        check("every_refusal_code_has_a_killed_mutation", need <= killed_codes and len(need) == 16,
               str(sorted(need - killed_codes)))
         check("every_mutation_has_its_own_id", len({m[0] for m in M}) == len(M))
     check("the_repository_files_are_unchanged", files_sha256() == before)
