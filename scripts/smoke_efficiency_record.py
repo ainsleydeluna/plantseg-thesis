@@ -621,7 +621,23 @@ def _companion_mismatch():
     doc["state_dict_artifact"]["sha256"] = "f" * 64
     meta.write_text(json.dumps(doc, indent=2), encoding="utf-8")
     code, _p, _r = run_profile(e4_argv(fresh("comp_bad_out"), prov=meta, metrics="size"))
-    return code == "state_dict_companion_mismatch", str(code)
+    unrecorded = copy_run(fixture("e4"), "comp_none")                # a run provenance recording no companion
+    doc = json.loads(unrecorded.read_text(encoding="utf-8"))
+    del doc["state_dict_artifact"]
+    unrecorded.write_text(json.dumps(doc, indent=2), encoding="utf-8")
+    none, _p, _r = run_profile(e4_argv(fresh("comp_none_out"), prov=unrecorded, metrics="size"))
+    return code == none == "state_dict_companion_mismatch", f"sha256 differs: {code}; none recorded: {none}"
+
+
+@case("companion_forbidden_name_refused")
+def _companion_forbidden():
+    meta = copy_run(fixture("e4"), "comp_fb")
+    never = TMP / "nowhere_sd" / "plantseg_TeSt_sd.pt"              # never created
+    doc = json.loads(meta.read_text(encoding="utf-8"))
+    doc["state_dict_artifact"]["path"] = str(never)
+    meta.write_text(json.dumps(doc, indent=2), encoding="utf-8")
+    code, _p, _r = run_profile(e4_argv(fresh("comp_fb_out"), prov=meta, metrics="size"))
+    return code == "path_forbidden_name" and not os.path.lexists(never.parent), str(code)
 
 
 @case("int8_footprint_counts_disagree_refused")
@@ -719,16 +735,24 @@ def child_reset() -> dict:
     return {"before": before, "after": EFF.read_proc_status(), "reset": reset, "slack": slack}
 
 
-CHILDREN = {"forward": child_forward, "spike": child_spike, "reset": child_reset}
+def child_threads(ckpt: str, out: str) -> dict:
+    """The memory group at --threads 1 through run(): the phase runs at the thread count given (§3)."""
+    default = torch.get_num_threads()
+    argv = ["--stage", "E1", "--checkpoint", ckpt, "--metrics", "memory", "--threads", "1", "--out-dir", out]
+    _path, record = PE.run(PE.build_parser().parse_args(argv))
+    return {"default_threads": default, "memory": record["memory"], "deferred": record["deferred"]}
 
 
-def run_child(name: str) -> dict:
+CHILDREN = {"forward": child_forward, "spike": child_spike, "reset": child_reset, "threads": child_threads}
+
+
+def run_child(name: str, *argv) -> dict:
     """One high-water measurement in a fresh process, as a run of record is: the smoke's own mark cannot confound it."""
     key = f"child_{name}"
     if key not in FIX:
         env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
-        p = subprocess.run([sys.executable, "-B", str(Path(__file__).resolve()), "--child", name], cwd=str(REPO),
-                           env=env, capture_output=True, text=True, timeout=900)
+        p = subprocess.run([sys.executable, "-B", str(Path(__file__).resolve()), "--child", name, *map(str, argv)],
+                           cwd=str(REPO), env=env, capture_output=True, text=True, timeout=900)
         lines = [ln for ln in p.stdout.splitlines() if ln.startswith(CHILD_TAG)]
         FIX[key] = (json.loads(lines[-1][len(CHILD_TAG):]) if lines
                     else {"error": f"exit {p.returncode}: {(p.stdout + p.stderr)[-400:]}"})
@@ -843,6 +867,41 @@ def _ru_maxrss():
                 f"start {start}")
 
 
+@case("memory_at_requested_threads")
+def _memory_threads():
+    res = run_child("threads", fixture("e1"), fresh("mem_threads"))
+    if "error" in res or "refused" in res:
+        return False, str(res)[:300]
+    mem = res["memory"]
+    if mem is None:
+        reason = res["deferred"].get("memory", "")
+        env = environment_caused({"refused": reason[1:].split("]")[0], "message": reason})
+        return (True, env) if env else (False, f"deferred: {reason[:200]}")
+    ok = (mem["threads"] == 1 and mem["slack_bytes"] == EFF.hwm_slack_bytes(1, mem["page_size_bytes"])
+          and not res["deferred"])
+    return ok, (f"the memory group at --threads 1 (this host's default {res['default_threads']}): the phase ran at "
+                f"{mem['threads']} thread(s), slack {mem['slack_bytes']} B")
+
+
+@case("memory_precedes_companion")
+def _memory_order():
+    order = []
+
+    def tap(name, fn):
+        def wrapped(*a, **kw):
+            order.append(name)
+            return fn(*a, **kw)
+        return wrapped
+    with patched(PE, "serialized_artifact", tap("size_read", PE.serialized_artifact)), \
+            patched(PE, "load_model", tap("load", PE.load_model)), \
+            patched(PE, "measure_memory", tap("memory", lambda model: {"stub": "no reset in this process"})), \
+            patched(PE, "model_only_serialization", tap("companion", PE.model_only_serialization)):
+        code, _p, rec = run_profile(e1_argv(fresh("mem_order"), metrics="size,memory"))
+    ok = (code is None and order == ["size_read", "load", "memory", "companion"]
+          and rec["artifact"]["model_only_companion"]["model_only_serialized_bytes"] > 0)
+    return ok, f"a combined size and memory run: {order}" + (f"; refused {code}" if code else "")
+
+
 @case("parent_contamination_detected")
 def _parent():
     hwm = 200 * MiB
@@ -939,6 +998,27 @@ def _forbidden():
     return ok, f"{got}; main exit {rc}"
 
 
+@case("converted_artifact_forbidden_name_refused")
+def _converted_forbidden():
+    never = TMP / "nowhere_conv" / "plantseg_TEST_e4_int8.pt"         # never created
+    real = PE.resolve_evaluation_source
+
+    def redirected(*a, **kw):
+        return {**real(*a, **kw), "artifact_path": never}             # a run provenance naming a "test" path
+    with patched(PE, "resolve_evaluation_source", redirected):
+        code, _p, _r = run_profile(e4_argv(fresh("conv_fb")))
+    return code == "path_forbidden_name" and not os.path.lexists(never.parent), str(code)
+
+
+@case("metric_refusals_coded")
+def _metrics_coded():
+    unknown = code_of(PE.parse_metrics, "params,bogus")
+    none = code_of(PE.parse_metrics, " , ")
+    rc, err = main_rc(e1_argv(fresh("metrics_bad"), metrics="params,bogus"))
+    ok = unknown == "metrics_unknown" and none == "metrics_none" and rc == 2 and "[metrics_unknown]" in err
+    return ok, f"{unknown}, {none}; main exit {rc}"
+
+
 @case("out_dir_not_empty_refused")
 def _not_empty():
     full = fresh("full_out")
@@ -984,10 +1064,10 @@ def _no_forbidden():
     return not bad, f"{len(bad)} under {TMP}" + (f": {bad[:3]}" if bad else "")
 
 
-def child_main(name: str) -> int:
-    """`--child NAME`: one memory measurement in this fresh process, printed as one CHILD_JSON line."""
+def child_main(name: str, argv) -> int:
+    """`--child NAME [ARG...]`: one memory measurement in this fresh process, printed as one CHILD_JSON line."""
     try:
-        out = CHILDREN[name]()
+        out = CHILDREN[name](*argv)
     except Exception as e:                                   # noqa: BLE001 - the parent judges it
         out = {"refused": getattr(e, "code", None) or type(e).__name__, "message": str(e)}
     print(CHILD_TAG + json.dumps(out, default=str), flush=True)
@@ -998,10 +1078,13 @@ def main(argv=None) -> int:
     global BEFORE, TMP
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--only", default=None, help="comma-separated check names (the mutation runner's)")
-    ap.add_argument("--child", default=None, choices=sorted(CHILDREN), help=argparse.SUPPRESS)
+    ap.add_argument("--child", nargs="+", default=None, help=argparse.SUPPRESS)
     args = ap.parse_args(argv)
     if args.child:
-        return child_main(args.child)
+        if args.child[0] not in CHILDREN:
+            print(f"unknown child {args.child[0]!r}")
+            return 2
+        return child_main(args.child[0], args.child[1:])
     only = None if args.only is None else [n for n in args.only.split(",") if n]
     unknown = sorted(set(only or ()) - set(CASES))
     if unknown:

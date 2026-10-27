@@ -139,11 +139,32 @@ MUTATIONS = [
      ("teacher_config_required",), "the teacher run without --teacher-config accepted"),
     ("M23", PE, [("    elif teacher_sha is not None:", "    elif False:")],
      ("teacher_sha_not_teacher",), "a teacher sha256 accepted on another stage"),
-    ("M24", PE, [("        if sha_error is not None:", "        if False:")],
+    ("M24", PE, [('        if sha_error is not None:\n            raise EfficiencyCliError(f"--teacher-ckpt-sha256 {sha_error}"',
+                  '        if False:\n            raise EfficiencyCliError(f"--teacher-ckpt-sha256 {sha_error}"')],
      ("teacher_sha_format_uppercase", "teacher_sha_format_empty"),
      "the profiler's own format check dropped (the resolver's message is not evaluate_model.py's)"),
     ("M25", EFF, [("        if isinstance(mod, FloatFunctional):\n            continue\n", "")],
      ("fp32_student_counted_as_fp32",), "FloatFunctional counted as quantized again (the FP32 student refused)"),
+    ("M26", PE, [("    refuse_forbidden_converted(resolved)\n", "")],
+     ("converted_artifact_forbidden_name_refused",), "the converted artifact's \"test\" guard dropped"),
+    ("M27", PE, [('    error = forbidden_path_error("the state_dict companion", path)\n    if error:\n'
+                  '        raise EfficiencyError("path_forbidden_name", error)\n', "")],
+     ("companion_forbidden_name_refused",), "the state_dict companion's \"test\" guard dropped"),
+    ("M28", PE, [("    if args.threads is not None:\n        import torch\n        torch.set_num_threads(int(args.threads))"
+                  "     # before any model: every measurement at it, memory included (§3)\n", "")],
+     ("memory_at_requested_threads",), "--threads not applied before the memory phase"),
+    ("M29", PE, [('    if artifact is not None and kind != "int8_artifact":\n        artifact["model_only_companion"] = '
+                  "model_only_companion(resolved)     # parses the checkpoint: after memory\n", ""),
+                 ('    artifact = measure_artifact_size(resolved) if "size" in metrics else None\n',
+                  '    artifact = measure_artifact_size(resolved) if "size" in metrics else None\n'
+                  '    if artifact is not None and kind != "int8_artifact":\n'
+                  '        artifact["model_only_companion"] = model_only_companion(resolved)\n')],
+     ("memory_precedes_companion",), "the model-only companion measured before the load and the memory phase"),
+    ("M30", PE, [(',\n                                 code="metrics_unknown")', ")")],
+     ("metric_refusals_coded",), "the unknown-metric refusal uncoded again"),
+    ("M33", PE, [('    if not rec.get("path") or not rec.get("sha256"):\n        raise EfficiencyError("state_dict_companion_'
+                  'mismatch",\n', '    if False:\n        raise EfficiencyError("state_dict_companion_mismatch",\n')],
+     ("state_dict_companion_mismatch",), "a run provenance recording no companion not refused"),
 ]
 
 RESULTS: list[tuple[str, bool, str]] = []

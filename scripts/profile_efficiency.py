@@ -21,18 +21,20 @@ L-RESIDUAL-SHA's efficiency half (LEFF B-1: E-35, DL-59; the LEFF Phase A plan �
   * The loaders dispatch on the resolver's spec kind and are unpacked to their modules (F1). FP32: the checkpoint's
     sha256 is compared again at the load ([checkpoint_changed_after_validation]); INT8: the converted artifact is
     re-hashed immediately before it is loaded ([converted_changed_before_load]).
-  * No path argument names "test", as given or resolved, before anything is opened ([path_forbidden_name]);
-    --out-dir is outside the repository and absent or empty ([out_dir_not_empty]); the record is created
-    exclusively.
+  * No path argument names "test", as given or resolved, before anything is opened ([path_forbidden_name]); nor
+    do the converted artifact and the state_dict companion a run provenance names, refused before the profiler
+    reads or loads them (the resolver's whole-file hash is the one read SL-1 allows); --out-dir is outside the
+    repository and absent or empty ([out_dir_not_empty]); the record is created exclusively.
   * Size: the file of record's bytes are re-hashed against the resolver's sha256 before any model is built; an FP32
-    stage also records its model-only serialization, a labelled companion (LEFF-AUDIT-RULE-1 Q7). The INT8 weight
-    footprint is read from the artifact's own packed params and cross-checked against its state_dict companion
-    ([state_dict_companion_mismatch]; A13).
+    stage also records its model-only serialization, a labelled companion (LEFF-AUDIT-RULE-1 Q7), measured after
+    the memory phase. The INT8 weight footprint is read from the artifact's own packed params and cross-checked
+    against its state_dict companion ([state_dict_companion_mismatch]; A13).
   * Peak memory (§3): VmHWM over the protocol's 120 untimed forwards minus VmRSS at the phase start, the high-water
-    mark reset through /proc/self/clear_refs after the load and gc.collect(); in a combined invocation it runs
-    first, right after the load. The process-start values are recorded for §3's parent test. The record is
-    plantseg-efficiency/2.0.0.
-Every refusal prints `[code] message` and exits 2.
+    mark reset through /proc/self/clear_refs after the load and gc.collect(), at --threads when it is given; in a
+    combined invocation it runs first, right after the load, before any other measurement's allocation. The
+    process-start values are recorded for §3's parent test. The record is plantseg-efficiency/2.0.0.
+Every refusal exits 2 and prints `[code] message`, except an error a loader raises while it reads a validated file
+(model_loading.CheckpointError carries no code), printed as `CheckpointError: message`.
 """
 from __future__ import annotations
 
@@ -84,8 +86,7 @@ PATH_FLAGS = ("out_dir", "checkpoint", "provenance", "teacher_config")
 
 
 class EfficiencyCliError(RuntimeError):
-    """Argument/mode violation, raised before any artifact or model work. `code` names the refusal; the
-    unknown-metric refusals predate the codes and carry none."""
+    """Argument/mode violation, raised before any artifact or model work. `code` names the refusal."""
 
     def __init__(self, message: str, code: str | None = None):
         super().__init__(message)
@@ -116,9 +117,10 @@ def parse_metrics(raw: str) -> tuple[str, ...]:
     requested = tuple(m.strip() for m in raw.split(",") if m.strip())
     unknown = [m for m in requested if m not in METRICS]
     if unknown:
-        raise EfficiencyCliError(f"unknown metrics {unknown}; registered metrics are {list(METRICS)}")
+        raise EfficiencyCliError(f"unknown metrics {unknown}; registered metrics are {list(METRICS)}",
+                                 code="metrics_unknown")
     if not requested:
-        raise EfficiencyCliError("no metrics requested")
+        raise EfficiencyCliError("no metrics requested", code="metrics_none")
     return requested
 
 
@@ -164,6 +166,16 @@ def refuse_forbidden_paths(args) -> None:
             error = forbidden_path_error(f"--{flag.replace('_', '-')}", value)
             if error:
                 raise EfficiencyCliError(error, code="path_forbidden_name")
+
+
+def refuse_forbidden_converted(resolved: dict) -> None:
+    """SL-1 for the converted artifact a run provenance names: the resolver hashed it whole (the one read SL-1
+    allows); a path naming "test", as recorded or resolved, is refused before the profiler reads or loads it."""
+    if resolved["spec"]["kind"] == "int8_artifact" and forbidden_path_error("", resolved["artifact_path"]):
+        raise EfficiencyError("path_forbidden_name",
+                              f"the converted artifact {str(resolved['artifact_path'])!r} its run provenance names "
+                              "names 'test' (SL-1): the resolver hashed it whole, the one read SL-1 allows, and the "
+                              "profiler neither reads nor loads it")
 
 
 def check_out_dir(raw) -> Path:
@@ -230,7 +242,6 @@ def fp32_reference_for(stage: str):
 # ------------------------------------------------------------------ size and footprint
 def measure_artifact_size(resolved: dict) -> dict:
     """The file of record's serialized size, its bytes re-hashed against the resolver's before any model is built."""
-    kind = resolved["spec"]["kind"]
     source_path, source_sha256 = source_identity(resolved)
     artifact = serialized_artifact(source_path)
     if artifact["sha256"] != source_sha256:
@@ -241,10 +252,17 @@ def measure_artifact_size(resolved: dict) -> dict:
     # rather than silently switching size onto the latency copy.
     artifact["size_artifact_role"] = ARTIFACT_ROLE_ACCURACY
     artifact["size_measured_from_latency_copy"] = False
-    if kind != "int8_artifact":
-        artifact["model_only_companion"] = model_only_serialization(
-            source_path, expected_sha256=source_sha256, teacher=kind == "teacher_checkpoint")
     return artifact
+
+
+def model_only_companion(resolved: dict) -> dict | None:
+    """An FP32 stage's model-only serialization (Q7), a labelled companion to its serialized size. It parses the
+    whole checkpoint, so profile() measures it after the memory phase (§3); an INT8 stage has none."""
+    kind = resolved["spec"]["kind"]
+    if kind == "int8_artifact":
+        return None
+    source_path, source_sha256 = source_identity(resolved)
+    return model_only_serialization(source_path, expected_sha256=source_sha256, teacher=kind == "teacher_checkpoint")
 
 
 def companion_path(resolved: dict, provenance_path) -> tuple[Path, str]:
@@ -355,6 +373,8 @@ def profile(resolved: dict, *, stage: str, metrics, artifact_role: str, threads:
             memory = measure_memory(model)
         except EfficiencyError as e:
             deferred["memory"] = f"[{e.code}] {e}"
+    if artifact is not None and kind != "int8_artifact":
+        artifact["model_only_companion"] = model_only_companion(resolved)     # parses the checkpoint: after memory
 
     reference = fp32_reference_for(stage) if precision == "int8" else None
 
@@ -407,11 +427,15 @@ def run(args, *, teacher_builder=None) -> tuple[Path, dict]:
     validate_teacher_identity(args)
     refuse_forbidden_paths(args)
     out_dir = check_out_dir(args.out_dir)
+    if args.threads is not None:
+        import torch
+        torch.set_num_threads(int(args.threads))     # before any model: every measurement at it, memory included (§3)
 
     # ---- source artifact validated BEFORE any model construction; the teacher hashed before any parse ----
     resolved = resolve_evaluation_source(args.stage, checkpoint=args.checkpoint,
                                          provenance=args.provenance,
                                          expected_sha256=args.teacher_ckpt_sha256)
+    refuse_forbidden_converted(resolved)
 
     record = profile(resolved, stage=args.stage, metrics=metrics, artifact_role=args.artifact_role,
                      threads=args.threads, provenance_path=args.provenance,
