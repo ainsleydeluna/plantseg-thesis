@@ -218,7 +218,11 @@ def case_list_parser():
             ("list_row_with_an_upper_case_sha256_refused", tvb.replace(sha(b"V2").encode(),
                                                                         sha(b"V2").upper().encode()), {},
              "line 7 is not a"),
-            ("list_row_of_another_split_refused", tvb.replace(b"val\tva_c", b"eval\tva_c"), {}, "line 7 is not a")):
+            ("list_row_of_another_split_refused", tvb.replace(b"val\tva_c", b"eval\tva_c"), {}, "line 7 is not a"),
+            ("list_row_with_a_non_digit_byte_count_refused", tvb.replace(b"va_c.jpg\t2\t", b"va_c.jpg\t2x\t"), {},
+             "line 7 is not a"),
+            ("list_row_with_a_non_hex_sha1_refused", tvb.replace(hashlib.sha1(b"V2").hexdigest().encode(), b"z" * 40),
+             {}, "line 7 is not a")):
         args = {"rows": 6, "train": 3, "val": 3}
         args.update(kw)
         got = outcome(D.parse_train_val_list, data, sha256=sha(data), **args)
