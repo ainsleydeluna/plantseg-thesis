@@ -29,7 +29,7 @@ scripts/tday_manifest.py.
     6. outputs: tday_image_hashes.tsv and tday_dedup.json are built, then created exclusively in --out, an existing
        folder outside the repository at --repo and outside this checkout, once resolved; both or neither (a failure
        removes what the run created). Printed: the three values of manifest.HASHER_VALUES (:544) and, beside them,
-       issue #11's counts; never an id.
+       issue #11's counts; never an id. A character stdout cannot encode is printed escaped.
 
 Exit codes (scripts/tday_manifest.py's): 0 printed or written, 2 refused (REFUSED [<code>] -- <detail>), 4 error.
 """
@@ -322,6 +322,11 @@ def parser() -> argparse.ArgumentParser:
 
 
 def main(argv=None) -> int:
+    reconfigure = getattr(sys.stdout, "reconfigure", None)      # a text stream's (a StringIO has none)
+    if reconfigure is not None:
+        # a stdout whose encoding lacks the issue labels' U+2194 (a Windows code page, redirected) gets it escaped:
+        # printing never turns a run that wrote its outputs into exit 4
+        reconfigure(errors="backslashreplace")
     p = parser()
     args = p.parse_args(argv)
     if args.print_pin == (args.cmd == "hash"):

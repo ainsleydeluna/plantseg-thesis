@@ -316,6 +316,11 @@ M = [
      "hasher", "case_step6_outputs", "step6_out_not_an_existing_folder_refused", ["output_location"]),
     ("ids_printed", HSH, [("    print(D.issue_counts_line())", '    print(D.issue_counts_line(), doc["kept_ids"])')],
      "hasher", "case_pass_and_trace", "prints_no_id_H7", []),
+    ("issue_line_counts_dropped", DED, [('    parts = [f"{r} {ISSUE_ROWS[r][1]} ({ISSUE_ROWS[r][0]})" for r '
+                                         'in REASONS]', '    parts = [f"{r} ({ISSUE_ROWS[r][0]})" for r in REASONS]')],
+     "hasher", "case_pass_and_trace", "prints_the_issue_s_pinned_counts_70_11_13_H7", []),
+    ("stdout_not_escaped", HSH, [('        reconfigure(errors="backslashreplace")', "        pass")],
+     "hasher", "case_stdout_without_the_arrow", "cp1252_stdout_exit_0_four_lines_arrow_escaped", []),
     # ------------------------------------------------------------------------- tday_hash_images.py: the pin (H8)
     ("print_pin_unchecked", HSH, [("    errs = M.hasher_pin_errors(pin)\n    if errs:", "    errs = []\n    if errs:")],
      "hasher", "case_print_pin", "print_pin_commit_upper_case_refused", ["generator_pin_incomplete"]),

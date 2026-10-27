@@ -13,6 +13,8 @@
   through src.tman.schema -> src.eval.artifacts -> src.eval.protocols and src/eval/__init__.py: recorded, accepted.
 - Exclusive outputs, both or neither (a refused second create, or a write that fails, leaves nothing the run created;
   an error is exit 4); an --out inside the repository refused; a shuffled os.scandir order gives identical bytes.
+- The printed lines: H7's three values and the issue's counts, the latter pinned as a literal line (70, 11, 13); a
+  stdout that cannot encode the labels' U+2194 (cp1252) still gives exit 0, the arrow escaped.
 - --print-pin: its pin passes manifest.hasher_pin_errors and test_value_errors in the builder's wrapping
   (manifest.py :861), which fails when a HASHER_VALUES key is injected; its parameters are H8's.
 - Static cases (H8, H10): the word in no identifier, attribute, key, f-string or path-like literal of the two new
@@ -384,6 +386,9 @@ def case_pass_and_trace():
                   "counts_by_reason " + S.canonical_json_bytes(doc.get("removed_by_reason")).decode("utf-8"),
                   D.issue_counts_line()]
     check("prints_exactly_hasher_values_and_the_issue_counts_H7", txt.splitlines() == want_lines, txt[-400:])
+    issue = (f"issue #11's counts beside them (AM-18 item 8(a), not recomputed): equal_train 70 ({WORD} ↔ train); "
+             f"equal_val 11 ({WORD} ↔ val); duplicate_in_split 13 ({WORD} ↔ {WORD})")
+    check("prints_the_issue_s_pinned_counts_70_11_13_H7", txt.splitlines()[3:] == [issue], txt[-300:])
     check("prints_no_id_H7", "kx_" not in txt and not any(os.path.splitext(n)[0] in txt for n in IMAGES))
     check("suffix_rule_upper_case_kept_png_txt_and_folder_left", b"kx_tb\tkx_tb.JPG" in tsv
           and b"kx_v1\tkx_v1.jpeg" in tsv and b"kx_mask" not in tsv and b"kx_notes" not in tsv
@@ -642,6 +647,26 @@ def case_shuffled_scandir():
     check("shuffled_scandir_gives_identical_bytes", outs[0][0] == outs[1][0] == 0 and outs[0] == outs[1])
 
 
+def case_stdout_without_the_arrow():
+    """A stdout whose encoding has no U+2194 (cp1252, as Windows gives a redirected stdout): the run still exits 0,
+    writes both outputs and prints its four lines, the issue labels' arrow escaped."""
+    import scripts.tday_hash_images as H
+    w = World()
+    raw = io.BytesIO()
+    out = io.TextIOWrapper(raw, encoding="cp1252", newline="\n")
+    saved = H.split_of_record
+    H.split_of_record = lambda: SPLIT
+    try:
+        with contextlib.redirect_stdout(out):
+            rc = H.main(w.argv())
+        out.flush()
+    finally:
+        H.split_of_record = saved
+    lines = raw.getvalue().decode("cp1252").splitlines()
+    check("cp1252_stdout_exit_0_four_lines_arrow_escaped", rc == 0 and len(lines) == 4
+          and lines[3].count("\\u2194") == 3 and len(list(w.out.iterdir())) == 2, f"{rc} {lines[-1:]}")
+
+
 # ======================================================================================= --print-pin (H8)
 def case_print_pin():
     from src.tman import dedup as D
@@ -820,4 +845,4 @@ if __name__ == "__main__":
                                   (case_pass_and_trace, case_step1_paths, case_step2_records, case_step2_repository,
                                    case_step3_listing,
                                    case_step4_list, case_step5_hashing, case_step6_outputs, case_shuffled_scandir,
-                                   case_print_pin, case_static, case_created_names)))
+                                   case_stdout_without_the_arrow, case_print_pin, case_static, case_created_names)))
