@@ -165,16 +165,20 @@ def is_planned(row: dict) -> bool:
     return row.get("role") in PLANNED_ROLES
 
 
-def coverage_items(stats: H.StatsArtifact, inv: H.Inventory, rec_slots, *, input_root: Path) -> tuple:
+def coverage_items(stats: H.StatsArtifact, inv: H.Inventory, rec_slots, *, input_root: Path, roles=None,
+                   stages=()) -> tuple:
     """B-5 (d): (items, loaded) of every clean canvas binding record of a slot that is not a planned
     cell's (never an fq_off row), read through load_bound at B5-S1's stage map, its model row at its
-    entry's stage and seed (R-14)."""
+    entry's stage and seed (R-14). With `roles`, only the slots whose roles meet them or whose stage is in
+    `stages` are read; every other slot is ignored and never refused (LRB4)."""
     items, loaded = [], {}
     listed = sorted({(r["slot"], r["precision"]) for r in inv.doc["binding"].get("artifacts", [])
                      if r.get("scope") == "clean" and r.get("cell") is None and r.get("slot") not in rec_slots
                      and r.get("precision") != H.PRECISION_FQOFF})
     for slot, precision in listed:
         e = inv.entry(slot)
+        if roles is not None and not (set(e["role"]) & set(roles) or e.get("stage") in stages):
+            continue
         stage, seed = e.get("stage"), e.get("seed")
         ba = H.load_bound(inv, slot=slot, stage=stage, precision=precision, scope="clean",
                           input_root=input_root, policy=stats.policy)
@@ -195,10 +199,10 @@ def _sort_key(r: dict):
 
 
 def build_am6_tables(stats: H.StatsArtifact, inv: H.Inventory, cells: H.PlannedCells, *,
-                     input_root: Path, coverage: bool = False, subset=None) -> dict:
+                     input_root: Path, coverage: bool = False, subset=None, roles=None, stages=()) -> dict:
     """The "AM-6 / AM-17 item 1(b): GT-present on TEST for every model of record" part; with `coverage`,
-    every other clean canvas record too (B-5 (d)); with `subset`, each row's values on those image ids
-    (AM-18 item 8(c))."""
+    every other clean canvas record too (B-5 (d)), or with `roles` only those of these roles or `stages`
+    (dedup_subset's (i)); with `subset`, each row's values on those image ids (AM-18 item 8(c))."""
     from .report import gt_present_rows
     H.check_seed42_identity(inv, cells, stats)
     rec_slots = {slot: key for key, slot in cells.slots.items()}
@@ -231,7 +235,8 @@ def build_am6_tables(stats: H.StatsArtifact, inv: H.Inventory, cells: H.PlannedC
         if not st.has_model:
             labels.append({"slot": st.slot, "stage": stage, "seed": seed, "label": st.label})
     if coverage:
-        more, more_loaded = coverage_items(stats, inv, rec_slots, input_root=input_root)
+        more, more_loaded = coverage_items(stats, inv, rec_slots, input_root=input_root, roles=roles,
+                                           stages=stages)
         items += more
         loaded.update(more_loaded)
     H.cross_check(loaded, {}, evaluator_commit=inv.evaluator_commit, official=stats.profile == "official")

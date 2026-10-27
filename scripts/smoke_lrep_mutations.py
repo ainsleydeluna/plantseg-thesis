@@ -556,11 +556,11 @@ MUTATIONS = [
     ("S66", "B5-D3: a None p-value reads as a False decision, not 'not evaluable'",
      [(DS, "unadjusted", [("return None if p is None", "return False if p is None")])], "dedup:T1"),
     ("S67", "B5-D3: a zero dataset-level difference counts as a sign disagreement",
-     [(DS, "compare", [("== -1:", "<= 0:")])], "dedup:T3"),
+     [(DS, "compare", [("== -1", "<= 0")])], "dedup:T3"),
     ("S68", "B5-D3: a different label no longer disagrees",
      [(DS, "compare", [('why.append("label")', "pass")])], "dedup:T3"),
-    ("S69", "B5-D3: a subset that is not evaluable disagrees",
-     [(DS, "compare", [('return None, ["not evaluable', 'return True, ["not evaluable')])], "dedup:T3"),
+    ("S69", "B5-D3: a subset that is not evaluable disagrees whatever the sign",
+     [(DS, "compare", [("(True if opposite else None)", "True")])], "dedup:T3"),
     ("S70", "B5-D3: the pending caveat dropped from a not-rejected label",
      [(DS, "label_of", [('label = f"{label}; {RP.CAVEAT_PENDING}"', "pass")])], "dedup:T2"),
     ("S71", "B5-D3: report.contrast_label fed the difference's own type (np.float64)",
@@ -694,6 +694,12 @@ MUTATIONS = [
                           'for s in H.role_slots(inv, "quant_descriptive")}')])], "arms:P11"),
     ("S121", "(c): an AM-23 QAT stage without a slot dropped from the fq_off table",
      [(RX, "build_fqoff", [("out.update(seed=QUANT_SEED, note=NO_SLOT)", "rows.pop()")])], "report:Q10"),
+    ("S122", "B5-D3: a subset that is not evaluable skips the sign test",
+     [(DS, "compare", [("(True if opposite else None)", "None")])], "dedup:T3"),
+    ("S123", "(b)(i): the part reads every role's coverage rows (LRB4)",
+     [(DS, "model_rows", [("roles=SUBSET_ROLES, stages=(H.E6KD_STAGE,)", "roles=None")])], "dedup:V5"),
+    ("S124", "(b)(i): am6's coverage role filter ignored",
+     [(AM6, "coverage_items", [("if roles is not None and not", "if False and not")])], "dedup:V5"),
 ]
 
 

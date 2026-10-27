@@ -13,10 +13,11 @@ result, the official result stands and Chapter 4 reports both. ... The numbers o
 each reason are reported next to the issue's counts."
 
   * The subset is B5-S2's kept ids (heldout_inputs.read_dedup), checked against every scored artifact
-    read here: one image id set (am6_tables.ids_sha256 of each artifact's manifest_ids; a corrupted
-    cell whose ids were suffixed, src/eval/adapters.py:13-14, is refused here, never mapped), the kept
-    ids inside it, and |all| - |kept| <= the sum of removed_by_reason (TMAN's committed schema states no
-    partition of the reasons, so the overlap is reported); dedup_invalid otherwise.
+    read here (the 37 with their cells and the rows (i) reports; no other slot is read, LRB4): one image
+    id set (am6_tables.ids_sha256 of each artifact's manifest_ids; a corrupted cell whose ids were
+    suffixed, src/eval/adapters.py:13-14, is refused here, never mapped), the kept ids inside it, and
+    |all| - |kept| <= the sum of removed_by_reason (TMAN's committed schema states no partition of the
+    reasons, so the overlap is reported); dedup_invalid otherwise.
   * (i) Every row of the GT-present table (am6_tables with coverage, B-5 (d)) whose roles include
     family, per_seed, arm, arm_teacher, quant_descriptive or teacher_reference, and E6-KD's: its four
     numbers on the subset, eligibility recomputed by eligibility.class_totals on the kept rows, and the
@@ -46,8 +47,9 @@ each reason are reported next to the issue's counts."
     NI's `passed` beside the official one; the official Holm decision and label (report.family_rows)
     printed unchanged. "Disagrees" means a different decision, a different label, opposite signs of the
     dataset-level difference (sign product -1), or a different NI `passed`. A subset p-value of None
-    reads "not evaluable", never a False decision, and the contrast is then neither agreeing nor
-    disagreeing (disagrees null). The official result stands (PA :1228-1230).
+    reads "not evaluable", never a False decision; the contrast then disagrees on the sign alone, and is
+    otherwise neither agreeing nor disagreeing (disagrees null). The official result stands (PA
+    :1228-1230).
   * (v) removed_by_reason beside the issue's counts, AM-18 item 8(a)'s rows (PA :1196-1204), pinned
     here; the issue #11 CSV is never read. The issue's row labels are string values only, never keys.
 
@@ -75,7 +77,7 @@ ISSUE_TOTALS = {"duplicate_groups": 265, "redundant_files": 277, "files": 7774,
                 "hash": "SHA-1 over the image files of the Zenodo 10.5281/zenodo.17719108 release",
                 "source": "AM-18 item 8(a), PA :1196-1204"}
 #: (i): the roles of the rows reported on the subset (every model of record and every arm, PA
-#: :1225-1226; AM-23 item 5 for quant_descriptive), and E6-KD's row whatever its role.
+#: :1226-1227; AM-23 item 5 for quant_descriptive), and E6-KD's row whatever its role.
 SUBSET_ROLES = ("family", "per_seed", "arm", "arm_teacher", "quant_descriptive", "teacher_reference")
 EIGHT = (*D.CLEAN_COMPARISON_IDS, D.ROBUSTNESS_ID)
 NOT_EVALUABLE = "not evaluable"
@@ -189,16 +191,20 @@ def _sign(x) -> int:
 
 def compare(official: dict, subset: dict) -> tuple:
     """B5-D3: (disagrees, why) of one contrast -- a different decision, a different label, or opposite
-    signs of the dataset-level difference (sign product -1). A subset that is not evaluable neither
-    agrees nor disagrees: (None, ["not evaluable on the subset"])."""
+    signs of the dataset-level difference (sign product -1). The sign test needs no p-value: a subset that
+    is not evaluable disagrees on the sign alone, and otherwise neither agrees nor disagrees (None)."""
+    opposite = _sign(official["dataset_level_difference"]) * _sign(subset["dataset_level_difference"]) == -1
     if subset["unadjusted_reject"] is None:
-        return None, ["not evaluable on the subset"]
+        why = ["not evaluable on the subset"]
+        if opposite:
+            why.append("sign of the dataset-level difference")
+        return (True if opposite else None), why
     why = []
     if official["unadjusted_reject"] != subset["unadjusted_reject"]:
         why.append("decision")
     if official["label"] != subset["label"]:
         why.append("label")
-    if _sign(official["dataset_level_difference"]) * _sign(subset["dataset_level_difference"]) == -1:
+    if opposite:
         why.append("sign of the dataset-level difference")
     return bool(why), why
 
@@ -227,8 +233,10 @@ def subset_interval(contrast_id, spec, *, pv=None, result=None, ps=None, B: int)
 
 def model_rows(stats, inv, cells, kept, *, input_root: Path) -> list[dict]:
     """(i): the rows of the GT-present table (with coverage) that item 8(c) reports, with their full and
-    subset values; each row's image-id fingerprint is checked by the caller (B5-S2)."""
-    doc = AM6.build_am6_tables(stats, inv, cells, input_root=input_root, coverage=True, subset=kept)
+    subset values; each row's image-id fingerprint is checked by the caller (B5-S2). Only those rows are
+    read: a coverage slot of another role is ignored here and never refused (LRB4)."""
+    doc = AM6.build_am6_tables(stats, inv, cells, input_root=input_root, coverage=True, subset=kept,
+                               roles=SUBSET_ROLES, stages=(H.E6KD_STAGE,))
     out = []
     for r in doc["rows"]:
         roles = [r["role"]] if AM6.is_planned(r) else list(r["roles"])

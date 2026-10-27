@@ -6,12 +6,13 @@ SYNTHETIC ONLY (DL-41): scripts/lrep_fixtures.py's world with its dedup file (fo
 removed, the per-reason counts overlapping by one), variants of the export and the dedup file under new
 directories in TMPDIR, and one pair of artifacts with three AM-5 images for the Am5Pair (all left in
 place); none contains "test". Every expected value is recomputed here from the artifacts with the frozen
-functions (never read from the module under test).
+functions (never read from the module under test), except that T4 applies dedup_subset's label_of and
+compare to the part's rows, rules that T2 and T3 pin on typed hand rows.
 
   I  B5-S2: the reader (path, sha256 first, strict JSON, T4's fields) and dedup_invalid on each failure;
      the invariants against the scored artifacts (one id set, kept inside it, |all| - |kept| <= the sum)
   V  (i): the rows read (every model of record and every arm, E6-KD), their four numbers on the subset
-     with eligibility recomputed, the eligibility changes, the counts
+     with eligibility recomputed, the eligibility changes, the counts; no other slot is read (LRB4)
   C  (ii): the eight contrasts on the subset: the restricted vectors and run_comparison, robustness
      through assemble_miou_c and align_miou_c, the dataset-level differences, the Am5Pair on the kept
      rows, the 31 intervals beside the official ones (lrep_descriptive_v1)
@@ -350,9 +351,26 @@ def v_changes():
 
 def v_counts():
     d = the_doc()["dedup"]
+    every = hashlib.sha256("\n".join(sorted(CTX.world.truth.ids)).encode()).hexdigest()
     return ((d["n_all"], d["n_kept"], d["n_removed"], d["sum_removed_by_reason"], d["overlap"])
-            == (30, 26, 4, 5, 1) and d["image_ids_sha256"] == DS.AM6.ids_sha256(CTX.world.truth.ids)
+            == (30, 26, 4, 5, 1) and d["image_ids_sha256"] == every
             and d["kept_ids_sha256"] == hashlib.sha256("\n".join(kept()).encode()).hexdigest()), str(d)[:300]
+
+
+def v_unreported_slot():
+    """LRB4: the part reads only the rows it reports. The 160k E2 control's binding record off its files
+    (an R-7 defect in a slot (b) does not report) refuses the am6 part with coverage
+    (artifact_record_mismatch), while the duplicate-free part is built with its 35 rows (DL-24 B5R3-02)."""
+    def edit(export, binding):
+        r = next(r for r in binding["artifacts"]
+                 if (r["slot"], r["precision"], r["scope"]) == ("E2:s42:160k", "fp32", "clean"))
+        r["files_sha256"][sorted(r["files_sha256"])[0]] = LF.syn_sha("not the control's file")
+    path = variant("control_off_record", edit)
+    inv = inventory(path)
+    am6 = refused("artifact_record_mismatch", lambda: DS.AM6.build_am6_tables(
+        stats_artifact(), inv, H.planned_cells(inv), input_root=CTX.world.input_root, coverage=True))
+    doc = doc_of(path)
+    return am6[0] and len(doc["models"]) == 35, am6[1]
 
 
 # --------------------------------------------------------------------------------------------------
@@ -575,7 +593,8 @@ def t_labels():
 
 def t_compare():
     """Hand rows: a different decision, a different label, opposite signs (product -1), a zero difference
-    (no sign disagreement), agreement, and a subset that is not evaluable."""
+    (no sign disagreement), agreement, and a subset that is not evaluable: with the same sign (no
+    verdict) and with the opposite sign (it disagrees on the sign; DL-24 B5R3-01)."""
     o = {"unadjusted_reject": True, "label": "sizable", "dataset_level_difference": 0.02}
     cases = [({**o, "unadjusted_reject": False, "label": "not rejected"}, (True, ["decision", "label"])),
              ({**o, "label": "detected, below"}, (True, ["label"])),
@@ -583,7 +602,9 @@ def t_compare():
              ({**o, "dataset_level_difference": 0.0}, (False, [])),
              (dict(o), (False, [])),
              ({**o, "unadjusted_reject": None, "label": "not evaluable"},
-              (None, ["not evaluable on the subset"]))]
+              (None, ["not evaluable on the subset"])),
+             ({**o, "unadjusted_reject": None, "label": "not evaluable", "dataset_level_difference": -0.001},
+              (True, ["not evaluable on the subset", "sign of the dataset-level difference"]))]
     got = [DS.compare(o, s) for s, _ in cases]
     return got == [w for _, w in cases], str(got)
 
@@ -729,6 +750,8 @@ def cases():
             ("V2", "(i): twelve numbers on the subset recomputed here; full values the artifact's", v_values),
             ("V3", "(i): the eligibility changes (:159's form); 26 kept, 4 removed", v_changes),
             ("V4", "(i): the counts, the overlap and the fingerprints", v_counts),
+            ("V5", "(i): a defect in a slot (b) does not report leaves the part unrefused (LRB4)",
+             v_unreported_slot),
             ("C1", "(ii): the eight contrasts in order", c_order),
             ("C2", "(ii): the clean vectors restricted by id, run_comparison on them", c_vectors),
             ("C3", "(ii): the pooled dataset-level differences on the kept rows", c_pooled),
