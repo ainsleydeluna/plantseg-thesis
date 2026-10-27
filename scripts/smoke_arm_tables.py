@@ -559,8 +559,8 @@ def l_diverged_old_shape():
 
 
 def l_diverged_fields():
-    """status_invalid: TMAN's diverged entry with both units null, with both non-null, or without its
-    telemetry_sha256 (each the only defect)."""
+    """status_invalid: TMAN's diverged entry with both units null, with both non-null, without its
+    telemetry_sha256, without its run_id or without its cause (each the only defect)."""
     def make(change):
         def edit(export, binding):
             _div_flip(export, binding)
@@ -569,7 +569,9 @@ def l_diverged_fields():
     out = [refused("status_invalid", lambda n=n, c=c: doc_of(variant(n, make(c))))
            for n, c in (("div_flip_null", lambda e: e.update(iteration=None)),
                         ("div_flip_both", lambda e: e.update(epoch=3)),
-                        ("div_flip_no_tel", lambda e: e.pop("telemetry_sha256")))]
+                        ("div_flip_no_tel", lambda e: e.pop("telemetry_sha256")),
+                        ("div_flip_no_runid", lambda e: e.pop("run_id")),
+                        ("div_flip_no_cause", lambda e: e.pop("cause")))]
     return all(ok for ok, _ in out), str([d for _, d in out])
 
 
@@ -730,7 +732,7 @@ def cases():
             ("L7", "R4-5(f): an arm run diverged in TMAN's shape, its PTQ child not run", l_diverged),
             ("L8", "status_invalid: a divergence in the shape before B-5b (no epoch key)",
              l_diverged_old_shape),
-            ("L9", "status_invalid: both units null, both non-null, or no telemetry_sha256",
+            ("L9", "status_invalid: both units null, both non-null, no telemetry_sha256, run_id or cause",
              l_diverged_fields),
             ("L10", "R4-5(f): a QAT run diverged at an epoch in TMAN's shape", l_diverged_epoch),
             ("D1", "byte-identical JSON on repeated runs", d_deterministic),

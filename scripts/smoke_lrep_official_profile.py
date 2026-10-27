@@ -18,7 +18,8 @@ Policy.OFFICIAL).
      the arm tables; the official-input guard sits where dedup's (ii) and (iii) take their inputs
   H  the happy paths: each of the world's nine DT slots reads descriptive_test through the DT read (its
      run non-official, its rows the official AM-5 rule's); a DT pair with E7 is non-official, its delta
-     the rows' own; every other B-5 slot reads official under Policy.OFFICIAL
+     the rows' own; every other B-5 slot reads official under Policy.OFFICIAL; the arm rows and am6's
+     coverage under Policy.OFFICIAL (a stand-in for the statistics artifact's policy and clean inputs)
   A-F one case per step of the DT read (item 3), each reached with every earlier gate passing:
      A (a) an artifact its loader refuses; B (b) a smoke, official, VAL, random_init or 1560-row DT
      artifact; C (c) an undefined primary value AM-5 does not exclude; D (d) a reference that is not the
@@ -365,6 +366,41 @@ def h_official_slots():
     return not bad and n == 19, f"{bad} of {n}"
 
 
+def h_arm_row():
+    """(e) in the arm rows under Policy.OFFICIAL (arm_tables.arm_row, the statistics artifact stood in by
+    its policy and its clean inputs): E7-R1's row reads descriptive_test through the DT read, prints DT_LABEL
+    and pairs with E7 under Policy.NONOFFICIAL_SMOKE (dt_pair) on 1561 - 7 images; E3-R1's reads official
+    and pairs with E3 under Policy.OFFICIAL on as many."""
+    from src.stats import arm_tables as AT
+    inv, st = inventory(), stats_stand_in()
+    teacher = {"x": "R1", "val_x": None, "ece_x": None, "go": None, "record": None, "note": None}
+    got = {}
+    for stage, slot in (("E7", DT_SLOT), ("E3", "E3-R1:s42:lambda0.5:alpha25:80k")):
+        row, _ = AT.arm_row(st, inv, "R1", stage, slot, reference(stage), input_root=CTX.world.input_root,
+                            B=SMOKE_B, scale=AT.SEED_NOISE_RECORD["band"], teacher=teacher)
+        p = row["per_image"]
+        got[stage] = (row["read"], row["read_label"], p["pair_policy"], p["n_paired"])
+    return (got == {"E7": ("descriptive_test", DT_LABEL, "nonofficial_smoke", N_INCLUDED),
+                    "E3": ("official", None, "official", N_INCLUDED)}), str(got)
+
+
+def h_coverage():
+    """am6's coverage under Policy.OFFICIAL (am6_tables.coverage_items, the stand-in): the 28 clean records
+    outside the planned cells are read, the nine DT slots' through the DT read (descriptive_test, DT_LABEL,
+    their runs non-official) and the 19 others' official."""
+    from src.stats import am6_tables as AM6
+    inv = inventory()
+    planned = set(H.planned_cells(inv).slots.values())
+    items, loaded = AM6.coverage_items(stats_stand_in(), inv, planned, input_root=CTX.world.input_root)
+    dt = sorted(ident["slot"] for ident, _, _ in items if ident["read"] == H.READ_DESCRIPTIVE_TEST)
+    policies = {k: ba.run.policy for k, ba in loaded.items()}
+    return (len(items) == 28 and dt == sorted(LF.DT_SLOTS)
+            and all(ident["read_label"] == (DT_LABEL if ident["slot"] in LF.DT_SLOTS else None)
+                    for ident, _, _ in items)
+            and sum(p is Policy.NONOFFICIAL_SMOKE for p in policies.values()) == 9
+            and sum(p is Policy.OFFICIAL for p in policies.values()) == 19), str(dt)
+
+
 # --------------------------------------------------------------------------------------------------
 # A-F: one case per step of the DT read
 # --------------------------------------------------------------------------------------------------
@@ -680,6 +716,10 @@ def cases():
              h_dt_slots),
             ("H2", "(e): a DT pair with E7 is aligned under NONOFFICIAL_SMOKE, its delta the rows'", h_pair),
             ("H3", "item 4: every other B-5 slot reads official under Policy.OFFICIAL", h_official_slots),
+            ("H4", "(e): the arm rows under Policy.OFFICIAL: E7-R1's DT pair non-official, E3-R1's official",
+             h_arm_row),
+            ("H5", "am6's coverage under Policy.OFFICIAL: the nine DT slots through the DT read, 19 official",
+             h_coverage),
             ("A1", "descriptive_input_invalid (a): an artifact its loader refuses", a_loader),
             ("B1", "descriptive_input_invalid (b): official, smoke, VAL, random_init, 1560 rows", b_status),
             ("C1", "descriptive_input_invalid (c): an undefined value AM-5 does not exclude", c_undefined),

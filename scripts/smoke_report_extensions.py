@@ -29,7 +29,7 @@ new directory in TMPDIR (left in place); none contains "test" or ":".
   S  B5-S4: PARTS and --parts, the new parts under the split banner and "descriptive; outside protocol
      1.0.0", each equal to its module's own build, the MDE part's caveat in the dedup labels, B =
      PRODUCTION_B through the CLI and a smaller B keeping the profile nonofficial, dedup_invalid
-     through the CLI
+     through the CLI; B-5b (R4-1 item 8): report_extensions.run passes its B to the B-5 parts
 
 In process, the report is built with SMOKE_B bootstrap replicates; the CLI runs (W1, H7) use
 bootstrap.PRODUCTION_B.
@@ -661,6 +661,22 @@ def s_cli_dedup():
     return code == 2 and "REFUSED (dedup_invalid)" in so and not out.exists(), so[-200:]
 
 
+def s_run_b():
+    """B-5b (R4-1 item 8): report_extensions.run passes its B to the B-5 parts (the official-profile smoke
+    runs it at a smaller B; the CLI keeps PRODUCTION_B, S8): --parts arms at B = 60 gives the part and each
+    of its intervals B = 60, named as unmet (bootstrap_replicates_nonproduction)."""
+    w = CTX.world
+    out = new_out("rx_run_b")
+    path, doc = RX.run(stats_artifact=w.stats_path, inventory=w.inventory_path, out_dir=out,
+                       repo_root=w.input_root, synthetic=True, strata=w.strata_path, mde_entry=MDE,
+                       parts="arms", B=SMOKE_B)
+    arms = part(doc, "arms")
+    bs = {arms["B"], *(r["per_image"]["B"] for r in arms["rows"] if r["per_image"])}
+    unmet = {u[0] for u in doc["unmet_official_conditions"]}
+    return (bs == {SMOKE_B} and "bootstrap_replicates_nonproduction" in unmet and path == out
+            and [p["part"] for p in doc["parts"]] == ["arms"]), str(sorted(bs))
+
+
 def s_alone():
     """--parts dedup alone still reads the MDE entry for its caveat (not added as a part); --parts arms
     alone gives the arms part only."""
@@ -749,7 +765,9 @@ def cases():
             ("S7", "a B other than PRODUCTION_B is an unmet official condition", s_unmet_b),
             ("S8", "through the CLI every B-5 interval has B = PRODUCTION_B", s_cli_b),
             ("S9", "the CLI refuses --parts dedup on an export whose dedup is null (exit 2)", s_cli_dedup),
-            ("S10", "--parts dedup alone reads the MDE entry's caveat; --parts arms alone", s_alone)]
+            ("S10", "--parts dedup alone reads the MDE entry's caveat; --parts arms alone", s_alone),
+            ("S11", "B-5b: report_extensions.run passes its B to the B-5 parts (B = 60 named as unmet)",
+             s_run_b)]
 
 
 def run_case(fn):
