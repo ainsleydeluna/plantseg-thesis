@@ -878,12 +878,13 @@ _INTEROP_CALLS: list = []      # this process's one torch.set_num_interop_thread
 def set_interop_threads(n: int = INTEROP_THREADS_OF_RECORD) -> dict:
     """torch.set_num_interop_threads(n), once per process, first in main() (LF30).
 
-    torch takes the call once. On torch 2.1.0 a second call, or a call once inter-op work has started, does not raise:
-    its c10::Error ends the process with SIGABRT (MEASURED; scripts/smoke_latency_threads.py
-    torch_second_interop_call_aborts), where the plan inferred a RuntimeError. So torch is called at most once here: a
-    later call in the same process never reaches torch and is recorded "already called in this process", and a
-    RuntimeError (a build that raises) is recorded "locked" with torch's text. The run of record refuses any status
-    but "set" ([interop_threads_locked])."""
+    torch takes the call once. On torch 2.1.0 a second call, or a first call once inter-op work has started, does not
+    raise: its c10::Error ends the process with SIGABRT (MEASURED; scripts/smoke_latency_threads.py
+    torch_second_interop_call_aborts and torch_interop_call_after_work_aborts), where the plan inferred a RuntimeError.
+    So torch is called at most once here, and main() calls this before any model is built: a later call in the
+    same process never reaches torch and is recorded "already called in this process", and a RuntimeError (a build
+    that raises) is recorded "locked" with torch's text. The run of record refuses any status but "set"
+    ([interop_threads_locked])."""
     if _INTEROP_CALLS:
         return {"requested": int(n), "status": "already called in this process", "error": None,
                 "first_call": dict(_INTEROP_CALLS[0])}
@@ -971,8 +972,10 @@ def provenance(*, stage: str, model_role: str, precision: str, artifact_role: st
                expected_sha256: str | None = None) -> dict:
     """Identify EXACTLY which artifact produced a measurement. Never pool two unidentified ones.
 
-    `source_artifact_sha256` is the resolver's own hash of the file; `expected_sha256` the value the operator named
-    for it (the teacher's --teacher-ckpt-sha256, DL-59), None when none was named.
+    `source_artifact_sha256` is the resolver's own hash of the file; `expected_sha256` the teacher's
+    --teacher-ckpt-sha256 (DL-59), None for every other source and when none was named. A run's
+    --expected-checkpoint-sha256, --expected-converted-sha256 and --expected-x86-sha256 (H, H2, H86) are recorded
+    under the profiler's provenance.expected.
     """
     if stage not in STAGES:
         _fail("unknown_stage", f"stage must be one of {STAGES}, got {stage!r}")

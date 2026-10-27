@@ -354,7 +354,9 @@ def fvcore_version() -> str | None:
 
 
 def image_gate() -> dict:
-    """The KD image of record (DL-87) by its digest, its PL-26 fingerprint and the pinned fvcore."""
+    """The KD image of record (DL-87) by its digest, its PL-26 fingerprint and the pinned fvcore. A fingerprint child
+    that fails, runs past its timeout or prints a line that does not parse is refused [image_fingerprint_mismatch]
+    with its cause, as a child that exits non-zero is."""
     import scripts.preflight_distill as PD
 
     digest = os.environ.get("PLANTSEG_IMAGE_DIGEST", "").strip()
@@ -362,8 +364,11 @@ def image_gate() -> dict:
         refuse("image_not_of_record",
                f"PLANTSEG_IMAGE_DIGEST {digest or '(unset)'} is not the KD image of record {PD.KD_IMAGE_DIGEST} "
                "(DL-87)")
-    rc, fp, out = image_fingerprint()
-    problems = (PD.fingerprint_problems(fp) if rc == 0 and fp is not None
+    try:
+        rc, fp, out = image_fingerprint()
+    except (subprocess.SubprocessError, OSError, ValueError) as e:      # TimeoutExpired; a FINGERPRINT_JSON line
+        rc, fp, out = None, None, f"{type(e).__name__}: {e}"             # that does not parse (JSONDecodeError)
+    problems = (PD.fingerprint_problems(fp) if rc == 0 and isinstance(fp, dict)
                 else [f"the fingerprint child failed: rc={rc} {str(out)[-200:]}"])
     if problems:
         refuse("image_fingerprint_mismatch", f"the image differs from the fingerprint of record (PL-26): {problems[:6]}")

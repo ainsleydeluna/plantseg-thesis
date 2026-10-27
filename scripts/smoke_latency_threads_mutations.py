@@ -96,8 +96,8 @@ SHADOW_PATHS: tuple[str, ...] = (
     "src/training/train_e1.py",
 )
 
-# (id, file, [(FIND, REPLACE), ...], named checks, the edit): the plan's M1-M12, the GO's M13-M16 (LF35) and the lane's
-# M17-M18. Each FIND occurs exactly once in its file.
+# (id, file, [(FIND, REPLACE), ...], named checks, the edit): the plan's M1-M12, the GO's M13-M16 (LF35), the lane's
+# M17-M22 and the DL-24 fixes' M23. Each FIND occurs exactly once in its file.
 MUTATIONS = [
     ("M01", EFF, [('"probe": probe},\n        num_threads=num_threads)', '"probe": probe})')],
      ("timer_runs_at_requested_threads",), "the Timer without num_threads (its default 1, F2)"),
@@ -153,6 +153,22 @@ MUTATIONS = [
      ("table_record_forbidden_name_refused",), "a session record's \"test\" guard dropped"),
     ("M18", EFF, [("    if _INTEROP_CALLS:\n", "    if False:\n")],
      ("interop_second_call_refused",), "torch called again on a second call in one process (torch 2.1.0 aborts)"),
+    ("M19", PE, [('    error = forbidden_path_error("the x86 latency copy", path)\n    if error:\n'
+                  '        refuse("path_forbidden_name", error)\n', "")],
+     ("x86_copy_forbidden_name_refused",), "the x86 latency copy's \"test\" guard dropped"),
+    ("M20", PE, [('        usable = [rec.get("usable_for_accuracy"), role_fields.get("usable_for_accuracy")]\n',
+                  '        usable = [rec.get("usable_for_accuracy")]\n')],
+     ("x86_copy_role_reads_every_usable_flag",), "the finalize copy's provenance flag not read"),
+    ("M21", PE, [('    if dirty:\n        refuse("governed_paths_dirty"',
+                  '    if False:\n        refuse("governed_paths_dirty"')],
+     ("governed_porcelain_recheck_by_injection",), "the recorded porcelain not checked against the gate"),
+    ("M22", PE, [('    if actual != resolved["checkpoint_sha256"]:\n'
+                  '        raise changed_error(resolved, path, actual, "the arm-key read")',
+                  '    if False:\n        raise changed_error(resolved, path, actual, "the arm-key read")')],
+     ("arm_key_read_rehash_refused",), "the arm-key read parses bytes it did not compare"),
+    ("M23", PE, [("    except (subprocess.SubprocessError, OSError, ValueError) as e:",
+                  "    except ZeroDivisionError as e:")],
+     ("image_fingerprint_child_failure_coded",), "a fingerprint child that times out or prints garble left uncoded"),
 ]
 
 RESULTS: list[tuple[str, bool, str]] = []

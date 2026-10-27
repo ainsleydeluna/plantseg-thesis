@@ -524,6 +524,18 @@ def run_child(name: str, *argv) -> dict:
     return json.loads(lines[-1][len(CHILD_TAG):]) if lines else {"error": f"exit {p.returncode}: {p.stderr[-300:]}"}
 
 
+def run_raw_child(name: str, *argv) -> subprocess.CompletedProcess:
+    """A fresh child whose exit status is the evidence (it may end on a signal): its raw process result."""
+    return subprocess.run([sys.executable, "-B", str(Path(__file__).resolve()), "--child", name, *map(str, argv)],
+                          cwd=str(REPO), env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}, capture_output=True,
+                          text=True, timeout=300)
+
+
+def _forked_neg(x: torch.Tensor) -> torch.Tensor:
+    """Scripted, its torch.jit.fork runs on the inter-op pool (at::launch): inter-op work."""
+    return torch.jit.wait(torch.jit.fork(torch.neg, x))
+
+
 @case("interop_set_at_start")
 def _interop_start():
     res = run_child("interop_start", fixture("e1"), fresh("interop_start"))
@@ -557,12 +569,23 @@ def _interop_twice():
 
 @case("torch_second_interop_call_aborts")
 def _torch_twice():
-    p = subprocess.run([sys.executable, "-B", str(Path(__file__).resolve()), "--child", "torch_twice"], cwd=str(REPO),
-                       env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}, capture_output=True, text=True, timeout=300)
-    aborted = p.returncode == -signal.SIGABRT and CHILD_TAG not in p.stdout
+    p = run_raw_child("torch_twice")
+    # the first call returned (its marker), the second ended the process before its own marker
+    aborted = (p.returncode == -signal.SIGABRT and f'{CHILD_TAG}{{"first": "returned"}}' in p.stdout
+               and '"second"' not in p.stdout)
     tail = [ln for ln in p.stderr.splitlines() if "interop" in ln][:1]
-    return aborted, (f"torch {torch.__version__}: a second torch.set_num_interop_threads ended the process (exit "
-                     f"{p.returncode}, SIGABRT), where the plan inferred a RuntimeError; {tail}")
+    return aborted, (f"torch {torch.__version__}: the first torch.set_num_interop_threads returned, the second ended "
+                     f"the process (exit {p.returncode}, SIGABRT), where the plan inferred a RuntimeError; {tail}")
+
+
+@case("torch_interop_call_after_work_aborts")
+def _torch_after_work():
+    p = run_raw_child("torch_after_work")
+    # a scripted fork ran on the inter-op pool (its marker), then a first set_num_interop_threads ended the process
+    aborted = (p.returncode == -signal.SIGABRT and f'{CHILD_TAG}{{"work": "done"}}' in p.stdout
+               and '"set"' not in p.stdout)
+    return aborted, (f"torch {torch.__version__}: after inter-op work (a scripted torch.jit.fork), a first "
+                     f"torch.set_num_interop_threads ended the process (exit {p.returncode}, SIGABRT)")
 
 
 @case("interop_threads_not_of_record")
@@ -777,6 +800,18 @@ def _no_worktree():
                     world=of_record_world(governed_root=plain))
 
 
+@case("governed_porcelain_recheck_by_injection")
+def _porcelain_recheck():
+    import src.eval.stage_artifacts as SA
+    root = make_checkout(fresh("checkout_race"))
+    (root / "src" / "module_c.py").write_text("Z = 3\n", encoding="utf-8")      # untracked, governed
+    out = fresh("race_out")
+    with of_record_world(governed_root=root), patched(SA, "governed_paths_error", lambda _repo=None: None):
+        code, msg = refused_text(e1_record_argv(out))                         # the gate's own read saw it clean
+    ok = code == "governed_paths_dirty" and "during the gate" in msg and not os.path.lexists(out)
+    return ok, f"{code}: {msg[:140]}"
+
+
 @case("image_not_of_record")
 def _image():
     return _refused(e1_record_argv(fresh("image_out")), "image_not_of_record", world=of_record_world(digest=None))
@@ -787,6 +822,24 @@ def _fingerprint():
     fp = {**fingerprint_of_record(), "python": "0.0.0"}
     return _refused(e1_record_argv(fresh("fp_out")), "image_fingerprint_mismatch",
                     world=of_record_world(fingerprint=fp))
+
+
+@case("image_fingerprint_child_failure_coded")
+def _fingerprint_child_failure():
+    def times_out():
+        raise subprocess.TimeoutExpired(cmd="preflight_distill.py _fingerprint", timeout=600)
+
+    def garbled():
+        return json.loads("{not a fingerprint")                       # a FINGERPRINT_JSON line that does not parse
+    got = []
+    for label, fake, cause in (("timeout", times_out, "TimeoutExpired"), ("garbled", garbled, "JSONDecodeError"),
+                               ("exit 1", lambda: (1, None, "Traceback: boom"), "rc=1")):
+        out = fresh("fp_child")
+        with of_record_world(), patched(PE, "image_fingerprint", fake):
+            code, msg = refused_text(e1_record_argv(out))
+        got.append((code == "image_fingerprint_mismatch" and cause in msg and not os.path.lexists(out),
+                    f"{label}: {code}"))
+    return all(ok for ok, _ in got), "; ".join(d for _ok, d in got)
 
 
 @case("fvcore_not_pinned")
@@ -815,12 +868,39 @@ def _parent():
         return _refused(e1_record_argv(fresh("parent_out"), metrics="memory"), "memory_parent_contaminated")
 
 
+@case("memory_start_unavailable_by_injection")
+def _start_unavailable():
+    with patched(PE, "PROCESS_START_MEMORY", None):
+        return _refused(e1_record_argv(fresh("start_none_out"), metrics="memory"), "memory_sampler_unavailable")
+
+
 @case("arm_artifact_not_of_record")
 def _arm():
     ck = fixture("e3_arm")
     argv = ["--of-record", "--stage", "E3", "--checkpoint", ck, "--expected-checkpoint-sha256", sha256_path(ck),
             "--metrics", "params,size,flops", "--threads", "1", "--host-label", HOST_LABEL, "--out-dir", fresh("arm")]
     return _refused(argv, "arm_artifact_not_of_record")
+
+
+@case("arm_key_read_rehash_refused")
+def _arm_rehash():
+    ck = fresh("arm_rehash").with_suffix(".pt")
+    write_fp32(ck, seed=41)
+    real = PE.checkpoint_keys
+    loads = Counter(torch.load)
+
+    def change_then_read(resolved):
+        write_fp32(Path(resolved["checkpoint_path"]), seed=42)     # the bytes change after the resolver validated them
+        before = loads.n
+        with patched(torch, "load", loads):
+            try:
+                return real(resolved)
+            finally:
+                parsed.append(loads.n - before)
+    parsed: list = []
+    with patched(PE, "checkpoint_keys", change_then_read):
+        ok, detail = _refused(e1_record_argv(fresh("arm_rehash_out"), ckpt=ck), "checkpoint_changed_after_validation")
+    return ok and parsed == [0], f"{detail}; torch.load calls at the arm-key read {parsed}"
 
 
 @case("fp32_has_no_x86_copy")
@@ -956,6 +1036,14 @@ def _identity():
     return _refused(e4_argv(fresh("identity_out"), prov=meta), "x86_copy_identity", world=NO_WORLD())
 
 
+@case("x86_copy_forbidden_name_refused")
+def _x86_forbidden():
+    meta = _e4_edited("x86_forbid", lambda run, d: d["x86_latency_copy"].__setitem__(
+        "path", "plantseg_TEST_x86_copy.pt"))
+    # the named copy is never created: a mutant without the guard stops at [x86_copy_missing], having opened nothing
+    return _refused(e4_argv(fresh("x86_forbid_out"), prov=meta), "path_forbidden_name", world=NO_WORLD())
+
+
 @case("e5_x86_copy_bound")
 def _e5_bound():
     ev = e5_eval_dir()
@@ -995,6 +1083,35 @@ def _fin_not():
 def _checks_failed():
     ev = _e5_edited("fin_checks", lambda f: f["x86_latency_copy"]["checks"].__setitem__("parity_x86_copy", False))
     return _refused(e5_argv(fresh("fin_checks_out"), ev=ev), "x86_copy_checks_failed", world=NO_WORLD())
+
+
+@case("qat_finalize_unreadable_or_other_stage")
+def _fin_other():
+    other = _e5_edited("fin_stage", lambda f: f.__setitem__("stage", "E6"))
+    garbled = _e5_edited("fin_garbled", lambda f: None)
+    runs = [(fresh("fin_other_out"), other, "is not a qat_finalize/1 record of E5"),
+            (fresh("fin_garbled_out"), garbled, "cannot be read")]
+    runs = [(out, e5_argv(out, ev=ev), text) for out, ev, text in runs]    # e5_argv reads H86 from the record
+    garbled["finalize"].write_text("{not json", encoding="utf-8")
+    got = []
+    for out, argv, text in runs:
+        code, msg = refused_text(argv)
+        got.append((code == "qat_finalize_mismatch" and text in msg and not os.path.lexists(out),
+                    f"{code}: {msg[:70]}"))
+    return all(ok for ok, _ in got), "; ".join(d for _ok, d in got)
+
+
+@case("x86_copy_unrecorded_in_finalize")
+def _fin_unrecorded():
+    ev = _e5_edited("fin_unrec", lambda f: f["x86_latency_copy"].pop("path"))
+    return _refused(e5_argv(fresh("fin_unrec_out"), ev=ev), "x86_copy_unrecorded", world=NO_WORLD())
+
+
+@case("x86_copy_role_reads_every_usable_flag")
+def _fin_usable():
+    ev = _e5_edited("fin_usable",
+                    lambda f: f["x86_latency_copy"]["provenance"].__setitem__("usable_for_accuracy", True))
+    return _refused(e5_argv(fresh("fin_usable_out"), ev=ev), "x86_copy_role", world=NO_WORLD())
 
 
 @case("qat_finalize_required")
@@ -1300,11 +1417,19 @@ def child_main(name: str, argv) -> int:
       interop_locked CKPT OUT CHECKOUT         a torch whose set_num_interop_threads raises (injected), then a run of
                                                record with every earlier gate passing
       interop_twice CKPT OUT1 OUT2 CHECKOUT    main() twice in one process: off record, then of record
-      torch_twice                              torch.set_num_interop_threads twice and nothing else (torch itself)"""
+      torch_twice                              torch.set_num_interop_threads twice and nothing else (torch itself)
+      torch_after_work                         a scripted torch.jit.fork, then torch.set_num_interop_threads once"""
     if name == "torch_twice":
         torch.set_num_interop_threads(1)
+        print(CHILD_TAG + json.dumps({"first": "returned"}), flush=True)
         torch.set_num_interop_threads(1)           # torch 2.1.0 ends the process here (SIGABRT)
-        print(CHILD_TAG + json.dumps({"rc": "returned"}), flush=True)
+        print(CHILD_TAG + json.dumps({"second": "returned"}), flush=True)
+        return 0
+    if name == "torch_after_work":
+        torch.jit.script(_forked_neg)(torch.ones(4))         # the scripted fork runs on the inter-op pool
+        print(CHILD_TAG + json.dumps({"work": "done"}), flush=True)
+        torch.set_num_interop_threads(1)           # torch 2.1.0 ends the process here (SIGABRT)
+        print(CHILD_TAG + json.dumps({"set": "returned"}), flush=True)
         return 0
     ckpt, out = argv[0], argv[1]
     doc: dict = {}
