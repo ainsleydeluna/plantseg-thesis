@@ -10,7 +10,8 @@
 - The call trace of a run: one os.scandir, one binary read per image and one of the list, two exclusive creates, no
   annotation path, no PIL or cv2 call (PIL.Image.open and the cv2 module raise). PIL and torch are in sys.modules
   through src.tman.schema -> src.eval.artifacts -> src.eval.protocols and src/eval/__init__.py: recorded, accepted.
-- Exclusive outputs; an --out inside the repository refused; a shuffled os.scandir order gives identical bytes.
+- Exclusive outputs, both or neither (a refused second create, or a write that fails, leaves nothing the run created;
+  an error is exit 4); an --out inside the repository refused; a shuffled os.scandir order gives identical bytes.
 - --print-pin: its pin passes manifest.hasher_pin_errors and test_value_errors in the builder's wrapping
   (manifest.py :861), which fails when a HASHER_VALUES key is injected; its parameters are H8's.
 - Static cases (H8, H10): the word in no identifier, attribute, key, f-string or path-like literal of the two new
@@ -33,6 +34,7 @@ sys.dont_write_bytecode = True
 import ast  # noqa: E402
 import builtins  # noqa: E402
 import contextlib  # noqa: E402
+import errno  # noqa: E402
 import io  # noqa: E402
 import json  # noqa: E402
 import os  # noqa: E402
@@ -288,9 +290,46 @@ class FailOpen:
         return False
 
 
+class FullDisk:
+    """builtins.open, for one path, gives a file whose write puts down half the bytes and raises OSError ENOSPC (the
+    disk fills up during the write)."""
+
+    class File:
+        def __init__(self, fh):
+            self.fh = fh
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            self.fh.close()
+            return False
+
+        def write(self, data):
+            self.fh.write(data[:len(data) // 2])
+            raise OSError(errno.ENOSPC, "fixture: no space left on the device")
+
+    def __init__(self, target):
+        self.target, self.saved = str(target), None
+
+    def __enter__(self):
+        self.saved = saved = builtins.open
+
+        def opener(f, *a, **kw):
+            fh = saved(f, *a, **kw)
+            return self.File(fh) if isinstance(f, (str, os.PathLike)) and os.fspath(f) == self.target else fh
+        builtins.open = opener
+        return self
+
+    def __exit__(self, *exc):
+        builtins.open = self.saved
+        return False
+
+
 def run(argv: list, *, split: str = SPLIT, ctx=None) -> tuple[int, str]:
     """The hasher's main(argv) with split_of_record patched to `split` (the production split is never exercised),
-    stdout captured, inside `ctx` (a Trace, Resolving, FailOpen or a list of them); argparse's exit is its code."""
+    stdout captured, inside `ctx` (a Trace, Resolving, FailOpen, FullDisk or a list of them); argparse's exit is its
+    code."""
     import scripts.tday_hash_images as H
     saved, buf = H.split_of_record, io.StringIO()
     H.split_of_record = lambda: split
@@ -535,10 +574,13 @@ def case_step6_outputs():
           and {p.name: p.read_bytes() for p in w.out.iterdir()} == first and len(first) == 2, txt2[-200:])
     w2 = World()
     (w2.out / D.DEDUP_NAME).write_bytes(b"older")
-    rc, txt = run(w2.argv())
+    t = Trace()
+    rc, txt = run(w2.argv(), ctx=t)
+    opened = [c for c in t.calls if c[0] in ("builtins.open", "io.open")
+              and (under(c[1], w2.out) or under(c[1], w2.out.resolve()))]
     check("step6_one_output_present_refused_none_created", refused(rc, txt, "output_exists")
           and sorted(p.name for p in w2.out.iterdir()) == [D.DEDUP_NAME]
-          and (w2.out / D.DEDUP_NAME).read_bytes() == b"older", txt[-200:])
+          and (w2.out / D.DEDUP_NAME).read_bytes() == b"older" and not opened, f"{txt[-200:]} {opened[:2]}")
     w3 = World()
     (w3.out / D.HASH_LIST_NAME).write_bytes(b"older")
     saved = os.path.lexists
@@ -549,6 +591,20 @@ def case_step6_outputs():
         os.path.lexists = saved
     check("step6_exclusive_create_refuses_an_existing_file_xb", refused(rc, txt, "output_exists")
           and (w3.out / D.HASH_LIST_NAME).read_bytes() == b"older", txt[-200:])
+    w4 = World()
+    (w4.out / D.DEDUP_NAME).write_bytes(b"older")
+    try:
+        os.path.lexists = lambda p: False                   # the pre-check misses it: the second create refuses
+        rc, txt = run(w4.argv())
+    finally:
+        os.path.lexists = saved
+    left = sorted(p.name for p in w4.out.iterdir())
+    check("step6_second_create_refused_first_output_removed", refused(rc, txt, "output_exists")
+          and left == [D.DEDUP_NAME] and (w4.out / D.DEDUP_NAME).read_bytes() == b"older", f"{txt[-200:]} {left}")
+    w5 = World()
+    rc, txt = run(w5.argv(), ctx=FullDisk(w5.out.resolve() / D.DEDUP_NAME))
+    check("step6_write_failure_exit_4_leaves_neither_output", rc == 4 and "ERROR -- OSError" in txt
+          and not any(w5.out.iterdir()), f"{rc} {txt[-200:]} {sorted(p.name for p in w5.out.iterdir())}")
 
 
 def case_shuffled_scandir():

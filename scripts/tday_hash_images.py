@@ -25,8 +25,9 @@ scripts/tday_manifest.py.
     5. hashing: one binary read per image, SHA-256 only. No image library is imported or called, and no annotation
        is touched.
     6. outputs: tday_image_hashes.tsv and tday_dedup.json are built, then created exclusively in --out, an existing
-       folder outside the repository at --repo and outside this checkout, once resolved. Printed: the three values
-       of manifest.HASHER_VALUES (:544) and, beside them, issue #11's counts; never an id.
+       folder outside the repository at --repo and outside this checkout, once resolved; both or neither (a failure
+       removes what the run created). Printed: the three values of manifest.HASHER_VALUES (:544) and, beside them,
+       issue #11's counts; never an id.
 
 Exit codes (scripts/tday_manifest.py's): 0 printed or written, 2 refused (REFUSED [<code>] -- <detail>), 4 error.
 """
@@ -240,17 +241,26 @@ def out_folder(path, repo) -> Path:
 
 
 def write_outputs(folder: Path, files: list) -> None:
-    """Both outputs created exclusively: none may exist yet, and each is opened with "xb"."""
+    """Both outputs created exclusively: none may exist yet, and each is opened with "xb". A failure removes every
+    file this call created, so both outputs exist or neither (src/eval/teacher_diag.py :892-909's form)."""
     targets = [folder / name for name, _ in files]
     if any(os.path.lexists(t) for t in targets):
         raise S.TmanRefused("output_exists", f"--out already holds {D.HASH_LIST_NAME} or {D.DEDUP_NAME}: outputs are "
                                              "created once")
-    for t, (_, data) in zip(targets, files):
-        try:
-            with open(t, "xb") as fh:
+    made = []
+    try:
+        for t, (_, data) in zip(targets, files):
+            try:
+                fh = open(t, "xb")
+            except FileExistsError:
+                raise S.TmanRefused("output_exists", f"{t.name} exists: outputs are created once") from None
+            with fh:
+                made.append(t)
                 fh.write(data)
-        except FileExistsError:
-            raise S.TmanRefused("output_exists", f"{t.name} exists: outputs are created once") from None
+    except BaseException:
+        for t in made:
+            t.unlink(missing_ok=True)
+        raise
 
 
 # ------------------------------------------------------------------------------------------------ commands
