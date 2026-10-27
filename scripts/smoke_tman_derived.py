@@ -53,7 +53,7 @@ def ptq_inputs(**kw) -> dict:
 def qat_inputs(run_slot: str = "E6:s42:15ep", **kw) -> dict:
     d = {"run_slot": run_slot, "telemetry_sha256": "4" * 64, "scripts_commit": "5" * 40, "image_digest": KD,
          "rules_sha256": "76addc57d0367dda9a1163f749ec32c9c240b20736104dc12aa77488344f9568",
-         "clip_selection_sha256": "6" * 64}
+         "clip_selection": {"path": "u4_clip/clip_selection.json", "sha256": "6" * 64}}
     d.update(kw)
     return d
 
@@ -112,6 +112,13 @@ def case_inputs_and_parents():
     check("qat_by_inputs_complete", not M.derived_inputs_errors(q))
     check("qat_inputs_without_rules_sha256_refused_TB13", bool(M.derived_inputs_errors(
         dict(q, inputs={x: v for x, v in q["inputs"].items() if x != "rules_sha256"}))))
+    check("qat_inputs_cite_the_clip_selection_by_path_and_sha256_TB9", bool(M.derived_inputs_errors(
+        dict(q, inputs=qat_inputs(clip_selection="6" * 64)))))
+    check("ptq_script_of_an_arm_s_e7_is_run_ptq_arm_B53", M.ptq_script("E7-R1:s42:list42", c) == M.PTQ_ARM_SCRIPT
+          == "scripts/run_ptq_arm.py")
+    check("ptq_script_of_e4_and_e7_is_run_ptq_B53", M.ptq_script("E4:s42:list43", c) == M.ptq_script(
+        "E7:s42:list42", c) == "scripts/run_ptq.py")
+    check("ptq_script_of_a_slot_whose_code_is_not_merged_is_its_lane_s", M.ptq_script("E7-E2:s42:list42", c) is None)
     check("hashed_complete", not M.derived_inputs_errors(dict(e, hashed=hashed())))
     check("hashed_without_x86_copy_refused", bool(M.derived_inputs_errors(
         dict(e, hashed={k: v for k, v in hashed().items() if k != "x86_copy_sha256"}))))

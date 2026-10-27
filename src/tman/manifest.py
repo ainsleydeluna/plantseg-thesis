@@ -15,7 +15,7 @@ file sha256; the PTQ script's path and commit, :724-733; the image digest, :736-
 :929-933 with src/quant/runner.py:208-213). QAT: the run's telemetry sha256 as recorded on the pod (it binds every
 epoch checkpoint's sha256), the conversion and selection scripts' commit, the image digest,
 configs/qat_selection_rules.json's sha256 (read at build and by the validator, TB13) and the pilot's clip-selection
-record's sha256.
+record (its path under the run directories and its sha256, so the validator reads it: TB9).
 
 Generator pins (AM-19 item 1(c)): the corrupted-TEST cache pin is L-CORR's JSON, embedded verbatim (IF§3): the
 validator recomputes pin_sha256 and compares its cells with the registered set (src.corruption_roles, imported
@@ -41,7 +41,7 @@ PTQ_INPUTS = {"parent_checkpoint_sha256": "sha256",
               "script": ("obj", {"path": "str", "commit": "commit"}),
               "image_digest": "str", "qconfig_fingerprint": "str"}
 QAT_INPUTS = {"run_slot": "slot", "telemetry_sha256": "sha256", "scripts_commit": "commit", "image_digest": "str",
-              "rules_sha256": "sha256", "clip_selection_sha256": "sha256"}
+              "rules_sha256": "sha256", "clip_selection": S.REF}      # the pilot's record, under --runs (TB9)
 HASHED = {"artifact_sha256": "sha256", "state_dict_sha256": "sha256", "x86_copy_sha256": "sha256",
           "provenance": S.REF, "record": S.REF, "made_utc": "utc", "image_digest": "str",
           "isolation": S.nullable(S.REF), "appended": ("enum", ("freeze", "append"))}
@@ -92,6 +92,126 @@ def derived_parent_errors(entry: dict, by_slot: dict, cat) -> list[str]:
     if s["record_kind"] == "qat_selection" and entry["inputs"].get("run_slot") != entry["parent"]:
         return [f"{entry['slot']}: inputs.run_slot {entry['inputs'].get('run_slot')} is not its parent"]
     return []
+
+
+PTQ_SCRIPT, PTQ_ARM_SCRIPT = "scripts/run_ptq.py", "scripts/run_ptq_arm.py"
+
+
+def ptq_script(slot: str, cat) -> str | None:
+    """AM-19 item 4(c)'s PTQ script of a derived slot: scripts/run_ptq_arm.py for an arm's E7 (role arm),
+    scripts/run_ptq.py for every other PTQ; none for a slot whose code is not merged at O (its lane's: not
+    compared)."""
+    if code_gated(slot, cat):
+        return None
+    return PTQ_ARM_SCRIPT if "arm" in cat.slots[slot]["roles"] else PTQ_SCRIPT
+
+
+def calibration_item(ci: dict | None, slot: dict) -> dict | None:
+    """The calibration index's list for a PTQ slot's params.list (42: of record; 43-45: sensitivity)."""
+    lst, ci = slot["params"].get("list"), ci or {}
+    return ci.get("of_record") if lst == 42 else (ci.get("sensitivity") or {}).get(str(lst))
+
+
+def derived_inputs_mismatch_errors(entry: dict, by_slot: dict, cat, ci: dict | None, src) -> list[str]:
+    """derived_inputs_mismatch: a derived entry's listed inputs are their sources' (AM-19 item 4(c); DL-24 #22,
+    #53). A PTQ's parent checkpoint is its parent entry's, its calibration list the calibration index's list for the
+    slot's params.list (when the index is given; content_class_missing otherwise) and its script the slot's PTQ
+    script; a QAT selection's telemetry is its run's completion record; the scripts' commit is in the records'
+    history."""
+    slot, inp, pe = entry["slot"], entry["inputs"], by_slot.get(entry["parent"]) or {}
+    s, errs = cat.slots[slot], []
+    if entry["method"] == "ptq":
+        if inp["parent_checkpoint_sha256"] != (pe.get("checkpoint") or {}).get("sha256"):
+            errs.append(f"{slot}: inputs.parent_checkpoint_sha256 is not its parent {entry['parent']}'s checkpoint")
+        item = calibration_item(ci, s) or {}
+        if ci is not None and inp["calibration_list"] != {"path": item.get("path"),
+                                                          "file_sha256": item.get("file_sha256")}:
+            errs.append(f"{slot}: inputs.calibration_list is not the calibration index's list "
+                        f"{s['params'].get('list')}")
+        script = ptq_script(slot, cat)
+        if script is not None and inp["script"]["path"] != script:
+            errs.append(f"{slot}: inputs.script.path {inp['script']['path']} is not {script}")
+        commit = inp["script"]["commit"]
+    else:
+        if inp["telemetry_sha256"] != (pe.get("completion") or {}).get("sha256"):
+            errs.append(f"{slot}: inputs.telemetry_sha256 is not its run {entry['parent']}'s completion record")
+        commit = inp["scripts_commit"]
+    if not (src.commit_exists(commit) and src.is_ancestor(commit, src.records_ref)):
+        errs.append(f"{slot}: its scripts' commit {commit[:12]} is not in the records' history")
+    return errs
+
+
+def _dotted(doc, key: str):
+    for k in key.split("."):
+        doc = doc.get(k) if isinstance(doc, dict) else None
+    return doc
+
+
+def derived_hash_errors(entry: dict, parent: dict, cat, ci: dict | None, runs_root) -> list[str]:
+    """derived_hash_mismatch: a hashed derived model is what its records say, read under the run directories
+    (decision (xviii); DL-24 #27, #34, #49, #50). Its cited files -- the provenance, the record and a QAT selection's
+    selected checkpoint -- have the cited sha256. A PTQ model's provenance names the listed inputs (the parent
+    checkpoint, the calibration list with the index's checksum and role, its seed, the qconfig, the script's commit)
+    and the hashed artifacts and image digest. A QAT selection's record (qat_selection/1) names the rules file, the
+    run with its telemetry and clip norm, and as its winner the selected checkpoint (its epoch_end row) with the
+    hashed artifact and provenance. The clip selection the inputs cite (qat_clip_selection/1, the same rules) names
+    the pilot's selection as its winner, with its run, telemetry and record (TB9), and its winner's clip norm is
+    every run's (src/quant/qat.py clip_binding)."""
+    from . import completion as C
+    h, inp, slot, root = entry["hashed"], entry["inputs"], entry["slot"], Path(runs_root)
+    code, qat = "derived_hash_mismatch", entry["method"] == "qat_selection"
+    reads = {"provenance": None if qat else R.PTQ_PROVENANCE, "record": R.QAT_SELECTION if qat else None}
+    if qat:
+        reads["selected_checkpoint"] = None
+    docs, bad = {}, []
+    for k, allow in reads.items():
+        p = root / h[k]["path"]
+        docs[k], sha = R.read_json_file(p, allow, code=code) if allow else (None, R.file_sha256(p, code=code))
+        if sha != h[k]["sha256"]:
+            bad.append(k)
+    if bad:
+        return [f"{slot}: its {bad} under the run directories are not the cited sha256"]
+    if not qat:
+        s = cat.slots[slot]
+        want = {"source_checkpoint_sha256": inp["parent_checkpoint_sha256"],
+                "calibration.list_file_sha256": inp["calibration_list"]["file_sha256"],
+                "calibration.seed": s["params"].get("list"), "qconfig.fingerprint": inp["qconfig_fingerprint"],
+                "code.commit": inp["script"]["commit"], "converted_artifact_sha256": h["artifact_sha256"],
+                "state_dict_artifact.sha256": h["state_dict_sha256"], "x86_latency_copy.sha256": h["x86_copy_sha256"],
+                "environment.image_digest": h["image_digest"]}
+        if ci is not None:
+            item = calibration_item(ci, s) or {}
+            want.update({"calibration.checksum_sha256": item.get("checksum_sha256"),
+                         "calibration.role": item.get("role")})
+        bad = sorted(k for k, v in want.items() if _dotted(docs["provenance"], k) != v)
+        return [f"{slot}: its provenance names other {bad} than the entry"] if bad else []
+    rec, rid = docs["record"], parent.get("run_id")
+    rows, _, _ = C.qat_rows(root / rid)
+    meta = rows[0] if rows and rows[0].get("event") == "run_meta" else {}
+    epoch = _dotted(rec, "winner.epoch")
+    row = next((r for r in rows if r.get("event") == "epoch_end" and r.get("epoch") == epoch), None) \
+        if isinstance(epoch, int) else None
+    want = {"format": R.QAT_SELECTION_FORMAT, "rules_sha256": inp["rules_sha256"], "run_id": rid,
+            "telemetry_sha256": inp["telemetry_sha256"], "clip_norm": meta.get("clip_norm"), "winner.run_id": rid,
+            "winner.checkpoint_sha256": h["selected_checkpoint"]["sha256"],
+            "winner.artifact_of_record.sha256": h["artifact_sha256"],
+            "winner.provenance.sha256": h["provenance"]["sha256"]}
+    bad = sorted(k for k, v in want.items() if _dotted(rec, k) != v)
+    if row is None or h["selected_checkpoint"] != {"path": f"{rid}/{row.get('checkpoint')}",
+                                                   "sha256": row.get("checkpoint_sha256")} \
+            or _dotted(rec, "winner.checkpoint") != row.get("checkpoint"):
+        bad.append("selected_checkpoint (the winner's epoch_end row: its checkpoint and sha256)")
+    clip, csha = R.read_json_file(root / inp["clip_selection"]["path"], R.CLIP_SELECTION, code=code)
+    won = (_dotted(clip, "winner.run_id"), _dotted(clip, "winner.telemetry_sha256"),
+           _dotted(clip, "winner.qat_selection.sha256"))
+    if csha != inp["clip_selection"]["sha256"] or _dotted(clip, "format") != R.CLIP_SELECTION_FORMAT \
+            or _dotted(clip, "rules_sha256") != inp["rules_sha256"]:
+        bad.append("clip_selection (its sha256, format and rules)")
+    elif cat.slots[slot]["pilot"] and won != (rid, inp["telemetry_sha256"], h["record"]["sha256"]):
+        bad.append(f"the pilot's winner (the clip selection names {won[0]}, its telemetry and record; TB9)")
+    elif _dotted(clip, "winner.clip_norm") != _dotted(rec, "clip_norm"):
+        bad.append(f"clip_norm (the clip selection's winner's is {_dotted(clip, 'winner.clip_norm')!r})")
+    return [f"{slot}: its records disagree with the entry and its run at {bad}"] if bad else []
 
 
 def code_gated(slot: str, cat) -> bool:

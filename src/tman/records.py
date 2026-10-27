@@ -86,6 +86,7 @@ QAT_CHECKPOINT = {"stage": True, "epoch": True, "step": True, "seed": True, "run
                   "nonfinite_since_step": True}
 QAT_STATE_FLAG_KEYS = ("state_finite", "state_nonfinite", "nonfinite_since_step")
 # qat_selection/1 (src/quant/qat_select.py:479-494) and qat_clip_selection/1 (qat_select.py clip_selection)
+QAT_SELECTION_FORMAT, CLIP_SELECTION_FORMAT = "qat_selection/1", "qat_clip_selection/1"   # qat_select.py:38; qat.py:102
 QAT_SELECTION = {"format": True, "rules_sha256": True, "stage": True, "run_id": True, "seed": True,
                  "clip_norm": True, "telemetry_sha256": True, "git_head": True, "host_label": True,
                  "cpu_model": True, "excluded_epochs": True, "smoke_inputs": True,
@@ -295,6 +296,12 @@ def read_json_file(path: Path, allow, *, code: str):
     S.refuse_test_path(path)
     data = _read_bytes(path, code)
     return project(strict_json(data, str(path), code=code), allow), S.sha256_bytes(data)
+
+
+def file_sha256(path: Path, *, code: str) -> str:
+    """A run file's sha256, its bytes not parsed (an unreadable file is refused as `code`)."""
+    S.refuse_test_path(path)
+    return S.sha256_bytes(_read_bytes(path, code))
 
 
 def _read_bytes(path, code: str) -> bytes:

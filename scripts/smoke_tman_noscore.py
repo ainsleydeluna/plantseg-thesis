@@ -11,7 +11,8 @@
 3. The mutation test: every score field of the fixtures -- the KD, E1 and QAT telemetry rows, the E1 and teacher
    logs' scores, the selection files, the ptq_record's parent score -- set to random finite values, to "nan" (as
    the trainers write a non-finite value) or deleted: every verdict, the arithmetic and the manifest and inventory
-   bytes stay identical, up to the sha256 of the files the mutation changed. Removing a record changes the verdict.
+   bytes stay identical, up to the sha256 of the files the mutation changed and of the QAT selection records that
+   cite a changed telemetry. Removing a record changes the verdict.
 
 Synthetic inputs only, under the system temp dir (removed at the end); TEST is never read.
 
@@ -101,8 +102,9 @@ def replace_all(o, mapping: dict):
 
 
 def mutate_world(w, mode: str, seed: int) -> dict:
-    """Mutate every score field of the world's run files, selection files and ptq_records; the sources then cite
-    the changed files' sha256. Returns {new sha256: old sha256} of every file changed."""
+    """Mutate every score field of the world's run files, selection files and ptq_records; the QAT selection records
+    under --runs then cite the changed telemetry's sha256 (as a selection made on it would), and the sources cite
+    every changed file's sha256. Returns {new sha256: old sha256} of every file changed."""
     S, rng, shas = w.S, random.Random(seed), {}
     for rel in run_files(w):
         p = w.runs / rel
@@ -112,6 +114,13 @@ def mutate_world(w, mode: str, seed: int) -> dict:
                            for x in old.split(b"\n") if x.strip())
         else:
             new = mutate_text(old.decode("utf-8"), mode, rng).encode("utf-8")
+        if new != old:
+            p.write_bytes(new)
+            shas[S.sha256_bytes(new)] = S.sha256_bytes(old)
+    for rel in w.qat_records:                      # each before the records citing it (the clip selection last)
+        p = w.runs / rel
+        old = p.read_bytes()
+        new = S.json_file_bytes(replace_all(json.loads(old), {o: n for n, o in shas.items()}))
         if new != old:
             p.write_bytes(new)
             shas[S.sha256_bytes(new)] = S.sha256_bytes(old)

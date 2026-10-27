@@ -688,6 +688,78 @@ M = [
     ("teacher_logs_unsorted", COM, [("logs = [log_rel] if log_rel else sorted(",
                                      "logs = [log_rel] if log_rel else list(")],
      "determinism", "case_listing_order", "shuffled_listing_4_byte_identical", [], None),
+    # ------ derived inputs against their sources; hashed forms against their records (DL-24 #22 #27 #34 #49 #50 #53)
+    ("inputs_parent_checkpoint", MAN, [('        if inp["parent_checkpoint_sha256"] != (pe.get("checkpoint") or {})'
+                                        '.get("sha256"):', "        if False:")],
+     "validate", "case_derived_sources", "derived_parent_checkpoint_not_its_parent_s_B22",
+     ["derived_inputs_mismatch"], None),
+    ("inputs_calibration_list", MAN, [('if ci is not None and inp["calibration_list"] != {"path": item.get("path"),',
+                                       'if False and inp["calibration_list"] != {"path": item.get("path"),')],
+     "validate", "case_derived_sources", "derived_calibration_list_not_the_index_s_B22", ["derived_inputs_mismatch"],
+     None),
+    ("inputs_script_path", MAN, [('if script is not None and inp["script"]["path"] != script:', "if False:")],
+     "validate", "case_derived_sources", "derived_script_not_its_ptq_script_B53", ["derived_inputs_mismatch"], None),
+    ("inputs_commit_in_history", MAN, [("    if not (src.commit_exists(commit) and src.is_ancestor(commit, "
+                                        "src.records_ref)):", "    if False:")],
+     "validate", "case_derived_sources", "derived_script_commit_outside_the_records_history",
+     ["derived_inputs_mismatch"], None),
+    ("inputs_qat_telemetry", MAN, [('        if inp["telemetry_sha256"] != (pe.get("completion") or {}).get("sha256"):',
+                                    "        if False:")],
+     "validate", "case_derived_sources", "qat_telemetry_not_its_run_s_completion_B22", ["derived_inputs_mismatch"],
+     None),
+    ("ptq_script_of_an_arm", MAN, [('return PTQ_ARM_SCRIPT if "arm" in cat.slots[slot]["roles"] else PTQ_SCRIPT',
+                                    "return PTQ_SCRIPT")],
+     "derived", "case_inputs_and_parents", "ptq_script_of_an_arm_s_e7_is_run_ptq_arm_B53",
+     ["derived_inputs_mismatch"], None),
+    ("ptq_script_of_a_lane_s_slot", MAN, [("    if code_gated(slot, cat):\n        return None",
+                                           "    if False:\n        return None")],
+     "derived", "case_inputs_and_parents", "ptq_script_of_a_slot_whose_code_is_not_merged_is_its_lane_s", [], None),
+    ("hashed_files_cited", MAN, [('        if sha != h[k]["sha256"]:\n            bad.append(k)',
+                                  "        if False:\n            bad.append(k)")],
+     "validate", "case_derived_sources", "ptq_provenance_not_the_cited_sha256_B50", ["derived_hash_mismatch"], None),
+    ("hashed_selected_checkpoint_read", MAN, [('        reads["selected_checkpoint"] = None', "        pass")],
+     "validate", "case_derived_sources", "qat_selected_checkpoint_absent_B49", ["derived_hash_mismatch"], None),
+    ("ptq_provenance_parent", MAN, [('        want = {"source_checkpoint_sha256": inp["parent_checkpoint_sha256"],\n',
+                                     "        want = {\n")],
+     "validate", "case_derived_sources", "ptq_provenance_naming_other_parent_B27", ["derived_hash_mismatch"], None),
+    ("ptq_provenance_index_fields", MAN, [("        if ci is not None:\n            item = calibration_item(ci, s)",
+                                           "        if False:\n            item = calibration_item(ci, s)")],
+     "validate", "case_derived_sources", "ptq_provenance_naming_other_checksum_B27", ["derived_hash_mismatch"], None),
+    ("ptq_provenance_artifact", MAN, [('"code.commit": inp["script"]["commit"], "converted_artifact_sha256": '
+                                       'h["artifact_sha256"],', '"code.commit": inp["script"]["commit"],')],
+     "validate", "case_derived_sources", "ptq_provenance_naming_other_artifact_B27", ["derived_hash_mismatch"], None),
+    ("qat_record_winner_checkpoint", MAN, [('            "winner.checkpoint_sha256": h["selected_checkpoint"]'
+                                            '["sha256"],\n', "")],
+     "validate", "case_derived_sources", "qat_record_naming_winner_of_another_checkpoint_B34",
+     ["derived_hash_mismatch"], None),
+    ("qat_record_telemetry", MAN, [('"telemetry_sha256": inp["telemetry_sha256"], "clip_norm": meta.get("clip_norm"), ',
+                                    '"clip_norm": meta.get("clip_norm"), ')],
+     "validate", "case_derived_sources", "qat_record_naming_other_telemetry_B34", ["derived_hash_mismatch"], None),
+    ("qat_record_clip_norm_of_its_run", MAN, [('"clip_norm": meta.get("clip_norm"), "winner.run_id": rid,',
+                                               '"winner.run_id": rid,')],
+     "validate", "case_derived_sources", "qat_record_naming_other_clip_norm_B34", ["derived_hash_mismatch"], None),
+    ("qat_selected_checkpoint_row", MAN, [('    if row is None or h["selected_checkpoint"] != {"path": ',
+                                           '    if False and h["selected_checkpoint"] != {"path": ')],
+     "validate", "case_derived_sources", "qat_record_naming_winner_of_another_epoch_B34", ["derived_hash_mismatch"],
+     None),
+    ("clip_selection_cited", MAN, [('    if csha != inp["clip_selection"]["sha256"] or ', "    if False or ")],
+     "validate", "case_derived_sources", "clip_selection_not_the_cited_sha256_B34", ["derived_hash_mismatch"], None),
+    ("clip_selection_rules", MAN, [('            or _dotted(clip, "rules_sha256") != inp["rules_sha256"]:',
+                                    "            or False:")],
+     "validate", "case_derived_sources", "clip_selection_of_other_rules_B34", ["derived_hash_mismatch"], None),
+    ("pilot_winner_TB9", MAN, [('    elif cat.slots[slot]["pilot"] and won != (rid, inp["telemetry_sha256"], '
+                                'h["record"]["sha256"]):', "    elif False:")],
+     "validate", "case_derived_sources", "pilot_selection_of_the_retained_loser_TB9_B34", ["derived_hash_mismatch"],
+     None),
+    ("pilot_winner_record_TB9", MAN, [('           _dotted(clip, "winner.qat_selection.sha256"))',
+                                       '           h["record"]["sha256"])')],
+     "validate", "case_derived_sources", "pilot_winner_naming_another_record_TB9", ["derived_hash_mismatch"], None),
+    ("clip_norm_of_the_winner", MAN, [('    elif _dotted(clip, "winner.clip_norm") != _dotted(rec, "clip_norm"):',
+                                       "    elif False:")],
+     "validate", "case_derived_sources", "run_clip_not_the_clip_winner_s_B34", ["derived_hash_mismatch"], None),
+    ("derived_hash_of_appends", VAL, [("            made.append(M.appended_entry(app, listed))", "            pass")],
+     "validate", "case_appends", "appended_model_whose_provenance_names_another_parent_B27",
+     ["derived_hash_mismatch"], None),
 ]
 REFUSAL_EXTRA = ("inventory_invalid", "inventory_sha256_mismatch", "binding_invalid",       # read_inventory's codes
                  "output_location", "output_exists")                                       # the CLI's outputs
@@ -834,7 +906,7 @@ def case_mutations():
             killed_codes |= set(m[6])
     if not ONLY:
         codes = {c for c, _, _ in V.GATES} | set(REFUSAL_EXTRA)
-        check("every_refusal_code_has_a_killed_mutation", codes <= killed_codes and len(codes) == 87,
+        check("every_refusal_code_has_a_killed_mutation", codes <= killed_codes and len(codes) == 89,
               str(sorted(codes - killed_codes)))
         check("plan_s_sixteen_sample_mutations_present", sorted(m[7] for m in M if m[7]) == list(range(1, 17)))
     check("the_repository_files_are_unchanged", files_sha256() == before)

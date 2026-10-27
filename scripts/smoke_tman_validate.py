@@ -40,6 +40,7 @@ CODE_DATE, RECORDS_DATE, MANIFEST_DATE = ("2026-11-01T08:00:00+00:00", "2026-11-
                                          "2026-11-03T12:00:00+00:00")
 FREEZE_DAY = "2026-11-03"
 QAT_RULES_SHA256 = "76addc57d0367dda9a1163f749ec32c9c240b20736104dc12aa77488344f9568"
+CLIP_REL = "u4_clip/clip_selection.json"            # the U4 pilot's clip selection, under --runs
 REAL_FILES = ("configs/tday_catalogue.json", "configs/kd_schedule.json", "configs/qat_selection_rules.json",
               *[f"configs/calibration/ptq_calibration_seed{s}.json" for s in (42, 43, 44, 45)],
               "reports/derived/mde_entry_20261009T034825Z.json", "reports/strata/train_strata_v1.json")
@@ -92,6 +93,8 @@ class World:
         self.dl, self.next_dl, self.files = {}, 200, {}
         self.entries: dict = {}
         self.ptq_docs: dict = {}
+        self.qat: dict = {}                  # run_id -> its selection's telemetry sha256 and hashed block
+        self.qat_records: list = []          # the QAT selection records under --runs, each before the ones citing it
         self.launch: list = []
         self.cut_refs: dict = {}
         for rel in REAL_FILES:
@@ -210,26 +213,41 @@ class World:
             "records_commit": self.E, "decision_date": None, "launch_order_position": None})
 
     def ptq(self, slot: str, parent: str, list_seed: int, of_record: bool) -> dict:
+        """A PTQ model under --runs: its provenance (the fields src/quant/ptq.py records, of the listed inputs and
+        hashed artifacts) and its record, both cited by sha256 (DL-24 #27, #49)."""
         S = self.S
         s = self.cat.slots[slot]
         key = S.file_id_of(slot)
         cal = f"configs/calibration/ptq_calibration_seed{list_seed}.json"
-        prov = S.json_file_bytes({"schema": "ptq_run_meta/fixture", "stage": s["evaluator_stage"],
-                                  "calibration": {"seed": list_seed, "data_root": "/workspace/plantseg_trainval"}})
-        (self.runs / key).mkdir(exist_ok=True)
-        (self.runs / key / "ptq_run_meta.json").write_bytes(prov)
+        cal_data = (REPO / cal).read_bytes()
+        inputs = {"parent_checkpoint_sha256": self.entries[parent]["checkpoint"]["sha256"],
+                  "calibration_list": {"path": cal, "file_sha256": S.sha256_bytes(cal_data)},
+                  "script": {"path": "scripts/run_ptq.py", "commit": self.E}, "image_digest": S.KD_IMAGE,
+                  "qconfig_fingerprint": "0123456789abcdef"}
         h = {"artifact_sha256": S.sha256_bytes(f"ts {slot}".encode()),
              "state_dict_sha256": S.sha256_bytes(f"sd {slot}".encode()),
-             "x86_copy_sha256": S.sha256_bytes(f"x86 {slot}".encode()),
-             "provenance": {"path": f"{key}/ptq_run_meta.json", "sha256": S.sha256_bytes(prov)},
-             "record": {"path": f"{key}/ptq_record.json", "sha256": S.sha256_bytes(f"rec {slot}".encode())},
-             "made_utc": "2026-11-02T10:00:00Z", "image_digest": S.KD_IMAGE, "isolation": None, "appended": "freeze"}
+             "x86_copy_sha256": S.sha256_bytes(f"x86 {slot}".encode())}
+        prov = S.json_file_bytes({
+            "schema": "ptq_run_meta/fixture", "stage": s["evaluator_stage"],
+            "source_checkpoint_sha256": inputs["parent_checkpoint_sha256"],
+            "qconfig": {"fingerprint": inputs["qconfig_fingerprint"]},
+            "converted_artifact_sha256": h["artifact_sha256"],
+            "state_dict_artifact": {"path": f"{key}_int8_student.pt", "sha256": h["state_dict_sha256"]},
+            "x86_latency_copy": {"path": f"{key}_int8_x86.pt", "sha256": h["x86_copy_sha256"]},
+            "calibration": {"list_file_sha256": inputs["calibration_list"]["file_sha256"],
+                            "checksum_sha256": json.loads(cal_data)["checksum_sha256"], "seed": list_seed,
+                            "role": json.loads(cal_data)["role"], "data_root": "/workspace/plantseg_trainval"},
+            "code": {"commit": self.E, "clean_at_commit": True}, "environment": {"image_digest": S.KD_IMAGE},
+            "created_utc": "2026-11-02T10:00:00Z"})
+        rec = S.json_file_bytes({"format": "ptq_run_record/fixture", "slot": slot, "provenance": S.sha256_bytes(prov)})
+        (self.runs / key).mkdir(exist_ok=True)
+        (self.runs / key / "ptq_run_meta.json").write_bytes(prov)
+        (self.runs / key / "ptq_record.json").write_bytes(rec)
+        h.update(provenance={"path": f"{key}/ptq_run_meta.json", "sha256": S.sha256_bytes(prov)},
+                 record={"path": f"{key}/ptq_record.json", "sha256": S.sha256_bytes(rec)},
+                 made_utc="2026-11-02T10:00:00Z", image_digest=S.KD_IMAGE, isolation=None, appended="freeze")
         e = {"kind": "derived", "dl_rows": [self.row(f"{slot} made")], "method": "ptq", "parent": parent,
-             "inputs": {"parent_checkpoint_sha256": self.entries[parent]["checkpoint"]["sha256"],
-                        "calibration_list": {"path": cal, "file_sha256": S.sha256_bytes((REPO / cal).read_bytes())},
-                        "script": {"path": "scripts/run_ptq.py", "commit": self.E}, "image_digest": S.KD_IMAGE,
-                        "qconfig_fingerprint": "0123456789abcdef"},
-             "hashed": h, "evaluator_stage": s["evaluator_stage"], "ptq_record": None}
+             "inputs": inputs, "hashed": h, "evaluator_stage": s["evaluator_stage"], "ptq_record": None}
         if of_record:
             doc = FX.ptq_record_doc(stage=s["evaluator_stage"], seed=s["seed"])
             doc["parent"]["checkpoint_sha256"] = e["inputs"]["parent_checkpoint_sha256"]
@@ -243,24 +261,73 @@ class World:
         self.entries[slot] = e
         return e
 
-    def qat_selection(self, slot: str, parent: str):
+    def qat_files(self, rid: str, stage: str, clip: float, made: str = "2026-11-02T10:00:00Z", epoch: int = 12):
+        """A QAT run's conversion and selection under --runs (src/quant/qat_select.py:479-494): the selected epoch's
+        checkpoint (its stored flags; its epoch_end row carries its sha256), the winner's provenance and the
+        qat_selection/1 record. Keeps the run's telemetry sha256 and hashed block in self.qat[rid]."""
+        import torch
+        S, d, ck = self.S, self.runs / rid, f"epoch_ckpts/e{epoch:02d}.pt"
+        (d / "epoch_ckpts").mkdir(exist_ok=True)
+        torch.save({"stage": stage, "epoch": epoch, "step": epoch * 10, "seed": 42, "run_id": rid,
+                    "state_sha256": f"{epoch + 100:064x}", "source_checkpoint_sha256": "c" * 64, "state_finite": True,
+                    "state_nonfinite": False, "nonfinite_since_step": None}, d / ck)
+        ck_sha = S.sha256_bytes((d / ck).read_bytes())
+        tel = d / "qat_telemetry.jsonl"
+        rows = [json.loads(x) for x in tel.read_bytes().split(b"\n") if x.strip()]
+        for r in rows:
+            if r.get("event") == "epoch_end" and r["epoch"] == epoch:
+                r["checkpoint_sha256"] = ck_sha
+        FX.write_jsonl(tel, rows)
+        tsha = S.sha256_bytes(tel.read_bytes())
+        art = {k: S.sha256_bytes(f"{k} {rid}".encode()) for k in ("ts", "sd", "x86")}
+        prov = S.json_file_bytes({"format": "qat_artifact_provenance/fixture", "run_id": rid, "epoch": epoch,
+                                  "converted_artifact_sha256": art["ts"]})
+        (d / "eval").mkdir(exist_ok=True)
+        (d / "eval" / f"e{epoch:02d}_provenance.json").write_bytes(prov)
+        rec = S.json_file_bytes({
+            "format": "qat_selection/1", "rules_sha256": QAT_RULES_SHA256, "stage": stage, "run_id": rid, "seed": 42,
+            "clip_norm": clip, "telemetry_sha256": tsha,
+            "winner": {"epoch": epoch, "checkpoint": ck, "checkpoint_sha256": ck_sha, "run_id": rid,
+                       "artifact_of_record": {"path": f"e{epoch:02d}/model.pt", "sha256": art["ts"]},
+                       "provenance": {"path": f"e{epoch:02d}_provenance.json", "sha256": S.sha256_bytes(prov)},
+                       "summary": {"path": f"e{epoch:02d}_summary.json", "sha256": "5" * 64}}})
+        (d / "eval" / "qat_selection.json").write_bytes(rec)
+        self.qat_records.append(f"{rid}/eval/qat_selection.json")
+        self.qat[rid] = {"telemetry_sha256": tsha, "hashed": {
+            "artifact_sha256": art["ts"], "state_dict_sha256": art["sd"], "x86_copy_sha256": art["x86"],
+            "provenance": {"path": f"{rid}/eval/e{epoch:02d}_provenance.json", "sha256": S.sha256_bytes(prov)},
+            "record": {"path": f"{rid}/eval/qat_selection.json", "sha256": S.sha256_bytes(rec)},
+            "made_utc": made, "image_digest": S.KD_IMAGE, "isolation": None, "appended": "freeze",
+            "evaluations": [{"dir": f"{rid}/eval", "fault_report": None}],
+            "selected_checkpoint": {"path": f"{rid}/{ck}", "sha256": ck_sha}}}
+        return self.qat[rid]
+
+    def clip_selection(self):
+        """The U4 pilot's clip_selection.json under --runs (qat_clip_selection/1, qat_select.py:630-648): clip 5.0
+        wins; the loser is retained."""
         S = self.S
-        rid = self.entries[parent]["run_id"]
-        tel = S.sha256_bytes((self.runs / rid / "qat_telemetry.jsonl").read_bytes())
+
+        def side(rid, clip):
+            q = self.qat[rid]
+            return {"clip_norm": clip, "run_id": rid, "telemetry_sha256": q["telemetry_sha256"],
+                    "qat_selection": q["hashed"]["record"], "rejected": False, "epoch": 12}
+        data = S.json_file_bytes({"format": "qat_clip_selection/1", "rules_sha256": QAT_RULES_SHA256, "stage": "E5",
+                                  "seed": 42, "winner": side("e5_s42_clip5_15ep", 5.0),
+                                  "loser": dict(side("e5_s42_clip1_15ep", 1.0), retained=True), "tie": False})
+        (self.runs / CLIP_REL).parent.mkdir(exist_ok=True)
+        (self.runs / CLIP_REL).write_bytes(data)
+        self.qat_records.append(CLIP_REL)
+        self.clip = {"path": CLIP_REL, "sha256": S.sha256_bytes(data)}
+
+    def qat_selection(self, slot: str, parent: str):
+        q = self.qat[self.entries[parent]["run_id"]]
         self.entries[slot] = {
             "kind": "derived", "dl_rows": [self.row(f"{slot} converted and selected")], "method": "qat_selection",
             "parent": parent, "evaluator_stage": self.cat.slots[slot]["evaluator_stage"], "ptq_record": None,
-            "inputs": {"run_slot": parent, "telemetry_sha256": tel, "scripts_commit": self.E,
-                       "image_digest": S.KD_IMAGE, "rules_sha256": QAT_RULES_SHA256,
-                       "clip_selection_sha256": S.sha256_bytes(b"clip selection")},
-            "hashed": {"artifact_sha256": S.sha256_bytes(f"ts {slot}".encode()),
-                       "state_dict_sha256": S.sha256_bytes(f"sd {slot}".encode()),
-                       "x86_copy_sha256": S.sha256_bytes(f"x86 {slot}".encode()),
-                       "provenance": {"path": f"{rid}/eval/e12_provenance.json", "sha256": "1" * 64},
-                       "record": {"path": f"{rid}/eval/qat_selection.json", "sha256": "2" * 64},
-                       "made_utc": "2026-11-02T10:00:00Z", "image_digest": S.KD_IMAGE, "isolation": None,
-                       "appended": "freeze", "evaluations": [{"dir": f"{rid}/eval", "fault_report": None}],
-                       "selected_checkpoint": {"path": f"{rid}/epoch_ckpts/e12.pt", "sha256": "3" * 64}}}
+            "inputs": {"run_slot": parent, "telemetry_sha256": q["telemetry_sha256"], "scripts_commit": self.E,
+                       "image_digest": self.S.KD_IMAGE, "rules_sha256": QAT_RULES_SHA256,
+                       "clip_selection": dict(self.clip)},
+            "hashed": copy.deepcopy(q["hashed"])}
 
     def derived_models(self):
         for seed in (42, 43, 44):
@@ -269,6 +336,10 @@ class World:
             self.ptq(f"E4:s42:list{lst}", "E1:s42:80k", lst, False)
             self.ptq(f"E7:s42:list{lst}", E3S42, lst, False)
         self.ptq("E7:s42:list42", E3S42, 42, True)
+        for rid, stage, clip in (("e5_s42_clip1_15ep", "E5", 1.0), ("e5_s42_clip5_15ep", "E5", 5.0),
+                                 ("e6_s42_15ep", "E6", 5.0)):
+            self.qat_files(rid, stage, clip)
+        self.clip_selection()
         self.qat_selection("E5:s42:sel", "E5:s42:clip5:15ep")
         self.qat_selection("E6:s42:sel", "E6:s42:15ep")
 
@@ -799,8 +870,7 @@ def case_completion_gates():
         expect_gate(w, "qat_checkpoint_flag_disagrees_TB13", "checkpoint_state_flag", doc=d)
     finally:
         tel.write_bytes(saved)
-        (q / "epoch_ckpts" / "e01.pt").unlink()
-        (q / "epoch_ckpts").rmdir()
+        (q / "epoch_ckpts" / "e01.pt").unlink()          # the folder keeps the selected epoch's checkpoint
     t = w.runs / "e2_s42_lambda4_80k_a1" / "e2_telemetry.jsonl"
     saved = t.read_bytes()
     try:
@@ -1137,7 +1207,8 @@ def case_parent_and_derived_gates():
     expect_gate(w, "appended_qat_selection_second_evaluation_without_report_B24", "derived_selection_conflict",
                 doc=mutated(w, append_qat), detail="a second one needs a fault report")
     evals = [{"dir": "eval1", "fault_report": None},
-             {"dir": "eval2", "fault_report": {"path": "reports/derived/no_such_fault_report.json", "sha256": "0" * 64}}]
+             {"dir": "eval2",
+              "fault_report": {"path": "reports/derived/no_such_fault_report.json", "sha256": "0" * 64}}]
     expect_gate(w, "qat_fault_report_not_committed_B77", "record_uncommitted",
                 doc=mutated(w, lambda d: w.entry(d, "E5:s42:sel")["hashed"].update(evaluations=evals)))
     report = w.S.json_file_bytes({"format": "fault_report/1", "run_id": "e5_s42_clip5_15ep", "cause": "fixture"})
@@ -1195,6 +1266,132 @@ def case_appends():
         w, lambda d: post(d, "E4:s42:list43", rec=None, isolation=recs["of_record"],
                           provenance={"path": "E4_s42_list43/ptq_run_meta.json", "sha256": "0" * 64})),
         detail="provenance is not the cited one")
+    other = runs_variant(w, w.entry(w.doc, "E4:s42:list43")["hashed"]["provenance"], "variant_appended_parent.json",
+                         {"source_checkpoint_sha256": "0" * 64})
+    expect_gate(w, "appended_model_whose_provenance_names_another_parent_B27", "derived_hash_mismatch", doc=mutated(
+        w, lambda d: post(d, "E4:s42:list43", rec=None, isolation=recs["of_record"], provenance=other)),
+        detail="names other ['source_checkpoint_sha256']")
+
+
+def runs_variant(w: World, ref: dict, name: str, edits: dict) -> dict:
+    """A copy of a JSON record under --runs, written beside `ref` as `name` with the dotted fields of `edits`
+    replaced; its {path, sha256}."""
+    doc = json.loads((w.runs / ref["path"]).read_bytes())
+    for key, value in edits.items():
+        *head, last = key.split(".")
+        node = doc
+        for k in head:
+            node = node[k]
+        node[last] = value
+    rel = f"{Path(ref['path']).parent.as_posix()}/{name}"
+    data = w.S.json_file_bytes(doc)
+    (w.runs / rel).write_bytes(data)
+    return {"path": rel, "sha256": w.S.sha256_bytes(data)}
+
+
+def case_derived_sources():
+    """DL-24 #22, #27, #34, #49, #50, #53: a derived entry's listed inputs are their sources' (the parent entry, the
+    calibration index, the PTQ script, the run's completion record, the records' history), and its hashed form is
+    what its records under --runs say: the PTQ provenance; the QAT selection record, its selected epoch's
+    checkpoint and the pilot's clip selection (TB9)."""
+    w = WORLD
+
+    def inputs(slot, **upd):
+        return mutated(w, lambda d: w.entry(d, slot)["inputs"].update(copy.deepcopy(upd)))
+
+    def hashed(slot, **upd):
+        return mutated(w, lambda d: w.entry(d, slot)["hashed"].update(copy.deepcopy(upd)))
+    p43, q6 = "E4:s42:list43", "E6:s42:sel"
+    for name, doc, detail in (
+            ("derived_parent_checkpoint_not_its_parent_s_B22", inputs(p43, parent_checkpoint_sha256="0" * 64),
+             "is not its parent E1:s42:80k's checkpoint"),
+            ("derived_calibration_list_not_the_index_s_B22", inputs(p43, calibration_list=w.entry(
+                w.doc, "E4:s42:list44")["inputs"]["calibration_list"]), "is not the calibration index's list 43"),
+            ("derived_script_not_its_ptq_script_B53", inputs(p43, script={"path": "scripts/elsewhere.py",
+                                                                          "commit": w.E}),
+             "is not scripts/run_ptq.py"),
+            ("derived_script_commit_outside_the_records_history", inputs(p43, script={
+                "path": "scripts/run_ptq.py", "commit": "f" * 40}), "is not in the records' history"),
+            ("qat_telemetry_not_its_run_s_completion_B22", inputs(q6, telemetry_sha256="0" * 64),
+             "is not its run E6:s42:15ep's completion record")):
+        expect_gate(w, name, "derived_inputs_mismatch", doc=doc, detail=detail)
+    ph = w.entry(w.doc, p43)["hashed"]
+    ptq_variants = (("other_parent", {"source_checkpoint_sha256": "0" * 64}, "source_checkpoint_sha256"),
+                    ("other_list", {"calibration.list_file_sha256": w.entry(
+                        w.doc, "E4:s42:list44")["inputs"]["calibration_list"]["file_sha256"]},
+                     "calibration.list_file_sha256"),
+                    ("other_checksum", {"calibration.checksum_sha256": "0" * 64}, "calibration.checksum_sha256"),
+                    ("other_seed", {"calibration.seed": 44}, "calibration.seed"),
+                    ("other_role", {"calibration.role": "am10_list_of_record"}, "calibration.role"),
+                    ("other_qconfig", {"qconfig.fingerprint": "fedcba9876543210"}, "qconfig.fingerprint"),
+                    ("other_commit", {"code.commit": "f" * 40}, "code.commit"),
+                    ("other_artifact", {"converted_artifact_sha256": "0" * 64}, "converted_artifact_sha256"),
+                    ("other_state_dict", {"state_dict_artifact.sha256": "0" * 64}, "state_dict_artifact.sha256"),
+                    ("other_x86_copy", {"x86_latency_copy.sha256": "0" * 64}, "x86_latency_copy.sha256"),
+                    ("other_image", {"environment.image_digest": "sha256:" + "e" * 64}, "environment.image_digest"))
+    for tag, edits, field in ptq_variants:
+        ref = runs_variant(w, ph["provenance"], f"variant_{tag}.json", edits)
+        expect_gate(w, f"ptq_provenance_naming_{tag}_B27", "derived_hash_mismatch", doc=hashed(p43, provenance=ref),
+                    detail=f"names other ['{field}']")
+    qh = w.entry(w.doc, q6)["hashed"]
+    for name, doc, detail in (
+            ("ptq_provenance_not_the_cited_sha256_B50", hashed(p43, provenance=dict(ph["provenance"], sha256="0" * 64)),
+             "['provenance'] under the run directories are not the cited sha256"),
+            ("ptq_record_file_not_the_cited_sha256_B49", hashed(p43, record=dict(ph["record"], sha256="0" * 64)),
+             "['record'] under the run directories are not the cited sha256"),
+            ("ptq_record_file_absent_B49", hashed(p43, record=dict(ph["record"], path="E4_s42_list43/absent.json")),
+             "unreadable"),
+            ("qat_record_not_the_cited_sha256_B34", hashed(q6, record=dict(qh["record"], sha256="0" * 64)),
+             "['record'] under the run directories are not the cited sha256"),
+            ("qat_provenance_not_the_cited_sha256_B50", hashed(q6, provenance=dict(qh["provenance"], sha256="0" * 64)),
+             "['provenance'] under the run directories are not the cited sha256"),
+            ("qat_selected_checkpoint_absent_B49", hashed(q6, selected_checkpoint={
+                "path": "e6_s42_15ep/epoch_ckpts/e13.pt", "sha256": qh["selected_checkpoint"]["sha256"]}),
+             "unreadable")):
+        expect_gate(w, name, "derived_hash_mismatch", doc=doc, detail=detail)
+    qat_variants = (("other_telemetry", {"telemetry_sha256": "0" * 64}, "'telemetry_sha256'"),
+                    ("other_rules", {"rules_sha256": "0" * 64}, "'rules_sha256'"),
+                    ("other_run", {"run_id": "e5_s42_clip5_15ep"}, "'run_id'"),
+                    ("other_clip_norm", {"clip_norm": 1.0}, "'clip_norm'"),
+                    ("winner_of_another_run", {"winner.run_id": "e5_s42_clip5_15ep"}, "'winner.run_id'"),
+                    ("winner_of_another_checkpoint", {"winner.checkpoint_sha256": "0" * 64},
+                     "'winner.checkpoint_sha256'"),
+                    ("winner_of_another_artifact", {"winner.artifact_of_record.sha256": "0" * 64},
+                     "'winner.artifact_of_record.sha256'"),
+                    ("winner_of_another_provenance", {"winner.provenance.sha256": "0" * 64},
+                     "'winner.provenance.sha256'"),
+                    ("winner_of_another_epoch", {"winner.epoch": 11, "winner.checkpoint": "epoch_ckpts/e11.pt"},
+                     "selected_checkpoint (the winner's epoch_end row"))
+    for tag, edits, detail in qat_variants:
+        ref = runs_variant(w, qh["record"], f"variant_{tag}.json", edits)
+        expect_gate(w, f"qat_record_naming_{tag}_B34", "derived_hash_mismatch", doc=hashed(q6, record=ref),
+                    detail=detail)
+    clip = w.entry(w.doc, q6)["inputs"]["clip_selection"]
+    for name, slot, ref, detail in (
+            ("clip_selection_not_the_cited_sha256_B34", q6, dict(clip, sha256="0" * 64),
+             "clip_selection (its sha256, format and rules)"),
+            ("clip_selection_of_other_rules_B34", q6, runs_variant(w, clip, "variant_rules.json",
+                                                                   {"rules_sha256": "0" * 64}),
+             "clip_selection (its sha256, format and rules)"),
+            ("clip_selection_absent_B34", q6, dict(clip, path="u4_clip/absent.json"), "unreadable"),
+            ("run_clip_not_the_clip_winner_s_B34", q6, runs_variant(w, clip, "variant_winner_clip.json",
+                                                                    {"winner.clip_norm": 1.0}),
+             "clip_norm (the clip selection's winner's is 1.0)"),
+            ("pilot_winner_naming_another_record_TB9", "E5:s42:sel", runs_variant(
+                w, clip, "variant_winner_record.json", {"winner.qat_selection.sha256": "0" * 64}),
+             "the pilot's winner")):
+        expect_gate(w, name, "derived_hash_mismatch", doc=inputs(slot, clip_selection=ref), detail=detail)
+    loser = w.qat["e5_s42_clip1_15ep"]
+
+    def pilot_loser(d):
+        e = w.entry(d, "E5:s42:sel")
+        e["parent"] = "E5:s42:clip1:15ep"
+        e["inputs"].update(run_slot="E5:s42:clip1:15ep", telemetry_sha256=loser["telemetry_sha256"])
+        e["hashed"] = copy.deepcopy(loser["hashed"])
+    expect_gate(w, "pilot_selection_of_the_retained_loser_TB9_B34", "derived_hash_mismatch",
+                doc=mutated(w, pilot_loser), detail="the pilot's winner (the clip selection names e5_s42_clip5_15ep")
+    code, _, e = w.run("draft", hashed(q6, record=dict(qh["record"], sha256="0" * 64)), runs_root=None)
+    check("derived_records_unread_without_runs_in_a_draft", code is None, f"{code}: {e.detail[:200] if e else ''}")
 
 
 def case_non_finite_gate():
@@ -1247,6 +1444,7 @@ def case_moved_freeze():
     from src.tman import schedule as D
     w = WORLD
     FX.qat_run(w.runs, "e6_s42_late", stage="E6", end="2026-11-04T10:00:00Z")
+    late = w.qat_files("e6_s42_late", "E6", 5.0, made="2026-11-04T11:00:00Z")      # its conversion and selection
     tel = w.runs / "e6_s42_late" / "qat_telemetry.jsonl"
     delay = w.entry_file("freeze_delay", [], {"original_date": FREEZE_DAY, "runs": ["E6:s42:15ep"]})
     dref = {"path": delay["path"], "sha256": delay["sha256"]}
@@ -1264,6 +1462,8 @@ def case_moved_freeze():
                  completion={"record": "qat_telemetry.jsonl", "at_utc": "2026-11-04T10:00:00Z",
                              "sha256": w.S.sha256_bytes(tel.read_bytes()),
                              "line": sum(1 for x in tel.read_bytes().split(b"\n") if x.strip())})
+        sel = w.entry(d, "E6:s42:sel")
+        sel["inputs"]["telemetry_sha256"], sel["hashed"] = late["telemetry_sha256"], copy.deepcopy(late["hashed"])
     code, _, e = w.run("freeze", mutated(w, lambda d: moved(d, "2026-11-04")))
     check("delay_and_new_freeze_on_the_first_complete_day_AM19_1d", code is None,
           f"{code}: {e.detail[:200] if e else ''}")
@@ -1627,7 +1827,7 @@ def case_draft_and_cli():
         check("cli_validate_freeze_without_runs_refused", rc == 2)
     finally:
         R.TRIGGER_READER = None
-    check("gate_codes_unique_and_ordered", len(set(c for c, _, _ in V.GATES)) == len(V.GATES) == 82)
+    check("gate_codes_unique_and_ordered", len(set(c for c, _, _ in V.GATES)) == len(V.GATES) == 84)
 
 
 WORLD: World | None = None
@@ -1645,7 +1845,8 @@ def main() -> int:
                             (case_world_passes, case_input_gates, case_record_gates, case_entry_files,
                              case_completion_gates,
                              case_cut_gates, case_cut_attribution, case_parent_and_derived_gates, case_appends,
-                             case_non_finite_gate, case_scope_gates, case_moved_freeze, case_printers,
+                             case_derived_sources, case_non_finite_gate, case_scope_gates, case_moved_freeze,
+                             case_printers,
                              case_draft_and_cli,
                              case_inventory, case_coverage))
     finally:

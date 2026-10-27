@@ -969,6 +969,11 @@ def g_derived_inputs_incomplete(x: Ctx):
     return _err(errs)
 
 
+def g_derived_inputs_mismatch(x: Ctx):
+    return _err([err for e in _derived(x) for err in M.derived_inputs_mismatch_errors(
+        e, x.by_slot, x.cat, x.body["calibration_index"], x.records.src)])
+
+
 def g_ptq_record_invalid(x: Ctx):
     """A2 for each PTQ entry, and for each PTQ append as the entry it makes; an append whose ptq_record is intact
     stands in for its isolation record (TB19 Q9; read by append_invalid)."""
@@ -1060,6 +1065,21 @@ def g_append_invalid(x: Ctx):
         errs += read_errs or M.append_errors(a, frozen, x.freeze.original_utc, isolation=iso, provenance=prov,
                                              ptq_record_ok=a["slot"] in x.ptq_ok)
     return _err(errs)
+
+
+def g_derived_hash_mismatch(x: Ctx):
+    """Each hashed derived model, in the body and appended, against its records under --runs (DL-24 #27, #34, #49,
+    #50); the appends are append_invalid's first."""
+    if x.runs_root is None:
+        return None
+    made = [e for e in _derived(x) if e["hashed"] is not None]
+    for app in x.doc["appends"]:
+        listed = x.by_slot.get(app.get("slot")) if isinstance(app, dict) else None
+        if M.appendable(app, listed):
+            made.append(M.appended_entry(app, listed))
+    ci = x.body["calibration_index"]
+    return _err([err for e in made for err in M.derived_hash_errors(e, x.by_slot.get(e["parent"]) or {}, x.cat, ci,
+                                                                      x.runs_root)])
 
 
 def _unlock_doc(x: Ctx) -> dict | None:
@@ -1308,11 +1328,13 @@ GATES = [
     ("descendant_entry_missing", FU, g_descendant_entry_missing),
     ("not_run_without_parent_record", ALL, g_not_run_without_parent_record),
     ("derived_parent_incomplete", ALL, g_derived_parent_incomplete),
-    ("derived_inputs_incomplete", ALL, g_derived_inputs_incomplete), ("ptq_record_invalid", ALL, g_ptq_record_invalid),
+    ("derived_inputs_incomplete", ALL, g_derived_inputs_incomplete),
+    ("derived_inputs_mismatch", ALL, g_derived_inputs_mismatch), ("ptq_record_invalid", ALL, g_ptq_record_invalid),
     ("derived_missing", FU, g_derived_missing), ("e6s42_not_hashed_at_freeze", FU, g_e6s42_not_hashed_at_freeze),
     ("derived_selection_conflict", ALL, g_derived_selection_conflict),
     ("non_finite_invalid", ALL, g_non_finite_invalid),
-    ("append_invalid", ALL, g_append_invalid), ("append_after_unlock", U, g_append_after_unlock),
+    ("append_invalid", ALL, g_append_invalid), ("derived_hash_mismatch", ALL, g_derived_hash_mismatch),
+    ("append_after_unlock", U, g_append_after_unlock),
     ("derived_not_hashed_at_unlock", U, g_derived_not_hashed_at_unlock),
     ("scope_forbidden", ALL, g_scope_forbidden), ("scope_required_missing", FU, g_scope_required_missing),
     ("candidate_scored", ALL, g_candidate_scored), ("default_candidate_missing", FU, g_default_candidate_missing),
