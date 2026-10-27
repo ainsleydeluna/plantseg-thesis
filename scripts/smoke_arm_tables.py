@@ -24,6 +24,10 @@ none contains "test" or ":".
      shapes refused (status_invalid)
   D  determinism, no test or p-value key, the banner, no test object imported, the markdown's cells, no
      'test' path
+  G  B-5b (ruling LREP-B5-RULE-4 R4-1 items 2 and 6): E7-X rows read descriptive_test and print the DT
+     label in their candidate cell, the other rows read official; a row without a model prints none; in
+     the smoke profile every pair stays under the statistics artifact's policy (the official profile's
+     DT read and pair: scripts/smoke_lrep_official_profile.py)
 
 Cases are importable (setup / cases) so that scripts/smoke_lrep_mutations.py can run them mutated.
 
@@ -70,6 +74,8 @@ R2_VALUES = (0.39719322323799133, 0.0573499952011995, "go")
 ORDER = [("R1", "E3"), ("R1", "E7"), ("R1", "E6"), ("R2", "E3"), ("R2", "E7"), ("R2", "E6"), ("flip", "E3"),
          ("flip", "E7")]
 CUT = {"cut_date": "2026-10-24", "rule": "AM-22 item 2(a): the launch cutoff", "comparator": None}
+#: R4-1 item 6, typed from the ruling: what every row built from a DT run prints.
+DT_LABEL = "descriptive TEST; provisional artifact (the evaluator scores this stage descriptively only)"
 
 
 def stats_artifact():
@@ -634,6 +640,25 @@ def d_cells():
     return not bad and len(AT.HEADER) == 13, str(bad[:2])
 
 
+def g_read():
+    """R4-1 items 2 and 6: the E7-X rows read descriptive_test (role arm at int8_ptq) and print DT_LABEL in
+    their candidate cell; the E3-X and E6-X rows read official and print none; a cut variant's E7-R2 (no
+    model, so no DT run) reads descriptive_test and prints no label; every pair here is aligned under the
+    smoke profile's policy (pair_policy nonofficial_smoke)."""
+    doc, cut = the_doc(), doc_of(variant("cut_r2", _cut_r2))
+    md = "\n".join(AT.render_markdown(doc, ""))
+    got = {(r["x"], r["stage"]): (r["read"], r["read_label"]) for r in doc["rows"]}
+    want = {k: (("descriptive_test", DT_LABEL) if k[1] == "E7" else ("official", None)) for k in ORDER}
+    cells = (all(f"| {x} | E7 | E7-{x} ({DT_LABEL}) |" in md for x in ("R1", "R2", "flip"))
+             and all(f"| {x} | {st} | {st}-{x} |" in md for x, st in ORDER if st != "E7"))
+    r2 = row(cut, "R2", "E7")
+    cut_md = "\n".join(AT.render_markdown(cut, ""))
+    pairs = {r["per_image"]["pair_policy"] for r in doc["rows"]}
+    return (got == want and cells and pairs == {"nonofficial_smoke"}
+            and (r2["read"], r2["read_label"], r2["candidate"]) == ("descriptive_test", None, None)
+            and "| R2 | E7 | E7-R2 | " in cut_md), str(got)[:300]
+
+
 def setup(root: Path, world=None) -> None:
     CTX.world = world or LF.build_world(root, strata=False)
     CTX.stats, CTX.paths, CTX.doc = None, {}, None
@@ -693,7 +718,9 @@ def cases():
             ("D3", "the banner 'descriptive; outside protocol 1.0.0'", d_banner),
             ("D4", "arm_tables imports no test object (AST)", d_no_test_import),
             ("D5", "no created path contains 'test' or ':' (LRB20; R4-6)", d_no_test_path),
-            ("D6", "the markdown's lines have the header's cells, with and without a model", d_cells)]
+            ("D6", "the markdown's lines have the header's cells, with and without a model", d_cells),
+            ("G1", "R4-1 items 2, 6: E7-X rows read descriptive_test and print the DT label; others official",
+             g_read)]
 
 
 def run_case(fn):

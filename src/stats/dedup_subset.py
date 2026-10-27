@@ -52,6 +52,12 @@ each reason are reported next to the issue's counts."
     :1228-1230).
   * (v) removed_by_reason beside the issue's counts, AM-18 item 8(a)'s rows (PA :1196-1204), pinned
     here; the issue #11 CSV is never read. The issue's row labels are string values only, never keys.
+  * B-5b (ruling LREP-B5-RULE-4 R4-1): (i)'s rows come from am6's coverage, so a descriptive_test slot (the
+    arms' E7-X) is read there by the DT read under Policy.OFFICIAL, and its row carries `read` and prints
+    DT_LABEL in its stage cell. (ii) and (iii) are official computations: before they take their inputs,
+    every run is checked to be one of the 37 inputs of the verified statistics artifact
+    (heldout_inputs.require_official_inputs; descriptive_input_in_official), so a DT run never reaches the
+    eight contrasts or NI (item 5).
 
 Descriptive; outside protocol 1.0.0. Import-time behaviour is side-effect free.
 """
@@ -245,6 +251,7 @@ def model_rows(stats, inv, cells, kept, *, input_root: Path) -> list[dict]:
         full = {k: r[k] for k in r["subset"] if k not in ("eligibility_changes", "n_images_kept",
                                                          "n_images_removed", "image_ids_sha256")}
         out.append({"slot": r["slot"], "stage": r["stage"], "seed": r["seed"], "roles": roles,
+                    "read": r.get("read", H.READ_OFFICIAL), "read_label": r.get("read_label"),
                     "run_id": r["run_id"], "full": full, "subset": r["subset"]})
     return out
 
@@ -301,6 +308,10 @@ def build_dedup(stats: H.StatsArtifact, inv: H.Inventory, cells: H.PlannedCells,
     grid = official_corruption_grid()
     cell_runs = {stage: {(n, s): stats.cell(stage, n, s).run for n in grid.names
                          for s in INFERENTIAL_SEVERITIES} for stage in D.CORRUPTION_STAGES}
+    H.require_official_inputs(stats, {**{f"{st} clean": run for st, run in clean.items()},
+                                      **{f"{st} {H.cell_id(n, s)}": run for st, by_cell in cell_runs.items()
+                                         for (n, s), run in by_cell.items()}},
+                              "dedup (ii)-(iii), the eight contrasts and NI recomputed on the subset")
     fingerprints = {f"{li.stage} {D.condition_tuple_label(li.condition)}":
                     AM6.ids_sha256(li.run.stats.manifest_ids) for li in stats.views.loaded.values()}
     models = model_rows(stats, inv, cells, kept, input_root=input_root)
@@ -387,7 +398,8 @@ def render_markdown(doc: dict, banner: str = "") -> list[str]:
             "| stage | seed | roles | all-class full | all-class subset | GT-present subset | disease-only "
             "subset | eligibility changes |", "|---|---|---|---|---|---|---|---|"]
     for m in doc["models"]:
-        out.append(f"| {m['stage']} | {_fmt(m['seed'])} | {', '.join(m['roles'])} | "
+        stage = m["stage"] if not m.get("read_label") else f"{m['stage']} ({m['read_label']})"
+        out.append(f"| {stage} | {_fmt(m['seed'])} | {', '.join(m['roles'])} | "
                    f"{_fmt(m['full']['union_present_all_class_float64'])} | "
                    f"{_fmt(m['subset']['union_present_all_class_float64'])} | "
                    f"{_fmt(m['subset']['gt_present_all_class_float64'])} | "

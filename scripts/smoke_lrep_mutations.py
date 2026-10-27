@@ -16,9 +16,10 @@ check or an unexpected error both count as killed). Three kinds:
      (c), (d) and (e)), each killed by its named case
 
 The cases run on one synthetic world (scripts/lrep_fixtures.py) under a new directory in TMPDIR (left
-in place); no created path contains "test". A smoke that keeps a document between its cases (the arms,
-dedup, quant and report smokes' the_doc, am6's cov_doc) has it dropped before a mutated run of one of
-its cases and restored after, so that the mutant builds its own.
+in place), and scripts/smoke_lrep_official_profile.py's on its own official world in a sub-directory
+(B-5b); no created path contains "test" or ":". A smoke that keeps a document between its cases (the
+arms, dedup, quant and report smokes' the_doc, am6's cov_doc, the official smoke's inventory) has it
+dropped before a mutated run of one of its cases and restored after, so that the mutant builds its own.
 
 Run:  TMPDIR=<a scratch directory without 'test'> python -B scripts/smoke_lrep_mutations.py
 """
@@ -47,6 +48,7 @@ import smoke_quant_rows as S_QR                                          # noqa:
 import smoke_dedup_subset as S_DS                                        # noqa: E402
 import smoke_default_candidates as S_DC                                  # noqa: E402
 import smoke_lrep_descriptive as S_LD                                    # noqa: E402
+import smoke_lrep_official_profile as S_OFF                              # noqa: E402
 import smoke_report_extensions as S_RX                                   # noqa: E402
 import smoke_seed_stability as S_SEED                                    # noqa: E402
 import smoke_strata_tables as S_ST                                       # noqa: E402
@@ -66,7 +68,7 @@ CTX = types.SimpleNamespace(world=None)
 #: The documents B-5's smokes keep between their cases, by case tag: dropped before a mutated run of one
 #: of that smoke's cases (the mutant builds its own) and restored after it.
 KEPT = {"arms": (S_ARM.CTX, "doc"), "dedup": (S_DS.CTX, "doc"), "quant": (S_QR.CTX, "doc"),
-        "report": (S_RX.CTX, "doc"), "am6": (S_AM6.CTX, "cov")}
+        "report": (S_RX.CTX, "doc"), "am6": (S_AM6.CTX, "cov"), "official": (S_OFF.CTX, "inv")}
 
 
 @contextlib.contextmanager
@@ -187,7 +189,7 @@ def all_cases() -> dict:
     out = dict(LOCAL)
     for tag, mod in (("seed", S_SEED), ("strata", S_ST), ("defaults", S_DC), ("am6", S_AM6),
                      ("report", S_RX), ("arms", S_ARM), ("quant", S_QR), ("dedup", S_DS),
-                     ("descriptive", S_LD)):
+                     ("descriptive", S_LD), ("official", S_OFF)):
         for cid, _, fn in mod.cases():
             out[f"{tag}:{cid}"] = fn
     return out
@@ -293,6 +295,11 @@ MUTATIONS = [
      [(AT, "read_record", [off_h("arm_record_invalid", ' f"{what} {rel}: sha256')])], "arms:T3"),
     ("C46", "quant_slot_invalid not raised (two slots for one stage)",
      [(QR, "quant_slots", [off_h("quant_slot_invalid", ' f"two quant_descriptive')])], "quant:R2"),
+    # C: B-5b's codes (ruling LREP-B5-RULE-4 R4-1)
+    ("C47", "descriptive_input_invalid not raised (the DT read's step (b): an official DT artifact)",
+     [(H, "read_descriptive_test", [off("descriptive_input_invalid", ' f"{where}: (b)')])], "official:B1"),
+    ("C48", "descriptive_input_in_official not raised (a DT run given to dedup's (ii)-(iii))",
+     [(H, "require_official_inputs", [off("descriptive_input_in_official")])], "dedup:O1"),
     # R: further raise sites (DL-24)
     ("R01", "binding_invalid not raised (a bound export without binding.artifacts)",
      [(H, "open_inventory", [off("binding_invalid", ' f"{path}: a bound export')])], "seed:R2h"),
@@ -739,6 +746,7 @@ def setup(root: Path) -> None:
     CTX.world = w
     for mod in (S_SEED, S_ST, S_DC, S_AM6, S_RX, S_ARM, S_QR, S_DS, S_LD):
         mod.setup(root, world=w)
+    S_OFF.setup(LF.new_dir(root, "official"))          # its own official world (R4-1 item 8)
 
 
 def main() -> int:

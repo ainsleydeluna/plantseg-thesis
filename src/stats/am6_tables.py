@@ -22,6 +22,11 @@ values reproducing summary.json bitwise, float64 beside them; ERR E-24: canvas a
     faithfulness check applies to the family rows only; the sort covers every mapped stage and a null
     seed (the teachers'); one ground truth holds across every row (R-10). The extension report reads it
     with `coverage` (B5-S4).
+  * B-5b (ruling LREP-B5-RULE-4 R4-1): a coverage row is read by heldout_inputs.load_slot and carries its
+    slot's `read`. A descriptive_test slot (E7-X; the calibration-sensitivity E4 and E7 at lists 43-45)
+    reads under Policy.OFFICIAL through the DT read, its reference the 37's input of its evaluator stage,
+    and its row prints DT_LABEL in its stage cell; every other slot reads under the statistics artifact's
+    policy as before.
   * Per row (scripts/eligibility_variants.py's computation, reused through src.stats.eligibility):
     union-present and GT-present, all-class and disease-only, each as `value` (float32, the
     evaluator's arithmetic) and `value_float64`, with the class counts and the classes that are
@@ -168,9 +173,11 @@ def is_planned(row: dict) -> bool:
 def coverage_items(stats: H.StatsArtifact, inv: H.Inventory, rec_slots, *, input_root: Path, roles=None,
                    stages=()) -> tuple:
     """B-5 (d): (items, loaded) of every clean canvas binding record of a slot that is not a planned
-    cell's (never an fq_off row), read through load_bound at B5-S1's stage map, its model row at its
-    entry's stage and seed (R-14). With `roles`, only the slots whose roles meet them or whose stage is in
-    `stages` are read; every other slot is ignored and never refused (LRB4)."""
+    cell's (never an fq_off row), read through load_slot (R4-1: load_bound at B5-S1's stage map, or the DT
+    read for a descriptive_test slot under Policy.OFFICIAL), its model row at its entry's stage and seed
+    (R-14), the row carrying its slot's read and, from a DT run, DT_LABEL. With `roles`, only the slots
+    whose roles meet them or whose stage is in `stages` are read; every other slot is ignored and never
+    refused (LRB4)."""
     items, loaded = [], {}
     listed = sorted({(r["slot"], r["precision"]) for r in inv.doc["binding"].get("artifacts", [])
                      if r.get("scope") == "clean" and r.get("cell") is None and r.get("slot") not in rec_slots
@@ -180,13 +187,12 @@ def coverage_items(stats: H.StatsArtifact, inv: H.Inventory, rec_slots, *, input
         if roles is not None and not (set(e["role"]) & set(roles) or e.get("stage") in stages):
             continue
         stage, seed = e.get("stage"), e.get("seed")
-        ba = H.load_bound(inv, slot=slot, stage=stage, precision=precision, scope="clean",
-                          input_root=input_root, policy=stats.policy)
+        ba = H.load_slot(stats, inv, slot=slot, stage=stage, precision=precision, input_root=input_root)
         H.check_row_at_entry(inv, ba)
         loaded[f"{slot} {precision}"] = ba
         items.append(({"slot": slot, "stage": stage, "seed": seed, "roles": list(e["role"]),
-                       "kind": e.get("kind"), "label": None, "precision": precision,
-                       "run_id": ba.summary["run"]["run_id"],
+                       "kind": e.get("kind"), "label": None, "precision": precision, "read": ba.read,
+                       "read_label": ba.read_label, "run_id": ba.summary["run"]["run_id"],
                        "checkpoint_sha256": ba.summary["run"].get("checkpoint_sha256"),
                        "source": COVERAGE_SOURCE}, ba.run.stats, ba.summary))
     return items, loaded
@@ -288,7 +294,8 @@ def render_markdown(doc: dict, banner: str = "") -> list[str]:
                 "|---|---|---|---|---|---|---|---|---|"]
         for r in others:
             seed = "—" if r["seed"] is None else r["seed"]
-            out.append(f"| {r['stage']} | {seed} | {', '.join(r['roles'])} | "
+            stage = r["stage"] if not r.get("read_label") else f"{r['stage']} ({r['read_label']})"
+            out.append(f"| {stage} | {seed} | {', '.join(r['roles'])} | "
                        f"{r['precision']} | {_fmt(r['union_present_all_class'])} | "
                        f"{_fmt(r['gt_present_all_class'])} | {_fmt(r['union_present_disease_only'])} | "
                        f"{_fmt(r['gt_present_disease_only'])} | {r['union_present_all_class_n_classes']} / "

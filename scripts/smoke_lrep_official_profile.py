@@ -1,0 +1,517 @@
+#!/usr/bin/env python3
+"""The official profile of lane LREP (B-5b: ruling LREP-B5-RULE-4 R4-1): the descriptive TEST read ("DT
+read") and its guards on an official, TEST-shaped synthetic world.
+
+SYNTHETIC ONLY (DL-41): scripts/lrep_fixtures.py's official world -- n = 1561 images, k = 7 AM-5 images,
+the fixture's synthetic dataset name (never PlantSeg), every artifact official but the nine
+descriptive_test slots' (provisional) -- written through the unmodified evaluator writer into a clean
+fixture repository under a new directory in TMPDIR (left in place), plus edited or re-scored copies of
+one DT artifact, of E3-R1's and of E7's for the refusals. This is the only smoke whose artifacts hold
+dataset.split "test", as a JSON value (R4-6(ii)); no created path or file name contains "test" or ":", and
+no id, key or name contains "test". The export is read under Policy.OFFICIAL through a stand-in for TMAN's
+reader (the stub's checks without its stub mark; B-4 swaps in TMAN's), and a DT slot's reference is the
+family slot of its evaluator stage at seed 42, read as the 37's input is (driver.load_input under
+Policy.OFFICIAL).
+
+  G  R4-1 item 2: slot_read over the catalogue's 49 scored slots gives exactly the nine; the DT read is
+     reached only through load_slot, which only the arm tables and am6's coverage call; dt_pair only by
+     the arm tables; the official-input guard sits where dedup's (ii) and (iii) take their inputs
+  H  the happy paths: each of the world's nine DT slots reads descriptive_test through the DT read (its
+     run non-official, its rows the official AM-5 rule's); a DT pair with E7 is non-official, its delta
+     the rows' own; every other B-5 slot reads official under Policy.OFFICIAL
+  A-F one case per step of the DT read (item 3), each reached with every earlier gate passing:
+     A (a) an artifact its loader refuses; B (b) a smoke, official, VAL, random_init or 1560-row DT
+     artifact; C (c) an undefined primary value AM-5 does not exclude; D (d) a reference that is not the
+     37's E7 read officially, another metric implementation (assert_compatible), another AM-5 set
+     (am5_pair); E (e) a reference whose files changed after its official read, a clean_image_id that
+     differs (align_runs); F (f) a record whose files differ from the artifact's
+  K  item 4: an official-capable slot's provisional artifact is refused under Policy.OFFICIAL
+     (artifact_unreadable), never read as descriptive
+  X  the world: its artifacts' dataset name, split value and statuses; no created path contains 'test'
+     or ':'
+
+Run:  TMPDIR=<a scratch directory without 'test'> python -B scripts/smoke_lrep_official_profile.py
+"""
+from __future__ import annotations
+
+import ast
+import copy
+import dataclasses
+import json
+import os
+import shutil
+import sys
+import time
+import traceback
+import types
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[1]
+for p in (REPO, REPO / "scripts"):
+    if str(p) not in sys.path:
+        sys.path.insert(0, str(p))
+
+import numpy as np                                                       # noqa: E402
+
+import lrep_fixtures as LF                                               # noqa: E402
+import stats_fixtures as F                                               # noqa: E402
+from src.eval.adapters import DATASET_NAME                               # noqa: E402
+from src.eval.evaluate import Condition                                  # noqa: E402
+from src.stats import driver as D                                        # noqa: E402
+from src.stats import heldout_inputs as H                                # noqa: E402
+from src.stats.align import METRIC_DISEASE_ONLY                          # noqa: E402
+from src.stats.ingest import Policy                                      # noqa: E402
+
+#: R4-6(ii): the official world's dataset.split, a JSON value only (never a path, file name, id or key).
+TEST_SPLIT = "test"
+CTX = types.SimpleNamespace(world=None, paths={}, copies={}, refs={}, inv=None)
+DT_SLOT = "E7-R1:s42:list42"                     # the DT slot the refusal cases edit (role arm, int8_ptq)
+DT_PRECISION = "int8_ptq"
+N_INCLUDED = LF.OFFICIAL_N - LF.OFFICIAL_K      # the rows a DT run keeps under the official AM-5 rule
+
+
+def tman_reader(path, *, expect_sha256=None):
+    """A stand-in for TMAN's reader (src.tman.validate.read_inventory, which B-4 swaps in): the stub's
+    checks without its stub mark, so that open_inventory reads the export under Policy.OFFICIAL."""
+    return H.read_inventory(path, expect_sha256=expect_sha256)
+
+
+def inventory(path=None) -> H.Inventory:
+    if path is None and CTX.inv is not None:
+        return CTX.inv
+    inv = H.open_inventory(path or CTX.world.inventory_path, policy=Policy.OFFICIAL, reader=tman_reader)
+    if path is None:
+        CTX.inv = inv
+    return inv
+
+
+def reference(stage: str, policy: Policy = Policy.OFFICIAL):
+    """The family slot of `stage` at seed 42 read as the 37's input is: driver.load_input under `policy`."""
+    key = (stage, policy)
+    if key not in CTX.refs:
+        w = CTX.world.art(stage, 42)
+        CTX.refs[key] = D.load_input(stage, D.CLEAN, w.rel, CTX.world.input_root, policy)
+    return CTX.refs[key]
+
+
+def stats_stand_in():
+    """What load_slot reads of the verified statistics artifact: its policy and its clean inputs (the 37's
+    E4 and E7 are the references of the DT slots)."""
+    return types.SimpleNamespace(policy=Policy.OFFICIAL, clean=reference)
+
+
+def variant(name, edit):
+    if name not in CTX.paths:
+        export, binding = copy.deepcopy(CTX.world.export), copy.deepcopy(CTX.world.binding)
+        edit(export, binding)
+        CTX.paths[name] = LF.write_inventory(CTX.world.fresh(name), export, binding, CTX.world.dedup)
+    return CTX.paths[name]
+
+
+def point_record(binding, slot, precision, copy_w, **fields):
+    r = next(r for r in binding["artifacts"]
+             if (r["slot"], r["precision"], r["scope"], r.get("cell")) == (slot, precision, "clean", None))
+    r["repo_relative_path"], r["files_sha256"] = copy_w.rel, dict(copy_w.files_sha256)
+    r.update(fields)
+
+
+def pointed(name, slot=DT_SLOT, precision=DT_PRECISION, **fields):
+    """An export whose clean record of (slot, precision) names the copy `name`."""
+    return inventory(variant(name, lambda export, binding: point_record(
+        binding, slot, precision, CTX.copies[name], **fields)))
+
+
+def stage_of(slot: str) -> str:
+    return next(e["stage"] for e in CTX.world.export["entries"] if e["slot"] == slot)
+
+
+def dt_read(slot=DT_SLOT, inv=None, ref=None):
+    stage = stage_of(slot)
+    return H.read_descriptive_test(inv or inventory(), slot=slot, stage=stage,
+                                   precision=H.stage_spec(stage)[2], input_root=CTX.world.input_root,
+                                   reference=ref if ref is not None else reference(H.stage_spec(stage)[0]))
+
+
+def refused(code, fn):
+    try:
+        fn()
+    except H.LrepRefusal as e:
+        return e.code == code, f"{e.code}: {e.detail[:300]}"
+    except Exception as e:                                              # noqa: BLE001
+        return False, f"unexpected {type(e).__name__}: {e}"
+    return False, f"no refusal (expected {code})"
+
+
+def refused_at(step: str, fn, needle: str = ""):
+    """descriptive_input_invalid at step `step` of the DT read (its detail names the step), with `needle` in
+    the detail."""
+    try:
+        fn()
+    except H.LrepRefusal as e:
+        ok = e.code == "descriptive_input_invalid" and f": ({step}) {H.DT_STEPS[step]}" in e.detail
+        return ok and needle in e.detail, f"{e.code}: {e.detail[:400]}"
+    except Exception as e:                                              # noqa: BLE001
+        return False, f"unexpected {type(e).__name__}: {e}"
+    return False, f"no refusal (expected descriptive_input_invalid at ({step}))"
+
+
+# --------------------------------------------------------------------------------------------------
+# copies
+# --------------------------------------------------------------------------------------------------
+def rows_copy(src: LF.Written, name: str, fn) -> LF.Written:
+    """A copy of an artifact under runs/heldout/<name>, its per_image.jsonl rows edited by `fn` (a list of
+    dicts, in place) and its MANIFEST rehashed; not in the binding (cases point records at it)."""
+    if "test" in name.lower() or ":" in name or "/" in name:
+        raise ValueError(name)
+    w = CTX.world
+    d = w.input_root / "runs" / "heldout" / name
+    shutil.copytree(w.input_root / src.rel, d)
+    p = d / "per_image.jsonl"
+    rows = [json.loads(line) for line in p.read_text(encoding="utf-8").splitlines()]
+    fn(rows)
+    p.write_text("".join(json.dumps(r, allow_nan=False) + "\n" for r in rows), encoding="utf-8", newline="\n")
+    F.rehash(d)
+    return dataclasses.replace(src, rel=f"runs/heldout/{name}", files_sha256=D.input_file_sha256(d))
+
+
+def rescored_copy(src: LF.Written, name: str, truth) -> LF.Written:
+    """`src`'s model re-scored on `truth` through the writer, as a DT artifact (E7, int8_ptq, provisional,
+    the official world's split), with `src`'s checkpoint."""
+    w = CTX.world
+    rel = f"runs/heldout/{name}"
+    if "test" in rel.lower() or ":" in rel:
+        raise ValueError(rel)
+    scored = F.score(truth, F.predict(truth, quality=0.76, seed=F.int_seed(LF.WORLD_SEED, rel)),
+                     Condition(*D.CLEAN))
+    F.write_fixture(w.input_root / rel, scored, len(truth.ids), stage="E7", condition=Condition(*D.CLEAN),
+                    split=TEST_SPLIT, status="provisional", repo_root=w.input_root, run_id=f"lrep-{name}",
+                    precision=DT_PRECISION, checkpoint_sha256=src.checkpoint)
+    summary = json.loads((w.input_root / rel / "summary.json").read_text(encoding="utf-8"))
+    return dataclasses.replace(src, rel=rel, files_sha256=D.input_file_sha256(w.input_root / rel),
+                               run_id=f"lrep-{name}",
+                               split_manifest_sha256=summary["dataset"]["split_manifest_sha256"])
+
+
+def _first_defined(rows) -> dict:
+    return next(r for r in rows if r["n_eligible_disease_only"] > 0)
+
+
+def setup(root: Path, world=None) -> None:
+    w = world or LF.build_world(root, stats=False, strata=False, official_split=TEST_SPLIT)
+    CTX.world, CTX.paths, CTX.copies, CTX.refs, CTX.inv = w, {}, {}, {}, None
+    dt = w.written[(DT_SLOT, DT_PRECISION, "clean", None)]
+    edits = {"dt_official": lambda s: {**s, "run": {**s["run"], "artifact_status": "official"}},
+             "dt_smoke": lambda s: {**s, "run": {**s["run"], "artifact_status": "smoke"}},
+             "dt_val": lambda s: {**s, "dataset": {**s["dataset"], "split": "val"}},
+             "dt_random_init": lambda s: {**s, "run": {**s["run"], "random_init": True}},
+             "dt_protocol": lambda s: {**s, "metric_protocol": "plantseg-metric/0.0.0"},
+             "dt_metric": lambda s: {**s, "run": {**s["run"], "metric_impl_sha256": LF.syn_sha("metric")}}}
+    for name, fn in edits.items():
+        CTX.copies[name] = LF.edited_copy(w, dt, f"e7r1_s42_{name[3:]}", fn)
+
+    def undefined(rows):
+        r = _first_defined(rows)
+        r.update(disease_only_miou=None, disease_only_miou_status="evaluation_error")
+
+    def clean_id(rows):
+        _first_defined(rows)["clean_image_id"] = "img_99999"
+    CTX.copies["dt_undefined"] = rows_copy(dt, "e7r1_s42_undefined", undefined)
+    CTX.copies["dt_clean_id"] = rows_copy(dt, "e7r1_s42_cleanid", clean_id)
+    CTX.copies["dt_1560"] = rescored_copy(dt, "e7r1_s42_rows1560", F.make_truth(
+        LF.OFFICIAL_N - 1, LF.OFFICIAL_K, F.int_seed(LF.WORLD_SEED, "truth")))
+    CTX.copies["dt_other_am5"] = rescored_copy(dt, "e7r1_s42_otheram5", F.make_truth(
+        LF.OFFICIAL_N, LF.OFFICIAL_K, F.int_seed(LF.WORLD_SEED, "another truth")))
+    e3r1 = w.written[("E3-R1:s42:lambda0.5:alpha25:80k", "fp32", "clean", None)]
+    CTX.copies["e3r1_provisional"] = LF.edited_copy(
+        w, e3r1, "e3r1_s42_provisional",
+        lambda s: {**s, "run": {**s["run"], "artifact_status": "provisional"}})
+    # (e): E7's family artifact copied and read officially, then changed on disk
+    src = w.art("E7", 42)
+    d = w.input_root / "runs" / "heldout" / "e7_s42_refcopy"
+    shutil.copytree(w.input_root / src.rel, d)
+    CTX.copies["ref_changed"] = D.load_input("E7", D.CLEAN, "runs/heldout/e7_s42_refcopy", w.input_root,
+                                             Policy.OFFICIAL)
+    F.edit_summary(d, lambda s: {**s, "run": {**s["run"], "run_id": "lrep-e7-s42-refcopy-changed"}})
+
+
+# --------------------------------------------------------------------------------------------------
+# G: the DT set and its plumbing
+# --------------------------------------------------------------------------------------------------
+def g_dt_set():
+    """R4-1 item 2: slot_read over the catalogue's 49 scored slots (role, stage) gives exactly the nine DT
+    slots, from their role and their stage's precision; E7-E2 (int8_ptq, quant_descriptive), E3-X (arm,
+    fp32) and the planned E4 and E7 (family, per_seed) read official."""
+    scored = {s: v for s, v in LF.CATALOGUE.items() if v[4] is not None}
+    got = sorted(s for s, v in scored.items() if H.slot_read({"stage": v[0], "role": list(v[3])})
+                 == H.READ_DESCRIPTIVE_TEST)
+    return (len(scored) == 49 and got == sorted(LF.DT_SLOTS) and len(got) == 9
+            and H.slot_read({"stage": "E7-E2", "role": ["quant_descriptive"]}) == H.READ_OFFICIAL
+            and H.slot_read({"stage": "E7", "role": ["per_seed"]}) == H.READ_OFFICIAL
+            and H.slot_read({"stage": "E3-R1", "role": ["arm"]}) == H.READ_OFFICIAL), str(got)
+
+
+def _callers(name: str) -> set:
+    """{(module file, enclosing function)} of every call of `name` in LREP's src/stats files."""
+    from src.stats.report_extensions import LREP_CODE_PATHS
+    out = set()
+    for rel in LREP_CODE_PATHS:
+        if not rel.startswith("src/stats/"):
+            continue
+        tree = ast.parse((REPO / rel).read_text(encoding="utf-8"))
+        for fn in ast.walk(tree):
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for node in ast.walk(fn):
+                f = getattr(node, "func", None) if isinstance(node, ast.Call) else None
+                if ((isinstance(f, ast.Attribute) and f.attr == name)
+                        or (isinstance(f, ast.Name) and f.id == name)):
+                    out.add((Path(rel).name, fn.name))
+    return out
+
+
+def g_plumbing():
+    """R4-1 items 3-5: the DT read is reached through load_slot only, which only the arm tables' rows and
+    am6's coverage call; dt_pair only by the arm rows; the official-input guard where dedup's (ii) and (iii)
+    take their inputs (load_bound itself is not the DT read: its other callers read official slots)."""
+    got = {n: _callers(n)
+           for n in ("read_descriptive_test", "load_slot", "dt_pair", "require_official_inputs")}
+    want = {"read_descriptive_test": {("heldout_inputs.py", "load_slot")},
+            "load_slot": {("arm_tables.py", "arm_row"), ("am6_tables.py", "coverage_items")},
+            "dt_pair": {("arm_tables.py", "arm_row")},
+            "require_official_inputs": {("dedup_subset.py", "build_dedup")}}
+    return got == want, str(got)
+
+
+# --------------------------------------------------------------------------------------------------
+# H: the happy paths
+# --------------------------------------------------------------------------------------------------
+def h_dt_slots():
+    """Each of the world's nine DT slots, read by load_slot under Policy.OFFICIAL, reads descriptive_test
+    through the DT read: its artifact provisional on the official world's split, its run non-official
+    (Policy.NONOFFICIAL_SMOKE), its rows the official AM-5 rule's (1561 - 7, none excluded, the dropped ids
+    the reference's), and its label DT_LABEL."""
+    inv, bad = inventory(), []
+    for slot in LF.DT_SLOTS:
+        stage = stage_of(slot)
+        ba = H.load_slot(stats_stand_in(), inv, slot=slot, stage=stage, precision=H.stage_spec(stage)[2],
+                         input_root=CTX.world.input_root)
+        ref = reference(H.stage_spec(stage)[0]).run
+        ident = ba.run.identity
+        if not (ba.read == H.READ_DESCRIPTIVE_TEST and ba.read_label == H.DT_LABEL
+                and ba.run.policy is Policy.NONOFFICIAL_SMOKE and ident.artifact_status == "provisional"
+                and ident.split == TEST_SPLIT and len(ba.run.records) == N_INCLUDED
+                and not any(r.am5_excluded for r in ba.run.records)
+                and set(ba.run.stats.manifest_ids) - set(ba.run.image_ids) == set(ref.am5.excluded_ids)):
+            bad.append(slot)
+    return not bad, str(bad)
+
+
+def h_pair():
+    """(e): E7-R1's pair with E7 through dt_pair is aligned under Policy.NONOFFICIAL_SMOKE (the pair marks
+    itself non-official), on 1561 - 7 images, with no Am5Pair (a non-strict pair carries none), and its
+    delta is E7-R1's disease-only value minus E7's, image by image, from the rows."""
+    ba = dt_read()
+    ref = reference("E7")
+    pv = H.dt_pair(ref, ba, input_root=CTX.world.input_root, metric=METRIC_DISEASE_ONLY)
+    b, c = ref.run.by_id(), ba.run.by_id()
+    want = np.asarray([c[i].disease_only_miou - b[i].disease_only_miou for i in sorted(b)], dtype=np.float64)
+    return (pv.policy is Policy.NONOFFICIAL_SMOKE and pv.n == N_INCLUDED and pv.am5 is None
+            and pv.alignment_status == "ok" and pv.image_ids == tuple(sorted(b))
+            and np.array_equal(pv.delta, want)), f"{pv.policy} n={pv.n} {pv.alignment_status}"
+
+
+def h_official_slots():
+    """R4-1 item 4: every other clean record of the world outside the planned cells (E3-X, E6-X, AM-23's, the
+    teachers, A, F, G, the three controls, E6-KD, the default candidates: 19) reads official through
+    load_bound under Policy.OFFICIAL: its artifact official, its run official, no label."""
+    planned = {e["slot"] for e in CTX.world.export["entries"] if set(e["role"]) & {"family", "per_seed"}}
+    inv, bad, n = inventory(), [], 0
+    for (slot, precision, scope, cell), w in sorted(CTX.world.written.items()):
+        if scope != "clean" or slot in LF.DT_SLOTS or slot in planned:
+            continue
+        n += 1
+        ba = H.load_slot(stats_stand_in(), inv, slot=slot, stage=w.stage, precision=precision,
+                         input_root=CTX.world.input_root)
+        if not (ba.read == H.READ_OFFICIAL and ba.read_label is None and ba.run.policy is Policy.OFFICIAL
+                and ba.run.identity.artifact_status == "official"):
+            bad.append(slot)
+    return not bad and n == 19, f"{bad} of {n}"
+
+
+# --------------------------------------------------------------------------------------------------
+# A-F: one case per step of the DT read
+# --------------------------------------------------------------------------------------------------
+def a_loader():
+    """(a): a DT artifact its loader refuses (its summary's metric_protocol is not the frozen one; files,
+    record and manifest consistent) is refused at (a), naming load_bound's code."""
+    return refused_at("a", lambda: dt_read(inv=pointed("dt_protocol")), "artifact_unreadable")
+
+
+def b_status():
+    """(b): a DT artifact that is official, smoke, on the VAL split, random_init, or of 1560 rows (each the
+    only defect, every earlier gate passing) is refused at (b)."""
+    out = [refused_at("b", lambda n=n: dt_read(inv=pointed(n)), what)
+           for n, what in (("dt_official", "artifact_status 'official'"),
+                           ("dt_smoke", "artifact_status 'smoke'"), ("dt_val", "split 'val'"),
+                           ("dt_random_init", "random_init True"))]
+    out.append(refused_at("b", lambda: dt_read(inv=pointed(
+        "dt_1560", split_manifest_sha256=CTX.copies["dt_1560"].split_manifest_sha256)), "1560"))
+    return all(ok for ok, _ in out), str([d for ok, d in out if not ok])[:600]
+
+
+def c_undefined():
+    """(c): a DT artifact with an undefined disease-only value on a row AM-5 does not exclude (status
+    evaluation_error) is refused at (c) by ingest.apply_am5_policy under Policy.OFFICIAL."""
+    return refused_at("c", lambda: dt_read(inv=pointed("dt_undefined")), "OFFICIAL analysis forbids")
+
+
+def d_reference():
+    """(d): the reference must be the 37's E7 input read under Policy.OFFICIAL: E7 read under
+    Policy.NONOFFICIAL_SMOKE, the 37's E3 (official, another stage), or E7's family slot as a BoundArtifact
+    are each refused at (d)."""
+    inv = inventory()
+    e7 = CTX.world.art("E7", 42)
+    bound = H.load_bound(inv, slot=e7.slot, stage="E7", precision=DT_PRECISION, scope="clean",
+                         input_root=CTX.world.input_root, policy=Policy.OFFICIAL)
+    out = [refused_at("d", lambda r=r: dt_read(ref=r), "the reference is not")
+           for r in (reference("E7", Policy.NONOFFICIAL_SMOKE), reference("E3"), bound)]
+    return all(ok for ok, _ in out), str([d for ok, d in out if not ok])[:600]
+
+
+def d_metric():
+    """(d): a DT artifact scored by another metric implementation is refused at (d) by
+    align.assert_compatible under Policy.OFFICIAL."""
+    return refused_at("d", lambda: dt_read(inv=pointed("dt_metric")), "metric_impl_sha256")
+
+
+def d_am5():
+    """(d): a DT artifact on the same images whose AM-5 set differs from E7's is refused at (d) by
+    ingest.am5_pair."""
+    return refused_at("d", lambda: dt_read(inv=pointed("dt_other_am5")), "AM-5 pair")
+
+
+def e_reference_changed():
+    """(e): a reference whose files changed after its official read is refused at (e), its re-load under
+    Policy.NONOFFICIAL_SMOKE compared with the official read's files."""
+    ba = dt_read()
+    return refused_at("e", lambda: H.dt_pair(CTX.copies["ref_changed"], ba, input_root=CTX.world.input_root,
+                                             metric=METRIC_DISEASE_ONLY), "files differ")
+
+
+def e_clean_id():
+    """(e): a DT artifact whose clean_image_id differs from E7's on one image passes (a)-(d) and is refused
+    at (e) by align.align_runs."""
+    ba = dt_read(inv=pointed("dt_clean_id"))
+    return refused_at("e", lambda: H.dt_pair(reference("E7"), ba, input_root=CTX.world.input_root,
+                                             metric=METRIC_DISEASE_ONLY), "clean_image_id")
+
+
+def f_record():
+    """(f): a DT record whose summary.json sha256 differs from the artifact's is refused at (f), naming
+    load_bound's artifact_record_mismatch."""
+    def edit(export, binding):
+        r = next(r for r in binding["artifacts"] if (r["slot"], r["precision"], r["scope"]) ==
+                 (DT_SLOT, DT_PRECISION, "clean"))
+        r["files_sha256"]["summary.json"] = LF.syn_sha("not the summary")
+    return refused_at("f", lambda: dt_read(inv=inventory(variant("dt_record_files", edit))),
+                      "artifact_record_mismatch")
+
+
+# --------------------------------------------------------------------------------------------------
+# K: no downgrade path (item 4)
+# --------------------------------------------------------------------------------------------------
+def k_no_downgrade():
+    """R4-1 item 4: E3-R1 (official-capable) with a provisional TEST artifact is refused under
+    Policy.OFFICIAL by load_slot (artifact_unreadable, the OFFICIAL row rule), never read as descriptive."""
+    inv = pointed("e3r1_provisional", slot="E3-R1:s42:lambda0.5:alpha25:80k", precision="fp32")
+    return refused("artifact_unreadable", lambda: H.load_slot(
+        stats_stand_in(), inv, slot="E3-R1:s42:lambda0.5:alpha25:80k", stage="E3-R1", precision="fp32",
+        input_root=CTX.world.input_root))
+
+
+# --------------------------------------------------------------------------------------------------
+# X: the world
+# --------------------------------------------------------------------------------------------------
+def x_world():
+    """The official world: every artifact's dataset name is the fixture's, never the evaluator's PlantSeg
+    name; its split the official value; 1561 rows with 7 AM-5 images; its status official but the nine DT
+    slots' (provisional); the five extra catalogue slots are written."""
+    bad = []
+    for (slot, precision, scope, cell), w in CTX.world.written.items():
+        s = json.loads((CTX.world.input_root / w.rel / "summary.json").read_text(encoding="utf-8"))
+        want = "provisional" if slot in LF.DT_SLOTS else "official"
+        if not (s["dataset"]["name"] == F.FIXTURE_DATASET_NAME != DATASET_NAME
+                and s["dataset"]["split"] == TEST_SPLIT and s["dataset"]["expected_rows"] == LF.OFFICIAL_N
+                and s["run"]["artifact_status"] == want and s["am5"]["excluded_count"] == LF.OFFICIAL_K):
+            bad.append((slot, precision, scope, cell))
+    extra = {x[0] for x in LF.OFFICIAL_EXTRA_SLOTS} <= {k[0] for k in CTX.world.written}
+    return not bad and extra and len(CTX.world.written) > 100, str(bad[:3])
+
+
+def x_no_test_path():
+    """LRB20 with ':' (R4-6): no created path or file name contains 'test' or ':'."""
+    bad = [os.path.join(d, n) for d, dirs, files in os.walk(CTX.world.root) for n in dirs + files
+           if "test" in n.lower() or ":" in n]
+    return not bad, str(bad[:3])
+
+
+def cases():
+    return [("G1", "R4-1 item 2: slot_read over the catalogue's 49 scored slots gives exactly the nine",
+             g_dt_set),
+            ("G2", "R4-1 items 3-5: who calls the DT read, load_slot, dt_pair and the official-input guard",
+             g_plumbing),
+            ("H1", "the nine DT slots read descriptive_test through the DT read, their runs non-official",
+             h_dt_slots),
+            ("H2", "(e): a DT pair with E7 is aligned under NONOFFICIAL_SMOKE, its delta the rows'", h_pair),
+            ("H3", "item 4: every other B-5 slot reads official under Policy.OFFICIAL", h_official_slots),
+            ("A1", "descriptive_input_invalid (a): an artifact its loader refuses", a_loader),
+            ("B1", "descriptive_input_invalid (b): official, smoke, VAL, random_init, 1560 rows", b_status),
+            ("C1", "descriptive_input_invalid (c): an undefined value AM-5 does not exclude", c_undefined),
+            ("D1", "descriptive_input_invalid (d): a reference that is not the 37's E7 read officially",
+             d_reference),
+            ("D2", "descriptive_input_invalid (d): another metric implementation (assert_compatible)",
+             d_metric),
+            ("D3", "descriptive_input_invalid (d): another AM-5 set (am5_pair)", d_am5),
+            ("E1", "descriptive_input_invalid (e): the reference's files changed after its official read",
+             e_reference_changed),
+            ("E2", "descriptive_input_invalid (e): a clean_image_id that differs (align_runs)", e_clean_id),
+            ("F1", "descriptive_input_invalid (f): a record whose files differ from the artifact's",
+             f_record),
+            ("K1", "item 4: an official-capable slot's provisional artifact is refused (artifact_unreadable)",
+             k_no_downgrade),
+            ("X1", "the official world: dataset name, split, rows, AM-5 count and statuses", x_world),
+            ("X2", "no created path contains 'test' or ':' (LRB20; R4-6)", x_no_test_path)]
+
+
+def run_case(fn):
+    try:
+        ok, detail = fn()
+        return bool(ok), str(detail)
+    except Exception as e:                                              # noqa: BLE001
+        return False, f"{type(e).__name__}: {e} | {traceback.format_exc(limit=3)[-300:]}"
+
+
+def main() -> int:
+    t0 = time.time()
+    root, why = LF.make_root("lrep_official_")
+    if root is None:
+        print(f"ABORT: {why}", file=sys.stderr)
+        return 2
+    print(f"smoke_lrep_official_profile: temporary root {root} (left in place)", flush=True)
+    setup(root)
+    print(f"  official world written ({len(CTX.world.written)} artifacts, n = {CTX.world.n}): "
+          f"{time.time() - t0:.0f} s", flush=True)
+    results = [(cid, desc, *run_case(fn)) for cid, desc, fn in cases()]
+    for cid, desc, ok, detail in results:
+        print(f"  [{'PASS' if ok else 'FAIL'}] {cid} {desc}")
+        if not ok:
+            print(f"         {detail[:600]}")
+    good = sum(1 for r in results if r[2])
+    verdict = "LREP OFFICIAL PROFILE OK" if good == len(results) else "LREP OFFICIAL PROFILE FAILED"
+    print(f"\nRESULT: {verdict} ({good}/{len(results)}); {time.time() - t0:.0f} s")
+    print("NONOFFICIAL: synthetic inputs; no table here is a thesis result.")
+    return 0 if good == len(results) else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

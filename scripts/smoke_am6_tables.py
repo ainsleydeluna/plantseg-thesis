@@ -25,6 +25,9 @@ TMPDIR (left in place); none contains "test" or ":".
      never an fq_off record, even one filed under scope clean
   S  the subset mode: the four numbers recomputed on the kept rows, the eligibility changes, the
      fingerprint; zero ids removed gives the full values bitwise; a kept id outside the artifact
+  V8 B-5b (ruling LREP-B5-RULE-4 R4-1 items 2 and 6): the coverage rows' `read` -- the world's five
+     descriptive_test slots (E7-X, E4 and E7 at list 43) print the DT label in their stage cell, the
+     others read official -- and the planned rows carry none
   D  determinism, repr floats, no 'test' path
 
 Run:  TMPDIR=<a scratch directory without 'test'> python -B scripts/smoke_am6_tables.py
@@ -78,6 +81,9 @@ PART1_COVERAGE = (("E2:s42:lambda1:80k", "fp32"), ("E3:s42:lambda0.5:alpha50:80k
                   ("E6-KD:s42:sel", "int8_qat"))
 #: A coverage row's source, typed out (R4-03).
 COVERAGE_SOURCE = "binding: every clean canvas record (B-5 (d); R3-14)"
+#: R4-1 items 2 and 6, typed from the ruling: the world's descriptive_test slots and their rows' label.
+DT_SLOTS = ("E7-R1:s42:list42", "E7-R2:s42:list42", "E7-flip:s42:list42", "E4:s42:list43", "E7:s42:list43")
+DT_LABEL = "descriptive TEST; provisional artifact (the evaluator scores this stage descriptively only)"
 SPACES = ("all_class", "disease_only")
 FIELDS = (("", "value"), ("_float64", "value_float64"), ("_n_classes", "n_classes"))
 
@@ -491,6 +497,21 @@ def v_no_fqoff_row():
     return others == want and len(others) == 23, str(sorted(set(others) ^ set(want))[:4])
 
 
+def v_read():
+    """R4-1 items 2 and 6: the coverage rows of the world's five descriptive_test slots (E7-R1, E7-R2,
+    E7-flip; E4 and E7 at list 43) read descriptive_test and print DT_LABEL in their stage cell; the other
+    eighteen read official and print none; the planned rows carry no read (Part 1's rows, unchanged)."""
+    doc = cov_doc()
+    others = [r for r in doc["rows"] if not AM6.is_planned(r)]
+    md = "\n".join(AM6.render_markdown(doc, "BANNER"))
+    dt = sorted(r["slot"] for r in others if r["read"] == "descriptive_test")
+    labels = all(r["read_label"] == (DT_LABEL if r["slot"] in DT_SLOTS else None)
+                 and r["read"] in ("official", "descriptive_test") for r in others)
+    cells = all(f"| {st} ({DT_LABEL}) | 42 |" in md for st in ("E7-R1", "E7-R2", "E7-flip", "E4", "E7"))
+    return (dt == sorted(DT_SLOTS) and labels and cells and md.count(DT_LABEL) == 5
+            and not any("read" in r for r in doc["rows"] if AM6.is_planned(r))), str(dt)
+
+
 def r_cov_other_gt():
     """With coverage, the teacher's record pointed at an artifact scored on another ground truth (its
     checkpoint, stage and model_role the teacher's): one ground truth holds across every row (R-10)."""
@@ -660,6 +681,8 @@ def cases():
             ("V5", "(d): the sort covers every stage and a null seed (a variant's teacher; R4-5(d))", v_sort),
             ("V6", "(d): the second table, its banner, a null seed as —, no slot key", v_markdown),
             ("V7", "(d): an fq_off record filed under scope clean is never a row", v_no_fqoff_row),
+            ("V8", "R4-1 items 2, 6: the five DT slots' rows read descriptive_test and print the DT label",
+             v_read),
             ("R6", "cross_artifact_mismatch: the teacher's record on another ground truth", r_cov_other_gt),
             ("R7", "precision_mismatch: the teacher scored as a student (B5-S1)", r_cov_role),
             ("R8", "seed_inconsistent: a coverage row's model row at another seed (R-14)", r_cov_seed),

@@ -41,6 +41,11 @@ contrasts, read the same way.
     arm_record_invalid.
   * TEST side only. AM-18 item 3(d)'s VAL side is a later local block (LRB10; LREP-B5-RULE-2 item 7),
     which runs side_values, reading and lrep_descriptive.mean_delta_task on the VAL artifacts.
+  * B-5b (ruling LREP-B5-RULE-4 R4-1): a candidate is read by heldout_inputs.load_slot. E7-X reads
+    descriptive_test (role arm at int8_ptq): under Policy.OFFICIAL through the DT read, its per-image pair
+    with E7 through heldout_inputs.dt_pair (align_runs under Policy.NONOFFICIAL_SMOKE, the pair's policy
+    recorded); its row carries `read` and prints DT_LABEL in its candidate cell. E3-X and E6-X read
+    official, under the statistics artifact's policy as before.
 
 Descriptive; outside protocol 1.0.0: no test, no p-value, not in the Holm family (PA :1085).
 Import-time behaviour is side-effect free.
@@ -214,8 +219,9 @@ def side_values(stats, summary: dict) -> dict:
 
 def arm_row(stats: H.StatsArtifact, inv: H.Inventory, x: str, stage: str, slot: str, base, *,
             input_root: Path, B: int, scale: float, teacher: dict) -> tuple[dict, object]:
-    """One row (x, stage) against the 37's `base`: its candidate's status, values and per-image mean Δ,
-    or its IF§11.2 label."""
+    """One row (x, stage) against the 37's `base`: its candidate's status, read, values and per-image mean
+    Δ, or its IF§11.2 label. The candidate is read by load_slot (R4-1); a DT run's pair goes through
+    dt_pair, every other through align_runs under the statistics artifact's policy."""
     from .align import METRIC_DISEASE_ONLY, AlignmentError, align_runs
     cand = candidate_stage(x, stage)
     precision = H.stage_spec(cand)[2]
@@ -223,27 +229,31 @@ def arm_row(stats: H.StatsArtifact, inv: H.Inventory, x: str, stage: str, slot: 
     row = {"x": x, "stage": stage, "contrast_id": LD.arm_contrast_id(x, stage), "candidate_stage": cand,
            "candidate_slot": slot, "baseline_stage": stage,
            "baseline": side_values(base.run.stats, base.summary), "candidate": None, "kind": st.kind,
-           "label": st.label, "delta_all_class": None, "seed_noise_scale": scale, "reading": None,
-           "per_image": None, "teacher": teacher}
+           "label": st.label, "read": H.slot_read(inv.entry(slot)), "read_label": None,
+           "delta_all_class": None, "seed_noise_scale": scale, "reading": None, "per_image": None,
+           "teacher": teacher}
     if not st.has_model:
         if inv.has_record(slot, precision, "clean", None):
             raise H.refusal("artifact_for_missing_run", f"{cand} ({slot!r}) reads {st.label!r} but the "
                                                         "binding lists a clean artifact for it (R-6)")
         return row, None
-    ba = H.load_bound(inv, slot=slot, stage=cand, precision=precision, scope="clean", input_root=input_root,
-                      policy=stats.policy)
+    ba = H.load_slot(stats, inv, slot=slot, stage=cand, precision=precision, input_root=input_root)
     H.check_row_at_entry(inv, ba)
-    row["candidate"] = side_values(ba.run.stats, ba.summary)
+    row.update(read=ba.read, read_label=ba.read_label, candidate=side_values(ba.run.stats, ba.summary))
     delta = row["candidate"]["m"] - row["baseline"]["m"]
     row.update(delta_all_class=delta, reading=reading(delta, scale))
-    try:
-        pv = align_runs(base.run, ba.run, policy=stats.policy, metric=METRIC_DISEASE_ONLY)
-    except AlignmentError as e:
-        raise H.refusal("cross_artifact_mismatch", f"{cand} vs {stage}: the pair cannot be aligned: "
-                                                   f"{e}") from e
+    if H.dt_read(stats.policy, ba.read):
+        pv = H.dt_pair(base, ba, input_root=input_root, metric=METRIC_DISEASE_ONLY)
+    else:
+        try:
+            pv = align_runs(base.run, ba.run, policy=stats.policy, metric=METRIC_DISEASE_ONLY)
+        except AlignmentError as e:
+            raise H.refusal("cross_artifact_mismatch", f"{cand} vs {stage}: the pair cannot be aligned: "
+                                                       f"{e}") from e
     r = LD.mean_delta_task(row["contrast_id"], pv.delta, B=B)
     row["per_image"] = {"metric": METRIC_DISEASE_ONLY, "n_paired": pv.n,
-                        "alignment_status": pv.alignment_status, **LD.task_json(r)}
+                        "alignment_status": pv.alignment_status, "pair_policy": pv.policy.value,
+                        **LD.task_json(r)}
     return row, ba
 
 
@@ -301,8 +311,8 @@ def render_markdown(doc: dict, banner: str = "") -> list[str]:
                    f"{_fmt(p['observed'])} [{_fmt(p['lower_bound'])}, {_fmt(p['upper_bound'])}]",
                    f"{_fmt(b['gt_present']['value_float64'])} / {_fmt(c['gt_present']['value_float64'])}",
                    f"{_fmt(b['disease_only']['value_float64'])} / {_fmt(c['disease_only']['value_float64'])}"]
-        out.append(_line([r["x"], r["stage"], r["candidate_stage"], *mid, _fmt(t["val_x"]), _fmt(t["ece_x"]),
-                          _fmt(t["go"])]))
+        cand = r["candidate_stage"] + (f" ({r['read_label']})" if r.get("read_label") else "")
+        out.append(_line([r["x"], r["stage"], cand, *mid, _fmt(t["val_x"]), _fmt(t["ece_x"]), _fmt(t["go"])]))
     out += ["", "| arm teacher | VAL_X | ECE_X | go/no-go | record | TEST slot |",
             "|---|---|---|---|---|---|"]
     for t in doc["teachers"]:

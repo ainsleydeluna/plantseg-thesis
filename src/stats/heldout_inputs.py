@@ -26,6 +26,15 @@ writes them, never parses the TEST-day manifest and never builds its path (IF§1
   * B-5 (rulings LREP-B5-RULE-1 to LREP-B5-RULE-3): the readers of the slots of role arm, arm_teacher
     and quant_descriptive with the family slots they compare with (IF§11.1 :25), and the
     duplicate-free TEST list (B5-S2), in section 8.
+  * B-5b (ruling LREP-B5-RULE-4 R4-1): the descriptive TEST read ("DT read", section 9). B5-S1's map gains
+    the column `read`, set from a slot's role and its stage's precision, never from its artifact's status
+    (slot_read): descriptive_test for the slots the evaluator scores descriptively only (role arm at
+    int8_ptq: E7-R1, E7-R2, E7-flip; role calibration_sensitivity: E4 and E7 at lists 43-45), official for
+    every other. Under Policy.OFFICIAL a descriptive_test slot's provisional TEST artifact is read by
+    read_descriptive_test, each step a frozen function and any failure descriptive_input_invalid; its run
+    keeps Policy.NONOFFICIAL_SMOKE, and a pair with it is aligned under that policy (dt_pair). Every other
+    slot reads under Policy.OFFICIAL as before, with no downgrade path (load_slot), and an official
+    computation takes the 37 inputs only (require_official_inputs: descriptive_input_in_official).
 
 Every refusal is an `LrepRefusal` with a code from CODES, raised at a site that reads
 `raise refusal("<code>", ...)` (scripts/smoke_lrep_mutations.py mutates those sites), except the three
@@ -35,6 +44,7 @@ Nothing here writes a file. Import-time behaviour is side-effect free.
 """
 from __future__ import annotations
 
+import dataclasses
 import datetime as _dt
 import hashlib
 import json
@@ -48,7 +58,9 @@ import numpy as np
 
 from ..eval.protocols import CANVAS_PROTOCOL_ID
 from . import driver as D
-from .ingest import IngestError, Policy, verify_run_manifest
+from .align import AlignmentError, assert_compatible
+from .ingest import (EXPECTED_ROWS_TEST, IngestError, Policy, am5_pair, apply_am5_policy,
+                     verify_run_manifest)
 
 INVENTORY_SCHEMA = "tday-inventory/1"
 BINDING_SCHEMA = "tday_binding/1"
@@ -114,6 +126,31 @@ def _stage_map() -> dict:
 STAGE_MAP = _stage_map()
 #: Every mapped stage in one fixed order (the AM-6 table's sort key covers every stage).
 STAGE_ORDER = tuple(STAGE_MAP)
+#: R4-1 item 2: B5-S1's column `read` of a slot (slot_read), set from its role and its stage's precision,
+#: never from its artifact's status. descriptive_test: the slots whose INT8 TEST artifact the evaluator
+#: refuses to score official (scripts/evaluate_model.py:263-270; src/eval/stage_artifacts.py:199, :209-240):
+#: role arm at int8_ptq (E7-R1, E7-R2 and E7-flip at list 42: ptq_record_missing) and role
+#: calibration_sensitivity (E4 and E7 at lists 43-45: ptq_record_role); official: every other slot.
+READ_OFFICIAL = "official"
+READ_DESCRIPTIVE_TEST = "descriptive_test"
+READS = (READ_OFFICIAL, READ_DESCRIPTIVE_TEST)
+DT_ROLE = "calibration_sensitivity"
+DT_ARM_PRECISION = "int8_ptq"
+#: R4-1 item 6: what every row built from a DT run prints, beside the existing banner.
+DT_LABEL = "descriptive TEST; provisional artifact (the evaluator scores this stage descriptively only)"
+#: R4-1 item 3: the rule text of each step of the DT read, which descriptive_input_invalid names.
+DT_STEPS = {
+    "a": "read by load_bound, the loader of every slot (four-file hashes, MANIFEST verify, the canvas guard "
+         "driver.refuse_non_canvas at driver.py:272), under Policy.NONOFFICIAL_SMOKE",
+    "b": "artifact_status provisional, split test, random_init false and expected_rows == actual_rows == "
+         f"ingest.EXPECTED_ROWS_TEST ({EXPECTED_ROWS_TEST})",
+    "c": "rows ingest.apply_am5_policy(rows, Policy.OFFICIAL): the official AM-5 rule, any other undefined "
+         "primary value aborts",
+    "d": "its reference, the 37's input of its evaluator stage (the family slot at seed 42) read under "
+         "Policy.OFFICIAL, passes align.assert_compatible under Policy.OFFICIAL and ingest.am5_pair with it",
+    "e": "its pair through align.align_runs under Policy.NONOFFICIAL_SMOKE, the reference re-loaded under "
+         "that policy with (c)'s rows and its files those of its official read",
+    "f": "its files, checkpoint, commit and split manifest equal its binding record (R-7)"}
 #: The run each of B-5's derived stages comes from (AM-18 item 3(a); AM-23 items 1-3; AM-3): a PTQ model
 #: of its parent run, or a QAT run's selection whose run descends from it (IF§11.2).
 B5_PARENT_STAGE = {"E7-R1": "E3-R1", "E7-R2": "E3-R2", "E7-flip": "E3-flip", "E7-E2": "E2",
@@ -153,7 +190,7 @@ _HEX40 = re.compile(r"^[0-9a-f]{40}$")
 _FILE_ID = re.compile(r"^[A-Za-z0-9._-]+$")
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
-#: Every LREP refusal code of B-1 to B-3 and B-5, with the plan rule or ruling it implements. The CLI
+#: Every LREP refusal code of B-1 to B-3, B-5 and B-5b, with the plan rule or ruling it implements. The CLI
 #: exits 2 on any of them and writes nothing.
 CODES = {
     # the statistics artifact (R-1)
@@ -228,6 +265,14 @@ CODES = {
     # AM-23's rows (items 5-6; B5-S3)
     "quant_slot_invalid": "B5-S3: a quant_descriptive slot outside E6-E2, E7-E2, E6-R1 and E6-R2, or two "
                           "slots for one stage",
+    # the descriptive TEST read (B-5b: ruling LREP-B5-RULE-4 R4-1)
+    "descriptive_input_invalid": "R4-1 item 3: a descriptive_test slot's artifact fails a step of the DT "
+                                 "read (a: its loader under NONOFFICIAL_SMOKE; b: provisional, split test, "
+                                 "not random_init, 1561 rows; c: the official AM-5 rule; d: its family "
+                                 "reference's identity and AM-5 set; e: its pair under NONOFFICIAL_SMOKE; f: "
+                                 "its binding record)",
+    "descriptive_input_in_official": "R4-1 item 5: an input that is not one of the 37 (a DT run among them) "
+                                     "where an official computation takes its inputs",
 }
 
 
@@ -913,7 +958,8 @@ def cell_condition(cell: str | None) -> tuple:
 
 @dataclass(frozen=True)
 class BoundArtifact:
-    """One scored artifact outside the 37, read and checked against its record and model row."""
+    """One scored artifact outside the 37, read and checked against its record and model row; `read` is its
+    slot's column (R4-1: load_slot sets it, read_descriptive_test reads descriptive_test)."""
     slot: str
     stage: str
     precision: str
@@ -922,10 +968,16 @@ class BoundArtifact:
     record: Mapping
     row: Mapping
     loaded: D.LoadedInput
+    read: str = READ_OFFICIAL
 
     @property
     def run(self):
         return self.loaded.run
+
+    @property
+    def read_label(self) -> str | None:
+        """R4-1 item 6: DT_LABEL for a descriptive_test read, else None."""
+        return read_label(self.read)
 
     @property
     def summary(self) -> dict:
@@ -1404,6 +1456,143 @@ def read_dedup(inv: Inventory) -> DedupRecord:
                        other_fields=tuple(sorted(set(doc) - set(DEDUP_FILE_FIELDS))))
 
 
+# --------------------------------------------------------------------------------------------------
+# 9. the descriptive TEST read (B-5b: ruling LREP-B5-RULE-4 R4-1). Nothing frozen changes: every step
+#    calls a frozen function (driver.load_input through load_bound, ingest.apply_am5_policy,
+#    align.assert_compatible, ingest.am5_pair, align.align_runs) and Policy gains no member.
+# --------------------------------------------------------------------------------------------------
+def slot_read(e: dict) -> str:
+    """R4-1 item 2: B5-S1's column `read` of a slot, from its entry's role and its stage's precision in
+    B5-S1's map, never from its artifact's status: descriptive_test for role calibration_sensitivity, or
+    role arm at int8_ptq; official for every other slot (a stage outside the map reads official here, and
+    load_bound refuses it: stage_unmapped)."""
+    roles = e.get("role") or ()
+    spec = STAGE_MAP.get(e.get("stage")) if isinstance(e.get("stage"), str) else None
+    if DT_ROLE in roles or ("arm" in roles and spec is not None and spec[2] == DT_ARM_PRECISION):
+        return READ_DESCRIPTIVE_TEST
+    return READ_OFFICIAL
+
+
+def read_label(read: str) -> str | None:
+    """R4-1 item 6: the label a row built from a DT run prints (DT_LABEL), None for an official read."""
+    return DT_LABEL if read == READ_DESCRIPTIVE_TEST else None
+
+
+def dt_read(policy: Policy, read: str) -> bool:
+    """R4-1 item 3: a slot goes through the DT read iff it reads descriptive_test and the profile reads under
+    Policy.OFFICIAL. In the smoke profile every slot reads through load_bound under the profile's policy."""
+    return policy is Policy.OFFICIAL and read == READ_DESCRIPTIVE_TEST
+
+
+def read_descriptive_test(inv: Inventory, *, slot: str, stage: str, precision: str, input_root: Path,
+                          reference) -> BoundArtifact:
+    """R4-1 item 3: a descriptive_test slot's clean artifact, read for the official profile. Any failure is
+    descriptive_input_invalid, naming its step and the step's rule text (DT_STEPS):
+      (a) load_bound under Policy.NONOFFICIAL_SMOKE, the loader of every slot (four-file hashes, MANIFEST
+          verify, driver.load_input's canvas guard, driver.py:272), and within it (f), the artifact's files,
+          checkpoint, commit and split manifest against its binding record (R-7; load_bound's
+          artifact_record_mismatch);
+      (b) artifact_status provisional (a smoke or official DT artifact is refused), split test, random_init
+          false, expected_rows == actual_rows == ingest.EXPECTED_ROWS_TEST;
+      (c) its rows ingest.apply_am5_policy(rows, Policy.OFFICIAL), set by dataclasses.replace;
+      (d) `reference` -- the 37's input of its evaluator stage (the family slot at seed 42: E7 for E7-X and
+          the E7 lists, E4 for the E4 lists), a driver.LoadedInput read under Policy.OFFICIAL -- passes
+          align.assert_compatible(reference, run, Policy.OFFICIAL) and ingest.am5_pair(reference, run).
+    (e) is dt_pair's. The run keeps its Policy.NONOFFICIAL_SMOKE, which marks it non-official wherever it
+    goes; the artifact reads descriptive_test."""
+    where = f"the DT read of {stage} ({slot!r}, {precision})"
+    try:
+        ba = load_bound(inv, slot=slot, stage=stage, precision=precision, scope="clean",
+                        input_root=input_root, policy=Policy.NONOFFICIAL_SMOKE)
+    except LrepRefusal as e:
+        if e.code == "artifact_record_mismatch":
+            raise refusal("descriptive_input_invalid", f"{where}: (f) {DT_STEPS['f']}: {e}") from e
+        raise refusal("descriptive_input_invalid", f"{where}: (a) {DT_STEPS['a']}: {e}") from e
+    ident = ba.run.identity
+    bad = [what for ok, what in (
+        (ident.artifact_status == "provisional", f"artifact_status {ident.artifact_status!r}"),
+        (ident.split == "test", f"split {ident.split!r}"),
+        (ident.random_init is False, f"random_init {ident.random_init!r}"),
+        (ident.expected_rows == ident.actual_rows == EXPECTED_ROWS_TEST,
+         f"expected_rows {ident.expected_rows}, actual_rows {ident.actual_rows}")) if not ok]
+    if bad:
+        raise refusal("descriptive_input_invalid", f"{where}: (b) {DT_STEPS['b']}: {bad}")
+    try:
+        records = apply_am5_policy(ba.run.records, Policy.OFFICIAL)
+    except IngestError as e:
+        raise refusal("descriptive_input_invalid", f"{where}: (c) {DT_STEPS['c']}: {e}") from e
+    run = dataclasses.replace(ba.run, records=records)
+    ev_stage = stage_spec(stage)[0]
+    ref = getattr(reference, "run", None)
+    if (ref is None or ref.policy is not Policy.OFFICIAL or ref.identity.stage != ev_stage
+            or not isinstance(reference, D.LoadedInput)):
+        problem = (f"the reference is not the 37's {ev_stage} input read under Policy.OFFICIAL (a "
+                   f"{type(reference).__name__}, policy {getattr(ref, 'policy', None)})")
+    else:
+        try:
+            assert_compatible(ref.identity, run.identity, Policy.OFFICIAL)
+            am5_pair(ref, run)
+            problem = None
+        except (AlignmentError, IngestError) as e:
+            problem = f"{type(e).__name__}: {e}"
+    if problem is not None:
+        raise refusal("descriptive_input_invalid", f"{where}: (d) {DT_STEPS['d']}: {problem}")
+    return dataclasses.replace(ba, loaded=dataclasses.replace(ba.loaded, run=run), read=READ_DESCRIPTIVE_TEST)
+
+
+def dt_pair(reference, ba: BoundArtifact, *, input_root: Path, metric: str):
+    """R4-1 item 3(e): the pair of a DT run with its reference (the arms' E7-X − E7, B5-D2) through
+    align.align_runs under Policy.NONOFFICIAL_SMOKE. The reference is re-loaded under that policy by
+    driver.load_input, its files those of its official read, with (c)'s rows (ingest.apply_am5_policy under
+    Policy.OFFICIAL), so that the PairedVector's own policy marks the pair non-official. Any failure is
+    descriptive_input_invalid."""
+    from .align import align_runs
+    where = f"the DT pair {ba.stage} ({ba.slot!r}) - {getattr(reference, 'stage', None)}"
+    try:
+        again = D.load_input(reference.stage, reference.condition, reference.rel_path, Path(input_root),
+                             Policy.NONOFFICIAL_SMOKE)
+        if dict(again.file_sha256) != dict(reference.file_sha256):
+            problem = "the reference's files differ from those of its official read"
+        else:
+            ref = dataclasses.replace(again.run, records=apply_am5_policy(again.run.records, Policy.OFFICIAL))
+            return align_runs(ref, ba.run, policy=Policy.NONOFFICIAL_SMOKE, metric=metric)
+    except (D.DriverRefusal, IngestError, AlignmentError) as e:
+        problem = f"{type(e).__name__}: {e}"
+    raise refusal("descriptive_input_invalid", f"{where}: (e) {DT_STEPS['e']}: {problem}")
+
+
+def load_slot(stats, inv: Inventory, *, slot: str, stage: str, precision: str, input_root: Path
+              ) -> BoundArtifact:
+    """R4-1 items 2-4: the clean artifact of a B-5 slot the arm tables or am6's coverage read, by its `read`
+    (slot_read). Under Policy.OFFICIAL a descriptive_test slot goes through read_descriptive_test, its
+    reference the 37's input of its evaluator stage (stats.clean); every other slot through load_bound under
+    the statistics artifact's policy, as before, so that under Policy.OFFICIAL a provisional artifact of an
+    official-capable slot is refused there (artifact_unreadable) with no downgrade path. In the smoke profile
+    a descriptive_test slot is read as before and still reads descriptive_test: its read comes from its
+    role and precision, never from its status."""
+    read = slot_read(inv.entry(slot))
+    if dt_read(stats.policy, read):
+        return read_descriptive_test(inv, slot=slot, stage=stage, precision=precision, input_root=input_root,
+                                     reference=stats.clean(stage_spec(stage)[0]))
+    ba = load_bound(inv, slot=slot, stage=stage, precision=precision, scope="clean", input_root=input_root,
+                    policy=stats.policy)
+    return dataclasses.replace(ba, read=read)
+
+
+def require_official_inputs(stats: StatsArtifact, inputs: Mapping[str, object], where: str) -> None:
+    """R4-1 item 5: an official computation (here the eight contrasts and NI that the duplicate-free part
+    recomputes, dedup_subset (ii)-(iii)) takes the 37 inputs of the verified statistics artifact only. Each
+    input -- a driver.LoadedInput or its EvaluationRun -- must be one of stats.views' own objects (identity,
+    not equality); anything else, a DT run among them, is descriptive_input_in_official."""
+    ours = {id(x) for li in stats.views.loaded.values() for x in (li, li.run)}
+    bad = sorted(label for label, x in inputs.items() if id(x) not in ours)
+    if bad:
+        raise refusal("descriptive_input_in_official", f"{where}: {bad[:4]} (of {len(bad)}) not among the "
+                                                       "37 inputs of the verified statistics artifact; a DT "
+                                                       "run never reaches an official computation (R4-1 "
+                                                       "item 5)")
+
+
 __all__ = [
     "INVENTORY_SCHEMA", "BINDING_SCHEMA", "KINDS", "ROLES", "SCOPES", "PROTOCOLS", "PRECISIONS",
     "INT8_PRECISIONS", "PRECISION_FQOFF", "SCORED_ENTRY_KINDS", "STAGES", "SEEDS", "RECORD_ROLES",
@@ -1422,4 +1611,7 @@ __all__ = [
     "load_stats_artifact",
     "check_seed42_identity", "TelemetryAttempt", "read_telemetry", "role_slots", "family_inputs",
     "b5_status", "DedupRecord", "read_dedup",
+    "READ_OFFICIAL", "READ_DESCRIPTIVE_TEST", "READS", "DT_ROLE", "DT_ARM_PRECISION", "DT_LABEL", "DT_STEPS",
+    "slot_read", "read_label", "dt_read", "read_descriptive_test", "dt_pair", "load_slot",
+    "require_official_inputs",
 ]

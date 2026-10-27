@@ -41,6 +41,14 @@ folders by split), the JSON split value is "val", and no created path contains "
 key's ":" stays a JSON string value; R4-6(i)). `make_root` follows scripts/smoke_mde.py: TMPDIR must be
 set and free of "test" and ":", and the root's name ends in hex digits, which cannot spell it.
 
+The official world (B-5b, ruling LREP-B5-RULE-4 R4-1 item 8; built only by
+scripts/smoke_lrep_official_profile.py, which gives its split value, R4-6(ii)): the same world in
+scripts/smoke_stats_official_fullsize.py's shape -- n = 1561 images, k = 7 AM-5 images, the fixture's
+synthetic dataset name (never PlantSeg) -- with every artifact official but the nine descriptive_test
+slots' (DT_SLOTS: provisional), and the five scored catalogue slots the smoke world leaves out
+(OFFICIAL_EXTRA_SLOTS), so that every official-capable slot has an official artifact. It writes no
+statistics artifact: its smoke writes one through the official driver.
+
 Not a smoke itself: imported by lane LREP's scripts/smoke_*.py.
 """
 from __future__ import annotations
@@ -234,6 +242,22 @@ B5_SLOTS = (
     _b5("E4:s42:list43", ("int8_ptq",), "derived", 0.691),
     _b5("E7:s42:list43", ("int8_ptq",), "derived", 0.751),
 )
+#: R4-1 item 8: the scored catalogue slots the smoke world leaves out (the 160k E3 control, the calibration
+#: lists 44 and 45), written in the official world only, so that every official-capable slot is scored.
+OFFICIAL_EXTRA_SLOTS = (
+    _b5("E3:s42:lambda0.5:alpha25:160k", ("fp32",), "scored_run", 0.764),
+    _b5("E4:s42:list44", ("int8_ptq",), "derived", 0.690),
+    _b5("E4:s42:list45", ("int8_ptq",), "derived", 0.693),
+    _b5("E7:s42:list44", ("int8_ptq",), "derived", 0.750),
+    _b5("E7:s42:list45", ("int8_ptq",), "derived", 0.753),
+)
+#: R4-1 item 2, typed from the catalogue: the nine slots the evaluator scores descriptively only (role arm at
+#: int8_ptq; role calibration_sensitivity), provisional in the official world; every other artifact there
+#: is official.
+DT_SLOTS = ("E7-R1:s42:list42", "E7-R2:s42:list42", "E7-flip:s42:list42", "E4:s42:list43", "E4:s42:list44",
+            "E4:s42:list45", "E7:s42:list43", "E7:s42:list44", "E7:s42:list45")
+#: R4-1 item 8: the official world's shape (scripts/smoke_stats_official_fullsize.py's n and k).
+OFFICIAL_N, OFFICIAL_K = 1561, 7
 #: The catalogue's not-built L arm (scope class not_built: never scored, evaluator_stage null) and ARM's
 #: measurement (no role), entered without a model row or record: (slot, kind, the kind's fields). No LREP
 #: table maps or loads them (R4-5(b)).
@@ -357,6 +381,17 @@ class World:
     strata_path: Path | None = None
     inventory_path: Path | None = None
     seq: int = 0
+    split: str = "val"                                 # the official world's: its smoke's value (R4-6(ii))
+    official: bool = False                             # every artifact official but DT_SLOTS' (R4-1 item 8)
+
+    def status_of(self, slot: str) -> str:
+        """The artifact_status the world writes for `slot`: provisional, or in the official world official
+        unless the slot is one of DT_SLOTS."""
+        return "official" if self.official and slot not in DT_SLOTS else "provisional"
+
+    def b5_slots(self) -> tuple:
+        """B-5's scored slots the world writes: B5_SLOTS, and in the official world OFFICIAL_EXTRA_SLOTS."""
+        return B5_SLOTS + (OFFICIAL_EXTRA_SLOTS if self.official else ())
 
     def art(self, stage: str, seed: int, precision: str | None = None, scope: str = "clean",
             cell: str | None = None) -> Written:
@@ -389,8 +424,8 @@ def _write(world: World, rel: str, *, slot: str, stage: str, seed, precision: st
     evaluator_stage, model_role, _ = H.stage_spec(stage)
     d = world.input_root / rel
     F.write_fixture(d, scored, world.n, stage=evaluator_stage, condition=condition,
-                    split="val", status="provisional", repo_root=world.input_root, run_id=run_id,
-                    precision=write_precision, checkpoint_sha256=checkpoint)
+                    split=world.split, status=world.status_of(slot), repo_root=world.input_root,
+                    run_id=run_id, precision=write_precision, checkpoint_sha256=checkpoint)
     edits = {}
     if precision == H.PRECISION_FQOFF:
         edits["precision"] = H.PRECISION_FQOFF
@@ -488,9 +523,9 @@ def b5_run_id(slot: str, kind: str, parent) -> str:
 
 
 def write_b5_artifacts(world: World) -> None:
-    """B-5's scored models (B5_SLOTS): one clean canvas artifact per row, and a QAT selection's fq_off
+    """B-5's scored models (world.b5_slots()): one clean canvas artifact per row, and a QAT selection's fq_off
     model as Part 1's are."""
-    for slot, stage, seed, precisions, kind, cls, roles, parent, quality in B5_SLOTS:
+    for slot, stage, seed, precisions, kind, cls, roles, parent, quality in world.b5_slots():
         for precision in precisions:
             ids = b5_identity(slot, precision)
             fq = precision == H.PRECISION_FQOFF
@@ -651,7 +686,7 @@ def b5_export_parts(world: World) -> tuple[list, list, list]:
     their scored records come from world.written. A teacher's row carries model_role teacher (B5-S1); an
     fq_off row a student's."""
     entries, models, ghosts = [], [], []
-    for slot, stage, seed, precisions, kind, cls, roles, parent, _ in B5_SLOTS:
+    for slot, stage, seed, precisions, kind, cls, roles, parent, _ in world.b5_slots():
         entries.append(_entry(slot, kind, stage, seed, list(roles), parent=parent, cls=cls,
                               never_cut=stage in H.TEACHER_STAGES))
         for precision in precisions:
@@ -828,14 +863,23 @@ def write_strata(world: World) -> Path:
 # the world
 # --------------------------------------------------------------------------------------------------
 def build_world(root: Path, *, n: int = N_IMAGES, B: int = STATS_B, stats: bool = True,
-                strata: bool = True) -> World:
-    """Every fixture LREP's smokes read, under `root` (a fresh directory from make_root)."""
+                strata: bool = True, official_split: str | None = None) -> World:
+    """Every fixture LREP's smokes read, under `root` (a fresh directory from make_root). With
+    `official_split` (scripts/smoke_lrep_official_profile.py only; R4-6(ii)), the official world: n
+    OFFICIAL_N, k OFFICIAL_K, that split value, every artifact official but DT_SLOTS', OFFICIAL_EXTRA_SLOTS
+    written too, and no statistics artifact (its smoke writes one through the official driver)."""
     root = Path(root)
+    official = official_split is not None
+    if official and stats:
+        raise ValueError("the official world's statistics artifact is written by the official driver")
+    if official:
+        n = OFFICIAL_N
     input_root = F.clean_git_fixture(root / "fx")
     commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(input_root), check=True,
                             capture_output=True, text=True).stdout.strip()
-    truth = F.make_truth(n, 0, F.int_seed(WORLD_SEED, "truth"))
-    world = World(root=root, input_root=input_root, commit=commit, truth=truth, n=n)
+    truth = F.make_truth(n, OFFICIAL_K if official else 0, F.int_seed(WORLD_SEED, "truth"))
+    world = World(root=root, input_root=input_root, commit=commit, truth=truth, n=n,
+                  split=official_split if official else "val", official=official)
     write_artifacts(world)
     write_b5_artifacts(world)
     write_all_telemetry(world)
@@ -857,4 +901,4 @@ __all__ = ["WORLD_SEED", "N_IMAGES", "STATS_B", "QUALITY", "SEED_SHIFT", "E2_SEL
            "B5_SLOTS", "DEDUP_REMOVED", "DEDUP_REASONS", "b5_identity", "b5_run_id", "write_b5_artifacts",
            "b5_export_parts", "dedup_doc", "dedup_bytes", "CATALOGUE_SOURCE", "CATALOGUE", "SLOT_KEY_RE",
            "E5_PILOT_OF_RECORD", "E5_PILOT_LOST", "UNSCORED_SLOTS", "DEFAULT_SLOTS", "RUN_TAILS",
-           "diverged_fields"]
+           "diverged_fields", "OFFICIAL_EXTRA_SLOTS", "DT_SLOTS", "OFFICIAL_N", "OFFICIAL_K"]

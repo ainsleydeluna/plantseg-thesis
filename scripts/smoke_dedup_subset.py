@@ -22,6 +22,8 @@ and compare to the part's rows, rules that T2 and T3 pin on typed hand rows.
      official Holm decision and label unchanged
   R  (v): removed_by_reason beside the issue's counts, as string values
   D  determinism, no Holm object, the banner, no 'test' path, the measured time at B = PRODUCTION_B
+  O  B-5b (ruling LREP-B5-RULE-4 R4-1): item 5, a DT run given to (ii) and (iii) is refused
+     (descriptive_input_in_official); items 2 and 6, the E7-X rows' read and DT label
 
 Cases are importable (setup / cases) so that scripts/smoke_lrep_mutations.py can run them mutated.
 
@@ -77,6 +79,8 @@ SPACES = ("all_class", "disease_only")
 FIELDS = (("", "value"), ("_float64", "value_float64"), ("_n_classes", "n_classes"))
 #: Cases whose detail is printed even when they pass (the guard's outcome and the measured time).
 NOTE_CASES = ("G2", "D5")
+#: R4-1 item 6, typed from the ruling: what every row built from a DT run prints.
+DT_LABEL = "descriptive TEST; provisional artifact (the evaluator scores this stage descriptively only)"
 
 
 def stats_artifact():
@@ -714,6 +718,41 @@ def d_production_time():
     return ok, f"{n} tasks at B = {BS.PRODUCTION_B}: {secs:.1f} s on the fixture"
 
 
+class _Injected(H.StatsArtifact):
+    """The verified statistics artifact (its family, views and the 37 unchanged), except that its clean
+    input of one stage is another run: the injection R4-1 item 5 guards against."""
+    def clean(self, stage):
+        return CTX.notes["injected"].get(stage) or H.StatsArtifact.clean(self, stage)
+
+
+def o_dt_in_official():
+    """R4-1 item 5: a DT run -- E7-R1's (role arm at int8_ptq), read by load_slot -- given to (ii) and (iii)
+    as E7's clean input is refused where the eight contrasts and NI take their inputs
+    (descriptive_input_in_official), naming it; the 37's own inputs pass the guard (the part is built)."""
+    st, inv = stats_artifact(), inventory()
+    ba = H.load_slot(st, inv, slot="E7-R1:s42:list42", stage="E7-R1", precision="int8_ptq",
+                     input_root=CTX.world.input_root)
+    CTX.notes["injected"] = {"E7": ba.loaded}
+    fake = _Injected(**{f.name: getattr(st, f.name) for f in dataclasses.fields(st)})
+    ok, detail = refused("descriptive_input_in_official", lambda: DS.build_dedup(
+        fake, inv, H.planned_cells(inv), input_root=CTX.world.input_root, B=SMOKE_B))
+    return (ok and "['E7 clean']" in detail and ba.read == "descriptive_test"
+            and fake.clean("E1") is st.clean("E1") and the_doc()["part"] == "dedup"), detail
+
+
+def o_read():
+    """R4-1 items 2 and 6: (i)'s rows of the arms' E7-R1, E7-R2 and E7-flip read descriptive_test and print
+    DT_LABEL in their stage cell; every other row reads official and prints none."""
+    doc = the_doc()
+    md = "\n".join(DS.render_markdown(doc, ""))
+    reads = {m["slot"]: (m["read"], m["read_label"]) for m in doc["models"]}
+    dt = sorted(s for s, v in reads.items() if v != ("official", None))
+    return (dt == ["E7-R1:s42:list42", "E7-R2:s42:list42", "E7-flip:s42:list42"]
+            and all(reads[s] == ("descriptive_test", DT_LABEL) for s in dt)
+            and all(f"| {st} ({DT_LABEL}) | 42 | arm |" in md for st in ("E7-R1", "E7-R2", "E7-flip"))
+            and md.count(DT_LABEL) == 3), str(dt)
+
+
 def write_am5_pair(w) -> tuple:
     """Two clean artifacts (E1, E2) on a truth with three AM-5 images, loaded here."""
     truth = F.make_truth(w.n, 3, F.int_seed(LF.WORLD_SEED, "am5 truth"))
@@ -732,7 +771,7 @@ def write_am5_pair(w) -> tuple:
 
 def setup(root: Path, world=None) -> None:
     CTX.world = world or LF.build_world(root, strata=False)
-    CTX.stats, CTX.paths, CTX.doc, CTX.notes = None, {}, None, {}
+    CTX.stats, CTX.paths, CTX.doc, CTX.notes = None, {}, None, {"injected": {}}
     CTX.am5 = write_am5_pair(CTX.world)
 
 
@@ -779,7 +818,10 @@ def cases():
             ("D2", "no Holm object on the subset side", d_no_holm),
             ("D3", "the banner, the analysis id and the footnote", d_banner),
             ("D4", "no created path contains 'test' or ':' (LRB20; R4-6)", d_no_test_path),
-            ("D5", "the part at B = PRODUCTION_B, timed", d_production_time)]
+            ("D5", "the part at B = PRODUCTION_B, timed", d_production_time),
+            ("O1", "R4-1 item 5: descriptive_input_in_official: a DT run given to (ii)-(iii) as E7's input",
+             o_dt_in_official),
+            ("O2", "R4-1 items 2, 6: the E7-X rows read descriptive_test and print the DT label", o_read)]
 
 
 def run_case(fn):
