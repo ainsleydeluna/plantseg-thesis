@@ -82,7 +82,8 @@ M = [
     ("entry_file_sha", VAL, [('if c["sha256"] not in (None, sha):', "if False:")],
      "validate", "case_record_gates", "cut_entry_cited_with_another_sha", ["entry_file_rewritten"], None),
     # ------------------------------------------- the cited entry files (decision (iii); DL-24 #17 #38 #87-#89 #92)
-    ("entry_file_dl_row", VAL, [("        if not x.dl.recorded_rows_with(sha):\n            errs.append(f\"{rel}: sha256",
+    ("entry_file_dl_row", VAL, [("        if not x.dl.recorded_rows_with(sha):\n"
+                                 "            errs.append(f\"{rel}: sha256",
                                  "        if False:\n            errs.append(f\"{rel}: sha256")],
      "validate", "case_entry_files", "entry_file_whose_row_is_only_DECIDED_B92", ["dl_row_missing"], None),
     ("entry_file_written_once", VAL, [("        err = x.records.written_once_error(rel)\n        if err:",
@@ -94,7 +95,8 @@ M = [
     ("entry_file_name", ENT, [("    err = entry_name_error(rel, doc)\n    return [err] if err else []",
                                "    err = None\n    return [err] if err else []")],
      "validate", "case_entry_files", "cut_entry_file_outside_its_folder_B89", ["entry_file_invalid"], None),
-    ("entry_file_fields", ENT, [('        require_fields(doc)\n    except S.TmanRefused as e:\n        return [f"{rel}: ',
+    ("entry_file_fields", ENT, [('        require_fields(doc)\n    except S.TmanRefused as e:\n'
+                                 '        return [f"{rel}: ',
                                  '        pass\n    except S.TmanRefused as e:\n        return [f"{rel}: ')],
      "validate", "case_moved_freeze", "freeze_delay_file_without_runs_B88", ["entry_file_invalid"], None),
     ("entry_file_slots_known", VAL, [('unknown = [k for k in doc["slots"] if k not in x.cat.slots]', "unknown = []")],
@@ -197,7 +199,8 @@ M = [
                                         "if False:")],
      "validate", "case_record_gates", "trigger_block_against_the_record_s_verdict_B1", ["trigger_inconsistent"], None),
     ("kind_of_the_slot_s_role", SCH, [('    return model.get(slot["scope_class"], ("scored_run",)) + ends',
-                                       '    return model.get(slot["scope_class"], ("scored_run", "listed_run")) + ends')],
+                                       '    return model.get(slot["scope_class"], ("scored_run", "listed_run")) '
+                                       '+ ends')],
      "validate", "case_input_gates", "family_run_entered_as_listed_run_B2", ["derived_counted_as_run"], None),
     ("sweep_of_record_strict", SCH, [('    if sweep and not sweep["of_record"]:', "    if sweep:")],
      "validate", "case_input_gates", "lambda_of_record_entered_as_listed_run_B2", ["derived_counted_as_run"], None),
@@ -206,7 +209,8 @@ M = [
      "validate", "case_input_gates", "non_finite_entry_on_a_kd_slot", ["derived_counted_as_run"], None),
     ("evaluator_stage_of_the_catalogue", VAL, [('                and e["evaluator_stage"] != s["evaluator_stage"]:',
                                                 "                and False:")],
-     "validate", "case_input_gates", "evaluator_stage_other_than_the_catalogue_s_B91", ["derived_counted_as_run"], None),
+     "validate", "case_input_gates", "evaluator_stage_other_than_the_catalogue_s_B91", ["derived_counted_as_run"],
+     None),
     ("derived_method_of_the_slot", VAL, [('elif e["kind"] == "derived" and e["method"] != s["record_kind"]:',
                                           "elif False:")],
      "validate", "case_input_gates", "derived_method_other_than_the_slot_s_B21", ["derived_counted_as_run"], None),
@@ -265,7 +269,8 @@ M = [
                                                 '("cut_unentered_at_unlock", U, g_cut_unentered_at_unlock)')],
      "validate", "case_cut_attribution", "cuttable_slot_without_entry_at_the_freeze_B4", ["cut_unentered_at_unlock"],
      None),
-    ("kd_attempts_from_the_launch_log", COM, [("                    self._add(found, rid, slot_of_launch(log.launch[rid]),",
+    ("kd_attempts_from_the_launch_log", COM, [("                    self._add(found, rid, "
+                                               "slot_of_launch(log.launch[rid]),",
                                                "                    if False: self._add(found, rid, "
                                                "slot_of_launch(log.launch[rid]),")],
      "validate", "case_cut_attribution", "launched_kd_run_cut_as_never_launched_B13", ["cut_reason_invalid"], None),
@@ -277,8 +282,8 @@ M = [
                                                       "                return None",
                                                       "            if True:\n                return None")],
      "validate", "case_cut_attribution", "cut_of_a_complete_arm_teacher_AM18_7b", ["cut_of_complete_run"], None),
-    ("slot_status_from_its_own_attempts", COM, [("return list(self.by_slot.get(slot, [])) if self.known(slot) else None",
-                                                 "return [] if self.known(slot) else None")],
+    ("slot_status_from_its_own_attempts", COM, [("return list(self.by_slot.get(slot, [])) if self.known(slot) "
+                                                 "else None", "return [] if self.known(slot) else None")],
      "validate", "case_cut_attribution", "group_cut_naming_a_complete_run_first_B0", ["cut_of_complete_run"], None),
     ("checkpoint_sources", VAL, [('if src["sha256"] != ck["sha256"] or (src["dl"] and ck["sha256"] not in '
                                   '(x.dl.row_text(src["dl"]) or "")):', "if False:")],
@@ -292,7 +297,8 @@ M = [
      ["restored_checkpoint_unrecorded"], None),
     # ------------------------------------------------------------------------------------------- cut checks
     ("S03_rule_operator_allowed", ENT, [('    if doc["rule"] not in S.CUT_RULES:\n        return f"rule {doc',
-                                         '    if doc["rule"] not in S.CUT_RULES + ["operator"]:\n        return f"rule {doc')],
+                                         '    if doc["rule"] not in S.CUT_RULES + ["operator"]:\n'
+                                         '        return f"rule {doc')],
      "cuts", "case_gate_order", "rule_operator_refused", ["cut_rule_unknown"], 3),
     ("S04_never_cut_test_skipped", ENT, [('bad = [s["slot"] for s in _slots(doc, ctx) if s["never_cut"]]',
                                           "bad = []")],
@@ -316,10 +322,10 @@ M = [
                                   'ctx.known_by(rel, None, doc["date"])]', "        missing = []")],
      "validate", "case_cut_gates", "arm_cut_without_its_teacher_record_known_by_its_day_B69",
      ["arm_cut_results_missing"], None),
-    ("arm_checks_per_group", ENT, [('    return [g for g in ctx.cat.groups if g in ARM_GROUPS and any(s["cut_group"] == g '
-                                    "for s in _slots(doc, ctx))]",
-                                    '    return [g for g in ctx.cat.groups if g in ARM_GROUPS and all(s["cut_group"] == g '
-                                    "for s in _slots(doc, ctx))]")],
+    ("arm_checks_per_group", ENT, [('    return [g for g in ctx.cat.groups if g in ARM_GROUPS and '
+                                    'any(s["cut_group"] == g for s in _slots(doc, ctx))]',
+                                    '    return [g for g in ctx.cat.groups if g in ARM_GROUPS and '
+                                    'all(s["cut_group"] == g for s in _slots(doc, ctx))]')],
      "cuts", "case_gate_order", "two_group_named_rule_cut_of_a_running_arm_run_B15", ["arm_run_cut_while_running"],
      None),
     ("S05_arithmetic_ge", PRE, [("    cut = needed > left\n", "    cut = needed >= left\n")],
@@ -375,7 +381,8 @@ M = [
     ("stopped_run", ENT, [('if not stopped or (doc["rule"] == "freeze" and doc["date"] == ctx.freeze.original_date)',
                            'if True or (doc["rule"] == "freeze" and doc["date"] == ctx.freeze.original_date)')],
      "cuts", "case_gate_order", "stopped_run_cut_by_named_rule_refused", ["stopped_run_cut_early"], None),
-    ("stopped_candidate_at_its_decision_date", ENT, [('            or doc["rule"] == "decision_date":\n        return None',
+    ("stopped_candidate_at_its_decision_date", ENT, [('            or doc["rule"] == "decision_date":\n'
+                                                      '        return None',
                                                       "            or False:\n        return None")],
      "cuts", "case_gate_order", "stopped_candidate_cut_at_its_decision_date_AM19_2b", ["stopped_run_cut_early"], None),
     ("launched_attempts_named", ENT, [("    if omitted:\n        return f\"the slots' launched attempts",
@@ -414,7 +421,8 @@ M = [
     ("go_rule_record_read", ENT, [('if isinstance(doc, dict) and doc.get("format") == _pa().GO_RULE_FORMAT:',
                                    "if False:")],
      "validate", "case_cut_gates", "launched_arm_cut_by_a_named_rule", ["arm_run_cut_while_running"], None),
-    ("condition_entry_read", ENT, [('and doc.get("kind") == "condition" \\\n', 'and doc.get("kind") == "conditions" \\\n')],
+    ("condition_entry_read", ENT, [('and doc.get("kind") == "condition" \\\n',
+                                    'and doc.get("kind") == "conditions" \\\n')],
      "validate", "case_cut_gates", "e6x_cut_citing_a_yes_condition_AM23_3b", ["condition_unmet"], None),
     ("rule_records_committed", VAL, [("    cited += x.rule_records()", "    cited += []")],
      "validate", "case_cut_gates", "named_rule_record_at_another_sha256_B16", ["record_uncommitted"], None),
@@ -472,7 +480,8 @@ M = [
     ("builder_reads_the_rules", MAN, [('x["inputs"].setdefault("rules_sha256", rules)',
                                        'x["inputs"].setdefault("rules_sha256", None)')],
      "validate", "case_record_gates", "builder_reads_the_rules_sha256_TB13", [], None),
-    ("calibration_lists_in_dl10", MAN, [('        if item["file_sha256"] not in (dl10_text or ""):', "        if False:")],
+    ("calibration_lists_in_dl10", MAN, [('        if item["file_sha256"] not in (dl10_text or ""):',
+                                         "        if False:")],
      "validate", "case_record_gates", "calibration_list_not_dl10_s_B30", ["calibration_index_mismatch"], None),
     ("calibration_checksum_in_dl10", MAN, [('    if str(ci["of_record"]["checksum_sha256"]) not in (dl10_text or ""):',
                                             "    if False:")],
@@ -482,19 +491,20 @@ M = [
      "validate", "case_record_gates", "calibration_list_seed_not_its_key_B40", ["calibration_index_mismatch"], None),
     ("calibration_role_of_its_list", MAN, [('or doc.get("role") != CALIBRATION_ROLES.get(seed):', ":")],
      "validate", "case_record_gates", "calibration_list_role_not_am16_s_B40", ["calibration_index_mismatch"], None),
-    ("appended_selection_conflict", VAL, [("            errs += M.selection_conflict_errors(M.appended_entry(app, listed))",
+    ("appended_selection_conflict", VAL, [("            errs += "
+                                           "M.selection_conflict_errors(M.appended_entry(app, listed))",
                                            "            pass")],
      "validate", "case_parent_and_derived_gates", "appended_qat_selection_second_evaluation_without_report_B24",
      ["derived_selection_conflict"], None),
     ("fault_reports_committed", VAL, [("    cited += x.fault_reports()", "    cited += []")],
      "validate", "case_parent_and_derived_gates", "qat_fault_report_not_committed_B77", ["record_uncommitted"], None),
-    ("cli_second_append", CLI, [('    if any(isinstance(a, dict) and a.get("slot") == args.slot for a in doc["appends"]):',
-                                 "    if False:")],
+    ("cli_second_append", CLI, [('    if any(isinstance(a, dict) and a.get("slot") == args.slot '
+                                 'for a in doc["appends"]):', "    if False:")],
      "paths", "case_cli_outputs", "cli_append_refuses_a_second_append_of_its_slot_B63", ["append_invalid"], None),
     ("cli_append_reads_a_manifest", CLI, [("            and isinstance(doc.get(\"appends\"), list)):\n        raise "
                                            "S.TmanRefused(\"manifest_format\"",
-                                           "            and isinstance(doc.get(\"appends\"), list)) and False:\n        "
-                                           "raise S.TmanRefused(\"manifest_format\"")],
+                                           "            and isinstance(doc.get(\"appends\"), list)) and False:\n"
+                                           "        raise S.TmanRefused(\"manifest_format\"")],
      "paths", "case_cli_outputs", "cli_append_refuses_a_file_that_is_no_manifest_B63", ["manifest_format"], None),
     ("non_finite_flags", MAN, [('elif len(ends) != 15 or any(r.get("state_finite") is not False for r in ends):',
                                 "elif len(ends) != 15:")],
@@ -887,10 +897,12 @@ M = [
     ("out_inside_the_repository", CLI, [("if p == repo or repo in p.parents:", "if p == repo:")],
      "paths", "case_cli_outputs", "out_in_the_repository_at_root_refused", ["output_location"], None),
     ("output_exists_code_of_the_cli", CLI, [('raise S.TmanRefused("output_exists", f"{out} exists: outputs are',
-                                             'raise S.TmanRefused("entry_file_rewritten", f"{out} exists: outputs are')],
+                                             'raise S.TmanRefused("entry_file_rewritten", '
+                                             'f"{out} exists: outputs are')],
      "paths", "case_cli_outputs", "a_second_build_is_refused_and_the_first_kept_B110", ["output_exists"], None),
     ("output_exists_code_of_the_printer", ENT, [('raise S.TmanRefused("output_exists", f"{out} exists: an output',
-                                                 'raise S.TmanRefused("entry_file_rewritten", f"{out} exists: an output')],
+                                                 'raise S.TmanRefused("entry_file_rewritten", '
+                                                 'f"{out} exists: an output')],
      "cuts", "case_printers_and_committed_files", "printer_writes_once_B110", ["output_exists"], None),
     ("output_location_code", CLI, [('raise S.TmanRefused("output_location", f"--out {p} is inside the repository',
                                     'raise S.TmanRefused("test_path", f"--out {p} is inside the repository')],
@@ -942,7 +954,8 @@ M = [
      "unlock", "case_unlock_printer", "printer_unlock_after_an_unlock_entry_B9", ["second_session"], None),
     ("printer_condition_slot", CLI, [("    if doc[\"slots\"] != [f\"E6-{doc['arm']}:s42:15ep\"]:", "    if False:")],
      "validate", "case_printers", "printer_condition_naming_another_arm_s_slot_B16", ["entry_field"], None),
-    ("printer_not_made_gated", CLI, [('    bad = [k for k in doc["slots"] if not M.code_gated(k, cat)]', "    bad = []")],
+    ("printer_not_made_gated", CLI, [('    bad = [k for k in doc["slots"] if not M.code_gated(k, cat)]',
+                                      "    bad = []")],
      "validate", "case_printers", "printer_not_made_for_a_slot_without_a_code_gate_B9", ["derived_missing"], None),
     ("printer_not_made_class", CLI, [('    E.check_slots(doc, cat, kinds_of_class=("derived",))', "    pass")],
      "validate", "case_printers", "printer_not_made_naming_a_run_slot", ["derived_counted_as_run"], None),
@@ -1231,6 +1244,22 @@ M = [
     ("kd_slot_at_a_seed_the_launcher_lacks", CAT, [('"seed": 42,\n      "slot": "A:s42:alpha25:80k"',
                                                     '"seed": 43,\n      "slot": "A:s42:alpha25:80k"')],
      "schema", "case_catalogue_cross_checks", "kd_slots_at_the_launcher_s_seeds_and_profiles_I1_B60", [], None),
+    # a gate or a printer that reads a score: the noscore comparisons see it (DL-24 #59)
+    ("unlock_gate_reading_a_score", VAL, [('    hp = x.repo_root / hasher["script"]["path"]\n',
+                                           '    hp = x.repo_root / hasher["script"]["path"]\n'
+                                           "    if b'\"all_class_miou\": 0.36,' not in (x.runs_root / "
+                                           '"e1_s42_80k" / "e1_telemetry.jsonl").read_bytes():\n'
+                                           '        errs.append("a score read")\n')],
+     "noscore", "case_mutation_invariance", "mutation_finite_unlock_and_session_verdicts_identical_B59", [], None),
+    ("append_printer_reading_a_score", CLI, [('    if not (isinstance(doc, dict) and isinstance(doc.get("body"), dict) '
+                                              'and isinstance(doc["body"].get("entries"), list)',
+                                              "    if b'\"all_class_miou\": 0.31,' not in (Path(args.runs) / "
+                                              '"e2_s42_lambda0.5_80k_a1" / "e2_telemetry.jsonl").read_bytes():\n'
+                                              '        raise S.TmanRefused("append_invalid", "a score read")\n'
+                                              '    if not (isinstance(doc, dict) and isinstance(doc.get("body"), dict) '
+                                              'and isinstance(doc["body"].get("entries"), list)')],
+     "noscore", "case_mutation_invariance",
+     "mutation_finite_printed_freeze_record_and_append_identical_but_hashes_B59", [], None),
 ]
 REFUSAL_EXTRA = ("inventory_invalid", "inventory_sha256_mismatch", "binding_invalid",       # read_inventory's codes
                  "output_location", "output_exists")                                       # the CLI's outputs

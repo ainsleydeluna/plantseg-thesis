@@ -10,9 +10,11 @@
    values is read too.
 3. The mutation test: every score field of the fixtures -- the KD, E1 and QAT telemetry rows, the E1 and teacher
    logs' scores, the selection files, the ptq_record's parent score -- set to random finite values, to "nan" (as
-   the trainers write a non-finite value) or deleted: every verdict, the arithmetic and the manifest and inventory
-   bytes stay identical, up to the sha256 of the files the mutation changed and of the QAT selection records that
-   cite a changed telemetry. Removing a record changes the verdict.
+   the trainers write a non-finite value) or deleted: every verdict (draft and freeze, and an unlock world's unlock
+   and session, its records made over the changed files), the arithmetic, the manifest and inventory bytes, and the
+   command line's printed freeze record and post-freeze append stay identical, up to the sha256 of the files the
+   mutation changed, of the QAT selection records that cite a changed telemetry and the commit a printer names.
+   Removing a record changes the verdict.
 
 Synthetic inputs only, under the system temp dir (removed at the end); TEST is never read.
 
@@ -147,7 +149,8 @@ def normalised(data: bytes, shas: dict) -> bytes:
 
 def outputs(w) -> dict:
     """What the lane prints and decides over the world: the freeze and draft verdicts, the manifest built, the
-    inventory export and the arithmetic of a KD reference run."""
+    command line's printed freeze record and post-freeze append (DL-24 #59), the inventory export and the arithmetic
+    of a KD reference run."""
     from src.tman import entries as E
     from src.tman import manifest as M
     S = w.S
@@ -157,6 +160,8 @@ def outputs(w) -> dict:
     for mode in ("freeze", "draft"):
         code, passed, e = w.run(mode, data=data)
         out[mode] = (code, passed)
+    out["head"] = FX.git(w.repo, "rev-parse", "HEAD")          # the commit a printer names (printed_by)
+    out["printed_freeze"], out["append"] = cli_outputs(w, doc, data)
     fr = w.freeze_record(doc["body"])                          # committed first: w.records then reads it
     out["freeze_dl"] = fr["dl"]
     out["inventory"] = S.json_file_bytes(M.build_inventory(doc, data, w.records, w.cat, runs_root=w.runs,
@@ -164,6 +169,61 @@ def outputs(w) -> dict:
     ref = E.reference_telemetry(w.runs, "e2_s42_lambda0.5_80k_a1", w.cat.slots["E2:s42:lambda0.5:80k"])
     out["arithmetic"] = S.json_file_bytes(E.cut_arithmetic(80000, [ref], "T", FX.utc(NOW)))
     return out
+
+
+def cli_outputs(w, doc: dict, data: bytes) -> tuple:
+    """The files the command line writes over the manifest `data` (DL-24 #59): its freeze record printed by `entry
+    freeze`, and the manifest `append` writes for E4 seed 43's PTQ model made after the freeze, with its ptq_record
+    (smoke_tman_paths.post_freeze_ptq_append's recipe). None where the command refuses."""
+    from src.tman import records as R
+    S, out = w.S, FX.scratch_dir("tmannscli")
+    (out / "m.json").write_bytes(data)
+    (out / "fields.json").write_bytes(S.json_file_bytes({"body_sha256": S.canonical_sha256(doc["body"]),
+                                                          "freeze_date": VW.FREEZE_DAY, "source": "schedule"}))
+    (out / "entry").mkdir()
+    rc, _ = VW._cli(["--root", str(w.repo), "entry", "freeze", "--date", VW.FREEZE_DAY, "--fields",
+                     str(out / "fields.json"), "--amendment", "AM-19", "--summary", "printed by a smoke.", "--out",
+                     str(out / "entry"), "--nn", "60", "--manifest", str(out / "m.json")])
+    printed = b"".join(p.read_bytes() for p in sorted((out / "entry").iterdir())) if rc == 0 else None
+    rel = "E4_s43_list42/E4_s43_list42_ptq_record.json"
+    (w.runs / rel).write_bytes(S.json_file_bytes(w.ptq_docs[rel]))
+    d = json.loads(data)
+    e = next(x for x in d["body"]["entries"] if x["slot"] == "E4:s43:list42")
+    prov = VW.runs_variant(w, e["hashed"]["provenance"], f"variant_made_{VW.stamp(VW.LATE)}.json",
+                           {"created_utc": VW.LATE})
+    (out / "hashed.json").write_bytes(S.json_file_bytes(dict(e["hashed"], appended="append", made_utc=VW.LATE,
+                                                             provenance=prov)))
+    e.update(hashed=None, ptq_record=None)
+    (out / "m_post.json").write_bytes(S.json_file_bytes(d))
+    (out / "append").mkdir()
+    saved = R.ptq_record_reader
+    try:
+        R.ptq_record_reader = lambda: w.reader()
+        rc, _ = VW._cli(["--root", str(w.repo), "append", "--manifest", str(out / "m_post.json"), "--slot",
+                         "E4:s43:list42", "--hashed", str(out / "hashed.json"), "--runs", str(w.runs), "--out",
+                         str(out / "append"), "--ptq-record", rel])
+    finally:
+        R.ptq_record_reader = saved
+    return printed, (out / "append" / "tday_manifest.json").read_bytes() if rc == 0 else None
+
+
+def unlock_verdicts(edit=None) -> tuple:
+    """An unlock world's unlock and session verdicts (smoke_tman_unlock.Unlock; `edit` changes its world before its
+    freeze record and unlock entry are made)."""
+    import scripts.smoke_tman_unlock as UL
+    u = UL.Unlock(edit_world=edit)
+    return u.run("unlock")[:2], u.run("session", u.start_session())[:2]
+
+
+def score_mutated(mode: str, seed: int):
+    """An edit_world: the world's score fields mutated (mutate_world), its manifest built again over the changed
+    files and committed."""
+    def edit(w):
+        mutate_world(w, mode, seed)
+        w.doc = w.M.build_manifest(w.records, w.cat, w.sources, runs_root=w.runs)
+        w.data = w.S.json_file_bytes(w.doc)
+        w.commit({w.S.MANIFEST_REL: w.data}, f"the manifest over the files mutated ({mode})")
+    return edit
 
 
 # ======================================================================================================= cases
@@ -265,6 +325,9 @@ def case_sentinel():
 
 
 def case_mutation_invariance():
+    base_unlock = unlock_verdicts()
+    check("unlock_world_passes_unlock_and_session_B59", base_unlock == (
+        (None, VW.gate_codes("unlock")), (None, VW.gate_codes("session"))), str([v[0] for v in base_unlock]))
     for n, mode in enumerate(("finite", "nan", "deleted")):
         w = VW.World()
         base = outputs(w)
@@ -280,9 +343,18 @@ def case_mutation_invariance():
         shas[f'"dl_row": "{after["freeze_dl"]}"'] = f'"dl_row": "{base["freeze_dl"]}"'
         diffs = [k for k in ("manifest", "inventory", "arithmetic") if normalised(after[k], shas) != base[k]]
         check(f"mutation_{mode}_manifest_inventory_arithmetic_identical_but_hashes", not diffs, str(diffs))
+        shas[after["head"]] = base["head"]
+        cli = [k for k in ("printed_freeze", "append") if after[k] is None or normalised(after[k], shas) != base[k]]
+        check(f"mutation_{mode}_printed_freeze_record_and_append_identical_but_hashes_B59", not cli, str(cli))
+        got = unlock_verdicts(score_mutated(mode, 2009 + n))
+        check(f"mutation_{mode}_unlock_and_session_verdicts_identical_B59", got == base_unlock,
+              str([v[0] for v in got]))
         if n == 0:
             check("the_manifest_and_export_cite_the_changed_files", after["manifest"] != base["manifest"]
                   and after["inventory"] != base["inventory"])
+            check("the_cli_printed_the_freeze_record_and_wrote_the_append_B59", all(
+                base[k] is not None and base[k].startswith(b"{") for k in ("printed_freeze", "append")),
+                  str([base[k] is None for k in ("printed_freeze", "append")]))
 
 
 def case_removal_changes_the_verdict():
