@@ -97,7 +97,7 @@ SHADOW_PATHS: tuple[str, ...] = (
 )
 
 # (id, file, [(FIND, REPLACE), ...], named checks, the edit): the plan's M1-M12, the GO's M13-M16 (LF35), the lane's
-# M17-M22 and the DL-24 fixes' M23. Each FIND occurs exactly once in its file.
+# M17-M22 and the DL-24 fixes' M23-M33. Each FIND occurs exactly once in its file.
 MUTATIONS = [
     ("M01", EFF, [('"probe": probe},\n        num_threads=num_threads)', '"probe": probe})')],
      ("timer_runs_at_requested_threads",), "the Timer without num_threads (its default 1, F2)"),
@@ -169,6 +169,35 @@ MUTATIONS = [
     ("M23", PE, [("    except (subprocess.SubprocessError, OSError, ValueError) as e:",
                   "    except ZeroDivisionError as e:")],
      ("image_fingerprint_child_failure_coded",), "a fingerprint child that times out or prints garble left uncoded"),
+    ("M24", EFT, [('        if not any(e["session"] == str(Path(s)) for e in entries):\n',
+                   "        if not entries:\n")],
+     ("table_session_missing_or_empty_refused",), "an empty sitting next to a full one makes a table"),
+    ("M25", EFT, [('        if not root.is_dir():\n'
+                   '            refuse("table_stage_missing", f"the sitting {session} is not a directory")\n', "")],
+     ("table_session_missing_or_empty_refused",), "a --session that is not a directory not named as such"),
+    ("M26", EFT, [("                    error = forbidden_path_error(label, value)     # SL-1: before it is stat'ed or "
+                   "listed\n", "                    error = None\n")],
+     ("table_session_directory_forbidden_name_refused",), "a stage or group directory's \"test\" guard dropped"),
+    ("M27", EFT, [("        if not isinstance(stages.get(stage), dict):\n", "        if False:\n")],
+     ("table_malformed_pins_or_record_refused",), "a pins entry that is not an object reaches .get"),
+    ("M28", EFT, [('    missing = [".".join(keys) for keys in RECORD_OBJECTS if not _is_object_at(rec, keys)]\n',
+                   "    missing = []\n")],
+     ("table_malformed_pins_or_record_refused",), "a record's blocks not checked as objects"),
+    ("M29", EFF, [('            dirs.extend("/".join([mount, *parts[:k]]) for k in range(len(parts), -1, -1))\n',
+                   '            dirs.extend("/".join([mount, *parts[:k]]) for k in '
+                   'range(len(parts), len(parts) - 1, -1))\n')],
+     ("cgroup_quota_read_on_the_process_cgroup_path",), "the quota read at the process's own cgroup only, no ancestor"),
+    ("M30", EFF, [("        if q is not None and (best[0] is None or q < best[0]):\n",
+                   "        if q is not None and (best[0] is None or q > best[0]):\n")],
+     ("cgroup_quota_read_on_the_process_cgroup_path",), "the largest quota on the path taken"),
+    ("M31", PE, [('PATH_FLAGS = ("out_dir", "checkpoint", "provenance", "teacher_config", "qat_finalize")',
+                  'PATH_FLAGS = ("out_dir", "checkpoint", "provenance", "teacher_config")')],
+     ("qat_finalize_forbidden_name_refused",), "--qat-finalize's \"test\" guard dropped"),
+    ("M32", EFT, [('    for label, value in [("--session", s) for s in sessions] + [("--pins", pins), '
+                   '("--out-dir", out_dir)]:', '    for label, value in [("--out-dir", out_dir)]:')],
+     ("table_session_or_pins_forbidden_name_refused",), "--session's and --pins' \"test\" guard dropped"),
+    ("M33", EFF, [('        "wall_clock_end": end,\n', "")],
+     ("record_of_record_complete",), "a 2.0.0 field dropped from the record"),
 ]
 
 RESULTS: list[tuple[str, bool, str]] = []

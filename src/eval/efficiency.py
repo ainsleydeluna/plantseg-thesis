@@ -771,18 +771,40 @@ def _cpu_list(text: str | None) -> list:
     return cpus
 
 
-def cgroup_cpu_quota(sys_root="/sys") -> float | None:
-    """The cgroup CPU quota in CPUs (v2 cpu.max, else v1 cfs_quota_us / cfs_period_us); None when unlimited or
-    unreadable."""
+def _cgroup_dirs(sys_root: str, proc: str) -> list:
+    """The cgroup directories that can set this process's CPU quota, innermost first: its own cgroup path from
+    /proc/self/cgroup (v2 "0::<path>" under <sys>/fs/cgroup; v1 the cpu controller's path under its mount) and each
+    ancestor up to the mount root, then the mount roots themselves. A path leaving its namespace ("..") is not
+    followed."""
+    v2_root, v1_roots = f"{sys_root}/fs/cgroup", [f"{sys_root}/fs/cgroup/cpu", f"{sys_root}/fs/cgroup/cpu,cpuacct"]
+    dirs = []
+    for line in (_read_text(f"{proc}/self/cgroup") or "").splitlines():
+        hierarchy, _, rest = line.partition(":")
+        controllers, _, path = rest.partition(":")
+        if hierarchy == "0" and not controllers:
+            mounts = [v2_root]
+        elif "cpu" in controllers.split(","):
+            mounts = [f"{sys_root}/fs/cgroup/{controllers}", *v1_roots]
+        else:
+            continue
+        parts = [p for p in path.split("/") if p]
+        if ".." in parts:
+            parts = []
+        for mount in mounts:
+            dirs.extend("/".join([mount, *parts[:k]]) for k in range(len(parts), -1, -1))
+    dirs.extend([v2_root, *v1_roots])
+    return list(dict.fromkeys(dirs))
+
+
+def _quota_at(cgroup_dir: str) -> float | None:
+    """The CPU quota one cgroup directory sets, in CPUs (v2 cpu.max, else v1 cpu.cfs_quota_us / cpu.cfs_period_us);
+    None when it sets none or cannot be read."""
     try:
-        v2 = _read_text(f"{sys_root}/fs/cgroup/cpu.max")
+        v2 = _read_text(f"{cgroup_dir}/cpu.max")
         if v2 is not None:
             parts = v2.split()
-            if parts[0] == "max":
-                return None
-            return int(parts[0]) / int(parts[1] if len(parts) > 1 else 100000)
-        q = _read_text(f"{sys_root}/fs/cgroup/cpu/cpu.cfs_quota_us")
-        p = _read_text(f"{sys_root}/fs/cgroup/cpu/cpu.cfs_period_us")
+            return None if parts[0] == "max" else int(parts[0]) / int(parts[1] if len(parts) > 1 else 100000)
+        q, p = _read_text(f"{cgroup_dir}/cpu.cfs_quota_us"), _read_text(f"{cgroup_dir}/cpu.cfs_period_us")
         if q is None or p is None or int(q) <= 0:
             return None
         return int(q) / int(p)
@@ -790,11 +812,29 @@ def cgroup_cpu_quota(sys_root="/sys") -> float | None:
         return None
 
 
+def cgroup_quota_and_source(sys_root="/sys", proc="/proc") -> tuple:
+    """(the CPU quota that binds this process in CPUs, the directory it was read from): the smallest quota set on the
+    process's cgroup path and its ancestors (_cgroup_dirs); (None, None) when none is set or readable."""
+    best = (None, None)
+    for d in _cgroup_dirs(sys_root, proc):
+        q = _quota_at(d)
+        if q is not None and (best[0] is None or q < best[0]):
+            best = (q, d)
+    return best
+
+
+def cgroup_cpu_quota(sys_root="/sys", proc="/proc") -> float | None:
+    """The cgroup CPU quota in CPUs that binds this process (cgroup_quota_and_source); None when unlimited or
+    unreadable."""
+    return cgroup_quota_and_source(sys_root, proc)[0]
+
+
 def host_facts(*, proc="/proc", sys_root="/sys", etc="/etc", root="/") -> dict:
     """The host of the measurement (LF31), read from /proc and sysfs in the measuring process (no lscpu): machine,
     vendor, model name, the ISA flags subset, the hypervisor flag, logical CPUs, physical cores (distinct package and
-    core pairs), threads per core, the affinity count, the cgroup quota, usable CPUs (the affinity count, or the
-    quota in whole CPUs when it is set and smaller), MemTotal, kernel, os-release, /.dockerenv, the scaling governor,
+    core pairs), threads per core, the affinity count, the cgroup quota (the smallest on the process's cgroup path,
+    and the directory it was read from), usable CPUs (the affinity count, or the quota in whole CPUs when it is set
+    and smaller), MemTotal, kernel, os-release, /.dockerenv, the scaling governor,
     the OMP/MKL/OPENBLAS/KMP/GOMP variables and torch's parallel_info(); then host_type_fingerprint."""
     first = {}
     for line in (_read_text(f"{proc}/cpuinfo") or "").split("\n\n")[0].splitlines():
@@ -811,7 +851,7 @@ def host_facts(*, proc="/proc", sys_root="/sys", etc="/etc", root="/") -> dict:
     logical = len(online) or os.cpu_count()
     physical = len(pairs) or None
     affinity = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else logical
-    quota = cgroup_cpu_quota(sys_root)
+    quota, quota_source = cgroup_quota_and_source(sys_root, proc)
     mem = re.search(r"^MemTotal:\s+(\d+) kB", _read_text(f"{proc}/meminfo") or "", re.M)
     release = re.search(r'^PRETTY_NAME="?([^"\n]*)"?', _read_text(f"{etc}/os-release") or "", re.M)
     governor = _read_text(f"{sys_root}/devices/system/cpu/cpu0/cpufreq/scaling_governor")
@@ -826,6 +866,7 @@ def host_facts(*, proc="/proc", sys_root="/sys", etc="/etc", root="/") -> dict:
         "threads_per_core": (logical // physical) if physical else None,
         "affinity_cpus": affinity,
         "cgroup_cpu_quota": quota,
+        "cgroup_cpu_quota_source": quota_source,
         "usable_cpus": affinity if quota is None or quota >= affinity else int(quota),
         "mem_total_bytes": int(mem.group(1)) * 1024 if mem else None,
         "kernel": platform.release(),

@@ -10,16 +10,18 @@ efficiency analysis, the sha256 of the file each run is handed and, for an INT8 
 of its x86 latency copy. Every record is hashed when it is listed and again after all are read. Refused:
   [table_too_many_sessions]      a third --session
   [path_forbidden_name]          a path naming "test", as given or resolved, before it is opened (a session's
-                                 records included)
+                                 stage and group directories and its records included)
   [out_dir_inside_repository]    an --out-dir inside the repository; [out_dir_not_empty] an existing, non-empty one
   [table_pins_invalid]           a pins file that is not efficiency_pins/1 with a sha256 for every stage it needs
   [table_record_not_of_record]   a record that is not plantseg-efficiency/2.0.0 of record (or not of the analysis,
-                                 or with a deferred metric, or another role than its stage and group take)
+                                 or with a deferred metric, or another role than its stage and group take, or one
+                                 whose blocks are not objects)
   [table_sha256_mismatch]        a record changed after it was listed
   [table_threads_mixed] [table_interop_mixed] [table_host_mixed] [table_image_mixed] [table_commit_mixed]
                                  the records differ in the thread count, the inter-op count, the host type
                                  (host_type_fingerprint), the image (digest and PL-26 fingerprint) or the commit
-  [table_stage_missing] [table_stage_duplicate]   a stage and group with no record, or with two
+  [table_stage_missing] [table_stage_duplicate]   a stage and group with no record, or with two; a --session that
+                                 is not a directory, or a sitting that holds no record, is missing too
   [table_artifact_not_pinned]    a record whose handed file, converted artifact or x86 copy differs from the pins
 It writes efficiency_table.json (efficiency_table/1), created exclusively outside the repository: one row per stage
 of EFFICIENCY_ANALYSIS_STAGES, every quantity with its record's path and sha256, and the sittings with every
@@ -97,7 +99,9 @@ def read_pins(path) -> tuple[dict, str]:
         refuse("table_pins_invalid", f"{path} is not an {PINS_FORMAT} file")
     for stage in EFFICIENCY_ANALYSIS_STAGES:
         need = ("checkpoint_sha256", "converted_sha256", "x86_sha256") if stage in INT8_STAGES else ("checkpoint_sha256",)
-        bad = [k for k in need if not _hex64((stages.get(stage) or {}).get(k))]
+        if not isinstance(stages.get(stage), dict):
+            refuse("table_pins_invalid", f"{path} pins {stage} as {type(stages.get(stage)).__name__}, not an object")
+        bad = [k for k in need if not _hex64(stages[stage].get(k))]
         if bad:
             refuse("table_pins_invalid", f"{path} pins no 64-hex {bad} for {stage}")
     return stages, sha256_bytes(raw)
@@ -108,9 +112,15 @@ def list_records(sessions) -> list:
     found = []
     for session in sessions:
         root = Path(session)
+        if not root.is_dir():
+            refuse("table_stage_missing", f"the sitting {session} is not a directory")
         for stage in EFFICIENCY_ANALYSIS_STAGES:
             for group in METRIC_GROUPS:
                 d = root / stage / group
+                for label, value in (("a session stage directory", root / stage), ("a session group directory", d)):
+                    error = forbidden_path_error(label, value)     # SL-1: before it is stat'ed or listed
+                    if error:
+                        refuse("path_forbidden_name", error)
                 if not d.is_dir():
                     continue
                 for name in sorted(os.listdir(d)):
@@ -130,11 +140,28 @@ def list_records(sessions) -> list:
     return found
 
 
+# The blocks the table reads, as objects (record_problem): any other value refuses, never a traceback.
+RECORD_OBJECTS = (("provenance",), ("provenance", "handed"), ("provenance", "binding"), ("thread_policy",),
+                  ("thread_policy", "inter_op"), ("host",), ("code",), ("image",))
+GROUP_OBJECTS = {"static": (), "latency": (("latency",),), "memory": (("memory",),)}
+X86_OBJECTS = (("provenance", "binding", "x86_copy"),)
+
+
+def _is_object_at(rec: dict, keys) -> bool:
+    node = rec
+    for k in keys:
+        node = node.get(k) if isinstance(node, dict) else None
+    return isinstance(node, dict)
+
+
 def record_problem(entry: dict) -> str | None:
     rec = entry["record"]
     if not isinstance(rec, dict) or rec.get("schema") != EFFICIENCY_SCHEMA or rec.get("of_record") is not True:
         return f"schema {rec.get('schema') if isinstance(rec, dict) else None!r}, of_record " \
                f"{rec.get('of_record') if isinstance(rec, dict) else None!r}"
+    missing = [".".join(keys) for keys in RECORD_OBJECTS if not _is_object_at(rec, keys)]
+    if missing:
+        return f"{missing} are not objects"
     stage, group = (rec.get("provenance") or {}).get("stage"), rec.get("metric_group")
     if not rec.get("efficiency_analysis_member") or stage not in EFFICIENCY_ANALYSIS_STAGES:
         return f"stage {stage!r} is not of the efficiency analysis"
@@ -144,14 +171,18 @@ def record_problem(entry: dict) -> str | None:
         return f"deferred {sorted(rec['deferred'])}"
     if (rec.get("provenance") or {}).get("artifact_role") != role_of(stage, group):
         return f"role {(rec.get('provenance') or {}).get('artifact_role')!r}; {stage} {group} takes {role_of(stage, group)}"
+    need = GROUP_OBJECTS[group] + (X86_OBJECTS if role_of(stage, group) == ARTIFACT_ROLE_X86_LATENCY else ())
+    missing = [".".join(keys) for keys in need if not _is_object_at(rec, keys)]
+    if missing:
+        return f"{missing} are not objects"
     return None
 
 
 def _one(values, code: str, what: str):
     distinct = sorted({json.dumps(v, sort_keys=True) for v in values})
-    if len(distinct) != 1:
+    if len(distinct) > 1:
         refuse(code, f"the records differ in {what}: {distinct[:4]}")
-    return json.loads(distinct[0])
+    return json.loads(distinct[0]) if distinct else None
 
 
 def build(sessions, pins_path, out_dir) -> tuple[Path, dict]:
@@ -165,6 +196,10 @@ def build(sessions, pins_path, out_dir) -> tuple[Path, dict]:
         problem = record_problem(e)
         if problem:
             refuse("table_record_not_of_record", f"{e['path']}: {problem}")
+    for s in sessions:
+        if not any(e["session"] == str(Path(s)) for e in entries):
+            refuse("table_stage_missing", f"the sitting {s} holds no record at <session>/<stage>/<group>/ "
+                                          f"({list(EFFICIENCY_ANALYSIS_STAGES)} x {list(METRIC_GROUPS)})")
     recs = [e["record"] for e in entries]
     tp = [r.get("thread_policy") or {} for r in recs]
     threads = _one([t.get("intra_op_requested") for t in tp] + [t.get("intra_op_observed") for t in tp],

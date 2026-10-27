@@ -665,7 +665,7 @@ def _quota():
     sysfs = fresh("sysfs") / "sys"
     (sysfs / "fs" / "cgroup").mkdir(parents=True)
     (sysfs / "fs" / "cgroup" / "cpu.max").write_text("50000 100000\n", encoding="ascii")
-    parsed = EFF.cgroup_cpu_quota(str(sysfs))
+    parsed = EFF.cgroup_cpu_quota(str(sysfs), str(fresh("no_proc")))      # no /proc/self/cgroup: the mount roots
     with _host_injected(cgroup_cpu_quota=parsed):
         ok, detail = _refused(e1_record_argv(fresh("quota")), "cpu_quota_below_threads")
     return ok and parsed == 0.5, f"cpu.max '50000 100000' -> {parsed} CPUs; {detail}"
@@ -922,12 +922,25 @@ def _int8_static():
 
 BINDING_KEYS = {"run_provenance_sha256", "qat_finalize_path", "qat_finalize_sha256", "x86_copy",
                 "state_dict_companion_sha256", "int8_official"}
+# §2's field list of a 2.0.0 record of record, block by block (LF28)
+RECORD_KEYS = {"schema", "measurement_role", "cpu_proxy", "on_device", "no_arm_claim", "of_record",
+               "efficiency_analysis_member", "metric_group", "thread_policy", "host", "code", "image", "provenance",
+               "parameters", "footprint", "footprint_source", "artifact", "compute", "latency", "memory", "deferred",
+               "created_utc", "wall_clock_start", "wall_clock_end"}
+THREAD_POLICY_KEYS = {"intra_op_requested", "intra_op_observed", "inter_op", "constant", "inter_op_constant", "dl_row"}
+CODE_KEYS = {"repo_commit", "governed_paths_clean", "worktree_state_sha256", "dirty_allowlisted", "files_sha256"}
+IMAGE_KEYS = {"digest", "fingerprint", "fvcore"}
+HOST_BLOCK_KEYS = {"label", "note", "facts", "fingerprint"}
+PROTOCOL_KEYS = {"warmup", "measured", "untimed_executions_per_observation", "forwards_executed", "timer",
+                 "num_threads"}
+ENVIRONMENT_KEYS = {"torch", "torchvision", "python", "platform", "processor", "machine", "quant_backends_available",
+                    "active_engine", "thread_count", "interop_thread_count", "parallel_info"}
 
 
 @case("record_of_record_complete")
 def _record_complete():
     """An E1 run of record in the world of record, its static group and then its latency group: every block of
-    §2's field list, nothing deferred."""
+    §2's field list (each block's key set, and the values the run of record fixes), nothing deferred."""
     import scripts.preflight_distill as PD
     with of_record_world():
         code_s, _ps, st = run_profile(e1_record_argv(fresh("rec_static")))
@@ -939,7 +952,16 @@ def _record_complete():
     tp, host, code, image, prov, lat = (st["thread_policy"], st["host"], st["code"], st["image"], st["provenance"],
                                         la["latency"])
     proto = lat["protocol"]
-    ok = (st["of_record"] is True and la["of_record"] is True and st["deferred"] == {} == la["deferred"]
+    keys = (set(st) == RECORD_KEYS == set(la) and set(tp) == THREAD_POLICY_KEYS == set(la["thread_policy"])
+            and set(code) == CODE_KEYS == set(la["code"]) and set(image) == IMAGE_KEYS == set(la["image"])
+            and set(host) == HOST_BLOCK_KEYS == set(la["host"]) and HOST_KEYS <= set(host["facts"])
+            and set(proto) == PROTOCOL_KEYS and set(prov["environment"]) == ENVIRONMENT_KEYS
+            == set(la["provenance"]["environment"]))
+    ok = (keys and st["of_record"] is True and la["of_record"] is True and st["deferred"] == {} == la["deferred"]
+          and st["efficiency_analysis_member"] is True and (st["metric_group"], la["metric_group"]) == (
+              "static", "latency") and st["footprint_source"] is not None and bool(st["created_utc"])
+          and st["wall_clock_start"] <= st["wall_clock_end"] and image["fingerprint"] == fingerprint_of_record()
+          and host["note"] is None and proto["timer"] == EFF.TIMER
           and tp["intra_op_requested"] == 1 == tp["intra_op_observed"] == la["thread_policy"]["intra_op_observed"]
           and tp["inter_op"]["status"] == "set" and tp["inter_op"]["observed"] == 1
           and tp["constant"] == 1 == tp["inter_op_constant"] and tp["dl_row"] == PE.THREAD_RULING
@@ -952,7 +974,7 @@ def _record_complete():
           and lat["intra_op_observed"] == 1 and proto["num_threads"] == 1 and proto["warmup"] == 20
           and proto["measured"] == 100 and proto["forwards_executed"] == 20 + 100 * (
               1 + proto["untimed_executions_per_observation"]))
-    return ok, (f"static and latency of record: threads {tp['intra_op_observed']}, inter-op "
+    return ok, (f"static and latency of record, key sets {keys}: threads {tp['intra_op_observed']}, inter-op "
                 f"{tp['inter_op']['observed']}, commit {code['repo_commit'][:12]}, host {host['fingerprint'][:12]}, "
                 f"forwards {proto['forwards_executed']}")
 
@@ -1040,8 +1062,12 @@ def _identity():
 def _x86_forbidden():
     meta = _e4_edited("x86_forbid", lambda run, d: d["x86_latency_copy"].__setitem__(
         "path", "plantseg_TEST_x86_copy.pt"))
-    # the named copy is never created: a mutant without the guard stops at [x86_copy_missing], having opened nothing
-    return _refused(e4_argv(fresh("x86_forbid_out"), prov=meta), "path_forbidden_name", world=NO_WORLD())
+    # the named copies are never created: a mutant without the guard stops at [x86_copy_missing], having opened nothing
+    e4 = _refused(e4_argv(fresh("x86_forbid_out"), prov=meta), "path_forbidden_name", world=NO_WORLD())
+    ev = _e5_edited("x86_forbid_e5", lambda f: f["x86_latency_copy"].__setitem__(
+        "path", "final/plantseg_TEST_x86_copy.pt"))
+    e5 = _refused(e5_argv(fresh("x86_forbid_e5_out"), ev=ev), "path_forbidden_name", world=NO_WORLD())
+    return e4[0] and e5[0], f"E4 run record: {e4[1]}; E5 finalize record: {e5[1]}"
 
 
 @case("e5_x86_copy_bound")
@@ -1083,6 +1109,14 @@ def _fin_not():
 def _checks_failed():
     ev = _e5_edited("fin_checks", lambda f: f["x86_latency_copy"]["checks"].__setitem__("parity_x86_copy", False))
     return _refused(e5_argv(fresh("fin_checks_out"), ev=ev), "x86_copy_checks_failed", world=NO_WORLD())
+
+
+@case("qat_finalize_forbidden_name_refused")
+def _fin_forbidden():
+    probe = TMP / "nowhere" / "plantseg_TEST_qat_finalize.json"      # never created
+    ok, detail = _refused(e5_argv(fresh("fin_forbid_out"), finalize=str(probe)), "path_forbidden_name",
+                          world=NO_WORLD())
+    return ok and not os.path.lexists(probe.parent), detail
 
 
 @case("qat_finalize_unreadable_or_other_stage")
@@ -1309,6 +1343,86 @@ def _t_two():
     return labels == sorted({HOST_LABEL, "pod-b"}) and len(doc["sittings"]) == 2, f"labels {labels}"
 
 
+SITTING_A = {(s, g) for s in ("teacher", "E1", "E2", "E3", "E4", "E7") for g in ("static", "latency", "memory")}
+SITTING_B = {(s, g) for s in EFF.EFFICIENCY_ANALYSIS_STAGES for g in ("static", "latency", "memory")} - SITTING_A
+
+
+def table_message(sessions, pins=None) -> tuple:
+    """(code, message, out): a refusal's code and text; (None, "", out) when the table was written."""
+    out = fresh("table_msg_out")
+    try:
+        EFT.build([str(s) for s in sessions], str(pins or write_pins("pins")), str(out))
+    except EFT.TableRefused as e:
+        return e.code, str(e), out
+    return None, "", out
+
+
+@case("table_session_missing_or_empty_refused")
+def _t_empty():
+    full = write_session("t_full_sitting")
+    never = fresh("t_never_sitting")                                 # never created
+    empty = fresh("t_empty_sitting")
+    empty.mkdir(parents=True)
+    flat = fresh("t_flat_sitting")                                   # records at <session>/<stage>/, no group level
+    (flat / "E1").mkdir(parents=True)
+    (flat / "E1" / "efficiency_E1_flat.json").write_text(json.dumps(synthetic_record("E1", "static")),
+                                                         encoding="utf-8")
+    a = table_message([full, never])
+    b = table_message([full, empty])
+    c = table_message([flat])
+    ok = (a[0] == b[0] == c[0] == "table_stage_missing" and "is not a directory" in a[1]
+          and "holds no record" in b[1] and "holds no record" in c[1]
+          and not any(os.path.lexists(x[2] / EFT.TABLE_NAME) for x in (a, b, c)) and not os.path.lexists(never))
+    return ok, f"never created: {a[0]}; empty: {b[0]}; flat: {c[0]}"
+
+
+@case("table_session_directory_forbidden_name_refused")
+def _t_forbidden_dir():
+    got = {}
+    for tag, level in (("group", ("E1", "static")), ("stage", ("E2",))):
+        a = write_session(f"t_dir_{tag}_a", slots=SITTING_A - {("E1", "static"), ("E2", "static"), ("E2", "latency"),
+                                                                ("E2", "memory")})
+        b = write_session(f"t_dir_{tag}_b", slots=SITTING_B | {("E1", "static"), ("E2", "static"),
+                                                               ("E2", "latency"), ("E2", "memory")})
+        link = a.joinpath(*level)
+        link.parent.mkdir(parents=True, exist_ok=True)
+        os.symlink(TMP / "nowhere" / f"plantseg_TeSt_{tag}", link, target_is_directory=True)   # never created
+        code, _m, out = table_message([a, b])
+        got[tag] = code == "path_forbidden_name" and not os.path.lexists(out / EFT.TABLE_NAME)
+    return all(got.values()) and not os.path.lexists(TMP / "nowhere"), \
+        f"a stage or group directory whose resolved path names the token is refused before it is listed: {got}"
+
+
+@case("table_session_or_pins_forbidden_name_refused")
+def _t_forbidden_args():
+    s = write_session("t_args")
+    a = table_message([s, TMP / "nowhere" / "plantseg_TEST_sitting"])[0]            # never created
+    b = table_message([s], pins=TMP / "nowhere" / "plantseg_TEST_pins.json")[0]     # never created
+    return a == b == "path_forbidden_name" and not os.path.lexists(TMP / "nowhere"), f"--session {a}; --pins {b}"
+
+
+@case("table_malformed_pins_or_record_refused")
+def _t_malformed():
+    got = {}
+    pins = copy.deepcopy(PINS)
+    pins["E1"] = PINS["E1"]["checkpoint_sha256"]                    # a string, not an object
+    sess = write_session("t_mal_ok")
+    for tag, argv_pins, session in (("pins_stage_string", write_pins("pins_mal", pins), sess),) + tuple(
+            (tag, None, write_session(f"t_mal_{tag}", edit=_mixed(edit))) for tag, edit in (
+                ("thread_policy_string", lambda r: r.__setitem__("thread_policy", "1")),
+                ("host_list", lambda r: r.__setitem__("host", [HOST_FP])),
+                ("inter_op_number", lambda r: r["thread_policy"].__setitem__("inter_op", 1)),
+                ("x86_copy_null", lambda r: r["provenance"]["binding"].__setitem__("x86_copy", None)),
+                ("memory_string", lambda r: r.__setitem__("memory", "1024")))):
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            rc = EFT.main(["build", "--session", str(session), "--pins", str(argv_pins or write_pins(f"pins_{tag}")),
+                           "--out-dir", str(fresh(f"t_mal_out_{tag}"))])
+        want = "table_pins_invalid" if tag.startswith("pins") else "table_record_not_of_record"
+        got[tag] = rc == EFT.EXIT_REFUSED and stdout.getvalue().startswith(f"RESULT: REFUSED [{want}]")
+    return all(got.values()), f"a refusal and a RESULT line, never a traceback: {got}"
+
+
 @case("table_too_many_sessions")
 def _t_three():
     s = write_session("t_three")
@@ -1343,9 +1457,9 @@ def _t_paths():
 
 # ---------------------------------------------------------------- 5. the host (LF31) and the repository
 HOST_KEYS = {"machine", "vendor", "model_name", "isa_flags", "hypervisor", "logical_cpus", "physical_cores",
-             "threads_per_core", "affinity_cpus", "cgroup_cpu_quota", "usable_cpus", "mem_total_bytes", "kernel",
-             "os_release", "dockerenv", "scaling_governor", "thread_env", "parallel_info", "hostname",
-             "host_type_fingerprint"}
+             "threads_per_core", "affinity_cpus", "cgroup_cpu_quota", "cgroup_cpu_quota_source", "usable_cpus",
+             "mem_total_bytes", "kernel", "os_release", "dockerenv", "scaling_governor", "thread_env", "parallel_info",
+             "hostname", "host_type_fingerprint"}
 
 
 @case("host_facts_keys_and_fingerprint_stable")
@@ -1371,6 +1485,39 @@ def _kernel():
     c = {**a, "usable_cpus": (a["usable_cpus"] or 0) + 1}
     ok = EFF.host_type_fingerprint(a) == EFF.host_type_fingerprint(b) != EFF.host_type_fingerprint(c)
     return ok, "kernel, MemTotal and the topology recorded only; usable CPUs fingerprinted"
+
+
+def cgroup_host_facts(tag, cgroup_lines, quota_files) -> dict:
+    """host_facts over a synthetic /proc and /sys that hold only the process's cgroup membership (/proc/self/cgroup)
+    and the given quota files under <sys>/fs/cgroup, with an affinity of 4 CPUs injected."""
+    base = fresh(tag)
+    proc, sys_root = base / "proc", base / "sys"
+    (proc / "self").mkdir(parents=True)
+    (proc / "self" / "cgroup").write_text("".join(f"{line}\n" for line in cgroup_lines), encoding="ascii")
+    for rel, text in quota_files.items():
+        f = sys_root / "fs" / "cgroup" / rel
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(text + "\n", encoding="ascii")
+    with patched(EFF.os, "sched_getaffinity", lambda _pid: {0, 1, 2, 3}):
+        return EFF.host_facts(proc=str(proc), sys_root=str(sys_root), etc=str(base / "etc"), root=str(base))
+
+
+@case("cgroup_quota_read_on_the_process_cgroup_path")
+def _cgroup_path():
+    v2 = cgroup_host_facts("cg_v2", ["0::/leff.slice/child/leaf"], {
+        "leff.slice/child/leaf/cpu.max": "max 100000",              # the process's own cgroup sets none
+        "leff.slice/child/cpu.max": "350000 100000",                # 3.5 CPUs
+        "leff.slice/cpu.max": "250000 100000"})                     # 2.5 CPUs on an ancestor: the smallest binds
+    v1 = cgroup_host_facts("cg_v1", ["2:cpuacct:/", "1:cpu,cpuacct:/docker/ctr", "0::/"], {
+        "cpu,cpuacct/docker/ctr/cpu.cfs_quota_us": "150000", "cpu,cpuacct/docker/ctr/cpu.cfs_period_us": "100000"})
+    unset = cgroup_host_facts("cg_unset", ["0::/"], {"cpu.max": "max 100000"})
+    ok = (v2["cgroup_cpu_quota"] == 2.5 and v2["cgroup_cpu_quota_source"].endswith("fs/cgroup/leff.slice")
+          and v2["usable_cpus"] == 2 and v1["cgroup_cpu_quota"] == 1.5 and v1["usable_cpus"] == 1
+          and v1["cgroup_cpu_quota_source"].endswith("fs/cgroup/cpu,cpuacct/docker/ctr")
+          and unset["cgroup_cpu_quota"] is None and unset["usable_cpus"] == 4)
+    return ok, (f"v2 nested: {v2['cgroup_cpu_quota']} CPUs from {Path(v2['cgroup_cpu_quota_source'] or '').name} -> "
+                f"usable {v2['usable_cpus']}; v1: {v1['cgroup_cpu_quota']} -> usable {v1['usable_cpus']}; unset -> "
+                f"usable {unset['usable_cpus']} (affinity 4)")
 
 
 BEFORE = None
