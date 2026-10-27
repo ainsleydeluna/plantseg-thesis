@@ -286,7 +286,7 @@ def printer_cut_context(records: R.Records, cat, freeze, doc: dict, runs) -> E.C
     idx = C.RunIndex(cat, log, runs)
     named = set(log.launched if log else ()) | set(doc["run_ids"])
     for r in sorted(named):
-        S.refuse_test_path(r)
+        S.refuse_test_path(r, runs)
     missing = sorted(r for r in named if not (Path(runs) / r).is_dir())
     if missing:
         raise S.TmanRefused("launched_attempt_without_directory", f"launched attempts without a directory under "
@@ -369,8 +369,8 @@ def cmd_append(args) -> int:
     if args.ptq_record:
         if args.runs is None:
             raise S.TmanRefused("ptq_record_invalid", "--ptq-record is a path under --runs")
-        S.refuse_test_path(args.ptq_record)
-        rec = {"path": args.ptq_record, "sha256": S.sha256_bytes((Path(args.runs) / args.ptq_record).read_bytes())}
+        rec = {"path": args.ptq_record, "sha256": R.file_sha256(Path(args.runs) / args.ptq_record,
+                                                                code="ptq_record_invalid")}   # it checks the path
     append = {"slot": args.slot, "hashed": read_json(args.hashed, "append_invalid"), "ptq_record": rec}
     by_slot = {e["slot"]: e for e in doc["body"]["entries"]}
     frozen = by_slot.get(args.slot)
@@ -488,9 +488,22 @@ COMMANDS = {"build": cmd_build, "validate": cmd_validate, "entry": cmd_entry, "a
             "append": cmd_append, "isolation-record": cmd_isolation, "inventory": cmd_inventory}
 
 
+# Every path-valued argument (a run id under --runs, a file, a folder): refused for "test" before any call on any of
+# them (DL-24 #7, #10); a part read under --runs or --root is checked there again where it is joined.
+PATH_ARGS = ("root", "sources", "out", "runs", "registered_cells", "manifest", "freeze_record", "unlock_entry",
+             "records", "fields", "reference_telemetry", "reference_smoke", "hashed", "ptq_record", "data_root")
+
+
 def main(argv=None) -> int:
     args = parser().parse_args(argv)
     try:
+        for name in PATH_ARGS:
+            v = getattr(args, name, None)
+            for p in v if isinstance(v, list) else [] if v is None else [v]:
+                if "test" in str(p).lower():
+                    raise S.TmanRefused("test_path", f"--{name.replace('_', '-')} {p}: a path containing 'test' is "
+                                                     "refused (project rule 4)")
+        S.refuse_test_path(args.root)               # as resolved too: the records' accessor resolves --root
         return COMMANDS[args.cmd](args)
     except S.TmanRefused as e:
         print(e.line())

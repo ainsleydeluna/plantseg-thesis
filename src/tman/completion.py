@@ -361,7 +361,7 @@ class RunIndex:
             if not self.root.is_dir():
                 raise S.TmanRefused("launched_attempt_without_directory", f"--runs {self.root} is not a folder")
             for name in sorted(p.name for p in self.root.iterdir()):
-                S.refuse_test_path(name)
+                S.refuse_test_path(name, self.root)
                 if name in kd:
                     continue
                 got = self._identify(name)
@@ -430,7 +430,7 @@ class RunIndex:
     def state(self, run_id: str) -> RunState:
         """A launched attempt's state, read from its directory under its own slot's record kind."""
         if run_id not in self._states:
-            S.refuse_test_path(run_id)
+            S.refuse_test_path(run_id, self.root)
             if self.root is None:
                 raise S.TmanRefused("launched_attempt_without_directory", "the run directories are read (--runs)")
             self._states[run_id] = run_state(self.cat.slots[self.slot_of[run_id]], self.root / run_id)

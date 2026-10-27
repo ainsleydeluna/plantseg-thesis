@@ -363,8 +363,7 @@ def ptq_record_errors(entry: dict, cat, parent_entry: dict | None, checksum_sha2
         return [f"{entry['slot']}: made, of role {s['roles']}, without its ptq_record (A2)"]
     if runs_root is None:
         return []
-    S.refuse_test_path(ref["path"])
-    rec = R.read_ptq_record(Path(runs_root) / ref["path"], ref["sha256"], reader=reader)
+    rec = R.read_ptq_record(Path(runs_root) / ref["path"], ref["sha256"], reader=reader)    # it checks the path
     want_role = S.PTQ_ROLE_OF_RECORD if of_record else "calibration_sensitivity"
     want = {"stage": s["evaluator_stage"], "seed": s["seed"], "role": want_role, "descriptive": not of_record}
     errs = [f"{entry['slot']}: ptq_record {k} {rec[k]!r} != {v!r}" for k, v in want.items() if rec[k] != v]
@@ -810,7 +809,7 @@ def build_entries(cat, given: dict, runs_root=None) -> list:
             e["scope"] = [sc for sc in S.SCOPES if sc in req]
         e.update({k: v for k, v in g.items() if k not in S.ENTRY_COMMON})
         if runs_root is not None and g.get("kind") in COMPLETE_KINDS + ("non_finite",) and e.get("run_id"):
-            S.refuse_test_path(e["run_id"])
+            S.refuse_test_path(e["run_id"], runs_root)
             st = C.run_state(s, Path(runs_root) / e["run_id"])
             if st.completion is not None:
                 e["completion"] = st.completion.as_entry()
@@ -929,7 +928,7 @@ def inventory_entries(body: dict, cat, records: R.Records, runs_root=None, appen
         if name and run_ids and runs_root is not None:
             tel = []
             for rid in run_ids:
-                S.refuse_test_path(rid)
+                S.refuse_test_path(f"{rid}/{name}", runs_root)
                 f = Path(runs_root) / rid / name
                 if f.is_file():
                     tel.append({"run_id": rid, "path": f"{rid}/{name}", "sha256": S.sha256_bytes(f.read_bytes())})

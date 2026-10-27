@@ -112,6 +112,7 @@ class Ctx:
         if self.runs_root is None:                    # a gate before launched_attempt_without_directory needs --runs
             raise S.TmanRefused("launched_attempt_without_directory", "freeze, unlock and session modes read the run "
                                                                       "directories (--runs)")
+        S.refuse_test_path(run_id, self.runs_root)
         return self.runs_root / run_id
 
     def state(self, e: dict) -> C.RunState:
@@ -260,7 +261,9 @@ def _err(errs, n: int = 4) -> str | None:
 
 # ================================================================================================ input gates
 def g_test_path(x: Ctx):
-    for p in [x.path, x.runs_root, x.freeze_rel, x.unlock_rel]:
+    """Each input path, before any call on it: the manifest, the runs root, the root S and the records folder, the
+    freeze record and the unlock entry (DL-24 #7)."""
+    for p in [x.path, x.runs_root, x.repo_root, getattr(x.records.src, "folder", None), x.freeze_rel, x.unlock_rel]:
         if p is not None and S.test_path_error(p):
             return S.test_path_error(p)
 
@@ -360,7 +363,6 @@ def g_record_uncommitted(x: Ctx):
     if any(e["kind"] == "derived" and e.get("method") == "qat_selection" for e in x.entries):
         rels.append(M.QAT_RULES_REL)                       # TB13
     for rel in rels:
-        S.refuse_test_path(rel)
         x.records.read(rel)
     if x.mode in U and x.records.read(S.MANIFEST_REL) != x.data:
         return f"the manifest validated is not the committed {S.MANIFEST_REL}"
@@ -373,7 +375,6 @@ def g_record_uncommitted(x: Ctx):
     cited += x.rule_records()                              # a named rule's record, at its cited sha256 (#16)
     cited += x.fault_reports()                             # AM-21 item 2(c)'s fault reports (#77)
     for ref in cited:
-        S.refuse_test_path(ref["path"])
         if S.sha256_bytes(x.records.read(ref["path"])) != ref["sha256"]:
             return f"{ref['path']}: the committed file is not the cited sha256 {ref['sha256'][:12]}"
 
@@ -918,7 +919,7 @@ def g_checkpoint_missing(x: Ctx):
     for e in x.entries:
         ck = e.get("checkpoint")
         if ck and e.get("run_id"):
-            S.refuse_test_path(ck["name"])
+            S.refuse_test_path(ck["name"], x.run_dir(e["run_id"]))
             f = x.run_dir(e["run_id"]) / ck["name"]
             if not f.is_file() or S.sha256_bytes(f.read_bytes()) != ck["sha256"]:
                 errs.append(f"{e['slot']}: {e['run_id']}/{ck['name']} is missing or its sha256 fails (DL-110: STOP)")

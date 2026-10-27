@@ -231,18 +231,20 @@ def entry_file_rel(name: str) -> str:
     return f"{ENTRIES_DIR_REL}/{name}"
 
 
-def test_path_error(path) -> str | None:
+def test_path_error(path, base=None) -> str | None:
     """An input path containing "test" (any case): refused as given, before any filesystem call, then as resolved (a
-    link into a "test" location) -- the rule of src/training/kd_arms.py:130-136."""
+    link into a "test" location) -- the rule of src/training/kd_arms.py:130-136. A relative path read under `base`
+    (the records' root or folder, the runs root, a run directory) is resolved there, not in the working folder
+    (DL-24 #84, #113)."""
     if "test" in str(path).lower():
         return f"{path}: a path containing 'test' is refused (project rule 4)"
-    if "test" in os.path.realpath(path).lower():
+    if "test" in os.path.realpath(path if base is None else os.path.join(base, path)).lower():
         return f"{path}: a path resolving to a 'test' location is refused (project rule 4)"
     return None
 
 
-def refuse_test_path(path) -> None:
-    err = test_path_error(path)
+def refuse_test_path(path, base=None) -> None:
+    err = test_path_error(path, base)
     if err:
         raise TmanRefused("test_path", err)
 

@@ -203,8 +203,13 @@ class Records:
     def ref(self) -> str:
         return self.src.records_ref
 
+    def base(self, rel: str) -> Path:
+        """Where `rel` is read: the records folder for a record at the gate (RecordsSource), else the root."""
+        folder = getattr(self.src, "folder", None)
+        return folder if folder is not None and self.src.is_record(rel) else self.src.root
+
     def read(self, rel: str, *, missing: str = "record_uncommitted") -> bytes:
-        S.refuse_test_path(rel)
+        S.refuse_test_path(rel, self.base(rel))
         try:
             _, data = self.src.read(rel, missing=missing, uncommitted="record_uncommitted")
         except ss.SelectionRefused as e:
@@ -228,7 +233,7 @@ class Records:
         return self._dl
 
     def has(self, rel: str) -> bool:
-        S.refuse_test_path(rel)
+        S.refuse_test_path(rel, self.base(rel))
         return self.src.has(rel)
 
     def adding_commits(self, rel: str) -> list:
@@ -244,7 +249,7 @@ class Records:
         return ss._path_history(self.src, rel)
 
     def show(self, commit: str, rel: str) -> bytes | None:
-        S.refuse_test_path(rel)
+        S.refuse_test_path(rel, self.base(rel))
         return self.src.show(commit, rel)
 
     def commit_time(self, commit: str) -> int | None:
@@ -255,7 +260,7 @@ class Records:
     def held_by(self, rel: str, until: int) -> set:
         """The sha256 of each content `rel` held in a commit of the records' history whose committer time meets
         `until` (sweep_select.meets): what was committed by then (decision (xvi): results known at that time)."""
-        S.refuse_test_path(rel)
+        S.refuse_test_path(rel, self.base(rel))
         out = self.src._out("log", "--full-history", "--no-renames", "--format=%H %ct", self.ref, "--", rel)
         held = set()
         for c, t in (ln.split() for ln in (out or "").splitlines() if len(ln.split()) == 2):

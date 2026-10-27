@@ -81,6 +81,34 @@ class Tracer:
         return False
 
 
+class Resolving:
+    """os.path.realpath sends `target` alone to a location whose name holds "test" in no "test" component (so
+    sweep_select's own component rule passes it); restored on exit."""
+
+    HIT = f"/{MARKER}/resolved/la" + "test/target"
+
+    def __init__(self, target):
+        self.target, self.saved = os.fspath(target), None
+
+    def __enter__(self):
+        self.saved = saved = os.path.realpath
+        os.path.realpath = lambda q, *a, **kw: self.HIT if os.fspath(q) == self.target else saved(q, *a, **kw)
+        return self
+
+    def __exit__(self, *exc):
+        os.path.realpath = self.saved
+        return False
+
+
+def refused_where_read(target, fn, *a, **kw):
+    """The code `fn` raises while `target` resolves into a "test" location (a crash: its type name)."""
+    with Resolving(target):
+        try:
+            return FX.refused_code(fn, *a, **kw)
+        except Exception as e:  # noqa: BLE001 -- a crash fails the check by name
+            return type(e).__name__
+
+
 def case_created_names():
     from src.tman import schema as S
     cat = S.load_catalogue((REPO / S.CATALOGUE_REL).read_bytes())
@@ -133,6 +161,95 @@ def case_test_paths_refused_before_any_call():
 LISTING_CALLS = ("walk", "glob", "rglob", "listdir", "scandir", "iterdir")
 WRITE_CALLS = ("write_bytes", "write_text", "mkdir", "makedirs", "unlink", "rmdir", "rename", "remove", "rmtree",
                "touch", "symlink_to", "copyfile", "copytree", "move", "chmod")
+
+
+def case_cli_test_named_arguments():
+    """Every path argument holding "test" is refused before any call on any path given (DL-24 #7, #10): --root for
+    each command, --runs for each command that takes it, and each other path argument once."""
+    plain, bad = f"/{MARKER}/plain", f"/{MARKER}/te" + "st_x"
+    cmds = {"build": ["build", "--sources", f"{plain}/s.json", "--out", f"{plain}/out"],
+            "validate": ["validate", "--manifest", f"{plain}/m.json", "--mode", "draft"],
+            "entry": ["entry", "not_made", "--slot", "E7-E2:s42:list42", "--date", "2026-11-03", "--fields",
+                      f"{plain}/f.json", "--amendment", "AM-23", "--summary", "s", "--out", f"{plain}/out"],
+            "arithmetic": ["arithmetic", "--slot", "E2:s43:lambda0.5:80k"],
+            "append": ["append", "--manifest", f"{plain}/m.json", "--slot", "E4:s42:list43", "--hashed",
+                       f"{plain}/h.json", "--out", f"{plain}/out"],
+            "isolation-record": ["isolation-record", "--data-root", f"{plain}/data", "--out", f"{plain}/out"],
+            "inventory": ["inventory", "--manifest", f"{plain}/m.json", "--out", f"{plain}/out"]}
+
+    def with_arg(argv: list, flag: str, value: str) -> list:
+        i = argv.index(flag) if flag in argv else None
+        return argv + [flag, value] if i is None else argv[:i + 1] + [value] + argv[i + 2:]
+    runs = [(f"cli_{c.replace('-', '_')}_root_holding_test_B7", ["--root", bad] + argv) for c, argv in cmds.items()]
+    runs += [(f"cli_{c}_runs_holding_test_B10", ["--root", plain] + with_arg(cmds[c], "--runs", bad))
+             for c in ("build", "validate", "entry", "arithmetic", "append", "inventory")]
+    runs += [(f"cli_{c}_{flag[2:].replace('-', '_')}_holding_test", ["--root", plain] + with_arg(cmds[c], flag, bad))
+             for c, flag in (("build", "--sources"), ("build", "--registered-cells"), ("validate", "--freeze-record"),
+                             ("validate", "--unlock-entry"), ("validate", "--records"), ("entry", "--fields"),
+                             ("arithmetic", "--reference-telemetry"), ("arithmetic", "--reference-smoke"),
+                             ("append", "--hashed"), ("append", "--ptq-record"))]
+    for name, argv in runs:
+        with Tracer(MARKER) as t:
+            rc, txt = _cli(argv)
+        check(name, rc == 2 and "REFUSED [test_path]" in txt and not t.calls,
+              f"{rc} {txt.strip()[-120:]} {t.calls[:2]}")
+    with Resolving(plain), Tracer(MARKER) as t:
+        rc, txt = _cli(["--root", plain] + cmds["validate"])
+    check("cli_root_resolving_to_a_test_location_B7", rc == 2 and "REFUSED [test_path]" in txt and not t.calls,
+          f"{rc} {txt.strip()[-120:]} {t.calls[:2]}")
+    check("marker_never_created_by_the_command_line", not os.path.lexists(f"/{MARKER}"))
+
+
+def case_paths_resolved_where_read():
+    """A relative part is resolved under the folder it is read from -- the records' root or folder, the runs root,
+    a run directory -- not in the working folder (DL-24 #84, #113): os.path.realpath sends that one joined path to a
+    "test" location, and each reader refuses it before any call on it."""
+    import scripts.smoke_tman_pins as PINS
+    import scripts.smoke_tman_validate as VW
+    import scripts.tday_manifest as CLI
+    from src.tman import completion as C
+    from src.tman import manifest as M
+    from src.tman import records as R
+    from src.tman import schedule as D
+    from src.tman import validate as V
+    w = VW.World()
+    try:
+        rel = w.cut_refs["ARM:latency"]["path"]
+        check("record_read_resolved_under_its_root_B113",
+              refused_where_read(w.records.src.root / rel, w.records.read, rel) == "test_path")
+        rs = R.Records.at_records_commit(FX.scratch_dir("tmanrecf"), FX.git(w.repo, "rev-parse", "HEAD"), root=w.repo)
+        check("record_read_resolved_under_the_records_folder_B84",
+              refused_where_read(rs.src.folder / rel, rs.read, rel) == "test_path")
+        ctx = w.ctx("freeze")
+        V.validate(ctx)
+        e = next(x for x in ctx.entries if x.get("checkpoint") and x.get("run_id"))
+        check("run_dir_resolved_under_the_runs_root_B84",
+              refused_where_read(ctx.runs_root / e["run_id"], ctx.run_dir, e["run_id"]) == "test_path")
+        check("checkpoint_name_resolved_under_its_run_directory_B84", refused_where_read(
+            ctx.runs_root / e["run_id"] / e["checkpoint"]["name"], V.g_checkpoint_missing, ctx) == "test_path")
+        g = w.sources["entries"]["E1:s42:80k"]
+        check("builder_run_id_resolved_under_the_runs_root_B84", refused_where_read(
+            w.runs / g["run_id"], M.build_entries, w.cat, w.sources["entries"], runs_root=w.runs) == "test_path")
+        e1 = next(x for x in w.doc["body"]["entries"] if x["slot"] == "E1:s42:80k")
+        name = M.telemetry_name(w.cat.slots["E1:s42:80k"])
+        check("inventory_telemetry_resolved_under_the_runs_root_B84", refused_where_read(
+            w.runs / e1["attempts"][0]["run_id"] / name, M.build_inventory, w.doc, w.data, w.records, w.cat,
+            runs_root=w.runs, registered=PINS.IF6_CELLS) == "test_path")
+        first = sorted(q.name for q in w.runs.iterdir())[0]
+        check("run_index_name_resolved_under_the_runs_root_B84",
+              refused_where_read(w.runs / first, C.RunIndex, w.cat, None, w.runs) == "test_path")
+        idx = C.RunIndex(w.cat, None, w.runs)
+        rid = e1["attempts"][0]["run_id"]
+        check("run_index_state_resolved_under_the_runs_root_B84",
+              refused_where_read(w.runs / rid, idx.state, rid) == "test_path")
+        freeze = D.freeze_instant(D.schedule_block(w.records.src))
+        check("printer_run_ids_resolved_under_the_runs_root_B10", refused_where_read(
+            w.runs / "g_s42_80k_a9", CLI.printer_cut_context, w.records, w.cat, freeze, {"run_ids": ["g_s42_80k_a9"]},
+            w.runs) == "test_path")
+    finally:
+        if VW.REAL_TEACHER is not None:
+            w.M.TEACHER_OF_RECORD.clear()
+            w.M.TEACHER_OF_RECORD.update(VW.REAL_TEACHER)
 
 
 def lane_python() -> dict:
@@ -268,6 +385,23 @@ def post_freeze_ptq_append(w, out: Path, base: list) -> None:
     (rc, txt), folder = got[1]
     check("cli_post_freeze_ptq_append_without_its_record_refused_A2", rc == 2 and "ptq_record_invalid" in txt
           and not (folder / "tday_manifest.json").exists(), txt.strip()[-200:])
+    import contextlib
+    saved = R.ptq_record_reader
+    try:
+        R.ptq_record_reader = lambda: w.reader()
+        for n, extra in ((3, ["--ptq-record", "E4_s43_list42/absent_ptq_record.json"]), (4, ["--ptq-record", rel])):
+            folder = out / f"post{n}"
+            folder.mkdir()
+            with Resolving(os.path.join(str(w.runs), rel)) if n == 4 else contextlib.nullcontext():
+                got.append((_cli(argv + ["--out", str(folder)] + extra), folder))
+    finally:
+        R.ptq_record_reader = saved
+    (rc, txt), folder = got[2]
+    check("cli_append_ptq_record_absent_refused_B10", rc == 2 and "REFUSED [ptq_record_invalid]" in txt
+          and not any(folder.iterdir()), txt.strip()[-200:])
+    (rc, txt), folder = got[3]
+    check("cli_append_ptq_record_resolved_under_runs_B10", rc == 2 and "REFUSED [test_path]" in txt
+          and not any(folder.iterdir()), txt.strip()[-200:])
 
 
 def cli_append_times(w, out: Path, base: list, iso: dict) -> None:
@@ -449,6 +583,15 @@ def case_cli_outputs():
         with Tracer(MARKER) as t:
             code = FX.refused_code(V.validate, w.ctx("freeze", runs_root=f"/{MARKER}/te" + "st_runs"))
         check("validator_runs_root_test_path_refused_before_any_call", code == "test_path" and not t.calls)
+        from src.tman import records as R
+        for name, ctx in (("validator_root_holding_test_refused_before_any_call_B7",
+                           w.ctx("draft", repo_root=f"/{MARKER}/te" + "st_root")),
+                          ("validator_records_folder_holding_test_refused_before_any_call_B84",
+                           w.ctx("draft", records=R.Records.at_records_commit(
+                               f"/{MARKER}/te" + "st_records", FX.git(w.repo, "rev-parse", "HEAD"), root=w.repo)))):
+            with Tracer(MARKER) as t:
+                code = FX.refused_code(V.validate, ctx)
+            check(name, code == "test_path" and not t.calls, f"{code} {t.calls[:2]}")
         cli_append_history(w, out, base, dirs["append"] / "tday_manifest.json")       # last: it commits an append
         check("the_scratch_repository_is_unchanged", FX.git(w.repo, "status", "--porcelain",
                                                              "--untracked-files=all") == status0 == "")
@@ -461,5 +604,6 @@ def case_cli_outputs():
 if __name__ == "__main__":
     raise SystemExit(FX.run_cases("TMAN PATHS SMOKE (lane TMAN, B-1) -- names, 'test' refusals, file access, outputs",
                                   (case_created_names, case_test_paths_refused_before_any_call,
+                                   case_cli_test_named_arguments, case_paths_resolved_where_read,
                                    case_static_file_access, case_evaluator_closure_never_reads_a_test_named_module,
                                    case_cli_outputs)))
