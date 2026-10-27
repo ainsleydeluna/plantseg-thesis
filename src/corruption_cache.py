@@ -162,8 +162,9 @@ VALIDATION_EVIDENCE = {
         "check": "scripts/smoke_corruption_vendor.py",
         "result": "PASS (102/102)",
         "reference_equivalence": "56/56 byte-identical, zero tolerance (5 corruptions x their "
-                                 "severities (1-5; gaussian_noise 1-4) x {64x64, 40x72} + 4 "
-                                 "non-noise x severity 5 x {512x512, 512x384})",
+                                 "severities (1-5; gaussian_noise 1-4) x {64x64, 72x40} + 4 "
+                                 "non-noise x severity 5 x {512x512, 512x384}; sizes are "
+                                 "width x height)",
         "upstream_sdist_sha256": "044e173f24d5934899bdbf3596bfbec917e8083e507eed583ab217abebbe084d",
         "commit": "0859d3e2356c392fc672805a2d8d821897a4060a",
         "run_utc": "2026-10-26T15:53:57Z",
