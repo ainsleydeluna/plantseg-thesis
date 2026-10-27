@@ -6,6 +6,9 @@ PRECISIONS, FQOFF_STAGES and its request rule), the binding (src/eval/stage_arti
 validate_qat_fakequant_off_source, and resolve_evaluation_source's route to it), the loader
 (src/eval/model_loading.py load_qat_fakequant_off_student) and the FP32 reference (fp32_reference_from_qat_state).
 Every refusal code of the binding and the loader (FQR12's 6-22) is reached with every earlier gate passing.
+Phase 2 (FQR11, FQR13 and LEFF B-1b's flags): scripts/evaluate_model.py's path for the precision, its CLI rules
+(FQR12's 1-5), the run end to end on a synthetic VAL split (make_tree, through scripts/synthetic_qat_fixtures.py),
+the summary's fields, the order of the refusals around the dataset adapter, and the modules a run loads (T-FQ8).
 
 The QAT runs are real runs of the trainers in mode "smoke" on Q2's colour task (scripts/synthetic_qat_fixtures.py):
 E5 and AM-23's E6-E2 through src/quant/qat.py run_qat (make_qat_run), E6-KD through src/quant/qat_kd.py run_qat_kd
@@ -17,7 +20,8 @@ of record under the committed rules file of the stage. A refusal case edits copi
 epoch_end row's sha256, the telemetry's and the selection's, and their pins) wherever an earlier gate would
 otherwise refuse first.
 
-Sections (phase 1): stages, binding, loader, parity, finder, never_selects, hygiene.
+Sections: stages, binding, loader, parity, finder, never_selects (phase 1); cli, run, summary, order, imports
+(phase 2); hygiene.
 
 No PlantSeg data, no checkpoint of record, no GPU; every file in a temp directory outside the repository. No check
 name, case name, code, file or folder holds the token SL-1 forbids, and no path is derived from a check name; the
@@ -50,16 +54,19 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
 from scripts.synthetic_ptq_fixtures import repo_state, state_verdict  # noqa: E402
-from scripts.synthetic_qat_fixtures import (color_task, confident_student, make_qat_run, safe_tmpdir,  # noqa: E402
-                                            task_loaders)
+from scripts.synthetic_qat_fixtures import (color_task, confident_student, make_qat_run, make_tree,  # noqa: E402
+                                            safe_tmpdir, task_loaders)
 
 TMP = safe_tmpdir("smoke_fqoff_")
 os.environ["PLANTSEG_IMAGE_DIGEST"] = "sha256:" + "5" * 64       # the runs record a non-null digest
+DATA = TMP / "data"                                             # the run section's synthetic VAL split
+os.environ["PLANTSEG_DATA_ROOT"] = str(DATA)                    # before configs/data.py is imported
 
 import numpy as np  # noqa: E402
 import torch  # noqa: E402
 import torch.nn as nn  # noqa: E402
 
+import scripts.evaluate_model as EM  # noqa: E402
 import scripts.select_qat_epoch as SE  # noqa: E402
 from src.eval import artifacts as ART  # noqa: E402
 from src.eval import model_loading as ML  # noqa: E402
@@ -72,7 +79,8 @@ from src.quant import qat_select as S  # noqa: E402
 
 results: list[tuple[str, bool, str]] = []
 CASES: list[tuple[str, str, object]] = []          # (name, section, fn): each case reports one check, of its name
-SECTIONS = ("stages", "binding", "loader", "parity", "finder", "never_selects", "hygiene")
+SECTIONS = ("stages", "binding", "loader", "parity", "finder", "never_selects", "cli", "run", "summary", "order",
+            "imports", "hygiene")
 OPTS: dict = {"cache": None, "before": None}
 FQOFF = "qat_fakequant_off"
 CARRIER_KEYS = {"spec", "checkpoint_path", "checkpoint_sha256", "epoch", "run_id", "selection_sha256",
@@ -84,6 +92,10 @@ PHASE1_CODES = ("fqoff_forbidden_path", "fqoff_selection_sha256_mismatch", "fqof
                 "fqoff_checkpoint_missing", "fqoff_checkpoint_sha256_mismatch", "fqoff_not_qat_train_state",
                 "fqoff_checkpoint_identity", "fqoff_state_not_finite", "fqoff_load_not_exact",
                 "fqoff_fake_quant_enabled")
+# FQR12's codes 1-5, the CLI's (scripts/evaluate_model.py, phase 2); with phase 1's, all 22 in FQR12's order
+PHASE2_CODES = ("fqoff_stage_not_in_scope", "fqoff_provenance_forbidden", "fqoff_source_flags", "fqoff_not_cpu",
+                "fqoff_protocol")
+ALL_CODES = PHASE2_CODES + PHASE1_CODES
 # FQR14: the parity tolerance, pinned once from the first measurement: the smallest of 1e-6, 1e-5, 1e-4 and 1e-3 at
 # least four times the measured maximum |logit difference| (8.583e-06 on lane/fqoff's first run, four times that
 # 3.43e-05); docs/lane_reports/fqoff.md gives both values
@@ -1176,8 +1188,8 @@ def finder_finds_phase1_sites():
     codes = [s["code"] for s in sites]
     first = sorted(set(codes), key=codes.index)
     keys = {(s["rel"], s["func"], s["code"], s["k"]) for s in sites}
-    ok = (set(codes) == set(PHASE1_CODES) and all(s["literal"] for s in sites) and len(sites) == raw
-          and first == list(PHASE1_CODES) and keys == set(MH.KILLS))
+    ok = (set(codes) == set(ALL_CODES) and all(s["literal"] for s in sites) and len(sites) == raw
+          and first == list(ALL_CODES) and keys == set(MH.KILLS))
     return ok, f"{len(sites)} sites of {len(set(codes))} codes; {raw} raise forms in the files"
 
 
@@ -1210,6 +1222,509 @@ def never_selects_selection_refuses_fqoff_summary():
     s["run"].update(precision=FQOFF, quant_backend=None)
     bad = S._check_summary(s, stage="E5", ev=ev, smoke=False)
     return any(x.startswith("run.precision") for x in bad), str(bad)
+
+
+# ================================================================ cli (phase 2: FQR11, FQR12 codes 1-5, FQR13)
+CLI = TMP / "cli"                       # never created: validate_cli_args is pure and opens nothing
+CONFIRM = f"confirm_{TOKEN}_split"       # the confirm flag's argparse name, the token never written
+
+
+def cli_base(**kw) -> dict:
+    """An fqoff run's arguments, every flag valid, `kw` replacing (None drops a flag)."""
+    d = {"stage": "E5", "precision": FQOFF, "split": "val", "out_dir": str(TMP / "out_cli"),
+         "checkpoint": str(CLI / "e07.pt"), "qat_run_dir": str(CLI / "run"),
+         "qat_selection": str(CLI / "eval" / "qat_selection.json"), "qat_selection_sha256": "1" * 64,
+         "qat_telemetry_sha256": "2" * 64, "artifact_status": "provisional", "device": "cpu", "batch_size": 1}
+    d.update(kw)
+    return d
+
+
+def argv_of(d: dict) -> list[str]:
+    argv = []
+    for k, v in d.items():
+        if v is True:
+            argv.append(f"--{k.replace('_', '-')}")
+        elif v not in (None, False):
+            argv += [f"--{k.replace('_', '-')}", str(v)]
+    return argv
+
+
+def em_args(d: dict):
+    return EM.build_parser().parse_args(argv_of(d))
+
+
+def cli_code_of(err: Exception) -> str:
+    m = re.match(r"\[(\w+)\]", str(err))
+    return m.group(1) if m else "uncoded"
+
+
+def cli_code(args) -> tuple[str | None, str]:
+    """validate_cli_args' refusal code ("[code] ..."), "uncoded" for a refusal without one, None when accepted."""
+    try:
+        EM.validate_cli_args(args)
+    except EM.CliError as e:
+        return cli_code_of(e), str(e)
+    return None, "accepted"
+
+
+def cli_refused(code: str, **kw) -> tuple[bool, str]:
+    got, msg = cli_code(em_args(cli_base(**kw)))
+    return got == code, f"{got}: {msg[:200]}"
+
+
+@case("cli")
+def cli_precision_and_flags():
+    """The precision is a --precision choice and a supported precision, never an INT8 one; the four binding flags
+    default to None; an fqoff run's arguments pass validate_cli_args."""
+    plain = EM.build_parser().parse_args(["--out-dir", str(TMP / "out_cli")])
+    ok = (FQOFF in EM.SUPPORTED_PRECISIONS and FQOFF not in EM.INT8_PRECISIONS
+          and all(getattr(plain, n) is None for n in EM.QAT_FLAGS) and cli_code(em_args(cli_base()))[0] is None)
+    return ok, f"SUPPORTED_PRECISIONS {EM.SUPPORTED_PRECISIONS}; flags {EM.QAT_FLAGS}"
+
+
+# ---- 1 fqoff_stage_not_in_scope
+@case("cli")
+def c01_stage_not_in_scope():
+    oks = [cli_refused("fqoff_stage_not_in_scope", stage=s) for s in ("E1", "E4", "E6-R1", "E6-R2", "E7")]
+    return all(ok for ok, _ in oks), oks[2][1]
+
+
+@case("cli")
+def c01_role_not_student():
+    return cli_refused("fqoff_stage_not_in_scope", model_role="teacher")
+
+
+# ---- 2 fqoff_provenance_forbidden
+@case("cli")
+def c02_provenance_forbidden():
+    return cli_refused("fqoff_provenance_forbidden", provenance=str(CLI / "prov.json"))
+
+
+# ---- 3 fqoff_source_flags
+@case("cli")
+def c03_qat_flag_off_precision():
+    """For every other precision a --qat-* flag is refused: an fp32 checkpoint run, an INT8 provenance run."""
+    fp32 = cli_base(stage="E1", precision="fp32", qat_selection=None, qat_selection_sha256=None,
+                    qat_telemetry_sha256=None)
+    int8 = cli_base(precision="int8_qat", checkpoint=None, provenance=str(CLI / "prov.json"), qat_run_dir=None,
+                    qat_selection_sha256=None, qat_telemetry_sha256=None)
+    a, b = cli_code(em_args(fp32)), cli_code(em_args(int8))
+    return a[0] == b[0] == "fqoff_source_flags", f"{a[1][:100]}; {b[1][:100]}"
+
+
+@case("cli")
+def c03_checkpoint_missing():
+    return cli_refused("fqoff_source_flags", checkpoint=None)
+
+
+@case("cli")
+def c03_binding_flag_missing():
+    oks = [cli_refused("fqoff_source_flags", **{n: None}) for n in EM.QAT_FLAGS]
+    return all(ok for ok, _ in oks), "; ".join(d[:60] for _ok, d in oks)
+
+
+@case("cli")
+def c03_random_init():
+    return cli_refused("fqoff_source_flags", random_init=True)
+
+
+@case("cli")
+def c03_sha256_malformed():
+    oks = [cli_refused("fqoff_source_flags", **{n: v}) for n in ("qat_selection_sha256", "qat_telemetry_sha256")
+           for v in ("A" * 64, "1" * 63)]
+    return all(ok for ok, _ in oks), oks[0][1]
+
+
+# ---- 4 fqoff_not_cpu and 5 fqoff_protocol
+@case("cli")
+def c04_not_cpu():
+    return cli_refused("fqoff_not_cpu", device="cuda")
+
+
+@case("cli")
+def c05_protocol_upstream():
+    return cli_refused("fqoff_protocol", protocol="upstream")
+
+
+@case("cli")
+def cli_guards_of_record_kept():
+    """The split of record (the token, never a path here) keeps its guards for this precision, the confirm flag and
+    the cap among them, and LEFF B-1b's rules under R (official): H and T required; with both the arguments pass.
+    validate_cli_args is pure: nothing is opened."""
+    r = dict(split=TOKEN, artifact_status="official")
+    no_confirm = cli_code(em_args(cli_base(**r)))
+    no_h = cli_code(em_args(cli_base(**r, **{CONFIRM: True})))
+    no_t = cli_code(em_args(cli_base(**r, **{CONFIRM: True}, expected_checkpoint_sha256="3" * 64)))
+    full = dict(r, **{CONFIRM: True}, expected_checkpoint_sha256="3" * 64, threads=2)
+    ok_r, capped = cli_code(em_args(cli_base(**full))), cli_code(em_args(cli_base(**full, max_samples=4)))
+    ok = (no_confirm[0] == "uncoded" and "--confirm-" in no_confirm[1]
+          and no_h[0] == "expected_checkpoint_sha256_required" and no_t[0] == "threads_required"
+          and ok_r[0] is None and capped[0] == "uncoded" and "sample cap" in capped[1])
+    return ok, f"{no_confirm[0]}, {no_h[0]}, {no_t[0]}, {ok_r[0]}, {capped[0]}"
+
+
+@case("cli")
+def cli_h2_refused():
+    """LEFF B-1b's own refusal of --expected-converted-sha256 off INT8 stands for this precision, unchanged."""
+    return cli_refused("expected_converted_sha256_not_int8", expected_converted_sha256="4" * 64)
+
+
+@case("cli")
+def cli_callers_without_the_flags():
+    """An args object without the four attributes (a caller that predates them) validates as before."""
+    a = EM.build_parser().parse_args(["--stage", "E1", "--checkpoint", str(CLI / "e1.pt"), "--out-dir",
+                                      str(TMP / "out_cli")])
+    for n in EM.QAT_FLAGS:
+        delattr(a, n)
+    got = cli_code(a)
+    return got[0] is None, got[1][:120]
+
+
+# ================================================================ run (phase 2: end to end, FQR11)
+@functools.lru_cache(maxsize=None)
+def val_tree() -> dict:
+    """The synthetic VAL split under PLANTSEG_DATA_ROOT (set before configs/data.py is imported): all 846 stems, so
+    the evaluator's cap picks its rows as it always does; no TRAIN and no TEST folder."""
+    return make_tree(DATA, n_train=0, n_val=846, seed=5)
+
+
+@contextlib.contextmanager
+def writer_without_git():
+    """The artifact writer's whole-repository git calls stubbed, as scripts/synthetic_qat_fixtures.py's evaluator
+    driver stubs them: a cloud lane never lists the whole repository."""
+    with patched(ART, "git_porcelain_bytes", lambda repo: b""), patched(ART, "git_commit", lambda repo: "0" * 40):
+        yield
+
+
+def run_args(b: Bound, tag: str, **kw):
+    d = cli_base(stage=b.stage, out_dir=str(TMP / "runs" / tag), checkpoint=str(b.ck), qat_run_dir=str(b.run),
+                 qat_selection=str(b.sel), qat_selection_sha256=b.sel_sha, qat_telemetry_sha256=b.tel_sha,
+                 max_samples=4, run_id=f"fqoff_{tag}")
+    d.update(kw)
+    return em_args(d)
+
+
+def em_run(args) -> tuple[object, str, object]:
+    """run() with counters, stdout captured, the writer's git calls stubbed and torch's thread count restored.
+    Returns (the artifact directory, or the exception raised; stdout; the counters)."""
+    val_tree()
+    c = EM.Counters(dataset=[], model=[])
+    buf = io.StringIO()
+    threads = torch.get_num_threads()
+    try:
+        with writer_without_git(), contextlib.redirect_stdout(buf):
+            out = EM.run(args, counters=c)
+    except Exception as e:                                # noqa: BLE001 -- the case reads it
+        out = e
+    finally:
+        torch.set_num_threads(threads)
+    return out, buf.getvalue(), c
+
+
+def run_code(out) -> str | None:
+    """The refusal code of a run's exception, None for an artifact directory."""
+    if isinstance(out, (SA.StageArtifactError, EvalRuntimeError)):
+        return out.code
+    if isinstance(out, EM.CliError):
+        return cli_code_of(out)
+    return None if isinstance(out, Path) else f"{type(out).__name__}: {str(out)[:160]}"
+
+
+def summary_of(out) -> dict:
+    return json.loads((out / "summary.json").read_text(encoding="utf-8")) if isinstance(out, Path) else {}
+
+
+@functools.lru_cache(maxsize=None)
+def e2e(raw: str = "run_e5", tag: str = "e5") -> tuple:
+    b = bound(raw)
+    out, stdout, c = em_run(run_args(b, tag))
+    return b, out, stdout, c, summary_of(out)
+
+
+@case("run")
+def run_e5_end_to_end():
+    """E5's selected epoch scored end to end on the synthetic VAL rows: an artifact, the adapter and the model built
+    after validation."""
+    _b, out, _stdout, c, summ = e2e()
+    ok = isinstance(out, Path) and bool(summ) and c.dataset and c.model
+    return bool(ok), str(out) if isinstance(out, Path) else str(run_code(out))
+
+
+@case("run")
+def run_binding_line():
+    """One stdout line after validation names the binding (FQR11)."""
+    b, _out, stdout, _c, _summ = e2e()
+    run_id = json.loads(b.sel.read_text(encoding="utf-8"))["run_id"]
+    want = (f"fqoff binding: stage E5, run {run_id}, epoch {b.epoch:02d}, checkpoint {Q.sha256_file(b.ck)}, "
+            f"selection {b.sel_sha}, telemetry {b.tel_sha}, finalize absent")
+    return want in stdout.splitlines(), want[:150]
+
+
+@case("run")
+def run_loads_through_fqoff_loader():
+    """The load dispatch takes this precision before INT8's and FP32's: load_qat_fakequant_off_student once,
+    load_student_checkpoint never (FQ11)."""
+    b = bound("run_e5")
+    calls = {"fqoff": 0, "fp32": 0}
+    real_fq, real_fp = ML.load_qat_fakequant_off_student, ML.load_student_checkpoint
+
+    def fq(carrier):
+        calls["fqoff"] += 1
+        return real_fq(carrier)
+
+    def fp(*a, **k):
+        calls["fp32"] += 1
+        return real_fp(*a, **k)
+    with patched(ML, "load_qat_fakequant_off_student", fq), patched(ML, "load_student_checkpoint", fp):
+        out, _stdout, _c = em_run(run_args(b, "dispatch"))
+    return isinstance(out, Path) and calls == {"fqoff": 1, "fp32": 0}, f"{calls}; {run_code(out)}"
+
+
+@case("run")
+def run_finalize_line():
+    """With an agreeing finalize record beside the selection, the binding line names its sha256."""
+    b = forge(bound("run_e5"), "run_finalize", finalize=lambda doc, sha: finalize_record(doc, sha))
+    out, stdout, _c = em_run(run_args(b, "finalize"))
+    fin = Q.sha256_file(b.ev / SA.QAT_FINALIZE_NAME)
+    line = next((ln for ln in stdout.splitlines() if ln.startswith("fqoff binding:")), "")
+    return isinstance(out, Path) and line.endswith(f"finalize {fin}"), line[-90:] or str(run_code(out))
+
+
+@case("run")
+def run_e6kd_end_to_end():
+    """E6-KD's binding (its own rules file, no finalize record) scores end to end."""
+    _b, out, _stdout, _c, summ = e2e("run_e6kd", "e6kd")
+    run = summ.get("run", {})
+    ok = isinstance(out, Path) and run.get("stage") == "E6-KD" and run.get("precision") == FQOFF
+    return ok, f"{run.get('stage')} {run.get('precision')}" if summ else str(run_code(out))
+
+
+@case("run")
+def run_h_matching_accepted():
+    """--expected-checkpoint-sha256 equal to the eNN.pt's: P1 and P2 pass and the run scores."""
+    b = bound("run_e5")
+    out, _stdout, _c = em_run(run_args(b, "h_match", expected_checkpoint_sha256=Q.sha256_file(b.ck)))
+    return isinstance(out, Path), str(run_code(out))
+
+
+@case("run")
+def run_h_mismatch_refused_before_parse():
+    """H differing from the eNN.pt: LEFF B-1b's P1 refuses with its code, on the eNN.pt this precision's handed-file
+    case names, before the validator opens any binding file (FQ14a)."""
+    b = bound("run_e5")
+    with recording() as opened:
+        out, _stdout, c = em_run(run_args(b, "h_mismatch", expected_checkpoint_sha256="7" * 64))
+    binding = [p for p in fixture_opens(opened) if p in {str(b.sel), str(b.run / Q.TELEMETRY_NAME)}]
+    ok = run_code(out) == "expected_checkpoint_sha256_mismatch" and not binding and not c.dataset and not c.model
+    return ok, f"{run_code(out)}; binding files opened {binding}"
+
+
+@case("run")
+def run_h_changed_during_validation():
+    """The eNN.pt equal to H at P1 and replaced by the bound file before the validator hashes it: this precision's
+    P2 comparison (the carrier's sha256 against H) refuses with LEFF B-1b's code (FQ14b)."""
+    b = forge(bound("run_e5"), "h_swap")
+    true_bytes, other = b.ck.read_bytes(), other_epoch_bytes(b, 3)
+    swap = b.ck.with_name(b.ck.name + ".new")
+    swap.write_bytes(other)
+    os.replace(swap, b.ck)                               # the hard link is replaced; the raw run is never written
+    real = A.read_run_record
+
+    def restore_then_read(run_dir):
+        if b.ck.read_bytes() != true_bytes:
+            back = b.ck.with_name(b.ck.name + ".back")
+            back.write_bytes(true_bytes)
+            os.replace(back, b.ck)
+        return real(run_dir)
+    with patched(A, "read_run_record", restore_then_read):
+        out, _stdout, c = em_run(run_args(b, "h_swap", expected_checkpoint_sha256=Q.sha256_bytes(other)))
+    ok = run_code(out) == "source_changed_during_validation" and not c.dataset and not c.model
+    return ok, str(run_code(out))
+
+
+@case("run")
+def run_threads_recorded():
+    """LEFF B-1b's --threads holds for this precision, set right after validate_cli_args, before any source check:
+    the summary records it."""
+    b = bound("run_e5")
+    want = 3 if torch.get_num_threads() == 2 else 2
+    out, _stdout, _c = em_run(run_args(b, "threads", threads=want))
+    got = summary_of(out).get("run", {}).get("eval_runtime", {}).get("torch_num_threads")
+    return got == want, f"torch_num_threads {got}, --threads {want}; {run_code(out)}"
+
+
+# ================================================================ summary (phase 2: FQR3)
+@case("summary")
+def summary_precision_and_backend():
+    """run.precision qat_fakequant_off with run.quant_backend null (FQ8)."""
+    _b, _out, _stdout, _c, summ = e2e()
+    run = summ.get("run", {})
+    return run.get("precision") == FQOFF and "quant_backend" in run and run["quant_backend"] is None, \
+        f"{run.get('precision')}, {run.get('quant_backend')!r}"
+
+
+@case("summary")
+def summary_checkpoint_fields():
+    """run.checkpoint_path is the eNN.pt and run.checkpoint_sha256 its sha256; a trained student, never random."""
+    b, _out, _stdout, _c, summ = e2e()
+    run = summ.get("run", {})
+    ok = (run.get("checkpoint_path") == str(b.ck) and run.get("checkpoint_sha256") == Q.sha256_file(b.ck)
+          and run.get("random_init") is False and run.get("stage") == "E5" and run.get("model_role") == "student")
+    return ok, str(run.get("checkpoint_path"))
+
+
+@case("summary")
+def summary_runtime_record():
+    """CPU, no determinism policy, no checkpoint metadata (ckpt_info stays None), the cap's rows, canvas."""
+    _b, _out, _stdout, _c, summ = e2e()
+    rt, ds = summ.get("run", {}).get("eval_runtime", {}), summ.get("dataset", {})
+    ok = (rt.get("checkpoint_iteration") is None and rt.get("checkpoint_best_val_miou_all_class") is None
+          and rt.get("determinism_policy_applied") is False and str(rt.get("model_device")) == "cpu"
+          and ds.get("expected_rows") == ds.get("actual_rows") == 4
+          and ds.get("preprocess_protocol") == "core_preprocess/1.0.0")
+    keys = ("model_device", "determinism_policy_applied", "checkpoint_iteration", "torch_num_threads")
+    return ok, json.dumps({k: rt.get(k) for k in keys})
+
+
+@case("summary")
+def summary_config_sha256():
+    """config_sha256 hashes the request's config payload, precision included: the same request at int8_qat hashes
+    otherwise (FQR3)."""
+    import dataclasses
+    b = bound("run_e5")
+    seen = {}
+    real = ART.prepare_artifact_request
+
+    def capture(**kw):
+        seen["req"] = real(**kw)
+        return seen["req"]
+    with patched(ART, "prepare_artifact_request", capture):
+        out, _stdout, _c = em_run(run_args(b, "config"))
+    req = seen["req"]
+    other = dataclasses.replace(req, run=dataclasses.replace(req.run, precision="int8_qat"))
+    mine = Q.sha256_bytes(ART.canonical_json_bytes(ART.build_config_payload(req)))
+    theirs = Q.sha256_bytes(ART.canonical_json_bytes(ART.build_config_payload(other)))
+    got = summary_of(out).get("run", {}).get("config_sha256")
+    return got == mine and mine != theirs, f"config_sha256 {str(got)[:16]}..; at int8_qat {theirs[:16]}.."
+
+
+@case("summary")
+def summary_never_selected():
+    """A selection's summary check refuses this run's own summary (src/quant/qat_select.py _check_summary)."""
+    _b, _out, _stdout, _c, summ = e2e()
+    ev = S.load_rules(S.rules_path_for_stage("E5"))[0]["qat_epoch"]["evaluator"]
+    bad = S._check_summary(summ, stage="E5", ev=ev, smoke=False)
+    return any(x.startswith("run.precision") for x in bad), str(bad)[:200]
+
+
+# ================================================================ order (phase 2: FQR12's places)
+@case("order")
+def order_cli_refusals_construct_nothing():
+    """Codes 1-5 through run(): validate_cli_args refuses each before anything is constructed."""
+    kws = [dict(stage="E1"), dict(model_role="teacher"), dict(provenance=str(CLI / "prov.json")),
+           dict(checkpoint=None), dict(device="cuda"), dict(protocol="upstream")]
+    want = ["fqoff_stage_not_in_scope", "fqoff_stage_not_in_scope", "fqoff_provenance_forbidden",
+            "fqoff_source_flags", "fqoff_not_cpu", "fqoff_protocol"]
+    got = []
+    for kw in kws:
+        out, _stdout, c = em_run(em_args(cli_base(**kw)))
+        got.append((run_code(out), bool(c.dataset or c.model)))
+    return [g[0] for g in got] == want and not any(g[1] for g in got), str(got)
+
+
+def source_refusals() -> list[tuple[str, Bound, dict]]:
+    """One binding per source code (6-20) for run(): (code, the binding, run arguments replaced)."""
+    b = bound("run_e5")
+    other_ck = str(b.run / Q.EPOCH_DIR / "e03.pt")
+    return [
+        ("fqoff_forbidden_path", b, dict(checkpoint=str(never("nowhere_latest_run", "e07.pt")))),
+        ("fqoff_selection_sha256_mismatch", b, dict(qat_selection_sha256="8" * 64)),
+        ("fqoff_selection_not_of_record", forge(b, "o08", sel=sel_edit(rules_sha256="0" * 64)), {}),
+        ("fqoff_stage_mismatch", forge(b, "o09", sel=sel_edit(stage="E6")), {}),
+        ("fqoff_run_record", b, dict(qat_run_dir=str(never("run")))),
+        ("fqoff_run_incomplete", forge(b, "o11", rows=drop_last_epoch), {}),
+        ("fqoff_run_not_real", forge(b, "o12", rows=first_row(mode="smoke")), {}),
+        ("fqoff_telemetry_sha256_mismatch", b, dict(qat_telemetry_sha256="9" * 64)),
+        ("fqoff_finalize_disagrees", forge(b, "o14", finalize=lambda doc, sha: finalize_record(doc, sha,
+                                                                                               status="pending")), {}),
+        ("fqoff_not_the_winner", b, dict(checkpoint=other_ck)),
+        ("fqoff_checkpoint_missing", forge(b, "o16", skip_ck=True), {}),
+        ("fqoff_checkpoint_sha256_mismatch", forge(b, "o17", ck_bytes=other_epoch_bytes(b, 3), rebind_ck=False), {}),
+        ("fqoff_not_qat_train_state", forge(b, "o18", ck_bytes=torchscript_bytes()), {}),
+        ("fqoff_checkpoint_identity", forge(b, "o19", ck_bytes=payload_bytes(b, payload_edit(epoch=3))), {}),
+        ("fqoff_state_not_finite", forge(b, "o20", ck_bytes=payload_bytes(b, payload_edit(state_finite=False))), {}),
+    ]
+
+
+@case("order")
+def order_source_refusals_before_adapter():
+    """Codes 6-20 through run(): each refused in the source branch, before the dataset adapter or a model exists."""
+    got = []
+    for code, b, over in source_refusals():
+        out, _stdout, c = em_run(run_args(b, f"order_{code}", **over))
+        got.append((code, run_code(out), bool(c.dataset or c.model)))
+    bad = [g for g in got if g[0] != g[1] or g[2]]
+    return not bad and len(got) == 15, f"{len(got) - len(bad)}/{len(got)} refused before the adapter; {bad[:2]}"
+
+
+@case("order")
+def order_loader_refusal_after_adapter():
+    """Codes 21-22 are the loader's: after validate_artifact_request and the adapter, and no artifact is written."""
+    b = bound("run_e5")
+    fb = forge(b, "o21", ck_bytes=payload_bytes(b, state_edit(lambda s: s.pop(own_key(s, ".weight")))))
+    out, _stdout, c = em_run(run_args(fb, "order_loader"))
+    written = [os.path.join(d, n) for d, _dirs, files in os.walk(TMP / "runs" / "order_loader") for n in files
+               if n == "summary.json"]
+    ok = run_code(out) == "fqoff_load_not_exact" and bool(c.dataset) and bool(c.model) and not written
+    return ok, f"{run_code(out)}; adapter {bool(c.dataset)}, model {bool(c.model)}, written {len(written)}"
+
+
+# ================================================================ imports (phase 2: T-FQ8)
+IMPORTS_DRIVER = r'''"""One fqoff run of scripts/evaluate_model.py's main() in a fresh interpreter: the repository
+modules it loads.
+
+Its git calls stubbed as scripts/synthetic_qat_fixtures.py's evaluator driver stubs them. Prints one IMPORTS line.
+"""
+import json
+import os
+import sys
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.environ["SMOKE_REPO"])
+import scripts.evaluate_model as EM
+before = set(sys.modules)
+import src.eval.artifacts as artifacts
+artifacts.git_porcelain_bytes = lambda r: b""
+artifacts.git_commit = lambda r: "0" * 40
+rc = EM.main(sys.argv[1:])
+print("IMPORTS " + json.dumps(sorted(set(sys.modules) - before)))
+raise SystemExit(rc)
+'''
+IMPORTS_REQUIRED = {"src.quant.qat", "src.quant.qat_artifacts", "src.quant.qat_select", "src.quant.x86_latency",
+                    "src.quant.prepare"}
+
+
+@case("imports")
+def imports_fqoff_run_modules():
+    """The repository modules an fqoff run loads at run time: a sys.modules difference over one end-to-end run in a
+    fresh interpreter (the report's list for TMAN's evaluator file set, T-FQ8). src/quant's five are among them, and
+    no src.stats module is."""
+    import subprocess
+    b = bound("run_e5")
+    val_tree()
+    drv = TMP / "imports_driver.py"
+    drv.write_text(IMPORTS_DRIVER, encoding="utf-8")
+    d = cli_base(stage=b.stage, out_dir=str(TMP / "runs" / "imports"), checkpoint=str(b.ck), qat_run_dir=str(b.run),
+                 qat_selection=str(b.sel), qat_selection_sha256=b.sel_sha, qat_telemetry_sha256=b.tel_sha,
+                 max_samples=4, run_id="fqoff_imports")
+    env = {**os.environ, "SMOKE_REPO": str(REPO), "PYTHONDONTWRITEBYTECODE": "1"}
+    p = subprocess.run([sys.executable, "-B", str(drv), *argv_of(d)], capture_output=True, text=True, env=env,
+                       cwd=str(REPO), timeout=1800, stdin=subprocess.DEVNULL)
+    line = next((ln for ln in reversed(p.stdout.splitlines()) if ln.startswith("IMPORTS ")), None)
+    mods = json.loads(line[len("IMPORTS "):]) if line else []
+    repo_mods = sorted(m for m in mods if m.split(".")[0] in ("src", "scripts", "configs"))
+    ok = (p.returncode == 0 and IMPORTS_REQUIRED <= set(repo_mods)
+          and not any(m == "src.stats" or m.startswith("src.stats.") for m in mods))
+    return ok, (f"rc {p.returncode}; " + " ".join(repo_mods)) if line else f"rc {p.returncode}: {p.stderr[-200:]}"
 
 
 # ================================================================ hygiene
@@ -1256,7 +1771,8 @@ def main(argv=None) -> int:
     OPTS["before"] = repo_state(REPO)
     t0 = time.time()
     print("=" * 78)
-    print("L-FQOFF FAKE-QUANT-OFF SMOKE (phase 1) -- the binding, the loader, the FP32 reference, synthetic only")
+    print("L-FQOFF FAKE-QUANT-OFF SMOKE (phases 1 and 2) -- the binding, the loader, the FP32 reference, the CLI and "
+          "the run, synthetic only")
     print(f"temp: {TMP}" + (f" | cache: {OPTS['cache']}" if OPTS["cache"] else ""))
     print("=" * 78, flush=True)
     if OPTS["cache"] is not None:
