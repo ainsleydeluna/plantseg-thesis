@@ -540,6 +540,16 @@ def case_cli_outputs():
         rc, txt = _cli(entry)
         check("a_second_write_is_refused_and_the_first_kept", rc == 2 and "REFUSED [output_exists]" in txt
               and (dirs["entry"] / made["entry"][0]).read_bytes() == first if made["entry"] else False)
+        bogus = json.loads((out / "sources.json").read_bytes())
+        k0 = next(iter(bogus["entries"]))
+        bogus["entries"][k0] = dict(bogus["entries"][k0], kind="bogus_kind")
+        (out / "sources_bogus.json").write_bytes(S.json_file_bytes(bogus))
+        refused = out / "build_refused"
+        refused.mkdir()
+        rc, txt = _cli(base + ["build", "--sources", str(out / "sources_bogus.json"), "--out", str(refused), "--runs",
+                               str(w.runs), "--registered-cells", str(out / "cells.json")])
+        check("cli_build_refused_writes_nothing_B61", rc == 2 and "REFUSED [entry_kind_unknown]" in txt
+              and not any(refused.iterdir()), txt.strip()[-160:])
         built = (dirs["build"] / "tday_manifest.json").read_bytes()
         rc, txt = _cli(runs[0][1])
         check("a_second_build_is_refused_and_the_first_kept_B110", rc == 2 and "REFUSED [output_exists]" in txt

@@ -48,6 +48,14 @@ SESSION_SPEC = {"unlock_entry": S.REF, "clock_offset": S.REF, "started_utc": "ut
                 "host": ("obj", {"name": "str", "cpu_model": "str"}),            # the execution context's (DL-24 #37)
                 "values": ("map", "any"), "push_evidence": ("obj", {"response": S.REF, "list": S.REF})}
 SESSION_IDENTITY = ("unlock_entry", "clock_offset", "started_utc", "host", "push_evidence")
+# Each body block the gates do not compare whole, held to its exact keys (DL-24 #29, #78): a value only TEST files
+# can give has no place beside them. The values are the later gates' to check.
+BODY_SPECS = {"evaluator": ("obj", {"commit": "any", "files": "any"}),
+              "expected_rows": ("obj", {"value": "any", "cites": ("list", "str")}),
+              "generator_pins": ("obj", {"corrupted_cache": ("obj", {"pin": "any", "value": "any"}),
+                                         "image_hasher": ("obj", {"pin": "any", "value": "any"})}),
+              "lane_code": ("obj", {"commit": "?commit", "files_sha256": ("map", "sha256")}),
+              "trigger": S.nullable(("obj", {"path": "any", "sha256": "any", "triggered": "any"}))}
 PUSH_LIST_KEYS = ("format", "response", "unlock_entry", "adding_commit", "t_lo_utc", "remote", "pushes")   # TB11
 BINDING_REL = "reports/derived/tday_binding.json"
 
@@ -281,6 +289,9 @@ def g_manifest_format(x: Ctx):
             or not isinstance(d["appends"], list) or not (d["session"] is None or isinstance(d["session"], dict)) \
             or not isinstance(b["schedule"], dict) or not isinstance(b["evaluator"], dict):
         return f"the body holds {sorted(b) if isinstance(b, dict) else b!r}, not the blocks {list(S.BODY_BLOCKS)}"
+    errs = [err for k, spec in BODY_SPECS.items() for err in S.value_errors(b[k], spec, f"body.{k}")]
+    if errs:
+        return _err(errs)
     x.body = b
 
 
@@ -680,7 +691,7 @@ def g_generator_cells_mismatch(x: Ctx):
 
 
 def g_test_value_before_unlock(x: Ctx):
-    errs = M.test_value_errors(_pins(x))
+    errs = M.test_value_errors(_pins(x)) + M.body_value_errors(x.body)
     if x.doc["session"] is not None and x.mode != "session":
         errs.append("a session part exists before the session (M11)")
     return _err(errs)

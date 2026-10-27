@@ -585,6 +585,19 @@ def case_input_gates():
                 detail="with exactly the parts")
     expect_gate(w, "body_without_a_block", "manifest_format", doc=mutated(w, lambda d: d["body"].pop("trigger")),
                 detail="not the blocks")
+    for name, block, edit in (
+            ("evaluator_holding_a_dedup_list_B29", "evaluator",
+             lambda d: d["body"]["evaluator"].update(dedup_list_sha256="0" * 64)),
+            ("expected_rows_holding_counts_B29", "expected_rows",
+             lambda d: d["body"]["expected_rows"].update(counts_by_reason={"duplicate": 1})),
+            ("lane_code_holding_a_cells_sha256_B29", "lane_code",
+             lambda d: d["body"]["lane_code"].update(inferential_cells_sha256="0" * 64)),
+            ("trigger_holding_another_key_B29", "trigger", lambda d: d["body"]["trigger"].update(k=3)),
+            ("pin_block_holding_a_value_beside_its_pin_B78", "generator_pins",
+             lambda d: d["body"]["generator_pins"]["corrupted_cache"].update(canonical_manifest_sha256="0" * 64)),
+            ("generator_pins_holding_another_block_B78", "generator_pins",
+             lambda d: d["body"]["generator_pins"].update(cache_checksum={"pin": None, "value": None}))):
+        expect_gate(w, name, "manifest_format", doc=mutated(w, edit), detail=f"body.{block}")
     cat = w.repo / "configs/tday_catalogue.json"
     saved = cat.read_bytes()
     try:
@@ -716,6 +729,12 @@ def case_record_gates():
     expect_gate(w, "session_part_before_the_session", "test_value_before_unlock",
                 doc=mutated(w, lambda d: d.update(session={"started_utc": "2026-11-04T00:00:00Z"})),
                 detail="a session part exists")
+    expect_gate(w, "test_value_key_in_an_entry_B29", "test_value_before_unlock",
+                doc=mutated(w, lambda d: w.entry(d, "E4:s42:list43")["hashed"].update(counts_by_reason={"x": 1})),
+                detail="the body holds ['counts_by_reason']")
+    given = dict(w.sources["entries"], **{"teacher:s42:40K": w.sources["entries"]["teacher:s42:40k"]})
+    check("builder_refuses_a_sources_slot_outside_the_catalogue_B31", FX.refused_code(
+        w.M.build_manifest, w.records, w.cat, dict(w.sources, entries=given), runs_root=w.runs) == "slot_unknown")
     expect_gate(w, "trigger_record_other_sha256_B1", "record_uncommitted",
                 doc=mutated(w, lambda d: d["body"]["trigger"].update(sha256="0" * 64)), detail="am3_trigger.json")
     expect_gate(w, "trigger_format_unknown_without_a_reader_O8", "trigger_format_unknown", trigger_reader=None,

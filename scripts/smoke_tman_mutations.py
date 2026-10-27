@@ -748,6 +748,48 @@ M = [
     ("validator_records_folder_checked", VAL, [('getattr(x.records.src, "folder", None), ', "")],
      "paths", "case_cli_outputs", "validator_records_folder_holding_test_refused_before_any_call_B84", ["test_path"],
      None),
+    ("body_blocks_held_to_their_keys", VAL, [('    errs = [err for k, spec in BODY_SPECS.items() for err in '
+                                              'S.value_errors(b[k], spec, f"body.{k}")]', "    errs = []")],
+     "validate", "case_input_gates", "evaluator_holding_a_dedup_list_B29", ["manifest_format"], None),
+    ("body_spec_evaluator", VAL, [('BODY_SPECS = {"evaluator": ("obj", {"commit": "any", "files": "any"}),',
+                                   'BODY_SPECS = {"evaluator": "any",')],
+     "validate", "case_input_gates", "evaluator_holding_a_dedup_list_B29", ["manifest_format"], None),
+    ("body_spec_expected_rows", VAL, [('"expected_rows": ("obj", {"value": "any", "cites": ("list", "str")}),',
+                                       '"expected_rows": "any",')],
+     "validate", "case_input_gates", "expected_rows_holding_counts_B29", ["manifest_format"], None),
+    ("body_spec_pin_block", VAL, [('"corrupted_cache": ("obj", {"pin": "any", "value": "any"}),',
+                                   '"corrupted_cache": ("map", "any"),')],
+     "validate", "case_input_gates", "pin_block_holding_a_value_beside_its_pin_B78", ["manifest_format"], None),
+    ("body_spec_pin_blocks_named", VAL, [('"generator_pins": ("obj", {"corrupted_cache": ("obj", {"pin": "any", '
+                                          '"value": "any"}),\n                                         '
+                                          '"image_hasher": ("obj", {"pin": "any", "value": "any"})}),',
+                                          '"generator_pins": ("map", ("obj", {"pin": "any", "value": "any"})),')],
+     "validate", "case_input_gates", "generator_pins_holding_another_block_B78", ["manifest_format"], None),
+    ("body_spec_lane_code", VAL, [('"lane_code": ("obj", {"commit": "?commit", "files_sha256": ("map", "sha256")}),',
+                                   '"lane_code": "any",')],
+     "validate", "case_input_gates", "lane_code_holding_a_cells_sha256_B29", ["manifest_format"], None),
+    ("body_spec_trigger", VAL, [('"trigger": S.nullable(("obj", {"path": "any", "sha256": "any", '
+                                  '"triggered": "any"}))}', '"trigger": "any"}')],
+     "validate", "case_input_gates", "trigger_holding_another_key_B29", ["manifest_format"], None),
+    ("body_value_keys_scanned", MAN, [('found = sorted({k for name, block in body.items() if name != "generator_pins" '
+                                       "for k in _keys(block)}",
+                                       'found = sorted(set() and {k for name, block in body.items() if name != '
+                                       '"generator_pins" for k in _keys(block)}')],
+     "validate", "case_record_gates", "test_value_key_in_an_entry_B29", ["test_value_before_unlock"], None),
+    ("body_value_gate", VAL, [("errs = M.test_value_errors(_pins(x)) + M.body_value_errors(x.body)",
+                               "errs = M.test_value_errors(_pins(x))")],
+     "validate", "case_record_gates", "test_value_key_in_an_entry_B29", ["test_value_before_unlock"], None),
+    ("builder_sources_slots_known", MAN, [('    if unknown:\n        raise S.TmanRefused("slot_unknown", f"sources '
+                                           'entries', '    if False:\n        raise S.TmanRefused("slot_unknown", '
+                                           'f"sources entries')],
+     "validate", "case_record_gates", "builder_refuses_a_sources_slot_outside_the_catalogue_B31", ["slot_unknown"],
+     None),
+    ("build_validates_before_it_writes", CLI, [('    res = V.validate(V.Ctx(mode="draft", manifest_bytes=data, '
+                                                'manifest_path=str(folder / "tday_manifest.json"),',
+                                                '    write_new(folder, "tday_manifest.json", data)\n'
+                                                '    res = V.validate(V.Ctx(mode="draft", manifest_bytes=data, '
+                                                'manifest_path=str(folder / "tday_manifest.json"),')],
+     "paths", "case_cli_outputs", "cli_build_refused_writes_nothing_B61", ["entry_kind_unknown"], None),
     ("out_inside_the_repository", CLI, [("if p == repo or repo in p.parents:", "if p == repo:")],
      "paths", "case_cli_outputs", "out_in_the_repository_at_root_refused", ["output_location"], None),
     ("output_exists_code_of_the_cli", CLI, [('raise S.TmanRefused("output_exists", f"{out} exists: outputs are',

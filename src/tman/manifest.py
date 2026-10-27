@@ -645,6 +645,14 @@ def test_value_errors(generator_pins: dict) -> list[str]:
     return errs
 
 
+def body_value_errors(body: dict) -> list[str]:
+    """test_value_before_unlock beyond the pins (DL-24 #29): no other block of the body holds the key of a value
+    only TEST files can give (an entry's free-form block included)."""
+    found = sorted({k for name, block in body.items() if name != "generator_pins" for k in _keys(block)}
+                   & set(PIN_VALUES + HASHER_VALUES))
+    return [f"the body holds {found} before the unlock (M11)"] if found else []
+
+
 def cells_for(scopes, registered=None) -> list[str]:
     """The cell ids a model's corrupted scopes ask for, in registered order: the inferential severities for
     corrupted, the others for corrupted_sev45 (IF§6; IF§8 `cells`)."""
@@ -825,6 +833,10 @@ def build_manifest(records: R.Records, cat, sources: dict, *, runs_root=None) ->
     errs = S.field_errors(sources, SOURCES_SPEC, "sources")
     if errs:
         raise S.TmanRefused("manifest_format", "; ".join(errs[:4]))
+    unknown = sorted(k for k in sources["entries"] if k not in cat.slots)
+    if unknown:
+        raise S.TmanRefused("slot_unknown", f"sources entries {unknown} are not catalogue slots: none is dropped "
+                                            "(DL-24 #31)")
     src = records.src
     fe = sources["freeze_entries"]
     delays = [entry_ref(records, fe["delay"])] if fe["delay"] else []

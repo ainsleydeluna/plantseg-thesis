@@ -101,10 +101,11 @@ def cmd_build(args) -> int:
     sources = read_json(args.sources, "manifest_format")
     doc = M.build_manifest(records, cat, sources, runs_root=args.runs)
     data = S.json_file_bytes(doc)
-    out = write_new(out_folder(args.out, args.root), "tday_manifest.json", data)
+    folder = out_folder(args.out, args.root)
+    res = V.validate(V.Ctx(mode="draft", manifest_bytes=data, manifest_path=str(folder / "tday_manifest.json"),
+                           records=records, registered_cells=registered(args)))       # a refusal writes nothing (#61)
+    out = write_new(folder, "tday_manifest.json", data)
     print(f"WROTE {out} sha256 {S.sha256_bytes(data)} body_sha256 {S.canonical_sha256(doc['body'])}")
-    res = V.validate(V.Ctx(mode="draft", manifest_bytes=data, manifest_path=str(out), records=records,
-                           registered_cells=registered(args)))
     return print_result(res)
 
 
