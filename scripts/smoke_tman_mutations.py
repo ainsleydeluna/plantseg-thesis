@@ -878,6 +878,31 @@ M = [
                                                 '"source_checkpoint_sha256") != pck:', "            if False:")],
      "validate", "case_run_identity", "qat_run_of_another_parent_checkpoint_B52", ["completion_source_mismatch"],
      None),
+    # ---------------------------- the session's host, one session over history, the part read first (#37 #56 #101)
+    ("session_on_the_frozen_host", VAL, [('    if s["host"] != x.body["execution_context"]["host"]:', "    if False:")],
+     "unlock", "case_session", "session_host_not_the_frozen_host_B37", ["clock_offset_invalid"], None),
+    ("clock_offset_record_of_the_session_host", VAL, [('doc["host"] != s["host"]["name"]', "False")],
+     "unlock", "case_session", "clock_offset_record_of_another_host_B37", ["clock_offset_invalid"], None),
+    ("second_session_over_history", VAL, [("    for commit, part in _committed_sessions(x):",
+                                           "    for commit, part in []:")],
+     "unlock", "case_session", "second_session_part_over_the_first_B56", ["second_session"], None),
+    ("second_unlock_after_a_session", VAL, [('        if x.mode != "session":\n            return f"commit '
+                                             '{commit[:12]} '
+                                             'already holds', '        if False:\n            return f"commit '
+                                             '{commit[:12]} already holds')],
+     "unlock", "case_session", "unlock_after_a_committed_session_part_refused_B56", ["second_session"], None),
+    ("session_values_only_added", VAL, [(" and names[0] <= names[1]):", " and True):")],
+     "unlock", "case_session", "session_values_removed_B56", ["second_session"], None),
+    ("session_identity_fields", VAL, [("        same = all(old.get(k) == cur.get(k) for k in SESSION_IDENTITY)",
+                                       "        same = True")],
+     "unlock", "case_session", "second_session_part_over_the_first_B56", ["second_session"], None),
+    ("session_part_read_first", VAL, [('    ("second_session", U, g_second_session), ("clock_offset_invalid", SES, '
+                                       'g_clock_offset_invalid),\n    ("session_after_deadline", U, '
+                                       'g_session_after_deadline), ',
+                                       '    ("second_session", U, g_second_session), ("session_after_deadline", U, '
+                                       'g_session_after_deadline),\n    ("clock_offset_invalid", SES, '
+                                       'g_clock_offset_invalid), ')],
+     "unlock", "case_session", "session_part_null_refused_B101", ["clock_offset_invalid"], None),
 ]
 REFUSAL_EXTRA = ("inventory_invalid", "inventory_sha256_mismatch", "binding_invalid",       # read_inventory's codes
                  "output_location", "output_exists")                                       # the CLI's outputs

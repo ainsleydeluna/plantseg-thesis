@@ -44,8 +44,10 @@ LANES_SPEC = {"format": ("enum", (S.LANES_FORMAT,)),
                                          "status": ("obj", {"kind": ("enum", ("implemented", "not_required")),
                                                             "dl": "?dl", "merge_commit": "?commit",
                                                             "entry": S.nullable(S.REF)})}))}
-SESSION_SPEC = {"unlock_entry": S.REF, "clock_offset": S.REF, "started_utc": "utc", "host": "str",
+SESSION_SPEC = {"unlock_entry": S.REF, "clock_offset": S.REF, "started_utc": "utc",
+                "host": ("obj", {"name": "str", "cpu_model": "str"}),            # the execution context's (DL-24 #37)
                 "values": ("map", "any"), "push_evidence": ("obj", {"response": S.REF, "list": S.REF})}
+SESSION_IDENTITY = ("unlock_entry", "clock_offset", "started_utc", "host", "push_evidence")
 BINDING_REL = "reports/derived/tday_binding.json"
 
 
@@ -1313,12 +1315,41 @@ def g_hasher_pin_mismatch(x: Ctx):
     return _err(errs)
 
 
+def _committed_sessions(x: Ctx) -> list:
+    """[(commit, session part)] of the manifest's committed versions that hold one, newest first."""
+    out = []
+    for commit, _ in x.records.history(S.MANIFEST_REL):
+        data = x.records.show(commit, S.MANIFEST_REL)
+        doc = R.strict_json(data, f"{S.MANIFEST_REL} at {commit[:12]}", code="second_session") if data else None
+        part = doc.get("session") if hasattr(doc, "keys") else None
+        if part is not None:
+            out.append((commit, part))
+    return out
+
+
 def g_second_session(x: Ctx):
+    """One TEST session (AM-17 item 9): no binding yet, one unlock entry in the decision log, and over the
+    manifest's committed history no session part at the unlock, and in the session none but this one -- its
+    identity fields unchanged, its recorded values' names only growing (the values are TEST values, not read:
+    decision (vi); DL-24 #56)."""
     if x.records.has(BINDING_REL):
         return f"{BINDING_REL} exists: a binding is written once, after the single session"
     rows = [dl for dl, (_, line) in x.dl.rows.items() if "TMAN unlock entry" in line]
     if len(rows) > 1:
         return f"two unlock entries in the decision log: {rows} (AM-17 item 9: a single TEST evaluation)"
+    cur = x.doc["session"] if isinstance(x.doc["session"], dict) else {}
+    for commit, part in _committed_sessions(x):
+        if x.mode != "session":
+            return f"commit {commit[:12]} already holds a session part: a second unlock (AM-17 item 9)"
+        if part == x.doc["session"]:
+            continue                                   # the part validated (its fields are clock_offset_invalid's)
+        old = part if isinstance(part, dict) else {}
+        same = all(old.get(k) == cur.get(k) for k in SESSION_IDENTITY)
+        names = (set(old["values"]) if isinstance(old.get("values"), dict) else None,
+                 set(cur["values"]) if isinstance(cur.get("values"), dict) else None)
+        if not (same and names[0] is not None and names[1] is not None and names[0] <= names[1]):
+            return (f"commit {commit[:12]} holds another session part: one TEST session, its values only added "
+                    "(AM-17 item 9)")
 
 
 def g_session_after_deadline(x: Ctx):
@@ -1334,13 +1365,17 @@ def g_session_after_deadline(x: Ctx):
 
 # ============================================================================================ session gates
 def g_clock_offset_invalid(x: Ctx):
+    """The session part (its fields, before any gate reads them: DL-24 #101), on the frozen execution context's
+    host (TB1; DL-24 #37), with its clock-offset record of that host, within 60 s, before any scoring record."""
     s = x.doc["session"]
     errs = S.field_errors(s, SESSION_SPEC, "session")
     if errs:
         return _err(errs)
+    if s["host"] != x.body["execution_context"]["host"]:
+        return f"the session's host {s['host']} is not the frozen execution context's host (TB1)"
     doc, sha = x.entry_file(s["clock_offset"]["path"])
     if sha != s["clock_offset"]["sha256"] or doc.get("kind") != "clock_offset" \
-            or abs(doc["offset_seconds"]) > S.CLOCK_OFFSET_LIMIT_S or doc["host"] != s["host"] \
+            or abs(doc["offset_seconds"]) > S.CLOCK_OFFSET_LIMIT_S or doc["host"] != s["host"]["name"] \
             or D.parse_utc_any(doc["measured_utc"]) >= D.parse_utc_any(s["started_utc"]):
         return "the clock-offset record is not the session host's, within 60 s, before any scoring record (AM-19a r21)"
 
@@ -1416,8 +1451,8 @@ GATES = [
     ("cut_unentered_at_unlock", FU, g_cut_unentered_at_unlock),
     ("lane_unmet", U, g_lane_unmet), ("not_required_invalid", U, g_not_required_invalid),
     ("evaluator_files_changed", U, g_evaluator_files_changed), ("hasher_pin_mismatch", U, g_hasher_pin_mismatch),
-    ("second_session", U, g_second_session), ("session_after_deadline", U, g_session_after_deadline),
-    ("clock_offset_invalid", SES, g_clock_offset_invalid), ("push_evidence_invalid", SES, g_push_evidence_invalid),
+    ("second_session", U, g_second_session), ("clock_offset_invalid", SES, g_clock_offset_invalid),
+    ("session_after_deadline", U, g_session_after_deadline), ("push_evidence_invalid", SES, g_push_evidence_invalid),
 ]
 REPORTED_KINDS = ("cut", "not_run", "not_made", "freeze_delay", "new_freeze")   # "entry later than its day" (xv)
 # F/U-only gates whose finding a draft prints as MISSING (plan §2.1) instead of skipping

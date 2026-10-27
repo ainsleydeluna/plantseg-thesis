@@ -113,11 +113,14 @@ class Unlock:
             return type(e).__name__, None, self.S.TmanRefused(type(e).__name__, str(e))
 
     def start_session(self, offset: float = 0.4, push_utc: str = "2026-11-04T09:00:00Z",
-                      clock_status: str = "RECORDED") -> bytes:
-        """The session part: the clock-offset record (its decision-log row of `clock_status`) and the push evidence
-        of the unlock entry's commit."""
+                      clock_status: str = "RECORDED", started: str = SESSION_UTC, host: dict | None = None,
+                      clock_host: str | None = None, edit=None) -> bytes:
+        """The session part, committed once (`edit` changes it first): on `host` (the frozen execution context's
+        by default), the clock-offset record of that host (or `clock_host`; its decision-log row of
+        `clock_status`) and the push evidence of the unlock entry's commit."""
         S, w = self.S, self.w
-        clock = w.entry_file("clock_offset", [], {"host": "tday-host", "source": "chronyc tracking",
+        host = host or dict(self.doc["body"]["execution_context"]["host"])
+        clock = w.entry_file("clock_offset", [], {"host": clock_host or host["name"], "source": "chronyc tracking",
                                                   "offset_seconds": offset, "measured_utc": "2026-11-05T01:50:00Z"},
                              date="2026-11-05", nn=_nn(w, "clock_offset"))
         w.dl[clock["dl"]] = (clock_status, w.dl[clock["dl"]][1])
@@ -131,9 +134,11 @@ class Unlock:
         doc = copy.deepcopy(self.doc)
         doc["session"] = {"unlock_entry": {"path": self.unlock["path"], "sha256": self.unlock["sha256"]},
                           "clock_offset": {"path": clock["path"], "sha256": clock["sha256"]},
-                          "started_utc": SESSION_UTC, "host": "tday-host", "values": {},
+                          "started_utc": started, "host": host, "values": {},
                           "push_evidence": {"response": {"path": rr, "sha256": S.sha256_bytes(resp)},
                                             "list": {"path": lr, "sha256": S.sha256_bytes(lst)}}}
+        if edit is not None:
+            edit(doc)
         return self.commit_manifest(doc)
 
 
@@ -415,6 +420,9 @@ def records_outside_e_history(u: Unlock) -> None:
 
 
 def case_session():
+    """The session (AM-17 item 9; TB11, TB14; AM-19a reading 21): one session part over the manifest's history, its
+    values only added (DL-24 #56); a variant of the part each in a world of its own (a second part is a second
+    session)."""
     u = Unlock()
     data = u.start_session()
     code, passed, e = u.run("session", data)
@@ -422,23 +430,45 @@ def case_session():
           f"{code}: {e.detail[:300] if e else ''}")
     code, _, e = u.run("unlock", data)
     check("unlock_mode_refuses_a_session_part", code == "test_value_before_unlock", f"{code}")
-    late = copy.deepcopy(json.loads(data))
-    late["session"]["started_utc"] = "2026-11-08T16:00:01Z"
-    expect_gate(u, "session_started_after_the_deadline_TB14", "session_after_deadline", mode="session",
-                data=u.commit_manifest(late), detail="after the TEST deadline")
-    data = u.start_session(offset=75.0)
-    expect_gate(u, "clock_offset_over_60_s_AM19a_r21", "clock_offset_invalid", mode="session", data=data,
-                detail="within 60 s")
-    data = u.start_session(offset=0.6, clock_status="DECIDED")         # a record of its own, not yet RECORDED
-    expect_gate(u, "clock_offset_entry_not_DL_recorded_B102", "dl_row_missing", mode="session", data=data,
-                detail="clock_offset__session__20261105")
-    data = u.start_session(push_utc="2026-11-05T03:00:00Z")
-    expect_gate(u, "unlock_pushed_after_the_session_started_TB11", "push_evidence_invalid", mode="session",
-                data=data, detail="no listed push carries the unlock entry")
-    data = u.start_session()
-    u.w.commit({"reports/derived/tday_binding.json": b"{}\n"}, "a binding")
-    expect_gate(u, "binding_already_written", "second_session", mode="session", data=data,
+    doc = json.loads(data)
+    doc["session"]["values"] = {"recorded": "a value recorded in the session (fixture)"}
+    code, _, e = u.run("session", u.commit_manifest(doc))
+    check("session_values_added_in_the_same_session_pass_B56", code is None, f"{code}: {e.detail[:200] if e else ''}")
+    expect_gate(u, "session_values_removed_B56", "second_session", mode="session", data=u.commit_manifest(
+        json.loads(data)), detail="its values only added")
+    code, _, e = u.run("unlock", u.commit_manifest(u.doc))
+    check("unlock_after_a_committed_session_part_refused_B56", code == "second_session"
+          and "already holds a session part" in (e.detail if e else ""), f"{code}: {e.detail[:200] if e else ''}")
+    for name, kw, want, detail in (
+            ("session_started_after_the_deadline_TB14", {"started": "2026-11-08T16:00:01Z"}, "session_after_deadline",
+             "after the TEST deadline"),
+            ("clock_offset_over_60_s_AM19a_r21", {"offset": 75.0}, "clock_offset_invalid", "within 60 s"),
+            ("clock_offset_entry_not_DL_recorded_B102", {"offset": 0.6, "clock_status": "DECIDED"}, "dl_row_missing",
+             "clock_offset__session__20261105"),
+            ("unlock_pushed_after_the_session_started_TB11", {"push_utc": "2026-11-05T03:00:00Z"},
+             "push_evidence_invalid", "no listed push carries the unlock entry"),
+            ("session_host_not_the_frozen_host_B37", {"host": {"name": "another-host", "cpu_model": "x86-64 fixture"}},
+             "clock_offset_invalid", "is not the frozen execution context's host"),
+            ("clock_offset_record_of_another_host_B37", {"clock_host": "another-host"}, "clock_offset_invalid",
+             "is not the session host's")):
+        v = Unlock()
+        expect_gate(v, name, want, mode="session", data=v.start_session(**kw), detail=detail)
+    v = Unlock()
+    data = v.start_session()
+    again = json.loads(data)
+    again["session"]["started_utc"] = "2026-11-05T03:00:00Z"
+    expect_gate(v, "second_session_part_over_the_first_B56", "second_session", mode="session",
+                data=v.commit_manifest(again), detail="holds another session part")
+    v.commit_manifest(json.loads(data))
+    v.w.commit({"reports/derived/tday_binding.json": b"{}\n"}, "a binding")
+    expect_gate(v, "binding_already_written", "second_session", mode="session", data=data,
                 detail="a binding is written once")
+    for name, edit in (("session_part_null_refused_B101", lambda d: d.update(session=None)),
+                       ("session_part_without_its_start_B101", lambda d: d.update(session={})),
+                       ("session_start_not_utc_B101",
+                        lambda d: d["session"].update(started_utc="2026-11-05 02:00:00"))):
+        w = Unlock()
+        expect_gate(w, name, "clock_offset_invalid", mode="session", data=w.start_session(edit=edit), detail="session")
 
 
 def case_coverage():
