@@ -843,6 +843,41 @@ M = [
     ("arm_go_rule_verdict", MAN, [('"arm": arm, "verdict": entry["go_rule"]["verdict"],', '"arm": arm,')],
      "validate", "case_arm_teacher", "arm_teacher_go_rule_verdict_not_the_record_s_B39", ["checkpoint_hash_mismatch"],
      None),
+    # --------------- the ARM measurement, aborted entries, a run's identity (DL-24 #36 #43 #45 #46 #52)
+    ("measurement_files_present", VAL, [("    if absent:\n        return f\"{absent}: the measurement's",
+                                         "    if False:\n        return f\"{absent}: the measurement's")],
+     "validate", "case_measurement", "arm_measurement_files_absent_B36", ["completion_record_invalid"], None),
+    ("measurement_files_cited", VAL, [('            if any(shas[k] != e[k]["sha256"] for k in shas) or e["completion"] '
+                                       '!= st.completion.as_entry():',
+                                       '            if e["completion"] != st.completion.as_entry():')],
+     "validate", "case_measurement", "arm_measurement_output_not_the_cited_B36", ["completion_source_mismatch"],
+     None),
+    ("measurement_completion_block", VAL, [('            if any(shas[k] != e[k]["sha256"] for k in shas) or '
+                                            'e["completion"] != st.completion.as_entry():',
+                                            '            if any(shas[k] != e[k]["sha256"] for k in shas):')],
+     "validate", "case_measurement", "arm_measurement_completion_block_not_its_record_B36",
+     ["completion_source_mismatch"], None),
+    ("measurement_complete_at_its_instant", VAL, [('    bad += [e["slot"] for e in x.entries if e["kind"] == '
+                                                   '"measurement"', '    bad += [e["slot"] for e in [] if '
+                                                   'e["kind"] == "measurement"')],
+     "validate", "case_measurement", "arm_measurement_after_its_instant_B36", ["entry_not_complete"], None),
+    ("aborted_names_the_last_two_attempts", VAL, [('            if len(e["run_ids"]) != 2 or set(e["run_ids"]) != '
+                                                   'set(last):', "            if False:")],
+     "validate", "case_aborted", "aborted_entry_naming_one_attempt_B43", ["completion_source_mismatch"], None),
+    ("aborted_runs_not_complete", VAL, [("                if st.status in (C.COMPLETE, C.DIVERGED):",
+                                         "                if False:")],
+     "validate", "case_aborted", "complete_run_entered_as_aborted_B43", ["completion_source_mismatch"], None),
+    ("aborted_rule_and_cause", VAL, [('                elif st.status == C.ABORTED and (st.rule, st.cause) != '
+                                      '(e["rule"], e["cause"]):', "                elif False:")],
+     "validate", "case_aborted", "aborted_entry_of_another_rule_B43", ["completion_source_mismatch"], None),
+    ("kd_run_meta_of_the_launched_line", VAL, [('        if sha != log.launched[rid]["run_meta_sha256"]:',
+                                                "        if False:")],
+     "validate", "case_run_identity", "kd_run_meta_not_the_launched_line_s_B46", ["completion_source_mismatch"],
+     None),
+    ("qat_run_of_its_parent_checkpoint", VAL, [('            if pck is not None and meta.get('
+                                                '"source_checkpoint_sha256") != pck:', "            if False:")],
+     "validate", "case_run_identity", "qat_run_of_another_parent_checkpoint_B52", ["completion_source_mismatch"],
+     None),
 ]
 REFUSAL_EXTRA = ("inventory_invalid", "inventory_sha256_mismatch", "binding_invalid",       # read_inventory's codes
                  "output_location", "output_exists")                                       # the CLI's outputs

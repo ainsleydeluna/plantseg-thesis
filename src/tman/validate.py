@@ -747,14 +747,23 @@ def g_launched_attempt_without_directory(x: Ctx):
     return f"launched attempts without a directory under --runs: {missing}" if missing else None
 
 
+def _measurement(x: Ctx, e: dict) -> C.RunState:
+    """An ARM measurement's state: its output and agreement under --runs, at the instant entered with them
+    (completion.arm_state; DL-24 #36)."""
+    return C.arm_state(x.runs_root, e["output"]["path"], e["agreement"]["path"], e["completion"]["at_utc"])
+
+
 def g_completion_record_invalid(x: Ctx):
     """Each entry's run and every launched attempt of a run slot (completion.RunIndex) is read by its completion
-    reader."""
+    reader; a measurement's output and agreement are present under --runs."""
     for e in _run_entries(x):
         if e["kind"] in M.COMPLETE_KINDS or e["kind"] in ("non_finite", "diverged"):
             x.state(e)
     for rid in sorted(x.index().slot_of):
         x.index().state(rid)
+    absent = [e["slot"] for e in x.entries if e["kind"] == "measurement" and _measurement(x, e).status != C.COMPLETE]
+    if absent:
+        return f"{absent}: the measurement's output and agreement are not under --runs (DL-24 #36)"
 
 
 def _entry_run_ids(e: dict) -> list:
@@ -766,6 +775,10 @@ def _entry_run_ids(e: dict) -> list:
 
 
 def g_completion_source_mismatch(x: Ctx):
+    """Each entry against its runs' records: a run entry's runs are launched attempts of its slot and its completion
+    block the end record; a KD run directory's run_meta is its launched line's (DL-108); a QAT run is trained from
+    its parent's checkpoint; an aborted entry names its slot's last two attempts, neither complete nor diverged, as
+    they aborted (AM-19 item 3(a)); a measurement's files are the cited ones (DL-24 #36, #43, #45, #46, #52)."""
     errs = []
     idx = x.index()
     for e in x.entries:                     # a run entry's runs are launched attempts of its own slot (#52)
@@ -784,6 +797,42 @@ def g_completion_source_mismatch(x: Ctx):
         if e["kind"] == "diverged" and (st.status != C.DIVERGED
                                         or (e["rule"], e["iteration"]) != (st.rule, st.iteration)):
             errs.append(f"{e['slot']}: its run's records show {st.status} ({st.rule}, {st.iteration})")
+        s = x.slot(e["slot"])
+        if s["record_kind"] == "qat_epoch15" and s["parent"]:
+            rows, _, _ = C.qat_rows(x.run_dir(e["run_id"]))
+            meta = rows[0] if rows and rows[0].get("event") == "run_meta" else {}
+            pck = ((x.by_slot.get(s["parent"]) or {}).get("checkpoint") or {}).get("sha256")
+            if pck is not None and meta.get("source_checkpoint_sha256") != pck:
+                errs.append(f"{e['slot']}: its run's source checkpoint is not its parent {s['parent']}'s")
+    log = x.launch_log()
+    for rid in sorted(log.launched if log is not None else ()):
+        slot = idx.slot_of.get(rid)
+        if slot is None or x.slot(slot)["record_kind"] != "kd_run_end":
+            continue
+        rel = C.kd_telemetry_name(x.slot(slot)["stage"]).replace("_telemetry.jsonl", "_run_meta.jsonl")
+        sha = R.file_sha256(x.run_dir(rid) / rel, code="completion_source_mismatch")
+        if sha != log.launched[rid]["run_meta_sha256"]:
+            errs.append(f"{rid}: its {rel} (sha256 {sha[:12]}) is not the launched line's run_meta (DL-108)")
+    for e in x.entries:
+        if e["kind"] == "aborted" and idx.known(e["slot"]):
+            last = idx.by_slot.get(e["slot"], [])[-2:]
+            if len(e["run_ids"]) != 2 or set(e["run_ids"]) != set(last):
+                errs.append(f"{e['slot']}: an aborted entry names the run and its repeat, its slot's last two "
+                            f"attempts {last}, not {e['run_ids']} (AM-19 item 3(a))")
+                continue
+            for rid in e["run_ids"]:
+                st = idx.state(rid)
+                if st.status in (C.COMPLETE, C.DIVERGED):
+                    errs.append(f"{e['slot']}: {rid} is {st.status}, not aborted (AM-19 item 3(a))")
+                elif st.status == C.ABORTED and (st.rule, st.cause) != (e["rule"], e["cause"]):
+                    errs.append(f"{e['slot']}: {rid} aborted ({st.rule}, {st.cause}), not ({e['rule']}, "
+                                f"{e['cause']})")
+        if e["kind"] == "measurement":
+            st = _measurement(x, e)
+            shas = {k: R.file_sha256(x.runs_root / e[k]["path"], code="completion_source_mismatch")
+                    for k in ("output", "agreement")}
+            if any(shas[k] != e[k]["sha256"] for k in shas) or e["completion"] != st.completion.as_entry():
+                errs.append(f"{e['slot']}: its output, agreement or completion block is not its files' under --runs")
     return _err(errs)
 
 
@@ -799,6 +848,8 @@ def g_checkpoint_state_flag(x: Ctx):
 def g_entry_not_complete(x: Ctx):
     bad = [e["slot"] for e in _run_entries(x) if e["kind"] in M.COMPLETE_KINDS + ("non_finite",)
            and not x.state(e).complete_at(x.instant(e["slot"]))]
+    bad += [e["slot"] for e in x.entries if e["kind"] == "measurement"
+            and not _measurement(x, e).complete_at(x.instant(e["slot"]))]
     return f"{bad} are not complete at their instant (AM-19 Definitions; item 1(c))" if bad else None
 
 

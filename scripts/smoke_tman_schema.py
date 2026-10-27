@@ -257,15 +257,15 @@ def e1_run(root: Path, run_id: str, *, end: str | None = "2026-09-20T10:00:00Z",
 def qat_run(root: Path, run_id: str, *, epochs: int = 15, end: str = "2026-10-25T12:00:00Z", stop: bool = False,
             nonfinite_from: int | None = None, complete_flag: bool = True, stage: str = "E6",
             torn: bool = False, seed: int = 42, clip_norm: float = 5.0, launched: str = "2026-10-24T00:00:00Z",
-            mode: str = "real") -> Path:
-    """A QAT run directory: qat_telemetry.jsonl with run_meta (its stage, seed, clip and launch time), train and
-    fake-quant VAL rows (scores), epoch_end rows and, when asked, a non-finite state, a run_stop or a torn last
-    line."""
+            mode: str = "real", source_sha256: str = "c" * 64) -> Path:
+    """A QAT run directory: qat_telemetry.jsonl with run_meta (its stage, seed, clip, source checkpoint and launch
+    time), train and fake-quant VAL rows (scores), epoch_end rows and, when asked, a non-finite state, a run_stop or
+    a torn last line."""
     d = Path(root) / run_id
     t0 = utc(launched)
     rows = [{"event": "run_meta", "wall_clock": t0, "mode": mode, "stage": stage, "source_stage": "E3",
              "seed": seed, "run_id": run_id, "clip_norm": clip_norm, "clip_source": "clip_selection",
-             "source_checkpoint_sha256": "c" * 64, "image_digest": "sha256:" + "b" * 64, "git_head": "0" * 40}]
+             "source_checkpoint_sha256": source_sha256, "image_digest": "sha256:" + "b" * 64, "git_head": "0" * 40}]
     since = None
     for e in range(1, epochs + 1):
         rows.append({"event": "train", "epoch": e, "step": e * 10, "loss": 0.5, "grad_norm": 2.0,

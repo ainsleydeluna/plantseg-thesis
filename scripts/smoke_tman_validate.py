@@ -195,8 +195,12 @@ class World:
         for slot, rid, stage, clip in (("E5:s42:clip1:15ep", "e5_s42_clip1_15ep", "E5", 1.0),
                                        ("E5:s42:clip5:15ep", "e5_s42_clip5_15ep", "E5", 5.0),
                                        ("E6:s42:15ep", "e6_s42_15ep", "E6", 5.0)):
-            FX.qat_run(self.runs, rid, stage=stage, clip_norm=clip)
+            FX.qat_run(self.runs, rid, stage=stage, clip_norm=clip, source_sha256=self.parent_sha256(slot))
             self.run_entry(slot, "listed_run", rid, None, self.row(f"{slot} completes"))
+
+    def parent_sha256(self, slot: str) -> str:
+        """A QAT run's source: its catalogue parent's checkpoint of record (DL-24 #52)."""
+        return self.entries[self.cat.slots[slot]["parent"]]["checkpoint"]["sha256"]
 
     def launch_lines(self, slot: str, rid: str, d: Path):
         s = self.cat.slots[slot]
@@ -1113,7 +1117,8 @@ def case_cut_attribution():
     tel = w.runs / "e5_s42_clip1_15ep" / "qat_telemetry.jsonl"
     saved = tel.read_bytes()
     try:
-        FX.qat_run(w.runs, "e5_s42_clip1_15ep", stage="E5", clip_norm=1.0, epochs=7)
+        FX.qat_run(w.runs, "e5_s42_clip1_15ep", stage="E5", clip_norm=1.0, epochs=7,
+                   source_sha256=w.parent_sha256("E5:s42:clip1:15ep"))
         expect_gate(w, "late_never_cut_run_absent_without_delay_B3", "freeze_source_conflict", doc=mutated(
             w, lambda d: d["body"].update(entries=[x for x in d["body"]["entries"]
                                                    if x["slot"] != "E5:s42:clip1:15ep"])), detail="enter")
@@ -1589,10 +1594,114 @@ def case_arm_teacher():
         expect_gate(w, name, "checkpoint_hash_mismatch", doc=doc, detail=detail)
 
 
+def case_run_identity():
+    """A run directory is its launched run's (DL-24 #45, #46, #52): a KD directory's run_meta is the launched line's
+    (DL-108), and a QAT run is trained from its parent's checkpoint of record."""
+    w = WORLD
+    meta = w.runs / "e2_s42_lambda4_80k_a1" / "e2_run_meta.jsonl"
+    saved = meta.read_bytes()
+    try:
+        rows = [json.loads(x) for x in saved.split(b"\n") if x.strip()]
+        rows[0]["seed"] = 99
+        FX.write_jsonl(meta, rows)
+        expect_gate(w, "kd_run_meta_not_the_launched_line_s_B46", "completion_source_mismatch",
+                    detail="is not the launched line's run_meta")
+    finally:
+        meta.write_bytes(saved)
+    tel = w.runs / "e6_s42_15ep" / "qat_telemetry.jsonl"
+    saved = tel.read_bytes()
+    try:
+        rows = [json.loads(x) for x in saved.split(b"\n") if x.strip()]
+        rows[0]["source_checkpoint_sha256"] = "0" * 64
+        FX.write_jsonl(tel, rows)
+        d = mutated(w, lambda d: w.entry(d, "E6:s42:15ep")["completion"].update(
+            sha256=w.S.sha256_bytes(tel.read_bytes())))
+        expect_gate(w, "qat_run_of_another_parent_checkpoint_B52", "completion_source_mismatch", doc=d,
+                    detail="its run's source checkpoint is not its parent")
+    finally:
+        tel.write_bytes(saved)
+
+
+def case_measurement():
+    """AM-16 item 5's ARM measurement entered as measured (DL-24 #36): its output and agreement are present under
+    --runs at their cited sha256, its completion block is the agreement record's, and it is complete by its
+    instant."""
+    w = WORLD
+    S = w.S
+    (w.runs / "arm_latency").mkdir(exist_ok=True)
+    refs = {}
+    for k, body in (("output", b'{"fixture": "latency"}\n'), ("agreement", b'{"fixture": "agreement"}\n')):
+        rel = f"arm_latency/{k}.json"
+        (w.runs / rel).write_bytes(body)
+        refs[k] = {"path": rel, "sha256": S.sha256_bytes(body)}
+    done = {"record": refs["agreement"]["path"], "at_utc": "2026-10-30T00:00:00Z",
+            "sha256": refs["agreement"]["sha256"], "line": None}
+
+    def measured(**over):
+        def edit(d):
+            e = w.entry(d, "ARM:latency")
+            keep = {k: e[k] for k in S.ENTRY_COMMON}
+            e.clear()
+            e.update(keep, kind="measurement", output=dict(refs["output"]), agreement=dict(refs["agreement"]),
+                     completion=dict(done))
+            e.update(copy.deepcopy(over))
+        return mutated(w, edit)
+    code, _, e = w.run("freeze", measured())
+    check("arm_measurement_with_its_files_passes_B36", code is None, f"{code}: {e.detail[:200] if e else ''}")
+    absent = {"path": "arm_latency/absent.json", "sha256": refs["agreement"]["sha256"]}
+    for name, doc, want, detail in (
+            ("arm_measurement_files_absent_B36", measured(agreement=absent, completion=dict(
+                done, record=absent["path"])), "completion_record_invalid", "are not under --runs"),
+            ("arm_measurement_output_not_the_cited_B36", measured(output=dict(refs["output"], sha256="0" * 64)),
+             "completion_source_mismatch", "its output, agreement or completion block"),
+            ("arm_measurement_completion_block_not_its_record_B36", measured(completion=dict(done, sha256="0" * 64)),
+             "completion_source_mismatch", "its output, agreement or completion block"),
+            ("arm_measurement_after_its_instant_B36", measured(completion=dict(done, at_utc="2026-11-20T00:00:00Z")),
+             "entry_not_complete", "ARM:latency")):
+        expect_gate(w, name, want, doc=doc, detail=detail)
+
+
+def case_aborted():
+    """AM-19 item 3(a) (DL-24 #43): a run that aborts, not by a divergence, and whose repeat aborts the same way is
+    entered "aborted (rule, cause)" with both attempts, each attempt's records showing that abort. E2 seed 43
+    launched twice; E2 seed 44 cut at the freeze. A world of its own."""
+    w = World()
+    s43, s44 = "E2:s43:lambda0.5:80k", "E2:s44:lambda0.5:80k"
+    abort = {"rule": "AM-7a item 4", "cause": "nonfinite_input", "input_finite": False, "teacher_finite": True}
+
+    def launch(n, **kw):
+        rid = f"e2_s43_lambda0.5_80k_a{n}"
+        w.launch_lines(s43, rid, FX.kd_run(w.runs, rid, stage_key="e2", seed=43, **kw))
+        w.launch[-2]["attempt"] = n
+        w.commit({"reports/kd_launch_log.jsonl": b"".join(json.dumps(x).encode() + b"\n" for x in w.launch)},
+                 f"E2 seed 43 attempt {n}")
+        return rid
+    runs = [launch(n, end=None, abort=dict(abort, at=f"2026-10-1{n}T00:00:00Z")) for n in (1, 2)]
+    dl = w.row(f"{s43}: aborted ({abort['rule']}, {abort['cause']}) twice (AM-19 item 3(a))")
+    w.commit({}, "E2 seed 43 aborted twice", rows={dl: w.dl[dl]})
+    _, c44 = w.committed_cut([s44], w.cut_fields("E2-s4344", [s44], "no card", False), nn=2)
+    aborted = {"kind": "aborted", "dl_rows": [dl], "run_ids": runs, "rule": abort["rule"], "cause": abort["cause"]}
+    w.rebuild({s43: aborted, **c44})
+    code, _, e = w.run("freeze")
+    check("aborted_twice_entered_as_aborted_passes_AM19_3a", code is None, f"{code}: {e.detail[:200] if e else ''}")
+
+    def entered(**upd):
+        return mutated(w, lambda d: w.entry(d, s43).update(copy.deepcopy(upd)))
+    expect_gate(w, "aborted_entry_naming_one_attempt_B43", "completion_source_mismatch",
+                doc=entered(run_ids=runs[1:]), detail="names the run and its repeat")
+    expect_gate(w, "aborted_entry_of_another_rule_B43", "completion_source_mismatch",
+                doc=entered(cause="step1_failure"), detail="aborted (AM-7a item 4, nonfinite_input), not")
+    runs.append(launch(3))                                        # a third attempt, complete
+    expect_gate(w, "aborted_entry_not_the_last_attempts_B43", "completion_source_mismatch",
+                doc=entered(), detail="its slot's last two attempts")
+    expect_gate(w, "complete_run_entered_as_aborted_B43", "completion_source_mismatch",
+                doc=entered(run_ids=runs[1:]), detail="is complete, not aborted")
+
+
 def case_non_finite_gate():
     """A QAT run entered as non-finite with its row (AM-21 item 2(b)), then without the run's flags."""
     w = World()
-    FX.qat_run(w.runs, "e6_s42_nf", stage="E6", nonfinite_from=1)
+    FX.qat_run(w.runs, "e6_s42_nf", stage="E6", nonfinite_from=1, source_sha256=w.parent_sha256("E6:s42:15ep"))
     dl = w.row("E6 seed 42: non-finite: no model (AM-21 item 2(b))")
     w.commit({}, rows={dl: w.dl[dl]})
     sha = w.S.sha256_bytes((w.runs / "e6_s42_nf" / "qat_telemetry.jsonl").read_bytes())
@@ -1608,7 +1717,7 @@ def case_non_finite_gate():
         d["body"]["entries"] = [x for x in d["body"]["entries"] if x["slot"] != "E6:s42:sel"]
     code, passed, e = w.run("freeze", mutated(w, nf))
     check("non_finite_run_without_selection_passes_A1", code is None, f"{code}: {e.detail[:200] if e else ''}")
-    FX.qat_run(w.runs, "e6_s42_fin", stage="E6", nonfinite_from=None)
+    FX.qat_run(w.runs, "e6_s42_fin", stage="E6", nonfinite_from=None, source_sha256=w.parent_sha256("E6:s42:15ep"))
     s2 = w.S.sha256_bytes((w.runs / "e6_s42_fin" / "qat_telemetry.jsonl").read_bytes())
     expect_gate(w, "non_finite_with_a_convertible_epoch", "non_finite_invalid",
                 doc=mutated(w, lambda d: nf(d, "e6_s42_fin", s2)))
@@ -1638,7 +1747,8 @@ def case_moved_freeze():
     one is refused."""
     from src.tman import schedule as D
     w = WORLD
-    FX.qat_run(w.runs, "e6_s42_late", stage="E6", end="2026-11-04T10:00:00Z")
+    FX.qat_run(w.runs, "e6_s42_late", stage="E6", end="2026-11-04T10:00:00Z",
+               source_sha256=w.parent_sha256("E6:s42:15ep"))
     late = w.qat_files("e6_s42_late", "E6", 5.0, made="2026-11-04T11:00:00Z")      # its conversion and selection
     tel = w.runs / "e6_s42_late" / "qat_telemetry.jsonl"
     delay = w.entry_file("freeze_delay", [], {"original_date": FREEZE_DAY, "runs": ["E6:s42:15ep"]})
@@ -2041,7 +2151,7 @@ def main() -> int:
                              case_completion_gates,
                              case_cut_gates, case_cut_attribution, case_parent_and_derived_gates, case_appends,
                              case_derived_sources, case_appends_history, case_checkpoint_sources, case_arm_teacher,
-                             case_non_finite_gate, case_scope_gates,
+                             case_run_identity, case_measurement, case_aborted, case_non_finite_gate, case_scope_gates,
                              case_moved_freeze, case_printers, case_draft_and_cli, case_inventory, case_coverage))
     finally:
         if REAL_TEACHER is not None:
