@@ -353,6 +353,16 @@ def case_cli_outputs():
         appended = json.loads((dirs["append"] / "tday_manifest.json").read_bytes())
         check("cli_append_writes_the_append_with_its_ptq_record_key", [a["slot"] for a in appended["appends"]]
               == ["E4:s42:list43"] and appended["appends"][0]["ptq_record"] is None)
+        again = out / "append_again"
+        again.mkdir()
+        (out / "not_a_manifest.json").write_text("[1, 2]\n", encoding="utf-8")
+        for name, manifest, want in (("cli_append_refuses_a_second_append_of_its_slot_B63",
+                                      dirs["append"] / "tday_manifest.json", "REFUSED [append_invalid]"),
+                                     ("cli_append_refuses_a_file_that_is_no_manifest_B63",
+                                      out / "not_a_manifest.json", "REFUSED [manifest_format]")):
+            rc, txt = _cli(base + ["append", "--manifest", str(manifest), "--slot", "E4:s42:list43", "--hashed",
+                                   str(out / "hashed.json"), "--out", str(again), "--runs", str(w.runs)])
+            check(name, rc == 2 and want in txt and not any(again.iterdir()), txt.strip()[-160:])
         post_freeze_ptq_append(w, out, base)
         inside = [("out_in_the_repository_at_root", w.repo / "reports"),
                   ("out_in_this_checkout", REPO / "nonexistent_tman_out")]

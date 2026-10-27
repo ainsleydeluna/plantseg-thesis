@@ -40,7 +40,7 @@ CODE_DATE, RECORDS_DATE, MANIFEST_DATE = ("2026-11-01T08:00:00+00:00", "2026-11-
                                          "2026-11-03T12:00:00+00:00")
 FREEZE_DAY = "2026-11-03"
 QAT_RULES_SHA256 = "76addc57d0367dda9a1163f749ec32c9c240b20736104dc12aa77488344f9568"
-REAL_FILES = ("configs/tday_catalogue.json", "configs/kd_schedule.json",
+REAL_FILES = ("configs/tday_catalogue.json", "configs/kd_schedule.json", "configs/qat_selection_rules.json",
               *[f"configs/calibration/ptq_calibration_seed{s}.json" for s in (42, 43, 44, 45)],
               "reports/derived/mde_entry_20261009T034825Z.json", "reports/strata/train_strata_v1.json")
 CODE_FIXTURES = {"scripts/evaluate_model.py": "import src.eval.fixture_scoring  # the evaluator's fixture root\n",
@@ -137,7 +137,12 @@ class World:
         S, M = self.S, self.M
         t, h = M.TEACHER_OF_RECORD, M.TRAINVAL_HASH_LIST
         mde, strata = (S.sha256_bytes((REPO / rel).read_bytes()) for rel, _ in M.REFERENCE_FILES.values())
-        self.dl.update({"DL-10": ("RECORDED", "calibration lists of record"),
+        lists = {s: (REPO / f"configs/calibration/ptq_calibration_seed{s}.json").read_bytes() for s in (42, 43, 44, 45)}
+        checksum = json.loads(lists[42])["checksum_sha256"]
+        self.dl10 = ("calibration lists of record: " + ", ".join(f"seed {s} sha256 {S.sha256_bytes(b)}"
+                                                                 for s, b in lists.items())
+                     + f"; seed 42 checksum {checksum}")                     # DL-10 holds all five values
+        self.dl.update({"DL-10": ("RECORDED", self.dl10),
                         "DL-63": ("RECORDED", f"strata file of record (sha256 {strata})"),
                         "DL-70": ("RECORDED", "AM-19 schedule T"),
                         "DL-88": ("RECORDED", f"teacher of record {t['path']} sha256 {t['sha256']} {t['bytes']} B"),
@@ -586,6 +591,25 @@ def case_record_gates():
          "best_val_miou": 0.4}], detail="an artifact's runtime")
     expect_gate(w, "calibration_index_other_checksum", "calibration_index_mismatch", doc=mutated(
         w, lambda d: d["body"]["calibration_index"]["of_record"].update(checksum_sha256="0" * 64)))
+    expect_gate(w, "calibration_index_other_split_list", "calibration_index_mismatch", doc=mutated(
+        w, lambda d: d["body"]["calibration_index"].update(split_list_sha256="0" * 64)),
+        detail="differs from the committed lists")
+    calibration_cases(w)
+    expect_gate(w, "qat_rules_sha256_not_the_committed_file_B18", "derived_inputs_incomplete",
+                doc=mutated(w, lambda d: w.entry(d, "E6:s42:sel")["inputs"].update(rules_sha256="0" * 64)),
+                detail="qat_selection_rules.json")
+    src = copy.deepcopy(w.sources)
+    src["entries"]["E5:s42:sel"]["inputs"]["rules_sha256"] = "0" * 64
+    check("builder_refuses_another_rules_sha256_B19", FX.refused_code(
+        w.M.build_manifest, w.records, w.cat, src, runs_root=w.runs) == "derived_inputs_incomplete")
+    src = copy.deepcopy(w.sources)
+    del src["entries"]["E5:s42:sel"]["inputs"]["rules_sha256"]
+    try:
+        got = w.entry(w.M.build_manifest(w.records, w.cat, src, runs_root=w.runs), "E5:s42:sel")["inputs"][
+            "rules_sha256"]
+    except w.S.TmanRefused as e:
+        got = e.code
+    check("builder_reads_the_rules_sha256_TB13", got == QAT_RULES_SHA256, str(got))
     expect_gate(w, "reference_other_strata_sha", "reference_mismatch",
                 doc=mutated(w, lambda d: d["body"]["references"]["strata"].update(sha256="0" * 64)),
                 detail="the references differ")
@@ -629,6 +653,37 @@ def case_record_gates():
     res = V.validate(w.ctx("draft", runs_root=None, trigger_reader=None))
     check("draft_lists_the_trigger_format_O8", res.exit_code == 3 and any(
         m.startswith("MISSING: trigger_format_unknown") for m in res.missing), str(res.missing))
+
+
+def calibration_cases(w: World) -> None:
+    """calibration_index_mismatch against DL-10 (§1.6; DL-24 #30, #40): each list's sha256 and the checksum of
+    record in DL-10's row; each list's seed its key and its role AM-10's or AM-16's. Each changed record is
+    restored."""
+    dl10 = w.dl["DL-10"]
+    sha44 = w.S.sha256_bytes(w.records.read("configs/calibration/ptq_calibration_seed44.json"))
+    checksum = w.doc["body"]["calibration_index"]["of_record"]["checksum_sha256"]
+    for name, text, detail in (("calibration_list_not_dl10_s_B30", dl10[1].replace(sha44, "0" * 64),
+                                "ptq_calibration_seed44.json: sha256"),
+                               ("calibration_checksum_not_dl10_s_B30", dl10[1].replace(checksum, "0" * 64),
+                                "checksum is not DL-10's")):
+        w.commit({}, f"DL-10 changed: {name}", rows={"DL-10": (dl10[0], text)})
+        try:
+            expect_gate(w, name, "calibration_index_mismatch", detail=detail)
+        finally:
+            w.commit({}, "DL-10 restored", rows={"DL-10": dl10})
+    for name, seed, change, detail in (("calibration_list_seed_not_its_key_B40", 43, {"seed": 99}, "seed 99"),
+                                       ("calibration_list_role_not_am16_s_B40", 44, {"role": "am10_list_of_record"},
+                                        "role 'am10_list_of_record'")):
+        rel = f"configs/calibration/ptq_calibration_seed{seed}.json"
+        orig = w.records.read(rel)
+        data = w.S.json_file_bytes({**json.loads(orig), **change})
+        w.commit({rel: data}, f"{rel} changed", rows={"DL-10": (dl10[0], f"{dl10[1]}; {w.S.sha256_bytes(data)}")})
+        try:
+            expect_gate(w, name, "calibration_index_mismatch", detail=detail, doc=mutated(
+                w, lambda d: d["body"].update(calibration_index=w.M.calibration_index(w.records))))
+        finally:
+            w.commit({rel: orig}, f"{rel} restored", rows={"DL-10": dl10})
+    check("calibration_world_restored", w.run("freeze")[0] is None)
 
 
 def case_entry_files():
@@ -1073,6 +1128,24 @@ def case_parent_and_derived_gates():
         w.commit({w.S.LANES_REL: register(late)}, "the lane register restored")
     expect_gate(w, "e6s42_by_inputs_at_the_freeze", "e6s42_not_hashed_at_freeze", doc=mutated(
         w, lambda d: w.entry(d, "E6:s42:sel").update(hashed=None)))
+    def append_qat(d, fault=None):
+        e = w.entry(d, "E5:s42:sel")
+        h = dict(copy.deepcopy(e["hashed"]), appended="append", evaluations=[{"dir": "eval1", "fault_report": None},
+                                                                            {"dir": "eval2", "fault_report": fault}])
+        d["appends"].append({"slot": "E5:s42:sel", "hashed": h, "ptq_record": None})
+        e["hashed"] = None
+    expect_gate(w, "appended_qat_selection_second_evaluation_without_report_B24", "derived_selection_conflict",
+                doc=mutated(w, append_qat), detail="a second one needs a fault report")
+    evals = [{"dir": "eval1", "fault_report": None},
+             {"dir": "eval2", "fault_report": {"path": "reports/derived/no_such_fault_report.json", "sha256": "0" * 64}}]
+    expect_gate(w, "qat_fault_report_not_committed_B77", "record_uncommitted",
+                doc=mutated(w, lambda d: w.entry(d, "E5:s42:sel")["hashed"].update(evaluations=evals)))
+    report = w.S.json_file_bytes({"format": "fault_report/1", "run_id": "e5_s42_clip5_15ep", "cause": "fixture"})
+    w.commit({"reports/derived/e5_s42_fault_report.json": report}, "a fault report (AM-8a)")
+    evals[1]["fault_report"] = {"path": "reports/derived/e5_s42_fault_report.json", "sha256": w.S.sha256_bytes(report)}
+    code, _, e = w.run("freeze", mutated(w, lambda d: w.entry(d, "E5:s42:sel")["hashed"].update(evaluations=evals)))
+    check("second_evaluation_with_its_committed_fault_report_passes", code is None,
+          f"{code}: {e.detail[:200] if e else ''}")
     expect_gate(w, "second_evaluation_without_report", "derived_selection_conflict", doc=mutated(
         w, lambda d: w.entry(d, "E5:s42:sel")["hashed"]["evaluations"].append({"dir": "eval2", "fault_report": None})))
     expect_gate(w, "append_to_a_hashed_entry", "append_invalid", doc=mutated(

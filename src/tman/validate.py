@@ -228,6 +228,22 @@ class Ctx:
         """The records the named-rule cuts cite (AM-19 item 3(b))."""
         return self._cut_refs("rule_record")
 
+    def qat_hashed(self) -> list[dict]:
+        """The QAT selections' hashed forms, in the body and appended (their fields are derived_inputs_incomplete's
+        and append_invalid's)."""
+        frozen = {e["slot"]: e for e in self.entries}
+        out = [e.get("hashed") for e in self.entries if e["kind"] == "derived" and e.get("method") == "qat_selection"]
+        out += [a.get("hashed") for a in self.doc["appends"] if isinstance(a, dict)
+                and (frozen.get(a.get("slot")) or {}).get("method") == "qat_selection"]
+        return [h for h in out if isinstance(h, dict)]
+
+    def fault_reports(self) -> list[dict]:
+        """The fault reports the QAT selections' later evaluation directories cite (AM-21 item 2(c); DL-24 #77)."""
+        evs = [ev for h in self.qat_hashed() if isinstance(h.get("evaluations"), list) for ev in h["evaluations"]]
+        return [ev["fault_report"] for ev in evs if isinstance(ev, dict) and isinstance(ev.get("fault_report"), dict)
+                and isinstance(ev["fault_report"].get("path"), str)
+                and isinstance(ev["fault_report"].get("sha256"), str)]
+
     def launch_log(self):
         if not hasattr(self, "_log"):
             self._log = self.records.launch_log(code="completion_record_invalid") \
@@ -338,6 +354,8 @@ def g_record_uncommitted(x: Ctx):
         rels.append(x.body["trigger"]["path"])
     if x.mode in U:
         rels.append(S.LANES_REL)
+    if any(e["kind"] == "derived" and e.get("method") == "qat_selection" for e in x.entries):
+        rels.append(M.QAT_RULES_REL)                       # TB13
     for rel in rels:
         S.refuse_test_path(rel)
         x.records.read(rel)
@@ -350,6 +368,7 @@ def g_record_uncommitted(x: Ctx):
                                                                            e["go_rule"]) if r]
     cited += x.results_known()                             # each committed at its cited sha256 (decision (xvi); #69)
     cited += x.rule_records()                              # a named rule's record, at its cited sha256 (#16)
+    cited += x.fault_reports()                             # AM-21 item 2(c)'s fault reports (#77)
     for ref in cited:
         S.refuse_test_path(ref["path"])
         if S.sha256_bytes(x.records.read(ref["path"])) != ref["sha256"]:
@@ -466,6 +485,7 @@ def g_calibration_index_mismatch(x: Ctx):
         return None
     if ci != M.calibration_index(x.records):
         return "the calibration index differs from the committed lists (§1.6; DL-10)"
+    return _err(M.calibration_dl10_errors(x.records, ci, x.dl.row_text("DL-10")))
 
 
 def g_reference_mismatch(x: Ctx):
@@ -938,7 +958,15 @@ def g_derived_parent_incomplete(x: Ctx):
 
 
 def g_derived_inputs_incomplete(x: Ctx):
-    return _err([err for e in _derived(x) for err in M.derived_inputs_errors(e)])
+    """A derived entry's inputs are all of its method's; a QAT selection's rules file is the committed one (TB13;
+    DL-24 #18-#20)."""
+    errs = [err for e in _derived(x) for err in M.derived_inputs_errors(e)]
+    qat = [e for e in _derived(x) if e["method"] == "qat_selection"]
+    if not errs and qat:
+        rules = M.qat_rules_sha256(x.records)
+        errs = [f"{e['slot']}: inputs.rules_sha256 is not the committed {M.QAT_RULES_REL}'s {rules[:12]} (TB13)"
+                for e in qat if e["inputs"]["rules_sha256"] != rules]
+    return _err(errs)
 
 
 def g_ptq_record_invalid(x: Ctx):
@@ -995,7 +1023,13 @@ def g_e6s42_not_hashed_at_freeze(x: Ctx):
 
 
 def g_derived_selection_conflict(x: Ctx):
-    return _err([err for e in _derived(x) for err in M.selection_conflict_errors(e)])
+    """AM-21 item 2(c) on every QAT selection, in the body and appended (DL-24 #24)."""
+    errs = [err for e in _derived(x) for err in M.selection_conflict_errors(e)]
+    for app in x.doc["appends"]:
+        listed = x.by_slot.get(app.get("slot")) if isinstance(app, dict) else None
+        if M.appendable(app, listed):
+            errs += M.selection_conflict_errors(M.appended_entry(app, listed))
+    return _err(errs)
 
 
 def g_non_finite_invalid(x: Ctx):

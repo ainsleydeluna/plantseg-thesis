@@ -351,6 +351,12 @@ def cmd_append(args) -> int:
     S.refuse_test_path(args.manifest)
     data = Path(args.manifest).read_bytes()
     doc = S.strict_json(data, args.manifest, code="manifest_unreadable")
+    if not (isinstance(doc, dict) and isinstance(doc.get("body"), dict) and isinstance(doc["body"].get("entries"), list)
+            and all(isinstance(e, dict) and isinstance(e.get("slot"), str) for e in doc["body"]["entries"])
+            and isinstance(doc.get("appends"), list)):
+        raise S.TmanRefused("manifest_format", f"{args.manifest}: not a manifest with a body's entries and appends")
+    if any(isinstance(a, dict) and a.get("slot") == args.slot for a in doc["appends"]):
+        raise S.TmanRefused("append_invalid", f"append {args.slot}: a second append of its slot (DL-24 #63)")
     records = records_at(args)
     cat = catalogue(records)
     freeze = D.freeze_instant(D.schedule_block(records.src))

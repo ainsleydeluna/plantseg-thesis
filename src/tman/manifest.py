@@ -14,7 +14,8 @@ Inputs: PTQ, AM-19 item 4(c)'s five (the parent checkpoint's sha256, src/quant/p
 file sha256; the PTQ script's path and commit, :724-733; the image digest, :736-745; the qconfig fingerprint,
 :929-933 with src/quant/runner.py:208-213). QAT: the run's telemetry sha256 as recorded on the pod (it binds every
 epoch checkpoint's sha256), the conversion and selection scripts' commit, the image digest,
-configs/qat_selection_rules.json's sha256 (read at build, TB13) and the pilot's clip-selection record's sha256.
+configs/qat_selection_rules.json's sha256 (read at build and by the validator, TB13) and the pilot's clip-selection
+record's sha256.
 
 Generator pins (AM-19 item 1(c)): the corrupted-TEST cache pin is L-CORR's JSON, embedded verbatim (IF§3): the
 validator recomputes pin_sha256 and compares its cells with the registered set (src.corruption_roles, imported
@@ -51,6 +52,14 @@ HASHED_QAT = {**HASHED, "evaluations": ("list", ("obj", {"dir": "str", "fault_re
 APPEND = {"slot": "slot", "hashed": ("map", "any"), "ptq_record": S.nullable(S.REF)}    # A2: the made entry's
 QAT_RULES_REL = "configs/qat_selection_rules.json"
 COMPLETE_KINDS = ("scored_run", "default_candidate", "arm_teacher", "listed_run")     # a complete run: a model
+# DL-10's lists (§1.6): AM-10's list of record (seed 42) and AM-16 item 5's sensitivity lists (seeds 43-45)
+CALIBRATION_ROLES = {42: "am10_list_of_record", 43: "am16_calibration_sensitivity",
+                     44: "am16_calibration_sensitivity", 45: "am16_calibration_sensitivity"}
+
+
+def qat_rules_sha256(records: R.Records) -> str:
+    """TB13: the sha256 of the committed QAT selection rules file, read at build and by the validator."""
+    return S.sha256_bytes(records.read(QAT_RULES_REL))
 MODEL_OF_RECORD_ROLES = ("family", "per_seed")                                       # A2: these carry ptq_record
 
 
@@ -139,8 +148,10 @@ def selection_conflict_errors(entry: dict) -> list[str]:
     2(c))."""
     if entry["method"] != "qat_selection" or entry["hashed"] is None:
         return []
-    ev = entry["hashed"]["evaluations"]
-    if not ev or any(e["fault_report"] is None for e in ev[1:]):
+    ev = entry["hashed"].get("evaluations")
+    if not (isinstance(ev, list) and all(isinstance(e, dict) for e in ev)):
+        return []                                  # an appended form's fields are append_invalid's
+    if not ev or any(e.get("fault_report") is None for e in ev[1:]):
         return [f"{entry['slot']}: evaluation directories {[e['dir'] for e in ev]}: a second one needs a fault "
                 "report (AM-21 item 2(c))"]
     return []
@@ -508,6 +519,23 @@ def evaluator_files(src: ss.HeadSource, commit: str) -> dict:
     return dict(sorted(out.items()))
 
 
+def calibration_dl10_errors(records: R.Records, ci: dict, dl10_text: str | None) -> list[str]:
+    """calibration_index_mismatch beyond the recomputation (§2.2; DL-24 #30, #40): each list's file sha256, and the
+    list of record's checksum, in DL-10's row; each list's seed its key; its role AM-10's for seed 42 and AM-16 item
+    5's for seeds 43-45."""
+    errs = []
+    for seed, item in [(42, ci["of_record"])] + [(int(k), v) for k, v in sorted(ci["sensitivity"].items())]:
+        doc, _ = records.json(item["path"], {"seed": True, "role": True}, code="calibration_index_mismatch")
+        if item["file_sha256"] not in (dl10_text or ""):
+            errs.append(f"{item['path']}: sha256 {item['file_sha256'][:12]} is not DL-10's")
+        if doc.get("seed") != seed or doc.get("role") != CALIBRATION_ROLES.get(seed):
+            errs.append(f"{item['path']}: seed {doc.get('seed')!r} and role {doc.get('role')!r}, not {seed} and "
+                        f"{CALIBRATION_ROLES.get(seed)}")
+    if str(ci["of_record"]["checksum_sha256"]) not in (dl10_text or ""):
+        errs.append("the list of record's checksum is not DL-10's")
+    return errs
+
+
 def calibration_index(records: R.Records) -> dict:
     """The calibration index of record (§1.6; DL-10) from the committed lists."""
     def one(seed):
@@ -600,8 +628,17 @@ def build_manifest(records: R.Records, cat, sources: dict, *, runs_root=None) ->
     freeze = D.freeze_instant(D.schedule_block(src), delays=delays, news=news)
     e = sources["evaluator_commit"]
     pins = sources["generator_pins"]
+    entries = build_entries(cat, sources["entries"], runs_root)
+    qat = [x for x in entries if x.get("kind") == "derived" and x.get("method") == "qat_selection"
+           and isinstance(x.get("inputs"), dict)]
+    rules = qat_rules_sha256(records) if qat else None
+    for x in qat:                                   # TB13: the rules file's sha256 is read at build
+        x["inputs"] = dict(x["inputs"])
+        if x["inputs"].setdefault("rules_sha256", rules) != rules:
+            raise S.TmanRefused("derived_inputs_incomplete", f"{x['slot']}: inputs.rules_sha256 is not the committed "
+                                                             f"{QAT_RULES_REL}'s {rules} (TB13)")
     body = {"calibration_index": calibration_index(records),
-            "entries": build_entries(cat, sources["entries"], runs_root),
+            "entries": entries,
             "evaluator": {"commit": e, "files": evaluator_files(src, e) if e else {}},
             "execution_context": sources["execution_context"],
             "expected_rows": {"value": S.EXPECTED_ROWS, "cites": list(EXPECTED_ROWS_CITES)},
