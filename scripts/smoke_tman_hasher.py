@@ -12,11 +12,13 @@
   annotation path, no PIL or cv2 call (PIL.Image.open and the cv2 module raise). PIL and torch are in sys.modules
   through src.tman.schema -> src.eval.artifacts -> src.eval.protocols and src/eval/__init__.py: recorded, accepted.
 - Exclusive outputs, both or neither (a refused second create, or a write that fails, leaves nothing the run created;
-  an error is exit 4); an --out inside the repository refused; a shuffled os.scandir order gives identical bytes.
+  an error is exit 4); an --out inside the repository, equal to it or linked into it refused; a shuffled os.scandir
+  order gives identical bytes.
 - The printed lines: H7's three values and the issue's counts, the latter pinned as a literal line (70, 11, 13); a
   stdout that cannot encode the labels' U+2194 (cp1252) still gives exit 0, the arrow escaped.
 - --print-pin: its pin passes manifest.hasher_pin_errors and test_value_errors in the builder's wrapping
-  (manifest.py :861), which fails when a HASHER_VALUES key is injected; its parameters are H8's.
+  (manifest.py :861), which fails when a HASHER_VALUES key is injected; its parameters are H8's. A usage error is
+  exit 2 with argparse's message and no refusal.
 - Static cases (H8, H10): the word in no identifier, attribute, key, f-string or path-like literal of the two new
   production files (REASON_LABELS' and ISSUE_ROWS' values and B-1's guard name excepted, each named here); no PIL or
   cv2 import; no src.stats import; the split read by import, never written; expected_images, the suffixes and the
@@ -85,7 +87,7 @@ class World:
     The options make one record or input wrong at a time."""
 
     def __init__(self, *, images=None, raw_names=(), pin_edit=None, unlock_edit=None, row_status="RECORDED",
-                 unlock_state="committed", manifest_bytes=None, tv=None):
+                 unlock_state="committed", manifest_bytes=None, mdata_edit=None, tv=None):
         from src.tman import entries as E
         from src.tman import manifest as M
         from src.tman import schema as S
@@ -121,6 +123,8 @@ class World:
                                    "image_hasher": {"pin": pin, "value": None}}}
         self.mdata = S.json_file_bytes({"format": S.MANIFEST_FORMAT, "body": body, "appends": [], "session": None}) \
             if manifest_bytes is None else manifest_bytes
+        if mdata_edit:                                          # the manifest's bytes, before the unlock records them
+            self.mdata = mdata_edit(self.mdata)
         lanes = S.json_file_bytes({"format": S.LANES_FORMAT, "lanes": []})
         freeze = E.make_entry("freeze", [], FREEZE_DAY, {"body_sha256": S.canonical_sha256(body),
                                                          "freeze_date": FREEZE_DAY, "source": "schedule"},
@@ -465,6 +469,24 @@ def case_step2_records():
     def no_modules(p):
         del p["parameters"]["modules"]
 
+    def commit_upper_case(p):
+        p["script"]["commit"] = "A" * 40
+
+    def images_as_text(p):
+        p["parameters"]["expected_images"] = str(p["parameters"]["expected_images"])
+
+    def dl_malformed(p):
+        p["parameters"]["train_val_list"]["dl"] = "DL-x"
+
+    def other(key, value):
+        return lambda p: p["parameters"].update({key: value})
+
+    def first_format_duplicated(b):
+        return b'{"format": "x", ' + b[1:]
+
+    def other_format(b):
+        return b.replace(b'\n  "format": "' + S.MANIFEST_FORMAT.encode() + b'"', b'\n  "format": "tday_manifest/0"', 1)
+
     no_body = S.json_file_bytes({"format": S.MANIFEST_FORMAT, "appends": [], "session": None})
     variants = (
         ("unlock_entry_absent", {}, {"unlock_entry": "reports/derived/tday_entries/unlock__session__20261108__09.json"},
@@ -481,12 +503,25 @@ def case_step2_records():
         ("manifest_appends_sha256_other", {"unlock_edit": m_edit("appends_sha256", "7" * 64)}, {},
          "unlock_manifest_mismatch"),
         ("manifest_not_json", {"manifest_bytes": b"not a manifest\n"}, {}, "manifest_unreadable"),
+        ("manifest_duplicate_key", {"mdata_edit": first_format_duplicated}, {}, "manifest_unreadable"),
         ("manifest_without_body", {"manifest_bytes": no_body}, {}, "manifest_format"),
+        ("manifest_of_another_format", {"mdata_edit": other_format}, {}, "manifest_format"),
         ("pin_script_sha256_other", {"pin_edit": script_sha}, {}, "hasher_pin_mismatch"),
         ("pin_script_path_other", {"pin_edit": script_path}, {}, "hasher_pin_mismatch"),
         ("pin_module_sha256_other", {"pin_edit": module}, {}, "hasher_pin_mismatch"),
         ("pin_python_other", {"pin_edit": python}, {}, "hasher_pin_mismatch"),
         ("pin_parameters_other", {"pin_edit": suffixes}, {}, "hasher_pin_mismatch"),
+        ("pin_digest_other", {"pin_edit": other("digest", "sha1 of the file bytes")}, {}, "hasher_pin_mismatch"),
+        ("pin_folder_other", {"pin_edit": other("folder", "images/{split}/jpg")}, {}, "hasher_pin_mismatch"),
+        ("pin_outputs_other", {"pin_edit": lambda p: p["parameters"]["outputs"].update(dedup_format="tday_dedup/2")},
+         {}, "hasher_pin_mismatch"),
+        ("pin_rule_other", {"pin_edit": lambda p: p["parameters"]["rule"]["precedence"].reverse()}, {},
+         "hasher_pin_mismatch"),
+        ("pin_split_other", {"pin_edit": other("split", {"from": "src.eval.stage_artifacts.OTHER_SPLIT"})}, {},
+         "hasher_pin_mismatch"),
+        ("pin_commit_not_lower_hex", {"pin_edit": commit_upper_case}, {}, "hasher_pin_mismatch"),
+        ("pin_expected_images_a_string", {"pin_edit": images_as_text}, {}, "hasher_pin_mismatch"),
+        ("pin_train_val_list_dl_malformed", {"pin_edit": dl_malformed}, {}, "hasher_pin_mismatch"),
         ("pin_without_modules", {"pin_edit": no_modules}, {}, "hasher_pin_mismatch"),
         ("pin_absent", {"pin_edit": lambda p: p.clear()}, {}, "hasher_pin_mismatch"))
     for name, opts, over, code in variants:
@@ -630,6 +665,15 @@ def case_step6_outputs():
     rc, txt = run(w5.argv(), ctx=FullDisk(w5.out.resolve() / D.DEDUP_NAME))
     check("step6_write_failure_exit_4_leaves_neither_output", rc == 4 and "ERROR -- OSError" in txt
           and not any(w5.out.iterdir()), f"{rc} {txt[-200:]} {sorted(p.name for p in w5.out.iterdir())}")
+    w6 = World()
+    rc, txt = run(w6.argv(out=str(w6.repo)))
+    check("step6_out_equal_to_the_repository_refused", refused(rc, txt, "output_location")
+          and "inside the repository" in txt and not (w6.repo / D.HASH_LIST_NAME).exists(), txt[-200:])
+    link = FX.scratch_dir("tmanhlink") / "out_link"
+    os.symlink(w6.repo / "reports", link)
+    rc, txt = run(w6.argv(out=str(link)))
+    check("step6_out_linked_into_the_repository_refused", refused(rc, txt, "output_location")
+          and "inside the repository" in txt and not (w6.repo / "reports" / D.HASH_LIST_NAME).exists(), txt[-200:])
 
 
 def case_shuffled_scandir():
@@ -720,12 +764,17 @@ def case_print_pin():
                        ("commit_of_39_hex_refused", ["--print-pin", "--commit", "3" * 39])):
         rc, txt = run(argv)
         check(f"print_pin_{name}", refused(rc, txt, "generator_pin_incomplete"), f"{rc} {txt[-160:]}")
-    for name, argv in (("both_modes", ["--print-pin", "--commit", COMMIT, "hash", "--repo", "r", "--unlock-entry", "u",
-                                       "--root", "d", "--train-val-list", "l", "--out", "o"]),
-                       ("neither_mode", []), ("print_pin_without_commit", ["--print-pin"])):
-        with contextlib.redirect_stderr(io.StringIO()):
-            rc, _ = run(argv)
-        check(f"usage_{name}_exit_2", rc == 2, str(rc))
+    hash_argv = ["hash", "--repo", "r", "--unlock-entry", "u", "--root", "d", "--train-val-list", "l", "--out", "o"]
+    modes = "give --print-pin --commit <40 hex>, or the hash command"
+    commit_flag = "--commit goes with --print-pin, and only with it"
+    for name, argv, want in (("both_modes", ["--print-pin", "--commit", COMMIT] + hash_argv, modes),
+                             ("neither_mode", [], modes), ("print_pin_without_commit", ["--print-pin"], commit_flag),
+                             ("commit_with_the_hash_command", ["--commit", COMMIT] + hash_argv, commit_flag)):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            rc, txt = run(argv)
+        check(f"usage_{name}_exit_2", rc == 2 and want in err.getvalue() and "REFUSED" not in txt,
+              f"{rc} {txt[-120:]} {err.getvalue()[-120:]}")
 
 
 # =============================================================================================== static (H8, H10)
