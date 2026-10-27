@@ -8,6 +8,7 @@
        Re-pinned by lane LQP (C14) after ruling R2's one call in run()'s INT8 official branch, outside the
        part D2 mirrors (teacher_d2_calibration.py :105-258).
        Re-pinned by lane LEFF B-1b for IF-T1's flags in run(), inert without them; D2 (teacher_d2_calibration.py) passes none.
+       Re-pinned by lane L-FQOFF after its run() hunks, outside the part D2 mirrors (teacher_d2_calibration.py :105-258).
   P6   src/eval/teacher_diag.py calls load_frozen_teacher and load_teacher_model exactly once each (the two
        load lines), and no DIAG script calls either.
   P7   frozen.provenance.as_dict() is called at exactly one site (teacher_record), and no DIAG script
@@ -32,7 +33,7 @@ if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
 RESULTS: list[tuple[str, bool, str]] = []
-EVALUATE_MODEL_RUN_SHA256 = "d41964f5ebf692526d75399a05e888d68632b43cb4da760718ca6e3e17ad783a"   # at ea22241
+EVALUATE_MODEL_RUN_SHA256 = "c3460683307f4e59d58ac0379fe682a532c93f33179f2b3c2583b8f50c0a0bfb"   # at b43ab55
 DIAG_SCRIPTS = ("scripts/teacher_d1_nmf_sensitivity.py", "scripts/teacher_d2_calibration.py",
                 "scripts/score_teacher_train.py", "scripts/teacher_d3_perclass_strata.py",
                 "scripts/hash_split_files.py", "scripts/dedup_val_scores.py")
