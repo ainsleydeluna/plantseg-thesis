@@ -41,6 +41,7 @@ CODE_DATE, RECORDS_DATE, MANIFEST_DATE = ("2026-11-01T08:00:00+00:00", "2026-11-
 FREEZE_DAY = "2026-11-03"
 QAT_RULES_SHA256 = "76addc57d0367dda9a1163f749ec32c9c240b20736104dc12aa77488344f9568"
 CLIP_REL = "u4_clip/clip_selection.json"            # the U4 pilot's clip selection, under --runs
+LATE = "2026-11-04T10:00:00Z"                       # a derived model made after the freeze, appended
 REAL_FILES = ("configs/tday_catalogue.json", "configs/kd_schedule.json", "configs/qat_selection_rules.json",
               *[f"configs/calibration/ptq_calibration_seed{s}.json" for s in (42, 43, 44, 45)],
               "reports/derived/mde_entry_20261009T034825Z.json", "reports/strata/train_strata_v1.json")
@@ -280,8 +281,10 @@ class World:
         FX.write_jsonl(tel, rows)
         tsha = S.sha256_bytes(tel.read_bytes())
         art = {k: S.sha256_bytes(f"{k} {rid}".encode()) for k in ("ts", "sd", "x86")}
-        prov = S.json_file_bytes({"format": "qat_artifact_provenance/fixture", "run_id": rid, "epoch": epoch,
-                                  "converted_artifact_sha256": art["ts"]})
+        prov = S.json_file_bytes({"stage": stage, "quantization_method": "qat", "converted_artifact_sha256": art["ts"],
+                                  "state_dict_artifact": {"path": f"e{epoch:02d}_int8_student.pt", "sha256": art["sd"]},
+                                  "training": {"run_id": rid, "epoch": epoch, "seed": 42, "clip_norm": clip},
+                                  "status": "converted", "created_utc": made})
         (d / "eval").mkdir(exist_ok=True)
         (d / "eval" / f"e{epoch:02d}_provenance.json").write_bytes(prov)
         rec = S.json_file_bytes({
@@ -1227,13 +1230,16 @@ def case_parent_and_derived_gates():
 
 def case_appends():
     """AM-19 item 4(c), decision (xi), TB19 Q9 and A2: derived models made after the freeze, appended. A PTQ model
-    of record cites its ptq_record, which stands in for the isolation record; a sensitivity model cites an isolation
-    record of its provenance's root and digest, made before it."""
+    of record cites its ptq_record, which stands in for the isolation record; a sensitivity model, and a QAT
+    selection, cite an isolation record of the provenance's root and digest, made before it. The made instant is the
+    provenance's created_utc, after the original freeze instant (DL-24 #25, #26)."""
     w = WORLD
 
-    def post(d, slot, rec="keep", isolation=None, **h):
+    def post(d, slot, rec="keep", isolation=None, made=LATE, **h):
         e = w.entry(d, slot)
-        hashed = dict(e["hashed"], appended="append", made_utc="2026-11-04T10:00:00Z", isolation=isolation, **h)
+        h.setdefault("provenance", runs_variant(w, e["hashed"]["provenance"], f"variant_made_{stamp(made)}.json",
+                                                {"created_utc": made}))
+        hashed = dict(e["hashed"], appended="append", made_utc=made, isolation=isolation, **h)
         d["appends"].append({"slot": slot, "hashed": hashed, "ptq_record": e["ptq_record"] if rec == "keep" else rec})
         e.update(hashed=None, ptq_record=None)
     code, _, e = w.run("freeze", mutated(w, lambda d: post(d, "E4:s43:list42")))
@@ -1266,11 +1272,50 @@ def case_appends():
         w, lambda d: post(d, "E4:s42:list43", rec=None, isolation=recs["of_record"],
                           provenance={"path": "E4_s42_list43/ptq_run_meta.json", "sha256": "0" * 64})),
         detail="provenance is not the cited one")
-    other = runs_variant(w, w.entry(w.doc, "E4:s42:list43")["hashed"]["provenance"], "variant_appended_parent.json",
-                         {"source_checkpoint_sha256": "0" * 64})
+    ph = w.entry(w.doc, "E4:s42:list43")["hashed"]["provenance"]
+    other = runs_variant(w, ph, "variant_appended_parent.json", {"source_checkpoint_sha256": "0" * 64,
+                                                                 "created_utc": LATE})
     expect_gate(w, "appended_model_whose_provenance_names_another_parent_B27", "derived_hash_mismatch", doc=mutated(
         w, lambda d: post(d, "E4:s42:list43", rec=None, isolation=recs["of_record"], provenance=other)),
         detail="names other ['source_checkpoint_sha256']")
+    expect_gate(w, "append_made_by_the_freeze_B25", "append_invalid", doc=mutated(
+        w, lambda d: post(d, "E4:s42:list43", rec=None, isolation=recs["of_record"], made="2026-11-02T10:00:00Z")),
+        detail="by the original freeze instant")
+    expect_gate(w, "appended_made_utc_not_its_provenance_s_B25", "derived_hash_mismatch", doc=mutated(
+        w, lambda d: post(d, "E4:s42:list43", rec=None, isolation=recs["of_record"], provenance=ph)),
+        detail="names other ['created_utc (the made instant)']")
+    early = runs_variant(w, ph, f"variant_made_{stamp('2026-11-04T08:30:00Z')}.json",
+                         {"created_utc": "2026-11-04T08:30:00Z"})
+    expect_gate(w, "isolation_after_the_artifact_with_a_later_made_utc_B25", "derived_hash_mismatch", doc=mutated(
+        w, lambda d: post(d, "E4:s42:list43", rec=None, isolation=recs["of_record"], provenance=early)),
+        detail="created_utc (the made instant)")
+    expect_gate(w, "isolation_after_the_artifact_xi", "append_invalid", doc=mutated(
+        w, lambda d: post(d, "E4:s42:list43", rec=None, isolation=recs["of_record"], made="2026-11-04T08:30:00Z")),
+        detail="made before it")
+    q5 = w.entry(w.doc, "E5:s42:sel")
+    qprov = runs_variant(w, q5["hashed"]["provenance"], "variant_made_late_provenance.json", {"created_utc": LATE})
+    qrec = runs_variant(w, q5["hashed"]["record"], "variant_made_late_record.json",
+                        {"winner.provenance.sha256": qprov["sha256"]})
+    qclip = runs_variant(w, q5["inputs"]["clip_selection"], "variant_made_late_clip.json",
+                         {"winner.qat_selection.sha256": qrec["sha256"]})
+
+    def post_qat(d, isolation):
+        e = w.entry(d, "E5:s42:sel")
+        e["inputs"]["clip_selection"] = qclip
+        d["appends"].append({"slot": "E5:s42:sel", "hashed": dict(e["hashed"], appended="append", made_utc=LATE,
+                                                                   isolation=isolation, provenance=qprov,
+                                                                   record=qrec), "ptq_record": None})
+        e["hashed"] = None
+    code, _, e = w.run("freeze", mutated(w, lambda d: post_qat(d, recs["of_record"])))
+    check("post_freeze_qat_append_with_its_isolation_record_passes_B26", code is None,
+          f"{code}: {e.detail[:200] if e else ''}")
+    expect_gate(w, "post_freeze_qat_append_without_an_isolation_record_xi", "append_invalid",
+                doc=mutated(w, lambda d: post_qat(d, None)), detail="without an isolation record")
+
+
+def stamp(utc: str) -> str:
+    """A UTC instant in a file name (no ':')."""
+    return utc.replace("-", "").replace(":", "")
 
 
 def runs_variant(w: World, ref: dict, name: str, edits: dict) -> dict:
@@ -1366,6 +1411,19 @@ def case_derived_sources():
         ref = runs_variant(w, qh["record"], f"variant_{tag}.json", edits)
         expect_gate(w, f"qat_record_naming_{tag}_B34", "derived_hash_mismatch", doc=hashed(q6, record=ref),
                     detail=detail)
+    for tag, edits, detail in (("made_at_another_time", {"created_utc": "2026-11-02T11:00:00Z"},
+                                "provenance.created_utc (the made instant)"),
+                               ("of_another_artifact", {"converted_artifact_sha256": "0" * 64},
+                                "provenance.converted_artifact_sha256"),
+                               ("of_another_state_dict", {"state_dict_artifact.sha256": "0" * 64},
+                                "provenance.state_dict_artifact.sha256"),
+                               ("of_another_run", {"training.run_id": "e5_s42_clip5_15ep"},
+                                "provenance.training.run_id"),
+                               ("of_another_epoch", {"training.epoch": 11}, "provenance.training.epoch")):
+        prov = runs_variant(w, qh["provenance"], f"variant_prov_{tag}.json", edits)
+        rec = runs_variant(w, qh["record"], f"variant_rec_{tag}.json", {"winner.provenance.sha256": prov["sha256"]})
+        expect_gate(w, f"qat_provenance_{tag}_B25_B50", "derived_hash_mismatch",
+                    doc=hashed(q6, provenance=prov, record=rec), detail=detail)
     clip = w.entry(w.doc, q6)["inputs"]["clip_selection"]
     for name, slot, ref, detail in (
             ("clip_selection_not_the_cited_sha256_B34", q6, dict(clip, sha256="0" * 64),
@@ -1392,6 +1450,44 @@ def case_derived_sources():
                 doc=mutated(w, pilot_loser), detail="the pilot's winner (the clip selection names e5_s42_clip5_15ep")
     code, _, e = w.run("draft", hashed(q6, record=dict(qh["record"], sha256="0" * 64)), runs_root=None)
     check("derived_records_unread_without_runs_in_a_draft", code is None, f"{code}: {e.detail[:200] if e else ''}")
+
+
+def case_appends_history():
+    """Plan §1.1 over git history (DL-24 #28, #54): the appends only grow. A validated manifest whose appends do not
+    extend the newest committed ones, and a commit that rewrites a committed append, are refused append_invalid. A
+    world of its own: a committed append stays in its history."""
+    w = World()
+    S = w.S
+    data = S.json_file_bytes({"format": S.ISOLATION_FORMAT, "root": "/workspace/plantseg_trainval",
+                              "image_digest": S.KD_IMAGE, "utc": "2026-11-04T09:00:00Z",
+                              "result": {"method": "fixture"}})
+    iso = {"path": "reports/derived/tday_isolation_history.json", "sha256": S.sha256_bytes(data)}
+    w.commit({iso["path"]: data}, "an isolation record")
+
+    def appended(slot):
+        h = w.entry(w.doc, slot)["hashed"]
+        prov = runs_variant(w, h["provenance"], f"variant_made_{stamp(LATE)}.json", {"created_utc": LATE})
+        return {"slot": slot, "hashed": dict(h, appended="append", made_utc=LATE, isolation=iso, provenance=prov),
+                "ptq_record": None}
+
+    def version(*slots):
+        d = mutated(w, lambda d: [w.entry(d, k).update(hashed=None) for k in ("E4:s42:list43", "E4:s42:list44")])
+        d["appends"] = [appended(k) for k in slots]
+        return d
+    v1 = version("E4:s42:list43")
+    w.commit({S.MANIFEST_REL: S.json_file_bytes(v1)}, "an append committed")
+    code, _, e = w.run("freeze", v1)
+    check("committed_append_passes", code is None, f"{code}: {e.detail[:200] if e else ''}")
+    code, _, e = w.run("freeze", version("E4:s42:list43", "E4:s42:list44"))
+    check("appends_growing_past_the_committed_pass", code is None, f"{code}: {e.detail[:200] if e else ''}")
+    expect_gate(w, "candidate_appends_behind_the_committed_B54", "append_invalid", doc=version(),
+                detail="the validated manifest: the appends changed: 1 committed appends are not a prefix of the 0")
+    expect_gate(w, "candidate_rewriting_a_committed_append_B54", "append_invalid", doc=version("E4:s42:list44"),
+                detail="the validated manifest: the appends changed")
+    v2 = version("E4:s42:list44")
+    c2 = w.commit({S.MANIFEST_REL: S.json_file_bytes(v2)}, "the committed append rewritten")
+    expect_gate(w, "committed_append_rewritten_in_a_later_commit_B28", "append_invalid", doc=v2,
+                detail=f"commit {c2[:12]}: the appends changed")
 
 
 def case_non_finite_gate():
@@ -1845,10 +1941,8 @@ def main() -> int:
                             (case_world_passes, case_input_gates, case_record_gates, case_entry_files,
                              case_completion_gates,
                              case_cut_gates, case_cut_attribution, case_parent_and_derived_gates, case_appends,
-                             case_derived_sources, case_non_finite_gate, case_scope_gates, case_moved_freeze,
-                             case_printers,
-                             case_draft_and_cli,
-                             case_inventory, case_coverage))
+                             case_derived_sources, case_appends_history, case_non_finite_gate, case_scope_gates,
+                             case_moved_freeze, case_printers, case_draft_and_cli, case_inventory, case_coverage))
     finally:
         if REAL_TEACHER is not None:
             WORLD.M.TEACHER_OF_RECORD.clear()

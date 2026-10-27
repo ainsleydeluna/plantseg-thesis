@@ -1050,14 +1050,16 @@ def g_non_finite_invalid(x: Ctx):
 
 
 def g_append_invalid(x: Ctx):
-    errs, slots = [], set()
+    """The appends only grow over the manifest's committed history (DL-24 #28, #54); each is checked structurally,
+    then with the records it cites (DL-24 #26)."""
+    errs, slots = M.appends_history_errors(x.records, x.doc["appends"]), set()
     for a in x.doc["appends"]:
         if not isinstance(a, dict) or a.get("slot") in slots:
             errs.append(f"append {a!r:.60}: malformed or a second append of its slot")
             continue
         slots.add(a.get("slot"))
         frozen = x.by_slot.get(a.get("slot"))
-        first = M.append_errors(a, frozen, x.freeze.original_utc, ptq_record_ok=True)
+        first = M.append_errors(a, frozen, x.freeze.original_utc, structural=True)
         if first:
             errs += first
             continue

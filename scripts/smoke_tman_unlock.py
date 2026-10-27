@@ -258,14 +258,23 @@ def case_unlock_printer():
 def case_unlock_gates():
     S, w = UW.S, UW.w
     u = UW
-    d = copy.deepcopy(u.doc)
-    w.entry(d, "E4:s42:list45")["hashed"] = None
-    d["appends"] = [{"slot": "E4:s42:list45", "hashed": dict(w.entry(u.doc, "E4:s42:list45")["hashed"],
-                                                              appended="append"), "ptq_record": None}]
-    data = u.commit_manifest(d)
-    code, _, e = u.run("freeze", data)
+    ua = Unlock()                       # a committed append stays in the history (plan §1.1): a world of its own
+    iso = S.json_file_bytes({"format": S.ISOLATION_FORMAT, "root": "/workspace/plantseg_trainval",
+                             "image_digest": S.KD_IMAGE, "utc": "2026-11-04T09:00:00Z",
+                             "result": {"method": "fixture"}})
+    rel = "reports/derived/tday_isolation_unlock.json"
+    ua.w.commit({rel: iso}, "an isolation record")
+    h = ua.w.entry(ua.doc, "E4:s42:list45")["hashed"]
+    prov = VW.runs_variant(ua.w, h["provenance"], f"variant_made_{VW.stamp(VW.LATE)}.json", {"created_utc": VW.LATE})
+    d = copy.deepcopy(ua.doc)
+    ua.w.entry(d, "E4:s42:list45")["hashed"] = None
+    d["appends"] = [{"slot": "E4:s42:list45", "hashed": dict(
+        h, appended="append", made_utc=VW.LATE, isolation={"path": rel, "sha256": S.sha256_bytes(iso)},
+        provenance=prov), "ptq_record": None}]
+    data = ua.commit_manifest(d)
+    code, _, e = ua.run("freeze", data)
     check("the_append_itself_passes_freeze_mode", code is None, f"{code}: {e.detail[:200] if e else ''}")
-    expect_gate(u, "appends_changed_after_the_unlock_record", "append_after_unlock", data=data,
+    expect_gate(ua, "appends_changed_after_the_unlock_record", "append_after_unlock", data=data,
                 detail="appends changed after the unlock record")
     d2 = copy.deepcopy(u.doc)
     w.entry(d2, "E4:s42:list45")["hashed"] = None

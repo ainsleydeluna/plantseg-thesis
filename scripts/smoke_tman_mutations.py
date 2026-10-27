@@ -497,8 +497,8 @@ M = [
     ("non_finite_flags", MAN, [('elif len(ends) != 15 or any(r.get("state_finite") is not False for r in ends):',
                                 "elif len(ends) != 15:")],
      "validate", "case_non_finite_gate", "non_finite_with_a_convertible_epoch", ["non_finite_invalid"], None),
-    ("S07_isolation_test_dropped", MAN, [('if not D.meets(made, freeze_utc) and not (ptq_record_ok and '
-                                          'frozen["method"] == "ptq"):', "if False:")],
+    ("S07_isolation_test_dropped", MAN, [('elif not structural and not (ptq_record_ok and '
+                                          'frozen["method"] == "ptq"):', "elif False:")],
      "validate", "case_appends", "post_freeze_append_without_an_isolation_record_xi", ["append_invalid"], 7),
     ("isolation_cited", MAN, [('        if S.sha256_bytes(data) != h["isolation"]["sha256"]:', "        if False:")],
      "validate", "case_appends", "isolation_record_not_the_cited_one", ["append_invalid"], None),
@@ -760,6 +760,53 @@ M = [
     ("derived_hash_of_appends", VAL, [("            made.append(M.appended_entry(app, listed))", "            pass")],
      "validate", "case_appends", "appended_model_whose_provenance_names_another_parent_B27",
      ["derived_hash_mismatch"], None),
+    # ------------------- the made instant, the structural first pass, the appends' history (DL-24 #25 #26 #28 #54)
+    ("append_made_by_the_freeze", MAN, [("    if D.meets(made, freeze_utc):\n        errs.append(",
+                                         "    if False:\n        errs.append(")],
+     "validate", "case_appends", "append_made_by_the_freeze_B25", ["append_invalid"], None),
+    # the first pass as it was (#26): the ptq_record stand-in for a PTQ append, none for a QAT selection
+    ("append_first_pass_structural", VAL, [("first = M.append_errors(a, frozen, x.freeze.original_utc, "
+                                            "structural=True)",
+                                            "first = M.append_errors(a, frozen, x.freeze.original_utc, "
+                                            "ptq_record_ok=True)")],
+     "validate", "case_appends", "post_freeze_qat_append_with_its_isolation_record_passes_B26", ["append_invalid"],
+     None),
+    ("cli_append_first_pass_structural", CLI, [("errs = M.append_errors(append, frozen, freeze.original_utc, "
+                                                "structural=True)",
+                                                "errs = M.append_errors(append, frozen, freeze.original_utc, "
+                                                "ptq_record_ok=True)")],
+     "paths", "case_cli_outputs", "cli_append_of_a_qat_selection_made_after_the_freeze_B26", ["append_invalid"],
+     None),
+    ("ptq_made_instant", MAN, [('        if not _same_second(_dotted(docs["provenance"], "created_utc"), '
+                                'h["made_utc"]):\n            bad.append(',
+                                "        if False:\n            bad.append(")],
+     "validate", "case_appends", "appended_made_utc_not_its_provenance_s_B25", ["derived_hash_mismatch"], None),
+    ("qat_made_instant", MAN, [('    if not _same_second(_dotted(docs["provenance"], "created_utc"), '
+                                'h["made_utc"]):\n        bad.append(', "    if False:\n        bad.append(")],
+     "validate", "case_derived_sources", "qat_provenance_made_at_another_time_B25_B50", ["derived_hash_mismatch"],
+     None),
+    ("qat_provenance_artifact", MAN, [('    pwant = {"converted_artifact_sha256": h["artifact_sha256"], ',
+                                       "    pwant = {")],
+     "validate", "case_derived_sources", "qat_provenance_of_another_artifact_B25_B50", ["derived_hash_mismatch"],
+     None),
+    ("qat_provenance_epoch", MAN, [('"training.run_id": rid, "training.epoch": epoch}', '"training.run_id": rid}')],
+     "validate", "case_derived_sources", "qat_provenance_of_another_epoch_B25_B50", ["derived_hash_mismatch"], None),
+    ("appends_history_pairs", MAN, [("            err = None if before is None else appends_prefix_error(before, "
+                                     "now or [])", "            err = None")],
+     "validate", "case_appends_history", "committed_append_rewritten_in_a_later_commit_B28", ["append_invalid"],
+     None),
+    ("appends_history_newest", MAN, [("    err = None if newest is None else appends_prefix_error(newest, appends)",
+                                      "    err = None")],
+     "validate", "case_appends_history", "candidate_appends_behind_the_committed_B54", ["append_invalid"], None),
+    ("validator_reads_the_appends_history", VAL, [('    errs, slots = M.appends_history_errors(x.records, '
+                                                   'x.doc["appends"]), set()', "    errs, slots = [], set()")],
+     "validate", "case_appends_history", "candidate_rewriting_a_committed_append_B54", ["append_invalid"], None),
+    ("cli_append_history", CLI, [('    errs = M.appends_history_errors(records, doc["appends"])', "    errs = []")],
+     "paths", "case_cli_outputs", "cli_append_to_a_manifest_behind_the_committed_appends_B54", ["append_invalid"],
+     None),
+    ("cli_append_derived_hash", CLI, [("    if args.runs is not None:\n        errs = M.derived_hash_errors(",
+                                       "    if False:\n        errs = M.derived_hash_errors(")],
+     "paths", "case_cli_outputs", "cli_append_made_utc_not_its_provenance_s_B25", ["derived_hash_mismatch"], None),
 ]
 REFUSAL_EXTRA = ("inventory_invalid", "inventory_sha256_mismatch", "binding_invalid",       # read_inventory's codes
                  "output_location", "output_exists")                                       # the CLI's outputs

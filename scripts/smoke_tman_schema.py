@@ -669,7 +669,7 @@ def case_readers():
             walk(a[0])
     for a in (R.KD_ROWS, R.KD_RUN_META, R.E1_ROWS, R.QAT_ROWS, R.QAT_CHECKPOINT, R.QAT_SELECTION, R.CLIP_SELECTION,
               R.ARM_TEACHER_RECORD, R.GO_RULE_RECORD, R.E7_ARM_RECORD, R.LAUNCH_PROVENANCE, R.PTQ_PROVENANCE,
-              R.EVAL_RUNTIME, R.SELECTION, R.PTQ_RECORD):
+              R.QAT_PROVENANCE, R.EVAL_RUNTIME, R.SELECTION, R.PTQ_RECORD):
         walk(a)
     check("allowlists_hold_no_score_key", not [k for k in allow_keys if SCORE_KEY_RE.search(k)],
           str([k for k in allow_keys if SCORE_KEY_RE.search(k)]))

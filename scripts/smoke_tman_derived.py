@@ -259,7 +259,11 @@ def case_appends():
     fz = D.cutoff_instant(FREEZE)
     frozen = derived("E4:s43:list42", "E1:s43:80k")
     before = {"slot": "E4:s43:list42", "hashed": hashed(appended="append"), "ptq_record": None}
-    check("append_made_before_the_freeze", not M.append_errors(before, frozen, fz))
+    check("append_made_by_the_freeze_refused_B25", any("by the original freeze instant" in x
+                                                         for x in M.append_errors(before, frozen, fz)))
+    check("structural_pass_refuses_an_append_made_by_the_freeze_B25", bool(M.append_errors(before, frozen, fz,
+                                                                                            structural=True)))
+    post = dict(before, hashed=hashed(appended="append", made="2026-11-04T10:00:00Z"))
     after = {"slot": "E4:s43:list42", "hashed": hashed(appended="append", made="2026-11-04T10:00:00Z",
                                                        isolation={"path": "iso.json", "sha256": "a" * 64}),
              "ptq_record": None}
@@ -284,6 +288,8 @@ def case_appends():
                                                                       isolation=iso("/somewhere")))
     check("qat_after_the_freeze_record_does_not_stand_in", bool(M.append_errors(
         dict(qafter, hashed=dict(qafter["hashed"], isolation=None)), qfrozen, fz, ptq_record_ok=True)))
+    check("structural_pass_leaves_the_isolation_record_to_the_reads_B26", not M.append_errors(
+        qafter, qfrozen, fz, structural=True))
     check("isolation_root_not_compared_without_provenance", not M.append_errors(
         after, frozen, fz, isolation=iso("/workspace/other"), provenance=None))
     check("append_without_its_ptq_record_key_refused", bool(M.append_errors(
@@ -310,13 +316,13 @@ def case_appends():
     check("append_unrelated_slot_refused", bool(M.append_errors(dict(before, slot="E4:s44:list42"), None, fz)))
     check("append_to_a_hashed_entry_refused", bool(M.append_errors(before, dict(frozen, hashed=hashed()), fz)))
     check("append_to_a_run_refused", bool(M.append_errors(before, run("scored_run", "E4:s43:list42"), fz)))
+    check("post_freeze_append_with_its_record_passes", not M.append_errors(post, frozen, fz, ptq_record_ok=True))
     check("append_digest_not_of_record_refused", bool(M.append_errors(
-        {"slot": "E4:s43:list42", "hashed": hashed(appended="append", image_digest="sha256:" + "0" * 64),
-         "ptq_record": None}, frozen, fz)))
+        dict(post, hashed=dict(post["hashed"], image_digest="sha256:" + "0" * 64)), frozen, fz, ptq_record_ok=True)))
     check("append_digest_other_than_declared_refused", bool(M.append_errors(
-        before, dict(frozen, inputs=ptq_inputs(image_digest=FX_STUDENT)), fz)))
+        post, dict(frozen, inputs=ptq_inputs(image_digest=FX_STUDENT)), fz, ptq_record_ok=True)))
     check("append_marked_freeze_refused", bool(M.append_errors(
-        {"slot": "E4:s43:list42", "hashed": hashed(appended="freeze"), "ptq_record": None}, frozen, fz)))
+        dict(post, hashed=dict(post["hashed"], appended="freeze")), frozen, fz, ptq_record_ok=True)))
     check("append_with_inputs_refused", bool(M.append_errors(dict(before, inputs=ptq_inputs()), frozen, fz)))
     check("append_incomplete_hashed_refused", bool(M.append_errors(
         {"slot": "E4:s43:list42", "hashed": {k: v for k, v in hashed(appended="append").items() if k != "record"},

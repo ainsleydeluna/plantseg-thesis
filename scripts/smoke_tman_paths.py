@@ -235,6 +235,7 @@ def post_freeze_ptq_append(w, out: Path, base: list) -> None:
     intact ptq_record stands in for the isolation record; without, refused. Lane LQP's reader is the world's
     stand-in for the calls (records.ptq_record_reader patched and restored)."""
     import json
+    import scripts.smoke_tman_validate as VW
     from src.tman import records as R
     S = w.S
     rel = "E4_s43_list42/E4_s43_list42_ptq_record.json"
@@ -242,8 +243,10 @@ def post_freeze_ptq_append(w, out: Path, base: list) -> None:
     (w.runs / rel).write_bytes(data)
     d = json.loads(w.data)
     e = next(x for x in d["body"]["entries"] if x["slot"] == "E4:s43:list42")
-    (out / "hashed_post.json").write_bytes(S.json_file_bytes(dict(e["hashed"], appended="append",
-                                                                  made_utc="2026-11-04T10:00:00Z")))
+    prov = VW.runs_variant(w, e["hashed"]["provenance"], f"variant_made_{VW.stamp(VW.LATE)}.json",
+                           {"created_utc": VW.LATE})
+    (out / "hashed_post.json").write_bytes(S.json_file_bytes(dict(e["hashed"], appended="append", made_utc=VW.LATE,
+                                                                  provenance=prov)))
     e.update(hashed=None, ptq_record=None)
     (out / "m_inputs_post.json").write_bytes(S.json_file_bytes(d))
     argv = base + ["append", "--manifest", str(out / "m_inputs_post.json"), "--slot", "E4:s43:list42", "--hashed",
@@ -267,6 +270,57 @@ def post_freeze_ptq_append(w, out: Path, base: list) -> None:
           and not (folder / "tday_manifest.json").exists(), txt.strip()[-200:])
 
 
+def cli_append_times(w, out: Path, base: list, iso: dict) -> None:
+    """The append command (DL-24 #25, #26): a QAT selection made after the freeze passes with its isolation record;
+    an artifact made by the original freeze instant is refused append_invalid; a made_utc other than the provenance's
+    created_utc is refused derived_hash_mismatch."""
+    import json
+    import scripts.smoke_tman_validate as VW
+    S = w.S
+    d = json.loads(w.data)
+    q = next(x for x in d["body"]["entries"] if x["slot"] == "E5:s42:sel")
+    qprov = VW.runs_variant(w, q["hashed"]["provenance"], "variant_made_late_provenance.json",
+                            {"created_utc": VW.LATE})
+    qrec = VW.runs_variant(w, q["hashed"]["record"], "variant_made_late_record.json",
+                           {"winner.provenance.sha256": qprov["sha256"]})
+    qclip = VW.runs_variant(w, q["inputs"]["clip_selection"], "variant_made_late_clip.json",
+                            {"winner.qat_selection.sha256": qrec["sha256"]})
+    (out / "hashed_qat.json").write_bytes(S.json_file_bytes(dict(q["hashed"], appended="append", made_utc=VW.LATE,
+                                                                 isolation=iso, provenance=qprov, record=qrec)))
+    q.update(hashed=None, inputs=dict(q["inputs"], clip_selection=qclip))
+    (out / "m_inputs_qat.json").write_bytes(S.json_file_bytes(d))
+    p = next(x for x in json.loads(w.data)["body"]["entries"] if x["slot"] == "E4:s42:list43")["hashed"]
+    (out / "hashed_early.json").write_bytes(S.json_file_bytes(dict(p, appended="append", isolation=iso)))
+    (out / "hashed_unproven.json").write_bytes(S.json_file_bytes(dict(p, appended="append", made_utc=VW.LATE,
+                                                                      isolation=iso)))
+    for name, manifest, slot, hashed, want in (
+            ("cli_append_of_a_qat_selection_made_after_the_freeze_B26", "m_inputs_qat.json", "E5:s42:sel",
+             "hashed_qat.json", None),
+            ("cli_append_made_by_the_freeze_refused_B25", "m_inputs.json", "E4:s42:list43", "hashed_early.json",
+             "REFUSED [append_invalid]"),
+            ("cli_append_made_utc_not_its_provenance_s_B25", "m_inputs.json", "E4:s42:list43", "hashed_unproven.json",
+             "REFUSED [derived_hash_mismatch]")):
+        folder = out / name
+        folder.mkdir()
+        rc, txt = _cli(base + ["append", "--manifest", str(out / manifest), "--slot", slot, "--hashed",
+                               str(out / hashed), "--out", str(folder), "--runs", str(w.runs)])
+        made = sorted(f.name for f in folder.iterdir())
+        check(name, rc == 0 and made == ["tday_manifest.json"] if want is None else rc == 2 and want in txt
+              and not made, txt.strip()[-200:])
+
+
+def cli_append_history(w, out: Path, base: list, appended: Path) -> None:
+    """DL-24 #54: the append command extends the newest committed appends only (the manifest the CLI wrote, with
+    one append, committed; the manifest without it is then behind)."""
+    w.commit({w.S.MANIFEST_REL: appended.read_bytes()}, "a manifest with an append committed")
+    folder = out / "behind"
+    folder.mkdir()
+    rc, txt = _cli(base + ["append", "--manifest", str(out / "m_inputs.json"), "--slot", "E4:s42:list43", "--hashed",
+                           str(out / "hashed.json"), "--out", str(folder), "--runs", str(w.runs)])
+    check("cli_append_to_a_manifest_behind_the_committed_appends_B54", rc == 2 and "REFUSED [append_invalid]" in txt
+          and "the validated manifest" in txt and not any(folder.iterdir()), txt.strip()[-200:])
+
+
 def _cli(argv) -> tuple[int, str]:
     import contextlib
     import scripts.tday_manifest as CLI
@@ -284,6 +338,11 @@ def case_cli_outputs():
     w = VW.World()
     S = w.S
     try:
+        data = S.json_file_bytes({"format": S.ISOLATION_FORMAT, "root": "/workspace/plantseg_trainval",
+                                  "image_digest": S.KD_IMAGE, "utc": "2026-11-04T09:00:00Z",
+                                  "result": {"method": "fixture"}})
+        iso = {"path": "reports/derived/tday_isolation_cli.json", "sha256": S.sha256_bytes(data)}
+        w.commit({iso["path"]: data}, "an isolation record (decision (xi))")
         status0 = FX.git(w.repo, "status", "--porcelain", "--untracked-files=all")
         dl0 = (w.repo / S.DECISION_LOG_REL).read_bytes()
         out = FX.scratch_dir("tmanpout")
@@ -293,7 +352,10 @@ def case_cli_outputs():
         (out / "fields.json").write_bytes(S.json_file_bytes({"reason": "code not merged", "lane": "L-AM23"}))
         d = json.loads(w.data)
         e = next(x for x in d["body"]["entries"] if x["slot"] == "E4:s42:list43")
-        (out / "hashed.json").write_bytes(S.json_file_bytes(dict(e["hashed"], appended="append")))
+        prov = VW.runs_variant(w, e["hashed"]["provenance"], f"variant_made_{VW.stamp(VW.LATE)}.json",
+                               {"created_utc": VW.LATE})
+        (out / "hashed.json").write_bytes(S.json_file_bytes(dict(e["hashed"], appended="append", made_utc=VW.LATE,
+                                                                 isolation=iso, provenance=prov)))
         e["hashed"] = None
         (out / "m_inputs.json").write_bytes(S.json_file_bytes(d))
         root = FX.scratch_dir("tmanroot")
@@ -364,6 +426,7 @@ def case_cli_outputs():
                                    str(out / "hashed.json"), "--out", str(again), "--runs", str(w.runs)])
             check(name, rc == 2 and want in txt and not any(again.iterdir()), txt.strip()[-160:])
         post_freeze_ptq_append(w, out, base)
+        cli_append_times(w, out, base, iso)
         inside = [("out_in_the_repository_at_root", w.repo / "reports"),
                   ("out_in_this_checkout", REPO / "nonexistent_tman_out")]
         for name, p in inside:
@@ -386,6 +449,7 @@ def case_cli_outputs():
         with Tracer(MARKER) as t:
             code = FX.refused_code(V.validate, w.ctx("freeze", runs_root=f"/{MARKER}/te" + "st_runs"))
         check("validator_runs_root_test_path_refused_before_any_call", code == "test_path" and not t.calls)
+        cli_append_history(w, out, base, dirs["append"] / "tday_manifest.json")       # last: it commits an append
         check("the_scratch_repository_is_unchanged", FX.git(w.repo, "status", "--porcelain",
                                                              "--untracked-files=all") == status0 == "")
     finally:

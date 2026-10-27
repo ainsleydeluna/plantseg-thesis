@@ -347,7 +347,9 @@ def cmd_arithmetic(args) -> int:
 
 # ------------------------------------------------------------------------------------------------ append
 def cmd_append(args) -> int:
-    """The validator's append checks (ptq_record_invalid, then append_invalid) on the one new append."""
+    """The validator's append checks on the one new append: append_invalid (the appends' history, then the append
+    structurally), ptq_record_invalid, append_invalid with the records it cites, and under --runs
+    derived_hash_mismatch."""
     S.refuse_test_path(args.manifest)
     data = Path(args.manifest).read_bytes()
     doc = S.strict_json(data, args.manifest, code="manifest_unreadable")
@@ -358,6 +360,9 @@ def cmd_append(args) -> int:
     if any(isinstance(a, dict) and a.get("slot") == args.slot for a in doc["appends"]):
         raise S.TmanRefused("append_invalid", f"append {args.slot}: a second append of its slot (DL-24 #63)")
     records = records_at(args)
+    errs = M.appends_history_errors(records, doc["appends"])            # DL-24 #54: the committed appends grow
+    if errs:
+        raise S.TmanRefused("append_invalid", "; ".join(errs))
     cat = catalogue(records)
     freeze = D.freeze_instant(D.schedule_block(records.src))
     rec = None
@@ -369,7 +374,7 @@ def cmd_append(args) -> int:
     append = {"slot": args.slot, "hashed": read_json(args.hashed, "append_invalid"), "ptq_record": rec}
     by_slot = {e["slot"]: e for e in doc["body"]["entries"]}
     frozen = by_slot.get(args.slot)
-    errs = M.append_errors(append, frozen, freeze.original_utc, ptq_record_ok=True)
+    errs = M.append_errors(append, frozen, freeze.original_utc, structural=True)
     if errs:
         raise S.TmanRefused("append_invalid", "; ".join(errs))
     checksum = ((doc["body"].get("calibration_index") or {}).get("of_record") or {}).get("checksum_sha256")
@@ -381,6 +386,11 @@ def cmd_append(args) -> int:
                                    ptq_record_ok=ok)
     if errs:
         raise S.TmanRefused("append_invalid", "; ".join(errs))
+    if args.runs is not None:
+        errs = M.derived_hash_errors(M.appended_entry(append, frozen), by_slot.get(frozen["parent"]) or {}, cat,
+                                     doc["body"].get("calibration_index"), args.runs)
+        if errs:
+            raise S.TmanRefused("derived_hash_mismatch", "; ".join(errs))
     new = dict(doc, appends=doc["appends"] + [append])
     out = write_new(out_folder(args.out, args.root), "tday_manifest.json", S.json_file_bytes(new))
     print(f"WROTE {out} sha256 {S.sha256_bytes(out.read_bytes())} ({len(new['appends'])} appends)")

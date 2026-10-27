@@ -123,6 +123,10 @@ PTQ_PROVENANCE = {"schema": True, "stage": True, "source_stage": True, "source_c
                                   "split": True, "data_root": True},
                   "ptq_run_role": True, "code": {"commit": True, "clean_at_commit": True},
                   "environment": {"image_digest": True}, "created_utc": True}
+# a QAT epoch's conversion provenance, eNN_run_meta.json (src/quant/qat_artifacts.py:507-540 with
+# src/quant/runner.py:176-203): its run and epoch, its artifacts and its time
+QAT_PROVENANCE = {"converted_artifact_sha256": True, "state_dict_artifact": REF,
+                  "training": {"run_id": True, "epoch": True}, "created_utc": True}
 # the evaluator's runtime record (src/eval/eval_runtime.py:273-294): the execution-context keys of TB1 only
 EVAL_RUNTIME = {"model_device": True, "input_devices": True, "batch_size": True, "num_workers": True,
                 "determinism_policy_applied": True, "torch_num_threads": True, "image_digest": True}

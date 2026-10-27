@@ -147,20 +147,29 @@ def _dotted(doc, key: str):
     return doc
 
 
+def _same_second(a, b) -> bool:
+    """Two UTC instants ('...Z'), equal to the second."""
+    try:
+        return int(D.parse_utc_any(a)) == int(D.parse_utc_any(b))
+    except (TypeError, ValueError):
+        return False
+
+
 def derived_hash_errors(entry: dict, parent: dict, cat, ci: dict | None, runs_root) -> list[str]:
     """derived_hash_mismatch: a hashed derived model is what its records say, read under the run directories
-    (decision (xviii); DL-24 #27, #34, #49, #50). Its cited files -- the provenance, the record and a QAT selection's
-    selected checkpoint -- have the cited sha256. A PTQ model's provenance names the listed inputs (the parent
-    checkpoint, the calibration list with the index's checksum and role, its seed, the qconfig, the script's commit)
-    and the hashed artifacts and image digest. A QAT selection's record (qat_selection/1) names the rules file, the
-    run with its telemetry and clip norm, and as its winner the selected checkpoint (its epoch_end row) with the
-    hashed artifact and provenance. The clip selection the inputs cite (qat_clip_selection/1, the same rules) names
-    the pilot's selection as its winner, with its run, telemetry and record (TB9), and its winner's clip norm is
-    every run's (src/quant/qat.py clip_binding)."""
+    (decision (xviii); DL-24 #25, #27, #34, #49, #50). Its cited files -- the provenance, the record and a QAT
+    selection's selected checkpoint -- have the cited sha256, and the provenance's created_utc is its made instant. A
+    PTQ model's provenance names the listed inputs (the parent checkpoint, the calibration list with the index's
+    checksum and role, its seed, the qconfig, the script's commit) and the hashed artifacts and image digest. A QAT
+    selection's record (qat_selection/1) names the rules file, the run with its telemetry and clip norm, and as its
+    winner the selected checkpoint (its epoch_end row) with the hashed artifact and provenance, which is the run's
+    and the selected epoch's conversion of the hashed artifacts. The clip selection the inputs cite
+    (qat_clip_selection/1, the same rules) names the pilot's selection as its winner, with its run, telemetry and
+    record (TB9), and its winner's clip norm is every run's (src/quant/qat.py clip_binding)."""
     from . import completion as C
     h, inp, slot, root = entry["hashed"], entry["inputs"], entry["slot"], Path(runs_root)
     code, qat = "derived_hash_mismatch", entry["method"] == "qat_selection"
-    reads = {"provenance": None if qat else R.PTQ_PROVENANCE, "record": R.QAT_SELECTION if qat else None}
+    reads = {"provenance": R.QAT_PROVENANCE if qat else R.PTQ_PROVENANCE, "record": R.QAT_SELECTION if qat else None}
     if qat:
         reads["selected_checkpoint"] = None
     docs, bad = {}, []
@@ -184,6 +193,8 @@ def derived_hash_errors(entry: dict, parent: dict, cat, ci: dict | None, runs_ro
             want.update({"calibration.checksum_sha256": item.get("checksum_sha256"),
                          "calibration.role": item.get("role")})
         bad = sorted(k for k, v in want.items() if _dotted(docs["provenance"], k) != v)
+        if not _same_second(_dotted(docs["provenance"], "created_utc"), h["made_utc"]):
+            bad.append("created_utc (the made instant)")
         return [f"{slot}: its provenance names other {bad} than the entry"] if bad else []
     rec, rid = docs["record"], parent.get("run_id")
     rows, _, _ = C.qat_rows(root / rid)
@@ -197,6 +208,11 @@ def derived_hash_errors(entry: dict, parent: dict, cat, ci: dict | None, runs_ro
             "winner.artifact_of_record.sha256": h["artifact_sha256"],
             "winner.provenance.sha256": h["provenance"]["sha256"]}
     bad = sorted(k for k, v in want.items() if _dotted(rec, k) != v)
+    pwant = {"converted_artifact_sha256": h["artifact_sha256"], "state_dict_artifact.sha256": h["state_dict_sha256"],
+             "training.run_id": rid, "training.epoch": epoch}
+    bad += [f"provenance.{k}" for k, v in pwant.items() if _dotted(docs["provenance"], k) != v]
+    if not _same_second(_dotted(docs["provenance"], "created_utc"), h["made_utc"]):
+        bad.append("provenance.created_utc (the made instant)")
     if row is None or h["selected_checkpoint"] != {"path": f"{rid}/{row.get('checkpoint')}",
                                                    "sha256": row.get("checkpoint_sha256")} \
             or _dotted(rec, "winner.checkpoint") != row.get("checkpoint"):
@@ -336,13 +352,15 @@ def not_hashed_errors(by_slot: dict) -> list[str]:
 
 # ------------------------------------------------------------------------------------------------- appends
 def append_errors(append: dict, frozen: dict | None, freeze_utc: int, *, isolation: dict | None = None,
-                  provenance: dict | None = None, ptq_record_ok: bool = False) -> list[str]:
+                  provenance: dict | None = None, ptq_record_ok: bool = False, structural: bool = False) -> list[str]:
     """append_invalid: an append names a derived entry listed by inputs at the freeze, gives every hashed field of its
-    method with an image digest of record equal to the declared one, and, when made after the freeze, cites an
-    isolation record of the same root and digest made before it (decision (xi)) -- an intact ptq_record of record
-    stands in for a PTQ artifact (TB19 Q9; `append_ptq_record`). `isolation` is the projected isolation record;
-    `provenance` the artifact's projected PTQ provenance (None when --runs is not given: the root is not compared;
-    freeze, unlock and session modes always read it)."""
+    method with an image digest of record equal to the declared one, is made after the original freeze instant (an
+    artifact made by then is hashed in the body at the freeze: plan §1.5; DL-24 #25), and cites an isolation record
+    of the same root and digest made before it (decision (xi)) -- an intact ptq_record of record stands in for a PTQ
+    artifact (TB19 Q9; `append_ptq_record`). `structural` stops before the isolation record, which the caller reads
+    next (DL-24 #26). `isolation` is the projected isolation record; `provenance` the artifact's projected PTQ
+    provenance (None when --runs is not given: the root is not compared; freeze, unlock and session modes always read
+    it). The made instant is the provenance's (derived_hash_mismatch)."""
     errs = S.field_errors(append, APPEND, "append")
     if errs:
         return errs
@@ -358,7 +376,10 @@ def append_errors(append: dict, frozen: dict | None, freeze_utc: int, *, isolati
         errs.append(f"append {slot}: image digest {h['image_digest']} is not the declared digest of record "
                     f"{frozen['inputs']['image_digest']}, or appended is {h['appended']!r}")
     made = D.parse_utc_any(h["made_utc"])
-    if not D.meets(made, freeze_utc) and not (ptq_record_ok and frozen["method"] == "ptq"):
+    if D.meets(made, freeze_utc):
+        errs.append(f"append {slot}: made {h['made_utc']}, by the original freeze instant: hashed in the body at the "
+                    "freeze, never appended (plan §1.5; DL-24 #25)")
+    elif not structural and not (ptq_record_ok and frozen["method"] == "ptq"):
         iso = isolation or {}
         root = ((provenance or {}).get("calibration") or {}).get("data_root")
         if h["isolation"] is None or not iso:
@@ -419,6 +440,32 @@ def appends_prefix_error(previous: list, current: list) -> str | None:
     if current[:len(previous)] != previous:
         return f"the appends changed: {len(previous)} committed appends are not a prefix of the {len(current)} now"
     return None
+
+
+def appends_history_errors(records: R.Records, appends: list) -> list[str]:
+    """append_invalid, plan §1.1 over git history (DL-24 #28, #54): in each commit of the records' history that
+    changes the manifest, every parent's committed appends are a prefix of the commit's (a removed manifest keeps
+    none), and the newest committed appends are a prefix of the validated manifest's."""
+    def committed(commit):
+        data = records.show(commit, S.MANIFEST_REL)
+        if data is None:
+            return None
+        doc = R.strict_json(data, f"{S.MANIFEST_REL} at {commit[:12]}", code="append_invalid")
+        got = doc.get("appends") if hasattr(doc, "keys") else None
+        if not isinstance(got, list):
+            raise S.TmanRefused("append_invalid", f"{S.MANIFEST_REL} at {commit[:12]}: no appends list")
+        return got
+    errs = []
+    for commit, parents in records.history(S.MANIFEST_REL):
+        now = committed(commit)
+        for p in parents:
+            before = committed(p)
+            err = None if before is None else appends_prefix_error(before, now or [])
+            if err:
+                errs.append(f"commit {commit[:12]}: {err}")
+    newest = committed(records.ref)
+    err = None if newest is None else appends_prefix_error(newest, appends)
+    return errs + ([f"the validated manifest: {err}"] if err else [])
 
 
 # -------------------------------------------------------------------------------------- isolation (decision (xi))
