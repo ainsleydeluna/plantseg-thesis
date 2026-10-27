@@ -1196,6 +1196,41 @@ M = [
     ("arm_teacher_first_nonfinite_iteration", REC, [('"first_nonfinite": {"iteration": True},',
                                                      '"first_nonfinite": True,')],
      "schema", "case_readers", "arm_teacher_record_keeps_the_first_non_finite_iteration_only_B112", [], None),
+    # -------------------------------------------------------------------------- coverage the verifiers asked for (C6h)
+    ("instant_moved_for_every_slot", VAL, [('        return self.freeze.moved_utc if self.slot(slot)["never_cut"] else '
+                                            'self.freeze.original_utc',
+                                            "        return self.freeze.moved_utc or self.freeze.original_utc")],
+     "validate", "case_moved_freeze", "cuttable_run_complete_between_the_freezes_R016_B58", ["entry_not_complete"],
+     None),
+    ("freeze_delay_lists_every_late_run", ENT, [('    if not late or sorted(doc["runs"]) != late:',
+                                                 '    if not late or not set(doc["runs"]) <= set(late):')],
+     "validate", "case_moved_freeze", "delay_missing_the_late_run_B93", ["freeze_source_conflict"], None),
+    ("freeze_delay_needs_a_late_run", ENT, [('    if not late or sorted(doc["runs"]) != late:',
+                                             '    if sorted(doc["runs"]) != late:')],
+     "validate", "case_moved_freeze", "delay_when_no_never_cut_run_is_late_B93", ["freeze_source_conflict"], None),
+    ("pair_models_at_the_gate", VAL, [('    return e1.get("kind") == "scored_run" and e6.get("kind") == "derived"',
+                                       "    return False")],
+     "validate", "case_scope_gates", "validator_requires_the_corrupted_scope_of_a_pair_with_both_models_TB2_B97",
+     ["scope_required_missing"], None),
+    ("pair_models_in_the_builder", MAN, [('        return kinds.get(f"E1:s{seed}:80k") == "scored_run" and '
+                                          'kinds.get(f"E6:s{seed}:sel") == "derived"', "        return False")],
+     "validate", "case_scope_gates", "builder_gives_a_pair_with_both_models_the_corrupted_scope_TB2_B97", [], None),
+    ("generator_script_at_s_against_its_pin", VAL, [('    if src.blob_at("HEAD", pin["script"]["path"]) != '
+                                                     'pin["script"]["git_blob"]:', "    if False:")],
+     "unlock", "case_generator_pin_at_another_commit", "generator_script_not_its_pin_G2_B98",
+     ["hasher_pin_mismatch"], None),
+    ("test_deadline_from_the_resolver", VAL, [("    cutoff = D.cutoff_instant(x.freeze.test_deadline)",
+                                               "    cutoff = D.cutoff_instant(D.AM22_TEST_DEADLINE)")],
+     "validate", "case_moved_freeze", "moved_freeze_moves_the_test_deadline_at_the_gate_TB14_B99",
+     ["session_after_deadline"], None),
+    ("evaluator_roots_of_if10", MAN, [(',\n                   "scripts/build_corruption_cache.py", '
+                                       '"scripts/verify_corruption_cache.py",\n                   '
+                                       '"scripts/run_corruption_grid.py", "scripts/report_robustness.py")', ")")],
+     "paths", "case_evaluator_closure_never_reads_a_test_named_module",
+     "evaluator_roots_are_decision_x_s_scripts_and_IF10_s_B79", [], None),
+    ("kd_slot_at_a_seed_the_launcher_lacks", CAT, [('"seed": 42,\n      "slot": "A:s42:alpha25:80k"',
+                                                    '"seed": 43,\n      "slot": "A:s42:alpha25:80k"')],
+     "schema", "case_catalogue_cross_checks", "kd_slots_at_the_launcher_s_seeds_and_profiles_I1_B60", [], None),
 ]
 REFUSAL_EXTRA = ("inventory_invalid", "inventory_sha256_mismatch", "binding_invalid",       # read_inventory's codes
                  "output_location", "output_exists")                                       # the CLI's outputs

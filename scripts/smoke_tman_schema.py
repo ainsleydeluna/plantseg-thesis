@@ -565,6 +565,18 @@ def case_catalogue_cross_checks():
                 for s in cat.slots.values() if s["evaluator_stage"] in pend)
     check("evaluator_stages_from_artifacts_STAGES_or_pending_code_TB8", gated and pend == [
         "E6-E2", "E6-KD", "E6-R1", "E6-R2", "E7-E2"], f"pending {pend}")
+    # I1 (DL-24 #60, #94): each KD slot of a launcher stage is at a seed and a horizon the launcher can launch, and the
+    # catalogue holds every seed it launches and every profile's horizon
+    import scripts.preflight_distill as pd
+    from src.tman import entries as E
+    horizons = {p["horizon"] for p in pd.PROFILES.values()}
+    kd = {key: [s for s in cat.slots.values() if s["stage"] == name] for key, name in pd.STAGE_NAMES.items()}
+    off = [s["slot"] for key, v in kd.items() for s in v
+           if s["seed"] not in pd.SEEDS[key] or E.slot_iterations(s) not in horizons]
+    seeds = {key: sorted({s["seed"] for s in v}) for key, v in kd.items()}
+    check("kd_slots_at_the_launcher_s_seeds_and_profiles_I1_B60", not off
+          and all(seeds[key] == sorted(pd.SEEDS[key]) for key in kd)
+          and {E.slot_iterations(s) for v in kd.values() for s in v} == horizons, f"off {off}; seeds {seeds}")
 
 
 def case_names():

@@ -361,6 +361,10 @@ def case_evaluator_closure_never_reads_a_test_named_module():
     check("closure_follows_a_config_s_bases_in_the_three_roots_B81", sorted(files) == sorted(
         [teacher, r1, r2, "configs/teacher/base_only.py", "src/__init__.py", "src/training/__init__.py",
          "src/training/teacher_components.py", "src/training/arm_components.py"]), str(sorted(files)))
+    check("evaluator_roots_are_decision_x_s_scripts_and_IF10_s_B79", sorted(M.EVALUATOR_ROOTS) == sorted(
+        ["scripts/evaluate_model.py", "scripts/evaluate_corruptions.py", "scripts/profile_efficiency.py",   # (x)
+         "scripts/build_corruption_cache.py", "scripts/verify_corruption_cache.py",                       # IF§10
+         "scripts/run_corruption_grid.py", "scripts/report_robustness.py"]), str(M.EVALUATOR_ROOTS))
 
 
 def post_freeze_ptq_append(w, out: Path, base: list) -> None:

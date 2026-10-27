@@ -39,9 +39,11 @@ WANTED: set = set()
 class Unlock:
     """The fixture world at the unlock (and, after `start_session`, in the session)."""
 
-    def __init__(self):
+    def __init__(self, edit_world=None):
         from src.tman import schema as S
         self.w = w = VW.World()
+        if edit_world is not None:
+            edit_world(w)                     # a variant world: its manifest committed again before the freeze record
         self.S = S
         self.wt = FX.scratch_dir("tmanwt")
         self.wt.rmdir()
@@ -508,6 +510,26 @@ def records_outside_e_history(u: Unlock) -> None:
                 records=R.Records.at_records_commit(folder, h, root=u.wt), detail="the records' history")
 
 
+def g2_pin(w) -> None:
+    """G2 (DL-24 #98): the corrupted-cache pin printed at a later commit whose build_corruption_cache.py is not E's
+    (S = E); the manifest built again with that pin and committed."""
+    rel = "scripts/build_corruption_cache.py"
+    c = w.commit({rel: b"# the cache generator, edited after E\n"}, "the cache generator edited after E")
+    w.sources["generator_pins"]["corrupted_cache"] = PINS.pin(
+        script={"path": rel, "git_blob": FX.git(w.repo, "rev-parse", f"{c}:{rel}")}, commit=c)
+    w.doc = w.M.build_manifest(w.records, w.cat, w.sources, runs_root=w.runs)
+    w.data = w.S.json_file_bytes(w.doc)
+    w.commit({w.S.MANIFEST_REL: w.data}, "the manifest with the G2 pin")
+
+
+def case_generator_pin_at_another_commit():
+    """G2 (DL-24 #98): a pin printed at a commit whose generator script is not S's blob is refused at the unlock,
+    every earlier unlock gate passing."""
+    u = Unlock(edit_world=g2_pin)
+    expect_gate(u, "generator_script_not_its_pin_G2_B98", "hasher_pin_mismatch",
+                detail="scripts/build_corruption_cache.py at S is not the pinned blob")
+
+
 def case_session():
     """The session (AM-17 item 9; TB11, TB14; AM-19a reading 21): one session part over the manifest's history, its
     values only added (DL-24 #56); a variant of the part each in a world of its own (a second part is a second
@@ -650,8 +672,8 @@ def main() -> int:
         return FX.run_cases("TMAN UNLOCK SMOKE (lane TMAN, B-1, C5)", ())
     try:
         return FX.run_cases("TMAN UNLOCK SMOKE (lane TMAN, B-1, C5)",
-                            (case_unlock_world, case_cli, case_unlock_printer, case_unlock_gates, case_session,
-                             case_push_evidence, case_coverage))
+                            (case_unlock_world, case_cli, case_unlock_printer, case_unlock_gates,
+                             case_generator_pin_at_another_commit, case_session, case_push_evidence, case_coverage))
     finally:
         if VW.REAL_TEACHER is not None:
             UW.w.M.TEACHER_OF_RECORD.clear()
