@@ -17,8 +17,9 @@ new directory in TMPDIR (left in place); none contains "test" or ":".
   C  each of the nine parts present and populated (the am6 part with (d)'s rows)
   Q  the fq_off table (LRB7): its values, driver.load_input on a qat_fakequant_off artifact, a slot
      without one, E6-KD's row; a row without its record, a row of another seed, the 37's identities;
-     AM-23's quant_descriptive QAT slots' rows, a cut one's label, a stage without a slot, an AM-23 row
-     at another seed (R-14) and one without a model still bound (R-6) (B-5 (c))
+     AM-23's quant_descriptive QAT slots' rows, a cut one's label, an AM-23 row at another seed (R-14)
+     and one without a model still bound (R-6) (B-5 (c)); B-5b R4-2: each of the three QAT slots absent
+     from the export is quant_slot_invalid, while an absent E7-E2 (not read here) leaves the table built
   M  the MDE part from the committed entry (LRB18)
   N  no regression: report.build_report keeps its three extension points unpopulated, and no LREP
      file imports rehearsal.py or writes report.py's names (K1)
@@ -365,17 +366,26 @@ def q_quant_label():
             and r["fq_off"] is None and r["seed"] == 42), str(r)
 
 
-def q_quant_no_slot():
-    """An AM-23 QAT stage the export has no slot for (E6-R1's selection left out) reads quant_rows' note
-    in the fq_off table, as in the quant part, never dropped (DL-24 B5R2-05)."""
+def _without(slot):
     def edit(export, binding):
-        export["entries"] = [e for e in export["entries"] if e["slot"] != "E6-R1:s42:sel"]
-        export["models"] = [r for r in export["models"] if r["slot"] != "E6-R1:s42:sel"]
-        binding["artifacts"] = [r for r in binding["artifacts"] if r["slot"] != "E6-R1:s42:sel"]
-    doc = build(inventory=variant("no_e6r1_sel", edit), parts="fqoff")
-    r = [r for r in part(doc, "fqoff")["rows"] if r["stage"] == "E6-R1"]
-    return (len(r) == 1 and r[0]["note"] == "no quant_descriptive slot in the export" and r[0]["slot"] is None
-            and r[0]["int8_qat"] is None and r[0]["fq_off"] is None and r[0]["seed"] == 42), str(r)
+        export["entries"] = [e for e in export["entries"] if e["slot"] != slot]
+        export["models"] = [r for r in export["models"] if r["slot"] != slot]
+        binding["artifacts"] = [r for r in binding["artifacts"] if r["slot"] != slot]
+    return edit
+
+
+def q_quant_no_slot():
+    """R4-2 (B5R2-05): an export without one of AM-23's QAT selections (E6-E2, E6-R1, E6-R2; each the only
+    defect) is not TMAN's validated export, and the fq_off table reads them: quant_slot_invalid, naming the
+    stage. Without E7-E2, which the table does not read, it is built with the three rows (LRB4)."""
+    out = [refused("quant_slot_invalid", lambda s=slot: build(
+        inventory=variant(f"no_{LF.file_id(s)}", _without(s)), parts="fqoff"))
+        for slot in ("E6-E2:s42:sel", "E6-R1:s42:sel", "E6-R2:s42:sel")]
+    named = all(f"['{st}']" in d for st, (_, d) in zip(("E6-E2", "E6-R1", "E6-R2"), out))
+    doc = build(inventory=variant("no_e7e2_list42", _without("E7-E2:s42:list42")), parts="fqoff")
+    rows = [r["stage"] for r in part(doc, "fqoff")["rows"] if r["stage"] in ("E6-E2", "E6-R1", "E6-R2")]
+    return (all(ok for ok, _ in out) and named and rows == ["E6-E2", "E6-R1", "E6-R2"]), \
+        str([d for _, d in out])[:600]
 
 
 def q_quant_row_seed():
@@ -708,7 +718,7 @@ def cases():
             ("Q8", "B-5 (c): the quant_descriptive QAT slots' fq_off rows beside their int8_qat", q_quant),
             ("Q9", "B-5 (c): a cut quant_descriptive QAT run reads its label in the fq_off table",
              q_quant_label),
-            ("Q10", "B-5 (c): an AM-23 QAT stage the export has no slot for reads quant_rows' note",
+            ("Q10", "R4-2: quant_slot_invalid for each AM-23 QAT slot absent from the export; E7-E2 not read",
              q_quant_no_slot),
             ("Q11", "B-5 (c): seed_inconsistent for an AM-23 model row at another seed (R-14)",
              q_quant_row_seed),

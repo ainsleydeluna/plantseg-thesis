@@ -264,7 +264,8 @@ CODES = {
                           "DL sha256, or whose √2·s differs from its band",
     # AM-23's rows (items 5-6; B5-S3)
     "quant_slot_invalid": "B5-S3: a quant_descriptive slot outside E6-E2, E7-E2, E6-R1 and E6-R2, or two "
-                          "slots for one stage",
+                          "slots for one stage, or an AM-23 quant_descriptive slot absent from the export "
+                          "(R4-2)",
     # the descriptive TEST read (B-5b: ruling LREP-B5-RULE-4 R4-1)
     "descriptive_input_invalid": "R4-1 item 3: a descriptive_test slot's artifact fails a step of the DT "
                                  "read (a: its loader under NONOFFICIAL_SMOKE; b: provisional, split test, "

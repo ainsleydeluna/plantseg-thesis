@@ -9,11 +9,12 @@ contains "test" or ":". Expected values are recomputed here from the artifacts.
   Q  the rows: E6-E2 − E6 and E7-E2 − E7 (all-class from m, GT-present and disease-only), E2 − E3 beside
      them as the negative of the official accuracy_e2_e3 delta, B5-S1's evaluator stages, the E6-X rows
      named in the arms part, the converted VAL scores "not on record"
-  L  labels: a cut QAT run, "not made: code not merged", a stage the export has no slot for; a slot
-     without a model whose clean artifact is still bound (artifact_for_missing_run)
-  R  quant_slot_invalid (a stage outside the four; a seed other than 42; two slots for one stage);
-     R-11 on the family slots; an E2 parent that is not the family slot (parent_rule, R-12); a model
-     row at another seed (R-14)
+  L  labels: a cut QAT run, "not made: code not merged"; a slot without a model whose clean artifact is
+     still bound (artifact_for_missing_run). L3 (a stage the export has no slot for, read as a note) is
+     retired at B5b-3: ruling LREP-B5-RULE-4 R4-2 refuses it (R7)
+  R  quant_slot_invalid (a stage outside the four; a seed other than 42; two slots for one stage; B-5b
+     R4-2: each AM-23 slot absent from the export); R-11 on the family slots; an E2 parent that is not
+     the family slot (parent_rule, R-12); a model row at another seed (R-14)
   D  no interval or test key, determinism, no test object imported, no 'test' path, the markdown
 
 Cases are importable (setup / cases) so that scripts/smoke_lrep_mutations.py can run them mutated.
@@ -182,12 +183,26 @@ def l_not_made():
     return r["label"] == "not made: code not merged" and r["candidate"] is None, str(r)[:300]
 
 
-def l_no_slot():
+#: R4-2: the four AM-23 slots (IF§9), typed out from the ruling.
+AM23_SLOTS = (("E6-E2", "E6-E2:s42:sel"), ("E7-E2", "E7-E2:s42:list42"), ("E6-R1", "E6-R1:s42:sel"),
+              ("E6-R2", "E6-R2:s42:sel"))
+
+
+def without(slot):
+    """An export without `slot`: its entry, model rows and records dropped (its QAT run kept)."""
     def edit(export, binding):
-        export["entries"] = [e for e in export["entries"] if e["slot"] != "E7-E2:s42:list42"]
-        drop_rows(export, binding, "E7-E2:s42:list42")
-    r = row(doc_of(variant("no_e7e2", edit)), "E7-E2")
-    return r["label"] == "no quant_descriptive slot in the export" and r["slot"] is None, str(r)[:300]
+        export["entries"] = [e for e in export["entries"] if e["slot"] != slot]
+        drop_rows(export, binding, slot)
+    return edit
+
+
+def r_absent():
+    """R4-2: an export without one of the four AM-23 slots (each the only defect) is not TMAN's validated
+    export, and the part reads all four: quant_slot_invalid, naming the stage."""
+    out = [refused("quant_slot_invalid", lambda s=slot: doc_of(variant(f"no_{LF.file_id(s)}", without(s))))
+           for _, slot in AM23_SLOTS]
+    named = all(f"['{stage}']" in d for (stage, _), (_, d) in zip(AM23_SLOTS, out))
+    return all(ok for ok, _ in out) and named, str([d for _, d in out])[:600]
 
 
 def r_outside():
@@ -305,8 +320,7 @@ def cases():
             ("Q5", "the converted VAL scores read 'not on record'", q_converted_val),
             ("L1", "E6-E2's QAT run cut: the cut label, no value", l_cut),
             ("L2", "E7-E2 'not made: code not merged' (AM-23 item 4)", l_not_made),
-            ("L3", "a stage the export has no slot for", l_no_slot),
-            ("L4", "artifact_for_missing_run: not made, its clean artifact still bound",
+            ("L4","artifact_for_missing_run: not made, its clean artifact still bound",
              l_bound_without_model),
             ("R1", "quant_slot_invalid: a quant_descriptive slot outside the four stages", r_outside),
             ("R2", "quant_slot_invalid: two slots for one stage", r_two),
@@ -315,6 +329,7 @@ def cases():
             ("R5", "parent_rule: E7-E2 under a seed-42 E2 that is not the family slot (R-12)",
              r_parent_not_family),
             ("R6", "seed_inconsistent: E7-E2's model row at another seed (R-14)", r_row_seed),
+            ("R7", "R4-2: quant_slot_invalid: each of the four AM-23 slots absent from the export", r_absent),
             ("D1", "no interval, test or '__' key", d_no_interval),
             ("D2", "byte-identical JSON on repeated runs", d_deterministic),
             ("D3", "quant_rows imports no test object and no bootstrap (AST)", d_no_test_import),

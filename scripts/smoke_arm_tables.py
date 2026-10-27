@@ -15,7 +15,8 @@ none contains "test" or ":".
      under a cut arm run (parent_rule, R-12); a model row at another seed (R-14); each role in its place
      (an arm slot at E6-R1, a quant_descriptive slot at E3-R1); B-5b (ruling LREP-B5-RULE-4 R4-5): every
      other arm or arm_teacher slot skipped and listed with its label (K8, an avg teacher, A, F, G, the
-     not-built L slots), the arm teachers at TMAN's teacher-R1 and teacher-R2 at seed 42
+     not-built L slots), the arm teachers at TMAN's teacher-R1 and teacher-R2 at seed 42; R4-2, an AM-23
+     selection the arm tables read (E6-R1, E6-R2) absent from the export, arm_slot_invalid as before
   V  values: both sides' m and rule_variants' values, Δ and its reading, the 37 as comparators (R-11),
      the per-image mean Δ and its interval (B5-D2), B5-S1's evaluator stages
   L  a candidate without a model: its IF§11.2 label, no value, never a refusal (unless the binding lists
@@ -275,6 +276,23 @@ def p_missing():
         export["entries"] = [e for e in export["entries"] if e["slot"] != "E7-flip:s42:list42"]
         drop_rows(export, binding, "E7-flip:s42:list42")
     return refused("arm_slot_invalid", lambda: doc_of(variant("no_e7flip", edit)))
+
+
+def p_am23_absent():
+    """R4-2: an export without E6-R1's or E6-R2's selection (an AM-23 slot the arm tables read) is refused
+    here as before (arm_slot_invalid, naming E6-X); one without E6-E2's or E7-E2's, which the arm tables do
+    not read, leaves the part built with its eight rows (LRB4; the quant part refuses it)."""
+    def without(slot):
+        def edit(export, binding):
+            export["entries"] = [e for e in export["entries"] if e["slot"] != slot]
+            drop_rows(export, binding, slot)
+        return edit
+    out = [refused("arm_slot_invalid", lambda s=s: doc_of(variant(f"no_{LF.file_id(s)}", without(s))))
+           for s in ("E6-R1:s42:sel", "E6-R2:s42:sel")]
+    named = all(st in d for st, (_, d) in zip(("E6-R1", "E6-R2"), out))
+    built = [len(doc_of(variant(f"no_{LF.file_id(s)}", without(s)))["rows"])
+             for s in ("E6-E2:s42:sel", "E7-E2:s42:list42")]
+    return all(ok for ok, _ in out) and named and built == [8, 8], str([d for _, d in out])[:400]
 
 
 def p_other_quant():
@@ -692,6 +710,8 @@ def cases():
              p_skipped),
             ("P13", "R4-5(a), (d): the arm teachers at teacher-R1 and teacher-R2, seed 42, X from the stage",
              p_teacher_stages),
+            ("P14", "R4-2: E6-R1's or E6-R2's selection absent: arm_slot_invalid; E6-E2's or E7-E2's: built",
+             p_am23_absent),
             ("V1", "both sides' m equal seed_stability.m_of on the artifacts", v_m),
             ("V2", "rule_variants' all-class, GT-present and disease-only values", v_rule_variants),
             ("V3", "Δ = m(candidate) - m(baseline) on all eight rows", v_delta),

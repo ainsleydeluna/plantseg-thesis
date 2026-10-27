@@ -19,10 +19,15 @@ the same way.
   * The quant_descriptive slots (IF§11.1) are E6-E2, E7-E2, E6-R1 and E6-R2 at seed 42; a slot at
     another stage or seed, or two slots for one stage, is quant_slot_invalid. A slot without a model
     carries its IF§11.2 label from TMAN's entries (cut, not made, ...), never a refusal, unless the
-    binding lists its clean artifact anyway (artifact_for_missing_run, R-6); a stage the export has no
-    slot for reads so ("when they exist", item 5), here and in the fq_off table. A candidate's model row
-    is at its entry's stage and seed (R-14). Their fq_off rows (E6-E2, E6-R1, E6-R2; IF§9) join the
+    binding lists its clean artifact anyway (artifact_for_missing_run, R-6). A candidate's model row is
+    at its entry's stage and seed (R-14). Their fq_off rows (E6-E2, E6-R1, E6-R2; IF§9) join the
     extension report's fq_off table (report_extensions.build_fqoff).
+  * B-5b (ruling LREP-B5-RULE-4 R4-2): TMAN enters every catalogue slot at the freeze, the not-required ones
+    as cut, so an export without one of the four is not TMAN's validated export. A part refuses an AM-23
+    slot it reads that is absent from the export (quant_slots' `required`): this part all four, the fq_off
+    table its QAT three, both quant_slot_invalid; the arm tables E6-R1 and E6-R2, arm_slot_invalid as
+    before. The note "no quant_descriptive slot in the export" (NO_SLOT, B-5) is retired: it served that
+    case only.
   * TEST side only: item 6's VAL side goes to the LRB10 block with AM-18 item 3(d)'s, and item 5's
     converted VAL scores read "not on record" (no committed record at M; DL-146 is a draft until the
     records catch-up lands).
@@ -41,8 +46,7 @@ ROWS = (("E6-E2", "E6"), ("E7-E2", "E7"))
 REFERENCE = ("E2", "E3")
 E6_X_STAGES = ("E6-R1", "E6-R2")
 QUANT_SEED = 42
-NO_SLOT = "no quant_descriptive slot in the export"
-CONVERTED_VAL = ("not on record: no committed record of the converted VAL scores at M (DL-146 is a draft "
+CONVERTED_VAL =("not on record: no committed record of the converted VAL scores at M (DL-146 is a draft "
                  "until the records catch-up lands)")
 TITLE = "AM-23's descriptive quantizations on TEST (items 5-6; descriptive)"
 FOOTNOTE = ("Descriptive (AM-23 item 6): no interval, no test and no claim beyond the differences. "
@@ -50,9 +54,10 @@ FOOTNOTE = ("Descriptive (AM-23 item 6): no interval, no test and no claim beyon
             "official accuracy_e2_e3 delta (E3 − E2).")
 
 
-def quant_slots(inv: H.Inventory) -> dict:
+def quant_slots(inv: H.Inventory, *, required=()) -> dict:
     """{stage: slot} of the quant_descriptive slots; a stage outside the four or a seed other than 42,
-    or two slots for one stage, is quant_slot_invalid."""
+    or two slots for one stage, is quant_slot_invalid, and so is a stage of `required` (the AM-23 stages
+    a part reads) that the export has no slot for (R4-2)."""
     found: dict = {}
     for slot in H.role_slots(inv, "quant_descriptive"):
         e = inv.entry(slot)
@@ -66,6 +71,11 @@ def quant_slots(inv: H.Inventory) -> dict:
     two = {k: v for k, v in found.items() if len(v) > 1}
     if two:
         raise H.refusal("quant_slot_invalid", f"two quant_descriptive slots for one stage: {two}")
+    missing = [st for st in required if st not in found]
+    if missing:
+        raise H.refusal("quant_slot_invalid", f"the export has no quant_descriptive slot for {missing}: TMAN "
+                                              "enters every catalogue slot at the freeze, the not-required "
+                                              "ones as cut, so this is not its validated export (R4-2)")
     return {k: v[0] for k, v in found.items()}
 
 
@@ -85,8 +95,8 @@ def build_quant_rows(stats: H.StatsArtifact, inv: H.Inventory, cells: H.PlannedC
     from .arm_tables import side_values
     from .lrep_descriptive import arm_contrast_id
     family = H.family_inputs(stats, inv, cells, stages=H.B5_FAMILY_STAGES)
-    slots = quant_slots(inv)
-    sides = {st: side_values(family[st].run.stats, family[st].summary) for st in H.B5_FAMILY_STAGES}
+    slots = quant_slots(inv, required=H.QUANT_STAGES)
+    sides ={st: side_values(family[st].run.stats, family[st].summary) for st in H.B5_FAMILY_STAGES}
     reference = {"candidate_stage": REFERENCE[0], "baseline_stage": REFERENCE[1],
                  "candidate": sides["E2"], "baseline": sides["E3"],
                  "differences": differences(sides["E2"], sides["E3"]),
@@ -94,12 +104,9 @@ def build_quant_rows(stats: H.StatsArtifact, inv: H.Inventory, cells: H.PlannedC
                          "(E3 − E2; driver.py:55)"}
     rows, loaded = [], {f"{st} seed 42": family[st] for st in H.B5_FAMILY_STAGES}
     for cand, base in ROWS:
-        row = {"candidate_stage": cand, "baseline_stage": base, "slot": slots.get(cand), "kind": None,
+        row = {"candidate_stage": cand, "baseline_stage": base, "slot": slots[cand], "kind": None,
                "label": None, "candidate": None, "baseline": sides[base], "differences": None}
         rows.append(row)
-        if row["slot"] is None:
-            row["label"] = NO_SLOT
-            continue
         st = H.b5_status(inv, row["slot"])
         row.update(kind=st.kind, label=st.label)
         precision = H.stage_spec(cand)[2]
@@ -117,9 +124,8 @@ def build_quant_rows(stats: H.StatsArtifact, inv: H.Inventory, cells: H.PlannedC
         row["differences"] = differences(row["candidate"], row["baseline"])
     e6x = []
     for stage in E6_X_STAGES:
-        slot = slots.get(stage)
-        st = H.b5_status(inv, slot) if slot is not None else None
-        e6x.append({"stage": stage, "slot": slot, "label": st.label if st else NO_SLOT,
+        slot = slots[stage]
+        e6x.append({"stage": stage, "slot": slot, "label": H.b5_status(inv, slot).label,
                     "arms_row": arm_contrast_id(stage.split("-", 1)[1], "E6")})
     H.cross_check(loaded, {}, evaluator_commit=inv.evaluator_commit, official=stats.profile == "official")
     return {"part": "quant", "title": TITLE, "banner": LD.BANNER, "rows": rows, "reference": reference,
@@ -148,5 +154,5 @@ def render_markdown(doc: dict, banner: str = "") -> list[str]:
     return out
 
 
-__all__ = ["ROWS", "REFERENCE", "E6_X_STAGES", "QUANT_SEED", "NO_SLOT", "CONVERTED_VAL", "quant_slots",
+__all__ = ["ROWS", "REFERENCE", "E6_X_STAGES", "QUANT_SEED", "CONVERTED_VAL", "quant_slots",
            "differences", "build_quant_rows", "render_markdown"]

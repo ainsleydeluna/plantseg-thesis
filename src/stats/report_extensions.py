@@ -16,9 +16,10 @@ Parts, in order (`--parts` selects a subset; plan §1.6, §2.4, §3.3):
             value (TL-12; LRB7): the qat_fakequant_off rows of family/per_seed E5/E6 slots, E6-KD's
             if it exists, and those of AM-23's quant_descriptive QAT slots E6-E2, E6-R1 and E6-R2
             (B-5 (c); IF§9), each with its IF§11.2 label from TMAN's entries when it has no model;
-            "not available: no fq_off artifact" for a slot with no such row. A row must be the same
-            model as the slot's int8_qat row, and the seed-42 int8_qat value from the 37 must be the
-            family slot's model (R-11)
+            "not available: no fq_off artifact" for a slot with no such row; one of those three slots
+            absent from the export is quant_slot_invalid (B-5b, R4-2). A row must be the same model as
+            the slot's int8_qat row, and the seed-42 int8_qat value from the 37 must be the family
+            slot's model (R-11)
   mde       the committed MDE entry's mde_w, tau_p, power_caveat, label and each pair's share_ties and
             n_zero (AM-17 item 3(c), (e), (f); DL-99; LRB18)
   arms      AM-18's arm tables (items 3(d) and 11; B-5 (a)) -- src.stats.arm_tables
@@ -70,7 +71,9 @@ REPORT_CODE_PATHS = ("src/stats", "src/stats/driver.py", "scripts/run_stats.py",
                      "configs/corruption_protocol.json", "docs/STATISTICAL_ANALYSIS_CONTRACT.md",
                      "scripts/report_extensions.py")
 FQOFF_NONE = "not available: no fq_off artifact"
-EXTENSION_POINTS = ("AM-8 seed stability", "Rare-class strata TEST tables", "Default candidates")
+#: AM-23's QAT stages, whose fq_off rows the fq_off table reads (B-5 (c)); each slot is required (R4-2).
+FQOFF_QUANT_STAGES = tuple(st for st in H.QUANT_STAGES if H.STAGE_MAP[st][2] == "int8_qat")
+EXTENSION_POINTS =("AM-8 seed stability", "Rare-class strata TEST tables", "Default candidates")
 
 
 def parse_parts(value) -> tuple[str, ...]:
@@ -109,18 +112,18 @@ def fqoff_row(inv: H.Inventory, slot: str, stage: str) -> dict:
 def build_fqoff(stats: H.StatsArtifact, inv: H.Inventory, cells: H.PlannedCells, *,
                 input_root: Path) -> dict:
     """One row per family/per_seed E5/E6 run of record, E6-KD's if the export lists it, and each of
-    AM-23's quant_descriptive QAT stages (E6-E2, E6-R1, E6-R2; B-5 (c)): its slot's row, or, for a stage
-    the export has no slot for, quant_rows' note. An E6-KD or AM-23 model row is at its entry's stage and
-    seed (R-14), and an AM-23 slot without a model has no bound clean artifact (R-6)."""
-    from .quant_rows import NO_SLOT, QUANT_SEED, quant_slots
+    AM-23's quant_descriptive QAT stages (E6-E2, E6-R1, E6-R2; B-5 (c)): its slot's row; one of those
+    slots absent from the export is quant_slot_invalid (R4-2). An E6-KD or AM-23 model row is at its
+    entry's stage and seed (R-14), and an AM-23 slot without a model has no bound clean artifact (R-6)."""
+    from .quant_rows import quant_slots
     H.check_seed42_identity(inv, cells, stats, stages=H.QAT_STAGES)
     rows, clean, others = [], {}, {}
     targets = [(stage, seed, cells.slots[(stage, seed)], "planned") for stage in H.QAT_STAGES
                for seed in H.SEEDS]
     kd = sorted({r["slot"] for r in inv.doc["models"] if r.get("stage") == "E6-KD"})
     targets += [("E6-KD", None, slot, "kd") for slot in kd]
-    quant = quant_slots(inv)
-    targets += [(stage, None, quant.get(stage), "quant") for stage in H.QUANT_STAGES
+    quant = quant_slots(inv, required=FQOFF_QUANT_STAGES)
+    targets += [(stage, None, quant[stage], "quant") for stage in H.QUANT_STAGES
                 if H.stage_spec(stage)[2] == "int8_qat"]
     for stage, seed, slot, kind in targets:
         out = {"stage": stage, "seed": seed, "slot": slot, "int8_qat": None, "fq_off": None,
@@ -136,9 +139,6 @@ def build_fqoff(stats: H.StatsArtifact, inv: H.Inventory, cells: H.PlannedCells,
                                            policy=stats.policy).loaded)
         else:
             if kind == "quant":
-                if slot is None:
-                    out.update(seed=QUANT_SEED, note=NO_SLOT)
-                    continue
                 st = H.b5_status(inv, slot)
                 if not st.has_model:
                     if inv.has_record(slot, "int8_qat", "clean", None):
@@ -427,6 +427,6 @@ def run(*, stats_artifact, inventory, out_dir, repo_root=None, synthetic: bool =
 
 
 __all__ = ["SCHEMA", "PARTS", "OUT_FILES", "LREP_CODE_PATHS", "REPORT_CODE_PATHS", "FQOFF_NONE",
-           "parse_parts", "fqoff_row", "build_fqoff", "render_fqoff", "build_mde", "render_mde",
-           "official_unmet", "build_report", "banner", "render_markdown", "check_out_dir", "write_report",
-           "run"]
+           "FQOFF_QUANT_STAGES", "parse_parts", "fqoff_row", "build_fqoff", "render_fqoff", "build_mde",
+           "render_mde", "official_unmet", "build_report", "banner", "render_markdown", "check_out_dir",
+           "write_report", "run"]

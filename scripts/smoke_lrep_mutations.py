@@ -379,6 +379,10 @@ MUTATIONS = [
      [(H, "load_bound", [off("precision_mismatch", ' f"{label}: its model row')])], "am6:R10"),
     ("R36", "artifact_for_missing_run not raised by the fq_off table (an AM-23 slot without a model)",
      [(RX, "build_fqoff", [off_h("artifact_for_missing_run")])], "report:Q12"),
+    # R: B-5b's further raise sites (ruling LREP-B5-RULE-4)
+    ("R37", "quant_slot_invalid not raised (an AM-23 slot absent from the export; R4-2)",
+     [(QR, "quant_slots", [off_h("quant_slot_invalid", ' f"the export has no quant_descriptive')])],
+     "quant:R7"),
     # S: semantic mutations
     ("S01", "condition 1: g > 0 becomes g >= 0",
      [(SS, "condition_1", [("not g[k] > 0.0", "not g[k] >= 0.0")])], "seed:S2"),
@@ -697,8 +701,8 @@ MUTATIONS = [
      [(AT, "arm_slots", [("quant = quant_slots(inv)",
                           'quant = {inv.entry(s)["stage"]: s '
                           'for s in H.role_slots(inv, "quant_descriptive")}')])], "arms:P11"),
-    ("S121", "(c): an AM-23 QAT stage without a slot dropped from the fq_off table",
-     [(RX, "build_fqoff", [("out.update(seed=QUANT_SEED, note=NO_SLOT)", "rows.pop()")])], "report:Q10"),
+    # S121 retired at B5b-3: R4-2 refuses an AM-23 slot absent from the export, so the fq_off table's
+    # NO_SLOT row is gone (R37, S129 and S130 pin the refusal)
     ("S122", "B5-D3: a subset that is not evaluable skips the sign test",
      [(DS, "compare", [("(True if opposite else None)", "None")])], "dedup:T3"),
     ("S123", "(b)(i): the part reads every role's coverage rows (LRB4)",
@@ -714,6 +718,13 @@ MUTATIONS = [
      [(SS, "cut_curves", [('"nonfinite": t}', '"nonfinite": None}')])], "seed:W14"),
     ("S128", "(d): an fq_off record filed under scope clean read as a coverage row",
      [(AM6, "coverage_items", [(' and r.get("precision") != H.PRECISION_FQOFF', "")])], "am6:V7"),
+    # S: B-5b (ruling LREP-B5-RULE-4)
+    ("S129", "R4-2: the quant part requires none of the four AM-23 slots",
+     [(QR, "build_quant_rows", [("quant_slots(inv, required=H.QUANT_STAGES)", "quant_slots(inv)")])],
+     "quant:R7"),
+    ("S130", "R4-2: the fq_off table requires none of AM-23's QAT slots",
+     [(RX, "build_fqoff", [("quant_slots(inv, required=FQOFF_QUANT_STAGES)", "quant_slots(inv)")])],
+     "report:Q10"),
 ]
 
 
