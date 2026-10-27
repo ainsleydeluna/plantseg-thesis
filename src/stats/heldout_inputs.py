@@ -697,6 +697,10 @@ def _checked_kind(inv: Inventory, slot: str) -> tuple[dict, str | None]:
 
 
 def _parent_of(inv: Inventory, e: dict, slot: str) -> str:
+    """R-12: a slot's catalogue.parent, which must be a slot of the export. TMAN's catalogue gives
+    E5:s42:sel parent null (its pilot decides) and a derived entry its own parent (src/tman/schema.py:392
+    and :461-464 at ee5593e); this reads catalogue.parent only, so that entry is refused here (DL-24 R2-01:
+    a difference reported for B-4, not coded)."""
     cat = e.get("catalogue")
     parent = cat.get("parent") if isinstance(cat, dict) else None
     if not inv.has_entry(parent):

@@ -4,7 +4,8 @@
 Each mutation rewrites one LREP function from its own source (an exact, unique text replacement,
 compiled into the module's namespace and restored afterwards; scripts/smoke_teacher_diag_mutations.py's
 harness) and runs its named case, which must pass unmutated and fail under the mutation (a failed
-check or an unexpected error both count as killed). Three kinds:
+check or an unexpected error both count as killed; the log prints how each killed case failed, so that a
+mutant killed by an error of its own shows: DL-24 V2-01). Three kinds:
 
   C  one per refusal code of src.stats.heldout_inputs.CODES: its raise site disabled
      (`raise refusal(` -> `if False: raise refusal(`), killed by the case that reaches that code with
@@ -405,6 +406,9 @@ MUTATIONS = [
     # R: B-5b's DL-24 fixes (B5b-F1)
     ("R43", "descriptive_input_invalid not raised at (d) (a DT-classed slot with no family reference)",
      [(H, "load_slot", [off("descriptive_input_invalid", ' f"the DT read of')])], "official:D4"),
+    # R: B-5b's DL-24 fixes (B5b-F2)
+    ("R44", "parent_rule not raised (catalogue.parent not a slot: the catalogue's null for E5:s42:sel)",
+     [(H, "_parent_of", [off("parent_rule", ' f"slot {slot!r}: catalogue.parent')])], "official:N1"),
     # S: semantic mutations
     ("S01", "condition 1: g > 0 becomes g >= 0",
      [(SS, "condition_1", [("not g[k] > 0.0", "not g[k] >= 0.0")])], "seed:S2"),
@@ -741,11 +745,18 @@ MUTATIONS = [
     ("S128", "(d): an fq_off record filed under scope clean read as a coverage row",
      [(AM6, "coverage_items", [(' and r.get("precision") != H.PRECISION_FQOFF', "")])], "am6:V7"),
     # S: B-5b (ruling LREP-B5-RULE-4)
-    ("S129", "R4-2: the quant part requires none of the four AM-23 slots",
-     [(QR, "build_quant_rows", [("quant_slots(inv, required=H.QUANT_STAGES)", "quant_slots(inv)")])],
+    # S129, S130, S165, S166 and S176 are coherent (DL-24 V2-01): each mutant runs to the behaviour it
+    # names, never to an error of its own (Part 2's B5R4-V1, S98)
+    ("S129", "R4-2: the quant part requires none of the four AM-23 slots, an absent one skipped",
+     [(QR, "build_quant_rows", [
+         ("quant_slots(inv, required=H.QUANT_STAGES)", "quant_slots(inv)"),
+         ("for cand, base in ROWS:", "for cand, base in [r for r in ROWS if r[0] in slots]:"),
+         ("for stage in E6_X_STAGES:", "for stage in [s for s in E6_X_STAGES if s in slots]:")])],
      "quant:R7"),
-    ("S130", "R4-2: the fq_off table requires none of AM-23's QAT slots",
-     [(RX, "build_fqoff", [("quant_slots(inv, required=FQOFF_QUANT_STAGES)", "quant_slots(inv)")])],
+    ("S130", "R4-2: the fq_off table requires none of AM-23's QAT slots, an absent one skipped",
+     [(RX, "build_fqoff", [("quant_slots(inv, required=FQOFF_QUANT_STAGES)", "quant_slots(inv)"),
+                           ('if H.stage_spec(stage)[2] == "int8_qat"]',
+                            'if H.stage_spec(stage)[2] == "int8_qat" and stage in quant]')])],
      "report:Q10"),
     # S: B-5b, R4-1 (B5b-2): the DT read, its pair, load_slot, the read column, the guard
     ("S131", "R4-1 (b): an official DT artifact accepted",
@@ -840,11 +851,14 @@ MUTATIONS = [
     ("S164", "R4-5(c): role e6kd outside the model-row role check",
      [(H, "model_row", [('set(row["role"]) <= set(ROLES)', 'set(row["role"]) <= set(ROLES) - {"e6kd"}')])],
      "am6:V4"),
-    ("S165", "R4-5(f): a divergence without both unit keys accepted",
-     [(H, "_kind_fields_problem", [('if "iteration" not in e or "epoch" not in e:', "if False:")])],
+    ("S165", "R4-5(f): a divergence without both unit keys accepted, its unit read by e.get (DL-24 V2-01)",
+     [(H, "_kind_fields_problem", [('if "iteration" not in e or "epoch" not in e:', "if False:"),
+                                   ("if e[u] is not None]", "if e.get(u) is not None]")])],
      "arms:L8"),
-    ("S166", "R4-5(f): a divergence with both units null or both non-null accepted",
-     [(H, "_kind_fields_problem", [("if len(units) != 1 or ", "if ")])], "arms:L9"),
+    ("S166", "R4-5(f): a divergence with both units null or both non-null accepted (coherent: DL-24 V2-01)",
+     [(H, "_kind_fields_problem", [("if len(units) != 1 or not _is_int(e[units[0]]) or e[units[0]] < 0:",
+                                    "if units and (not _is_int(e[units[0]]) or e[units[0]] < 0):")])],
+     "arms:L9"),
     ("S167", "R4-5(f): a divergence without its run_id or cause accepted",
      [(H, "_kind_fields_problem", [('("run_id", "rule", "cause")', '("rule",)')])], "arms:L9"),
     ("S168", "R4-5(f): a divergence without its telemetry_sha256 accepted",
@@ -869,8 +883,11 @@ MUTATIONS = [
      "arms:P13"),
     ("S175", "R4-5(a): X not taken from the arm teacher's stage name",
      [(AT, "teacher_x", [('return stage.split("-", 1)[1]', "return stage")])], "arms:P13"),
-    ("S176", "R4-5(b): an arm slot outside E3-X and E7-X no longer skipped",
-     [(AT, "arm_slots", [("if stage not in want:", "if False:")])], "arms:P12"),
+    ("S176", "R4-5(b): an arm slot outside E3-X and E7-X refused again (arm_slot_invalid), never skipped",
+     [(AT, "arm_slots", [("if stage not in want:\n            skipped.append(slot)\n            continue",
+                          'if stage not in want:\n            raise H.refusal("arm_slot_invalid", f"arm slot '
+                          '{slot!r} at {stage!r} is outside E3-X and E7-X (before R4-5(b))")')])],
+     "arms:P12"),
     ("S177", "R4-5(b): an arm_teacher slot outside teacher-R1 and teacher-R2 no longer skipped",
      [(AT, "arm_slots", [("if stage not in ARM_TEACHER_STAGES:", "if False:")])], "arms:P12"),
     ("S178", "R4-5(b): the skipped slots listed without their labels",
@@ -960,13 +977,15 @@ def main() -> int:
             results.append((mid, f"{desc} -- anchor", False, detail))
             continue
         killed = base[killer] and not ok
-        results.append((mid, f"'{desc}' killed by {killer}", killed, "" if killed else detail))
+        results.append((mid, f"'{desc}' killed by {killer}", killed, detail))
+    ids = {m[0] for m in MUTATIONS}
     for cid, desc, ok, detail in results:
         print(f"  [{'PASS' if ok else 'FAIL'}] {cid} {desc}")
         if not ok:
             print(f"         {detail[:400]}")
+        elif cid in ids:                    # how the case failed under the mutant (DL-24 V2-01)
+            print(f"         how: {' '.join(detail.split())[:240]}")
     good = sum(1 for r in results if r[2])
-    ids = {m[0] for m in MUTATIONS}
     n_mut = sum(1 for r in results if r[0] in ids and r[2])
     print(f"\nRESULT: {'LREP MUTATIONS OK' if good == len(results) else 'LREP MUTATIONS FAILED'} "
           f"({good}/{len(results)}; mutations killed {n_mut}/{len(MUTATIONS)}; refusal codes "

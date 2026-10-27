@@ -18,7 +18,9 @@ The world also writes what TMAN will supply (IF§11 v2):
     directories that do not exist. Every slot key, stage, seed, role and parent is TMAN's committed
     catalogue's (CATALOGUE, typed from configs/tday_catalogue.json at lane/tman ee5593e; ruling
     LREP-B5-RULE-4 R4-5); the catalogue leaves E5:s42:sel's parent to its pilot (null), and the world
-    names E5:s42:clip1:15ep, the pilot it takes as the winner;
+    names E5:s42:clip1:15ep, the pilot it takes as the winner. LREP's R-12 reads catalogue.parent only,
+    so the catalogue's null is refused parent_rule (DL-24 R2-01; smoke_lrep_official_profile's N1 and P9
+    name it for B-4);
   * B5-S2's duplicate-free TEST list tman/tday_dedup.json in T4's wording (kept_ids, removed_by_reason;
     four of the thirty images removed, the per-reason counts overlapping by one), named by the export's
     `dedup` {path, sha256, removed_by_reason};
@@ -204,7 +206,8 @@ CATALOGUE = {
 #: src/tman/schema.py:182 at ee5593e, typed out (R4-5(e)): every fixture slot key matches it.
 SLOT_KEY_RE = re.compile(r"^[A-Za-z][A-Za-z0-9-]*(?::[A-Za-z0-9.]+)+$")
 #: The catalogue leaves E5:s42:sel's QAT run to the pilot decision (parent null, pilot runs clip1 and clip5);
-#: the world takes clip1 as the winner, its run of record, and enters clip5 as the losing pilot.
+#: the world takes clip1 as the winner, its run of record, and enters clip5 as the losing pilot. It writes
+#: clip1 as E5:s42:sel's catalogue.parent, which R-12 reads (the catalogue's null: DL-24 R2-01, for B-4).
 E5_PILOT_OF_RECORD, E5_PILOT_LOST = "E5:s42:clip1:15ep", "E5:s42:clip5:15ep"
 
 

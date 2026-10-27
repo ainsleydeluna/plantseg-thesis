@@ -30,6 +30,9 @@ Policy.OFFICIAL).
      F (f) a record whose files differ from the artifact's
   K  item 4: an official-capable slot's provisional artifact is refused under Policy.OFFICIAL
      (artifact_unreadable), never read as descriptive
+  N  DL-24 R2-01, named for B-4 (a difference is reported, not coded): E5:s42:sel as TMAN's catalogue
+     gives it (catalogue.parent null, the pilot deciding) is refused parent_rule by R-12, which reads
+     catalogue.parent only; the world names the pilot of record there
   X  the world: its artifacts' dataset name, split value and statuses; no created path contains 'test'
      or ':'
   P  R4-1 item 8, the official profile end to end (run by main only, after the cases above; the mutation
@@ -47,6 +50,9 @@ Policy.OFFICIAL).
      P6-P8 one mixed run per refusal family, nothing written: a DT artifact that is official
         (descriptive_input_invalid), an official-capable slot's provisional artifact (artifact_unreadable),
         a DT run given to an official computation (descriptive_input_in_official)
+     P9 the report on N's E5:s42:sel: parent_rule at heldout_inputs._parent_of, named with its file:line
+        for B-4, nothing written
+     P10 the path walk again, after P1-P9 created theirs (DL-24 R2-02)
 
 Run:  TMPDIR=<a scratch directory without 'test'> python -B scripts/smoke_lrep_official_profile.py
 """
@@ -512,6 +518,28 @@ def k_no_downgrade():
 
 
 # --------------------------------------------------------------------------------------------------
+# N: a difference from TMAN's catalogue, named for B-4 (reported, not coded)
+# --------------------------------------------------------------------------------------------------
+def catalogue_parent(export, binding):
+    """E5:s42:sel as TMAN's catalogue and entry block give it (configs/tday_catalogue.json and
+    src/tman/schema.py:461-464 at ee5593e): catalogue.parent null, the pilot deciding; the derived entry's
+    own parent (schema.py:392) names the pilot run of record. The world names that run in catalogue.parent
+    (scripts/lrep_fixtures.py: E5_PILOT_OF_RECORD)."""
+    e = next(e for e in export["entries"] if e["slot"] == "E5:s42:sel")
+    e["catalogue"]["parent"] = None
+    e["parent"] = LF.E5_PILOT_OF_RECORD
+
+
+def n_pilot_parent():
+    """DL-24 R2-01, named for B-4: on E5:s42:sel as the catalogue gives it, LREP's R-12 reads
+    catalogue.parent only (heldout_inputs._parent_of), so planned_cells, which every part's report runs,
+    refuses parent_rule naming the slot."""
+    inv = inventory(variant("e5_catalogue_parent", catalogue_parent))
+    ok, detail = refused("parent_rule", lambda: H.planned_cells(inv))
+    return ok and "'E5:s42:sel': catalogue.parent None is not a slot of the export" in detail, detail
+
+
+# --------------------------------------------------------------------------------------------------
 # X: the world
 # --------------------------------------------------------------------------------------------------
 def x_world():
@@ -709,6 +737,25 @@ def p_mixed_injected():
             and "['E7 clean']" in detail), detail
 
 
+def p_mixed_pilot_parent():
+    """P9 (DL-24 R2-01): the report on an export that differs from the world's only in E5:s42:sel, as the
+    catalogue gives it (catalogue.parent null): parent_rule at heldout_inputs._parent_of, named for B-4
+    with its file:line (on TMAN's export, the refusal after the reader swap); nothing written."""
+    out = CTX.world.root / "rx_pilot_parent"
+    site = raise_site(H._parent_of, "parent_rule")
+    CTX.e2e["pilot_parent"] = site
+    ok, detail = refused("parent_rule", lambda: rx_run("rx_pilot_parent",
+                                                       variant("e5_catalogue_parent", catalogue_parent)))
+    return ok and "'E5:s42:sel': catalogue.parent None" in detail and not out.exists(), f"at {site}; {detail}"
+
+
+def p_paths():
+    """P10 (DL-24 R2-02): X2's walk again after P1-P9 created theirs (the strata, inputs.json, the
+    statistics artifact and its temporary sibling, the reports' out-dirs): no created path or file name
+    contains 'test' or ':'."""
+    return x_no_test_path()
+
+
 def profile_cases():
     return [("P1", "the official driver writes the 37's statistics artifact (Policy.OFFICIAL, nonofficial)",
              p_driver),
@@ -723,7 +770,10 @@ def profile_cases():
             ("P7", "mixed run: an official-capable slot's provisional artifact -> artifact_unreadable",
              p_mixed_provisional),
             ("P8", "mixed run: a DT run given to an official computation -> descriptive_input_in_official",
-             p_mixed_injected)]
+             p_mixed_injected),
+            ("P9", "mixed run: E5:s42:sel as the catalogue gives it -> parent_rule (R2-01, for B-4)",
+             p_mixed_pilot_parent),
+            ("P10", "no path created by P1-P9 contains 'test' or ':' (LRB20; R4-6)", p_paths)]
 
 
 def cases():
@@ -756,6 +806,8 @@ def cases():
              f_record),
             ("K1", "item 4: an official-capable slot's provisional artifact is refused (artifact_unreadable)",
              k_no_downgrade),
+            ("N1", "R2-01 (B-4): E5:s42:sel as the catalogue gives it (parent null) -> parent_rule (R-12)",
+             n_pilot_parent),
             ("X1", "the official world: dataset name, split, rows, AM-5 count and statuses", x_world),
             ("X2", "no created path contains 'test' or ':' (LRB20; R4-6)", x_no_test_path)]
 

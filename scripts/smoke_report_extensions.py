@@ -534,7 +534,8 @@ def h_deterministic():
 
 
 def h_no_test_path():
-    """LRB20, with ':' (R4-6): no created path contains 'test' or ':'."""
+    """LRB20, with ':' (R4-6): no created path contains 'test' or ':'. The last case, after every other
+    case has created its paths (DL-24 R2-02)."""
     bad = [os.path.join(d, n) for d, dirs, files in os.walk(CTX.world.root) for n in dirs + files
            if "test" in n.lower() or ":" in n]
     return not bad, str(bad[:3])
@@ -750,7 +751,6 @@ def cases():
             ("H4", "--parts selects parts", h_parts),
             ("H5", "no temporary directory left after a failure", h_no_tmp_left),
             ("H6", "byte-identical JSON from two runs", h_deterministic),
-            ("H7", "no created path contains 'test' or ':' (LRB20; R4-6)", h_no_test_path),
             ("H8", "the frozen code and the CLI are recorded and gate the profile (O3)", h_report_code),
             ("R1", "parts_invalid", r_parts),
             ("R2", "mde_entry_invalid (an MDE path that does not exist)", r_mde),
@@ -767,7 +767,9 @@ def cases():
             ("S9", "the CLI refuses --parts dedup on an export whose dedup is null (exit 2)", s_cli_dedup),
             ("S10", "--parts dedup alone reads the MDE entry's caveat; --parts arms alone", s_alone),
             ("S11", "B-5b: report_extensions.run passes its B to the B-5 parts (B = 60 named as unmet)",
-             s_run_b)]
+             s_run_b),
+            ("H7", "no created path contains 'test' or ':' (LRB20; R4-6; run last: DL-24 R2-02)",
+             h_no_test_path)]
 
 
 def run_case(fn):
