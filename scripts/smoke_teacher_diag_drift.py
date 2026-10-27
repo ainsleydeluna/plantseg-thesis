@@ -7,6 +7,7 @@
        K-part's two run() hunks (expected_sha256 to validate_teacher_artifact and load_teacher_model).
        Re-pinned by lane LQP (C14) after ruling R2's one call in run()'s INT8 official branch, outside the
        part D2 mirrors (teacher_d2_calibration.py :105-258).
+       Re-pinned by lane LEFF B-1b for IF-T1's flags in run(), inert without them; D2 (teacher_d2_calibration.py) passes none.
   P6   src/eval/teacher_diag.py calls load_frozen_teacher and load_teacher_model exactly once each (the two
        load lines), and no DIAG script calls either.
   P7   frozen.provenance.as_dict() is called at exactly one site (teacher_record), and no DIAG script
@@ -31,7 +32,7 @@ if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
 RESULTS: list[tuple[str, bool, str]] = []
-EVALUATE_MODEL_RUN_SHA256 = "b031d3aea7545039dae0aaa98eae809e8ad2cb64af8963da8d94c334115fc4f0"   # at e37e339
+EVALUATE_MODEL_RUN_SHA256 = "d41964f5ebf692526d75399a05e888d68632b43cb4da760718ca6e3e17ad783a"   # at ea22241
 DIAG_SCRIPTS = ("scripts/teacher_d1_nmf_sensitivity.py", "scripts/teacher_d2_calibration.py",
                 "scripts/score_teacher_train.py", "scripts/teacher_d3_perclass_strata.py",
                 "scripts/hash_split_files.py", "scripts/dedup_val_scores.py")
