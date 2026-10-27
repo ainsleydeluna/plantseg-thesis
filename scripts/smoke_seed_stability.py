@@ -15,7 +15,8 @@ model or GPU; no created path contains "test".
   W  the world end to end: ten labelled rows, robustness at every seed, ignored slots never refused,
      cut-run VAL curves (iterations for KD, epochs for QAT, the cut entry's comparator, never
      interpolated), divergences and the verdict sentence; B-5 (e): an attempt with no VAL row (R2-04)
-     and a non-finite comparator row (R2-09)
+     and a non-finite comparator row (R2-09), each also on the paths DL-24 named (the attempt of record;
+     a comparator without a model, in the trainer's tagged form)
   R  refusals: one case per code, each reached with every earlier gate passing (R-15 is an assertion),
      and one per further raise site the DL-24 review added (R2h-R2j, R4c-R4d, R12b-R12e, R13b, R14b,
      R17b, R18b); B-5 (e): a null freeze under Policy.OFFICIAL (R2k; R1-12); B-5's DL-24: a seed-42
@@ -740,6 +741,52 @@ def w_nonfinite_comparator():
             and "8000: non-finite (nan)" in line and "50000: —" in line), line[:300]
 
 
+def v_cut_e2_empty_of_record(export, binding):
+    """E2 cut at 43; its comparator E1 at 43 (the run of record) lists a telemetry file with no VAL row
+    under its training_run_id."""
+    v_cut_e2(export, binding)
+    entry(export, "E1:s43")["telemetry"] = [CTX.tel["e1_s43_empty"]]
+
+
+def w_empty_of_record():
+    """B-5 (e), R2-04 for the comparator's attempt of record (DL-24 B5R4-01): it reads "wrote no VAL rows"
+    in the JSON and the markdown, with no values."""
+    doc = seed_doc(variant("cut_e2_e1_empty", v_cut_e2_empty_of_record))
+    b = next(x for x in doc["cut_runs"] if (x["stage"], x["seed"]) == ("E2", 43))
+    e1 = next(c for c in b["comparators"] if c["stage"] == "E1")
+    line = next((ln for ln in SS.render_markdown(doc) if ln.startswith("  - comparator E1 seed 43")), "")
+    return (e1["note"] == "wrote no VAL rows" and e1["values"] == [] and e1["shared_points"] == 0
+            and e1["run_id"] == LF.training_run_id("E1", 43) and line.endswith(": wrote no VAL rows")), line
+
+
+def v_cut_e2_e3_tagged(export, binding):
+    """W9's pair (E2 and E3 cut at 43), E3's telemetry holding a VAL row at 20000 in the KD trainer's
+    non-finite form (all_class_miou null, its tag in `nonfinite`)."""
+    v_cut_e2_e3(export, binding)
+    entry(export, "E3:s43")["telemetry"] = [CTX.tel["e3_s43_tagged"]]
+
+
+def w_tagged_no_model_comparator():
+    """B-5 (e), R2-09 for a comparator without a model (DL-24 B5R4-02): E3's VAL row at 20000 keeps its
+    tag in E2's block ("nonfinite": "nan"; "non-finite (nan)" on the attempt's line), and so does E3's own
+    point in its block; never the absent mark."""
+    doc = seed_doc(variant("cut_e2_e3_tagged", v_cut_e2_e3_tagged))
+    blocks = {b["stage"]: b for b in doc["cut_runs"] if b["seed"] == 43}
+    e3_in_e2 = next(c for c in blocks["E2"]["comparators"] if c["stage"] == "E3")
+    att = e3_in_e2["attempts"][0]
+    vals = {v["iter"]: v for v in att["values"]}
+    own = {p["iter"]: p for p in blocks["E3"]["attempts"][0]["points"]}
+    md = SS.render_markdown(doc)
+    rid = "e3_s43_lambda0.5_alpha25_80k_a1"
+    comp_line = next((ln for ln in md if ln.startswith(f"    - attempt `{rid}`")), "")
+    own_line = next((ln for ln in md if ln.startswith(f"  - attempt `{rid}`")), "")
+    return (vals[20000]["all_class_miou"] is None and vals[20000]["nonfinite"] == "nan"
+            and vals[16000]["nonfinite"] is None and isinstance(vals[16000]["all_class_miou"], float)
+            and own[20000]["nonfinite"] == "nan" and own[20000]["all_class_miou"] is None
+            and "20000: non-finite (nan)" in comp_line and "20000: non-finite (nan)" in own_line), \
+        comp_line[:300]
+
+
 def w_no_shared_point():
     """A comparator curve that shares no point with the cut run is stated as such in the markdown, beside
     its empty values (LRB6; R2-02)."""
@@ -1220,6 +1267,26 @@ def write_nan_telemetry(w, name: str, *, run_id: str, nan_at: int) -> dict:
     return {"run_id": run_id, "path": rel, "sha256": H.sha256_file(p)}
 
 
+def write_tagged_telemetry(w, name: str, *, run_id: str, points, tagged_at: int) -> dict:
+    """A KD telemetry file whose VAL row at `tagged_at` is in the KD trainer's non-finite form,
+    all_class_miou null with its tag in `nonfinite` (src/training/train_distill.py:808-814; LF.write_telemetry
+    writes finite rows only). Returns the export's item."""
+    rel = f"telemetry/{name}.jsonl"
+    rows = [{"event": "run_meta", "mode": "real", "run_id": run_id}]
+    for u, v in points:
+        rows.append({"event": "train", "iter": u, "loss": 0.5})
+        val = {"event": "val", "iter": u, "all_class_miou": v, "disease_only_miou_PROVISIONAL": v,
+               "wall_clock": 1.79e9 + u}
+        if u == tagged_at:
+            val.update(all_class_miou=None, nonfinite={"all_class_miou": "nan"})
+        rows.append(val)
+    p = w.input_root / rel
+    if p.exists() or "test" in rel.lower():
+        raise ValueError(rel)
+    p.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8", newline="\n")
+    return {"run_id": run_id, "path": rel, "sha256": H.sha256_file(p)}
+
+
 def setup(root: Path, world=None) -> None:
     """Build the world once (or take a shared one): the base fixtures, partial, empty and non-finite
     telemetry files, and two edited copies."""
@@ -1242,6 +1309,14 @@ def setup(root: Path, world=None) -> None:
                                                  unit="iter", points=[])
     CTX.tel["e1_s43_nan"] = write_nan_telemetry(w, "e1_s43_nan", run_id=LF.training_run_id("E1", 43),
                                                 nan_at=8000)
+    # B-5's DL-24: E1's seed-43 run of record with no VAL row (R2-04), and E3's cut seed-43 run with a
+    # tagged non-finite VAL row at 20000 (R2-09)
+    CTX.tel["e1_s43_empty"] = LF.write_telemetry(w, "e1_s43_empty", run_id=LF.training_run_id("E1", 43),
+                                                 unit="iter", points=[])
+    CTX.tel["e3_s43_tagged"] = write_tagged_telemetry(w, "e3_s43_tagged",
+                                                      run_id="e3_s43_lambda0.5_alpha25_80k_a1",
+                                                      points=LF.kd_curve(0.38, iters=E3_CUT_ITERS),
+                                                      tagged_at=20000)
     CTX.copies["upstream"] = LF.edited_copy(
         w, w.art("E2", 43), "e2_s43_clean_upstream",
         lambda s: {**s, "dataset": {**s["dataset"], "preprocess_protocol": "upstream/1.0.0"}})
@@ -1318,6 +1393,9 @@ def cases():
         ("W11", "B-5 (e) R2-04: an attempt with no VAL row reads 'wrote no VAL rows'", w_no_val_rows),
         ("W12", "B-5 (e) R2-09: a non-finite comparator VAL row keeps its tag, never the absent mark",
          w_nonfinite_comparator),
+        ("W13", "B-5 (e) R2-04: the comparator's attempt of record wrote no VAL rows", w_empty_of_record),
+        ("W14", "B-5 (e) R2-09: a no-model comparator's tagged VAL row, and the cut run's own",
+         w_tagged_no_model_comparator),
         ("R1", "R-1 stats_artifact_unverified (its inputs missing)", r_stats_unverified),
         ("R2a", "stub_reader_official", r_stub_official),
         ("R2b", "R-2 inventory_unreadable", r_inventory_unreadable),

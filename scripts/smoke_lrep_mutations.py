@@ -637,9 +637,9 @@ MUTATIONS = [
      [(AM6, "coverage_items", [(' and r.get("slot") not in rec_slots', "")])], "am6:V1"),
     ("S97", "(d): a coverage row's model row checked at its stage only, not its seed (R-14)",
      [(H, "check_row_at_entry", [(' or ba.row["seed"] != e.get("seed")', "")])], "am6:R8"),
-    ("S98", "(d): the seed-42 faithfulness check applied to the coverage rows",
+    ("S98", "(d): the seed-42 faithfulness check applied to the coverage rows at the family's stages",
      [(AM6, "build_am6_tables", [('if r.get("role") != "family":',
-                                  'if r.get("role") not in ("family", None):')])], "am6:V1"),
+                                  'if r.get("role") == "per_seed" or r["stage"] not in ref:')])], "am6:V1"),
     ("S99", "(d): a null seed sorted first",
      [(AM6, "_sort_key", [('return (r["seed"] is None,', 'return (r["seed"] is not None,')])], "am6:V5"),
     ("S100", "(d): DL-99's E1 record checked over every E1 row (a 160k control's among them)",
@@ -700,6 +700,15 @@ MUTATIONS = [
      [(DS, "model_rows", [("roles=SUBSET_ROLES, stages=(H.E6KD_STAGE,)", "roles=None")])], "dedup:V5"),
     ("S124", "(b)(i): am6's coverage role filter ignored",
      [(AM6, "coverage_items", [("if roles is not None and not", "if False and not")])], "dedup:V5"),
+    ("S125", "(e) R2-04: the comparator's attempt of record without VAL rows has no note",
+     [(SS, "_comparator", [("if not a.points:", "if False:")])], "seed:W13"),
+    ("S126", "(e) R2-09: a no-model comparator's attempt drops its rows' non-finite tags",
+     [(SS, "_comparator", [('"nonfinite": tags.get(u)} for u in points]',
+                            '"nonfinite": None} for u in points]')])], "seed:W14"),
+    ("S127", "(e) R2-09: a cut run's own points drop their non-finite tags",
+     [(SS, "cut_curves", [('"nonfinite": t}', '"nonfinite": None}')])], "seed:W14"),
+    ("S128", "(d): an fq_off record filed under scope clean read as a coverage row",
+     [(AM6, "coverage_items", [(' and r.get("precision") != H.PRECISION_FQOFF', "")])], "am6:V7"),
 ]
 
 

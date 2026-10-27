@@ -19,7 +19,8 @@ TMPDIR (left in place); none contains "test".
      that says student (precision_mismatch)
   M  B5-S1's stage map, static, against STAGE_ARTIFACTS and the evaluator's STAGES
   V  (d): every other clean canvas record as a row (23 here), each with its slot's roles, kind, stage,
-     seed and label, its twelve numbers and R1/R3, the stages it is scored at, the sort, the markdown
+     seed and label, its twelve numbers and R1/R3, the stages it is scored at, the sort, the markdown;
+     never an fq_off record, even one filed under scope clean
   S  the subset mode: the four numbers recomputed on the kept rows, the eligibility changes, the
      fingerprint; zero ids removed gives the full values bitwise; a kept id outside the artifact
   D  determinism, repr floats, no 'test' path
@@ -67,6 +68,8 @@ EVALUATED_AS = {"E3-R1": "E3", "E3-R2": "E3", "E3-flip": "E3", "E7-R1": "E7", "E
                 "R1": "teacher", "R2": "teacher"}
 #: (d)'s rows beyond B-5's slots: the default candidates and E6-KD (Part 1's world).
 PART1_COVERAGE = (("E2:s42:lambda1", "fp32"), ("E3:s42:alpha50", "fp32"), ("E6-KD:s42:sel", "int8_qat"))
+#: A coverage row's source, typed out (R4-03).
+COVERAGE_SOURCE = "binding: every clean canvas record (B-5 (d); R3-14)"
 SPACES = ("all_class", "disease_only")
 FIELDS = (("", "value"), ("_float64", "value_float64"), ("_n_classes", "n_classes"))
 
@@ -357,7 +360,7 @@ def v_identity():
         e, w = entries[r["slot"]], CTX.world.written[(r["slot"], r["precision"], "clean", None)]
         if not (r["roles"] == e["role"] and r["kind"] == e["kind"] and r["stage"] == e["stage"]
                 and r["seed"] == e["seed"] and r["label"] is None and r["run_id"] == w.run_id
-                and r["checkpoint_sha256"] == w.checkpoint and r["source"] == AM6.COVERAGE_SOURCE
+                and r["checkpoint_sha256"] == w.checkpoint and r["source"] == COVERAGE_SOURCE
                 and "role" not in r):
             bad.append(r["slot"])
     return not bad, str(bad)
@@ -423,6 +426,19 @@ def v_markdown():
             and "| R2 | — | arm_teacher | fp32 |" in text
             and "| E6-E2 | 42 | quant_descriptive | int8_qat |" in text
             and not any(s in text for s in slots)), str(rows[:2])
+
+
+def v_no_fqoff_row():
+    """(d): never an fq_off row. E6-KD's qat_fakequant_off record filed under scope clean (against TL-12)
+    is not read: the coverage rows are the world's 23, none at qat_fakequant_off (DL-24 B5R4-03)."""
+    def edit(export, binding):
+        next(r for r in binding["artifacts"]
+             if (r["slot"], r["precision"]) == ("E6-KD:s42:sel", H.PRECISION_FQOFF))["scope"] = "clean"
+    doc = doc_of(variant("e6kd_fqoff_clean", edit), coverage=True)
+    others = sorted((r["slot"], r["precision"]) for r in doc["rows"] if not AM6.is_planned(r))
+    want = sorted([(slot, p) for slot, _, _, precs, *_ in LF.B5_SLOTS for p in precs
+                   if p != H.PRECISION_FQOFF] + list(PART1_COVERAGE))
+    return others == want and len(others) == 23, str(sorted(set(others) ^ set(want))[:4])
 
 
 def r_cov_other_gt():
@@ -588,6 +604,7 @@ def cases():
              v_stages),
             ("V5", "(d): the sort covers every stage and a null seed", v_sort),
             ("V6", "(d): the second table, its banner, a null seed as —, no slot key", v_markdown),
+            ("V7", "(d): an fq_off record filed under scope clean is never a row", v_no_fqoff_row),
             ("R6", "cross_artifact_mismatch: the teacher's record on another ground truth", r_cov_other_gt),
             ("R7", "precision_mismatch: the teacher scored as a student (B5-S1)", r_cov_role),
             ("R8", "seed_inconsistent: a coverage row's model row at another seed (R-14)", r_cov_seed),

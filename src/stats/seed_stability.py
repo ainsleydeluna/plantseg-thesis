@@ -482,6 +482,9 @@ def _comparator(inv, cells, stage, seed, why, unit, points, input_root) -> dict:
         return out
     a = _of_record_attempt(inv, slot, cunit, row, input_root)
     out.update(unit=cunit, run_id=a.run_id, telemetry=a.path, sha256=a.sha256)
+    if not a.points:                       # B-5 (e), R2-04: the attempt of record wrote no VAL row
+        out["note"] = WROTE_NO_VAL_ROWS
+        return out
     if cunit != unit:
         out["note"] = (f"its VAL rows are counted in {H.TELEMETRY_UNITS[cunit]}s: no point at the same "
                        f"{H.TELEMETRY_UNITS[unit]}s (never interpolated)")

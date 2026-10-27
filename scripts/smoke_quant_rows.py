@@ -187,7 +187,7 @@ def l_no_slot():
         export["entries"] = [e for e in export["entries"] if e["slot"] != "E7-E2:s42"]
         drop_rows(export, binding, "E7-E2:s42")
     r = row(doc_of(variant("no_e7e2", edit)), "E7-E2")
-    return r["label"] == QR.NO_SLOT and r["slot"] is None, str(r)[:300]
+    return r["label"] == "no quant_descriptive slot in the export" and r["slot"] is None, str(r)[:300]
 
 
 def r_outside():
