@@ -270,12 +270,18 @@ def doc_bytes(doc: dict) -> bytes:
 def read_dedup(data: bytes, *, expect_sha256: str | None = None) -> dict:
     """tday_dedup.json, strictly (dedup_invalid): its sha256 is `expect_sha256`, when given, before it is parsed;
     strict UTF-8 JSON (schema.strict_json: no duplicate key, no NaN or infinity); its bytes are the canonical JSON of
-    what they hold; every rule of doc_errors."""
+    what they hold (a lone surrogate escape, which UTF-8 cannot carry, among the refusals); every rule of
+    doc_errors."""
     if expect_sha256 is not None and S.sha256_bytes(data) != expect_sha256:
         raise S.TmanRefused("dedup_invalid", f"{DEDUP_NAME}: sha256 {S.sha256_bytes(data)}, not {expect_sha256}: it "
                                              "is not parsed")
     doc = S.strict_json(data, DEDUP_NAME, code="dedup_invalid")
-    if S.canonical_json_bytes(doc) != data:
+    try:
+        canonical = S.canonical_json_bytes(doc)
+    except UnicodeEncodeError:                      # "\ud800" parses as JSON, but its UTF-8 encoding fails
+        raise S.TmanRefused("dedup_invalid", f"{DEDUP_NAME}: a string holds a lone surrogate, which UTF-8 cannot "
+                                             "carry") from None
+    if canonical != data:
         raise S.TmanRefused("dedup_invalid", f"{DEDUP_NAME}: its bytes are not the canonical JSON of what they hold")
     errs = doc_errors(doc)
     if errs:

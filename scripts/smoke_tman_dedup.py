@@ -10,7 +10,8 @@ decision (ix); rulings H3-H7).
   id lists are disjoint and their union is the image set; and the doc's other rules.
 - The TRAIN/VAL list parser: its sha256 is compared before it is parsed; header, row count, split counts and rows are
   checked, the counts passed by parameter as the fixture's; the header is scripts/hash_split_files.py :232's.
-- Deterministic canonical bytes; the hash list; the strict reader's refusals; the listed ids' refusals.
+- Deterministic canonical bytes; the hash list; the strict reader's refusals (each form rule of doc_errors with every
+  earlier rule passing, and a lone surrogate escape); the listed ids' refusals.
 - LREP's reader rules restated (src/stats/heldout_inputs.py :126-127 and :1369-1377 at lane/lrep 6c222c9; no LREP
   code is imported: it is not on this branch), the export's DEDUP_SPEC (src/tman/validate.py :1612) and B-4's
   partition equality.
@@ -266,15 +267,41 @@ def case_reader():
     missing = D.doc_bytes({k: v for k, v in doc.items() if k != "script"})
     fmt = D.doc_bytes(dict(doc, format="tday_dedup/2"))
     broken = D.doc_bytes(dict(doc, kept_ids=list(reversed(doc["kept_ids"]))))
+    lone = data.replace(b'"kx_u1"', b'"kx_u1\\ud800"', 1)              # strict JSON; no UTF-8 for its string
+
+    def edit(**kw):
+        return D.doc_bytes(dict(doc, **kw))
     for name, bad, want in (("reader_duplicate_key_refused", dup, "not strict"),
                             ("reader_non_canonical_bytes_refused", pretty, "not the canonical JSON"),
                             ("reader_nan_refused", nan, "not strict"),
                             ("reader_extra_key_refused", extra, "exactly the keys"),
                             ("reader_missing_key_refused", missing, "exactly the keys"),
                             ("reader_other_format_refused", fmt, "is not 'tday_dedup/1'"),
-                            ("reader_broken_invariant_refused", broken, "not sorted and unique")):
+                            ("reader_broken_invariant_refused", broken, "not sorted and unique"),
+                            ("reader_lone_surrogate_escape_refused", lone, "lone surrogate"),
+                            # each form rule of doc_errors, every earlier rule passing (DL-24 r3-F5)
+                            ("reader_n_images_not_an_integer_refused", edit(n_images=float(doc["n_images"])),
+                             "n_images is not a positive integer"),
+                            ("reader_sha256_field_not_hex64_refused", edit(train_val_list_sha256="abc"),
+                             "train_val_list_sha256: 'abc' is not sha256"),
+                            ("reader_script_extra_key_refused", edit(script=dict(doc["script"], note="x")),
+                             "script: unexpected ['note']"),
+                            ("reader_kept_ids_not_a_list_refused", edit(kept_ids=doc["kept_ids"][0]),
+                             "kept_ids: not a list of ids"),
+                            ("reader_fourth_reason_in_the_id_lists_refused",
+                             edit(removed_ids_by_reason=dict(doc["removed_ids_by_reason"], other=[])),
+                             "removed_ids_by_reason does not hold exactly"),
+                            ("reader_fourth_reason_in_the_counts_refused",
+                             edit(removed_by_reason=dict(doc["removed_by_reason"], other=0)),
+                             "removed_by_reason is not a count >= 0"),
+                            ("reader_also_counted_second_key_refused",
+                             edit(also_counted=dict(doc["also_counted"], other=0)),
+                             "also_counted is not a count >= 0")):
         got = outcome(D.read_dedup, bad)
         check(name, got[0] == "refused" and got[1] == "dedup_invalid" and want in got[2], str(got)[:240])
+    got = outcome(D.hasher_values, D.hash_list_bytes([]), lone)
+    check("hasher_values_lone_surrogate_refused", got[0] == "refused" and got[1] == "dedup_invalid"
+          and "lone surrogate" in got[2], str(got)[:240])
 
 
 # ================================================================================================ the listed ids

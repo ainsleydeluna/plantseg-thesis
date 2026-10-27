@@ -132,8 +132,43 @@ M = [
     # ------------------------------------------------------------------------------- dedup.py: the strict reader
     ("reader_parses_before_its_sha256", DED, [(READ_SHA + READ_PARSE, READ_PARSE + READ_SHA)],
      "dedup", "case_reader", "reader_sha256_compared_before_parsing", ["dedup_invalid"]),
-    ("reader_accepts_non_canonical", DED, [("    if S.canonical_json_bytes(doc) != data:", "    if False:")],
+    ("reader_accepts_non_canonical", DED, [("    if canonical != data:", "    if False:")],
      "dedup", "case_reader", "reader_non_canonical_bytes_refused", ["dedup_invalid"]),
+    ("reader_lone_surrogate_uncaught", DED, [("        canonical = S.canonical_json_bytes(doc)\n"
+                                              "    except UnicodeEncodeError:",
+                                              "        canonical = S.canonical_json_bytes(doc)\n    except KeyError:")],
+     "dedup", "case_reader", "reader_lone_surrogate_escape_refused", ["dedup_invalid"]),
+    ("reader_not_strict_json", DED, [('    doc = S.strict_json(data, DEDUP_NAME, code="dedup_invalid")',
+                                      '    doc = __import__("json").loads(data)')],
+     "dedup", "case_reader", "reader_duplicate_key_refused", ["dedup_invalid"]),
+    ("doc_keys_unchecked", DED, [("    if not isinstance(doc, dict) or sorted(doc) != list(DOC_KEYS):",
+                                  "    if not isinstance(doc, dict):")],
+     "dedup", "case_reader", "reader_extra_key_refused", ["dedup_invalid"]),
+    ("doc_format_unchecked", DED, [("    errs = [] if doc[\"format\"] == DEDUP_FORMAT else [f\"format "
+                                    "{doc['format']!r} is not {DEDUP_FORMAT!r}\"]", "    errs = []")],
+     "dedup", "case_reader", "reader_other_format_refused", ["dedup_invalid"]),
+    ("n_images_form_unchecked", DED, [('    if not (_is_int(doc["n_images"]) and doc["n_images"] >= 1):',
+                                       "    if False:")],
+     "dedup", "case_reader", "reader_n_images_not_an_integer_refused", ["dedup_invalid"]),
+    ("sha256_fields_form_unchecked", DED, [('        errs += S.value_errors(doc[k], "sha256", k)', "        pass")],
+     "dedup", "case_reader", "reader_sha256_field_not_hex64_refused", ["dedup_invalid"]),
+    ("script_form_unchecked", DED, [('    errs += S.field_errors(doc["script"], {"path": "str", "sha256": "sha256"}, '
+                                     '"script")', "    pass")],
+     "dedup", "case_reader", "reader_script_extra_key_refused", ["dedup_invalid"]),
+    ("ids_list_type_unchecked", DED, [("    if not isinstance(ids, list) or not all(_is_id(i) for i in ids):",
+                                       "    if not all(_is_id(i) for i in ids):")],
+     "dedup", "case_reader", "reader_kept_ids_not_a_list_refused", ["dedup_invalid"]),
+    ("reason_keys_unchecked", DED, [("    if not (isinstance(rid, dict) and sorted(rid) == sorted(REASONS)):",
+                                     "    if not isinstance(rid, dict):")],
+     "dedup", "case_reader", "reader_fourth_reason_in_the_id_lists_refused", ["dedup_invalid"]),
+    ("counts_form_unchecked", DED, [("    if not (isinstance(counts, dict) and sorted(counts) == sorted(REASONS)\n"
+                                     "            and all(_is_int(counts[r]) and counts[r] >= 0 for r in REASONS)):",
+                                     "    if False:")],
+     "dedup", "case_reader", "reader_fourth_reason_in_the_counts_refused", ["dedup_invalid"]),
+    ("also_counted_form_unchecked", DED, [("    if not (isinstance(ac, dict) and list(ac) == [ALSO_COUNTED] and "
+                                           "_is_int(ac[ALSO_COUNTED])\n            and ac[ALSO_COUNTED] >= 0):",
+                                           "    if False:")],
+     "dedup", "case_reader", "reader_also_counted_second_key_refused", ["dedup_invalid"]),
     ("reader_skips_the_invariants", DED, [('    errs = doc_errors(doc)\n    if errs:\n        raise S.TmanRefused('
                                            '"dedup_invalid", f"{DEDUP_NAME}: "', '    errs = []\n    if errs:\n'
                                                                                  '        raise S.TmanRefused('
