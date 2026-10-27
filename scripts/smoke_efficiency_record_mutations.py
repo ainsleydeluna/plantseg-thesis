@@ -152,8 +152,7 @@ MUTATIONS = [
     ("M27", PE, [('    error = forbidden_path_error("the state_dict companion", path)\n    if error:\n'
                   '        raise EfficiencyError("path_forbidden_name", error)\n', "")],
      ("companion_forbidden_name_refused",), "the state_dict companion's \"test\" guard dropped"),
-    ("M28", PE, [("    if args.threads is not None:\n        import torch\n        torch.set_num_threads(int(args.threads))"
-                  "     # before any model: every measurement at it, memory included (§3)\n", "")],
+    ("M28", PE, [("    torch.set_num_threads(args.threads)\n    got = torch.get_num_threads()\n", "    got = args.threads\n")],
      ("memory_at_requested_threads",), "--threads not applied before the memory phase"),
     ("M29", PE, [('    if artifact is not None and kind != "int8_artifact":\n        artifact["model_only_companion"] = '
                   "model_only_companion(resolved)     # parses the checkpoint: after memory\n", ""),
