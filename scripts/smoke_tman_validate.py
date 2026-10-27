@@ -1490,6 +1490,105 @@ def case_appends_history():
                 detail=f"commit {c2[:12]}: the appends changed")
 
 
+def case_checkpoint_sources():
+    """Decision (xviii) (DL-24 #35, #51): one committed source at least holds a checkpoint's sha256 -- a RECORDED or
+    IMPLEMENTED decision-log row a source names, or its sweep's selection file."""
+    w = WORLD
+    ck = w.entry(w.doc, "E1:s43:80k")["checkpoint"]
+    row = w.row(f"E1:s43:80k ends; checkpoint best.pth sha256 {ck['sha256']} (decided, not recorded)", status="DECIDED")
+    w.commit({}, "a DECIDED row holding E1 seed 43's checkpoint", rows={row: w.dl[row]})
+    src = ck["sources"][0]
+    for name, sources in (("checkpoint_without_a_committed_source_B35", []),
+                          ("checkpoint_source_row_not_recorded_B51", [dict(src, dl=row)]),
+                          ("checkpoint_source_of_a_run_directory_only_B51", [dict(src, dl=None)])):
+        expect_gate(w, name, "checkpoint_hash_mismatch", doc=mutated(
+            w, lambda d, s=sources: w.entry(d, "E1:s43:80k")["checkpoint"].update(sources=copy.deepcopy(s))),
+            detail="no committed source holds its checkpoint sha256")
+    code, _, e = w.run("freeze", mutated(w, lambda d: w.entry(d, "E2:s42:lambda1:80k")["checkpoint"].update(
+        sources=[])))
+    check("default_candidate_held_by_its_selection_file_passes", code is None,
+          f"{code}: {e.detail[:200] if e else ''}")
+
+
+def case_arm_teacher():
+    """AM-18 items 2(c), 5 and 7(b), plan (ii) and (xviii) (DL-24 #39): teacher-R1 complete and entered as an arm
+    teacher, its checkpoint the committed arm record's final selection, with its go-rule record and launch
+    provenance; E3-R1 cut from it onward (its gate not met), E6-R1 and E7-R1 not run. A world of its own."""
+    w = World()
+    S = w.S
+    T, rid = "teacher-R1:s42:40k", "teacher-r1_s42_40k_a1"
+    work = FX.teacher_run(w.runs, rid)
+    data = b"teacher-R1 iteration 24000 (fixture)"
+    (work / "iter_24000.pth").write_bytes(data)
+    sha = S.sha256_bytes(data)
+    launch = {"format": "teacher_arm_launch_provenance/1", "arm": "R1", "attempt": 1,
+              "work_dir": f"/workspace/arms/{rid}", "launch": True, "recorded_utc": "2026-10-12T00:00:00Z",
+              "code_pin": w.E, "records_commit": w.E}
+    (work / "teacher_arm_launch_provenance.json").write_bytes(S.json_file_bytes(launch))
+    record = {"format": "arm_teacher_record/1", "arm": "R1", "status": "complete", "first_nonfinite": None,
+              "generated_utc": "2026-11-01T00:00:00Z", "work_dir": {"name": rid, "attempt": 1},
+              "selection": {"status": "final", "selected_iteration": 24000, "recorded_checkpoint_sha256": sha,
+                            "teacher_selection_json_sha256": "a" * 64,
+                            "checkpoint": {"name": "iter_24000.pth", "sha256": sha, "bytes": len(data)}},
+              "launch": {"teacher_arm_launch_provenance_sha256": S.sha256_bytes(S.json_file_bytes(launch))},
+              "logs": {"scalars_sha256": "b" * 64}}
+    files, refs = {}, {}
+
+    def put(key, rel, doc):
+        files[rel] = S.json_file_bytes(doc)
+        refs[key] = {"path": rel, "sha256": S.sha256_bytes(files[rel])}
+    put("launch_provenance", "reports/arms/teacher_arm_launch_provenance_R1_a1.json", launch)
+    put("arm_record", "reports/arms/arm_teacher_record_R1.json", record)
+    put("go_rule", "reports/arms/arm_go_rule_R1.json", {
+        "format": "arm_go_rule/1", "arm": "R1", "verdict": "no_go", "generated_utc": "2026-11-02T00:00:00Z",
+        "checkpoint": {"name": "iter_24000.pth", "sha256": sha, "bytes": len(data)},
+        "teacher_record": refs["arm_record"]})
+    other_launch = dict(launch, arm="R2")
+    put("other_arm", "reports/arms/variant_launch_R2.json", other_launch)
+    for key, edit in (("incomplete", {"status": "incomplete"}), ("other_attempt", {"work_dir": {"name": rid,
+                                                                                               "attempt": 2}}),
+                      ("provisional", {"selection": dict(record["selection"], status="provisional")}),
+                      ("other_arm_record", {"launch": {"teacher_arm_launch_provenance_sha256":
+                                                       refs["other_arm"]["sha256"]}})):
+        put(key, f"reports/arms/variant_record_{key}.json", dict(record, **edit))
+    dl = w.row(f"{T} complete; its arm record {refs['arm_record']['path']} sha256 {refs['arm_record']['sha256']}")
+    w.commit(files, "R1's arm records", rows={dl: w.dl[dl]})
+    teacher = {"kind": "arm_teacher", "dl_rows": [dl], "run_id": rid, "attempts": [{"run_id": rid, "attempt": 1}],
+               "checkpoint": {"name": "iter_24000.pth", "sha256": sha, "bytes": len(data), "sources": [
+                   {"kind": "arm_record", "path": refs["arm_record"]["path"], "dl": None, "sha256": sha}]},
+               "evaluator_stage": "teacher", "teacher_ckpt_sha256": sha, "arm_record": refs["arm_record"],
+               "launch_provenance": refs["launch_provenance"], "go_rule": dict(refs["go_rule"], verdict="no_go")}
+    R1 = "E3-R1:s42:lambda0.5:alpha25:80k"
+    fields = w.cut_fields("R1", [R1], "gate not met", True)
+    fields["results_known"] += [dict(refs["arm_record"], dl=None), dict(refs["go_rule"], dl=None)]
+    ref, cut = w.committed_cut([R1], fields, nn=2)
+    w.rebuild({**cut, **w.committed_not_run(R1, ref, NOT_RUN[R1], nn=2), T: teacher})
+    code, passed, e = w.run("freeze")
+    check("arm_teacher_with_its_records_passes_AM18_2c", code is None and passed == gate_codes("freeze"),
+          f"{code}: {e.detail[:300] if e else ''}")
+
+    def entered(**upd):
+        return mutated(w, lambda d: w.entry(d, T).update(copy.deepcopy(upd)))
+    other = S.sha256_bytes(b"another checkpoint")
+    for name, doc, detail in (
+            ("arm_teacher_go_rule_verdict_not_the_record_s_B39", entered(go_rule=dict(refs["go_rule"], verdict="go")),
+             "go-rule record verdict"),
+            ("arm_teacher_checkpoint_not_the_arm_record_s_selection_B39", entered(go_rule=None, checkpoint={
+                "name": "iter_24000.pth", "sha256": other, "bytes": len(data),
+                "sources": [{"kind": "arm_record", "path": refs["arm_record"]["path"], "dl": None, "sha256": other}]}),
+             "arm record selection.checkpoint.sha256"),
+            ("arm_teacher_record_incomplete_B39", entered(go_rule=None, arm_record=refs["incomplete"]),
+             "arm record status"),
+            ("arm_teacher_without_a_final_selection_B39", entered(go_rule=None, arm_record=refs["provisional"]),
+             "arm record selection.status"),
+            ("arm_teacher_record_of_another_attempt_B39", entered(go_rule=None, arm_record=refs["other_attempt"]),
+             "arm record work_dir.attempt"),
+            ("arm_teacher_launch_provenance_of_another_arm_B39", entered(
+                go_rule=None, arm_record=refs["other_arm_record"], launch_provenance=refs["other_arm"]),
+             "launch provenance arm")):
+        expect_gate(w, name, "checkpoint_hash_mismatch", doc=doc, detail=detail)
+
+
 def case_non_finite_gate():
     """A QAT run entered as non-finite with its row (AM-21 item 2(b)), then without the run's flags."""
     w = World()
@@ -1941,7 +2040,8 @@ def main() -> int:
                             (case_world_passes, case_input_gates, case_record_gates, case_entry_files,
                              case_completion_gates,
                              case_cut_gates, case_cut_attribution, case_parent_and_derived_gates, case_appends,
-                             case_derived_sources, case_appends_history, case_non_finite_gate, case_scope_gates,
+                             case_derived_sources, case_appends_history, case_checkpoint_sources, case_arm_teacher,
+                             case_non_finite_gate, case_scope_gates,
                              case_moved_freeze, case_printers, case_draft_and_cli, case_inventory, case_coverage))
     finally:
         if REAL_TEACHER is not None:

@@ -807,6 +807,42 @@ M = [
     ("cli_append_derived_hash", CLI, [("    if args.runs is not None:\n        errs = M.derived_hash_errors(",
                                        "    if False:\n        errs = M.derived_hash_errors(")],
      "paths", "case_cli_outputs", "cli_append_made_utc_not_its_provenance_s_B25", ["derived_hash_mismatch"], None),
+    # ------------------------- a checkpoint's committed source; an arm teacher's records (DL-24 #35 #39 #51)
+    ("checkpoint_held_by_a_committed_source", VAL, [("        if not held:\n            errs.append(f\"{e['slot']}: no "
+                                                     "committed source", "        if False:\n            errs.append("
+                                                     "f\"{e['slot']}: no committed source")],
+     "validate", "case_checkpoint_sources", "checkpoint_without_a_committed_source_B35",
+     ["checkpoint_hash_mismatch"], None),
+    ("checkpoint_source_row_recorded", VAL, [('        held = any(src["dl"] in rows for src in ck["sources"])',
+                                              '        held = any(src["dl"] for src in ck["sources"])')],
+     "validate", "case_checkpoint_sources", "checkpoint_source_row_not_recorded_B51", ["checkpoint_hash_mismatch"],
+     None),
+    ("checkpoint_held_by_its_selection_file", VAL, [("                held = held or bool(cand)",
+                                                     "                pass")],
+     "validate", "case_checkpoint_sources", "default_candidate_held_by_its_selection_file_passes", [], None),
+    ("arm_teacher_records_read", VAL, [('        if e["kind"] == "arm_teacher":\n            docs = ',
+                                        "        if False:\n            docs = ")],
+     "validate", "case_arm_teacher", "arm_teacher_go_rule_verdict_not_the_record_s_B39", ["checkpoint_hash_mismatch"],
+     None),
+    ("arm_record_selection_checkpoint", MAN, [('            "selection.checkpoint.sha256": ck["sha256"], '
+                                               '"selection.recorded_checkpoint_sha256": ck["sha256"],\n', "")],
+     "validate", "case_arm_teacher", "arm_teacher_checkpoint_not_the_arm_record_s_selection_B39",
+     ["checkpoint_hash_mismatch"], None),
+    ("arm_record_complete", MAN, [('"arm": arm, "status": "complete", ', '"arm": arm, ')],
+     "validate", "case_arm_teacher", "arm_teacher_record_incomplete_B39", ["checkpoint_hash_mismatch"], None),
+    ("arm_record_final_selection", MAN, [('"status": "complete", "selection.status": "final",',
+                                          '"status": "complete",')],
+     "validate", "case_arm_teacher", "arm_teacher_without_a_final_selection_B39", ["checkpoint_hash_mismatch"], None),
+    ("arm_record_attempt", MAN, [('"work_dir.name": rid, "work_dir.attempt": attempt,', '"work_dir.name": rid,')],
+     "validate", "case_arm_teacher", "arm_teacher_record_of_another_attempt_B39", ["checkpoint_hash_mismatch"],
+     None),
+    ("arm_launch_provenance_arm", MAN, [('lwant = {"format": LAUNCH_FORMAT, "arm": arm, ',
+                                         'lwant = {"format": LAUNCH_FORMAT, ')],
+     "validate", "case_arm_teacher", "arm_teacher_launch_provenance_of_another_arm_B39", ["checkpoint_hash_mismatch"],
+     None),
+    ("arm_go_rule_verdict", MAN, [('"arm": arm, "verdict": entry["go_rule"]["verdict"],', '"arm": arm,')],
+     "validate", "case_arm_teacher", "arm_teacher_go_rule_verdict_not_the_record_s_B39", ["checkpoint_hash_mismatch"],
+     None),
 ]
 REFUSAL_EXTRA = ("inventory_invalid", "inventory_sha256_mismatch", "binding_invalid",       # read_inventory's codes
                  "output_location", "output_exists")                                       # the CLI's outputs

@@ -819,7 +819,14 @@ def g_complete_run_omitted(x: Ctx):
     return f"launched and not in the manifest: {bad} (AM-19 item 3(d))" if bad else None
 
 
+ARM_REFS = (("arm_record", R.ARM_TEACHER_RECORD), ("go_rule", R.GO_RULE_RECORD),
+            ("launch_provenance", R.LAUNCH_PROVENANCE))
+
+
 def g_checkpoint_hash_mismatch(x: Ctx):
+    """Each checkpoint's sources hold its sha256, and one at least is a committed record holding it (decision
+    (xviii); DL-24 #35, #51): a RECORDED or IMPLEMENTED decision-log row a source names, its sweep's selection file,
+    or an arm teacher's arm record, the teacher's other records agreeing with the entry (DL-24 #39)."""
     errs = []
     for e in x.entries:
         ck = e.get("checkpoint")
@@ -828,6 +835,8 @@ def g_checkpoint_hash_mismatch(x: Ctx):
         for src in ck["sources"]:
             if src["sha256"] != ck["sha256"] or (src["dl"] and ck["sha256"] not in (x.dl.row_text(src["dl"]) or "")):
                 errs.append(f"{e['slot']}: source {src['kind']} {src['path']} does not hold {ck['sha256'][:12]}")
+        rows = x.dl.recorded_rows_with(ck["sha256"])
+        held = any(src["dl"] in rows for src in ck["sources"])
         s = x.slot(e["slot"])
         if s["sweep"]:
             rel = ss.LAMBDA_SELECTION_REL if s["sweep"]["key"] == "lambda_logit" else ss.ALPHA_SELECTION_REL
@@ -836,6 +845,17 @@ def g_checkpoint_hash_mismatch(x: Ctx):
                 cand = [c for c in doc.get("candidates") or [] if c.get("run_id") == e.get("run_id")]
                 if cand and cand[0].get("ckpt_sha256") != ck["sha256"]:
                     errs.append(f"{e['slot']}: {rel} records {str(cand[0].get('ckpt_sha256'))[:12]}")
+                held = held or bool(cand)
+        if e["kind"] == "arm_teacher":
+            docs = [x.records.json(e[k]["path"], allow, code="checkpoint_hash_mismatch")[0] if e[k] else None
+                    for k, allow in ARM_REFS]
+            arm = M.arm_teacher_errors(e, M.arm_of(s), *docs)
+            errs += arm
+            held = held or not arm                        # the arm record's final selection holds it
+        if not held:
+            errs.append(f"{e['slot']}: no committed source holds its checkpoint sha256 {ck['sha256'][:12]} "
+                        "(decision (xviii): a RECORDED or IMPLEMENTED row a source names, the selection file, or "
+                        "the arm record)")
     return _err(errs)
 
 

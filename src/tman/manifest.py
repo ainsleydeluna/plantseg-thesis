@@ -230,6 +230,44 @@ def derived_hash_errors(entry: dict, parent: dict, cat, ci: dict | None, runs_ro
     return [f"{slot}: its records disagree with the entry and its run at {bad}"] if bad else []
 
 
+# an arm teacher's records (scripts/arm_teacher_record.py:50, scripts/arm_go_rule.py:56, launch_teacher_arm.py:93)
+ARM_RECORD_FORMAT, GO_RULE_FORMAT = "arm_teacher_record/1", "arm_go_rule/1"
+LAUNCH_FORMAT = "teacher_arm_launch_provenance/1"
+
+
+def arm_of(slot: dict) -> str:
+    """An arm teacher's arm: teacher-R1 -> R1 (the arm records' `arm`)."""
+    return slot["stage"].split("-", 1)[1]
+
+
+def arm_teacher_errors(entry: dict, arm: str, record, go_rule, launch) -> list[str]:
+    """checkpoint_hash_mismatch for an arm teacher (AM-18 items 2 and 5; plan (ii), (xviii); DL-24 #39), its records
+    read projected. The arm record (arm_teacher_record/1) is of its arm, complete, of its run and attempt and of its
+    launch provenance, and its final selection's checkpoint is the entry's. The go-rule record (arm_go_rule/1), when
+    entered, gives the entry's verdict for that checkpoint and that arm record. The launch provenance
+    (teacher_arm_launch_provenance/1) launched the arm's attempt in the run's work directory."""
+    ck, rid = entry["checkpoint"], entry["run_id"]
+    attempt = next((a["attempt"] for a in entry["attempts"] if a["run_id"] == rid), None)
+    want = {"format": ARM_RECORD_FORMAT, "arm": arm, "status": "complete", "selection.status": "final",
+            "work_dir.name": rid, "work_dir.attempt": attempt,
+            "selection.checkpoint.name": ck["name"],
+            "selection.checkpoint.sha256": ck["sha256"], "selection.recorded_checkpoint_sha256": ck["sha256"],
+            "launch.teacher_arm_launch_provenance_sha256": entry["launch_provenance"]["sha256"]}
+    if ck["bytes"] is not None:
+        want["selection.checkpoint.bytes"] = ck["bytes"]
+    bad = [f"arm record {k}" for k, v in want.items() if _dotted(record, k) != v]
+    lwant = {"format": LAUNCH_FORMAT, "arm": arm, "attempt": attempt, "launch": True}
+    bad += [f"launch provenance {k}" for k, v in lwant.items() if _dotted(launch, k) != v]
+    work = _dotted(launch, "work_dir")
+    if not (isinstance(work, str) and Path(work).name == rid):
+        bad.append("launch provenance work_dir")
+    if entry["go_rule"] is not None:
+        gwant = {"format": GO_RULE_FORMAT, "arm": arm, "verdict": entry["go_rule"]["verdict"],
+                 "checkpoint.sha256": ck["sha256"], "teacher_record.sha256": entry["arm_record"]["sha256"]}
+        bad += [f"go-rule record {k}" for k, v in gwant.items() if _dotted(go_rule, k) != v]
+    return [f"{entry['slot']}: its records disagree with the entry at {bad}"] if bad else []
+
+
 def code_gated(slot: str, cat) -> bool:
     """A slot whose code is not merged yet (its own or its parent's code_merged gate): it may be entered as not
     made (AM-23 item 4; TB8)."""
