@@ -8,7 +8,11 @@ files, the lane register, the draft manifest, the trigger record and the launch 
 (records.Records.at_commit); the run directories by their own timestamps (completion). It prints each condition MET
 with its records -- a path, a DL id or a merge commit, a file's sha256, its date, and for a committed record the
 commit that holds it and that commit's committer time (audit M2) -- or MISSING with what is missing, and REPORT lines
-that never fail it. It decides nothing and writes nothing.
+that never fail it. It decides nothing and writes nothing. A commit the orchestrator confirmed reached the remote on
+a later day than its committer day (--pushed COMMIT=DAY, from the remote's activity; audit M2, DL-24 R2-4) counts
+from that day: C_X stops before it and every first-parent commit after it, and a record it holds is dated that day;
+the freeze entry carries each such confirmation as a record of kind "confirmed push", and the unlock re-check reads
+them from there.
 
 Each condition reads records only: statuses, dates, hashes, merge records, the trigger's verdict (L-AM3's reader,
 records.trigger_reader; B2R13) and the validator's verdict. An arm's go-rule record and an AM-23 condition entry are
@@ -32,6 +36,7 @@ is AM-22's "entered in the decision log" read through the entry file (audit n7).
 """
 from __future__ import annotations
 
+import copy
 import re
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -57,21 +62,22 @@ BODY_SETTLED = {"superseded": C.SETTLED_SUPERSEDED, "diverged": C.SETTLED_DIVERG
 ENTRY_PATH_RE = re.compile(re.escape(S.ENTRIES_DIR_REL) + r"/[A-Za-z0-9._-]+\.json")
 STOP_TEXT = ("entered as aborted (rule, cause): a STOP that only a new amendment settles (AM-22 Definitions; AM-19 "
              "item 3(a)); a record of such an amendment is a STOP to ask")
+CONFIRMED_PUSH = "confirmed push"     # a freeze entry's record of a commit's confirmed later push day (audit M2)
 
 
 def previous_day(day: str) -> str:
     return D.iso(D.day(day) - timedelta(days=1))
 
 
-def commit_at_end(src: ss.HeadSource, day: str) -> str | None:
+def commit_at_end(src: ss.HeadSource, day: str, pushed: dict | None = None) -> str | None:
     """C_X (audit M3): the newest commit on the first-parent chain of the records ref whose committer time meets the
-    end of `day`; None when there is none."""
-    cutoff = D.cutoff_instant(day)
-    for line in (src._out("log", "--first-parent", "--format=%H %ct", src.records_ref) or "").splitlines():
-        commit, _, t = line.partition(" ")
-        if t.isdigit() and D.meets(int(t), cutoff):
-            return commit
-    return None
+    end of `day`, older than every first-parent commit whose confirmed push day (`pushed`: {commit: day}; audit M2) is
+    later than `day`; None when there is none."""
+    cutoff, pushed = D.cutoff_instant(day), pushed or {}
+    chain = [(c, int(t)) for c, _, t in (ln.partition(" ") for ln in (src._out(
+        "log", "--first-parent", "--format=%H %ct", src.records_ref) or "").splitlines()) if t.isdigit()]
+    late = max((i for i, (c, _) in enumerate(chain) if pushed.get(c, day) > day), default=-1)
+    return next((c for c, t in chain[late + 1:] if D.meets(t, cutoff)), None)
 
 
 # ------------------------------------------------------------------------------------------- the records relied on
@@ -95,9 +101,10 @@ class Rec:
 
     @property
     def date(self) -> str:
+        """Its own day, else the latest Manila day of its commits, each its confirmed push day when later (audit M2)."""
         if self._date is not None:
             return self._date
-        days = [D.manila_day(t) for _, _, t in self.commits if t is not None]
+        days = [max(D.manila_day(t), self.view.pushed.get(c, "")) for _, c, t in self.commits if t is not None]
         return max(days) if days else self.view.day
 
     def entry(self) -> dict:
@@ -127,13 +134,16 @@ TEXTS = {1: "every registered run is settled",
 
 # ------------------------------------------------------------------------------------------ the records at X
 class View:
-    """The records committed by the end of `day` (C_X and its blobs; audit M3) and the run directories under
-    `runs_root`; `reader` is the trigger reader (records.trigger_reader). Every reading is cached per date; `states`
-    shares the run states over dates."""
+    """The records committed by the end of `day` (C_X and its blobs; audit M3; `pushed`, the confirmed push days of
+    audit M2) and the run directories under `runs_root`, their attempts named by the launch log as the records hold
+    it now (`records`; a run's own records judge it at X: DL-24 R1-F5); `reader` is the trigger reader
+    (records.trigger_reader). Every reading is cached per date; `states` shares the run states over dates."""
 
-    def __init__(self, records: R.Records, cat, runs_root, day: str, *, reader=None, states: dict | None = None):
+    def __init__(self, records: R.Records, cat, runs_root, day: str, *, reader=None, states: dict | None = None,
+                 pushed: dict | None = None):
         self.day, self.cutoff, self.cat, self.runs_root = day, D.cutoff_instant(day), cat, runs_root
-        self.commit = commit_at_end(records.src, day)
+        self.head, self.pushed = records, dict(pushed or {})
+        self.commit = commit_at_end(records.src, day, self.pushed)
         self.records = records.at_commit(self.commit) if self.commit else None
         self.committed = records.commit_time(self.commit) if self.commit else None
         self.reader, self.states = reader, ({} if states is None else states)
@@ -173,10 +183,13 @@ class View:
         return self._once(("sha", sha256), find)
 
     def file_commit(self, rel: str) -> tuple:
-        """The commit that added `rel` with its blob at C_X (sweep_select.adding_commit), with its committer time."""
+        """The newest commit at or before C_X that set `rel` to its blob there, with its committer time: a records file
+        committed again, such as the draft built for each candidate day (audit m5), is dated by its last change
+        (DL-24 R2-6)."""
         def find():
-            c = ss.adding_commit(self.records.src, rel)
-            return c, (self.records.commit_time(c) if c else None)
+            out = self.records.src._out("log", "-1", "--no-renames", "--format=%H %ct", self.records.ref, "--", rel)
+            c, _, t = (out or "").strip().partition(" ")
+            return (c, int(t)) if t.isdigit() else (None, None)
         return self._once(("file", rel), find)
 
     def commits_of(self, rec: Rec) -> tuple:
@@ -240,10 +253,10 @@ class View:
         return self._once("entries", read)
 
     def index(self) -> C.RunIndex:
-        """Each run slot's launched attempts: the launch log at C_X and the run directories (completion.RunIndex)."""
+        """Each run slot's launched attempts: the launch log as the records hold it now and the run directories
+        (completion.RunIndex); each attempt is judged at X by its own records (DL-24 R1-F5)."""
         def build():
-            log = self.records.launch_log(code="completion_record_invalid") \
-                if self.records.has(ss.LAUNCH_LOG_REL) else None
+            log = self.head.launch_log(code="completion_record_invalid") if self.head.has(ss.LAUNCH_LOG_REL) else None
             return C.RunIndex(self.cat, log, self.runs_root, states=self.states)
         return self._once("index", build)
 
@@ -474,18 +487,18 @@ def condition_2(v: View) -> Condition:
     if not (S.TYPES["utc"](made) and D.meets(D.parse_utc_any(made), v.cutoff)):
         c.missing.append(f"{E6_S42_SEL}: E6 seed 42's conversion and selection are not made by the end of {v.day} "
                          f"(the draft's hashed block: {made!r})")
-    else:
+    else:                       # the selection record, its own path and sha256 (DL-24 R2-14)
         rec = h.get("record") if hasattr(h.get("record"), "keys") else {}
-        c.records.append(Rec(v, f"derived artifacts of {E6_S42}", str(rec.get("path")), h.get("artifact_sha256"),
+        c.records.append(Rec(v, f"derived artifacts of {E6_S42}", str(rec.get("path")), rec.get("sha256"),
                              date=D.manila_day(D.parse_utc_any(made))))
     done = v.completion(E6_S42)
     if triggered is not None and done is not None:
-        entered = v.sha_commit(recs[0].sha256)[1]
+        cm, t = v.sha_commit(recs[0].sha256)
+        entered = max(D.manila_day(t), v.pushed.get(cm, "")) if t is not None else None      # audit M2
         due = D.iso(D.day(D.manila_day(done[1].at)) + timedelta(days=TRIGGER_DUE_DAYS))
-        if entered is not None and D.manila_day(entered) > due:
-            c.reports.append(f"REPORT deviation: trigger entered late (AM-22 item 1(a)2): entered "
-                             f"{D.manila_day(entered)}, due by the end of {due} ({E6_S42} complete "
-                             f"{D.manila_day(done[1].at)})")
+        if entered is not None and entered > due:
+            c.reports.append(f"REPORT deviation: trigger entered late (AM-22 item 1(a)2): entered {entered}, due by "
+                             f"the end of {due} ({E6_S42} complete {D.manila_day(done[1].at)})")
     return c
 
 
@@ -502,8 +515,9 @@ def condition_3(v: View) -> Condition:
         c.records.append(rec)
         h = (draft["by_slot"].get(E6_S42_SEL) or {}).get("hashed")
         if hasattr(h, "keys"):
-            c.records.append(Rec(v, f"{E6_S42_SEL} hashed in the draft", str((h.get("record") or {}).get("path")),
-                                 h.get("artifact_sha256"), date=rec.date))
+            sel = h.get("record") if hasattr(h.get("record"), "keys") else {}
+            c.records.append(Rec(v, f"{E6_S42_SEL} hashed in the draft", str(sel.get("path")), sel.get("sha256"),
+                                 date=rec.date))
     return c
 
 
@@ -608,6 +622,7 @@ def condition_5(v: View, *, registered_cells=None) -> Condition:
             return c
         c.notes.append(f"{left}: the measurement is cut at the freeze, its cut entered then (AM-22 item 1(g); "
                        "TMAN-B2-RULE-3)")
+        c.reports += V.report_lines(x)          # every gate before the last passed (DL-24 R1-F9)
     c.records.append(rec)
     ev = ((draft["doc"].get("body") or {}).get("evaluator") or {}).get("commit")
     if isinstance(ev, str):
@@ -631,10 +646,10 @@ class Check:
 
 
 def evaluate(records: R.Records, cat, runs_root, day: str, *, reader=None, states: dict | None = None,
-             quick: bool = False, **kw) -> Check:
-    """The five conditions at the end of `day`, from the records committed by then; `quick`, condition 5 (the
-    validator's run) only once conditions 1 to 4 hold."""
-    v = View(records, cat, runs_root, day, reader=reader, states=states)
+             quick: bool = False, pushed: dict | None = None, **kw) -> Check:
+    """The five conditions at the end of `day`, from the records committed by then (`pushed`: audit M2's confirmed
+    push days); `quick`, condition 5 (the validator's run) only once conditions 1 to 4 hold."""
+    v = View(records, cat, runs_root, day, reader=reader, states=states, pushed=pushed)
     if v.commit is None:
         return Check(day, v, [Condition(n, missing=[f"no commit of the records ref by the end of {day}"])
                               for n in range(1, 6)])
@@ -666,37 +681,77 @@ def first_d(records: R.Records, cat, runs_root, upto: str, *, reader=None, state
     return None, checks
 
 
+def candidate_draft(v: View) -> bool:
+    """Condition 5's first need at X: the draft at C_X carries X's candidate schedule block, the one the validator
+    compares with --am22-d X (validate.g_schedule_invalid; audit m5: the draft of each candidate day is built so)."""
+    draft = v.draft()[0] if v.commit else None
+    sch = (draft["doc"].get("body") or {}).get("schedule") if draft and hasattr(draft["doc"], "keys") else None
+    if sch is None:                                     # no draft committed by the end of X, or none with a schedule
+        return False
+    try:
+        return sch == D.freeze_instant(D.schedule_block(v.records.src), providers=[D.am22_candidate(v.day)]).as_block()
+    except S.TmanRefused:
+        return False
+
+
+def fallback_error(records: R.Records, cat, runs_root, *, reader=None, states: dict | None = None,
+                   **kw) -> str | None:
+    """Item 1(f) applies only when item 1(a) has given no D by the end of 2026-11-02 (PA :2353; DL-24 R1-F2, R2-2): a
+    date from 2026-10-17 to 2026-11-02 at whose end the five conditions hold refuses a freeze of item 1(f). Only a date
+    whose draft carries its candidate freeze can have them (candidate_draft: condition 5), so only such a date is
+    checked."""
+    states = {} if states is None else states
+    for day in days(AM22_IN_FORCE, LAST_D):
+        if not candidate_draft(View(records, cat, runs_root, day, reader=reader)):
+            continue
+        if evaluate(records, cat, runs_root, day, reader=reader, states=states, quick=True, **kw).met:
+            return (f"the five conditions hold at the end of {day}: D is {day}, and item 1(f) applies only when item "
+                    f"1(a) gives no D by the end of {LAST_D} (PA :2353)")
+    return None
+
+
 # ----------------------------------------------------------------------------- the AM-22 provider (B2R6, m10)
 def recorded_freezes(records: R.Records) -> list:
-    """The freeze records a RECORDED or IMPLEMENTED decision-log row enters: each entry file of kind freeze it names
-    that reads as entries.read_entry_file reads it (one that does not is no freeze of record)."""
+    """The freeze records a RECORDED or IMPLEMENTED decision-log row enters, [(path, document)]: each entry file of
+    kind freeze it names that reads as entries.read_entry_file reads it (one that does not is no freeze of record),
+    less those a later recorded entry corrects (DL-24 R1-N9)."""
     names = sorted({m.group(0) for st, line in records.decision_log().rows.values()
                     if st.startswith(("RECORDED", "IMPLEMENTED")) for m in ENTRY_PATH_RE.finditer(line)
                     if m.group(0).rsplit("/", 1)[1].startswith("freeze__")})
     out = []
     for rel in names:
         try:
-            out.append(E.read_entry_file(records, rel, "freeze")[0])
+            doc, sha = E.read_entry_file(records, rel, "freeze")
         except S.TmanRefused:
             continue
-    return out
+        out.append((rel, doc, sha))
+    corrected = {d["corrects"]["sha256"] for _, d, _ in out if isinstance(d.get("corrects"), dict)}
+    return [(rel, d) for rel, d, sha in out if sha not in corrected]
+
+
+def entered_1b(records: R.Records) -> list:
+    """The paths of the AM-22 item 1(b) freeze records the decision log enters."""
+    return [rel for rel, d in recorded_freezes(records) if d.get("source") == D.AM22_SOURCE_1B]
 
 
 def providers(records: R.Records, *, d_date: str | None = None, freeze_doc: dict | None = None,
               lookup: bool = False, conflict: bool = True) -> list:
-    """B2R6: the provider each freeze_instant call puts in front of B-1's: the candidate for D = `d_date` (--am22-d;
-    condition 5); else the freeze record `freeze_doc` (unlock mode: --freeze-record only); else, with `lookup`, the
-    AM-22 freeze recorded in the decision log. A record of item 1(f) gives none: B-1's providers answer (item 1(f);
-    AM-19 item 1(d)). With an item 1(b) freeze, a RECORDED or IMPLEMENTED row holding a TMAN freeze_delay or new_freeze
-    entry is freeze_source_conflict: under item 1 every never-cut run is complete at D (PA :2309-2311; audit m10)."""
+    """B2R6: the provider each freeze_instant call puts in front of B-1's: the candidate for D = `d_date` (--am22-d,
+    a date from 2026-10-17 to 2026-11-02; condition 5); else the freeze record `freeze_doc` (unlock mode:
+    --freeze-record only); else, with `lookup`, the AM-22 freeze recorded in the decision log (two are
+    freeze_source_conflict; `conflict` false takes the first, the conflict being reported). A record of item 1(f)
+    gives none: B-1's providers answer (item 1(f); AM-19 item 1(d)). With an item 1(b) freeze, a RECORDED or
+    IMPLEMENTED row holding a TMAN freeze_delay or new_freeze entry is freeze_source_conflict: under item 1 every
+    never-cut run is complete at D (PA :2309-2311; audit m10)."""
     if d_date is not None:
-        if not S.TYPES["day"](d_date):
-            raise S.TmanRefused("schedule_invalid", f"--am22-d {d_date!r} is not a date (YYYY-MM-DD)")
+        if not (S.TYPES["day"](d_date) and AM22_IN_FORCE <= d_date <= LAST_D):
+            raise S.TmanRefused("schedule_invalid", f"--am22-d {d_date!r} is not a date from {AM22_IN_FORCE} to "
+                                                    f"{LAST_D} (AM-22 item 1(a); DL-24 R2-15)")
         prov = D.am22_candidate(d_date)
     else:
         if freeze_doc is None and lookup:
-            found = [d for d in recorded_freezes(records) if d.get("source") == D.AM22_SOURCE_1B]
-            if len(found) > 1:
+            found = [d for _, d in recorded_freezes(records) if d.get("source") == D.AM22_SOURCE_1B]
+            if len(found) > 1 and conflict:
                 raise S.TmanRefused("freeze_source_conflict", f"{len(found)} AM-22 item 1(b) freeze records are "
                                                               "entered: the freeze is made once (item 1(b))")
             freeze_doc = found[0] if found else None
@@ -717,8 +772,38 @@ def providers(records: R.Records, *, d_date: str | None = None, freeze_doc: dict
 
 # ------------------------------------------------------------------------- the freeze entry (B2R5, B2R7, m8, m9)
 def freeze_conditions(chk: Check) -> list:
-    """The freeze entry's conditions (B2R5): the five, numbered, each with the records the check read for D."""
-    return [{"number": c.number, "records": [r.entry() for r in c.records]} for c in chk.conditions]
+    """The freeze entry's conditions (B2R5): the five, numbered, each with the records the check read for D and, for
+    each confirmed push of a commit one of them is held by (audit M2), a record {kind "confirmed push", ref the commit,
+    sha256 null, date its push day}."""
+    out = []
+    for c in chk.conditions:
+        held = {cm for r in c.records for _, cm, _ in r.commits}
+        out.append({"number": c.number, "records": [r.entry() for r in c.records] + [
+            {"kind": CONFIRMED_PUSH, "ref": cm, "sha256": None, "date": day}
+            for cm, day in sorted(chk.view.pushed.items()) if cm in held]})
+    return out
+
+
+def confirmed(doc: dict) -> dict:
+    """The confirmed push days a freeze entry carries, {commit: day} (audit M2): its records of kind "confirmed
+    push"."""
+    return {r["ref"]: r["date"] for c in (doc.get("conditions") or []) for r in c["records"]
+            if r["kind"] == CONFIRMED_PUSH}
+
+
+def pushed_error(records: R.Records, pushed: dict, chk: Check | None = None) -> str | None:
+    """--pushed COMMIT=DAY (audit M2): each a commit of the records' history, confirmed pushed on a day later than its
+    committer day; with `chk`, each held by a record the check for D relies on (a confirmation no record needs is not
+    entered)."""
+    for cm, day in sorted(pushed.items()):
+        t = records.commit_time(cm) if S.COMMIT_RE.fullmatch(cm) else None
+        if t is None or not S.TYPES["day"](day) or not records.src.is_ancestor(cm, records.ref):
+            return f"--pushed {cm}={day}: not a commit of the records' history and a date (YYYY-MM-DD)"
+        if day <= D.manila_day(t):
+            return f"--pushed {cm}={day}: it was committed on {D.manila_day(t)}; a confirmation names a later day"
+        if chk is not None and not any(cm == c for x in chk.conditions for r in x.records for _, c, _ in r.commits):
+            return f"--pushed {cm}={day}: no record the check for {chk.day} relies on is held by that commit"
+    return None
 
 
 def conditions_error(recorded, chk: Check) -> str | None:
@@ -754,8 +839,9 @@ def committed_by(v: View, rec: dict) -> bool:
 def frozen_body_error(v: View, records: R.Records, body: dict, freeze_date: str) -> str | None:
     """TMAN-B2-RULE-3 (amending audit m9): the body to freeze is the draft committed by the end of D (its blob at C_D)
     plus, only when the ARM latency measurement is not complete at the freeze, its freeze cut -- rule freeze, dated the
-    freeze date, its row entered that day (`records`: the decision log's history). Nothing else differs. A measurement
-    entered complete at the freeze and not in the draft completed after C_D: a STOP to ask."""
+    freeze date, its row entered that day (`records`: the decision log's history). Nothing else differs, and a
+    measurement is in the draft or joins it (DL-24 R3-01). A measurement entered at the freeze otherwise than cut,
+    absent from the draft: a STOP to ask."""
     draft, why, _ = v.draft()
     if draft is None:
         return f"no draft to freeze: {why}"
@@ -768,14 +854,19 @@ def frozen_body_error(v: View, records: R.Records, body: dict, freeze_date: str)
     if S.canonical_sha256(rest) != S.canonical_sha256(dbody):
         return (f"the body to freeze differs from the draft committed by the end of {v.day} beyond the measurement's "
                 "freeze cut (TMAN-B2-RULE-3)")
+    gone = [k for k, s in v.cat.slots.items() if s["class"] == "measurement"
+            and k not in have | {e.get("slot") for e in ents}]
+    if gone:
+        return (f"{gone}: in neither the draft nor the body to freeze; a measurement not complete at the freeze is cut "
+                "at it, its cut in the body (AM-22 item 1(g); TMAN-B2-RULE-3)")
     for e in (e for e in ents if e.get("slot") not in have):
         s = v.cat.slots.get(e.get("slot"))
         if s is None or s["class"] != "measurement":
             return (f"{e.get('slot')}: only the ARM latency measurement's freeze cut joins the draft at the freeze "
                     "(AM-22 item 1(g); TMAN-B2-RULE-3)")
         if e.get("kind") != "cut":
-            return (f"{e['slot']}: entered {e.get('kind')} at the freeze, absent from the draft at C_D: it completed "
-                    "after C_D and by the freeze -- a STOP to ask (TMAN-B2-RULE-3)")
+            return (f"{e['slot']}: entered {e.get('kind')} at the freeze and absent from the draft at C_D; a "
+                    "measurement complete by the freeze is a STOP to ask (TMAN-B2-RULE-3)")
         ref = e.get("entry") if isinstance(e.get("entry"), dict) else {}
         entered = E.entered_day(records, ref["sha256"]) if isinstance(ref.get("sha256"), str) else None
         if (e.get("rule"), e.get("cut_date"), entered) != ("freeze", freeze_date, freeze_date):
@@ -783,6 +874,37 @@ def frozen_body_error(v: View, records: R.Records, body: dict, freeze_date: str)
                     f"{entered}; it is the freeze's cut, dated and entered on the freeze date {freeze_date} "
                     "(TMAN-B2-RULE-3)")
     return None
+
+
+def freeze_body(records: R.Records, cat, d_date: str, cuts: list, *, pushed: dict | None = None) -> dict:
+    """`freeze-body --d-date D --cut <entry file>` (TMAN-B2-RULE-3; DL-24 R2-8): the manifest to freeze, the draft's
+    blob at C_D with a body entry for each slot of the measurement's freeze cut given -- a committed entry file of kind
+    cut that a RECORDED or IMPLEMENTED row enters -- in catalogue order; every other entry and block, lane_code
+    included, as the draft holds it, so `entry freeze --d-date D` finds nothing else differing (frozen_body_error,
+    checked here too)."""
+    if not (S.TYPES["day"](d_date) and AM22_IN_FORCE <= d_date <= LAST_D):
+        raise S.TmanRefused("schedule_invalid", f"--d-date {d_date!r} is not a date from {AM22_IN_FORCE} to {LAST_D}")
+    v = View(records, cat, None, d_date, pushed=pushed)
+    draft, why, _ = v.draft() if v.commit else (None, f"no commit of the records ref by the end of {d_date}", None)
+    if draft is None:
+        raise S.TmanRefused("freeze_entry_invalid", f"no draft to freeze: {why}")
+    body, given = copy.deepcopy(draft["doc"]["body"]), {}
+    for rel in cuts:
+        doc, sha = E.read_entry_file(records, rel, "cut")
+        cmp = doc["comparator"]["slot"] if doc["comparator"] else None
+        for k in doc["slots"]:
+            given[k] = {"kind": "cut", "dl_rows": records.decision_log().recorded_rows_with(sha),
+                        "entry": {"path": rel, "sha256": sha}, "cut_date": doc["date"], "rule": doc["rule"],
+                        "comparator": cmp}
+    held = sorted(set(given) & {e["slot"] for e in body["entries"]})
+    if held:
+        raise S.TmanRefused("freeze_entry_invalid", f"{held} are entered in the draft at C_D already")
+    order = {k: i for i, k in enumerate(cat.slots)}
+    body["entries"] = sorted(body["entries"] + M.build_entries(cat, given), key=lambda e: order.get(e["slot"], -1))
+    why = frozen_body_error(v, records, body, D.iso(D.day(d_date) + timedelta(days=1)))
+    if why:
+        raise S.TmanRefused("freeze_entry_invalid", why)
+    return dict(draft["doc"], body=body)
 
 
 def freeze_entry_error(doc: dict, resolver_date: str | None) -> str | None:
@@ -799,6 +921,9 @@ def freeze_entry_error(doc: dict, resolver_date: str | None) -> str | None:
     if src == D.AM22_SOURCE_1F:
         if d is not None or conds is not None:
             return "a freeze of item 1(f) names no D and no conditions (B2R5)"
+        if doc["freeze_date"] < FALLBACK_FREEZE:
+            return (f"a freeze of item 1(f) is AM-19's as committed, {FALLBACK_FREEZE} or later as AM-19 item 1(d) "
+                    f"moves it, not {doc['freeze_date']} (DL-24 R2-3)")
         if resolver_date is not None and doc["freeze_date"] != resolver_date:
             return f"the freeze date {doc['freeze_date']} is not the resolver's {resolver_date} (item 1(f); audit m8)"
         return None
@@ -818,9 +943,13 @@ def freeze_record_error(records: R.Records, cat, runs_root, doc: dict, body: dic
     err = freeze_entry_error(doc, resolver_date)
     if err or doc["source"] != D.AM22_SOURCE_1B:
         return err
-    v = View(records, cat, runs_root, doc["d_date"])
+    pushed = confirmed(doc)
+    v = View(records, cat, runs_root, doc["d_date"], pushed=pushed)
     if v.commit is None:
         return f"no commit of the records ref by the end of D {doc['d_date']}"
+    err = pushed_error(records, pushed)
+    if err:
+        return f"a confirmed push of the freeze entry: {err} (audit M2)"
     late = sorted({r["ref"] for c in doc["conditions"] for r in c["records"] if not committed_by(v, r)})
     if late:
         return f"records not committed by the end of D {doc['d_date']}: {late[:3]} (B2R7)"
@@ -828,9 +957,10 @@ def freeze_record_error(records: R.Records, cat, runs_root, doc: dict, body: dic
 
 
 def condition_unmet_error(records: R.Records, cat, runs_root, doc: dict, *, reader=None, **kw) -> str | None:
-    """am22_condition_unmet (B2R6, B2R7): the check run again for the record's D from the records at C_D (M3); a
-    condition that does not hold, or recorded conditions that are not the recomputed ones."""
-    chk = evaluate(records, cat, runs_root, doc["d_date"], reader=reader, **kw)
+    """am22_condition_unmet (B2R6, B2R7): the check run again for the record's D from the records at C_D (M3; the
+    record's confirmed pushes, M2); a condition that does not hold, or recorded conditions that are not the recomputed
+    ones."""
+    chk = evaluate(records, cat, runs_root, doc["d_date"], reader=reader, pushed=confirmed(doc), **kw)
     unmet = [c for c in chk.conditions if not c.met]
     if unmet:
         return "; ".join(f"condition {c.number} does not hold at the end of D {doc['d_date']}: {c.missing[0]}"
@@ -839,40 +969,63 @@ def condition_unmet_error(records: R.Records, cat, runs_root, doc: dict, *, read
 
 
 def d_not_first_error(records: R.Records, cat, runs_root, d_date: str, *, reader=None, **kw) -> str | None:
-    """am22_d_not_first (B2R7; audit m4): D is no later than 2026-11-02, and no earlier date from 2026-10-17 has all
-    five conditions at its end."""
+    """am22_d_not_first (B2R7; audit m4): D is a date from 2026-10-17 to 2026-11-02, and no earlier date from
+    2026-10-17 has all five conditions at its end."""
     if d_date > LAST_D:
         return f"D {d_date} is later than {LAST_D}: AM-22 item 1(f) applies"
+    if d_date < AM22_IN_FORCE:
+        return f"D {d_date} is before AM-22 is in force ({AM22_IN_FORCE}; B2R1; DL-24 R2-15)"
     earlier, _ = first_d(records, cat, runs_root, previous_day(d_date), reader=reader, **kw)
     return (f"the five conditions already hold at the end of {earlier}: D is the first such date (item 1(a); audit "
             "m4)") if earlier else None
 
 
 def freeze_fields(records: R.Records, cat, runs_root, d_date: str, body: dict, *, now: float, reader=None,
-                  **kw) -> dict:
-    """`entry freeze --d-date D` (audit m9 as TMAN-B2-RULE-3 amends it): D's end has passed; the check recomputed for
-    D and every earlier date from the records at each date's end, never pasted output (am22_d_not_first,
-    am22_condition_unmet); the body to freeze the draft at C_D but for the measurement's freeze cut
-    (freeze_entry_invalid); the fields {body_sha256 of that body, freeze_date D + 1, source item 1(b), d_date D, the
-    recomputed conditions}, condition 5 citing the draft at C_D."""
+                  pushed: dict | None = None, manifest: tuple | None = None, **kw) -> tuple:
+    """`entry freeze --d-date D` (audit m9 as TMAN-B2-RULE-3 amends it): D's end has passed; no item 1(b) freeze is
+    entered yet (DL-24 R3-14); the check recomputed for D and every earlier date from the records at each date's end
+    (`pushed`: the confirmed push days, audit M2), never pasted output (am22_d_not_first, am22_condition_unmet); the
+    body to freeze the draft at C_D but for the measurement's freeze cut, and (`manifest`: its (bytes, path)) passing
+    the validator in freeze mode with AM-22's freeze for D (freeze_entry_invalid). Returns (the fields {body_sha256 of
+    that body, freeze_date D + 1, source item 1(b), d_date D, the recomputed conditions, condition 5 citing the draft
+    at C_D, each confirmed push}, the check for D)."""
+    from . import validate as V
     err = date_error(d_date, now)
     if err:
         raise err
+    if entered_1b(records):
+        raise S.TmanRefused("freeze_entry_invalid", f"an item 1(b) freeze is entered already: {entered_1b(records)}; "
+                                                    "the freeze is made once (item 1(b); DL-24 R3-14)")
+    pushed = dict(pushed or {})
+    err = pushed_error(records, pushed)
+    if err:
+        raise S.TmanRefused("entry_field", f"{err} (audit M2)")
     states = {}
-    why = d_not_first_error(records, cat, runs_root, d_date, reader=reader, states=states, **kw)
+    why = d_not_first_error(records, cat, runs_root, d_date, reader=reader, states=states, pushed=pushed, **kw)
     if why:
         raise S.TmanRefused("am22_d_not_first", why)
-    chk = evaluate(records, cat, runs_root, d_date, reader=reader, states=states, **kw)
+    chk = evaluate(records, cat, runs_root, d_date, reader=reader, states=states, pushed=pushed, **kw)
     unmet = [c for c in chk.conditions if not c.met]
     if unmet:
         raise S.TmanRefused("am22_condition_unmet", "; ".join(f"condition {c.number} does not hold at the end of "
                                                               f"{d_date}: {c.missing[0]}" for c in unmet[:2]))
+    err = pushed_error(records, pushed, chk)
+    if err:
+        raise S.TmanRefused("entry_field", f"{err} (audit M2)")
     freeze_date = D.iso(D.day(d_date) + timedelta(days=1))
     why = frozen_body_error(chk.view, records, body, freeze_date)
     if why:
         raise S.TmanRefused("freeze_entry_invalid", why)
-    return {"body_sha256": S.canonical_sha256(body), "freeze_date": freeze_date, "source": D.AM22_SOURCE_1B,
-            "d_date": d_date, "conditions": freeze_conditions(chk)}
+    if manifest is not None:                                       # DL-24 R2: the body as the unlock will read it
+        try:
+            V.validate(V.Ctx(mode="freeze", manifest_bytes=manifest[0], manifest_path=manifest[1], records=records,
+                             runs_root=runs_root, registered_cells=kw.get("registered_cells"), trigger_reader=reader,
+                             am22_d=d_date))
+        except S.TmanRefused as e:
+            raise S.TmanRefused("freeze_entry_invalid", f"the body to freeze fails the validator in freeze mode with "
+                                                        f"AM-22's freeze for D {d_date}: [{e.code}] {e.detail[:300]}")
+    return ({"body_sha256": S.canonical_sha256(body), "freeze_date": freeze_date, "source": D.AM22_SOURCE_1B,
+             "d_date": d_date, "conditions": freeze_conditions(chk)}, chk)
 
 
 def date_error(day, now: float) -> S.TmanRefused | None:
@@ -892,52 +1045,81 @@ def date_error(day, now: float) -> S.TmanRefused | None:
     return None
 
 
-def check_freeze(records: R.Records, cat, runs_root, day: str, *, now: float, reader=None, **kw) -> tuple:
+def check_freeze(records: R.Records, cat, runs_root, day: str, *, now: float, reader=None, pushed: dict | None = None,
+                 **kw) -> tuple:
     """`check-freeze --date X` (B2R4): X refused unless its end has passed and it is no later than 2026-11-02; then
     (the five conditions at the end of X; D, the first date from 2026-10-17 to X at whose end all five hold, or None
-    (audit m4); the earlier dates' checks)."""
+    (audit m4); the earlier dates' checks), each date read with the confirmed push days `pushed` (audit M2)."""
     err = date_error(day, now)
     if err:
         raise err
+    pushed = dict(pushed or {})
+    err = pushed_error(records, pushed)
+    if err:
+        raise S.TmanRefused("entry_field", f"{err} (audit M2)")
     states = {}
-    chk = evaluate(records, cat, runs_root, day, reader=reader, states=states, **kw)
-    d, scans = first_d(records, cat, runs_root, previous_day(day), reader=reader, states=states, **kw)
+    chk = evaluate(records, cat, runs_root, day, reader=reader, states=states, pushed=pushed, **kw)
+    d, scans = first_d(records, cat, runs_root, previous_day(day), reader=reader, states=states, pushed=pushed, **kw)
     return chk, (d if d is not None else (day if chk.met else None)), scans
 
 
-def lines(chk: Check, d: str | None = None, scans=()) -> list:
-    """The check's printed lines: each earlier date's verdict (audit m4); each condition at X MET with its records or
-    MISSING with what is missing, every record's commits (M2), the boundary-day REPORT for each commit made on X or
-    X-1 (audit M2), the conditions' REPORT lines and NOTE lines; then D, or that there is none by X."""
+def boundary_reports(chk: Check) -> list:
+    """Audit M2: a REPORT for each commit made on the check's date or the day before, whatever the hour, that holds a
+    record a condition relies on; its push is confirmed from the remote before `entry freeze` runs (a commit whose
+    push is confirmed already, --pushed, is not asked again)."""
+    v, days, seen = chk.view, (chk.day, previous_day(chk.day)), {}
+    for c in chk.conditions:
+        for r in c.records:
+            for _, cm, t in r.commits:
+                if t is not None and cm not in v.pushed and D.manila_day(t) in days:
+                    seen.setdefault(cm, D.manila_day(t))
+    return [f"REPORT boundary-day entry: confirm from the remote that {cm} reached origin by the end of {day} "
+            "(AM-19 :1374)" for cm, day in sorted(seen.items())]
+
+
+def check_lines(chk: Check, title: str = "CHECK-FREEZE") -> list:
+    """One check's printed lines: each condition MET with its records or MISSING with what is missing, every record's
+    commits (M2) and confirmed push day, the conditions' REPORT lines, the boundary-day REPORTs (audit M2), NOTE lines
+    and the RESULT."""
     v = chk.view
-    out = [f"DATE {s.day} C_X {(s.view.commit or 'none')[:12]}: "
-           + ("MET" if s.met else "MISSING " + ", ".join(str(c.number) for c in s.conditions if not c.met))
-           for s in scans]
-    out.append(f"CHECK-FREEZE {chk.day} (AM-22 item 1(a)): the records committed by its end, C_X "
-               f"{v.commit or 'none'}" + (f" (committed {C.utc_text(v.committed)})" if v.committed else ""))
-    boundary, reports = {}, []
-    days = (chk.day, previous_day(chk.day))
+    out = [f"{title} {chk.day} (AM-22 item 1(a)): the records committed by its end, C_X {v.commit or 'none'}"
+           + (f" (committed {C.utc_text(v.committed)})" if v.committed else "")]
+    reports = []
     for c in chk.conditions:
         out.append(f"CONDITION {c.number} {'MET' if c.met else 'MISSING'}: {TEXTS[c.number]}")
         out += [f"  MISSING {m}" for m in c.missing]
         for r in c.records:
             held = "; ".join(f"{w} {cm[:12]} committed {C.utc_text(t)} ({D.manila_day(t)})"
+                             + (f", pushed {v.pushed[cm]} (confirmed)" if cm in v.pushed else "")
                              for w, cm, t in r.commits if t is not None)
             out.append(f"  RECORD {r.kind} | {r.ref} | sha256 {r.sha256 or '-'} | date {r.date}"
                        + (f" | {held}" if held else ""))
-            for _, cm, t in r.commits:
-                if t is not None and D.manila_day(t) in days:
-                    boundary.setdefault(cm, D.manila_day(t))
         out += [f"  NOTE {n}" for n in c.notes]
         reports += c.reports
-    out += reports
-    out += [f"REPORT boundary-day entry: confirm from the remote that {cm} reached origin by the end of {bday} "
-            "(AM-19 :1374)" for cm, bday in sorted(boundary.items())]
-    out += [f"NOTE {n}" for n in v.notes]
+    out += reports + boundary_reports(chk) + [f"NOTE {n}" for n in v.notes]
     unmet = [str(c.number) for c in chk.conditions if not c.met]
     out.append(f"RESULT: MET (all five conditions at the end of {chk.day})" if not unmet else
                f"RESULT: MISSING (condition{'s' if len(unmet) > 1 else ''} {', '.join(unmet)} at the end of "
                f"{chk.day})")
+    return out
+
+
+def lines(chk: Check, d: str | None = None, scans=()) -> list:
+    """The printed lines: each earlier date's verdict (audit m4); the check at X (check_lines); when D is earlier than
+    X, D's own check, its records and its boundary-day REPORTs (DL-24 R3-02); then D, or that there is none by X."""
+    out = [f"DATE {s.day} C_X {(s.view.commit or 'none')[:12]}: "
+           + ("MET" if s.met else "MISSING " + ", ".join(str(c.number) for c in s.conditions if not c.met))
+           for s in scans]
+    out += check_lines(chk)
+    if d and d != chk.day and scans and scans[-1].day == d:
+        out += check_lines(scans[-1], "CHECK-FREEZE OF D")
     out.append(f"D: {d}" if d else f"NO D: no date from {AM22_IN_FORCE} to {chk.day} has all five conditions at its "
                                     "end (AM-22 item 1(a))")
     return out
+
+
+def row_commit(records: R.Records, sha256: str) -> str | None:
+    """The commit that first put `sha256` in the decision log, in the records' history (git log -S, the oldest)."""
+    out = records.src._out("log", "--format=%H", f"-S{sha256}", records.ref, "--", S.DECISION_LOG_REL)
+    found = (out or "").split()
+    return found[-1] if found else None

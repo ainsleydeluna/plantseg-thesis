@@ -43,6 +43,7 @@ QAT_RULES_SHA256 = "76addc57d0367dda9a1163f749ec32c9c240b20736104dc12aa77488344f
 CLIP_REL = "u4_clip/clip_selection.json"            # the U4 pilot's clip selection, under --runs
 LATE = "2026-11-04T10:00:00Z"                       # a derived model made after the freeze, appended
 FREEZE_1F = {"source": "AM-22 item 1(f)", "d_date": None, "conditions": None}   # B2R5: a freeze of item 1(f)
+AFTER_1102 = "2026-11-03T02:00:00Z"     # --now of a 1(f) freeze printer: the end of 2026-11-02 has passed (PA :2353)
 REAL_FILES = ("configs/tday_catalogue.json", "configs/kd_schedule.json", "configs/qat_selection_rules.json",
               *[f"configs/calibration/ptq_calibration_seed{s}.json" for s in (42, 43, 44, 45)],
               "reports/derived/mde_entry_20261009T034825Z.json", "reports/strata/train_strata_v1.json",
@@ -2083,7 +2084,8 @@ def case_printers():
     printed(w, "printer_clock_offset_over_60_s_B9", "clock_offset", [], dict(clock, offset_seconds=75.0),
             "clock_offset_invalid", date="2026-11-05")
     fr = {"body_sha256": w.S.canonical_sha256(w.doc["body"]), "freeze_date": FREEZE_DAY, **FREEZE_1F}
-    printed(w, "printer_freeze_record_of_this_body_passes", "freeze", [], fr, None, extra=["--manifest", man])
+    printed(w, "printer_freeze_record_of_this_body_passes", "freeze", [], fr, None,
+            extra=["--manifest", man, "--runs", w.runs, "--now", AFTER_1102])          # item 1(f): DL-24 R1-F2
     printed(w, "printer_freeze_record_of_another_body_B9", "freeze", [], dict(fr, body_sha256="0" * 64),
             "run_added_after_freeze", extra=["--manifest", man])
     arm = {"path": w.cut_refs["ARM:latency"]["path"], "sha256": w.cut_refs["ARM:latency"]["sha256"]}

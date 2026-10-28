@@ -552,35 +552,40 @@ def g_image_digest_not_of_record(x: Ctx):
     return _err(errs)
 
 
-def _freeze_docs(x: Ctx) -> tuple[list, list]:
-    """The freeze-source entry files the schedule block cites; a malformed citation cites none (schedule_invalid
-    compares the whole block; DL-24 #90)."""
-    src = x.body["schedule"].get("freeze_source")
+def freeze_docs(schedule: dict, read) -> tuple[list, list]:
+    """The freeze-source entry files a schedule block cites, each read by `read` (path -> (doc, sha256)); a malformed
+    citation cites none (schedule_invalid compares the whole block; DL-24 #90)."""
+    src = schedule.get("freeze_source")
     delays, news = [], []
     if not (isinstance(src, dict) and isinstance(src.get("path"), str)):
         return delays, news
     if src.get("provider") == "new_freeze":
-        doc, sha = x.entry_file(src["path"])
+        doc, sha = read(src["path"])
         news.append({"doc": doc, "path": src["path"], "sha256": sha})
         d = doc.get("delay_entry") or {}
         if d.get("path"):
-            ddoc, dsha = x.entry_file(d["path"])
+            ddoc, dsha = read(d["path"])
             delays.append({"doc": ddoc, "path": d["path"], "sha256": dsha})
     elif src.get("provider") == "freeze_delay":
-        doc, sha = x.entry_file(src["path"])
+        doc, sha = read(src["path"])
         delays.append({"doc": doc, "path": src["path"], "sha256": sha})
     return delays, news
 
 
+def _freeze_docs(x: Ctx) -> tuple[list, list]:
+    return freeze_docs(x.body["schedule"], x.entry_file)
+
+
 def am22_providers(x: Ctx, conflict: bool = True) -> list:
-    """B2R6: the AM-22 provider in front of B-1's: the candidate for --am22-d D; at the unlock and the session, the
-    freeze record named by --freeze-record only; otherwise the AM-22 freeze recorded in the decision log
-    (am22.providers; a freeze delay or new freeze beside a 1(b) freeze is freeze_source_conflict, audit m10)."""
+    """B2R6: the AM-22 provider in front of B-1's: at the unlock and the session the freeze record named by
+    --freeze-record only, --am22-d not read there (DL-24 R2-3); otherwise the candidate for --am22-d D, else the AM-22
+    freeze recorded in the decision log (am22.providers; a freeze delay or new freeze beside a 1(b) freeze is
+    freeze_source_conflict, audit m10)."""
     from . import am22 as A
-    doc = None
-    if x.am22_d is None and x.mode in U and x.freeze_rel:
-        doc = x.entry_doc(x.freeze_rel)
-    return A.providers(x.records, d_date=x.am22_d, freeze_doc=doc, lookup=x.mode not in U, conflict=conflict)
+    if x.mode in U:
+        return A.providers(x.records, freeze_doc=x.entry_doc(x.freeze_rel) if x.freeze_rel else None,
+                           conflict=conflict)
+    return A.providers(x.records, d_date=x.am22_d, lookup=True, conflict=conflict)
 
 
 def g_schedule_invalid(x: Ctx):
@@ -1306,23 +1311,36 @@ def g_am22_condition_unmet(x: Ctx):
 
 
 def g_am22_d_not_first(x: Ctx):
-    """B2R7, audit m4: the record's D is no later than 2026-11-02 and the first date from 2026-10-17 at whose end the
-    five conditions hold (am22.d_not_first_error)."""
+    """B2R7, audit m4: the record's D is a date from 2026-10-17 to 2026-11-02 and the first at whose end the five
+    conditions hold, read with the record's confirmed pushes (am22.d_not_first_error; audit M2); a freeze of item 1(f)
+    only when no date to 2026-11-02 has them (am22.fallback_error; PA :2353; DL-24 R1-F2, R2-2)."""
     from . import am22 as A
+    fr = x.entry_doc(x.freeze_rel) if x.freeze_rel else None
+    kw = dict(reader=x.trigger_reader, registered_cells=x.registered_cells, states=x.states)
+    if isinstance(fr, dict) and fr.get("source") == D.AM22_SOURCE_1F:
+        return A.fallback_error(x.records, x.cat, x.runs_root, **kw)
     fr = _am22_freeze(x)
     return None if fr is None else A.d_not_first_error(x.records, x.cat, x.runs_root, fr["d_date"],
-                                                       reader=x.trigger_reader, registered_cells=x.registered_cells,
-                                                       states=x.states)
+                                                       pushed=A.confirmed(fr), **kw)
 
 
 def g_freeze_entry_late(x: Ctx):
     """Audit M4: an AM-22 item 1(b) freeze record's commit reaches the remote before the end of its freeze date (PA
-    :2345-2346). The evidence, a verbatim activity response and its tday_push_list/1 list naming the record under
-    "entry", is committed after that push and cited by the unlock entry's push_evidence (compulsory then): the
-    earliest push carrying the record's commit lies in [the first instant of its date, the end of its freeze date)
-    (push_evidence_error). Before the unlock entry exists nothing cites it yet."""
+    :2345-2346). That commit is the decision-log entry's: the record's RECORDED row is entered by the commit that adds
+    the record (DL-24 R1-F8, R2-7). The evidence, a verbatim activity response and its tday_push_list/1 list naming
+    the record under "entry", is committed after that push and cited by the unlock entry's push_evidence (compulsory
+    then): the earliest push carrying the record's commit lies in [the first instant of its date, the end of its
+    freeze date) (push_evidence_error). Before the unlock entry exists nothing cites it yet."""
+    from . import am22 as A
     fr, u = _am22_freeze(x), _unlock_doc(x)
-    if fr is None or u is None:
+    if fr is None:
+        return None
+    added = ss.adding_commit(x.records.src, x.freeze_rel)
+    entered = A.row_commit(x.records, x.entry_file(x.freeze_rel)[1])
+    if added is None or entered != added:
+        return (f"the AM-22 freeze record's decision-log row is entered by {entered}, not by the commit that adds the "
+                f"record ({added}): item 1(b) times the commit of the freeze's decision-log entry (PA :2345-2346)")
+    if u is None:
         return None
     if not u.get("push_evidence"):
         return "the unlock entry cites no push evidence of the AM-22 freeze record (audit M4)"
@@ -1533,7 +1551,10 @@ def push_evidence_error(records: R.Records, pe: dict, unlock_ref: dict, unlock_d
     except ss.SelectionRefused as e:
         return f"{e} (TB11)"
     lst = R.strict_json(data["list"], lr, code="push_evidence_invalid")
-    if key != "unlock_entry" and isinstance(lst, dict) and key in lst and "unlock_entry" not in lst:
+    what = "the unlock entry" if key == "unlock_entry" else "the freeze record"
+    if key != "unlock_entry" and isinstance(lst, dict):
+        if "unlock_entry" in lst:
+            return f"{lr}: a freeze record's list names it under {key!r}, not 'unlock_entry' (audit M4; DL-24 R2-12)"
         lst = {("unlock_entry" if k == key else k): v for k, v in lst.items()}      # the entry's key (audit M4)
     if not (isinstance(lst, dict) and sorted(lst) == sorted(PUSH_LIST_KEYS) and lst["format"] == S.PUSH_LIST_FORMAT
             and lst["response"] == pe["response"] and lst["unlock_entry"] == unlock_ref
@@ -1568,10 +1589,12 @@ def push_evidence_error(records: R.Records, pe: dict, unlock_ref: dict, unlock_d
         if carries:
             hits.append(t)
     if not hits:
-        return f"{rr}: no push carries the unlock entry's commit {commit[:12]} (TB11)"
+        return f"{rr}: no push carries {what}'s commit {commit[:12]} (TB11)"
     if not t_lo <= min(hits) < started:
-        return f"{rr}: the earliest push carrying the unlock entry, at {ss.iso_utc(min(hits))}, is not in [T_lo " \
-               f"{ss.iso_utc(t_lo)}, the end of its window {ss.iso_utc(started)}) (TB11; audit M4)"
+        end = (f"the session's start {started_utc}) (TB11)" if key == "unlock_entry" else
+               f"the end of its window {ss.iso_utc(started)}) (TB11; audit M4)")
+        return f"{rr}: the earliest push carrying {what}, at {ss.iso_utc(min(hits))}, is not in [T_lo " \
+               f"{ss.iso_utc(t_lo)}, {end}"
     return None
 
 
@@ -1671,15 +1694,24 @@ def validate(x: Ctx) -> Result:
             refusal.passed = list(res.passed)
             raise refusal
         res.passed.append(code)
+    res.reports += report_lines(x)
+    return res
+
+
+def report_lines(x: Ctx) -> list:
+    """The REPORT lines of the cited entry files, never a refusal: decision (xv)'s "entry later than its day" and
+    B2R8's "no card" (AM-22 item 2(f)). validate() prints them once every gate passes; check-freeze's condition 5 also
+    on its TMAN-B2-RULE-3 path, where every gate before the last has passed (DL-24 R1-F9)."""
+    out = []
     for rel in dict.fromkeys(c["path"] for c in x.cited_entries() if c["kind"] in REPORTED_KINDS):
         doc, sha = x.entry_file(rel)
         rep = E.late_entry_report(doc, E.entered_day(x.records, sha))
         if rep:
-            res.reports.append(f"REPORT {rep}")
+            out.append(f"REPORT {rep}")
         rep = E.no_card_report(doc, E.evidence_reader(x.records)) if doc.get("kind") == "cut" else None
         if rep:
-            res.reports.append(f"REPORT {rep}")
-    return res
+            out.append(f"REPORT {rep}")
+    return out
 
 
 # ===================================================================================== the inventory reader
