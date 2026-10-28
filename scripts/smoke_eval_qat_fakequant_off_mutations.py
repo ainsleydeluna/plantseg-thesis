@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Lane L-FQOFF: the mutation smoke of AM-4's fake-quant-off path (precision qat_fakequant_off). The FQ mutations
-(phase 1: FQ1-FQ7, FQ9, FQ10, FQ12 and FQ15; phase 2: FQ8, FQ11, FQ14a and FQ14b; DL-24's fixes: FQ16-FQ18) and the
+(phase 1: FQ1-FQ7, FQ9, FQ10, FQ12 and FQ15; phase 2: FQ8, FQ11, FQ14a and FQ14b; DL-24's fixes: FQ16-FQ19) and the
 refusal table of the fqoff codes (FQR12's 1-22: phase 2's 1-5 in scripts/evaluate_model.py, phase 1's 6-22 in
 src/eval/stage_artifacts.py and src/eval/model_loading.py), each killed by a named check of
 scripts/smoke_eval_qat_fakequant_off.py. FQ13 has no row:
@@ -114,8 +114,10 @@ MUTATIONS = [
     M("FQ14a", "LEFF B-1b's identity flag skipped at P1 for this precision: its handed-file case names the run dir",
       EM, "        return Path(args.checkpoint)\n", "        return Path(args.qat_run_dir)\n",
       case("run_h_mismatch_refused_before_parse"), "run_h_mismatch_refused_before_parse"),
-    M("FQ14b", "LEFF B-1b's identity flag skipped at P2 for this precision: the carrier's sha256 never compared",
-      EM, '            after = fqoff["checkpoint_sha256"]\n', "            after = expected\n",
+    M("FQ14b", "LEFF B-1b's identity flag skipped at P2 for this precision: neither the carrier's sha256 nor the "
+      "re-hashed file compared", EM,
+      '            after = fqoff["checkpoint_sha256"]\n            if after == expected:\n',
+      "            after = expected\n            if False:\n",
       case("run_h_changed_during_validation"), "run_h_changed_during_validation"),
     # ---- DL-24's confirmed findings (A5): each fix's mutation, killed by its case
     M("FQ16", "the payload loaded from the path again, not from the bytes the validator hashed (DL-24 R3-F1)", SAF,
@@ -130,6 +132,10 @@ MUTATIONS = [
     M("FQ18", "the smoke leaves its temp directory behind (DL-24 R4-1)", SMOKE_PATH,
       "    shutil.rmtree(TMP, ignore_errors=True)               # its temp directory (DL-24 R4-1); a cache stays\n",
       "", case("hygiene_temp_removed"), "hygiene_temp_removed"),
+    M("FQ19", "P2's re-hash of the handed file skipped for this precision: a file replaced after the validator returns "
+      "passes P2 (DL-24 R3-F1, LFQOFF-RULE-3)", EM,
+      "                after = identity_sha256(handed)\n", "                pass\n",
+      case("run_h_changed_after_validation"), "run_h_changed_after_validation"),
 ]
 
 # ------------------------------------------------------------------ the refusal table and its finder (FQR12)

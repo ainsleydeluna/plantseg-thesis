@@ -1578,6 +1578,27 @@ def run_h_changed_during_validation():
 
 
 @case("run")
+def run_h_changed_after_validation():
+    """The eNN.pt equal to H at P1 and when the validator reads it, then replaced right after the validator returns:
+    this precision's P2 re-hashes the handed file (LFQOFF-RULE-3, B-1b's route for a hash recorded before validation
+    ends) and refuses with LEFF B-1b's code before any dataset or model exists (FQ19)."""
+    b = forge(bound("run_e5"), "h_after")
+    true_sha, other = Q.sha256_file(b.ck), other_epoch_bytes(b, 3)
+    real = SA.validate_qat_fakequant_off_source
+
+    def validate_then_swap(*a, **k):
+        carrier = real(*a, **k)
+        swap = b.ck.with_name(b.ck.name + ".new")
+        swap.write_bytes(other)
+        os.replace(swap, b.ck)                           # the hard link is replaced; the raw run is never written
+        return carrier
+    with patched(SA, "validate_qat_fakequant_off_source", validate_then_swap):
+        out, _stdout, c = em_run(run_args(b, "h_after", expected_checkpoint_sha256=true_sha))
+    ok = run_code(out) == "source_changed_during_validation" and not c.dataset and not c.model
+    return ok, str(run_code(out))
+
+
+@case("run")
 def run_threads_recorded():
     """LEFF B-1b's --threads holds for this precision, set right after validate_cli_args, before any source check:
     the summary records it."""

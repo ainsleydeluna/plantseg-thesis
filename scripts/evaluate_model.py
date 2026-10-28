@@ -505,8 +505,12 @@ def run(args, *, counters: Counters | None = None, teacher_builder=None) -> Path
     expected = getattr(args, "expected_checkpoint_sha256", None)
     if expected is not None:
         after = ckpt_sha if resolved is None else identity_sha256(handed)
-        if fqoff is not None:            # lane L-FQOFF: the carrier's sha256 of the eNN.pt, as FP32's ckpt_sha
+        if fqoff is not None:
+            # lane L-FQOFF (LFQOFF-RULE-3): the carrier's sha256, of the bytes the validator read once and judged,
+            # then the handed file re-hashed now, B-1b's route for a hash recorded before validation ends
             after = fqoff["checkpoint_sha256"]
+            if after == expected:
+                after = identity_sha256(handed)
         if after != expected:
             raise CliError(f"[source_changed_during_validation] {handed} had sha256 {expected} before "
                            f"validation and {after} after it")
