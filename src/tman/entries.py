@@ -62,6 +62,11 @@ ENTRY_FILE_FIELDS: dict[str, dict] = {
     "freeze": {"body_sha256": "sha256", "freeze_date": "day", "source": "str"},
     "clock_offset": {"host": "str", "source": "str", "offset_seconds": "number", "measured_utc": "utc"},
 }
+# B2R5: kind freeze gains AM-22's fields, additively (schema.register_kind; T-19): its D and its five conditions,
+# numbered 1 to 5, each with the records check-freeze recomputed for D; both null under item 1(f).
+AM22_RECORD = ("obj", {"kind": "str", "ref": "str", "sha256": "?sha256", "date": "day"})
+S.register_kind(ENTRY_FILE_FIELDS, "freeze", {"d_date": "?day", "conditions": S.nullable(("list", ("obj", {
+    "number": "int", "records": ("list", AM22_RECORD)})))})
 SESSION_KINDS = ("freeze_delay", "new_freeze", "unlock", "freeze", "clock_offset")     # entries about no slot
 ROW_STATUS = "RECORDED"
 

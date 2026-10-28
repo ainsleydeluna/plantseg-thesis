@@ -1,7 +1,8 @@
 """The freeze instant, the TEST deadline and the dates of the cut rules (lane TMAN, B-1, C2; plan §2.3).
 
 `freeze_instant` walks an ordered list of providers and returns one answer:
-  1. the AM-22 freeze entry (B-2 puts its provider in front; absent in B-1);
+  1. the AM-22 freeze (B-2, B2R6: am22_provider, from the freeze record or for a candidate D, put in front by every
+     call site; src/tman/am22.py's providers);
   2. an AM-19 item 1(d) new-freeze entry after a delay entry dated the original freeze date;
   3. the schedule in force (configs/kd_schedule.json through sweep_select.load_schedule,
      src/training/sweep_select.py:799-819) and FREEZE_DATES[in_force].
@@ -45,6 +46,8 @@ AM22_PUSHED_DAY = "2026-10-17"
 AM22_COMMIT = "ce2954951e24a17fba9e871a0d927da0bb397dc3"
 CUTOFF_MOVE_DAYS = 2                                         # AM-22 item 2(a): the end of the second day after
 REPEAT_CUTOFF_DAYS = 3                                       # AM-22 item 2(b): the end of the third day after
+AM22_PROVIDER = "am22"                                       # B2R6: the AM-22 freeze provider, in front of B-1's
+AM22_SOURCE_1B, AM22_SOURCE_1F = "AM-22 item 1(b)", "AM-22 item 1(f)"      # the freeze record's sources (B2R5)
 
 
 def iso(d: date) -> str:
@@ -159,6 +162,25 @@ def freeze_instant(schedule: dict, *, delays=(), news=(), providers=()) -> Freez
         if got is not None:
             return got
     return new_freeze_provider(base, list(delays), list(news)) or base
+
+
+def am22_provider(freeze_date: str):
+    """B2R6: AM-22 item 1(b)'s freeze, put in front of B-1's providers: FreezeInstant(freeze_date, moved None, source
+    {provider "am22", path null, sha256 null}, the TEST deadline 2026-11-08 of item 1(e)), under Schedule T only (AM-22
+    header: under Schedule R nothing of it applies). The body never cites the freeze record; the record binds the
+    body through body_sha256, and the unlock entry binds the record."""
+    def provider(base: FreezeInstant) -> FreezeInstant | None:
+        if base.schedule.get("in_force") != "T":
+            return None
+        return FreezeInstant(base.schedule, freeze_date, None,
+                             {"provider": AM22_PROVIDER, "path": None, "sha256": None}, AM22_TEST_DEADLINE)
+    return provider
+
+
+def am22_candidate(d_date: str):
+    """B2R6's candidate provider for a date D: the same instant, the end of the day after D (item 1(b)), without a
+    record (condition 5; build and validate --am22-d D)."""
+    return am22_provider(iso(day(d_date) + timedelta(days=1)))
 
 
 def first_complete_day(instants: list, original_date: str) -> str | None:

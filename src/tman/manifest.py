@@ -840,9 +840,10 @@ def build_entries(cat, given: dict, runs_root=None) -> list:
     return out
 
 
-def build_manifest(records: R.Records, cat, sources: dict, *, runs_root=None) -> dict:
+def build_manifest(records: R.Records, cat, sources: dict, *, runs_root=None, providers=()) -> dict:
     """A draft tday_manifest/1 from the committed records and the sources file (plan §1.2): the builder fills what
-    the records give and copies the rest; the validator checks both."""
+    the records give and copies the rest; the validator checks both. `providers` go in front of the freeze's (B2R6:
+    AM-22's candidate for --am22-d D, or its recorded freeze)."""
     errs = S.field_errors(sources, SOURCES_SPEC, "sources")
     if errs:
         raise S.TmanRefused("manifest_format", "; ".join(errs[:4]))
@@ -854,7 +855,7 @@ def build_manifest(records: R.Records, cat, sources: dict, *, runs_root=None) ->
     fe = sources["freeze_entries"]
     delays = [entry_ref(records, fe["delay"])] if fe["delay"] else []
     news = [entry_ref(records, fe["new_freeze"])] if fe["new_freeze"] else []
-    freeze = D.freeze_instant(D.schedule_block(src), delays=delays, news=news)
+    freeze = D.freeze_instant(D.schedule_block(src), delays=delays, news=news, providers=providers)
     e = sources["evaluator_commit"]
     pins = sources["generator_pins"]
     entries = build_entries(cat, sources["entries"], runs_root)

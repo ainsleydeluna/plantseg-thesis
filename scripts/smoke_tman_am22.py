@@ -1,15 +1,21 @@
 #!/usr/bin/env python3
-"""Smoke for AM-22 item 1(a)'s check (src/tman/am22.py; lane TMAN, B-2): the registered runs and every exclusion of
-B2R3, every settled way with a never-cut run's limits, the records committed by the end of a date (C_X, audit M3),
-the conditions MET and MISSING with their REPORT lines (the boundary day, audit M2; a late trigger), `check-freeze`
-on the command line (exit codes; a date whose end has not passed, audit m6; a date after 2026-11-02, item 1(f)), and
-the static cases of B2R11 and B2R13.
+"""Smoke for AM-22 item 1(a)'s check and its freeze (src/tman/am22.py; lane TMAN, B-2): the registered runs and every
+exclusion of B2R3, every settled way with a never-cut run's limits, the records committed by the end of a date (C_X,
+audit M3), the five conditions MET and MISSING with their REPORT lines (the boundary day, audit M2; a late trigger),
+condition 5 with AM-22's candidate freeze and the ARM measurement's freeze cut (TMAN-B2-RULE-3), D the first such date
+(audit m4), AM-22's provider in front of B-1's (B2R6; audit m10), the freeze entry of item 1(b) and its printer `entry
+freeze --d-date` (B2R5, B2R7; audit m8, and m9 as TMAN-B2-RULE-3 amends it), the unlock gates of B2R7 with the freeze
+record's push evidence (audit M4), `check-freeze`, `build` and `validate` on the command line (a date whose end has not
+passed, audit m6; a date after 2026-11-02, item 1(f)), and the static cases of B2R6, B2R11 and B2R13.
 
 The fixture world (`AmWorld`) is smoke_tman_validate's World on AM-22's timeline: its runs of record complete by
 2026-10-20, every other cuttable registered run cut by item 2(a)'s cutoff -- on 2026-10-20, entered the next day, R2
 at its ceiling 2026-10-29, entered on 2026-10-30 -- with its children not run, AM-3's trigger entered on 2026-10-22
-(not triggered), the lane register and the draft committed on 2026-10-30. Smaller fixtures (`Mini`) put one question
-each: a settled way, an exclusion, a condition's record.
+(not triggered), and the lane register and the draft, built with AM-22's candidate freeze for 2026-10-30, committed on
+2026-10-30: D is 2026-10-30. `AmUnlock` carries it to the unlock, the freeze at the end of 2026-10-31; `Five` is the
+world whose D is 2026-10-31 (its draft of 2026-10-30 built without the candidate). A world is built when a case first
+reads it (smoke_tman_mutations runs a case alone). Smaller fixtures (`Mini`) put one question each: a settled way, an
+exclusion, a condition's record, a provider.
 
 Synthetic inputs only, under the system temp dir (removed at the end); TEST is never read.
 
@@ -22,6 +28,7 @@ import sys
 sys.dont_write_bytecode = True
 
 import contextlib  # noqa: E402
+import copy  # noqa: E402
 import io  # noqa: E402
 import json  # noqa: E402
 import os  # noqa: E402
@@ -34,6 +41,7 @@ if str(REPO) not in sys.path:
 
 import scripts.smoke_tman_pins as PINS  # noqa: E402
 import scripts.smoke_tman_schema as FX  # noqa: E402  (the TMAN fixture library)
+import scripts.smoke_tman_unlock as UL  # noqa: E402  (its records folder's blob reader)
 import scripts.smoke_tman_validate as VW  # noqa: E402  (the fixture world)
 
 check, expect_refused = FX.check, FX.expect_refused
@@ -54,6 +62,15 @@ T_R2 = "2026-10-30T01:00:00+00:00"            # R2's cut at its ceiling entered,
 T_DRAFT = "2026-10-30T03:00:00+00:00"         # the draft
 WORLD_PTQ_MADE = "2026-11-02T10:00:00Z"       # smoke_tman_validate.World.ptq's time, moved to PTQ_MADE here
 NOW = "2026-11-06T00:00:00Z"                  # --now
+D_WORLD, F_WORLD = "2026-10-30", "2026-10-31"  # the world's D and its freeze date, D + 1 (item 1(b))
+T_ARM = "2026-10-31T01:00:00+00:00"           # ARM latency cut at the freeze (item 1(g)); its lane entered not required
+T_BODY = "2026-10-31T02:00:00+00:00"          # the body to freeze committed: the draft and that cut (TMAN-B2-RULE-3)
+NOW_FREEZE = "2026-10-31T02:30:00Z"           # --now of `entry freeze --d-date 2026-10-30`, after the end of D
+T_FREEZE = "2026-10-31T03:00:00+00:00"        # the freeze record entered
+PUSHED = "2026-10-31T04:00:00Z"               # its commit reaches the remote, before the end of its date (audit M4)
+T_LO_FREEZE = "2026-10-30T16:00:00Z"          # the first instant of the freeze record's date (Manila)
+T_EVIDENCE = "2026-11-01T02:00:00+00:00"      # the push evidence committed
+UNLOCK_DAY, T_UNLOCK = "2026-11-01", "2026-11-01T03:00:00+00:00"
 MDE_REL = "reports/derived/mde_entry_20261009T034825Z.json"
 CUTOFF_GROUPS = {   # group -> (slots, reason, arm) of item 2(a)'s cuts on 2026-10-20
     "E2-s4344": ["E2:s43:lambda0.5:80k", "E2:s44:lambda0.5:80k"],
@@ -67,6 +84,9 @@ CUTOFF_GROUPS = {   # group -> (slots, reason, arm) of item 2(a)'s cuts on 2026-
 REASONS = {"L": "code not merged", "E6-E2": "code not merged"}
 ARMS = ("R1", "R2", "W", "L")
 R2 = ["teacher-R2:s42:40k", "E3-R2:s42:lambda0.5:alpha25:80k"]
+NOT_REQUIRED = (("L-AM23Q", "E6-E2:s42:15ep"), ("L-LAT-THREADS", "E1:s42:160k"))     # lane -> the slot it serves
+CLOCK = {"host": "tday-host", "source": "chronyc tracking", "offset_seconds": 0.4,
+         "measured_utc": "2026-11-05T01:50:00Z"}
 
 
 def mods():
@@ -85,13 +105,82 @@ def catalogue():
     return S.load_catalogue((REPO / S.CATALOGUE_REL).read_bytes())
 
 
+# ============================================================================================ worlds and stand-ins
+BUILT: list = []            # every world built in this process; lane LQP's reader stand-in reads their PTQ records
+_CELLS: list = []
+
+
+def built(cls):
+    """The world of class `cls`, built when a case first reads it."""
+    w = next((w for w in BUILT if type(w) is cls), None)
+    return w if w is not None else cls()
+
+
+def world() -> "AmWorld":
+    return built(AmWorld)
+
+
+def five() -> "Five":
+    return built(Five)
+
+
+def unlocked() -> "AmUnlock":
+    return built(AmUnlock)
+
+
+def read_ptq(path, expect_sha256=None):
+    """Lane LQP's reader stand-in (smoke_tman_validate.World.reader) over the worlds built here."""
+    w = next((w for w in BUILT if getattr(w, "runs", None) and str(path).startswith(str(w.runs) + os.sep)), None)
+    if w is None:
+        raise OSError(f"{path}: under no world's run directories")
+    return w.reader()(path, expect_sha256)
+
+
+@contextlib.contextmanager
+def stand_ins(w):
+    """For the cases that run the validator through am22 or the command line: records.ptq_record_reader (lane LQP's
+    reader: read_ptq), records.TRIGGER_READER (the fixture's am3_trigger/1 reader, smoke_tman_validate.World's) and
+    schedule.AM22_COMMIT (the world's E, which holds AM-22's text: item 2(a)'s dates of record, B2R1) patched, and
+    restored after."""
+    A, C, D, E, M, R, S = mods()
+    saved = R.ptq_record_reader, R.TRIGGER_READER, D.AM22_COMMIT
+    R.ptq_record_reader, R.TRIGGER_READER, D.AM22_COMMIT = (lambda: read_ptq), VW.World.trigger_reader(), w.E
+    try:
+        yield
+    finally:
+        R.ptq_record_reader, R.TRIGGER_READER, D.AM22_COMMIT = saved
+
+
+def scratch_file(prefix: str, name: str, data: bytes) -> Path:
+    f = FX.scratch_dir(prefix) / name
+    f.write_bytes(data)
+    return f
+
+
+def cells_file() -> Path:
+    """smoke_tman_pins's IF6 cells as a --registered-cells file: the order the worlds' pins hold (audit M5)."""
+    if not _CELLS:
+        _CELLS.append(scratch_file("tmancells", "cells.json", json.dumps(PINS.IF6_CELLS).encode()))
+    return _CELLS[0]
+
+
+def cli(CLI, argv: list) -> tuple:
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = CLI.main([str(a) for a in argv])
+    return rc, buf.getvalue()
+
+
 # ================================================================================================ the AM-22 world
 class AmWorld(VW.World):
     """smoke_tman_validate's World on AM-22's timeline (module docstring)."""
+    DRAFTS = ((D_WORLD, T_DRAFT),)      # each draft: (the date whose candidate freeze it is built with, or None; when)
 
     def __init__(self):
         A, C, D, E, M, R, S = mods()
+        BUILT.append(self)
         self.S, self.M, self.R = S, M, R
+        self.folders, self.wt = {}, None             # the records folders by commit; S (checkout)
         self.repo, self.runs = FX.new_repo(), FX.scratch_dir("tmanruns")
         self.cat = S.load_catalogue((REPO / S.CATALOGUE_REL).read_bytes())
         self.dl, self.next_dl, self.files = {}, 200, {}
@@ -119,12 +208,10 @@ class AmWorld(VW.World):
         self.cutoff_entries({"R2": (R2, "2026-10-29")}, "2026-10-30")
         self.lane_register()
         self.H_R2 = self.commit_dl(self.files, "R2's cut at its ceiling; the lane register", T_R2)
-        self.records = R.Records.at_head(self.repo)
         self.sources = self.make_sources()
-        self.doc = M.build_manifest(self.records, self.cat, self.sources, runs_root=self.runs)
-        self.data = S.json_file_bytes(self.doc)
-        self.H_DRAFT = FX.commit_files(self.repo, {S.MANIFEST_REL: self.data}, "the draft", date=T_DRAFT)
-        self.records = R.Records.at_head(self.repo)
+        self.draft_docs: list = []
+        self.drafts = [self.commit_draft(d, when) for d, when in self.DRAFTS]
+        self.H_DRAFT = self.drafts[0]
 
     def commit_dl(self, files: dict, msg: str, date: str) -> str:
         """Commit `files` with the decision log as it stands; the next files start empty."""
@@ -133,6 +220,20 @@ class AmWorld(VW.World):
             kv[0].split("-")[1])))).encode()
         sha = FX.commit_files(self.repo, files, msg, date=date)
         self.files = {}
+        self.records = self.R.Records.at_head(self.repo)
+        return sha
+
+    def commit_draft(self, d: str | None, when: str) -> str:
+        """The draft built from the sources with AM-22's candidate freeze for `d` (B2R6; audit m5: the draft of each
+        candidate day is built so), committed on `when`; it becomes the world's manifest."""
+        D, S = mods()[2], self.S
+        self.doc = self.M.build_manifest(self.records, self.cat, self.sources, runs_root=self.runs,
+                                         providers=[D.am22_candidate(d)] if d else [])
+        self.data = S.json_file_bytes(self.doc)
+        self.draft_docs.append(self.doc)
+        sha = FX.commit_files(self.repo, {S.MANIFEST_REL: self.data}, f"the draft (AM-22's candidate for {d})",
+                              date=when)
+        self.records = self.R.Records.at_head(self.repo)
         return sha
 
     def complete_runs(self):
@@ -222,27 +323,33 @@ class AmWorld(VW.World):
                                                 "entry": {"path": ref["path"], "sha256": ref["sha256"]}}
 
     def lane_register(self):
-        """The lane register: two lanes IMPLEMENTED (their rows naming them and their merge commits), one not
-        required (its entry citing E1-160k's cut), and L-AM16-ARM with no status a reader could accept."""
-        S = self.S
-        cut = self.cut_refs["E1:s42:160k"]
-        nr = self.entry_file("not_required", ["E1:s42:160k"], {"lane": "L-LAT-THREADS", "cut_entries": [
-            {"path": cut["path"], "sha256": cut["sha256"]}]}, date="2026-10-30")
-        self.am3_dl = self.row(f"L-AM3 merged at {self.H_SEL[:7]}: the AM-3 trigger lane", "IMPLEMENTED (2026-10-25)")
-        self.q_dl = self.row(f"L-AM23Q merged at {self.E[:7]}: the E6-E2 and E6-X lane", "IMPLEMENTED (2026-10-25)")
+        """The lane register: L-AM3 IMPLEMENTED (its row naming it and its merge commit E, an ancestor of S = E), two
+        lanes entered as not required (each entry citing the cut of the slot it serves: E6-E2's, its code not merged,
+        so E7-E2 is not made; E1-160k's) and L-AM16-ARM with no status a reader could accept (item 1(g): condition 4
+        does not read it)."""
+        S, nr = self.S, {}
+        for lane, slot in NOT_REQUIRED:
+            cut = self.cut_refs[slot]
+            nr[lane] = self.entry_file("not_required", [slot], {"lane": lane, "cut_entries": [
+                {"path": cut["path"], "sha256": cut["sha256"]}]}, date="2026-10-30")
+        self.am3_dl = self.row(f"L-AM3 merged at {self.E[:7]}: the AM-3 trigger lane", "IMPLEMENTED (2026-10-25)")
         self.lanes = {"format": S.LANES_FORMAT, "lanes": [
             {"lane": "L-AM3", "serves": ["E6-KD:s42:15ep", "E6-KD:s42:sel"],
-             "status": {"kind": "implemented", "dl": self.am3_dl, "merge_commit": self.H_SEL, "entry": None}},
-            {"lane": "L-AM23Q", "serves": ["E6-E2:s42:15ep", "E7-E2:s42:list42"],
-             "status": {"kind": "implemented", "dl": self.q_dl, "merge_commit": self.E, "entry": None}},
-            {"lane": "L-LAT-THREADS", "serves": ["E1:s42:160k"],
-             "status": {"kind": "not_required", "dl": None, "merge_commit": None,
-                        "entry": {"path": nr["path"], "sha256": nr["sha256"]}}},
+             "status": {"kind": "implemented", "dl": self.am3_dl, "merge_commit": self.E, "entry": None}},
+            *[{"lane": lane, "serves": [slot], "status": {"kind": "not_required", "dl": None, "merge_commit": None,
+                                                          "entry": {"path": nr[lane]["path"],
+                                                                    "sha256": nr[lane]["sha256"]}}}
+              for lane, slot in NOT_REQUIRED],
             {"lane": "L-AM16-ARM", "serves": ["ARM:latency"],
              "status": {"kind": "implemented", "dl": None, "merge_commit": None, "entry": None}}]}
-        data = S.json_file_bytes(self.lanes)
-        self.files[S.LANES_REL] = data
-        self.lanes_dl = self.row(f"the lane register {S.LANES_REL} sha256 {S.sha256_bytes(data)}")
+        self.commit_lanes()
+
+    def commit_lanes(self):
+        """The lane register as it stands, with its RECORDED row (the current-plan line), into the next commit."""
+        S = self.S
+        self.lanes_data = S.json_file_bytes(self.lanes)
+        self.files[S.LANES_REL] = self.lanes_data
+        self.lanes_dl = self.row(f"the lane register {S.LANES_REL} sha256 {S.sha256_bytes(self.lanes_data)}")
 
     def make_sources(self) -> dict:
         """World.make_sources with the trigger record at L-AM3's path (records.TRIGGER_RECORD_REL)."""
@@ -263,8 +370,187 @@ class AmWorld(VW.World):
                 "freeze_entries": {"delay": None, "new_freeze": None}, "entries": json.loads(json.dumps(self.entries))}
 
     def evaluate(self, day: str, **kw):
+        """The five conditions at the end of `day` (am22.evaluate), the registered cells in smoke_tman_pins's IF6
+        order (the world's pins; audit M5)."""
         A = mods()[0]
+        kw.setdefault("registered_cells", PINS.IF6_CELLS)
         return A.evaluate(self.records, self.cat, self.runs, day, reader=self.trigger_reader(), **kw)
+
+    def check_freeze(self, day: str, now: str = NOW) -> tuple:
+        A = mods()[0]
+        return A.check_freeze(self.records, self.cat, self.runs, day, now=FX.utc(now), reader=self.trigger_reader(),
+                              registered_cells=PINS.IF6_CELLS)
+
+    def print_entry(self, kind: str, date: str, fields: dict, *, nn: int, extra=(), root=None) -> tuple:
+        """The CLI's `entry` printer at --root (this world's repository by default): (its exit code, its output, the
+        file it wrote or None). It commits nothing."""
+        import scripts.tday_manifest as CLI
+        out = FX.scratch_dir("tmanprint")
+        (out / "fields.json").write_bytes(self.S.json_file_bytes(fields))
+        dest = out / "out"
+        dest.mkdir()
+        rc, txt = cli(CLI, ["--root", root or self.repo, "entry", kind, "--date", date, "--fields", out / "fields.json",
+                            "--amendment", "AM-22", "--summary", "printed by the AM-22 smoke.", "--out", dest,
+                            "--nn", nn, *extra])
+        made = sorted(dest.iterdir())
+        return rc, txt, (made[0] if len(made) == 1 else None)
+
+    def commit_entry(self, path: Path, when: str) -> dict:
+        """An entry file committed at its records path with its RECORDED row on `when`: {path, sha256, dl, doc,
+        commit}."""
+        S = self.S
+        data = path.read_bytes()
+        rel, sha, doc = S.entry_file_rel(path.name), S.sha256_bytes(data), json.loads(data)
+        dl = self.row(f"TMAN {doc['kind']} entry for the session: {rel} sha256 {sha}")
+        return {"path": rel, "sha256": sha, "dl": dl, "doc": doc,
+                "commit": self.commit_dl({rel: data}, f"the {doc['kind']} entry", when)}
+
+    def freeze_args(self, d: str, man: Path, now: str = NOW_FREEZE) -> list:
+        """`entry freeze --d-date d`'s arguments: the body to freeze `man`, the run directories, the registered cells
+        and the clock's stand-in."""
+        return ["--d-date", d, "--manifest", man, "--runs", self.runs, "--registered-cells", cells_file(), "--now", now]
+
+    def worktree(self, commit: str) -> Path:
+        wt = FX.scratch_dir("tmanwt")
+        wt.rmdir()
+        FX.git(self.repo, "worktree", "add", "-q", "--detach", str(wt), commit)
+        return wt
+
+    def checkout(self) -> Path:
+        """S, a linked checkout of E (TB16), made when first read."""
+        if self.wt is None:
+            self.wt = self.worktree(self.E)
+        return self.wt
+
+    def records_at(self, head: str):
+        """The records at `head`, from a records folder written from it (reports/ and the decision log), read with S
+        = E (smoke_tman_unlock.Unlock.export; PL-28)."""
+        if head not in self.folders:
+            folder = FX.scratch_dir("tmanrec")
+            for rel in FX.git(self.repo, "ls-tree", "-r", "--name-only", head, "--", "reports",
+                              self.S.DECISION_LOG_REL).splitlines():
+                (folder / rel).parent.mkdir(parents=True, exist_ok=True)
+                (folder / rel).write_bytes(UL._blob(self.repo, head, rel))
+            self.folders[head] = folder
+        return self.R.Records.at_records_commit(self.folders[head], head, root=self.checkout())
+
+
+class Five(AmWorld):
+    """The AM-22 world whose D is 2026-10-31 (audit m4): its draft of 2026-10-30 is built without AM-22's candidate --
+    condition 5 MISSING at that date's end (schedule_invalid) -- and the drafts of 2026-10-31 and 2026-11-02 with
+    their dates' candidates; all five conditions hold at the end of 2026-10-31 and again at the end of 2026-11-02."""
+    DRAFTS = ((None, T_DRAFT), ("2026-10-31", "2026-10-31T03:00:00+00:00"),
+              ("2026-11-02", "2026-11-02T03:00:00+00:00"))
+
+
+class AmUnlock(AmWorld):
+    """The AM-22 world to the unlock: D 2026-10-30, the freeze at the end of 2026-10-31 (item 1(b)). On the freeze date
+    the ARM latency measurement, not complete, is cut at the freeze (item 1(g); AM-19 item 3(b), first point) and its
+    lane entered as not required; the body to freeze -- the draft at C_D and that cut (TMAN-B2-RULE-3) -- is committed
+    as the manifest, and the freeze record `entry freeze --d-date` prints is entered; its commit reaches the remote that
+    day. The push evidence is committed on 2026-11-01 and the unlock entry `entry unlock --push-evidence` prints cites
+    it (audit M4). S is a linked checkout of E (TB16) and `tree` one of the unlock entry's commit, where the printers'
+    cases run; the validator reads the records from a records folder written from a commit (PL-28)."""
+
+    def __init__(self):
+        super().__init__()
+        A, C, D, E, M, R, S = mods()
+        self.ticks = 0
+        self.draft_doc, self.draft_data = self.doc, self.data
+        with stand_ins(self):
+            arm = self.entry_file("cut", ["ARM:latency"], self.cut_fields("ARM", ["ARM:latency"], "code not merged",
+                                                                          False), date=F_WORLD)
+            self.entries["ARM:latency"] = {"kind": "cut", "dl_rows": [arm["dl"]], "cut_date": F_WORLD,
+                                           "entry": {"path": arm["path"], "sha256": arm["sha256"]}, "rule": "freeze",
+                                           "comparator": None}
+            nr = self.entry_file("not_required", ["ARM:latency"], {"lane": A.ARM_LANE, "cut_entries": [
+                {"path": arm["path"], "sha256": arm["sha256"]}]}, date=F_WORLD)
+            self.lanes["lanes"][-1]["status"] = {"kind": "not_required", "dl": None, "merge_commit": None,
+                                                 "entry": {"path": nr["path"], "sha256": nr["sha256"]}}
+            self.commit_lanes()
+            self.H_ARM = self.commit_dl(self.files, "the ARM latency measurement cut at the freeze; its lane", T_ARM)
+            self.sources = self.make_sources()
+            self.doc = M.build_manifest(self.records, self.cat, self.sources, runs_root=self.runs,
+                                        providers=[D.am22_candidate(D_WORLD)])
+            self.data = S.json_file_bytes(self.doc)
+            self.H_BODY = FX.commit_files(self.repo, {S.MANIFEST_REL: self.data}, "the body to freeze", date=T_BODY)
+            self.records = R.Records.at_head(self.repo)
+            self.man = scratch_file("tmanbody", "m.json", self.data)
+            self.freeze = self.commit_entry(self.printed("freeze", F_WORLD, {}, self.freeze_args(D_WORLD, self.man)),
+                                            T_FREEZE)
+            self.evidence = self.push_evidence(PUSHED)
+            self.pe = scratch_file("tmanpe", "pe.json", S.json_file_bytes(self.evidence))
+            self.unlock_fields = {
+                "manifest": {"path": S.MANIFEST_REL, "sha256": S.sha256_bytes(self.data),
+                             "body_sha256": S.canonical_sha256(self.doc["body"]),
+                             "appends_sha256": S.canonical_sha256([])},
+                "lanes": {"path": S.LANES_REL, "sha256": S.sha256_bytes(self.lanes_data)},
+                "freeze_record": {"path": self.freeze["path"], "sha256": self.freeze["sha256"]}}
+            self.unlock = self.commit_entry(self.printed("unlock", UNLOCK_DAY, self.unlock_fields,
+                                                         ["--push-evidence", self.pe]), T_UNLOCK)
+        self.H_UNLOCK = self.unlock["commit"]
+        self.tree = self.worktree(self.H_UNLOCK)
+
+    def printed(self, kind: str, date: str, fields: dict, extra: list) -> Path:
+        """The entry file the CLI's printer writes for this world's records (a refusal is an error here)."""
+        rc, out, made = self.print_entry(kind, date, fields, nn=1, extra=extra)
+        if made is None:
+            raise RuntimeError(f"entry {kind}: rc {rc}: {out.strip()[-400:]}")
+        return made
+
+    def push_evidence(self, pushed: str, *, tag: str = "20261031", when: str = T_EVIDENCE,
+                      older: str | None = "2026-10-30T10:00:00Z") -> dict:
+        """The freeze record's push evidence (audit M4; TB11's form, smoke_tman_unlock.activity and push_list):
+        GitHub's activity response, newest first, the record's commit pushed to master and to the working branch at
+        `pushed` and, unless `older` is None, E pushed at `older`, before T_lo, the first instant of the record's date;
+        the tday_push_list/1 list made from it names the record under "entry". Both committed in one commit on
+        `when`; returns {response, list}."""
+        S, c = self.S, self.freeze["commit"]
+        prior = FX.git(self.repo, "rev-parse", f"{c}^")
+
+        def act(n, ref, after, before, ts):
+            return {"id": n, "node_id": f"PA_fixture{n}", "before": before, "after": after, "ref": ref,
+                    "timestamp": ts, "activity_type": "push", "actor": {"login": "fixture"}}
+        acts = [act(5004, "refs/heads/master", c, prior, pushed),
+                act(5003, "refs/heads/claude/keen-curie-u4a8ig", c, prior, pushed)]
+        acts += [act(5001, "refs/heads/master", self.E, "0" * 40, older)] if older else []
+        rr, lr = f"reports/derived/tday_freeze_push_{tag}.json", f"reports/derived/tday_freeze_push_list_{tag}.json"
+        resp = (json.dumps(acts, indent=2) + "\n").encode()
+        lst = S.json_file_bytes({
+            "format": S.PUSH_LIST_FORMAT, "response": {"path": rr, "sha256": S.sha256_bytes(resp)},
+            "entry": {"path": self.freeze["path"], "sha256": self.freeze["sha256"]}, "adding_commit": c,
+            "t_lo_utc": T_LO_FREEZE, "remote": "https://github.com/fixture/plantseg-thesis",
+            "pushes": [{**{k: a[k] for k in ("id", "ref", "before", "after", "timestamp", "activity_type")},
+                        "served": True, "carries_file": True, "remote_answer": "fetched (fixture)"}
+                       for a in acts if a["timestamp"] >= T_LO_FREEZE]})
+        FX.commit_files(self.repo, {rr: resp, lr: lst}, "the freeze record's push evidence", date=when)
+        return {"response": {"path": rr, "sha256": S.sha256_bytes(resp)},
+                "list": {"path": lr, "sha256": S.sha256_bytes(lst)}}
+
+    def tick(self) -> str:
+        """The next commit time after the unlock entry's, on 2026-11-01 (a case's variants)."""
+        self.ticks += 1
+        return f"2026-11-01T{4 + self.ticks:02d}:00:00+00:00"
+
+    def variant(self, kind: str, edit, nn: int) -> dict:
+        """The world's freeze record or unlock entry with `edit` applied, committed with its row after the unlock
+        entry's commit (commit_entry's dict)."""
+        S = self.S
+        doc = copy.deepcopy((self.freeze if kind == "freeze" else self.unlock)["doc"])
+        edit(doc)
+        f = FX.scratch_dir("tmanvar") / S.entry_file_name(kind, S.SESSION_FILE_ID, doc["date"], nn)
+        f.write_bytes(S.json_file_bytes(doc))
+        return self.commit_entry(f, self.tick())
+
+    def ctx(self, mode: str = "unlock", data: bytes | None = None, *, head: str | None = None, **kw):
+        from src.tman import validate as V
+        args = dict(mode=mode, manifest_bytes=self.data if data is None else data, manifest_path=self.S.MANIFEST_REL,
+                    records=self.records_at(head or self.H_UNLOCK), runs_root=self.runs,
+                    freeze_record=self.freeze["path"], unlock_entry=self.unlock["path"],
+                    registered_cells=PINS.IF6_CELLS, ptq_reader=self.reader(), trigger_reader=self.trigger_reader(),
+                    repo_root=self.checkout())
+        args.update(kw)
+        return V.Ctx(**args)
 
 
 # ======================================================================================== a fixture per question
@@ -341,11 +627,12 @@ def body(slot: str, kind: str, rows: list, **kw) -> dict:
 
 # ================================================================================================= the cases
 def case_static():
-    """B2R11: am22.py in LANE_CODE_FILES and score-blind; B2R13: L-AM3's reader is the trigger reader."""
+    """B2R11: am22.py in LANE_CODE_FILES and score-blind (the freeze entry's field `conditions` aside, as
+    smoke_tman_noscore reads it); B2R13: L-AM3's reader is the trigger reader."""
     A, C, D, E, M, R, S = mods()
     import scripts.smoke_tman_noscore as NS
     check("am22_is_lane_code_B2R11", "src/tman/am22.py" in M.LANE_CODE_FILES)
-    hits = [s for s in NS.code_literals(REPO / "src/tman/am22.py") if NS.SCORE.search(s)]
+    hits = [s for s in NS.code_literals(Path(A.__file__)) if NS.SCORE.search(s) and s != "conditions"]
     check("am22_holds_no_score_key_literal_B2R11", not hits, str(hits))
     import importlib
     mod = importlib.import_module(R.TRIGGER_MODULE)
@@ -507,30 +794,73 @@ def case_commit_at_end():
     check("c_x_walks_back_from_the_tip_M3", got == [None, b, b, c], str([x and x[:7] for x in got]) + f" a {a[:7]}")
 
 
-def case_conditions_in_the_world():
-    """The AM-22 world: conditions 1-4 MET at the end of 2026-10-30 with their records; MISSING on earlier dates for
-    what was not entered yet."""
+def case_providers():
+    """B2R6: AM-22's provider in front of B-1's at every freeze_instant call -- the candidate for D (--am22-d), the
+    freeze record of item 1(b) (the unlock's, or the one the decision log enters), none for item 1(f) or under Schedule
+    R; beside an item 1(b) freeze, a freeze delay or new freeze is freeze_source_conflict (audit m10)."""
+    import ast
     A, C, D, E, M, R, S = mods()
-    w = WORLD
-    chk = w.evaluate("2026-10-30")
-    c = {x.number: x for x in chk.conditions}
-    check("world_conditions_1_to_4_met_at_1030", all(c[n].met for n in (1, 2, 3, 4)),
-          str({n: c[n].missing[:2] for n in (1, 2, 3, 4) if not c[n].met}))
-    regs = chk.view.registered()[0]
-    check("world_registers_40_runs_and_settles_each", len(regs) == 40 and not c[1].missing, str(len(regs)))
-    ways = sorted({r.kind.split(" ")[0] for r in c[1].records})
-    check("world_settles_by_completion_cut_and_not_run", ways == ["AM-3", "completion", "cut", "not-run"], str(ways))
-    early = {x.number: x for x in w.evaluate("2026-10-29").conditions}
+    root, calls = Path(M.__file__).resolve().parents[2], []
+    for rel in M.LANE_CODE_FILES:
+        if rel.endswith(".py"):
+            for node in ast.walk(ast.parse((root / rel).read_text(encoding="utf-8"))):
+                fn = getattr(node, "func", None)
+                if isinstance(node, ast.Call) and "freeze_instant" in (getattr(fn, "attr", None),
+                                                                       getattr(fn, "id", None)):
+                    calls.append((rel, node.lineno, any(k.arg == "providers" for k in node.keywords)))
+    check("every_freeze_instant_call_puts_am22_s_provider_in_front_B2R6", len(calls) == 6
+          and all(c[2] for c in calls), str(calls))
+    sch = {"in_force": "T", "file": "configs/kd_schedule.json", "file_sha256": "1" * 64, "decision_log_entry": "DL-70"}
+    got = D.freeze_instant(sch, providers=[D.am22_candidate(D_WORLD)]).as_block()
+    check("candidate_freeze_is_the_end_of_d_plus_1_B2R6", (got["original_freeze_date"], got["moved_freeze_date"],
+                                                          got["freeze_source"], got["test_deadline"])
+          == (F_WORLD, None, {"provider": "am22", "path": None, "sha256": None}, "2026-11-08"), str(got))
+    got = D.freeze_instant(dict(sch, in_force="R"), providers=[D.am22_candidate(D_WORLD)])
+    check("schedule_r_takes_no_am22_freeze_B2R6", got.source["provider"] == "schedule", str(got.source))
+    m = Mini()
+    rec = R.Records.at_head(m.repo)
+    check("item_1f_record_gives_no_provider_B2R6", A.providers(rec, freeze_doc={
+        "source": D.AM22_SOURCE_1F, "freeze_date": "2026-11-03"}) == [] and A.providers(rec, lookup=True) == [])
+    one = A.providers(rec, freeze_doc={"source": D.AM22_SOURCE_1B, "freeze_date": F_WORLD})
+    check("item_1b_record_gives_its_freeze_date_B2R6", len(one) == 1
+          and one[0](D.schedule_provider(sch)).original_date == F_WORLD)
+    expect_refused("am22_d_not_a_date_refused_B2R6", "schedule_invalid", A.providers, rec, d_date="2026-10-3")
+    m.row("TMAN freeze_delay entry for the session: reports/derived/tday_entries/"
+          f"freeze_delay__session__20261103__01.json sha256 {'2' * 64}")
+    m.commit({}, "2026-10-31T02:00:00+00:00")
+    rec = R.Records.at_head(m.repo)
+    expect_refused("freeze_delay_beside_an_item_1b_freeze_conflicts_m10", "freeze_source_conflict", A.providers, rec,
+                   d_date=D_WORLD)
+    check("freeze_delay_without_an_item_1b_freeze_is_b1_s_m10", A.providers(rec, lookup=True) == []
+          and len(A.providers(rec, d_date=D_WORLD, conflict=False)) == 1)
+
+
+def case_conditions_in_the_world():
+    """The AM-22 world: all five conditions MET at the end of 2026-10-30 with their records; MISSING on earlier dates
+    for what was not entered yet."""
+    A, C, D, E, M, R, S = mods()
+    w = world()
+    with stand_ins(w):
+        chk = w.evaluate(D_WORLD)
+        c = {x.number: x for x in chk.conditions}
+        check("world_conditions_1_to_5_met_at_1030", all(c[n].met for n in (1, 2, 3, 4, 5)),
+              str({n: c[n].missing[:2] for n in (1, 2, 3, 4, 5) if not c[n].met}))
+        regs = chk.view.registered()[0]
+        check("world_registers_40_runs_and_settles_each", len(regs) == 40 and not c[1].missing, str(len(regs)))
+        ways = sorted({r.kind.split(" ")[0] for r in c[1].records})
+        check("world_settles_by_completion_cut_and_not_run", ways == ["AM-3", "completion", "cut", "not-run"],
+              str(ways))
+        early = {x.number: x for x in w.evaluate("2026-10-29").conditions}
+        d21 = {x.number: x for x in w.evaluate("2026-10-21").conditions}
+        d22 = {x.number: x for x in w.evaluate("2026-10-22").conditions}
     miss = sorted(x.split(": ")[0] for x in early[1].missing)
     check("r2_not_cut_by_1029_condition_1_missing", miss == sorted(R2 + ["E6-R2:s42:15ep", "teacher:s42:40k"])
           and any(x.startswith("teacher:s42:40k: its run is named by no launcher") for x in early[1].missing),
           str(miss))
     check("lane_register_not_committed_by_1029_condition_4_missing", not early[4].met
           and "not committed by the end of 2026-10-29" in early[4].missing[0], str(early[4].missing))
-    d21 = {x.number: x for x in w.evaluate("2026-10-21").conditions}
     check("trigger_not_entered_by_1021_condition_2_missing", not d21[2].met
           and "is not committed by the end of 2026-10-21" in d21[2].missing[0], str(d21[2].missing))
-    d22 = {x.number: x for x in w.evaluate("2026-10-22").conditions}
     check("trigger_entered_1022_read_for_triggered_draft_not_yet", not any("trigger" in m for m in d22[2].missing)
           and any("are not made by the end" in m for m in d22[2].missing), str(d22[2].missing))
     check("draft_not_committed_by_1029_condition_3_missing", not early[3].met
@@ -539,8 +869,42 @@ def case_conditions_in_the_world():
         r.kind == "E6:s42:sel hashed in the draft" for r in c[3].records))
     lanes = [r.kind for r in c[4].records]
     check("condition_4_reads_implemented_and_not_required_lanes_not_arm_1g", "lane L-AM3 IMPLEMENTED" in lanes
-          and "lane L-LAT-THREADS not required" in lanes and not any("L-AM16-ARM" in k for k in lanes)
-          and any("L-AM16-ARM is not read" in n for n in c[4].notes), str(lanes))
+          and "lane L-LAT-THREADS not required" in lanes and "lane L-AM23Q not required" in lanes
+          and not any("L-AM16-ARM" in k for k in lanes) and any("L-AM16-ARM is not read" in n for n in c[4].notes),
+          str(lanes))
+
+
+def case_condition_5():
+    """Condition 5 (B2R6; TMAN-B2-RULE-3): the draft at C_X passes freeze mode with AM-22's candidate for D = X, the
+    ARM measurement's entry its one unmet freeze-time item (its freeze cut cannot exist before the freeze); MISSING
+    with a run slot unentered, or for a draft built without the candidate (schedule_invalid)."""
+    A, C, D, E, M, R, S = mods()
+    w = world()
+    with stand_ins(w):
+        v = A.View(w.records, w.cat, w.runs, D_WORLD, reader=w.trigger_reader())
+        c5 = A.condition_5(v, registered_cells=PINS.IF6_CELLS)
+        check("condition_5_met_its_one_unmet_item_the_arm_measurement_RULE3", c5.met and any(
+            n.startswith("['ARM:latency']: the measurement is cut at the freeze") for n in c5.notes),
+            str(c5.missing or c5.notes))
+        check("condition_5_records_the_draft_at_c_x_and_the_evaluator_commit", [(r.kind, r.ref, r.sha256) for r in
+                                                                               c5.records]
+              == [("draft manifest", S.MANIFEST_REL, S.sha256_bytes(w.data)), ("evaluator commit", w.E, None)],
+              str([(r.kind, r.ref) for r in c5.records]))
+        draft, _, rec = v.draft()
+        doc = copy.deepcopy(draft["doc"])
+        doc["body"]["entries"] = [e for e in doc["body"]["entries"] if e["slot"] != "G:s42:80k"]
+        v2 = A.View(w.records, w.cat, w.runs, D_WORLD, reader=w.trigger_reader())
+        v2._cache["draft"] = ({"doc": doc, "data": S.json_file_bytes(doc),
+                               "by_slot": {e["slot"]: e for e in doc["body"]["entries"]}}, None, rec)
+        c5 = A.condition_5(v2, registered_cells=PINS.IF6_CELLS)
+        check("condition_5_missing_with_a_run_slot_unentered_RULE3", not c5.met and c5.missing
+              and "[cut_unentered_at_unlock]" in c5.missing[0] and "G:s42:80k" in c5.missing[0], str(c5.missing))
+    f = five()
+    with stand_ins(f):
+        c5 = A.condition_5(A.View(f.records, f.cat, f.runs, D_WORLD, reader=f.trigger_reader()),
+                           registered_cells=PINS.IF6_CELLS)
+    check("condition_5_missing_for_a_draft_without_the_candidate_B2R6", not c5.met and c5.missing
+          and "[schedule_invalid]" in c5.missing[0], str(c5.missing))
 
 
 def case_condition_4_rows_at_c_x():
@@ -603,64 +967,274 @@ def case_condition_2_cases():
 
 
 def case_report_lines():
-    """M2: every committed record's commit and committer time, and a boundary-day REPORT for each made on X or X-1."""
+    """M2: every committed record's commit and committer time, and a boundary-day REPORT for each made on X or X-1;
+    m4: each earlier date's verdict, then D."""
     A = mods()[0]
-    out = A.lines(WORLD.evaluate("2026-10-30"))
+    w = world()
+    with stand_ins(w):
+        chk, d, scans = w.check_freeze(D_WORLD)
+    out = A.lines(chk, d, scans)
     rep = [x for x in out if x.startswith("REPORT boundary-day entry")]
-    shas = {WORLD.H_R2, WORLD.H_DRAFT}
+    shas = {w.H_R2, w.H_DRAFT}
     check("boundary_day_reports_name_the_commits_of_x_M2", rep and all(any(s in x for s in shas) for x in rep)
-          and not any(WORLD.H_CUTS in x for x in rep), str(rep[:3]))
+          and not any(w.H_CUTS in x for x in rep), str(rep[:3]))
     check("records_print_their_commits_M2", any(x.startswith("  RECORD cut entry of G:s42:80k (cutoff)")
-                                                and WORLD.H_CUTS[:12] in x and "2026-10-21" in x for x in out))
-    check("result_line_names_the_conditions_missing", out[-1] == "RESULT: MISSING (condition 5 at the end of "
-                                                                 "2026-10-30)", out[-1])
+                                                and w.H_CUTS[:12] in x and "2026-10-21" in x for x in out))
+    dated = [x for x in out if x.startswith("DATE ")]
+    check("each_earlier_date_missing_then_d_m4", len(dated) == 13 and all(": MISSING " in x for x in dated)
+          and out[-2:] == ["RESULT: MET (all five conditions at the end of 2026-10-30)", "D: 2026-10-30"],
+          f"{len(dated)} {out[-2:]}")
 
 
 def case_cli():
-    """`check-freeze`: exit 3 while a condition is MISSING; a date whose end has not passed (m6), one after
-    2026-11-02 (item 1(f)) or before AM-22 is in force refused."""
-    A, C, D, E, M, R, S = mods()
+    """`check-freeze`: exit 0 with D once all five conditions hold at a date's end, 3 while none has; a date whose end
+    has not passed (m6), one after 2026-11-02 (item 1(f)) or before AM-22 is in force refused."""
     import scripts.tday_manifest as CLI
-    saved = R.TRIGGER_READER
-    try:
-        R.TRIGGER_READER = VW.World.trigger_reader()
-        base = ["--root", str(WORLD.repo), "check-freeze", "--runs", str(WORLD.runs)]
-        rc, out = cli(CLI, base + ["--date", "2026-10-30", "--now", NOW])
-        check("cli_check_freeze_prints_conditions_exit_3", rc == 3 and "CONDITION 1 MET" in out
-              and "CONDITION 5 MISSING" in out, out[-300:])
-        rc, out = cli(CLI, base + ["--date", "2026-10-30", "--now", "2026-10-30T15:59:59Z"])
+    w = world()
+    with stand_ins(w):
+        base = ["--root", w.repo, "check-freeze", "--runs", w.runs, "--registered-cells", cells_file()]
+        rc, out = cli(CLI, base + ["--date", D_WORLD, "--now", NOW])
+        check("cli_check_freeze_prints_the_conditions_and_d_exit_0", rc == 0 and "CONDITION 1 MET" in out
+              and "CONDITION 5 MET" in out and out.rstrip().endswith("D: 2026-10-30"), out[-300:])
+        rc, out = cli(CLI, base + ["--date", "2026-10-29", "--now", NOW])
+        check("cli_check_freeze_no_d_by_1029_exit_3", rc == 3 and "CONDITION 1 MISSING" in out
+              and out.rstrip().splitlines()[-1].startswith("NO D: "), out[-300:])
+        rc, out = cli(CLI, base + ["--date", D_WORLD, "--now", "2026-10-30T15:59:59Z"])
         check("cli_date_not_ended_refused_m6", rc == 2 and "am22_date_not_ended" in out, out[-200:])
         rc, out = cli(CLI, base + ["--date", "2026-11-03", "--now", NOW])
         check("cli_date_after_1102_refused_1f", rc == 2 and "am22_d_not_first" in out and "item 1(f)" in out,
               out[-200:])
         rc, out = cli(CLI, base + ["--date", "2026-10-16", "--now", NOW])
         check("cli_date_before_am22_refused", rc == 2 and "am22_d_not_first" in out, out[-200:])
-    finally:
-        R.TRIGGER_READER = saved
 
 
-def cli(CLI, argv: list) -> tuple:
-    buf = io.StringIO()
-    with contextlib.redirect_stdout(buf):
-        rc = CLI.main(argv)
-    return rc, buf.getvalue()
+def case_cli_am22_d():
+    """B2R6 on the command line: `build --am22-d D` writes the draft with AM-22's candidate freeze for D (audit m5);
+    `validate --am22-d D` checks the draft against it, freeze mode leaving only the ARM measurement's entry
+    (TMAN-B2-RULE-3); without --am22-d the draft's schedule block is not the freeze B-1's providers give."""
+    A, C, D, E, M, R, S = mods()
+    import scripts.tday_manifest as CLI
+    w = world()
+    with stand_ins(w):
+        src = scratch_file("tmansrc", "sources.json", S.json_file_bytes(w.sources))
+        out = FX.scratch_dir("tmanbuild")
+        rc, txt = cli(CLI, ["--root", w.repo, "build", "--sources", src, "--out", out, "--runs", w.runs,
+                            "--registered-cells", cells_file(), "--am22-d", D_WORLD])
+        made = out / "tday_manifest.json"
+        doc = json.loads(made.read_bytes()) if made.is_file() else {}
+        check("cli_build_am22_d_writes_the_candidate_s_draft_B2R6_m5", doc.get("body") == w.doc["body"]
+              and doc["body"]["schedule"]["original_freeze_date"] == F_WORLD, f"rc {rc}: {txt.strip()[-300:]}")
+        base = ["--root", w.repo, "validate", "--manifest", w.repo / S.MANIFEST_REL, "--mode", "freeze", "--runs",
+                w.runs, "--registered-cells", cells_file()]
+        rc, txt = cli(CLI, base + ["--am22-d", D_WORLD])
+        check("cli_validate_am22_d_leaves_the_arm_measurement_RULE3", rc == 2
+              and "REFUSED [cut_unentered_at_unlock]" in txt and "['ARM:latency'] have no entry" in txt, txt[-300:])
+        rc, txt = cli(CLI, base)
+        check("cli_validate_without_am22_d_schedule_invalid_B2R6", rc == 2 and "REFUSED [schedule_invalid]" in txt,
+              txt[-300:])
 
 
-WORLD: AmWorld | None = None
+def case_d_first():
+    """Audit m4: D is the first date from 2026-10-17 at whose end all five conditions hold. In the world whose first
+    such date is 2026-10-31, `check-freeze --date 2026-11-02` prints D: 2026-10-31; a freeze of item 1(b) for D
+    2026-11-02 is refused by its printer and at the unlock (am22_d_not_first, every earlier unlock gate passing)."""
+    A, C, D, E, M, R, S = mods()
+    import scripts.tday_manifest as CLI
+    f = five()
+    with stand_ins(f):
+        rc, out = cli(CLI, ["--root", f.repo, "check-freeze", "--runs", f.runs, "--registered-cells", cells_file(),
+                            "--date", "2026-11-02", "--now", NOW])
+        got = out.rstrip().splitlines()
+        dated = {x.split(" ")[1]: x for x in got if x.startswith("DATE ")}
+        check("d_is_the_first_date_whose_end_has_all_five_m4", rc == 0 and got[-1:] == ["D: 2026-10-31"]
+              and "RESULT: MET (all five conditions at the end of 2026-11-02)" in got
+              and sorted(dated) == A.days("2026-10-17", "2026-10-31") and dated["2026-10-31"].endswith(": MET")
+              and dated["2026-10-30"].endswith(": MISSING 5"), out[-400:])
+        why = A.d_not_first_error(f.records, f.cat, f.runs, "2026-11-02", reader=f.trigger_reader(),
+                                  registered_cells=PINS.IF6_CELLS)
+        check("d_not_first_names_the_first_date_m4", "already hold at the end of 2026-10-31" in str(why), str(why))
+        man = scratch_file("tmanbody", "m.json", f.data)
+        rc, out, made = f.print_entry("freeze", "2026-11-03", {}, nn=1, extra=f.freeze_args("2026-11-02", man, NOW))
+        check("printer_freeze_of_a_later_d_refused_m4", rc == 2 and "REFUSED [am22_d_not_first]" in out
+              and made is None, out.strip()[-300:])
+        fields = {"body_sha256": S.canonical_sha256(f.doc["body"]), "freeze_date": "2026-11-03",
+                  "source": D.AM22_SOURCE_1B, "d_date": "2026-11-02",
+                  "conditions": A.freeze_conditions(f.evaluate("2026-11-02"))}
+        ref = f.entry_file("freeze", [], fields, date="2026-11-03")
+        head = f.commit({ref["path"]: f.files[ref["path"]]}, "a freeze record of D 2026-11-02",
+                        date="2026-11-03T02:00:00+00:00")
+        VW.expect_gate(f, "unlock_freeze_of_a_later_d_refused_B2R7_m4", "am22_d_not_first", mode="unlock",
+                       detail="already hold at the end of 2026-10-31", data=f.data, freeze_record=ref["path"],
+                       manifest_path=S.MANIFEST_REL, records=f.records_at(head), repo_root=f.checkout())
+
+
+def case_unlock_world():
+    """The AM-22 world at the unlock passes every unlock gate at S = E (B2R7; audit M4). Its freeze record, printed by
+    `entry freeze --d-date`, holds D, D + 1 and the five conditions (B2R5), condition 5 citing the draft at C_D, and
+    the frozen body's sha256 -- the draft at C_D and the ARM measurement's freeze cut (TMAN-B2-RULE-3)."""
+    A, C, D, E, M, R, S = mods()
+    u = unlocked()
+    with stand_ins(u):
+        code, passed, e = u.run("unlock")
+        check("am22_unlock_world_passes_every_unlock_gate_B2R7_M4", code is None
+              and passed == VW.gate_codes("unlock"), f"{code}: {e.detail[:300] if e else ''}")
+        code, _, e = u.run("unlock", unlock_entry=None)
+        check("am22_unlock_before_its_entry_passes_M4", code is None, f"{code}: {e.detail[:200] if e else ''}")
+        rec = R.Records.at_head(u.tree)
+        one = A.providers(rec, lookup=True)
+        check("lookup_finds_the_entered_item_1b_freeze_B2R6", len(one) == 1
+              and one[0](D.schedule_provider(D.schedule_block(rec.src))).original_date == F_WORLD)
+    fr = u.freeze["doc"]
+    check("freeze_record_of_item_1b_names_d_and_d_plus_1_B2R5", (fr["source"], fr["d_date"], fr["freeze_date"],
+                                                                fr["date"]) == (D.AM22_SOURCE_1B, D_WORLD, F_WORLD,
+                                                                                F_WORLD)
+          and [c["number"] for c in fr["conditions"]] == [1, 2, 3, 4, 5]
+          and all(r["date"] <= D_WORLD for c in fr["conditions"] for r in c["records"]), str(fr["conditions"])[:300])
+    c5 = {(r["kind"], r["ref"], r["sha256"]) for r in fr["conditions"][4]["records"]}
+    check("condition_5_cites_the_draft_at_c_d_RULE3_m9", c5 == {("draft manifest", S.MANIFEST_REL,
+                                                                 S.sha256_bytes(u.draft_data)),
+                                                                ("evaluator commit", u.E, None)}, str(c5))
+    rest = [x for x in u.doc["body"]["entries"] if x["slot"] != "ARM:latency"]
+    check("frozen_body_is_the_draft_and_the_arm_freeze_cut_RULE3", fr["body_sha256"] == S.canonical_sha256(
+        u.doc["body"]) and dict(u.doc["body"], entries=rest) == u.draft_doc["body"]
+        and (u.entry(u.doc, "ARM:latency")["rule"], u.entry(u.doc, "ARM:latency")["cut_date"]) == ("freeze", F_WORLD))
+    sch = u.doc["body"]["schedule"]
+    check("schedule_block_is_am22_s_freeze_B2R6", (sch["freeze_source"], sch["original_freeze_date"],
+                                                   sch["test_deadline"])
+          == ({"provider": "am22", "path": None, "sha256": None}, F_WORLD, "2026-11-08"), str(sch))
+
+
+def case_freeze_printer():
+    """`entry freeze --d-date D` at the unlock entry's commit (B2R5, B2R7; audit m8, and m9 as TMAN-B2-RULE-3 amends
+    it): the same record recomputed; refused for a D whose conditions do not hold, a body differing from the draft at
+    C_D beyond the ARM measurement's freeze cut, that measurement entered complete (a STOP to ask), its cut not the
+    freeze's (rule, date, day entered), another slot joining the draft, fields given, a date other than D + 1, a freeze
+    of item 1(b) given without --d-date, a --now before the end of D, and a D after 2026-11-02 (item 1(f))."""
+    A, C, D, E, M, R, S = mods()
+    u = unlocked()
+    keys = ("body_sha256", "freeze_date", "source", "d_date", "conditions")
+    g = u.cut_refs["G:s42:80k"]
+
+    def changed(edit) -> Path:
+        doc = copy.deepcopy(u.doc)
+        edit(doc)
+        return scratch_file("tmanbody", "m.json", S.json_file_bytes(doc))
+
+    def arm(**upd) -> Path:
+        return changed(lambda d: u.entry(d, "ARM:latency").update(upd))
+
+    def measured(d):
+        i = next(i for i, x in enumerate(d["body"]["entries"]) if x["slot"] == "ARM:latency")
+        d["body"]["entries"][i] = {"slot": "ARM:latency", "kind": "measurement", "dl_rows": [], "output": None,
+                                   "agreement": None, "completion": None}
+
+    def joined(d):
+        d["body"]["entries"].append(dict(u.entry(d, "ARM:latency"), slot="E6-KD:s42:15ep"))
+    with stand_ins(u):
+        rc, out, made = u.print_entry("freeze", F_WORLD, {}, nn=2, extra=u.freeze_args(D_WORLD, u.man), root=u.tree)
+        got = json.loads(made.read_bytes()) if made else {}
+        check("printer_recomputes_the_freeze_record_m9", rc == 0 and {k: got.get(k) for k in keys}
+              == {k: u.freeze["doc"][k] for k in keys}, out.strip()[-300:])
+        for name, date, fields, extra, want, detail in (
+                ("printer_d_whose_conditions_do_not_hold_B2R7", D_WORLD, {}, u.freeze_args("2026-10-29", u.man),
+                 "am22_condition_unmet", "condition 1 does not hold at the end of 2026-10-29"),
+                ("printer_body_differing_beyond_the_arm_freeze_cut_RULE3", F_WORLD, {}, u.freeze_args(
+                    D_WORLD, changed(lambda d: d["body"]["expected_rows"].update(value=1))), "freeze_entry_invalid",
+                 "beyond the measurement's freeze cut"),
+                ("printer_arm_measurement_complete_after_c_d_is_a_stop_RULE3", F_WORLD, {},
+                 u.freeze_args(D_WORLD, changed(measured)), "freeze_entry_invalid", "a STOP to ask"),
+                ("printer_arm_cut_dated_after_the_freeze_date_RULE3", F_WORLD, {},
+                 u.freeze_args(D_WORLD, arm(cut_date="2026-11-01")), "freeze_entry_invalid", "the freeze's cut"),
+                ("printer_arm_cut_by_another_rule_RULE3", F_WORLD, {}, u.freeze_args(D_WORLD, arm(rule="cutoff")),
+                 "freeze_entry_invalid", "the freeze's cut"),
+                ("printer_arm_cut_entered_on_another_day_RULE3", F_WORLD, {},
+                 u.freeze_args(D_WORLD, arm(entry={"path": g["path"], "sha256": g["sha256"]})),
+                 "freeze_entry_invalid", "entered 2026-10-21"),
+                ("printer_another_slot_joining_the_draft_RULE3", F_WORLD, {}, u.freeze_args(D_WORLD, changed(joined)),
+                 "freeze_entry_invalid", "only the ARM latency measurement's freeze cut joins"),
+                ("printer_freeze_fields_given_with_d_date_m9", F_WORLD, {"body_sha256": "0" * 64},
+                 u.freeze_args(D_WORLD, u.man), "entry_field", "which it recomputes"),
+                ("printer_freeze_dated_other_than_d_plus_1_m8", "2026-11-01", {}, u.freeze_args(D_WORLD, u.man),
+                 "freeze_entry_invalid", "not its freeze date 2026-10-31"),
+                ("printer_item_1b_freeze_without_d_date_m9", F_WORLD, {k: u.freeze["doc"][k] for k in keys},
+                 ["--manifest", u.man], "freeze_entry_invalid", "printed with --d-date D"),
+                ("printer_d_whose_end_has_not_passed_m6", F_WORLD, {},
+                 u.freeze_args(D_WORLD, u.man, "2026-10-30T15:59:59Z"), "am22_date_not_ended", "has not passed"),
+                ("printer_d_after_1102_item_1f", "2026-11-04", {}, u.freeze_args("2026-11-03", u.man, NOW),
+                 "am22_d_not_first", "item 1(f)")):
+            rc, out, made = u.print_entry("freeze", date, fields, nn=5, extra=extra, root=u.tree)
+            check(name, rc == 2 and f"REFUSED [{want}]" in out and detail in out and made is None,
+                  f"rc {rc}: {out.strip()[-300:]}")
+
+
+def case_unlock_printer():
+    """`entry unlock --push-evidence` (audit M4): with the freeze record's push evidence the would-be record set
+    reaches second_session (this world already records its unlock entry); without it, freeze_entry_late; the evidence
+    is the unlock entry's alone (entry_field)."""
+    u = unlocked()
+    with stand_ins(u):
+        for name, kind, date, fields, extra, want in (
+                ("printer_unlock_with_the_freeze_push_evidence_passes_M4", "unlock", UNLOCK_DAY,
+                 u.unlock_fields, ["--push-evidence", u.pe], "second_session"),
+                ("printer_unlock_without_the_freeze_push_evidence_M4", "unlock", UNLOCK_DAY, u.unlock_fields, [],
+                 "freeze_entry_late"),
+                ("printer_push_evidence_is_the_unlock_entry_s_M4", "clock_offset", "2026-11-05", CLOCK,
+                 ["--push-evidence", u.pe], "entry_field")):
+            rc, out, made = u.print_entry(kind, date, fields, nn=5, extra=extra, root=u.tree)
+            check(name, rc == 2 and f"REFUSED [{want}]" in out and made is None, f"rc {rc}: {out.strip()[-300:]}")
+
+
+def case_unlock_gates():
+    """B2R7's unlock gates, each reached with every earlier gate passing: a freeze record whose freeze date is not
+    the day after its D (freeze_entry_invalid), one whose conditions are not the recomputed ones
+    (am22_condition_unmet), an unlock entry without the freeze record's push evidence and one whose evidence shows
+    the push after the end of the freeze date (freeze_entry_late, audit M4); and two freeze records of item 1(b)
+    entered are freeze_source_conflict (B2R6). Each variant is committed after the unlock entry's commit."""
+    A, C, D, E, M, R, S = mods()
+    u = unlocked()
+
+    def drop(d):
+        d["conditions"][3]["records"] = d["conditions"][3]["records"][1:]
+    with stand_ins(u):
+        bad = u.variant("freeze", lambda d: d.update(d_date="2026-10-29"), 11)
+        VW.expect_gate(u, "unlock_freeze_date_not_d_plus_1_refused_B2R7", "freeze_entry_invalid", mode="unlock",
+                       detail="its freeze date is D + 1", head=bad["commit"], freeze_record=bad["path"],
+                       unlock_entry=None)
+        expect_refused("two_item_1b_freeze_records_conflict_B2R6", "freeze_source_conflict", A.providers,
+                       R.Records.at_head(u.repo), lookup=True)
+        unmet = u.variant("freeze", drop, 12)
+        VW.expect_gate(u, "unlock_freeze_conditions_not_recomputed_refused_B2R7", "am22_condition_unmet",
+                       mode="unlock", detail="are not the ones recomputed for D", head=unmet["commit"],
+                       freeze_record=unmet["path"], unlock_entry=None)
+        none = u.variant("unlock", lambda d: d.update(push_evidence=None), 2)
+        VW.expect_gate(u, "unlock_entry_without_the_freeze_push_evidence_refused_M4", "freeze_entry_late",
+                       mode="unlock", detail="cites no push evidence", head=none["commit"], unlock_entry=none["path"])
+        late = u.push_evidence("2026-10-31T17:00:00Z", tag="late", when=u.tick())
+        lt = u.variant("unlock", lambda d: d.update(push_evidence=late), 3)
+        VW.expect_gate(u, "freeze_record_pushed_after_the_end_of_its_date_refused_M4", "freeze_entry_late",
+                       mode="unlock", detail="the end of its window 2026-10-31T16:00:00Z", head=lt["commit"],
+                       unlock_entry=lt["path"])
+
+
+def case_coverage():
+    """B2R7's gates follow run_added_after_freeze in the unlock order, and each has a case here (smoke_tman_unlock's
+    coverage leaves them to this smoke)."""
+    from src.tman import validate as V
+    codes = [c for c, _, _ in V.GATES]
+    i = codes.index("run_added_after_freeze")
+    check("b2r7_gates_follow_run_added_after_freeze", tuple(codes[i + 1:i + 5]) == UL.AM22_GATES, str(codes[i:i + 6]))
+    check("every_b2r7_gate_has_a_case", set(UL.AM22_GATES) <= VW.WANTED, str(sorted(set(UL.AM22_GATES) - VW.WANTED)))
+
+
+CASES = (case_static, case_trigger_reader, case_registered, case_settled_ways, case_commit_at_end, case_providers,
+         case_conditions_in_the_world, case_condition_5, case_condition_4_rows_at_c_x, case_condition_2_cases,
+         case_report_lines, case_cli, case_cli_am22_d, case_d_first, case_unlock_world, case_freeze_printer,
+         case_unlock_printer, case_unlock_gates, case_coverage)
 
 
 def main() -> int:
-    global WORLD
     try:
-        WORLD = AmWorld()
-    except Exception as e:  # noqa: BLE001
-        check("am22_world_built", False, f"{type(e).__name__}: {e}")
-        return FX.run_cases("TMAN AM-22 SMOKE (lane TMAN, B-2)", ())
-    try:
-        return FX.run_cases("TMAN AM-22 SMOKE (lane TMAN, B-2)",
-                            (case_static, case_trigger_reader, case_registered, case_settled_ways, case_commit_at_end,
-                             case_conditions_in_the_world, case_condition_4_rows_at_c_x, case_condition_2_cases,
-                             case_report_lines, case_cli))
+        return FX.run_cases("TMAN AM-22 SMOKE (lane TMAN, B-2)", CASES)
     finally:
         from src.tman import manifest as M
         if VW.REAL_TEACHER is not None:

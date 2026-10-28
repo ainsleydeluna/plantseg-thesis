@@ -179,7 +179,7 @@ def cli_outputs(w, doc: dict, data: bytes) -> tuple:
     S, out = w.S, FX.scratch_dir("tmannscli")
     (out / "m.json").write_bytes(data)
     (out / "fields.json").write_bytes(S.json_file_bytes({"body_sha256": S.canonical_sha256(doc["body"]),
-                                                          "freeze_date": VW.FREEZE_DAY, "source": "schedule"}))
+                                                          "freeze_date": VW.FREEZE_DAY, **VW.FREEZE_1F}))
     (out / "entry").mkdir()
     rc, _ = VW._cli(["--root", str(w.repo), "entry", "freeze", "--date", VW.FREEZE_DAY, "--fields",
                      str(out / "fields.json"), "--amendment", "AM-19", "--summary", "printed by a smoke.", "--out",
@@ -249,8 +249,15 @@ def case_static_scan():
     files = lane_python()
     check("static_scan_reads_the_lane_s_ten_modules_B2R11", len(files) == 10 and all(f.is_file() for f in files)
           and "am22.py" in [f.name for f in files], str([f.name for f in files]))
-    hits = {f.name: [s for s in code_literals(f) if SCORE.search(s)] for f in files}
+    # B2R5's field of kind freeze, AM-22's five conditions with their records: the one literal of that name; the
+    # go-rule record's score-derived block of the same name is kept by no allowlist (checked below)
+    hits = {f.name: [s for s in code_literals(f) if SCORE.search(s) and s != "conditions"] for f in files}
     check("no_score_key_literal_in_the_lane_s_code", not any(hits.values()), str({k: v for k, v in hits.items() if v}))
+    from src.tman import entries as E
+    keepers = [n for n in dir(R) if n.isupper() and isinstance(getattr(R, n), dict)
+               and "conditions" in _allow_keys(getattr(R, n))]
+    check("conditions_is_the_freeze_entry_s_field_and_no_reader_keeps_it_B2R5",
+          "conditions" in E.ENTRY_FILE_FIELDS["freeze"] and not keepers, str(keepers))
     holders = []
     for name in dir(R):
         a = getattr(R, name)

@@ -85,7 +85,7 @@ class Ctx:
     def __init__(self, *, mode: str, manifest_bytes: bytes, manifest_path: str, records: R.Records, runs_root=None,
                  freeze_record: str | None = None, unlock_entry: str | None = None, registered_cells=None,
                  ptq_reader=None, trigger_reader=None, artifact_runtimes=(), now: float | None = None,
-                 repo_root=None, am22_dates=None):
+                 repo_root=None, am22_dates=None, am22_d: str | None = None):
         if mode not in MODES:
             raise ValueError(f"mode {mode!r}")
         self.mode, self.data, self.path, self.records = mode, manifest_bytes, manifest_path, records
@@ -94,6 +94,7 @@ class Ctx:
         self.registered_cells, self.ptq_reader = registered_cells, ptq_reader
         self.trigger_reader = R.trigger_reader(records) if trigger_reader is None else trigger_reader
         self.am22_dates = am22_dates          # AM-22 item 2(a)'s dates: a stand-in (smokes); else the committed text's
+        self.am22_d = am22_d                  # --am22-d D: AM-22's candidate freeze for D (B2R6; condition 5)
         self.trigger_verdict: bool | None = None
         self.artifact_runtimes, self.now = list(artifact_runtimes), now
         self.repo_root = Path(records.src.root if repo_root is None else repo_root)
@@ -571,15 +572,26 @@ def _freeze_docs(x: Ctx) -> tuple[list, list]:
     return delays, news
 
 
+def am22_providers(x: Ctx, conflict: bool = True) -> list:
+    """B2R6: the AM-22 provider in front of B-1's: the candidate for --am22-d D; at the unlock and the session, the
+    freeze record named by --freeze-record only; otherwise the AM-22 freeze recorded in the decision log
+    (am22.providers; a freeze delay or new freeze beside a 1(b) freeze is freeze_source_conflict, audit m10)."""
+    from . import am22 as A
+    doc = None
+    if x.am22_d is None and x.mode in U and x.freeze_rel:
+        doc = x.entry_doc(x.freeze_rel)
+    return A.providers(x.records, d_date=x.am22_d, freeze_doc=doc, lookup=x.mode not in U, conflict=conflict)
+
+
 def g_schedule_invalid(x: Ctx):
     sch = D.schedule_block(x.records.src)
     delays, news = _freeze_docs(x)
     try:
-        x.freeze = D.freeze_instant(sch, delays=delays, news=news)
+        x.freeze = D.freeze_instant(sch, delays=delays, news=news, providers=am22_providers(x))
     except S.TmanRefused as e:
         if e.code != "freeze_source_conflict":
             raise
-        x.freeze_conflict, x.freeze = e, D.freeze_instant(sch)
+        x.freeze_conflict, x.freeze = e, D.freeze_instant(sch, providers=am22_providers(x, conflict=False))
         return None
     if x.body["schedule"] != x.freeze.as_block():
         return "the schedule block differs from the schedule in force and its freeze entries (plan §2.3)"
@@ -1269,6 +1281,60 @@ def g_run_added_after_freeze(x: Ctx):
         return "the manifest is not the one the unlock entry records (its body; in unlock mode, its file)"
 
 
+def _am22_freeze(x: Ctx) -> dict | None:
+    """The freeze record --freeze-record names when it is AM-22 item 1(b)'s, else None."""
+    fr = x.entry_doc(x.freeze_rel) if x.freeze_rel else None
+    return fr if isinstance(fr, dict) and fr.get("source") == D.AM22_SOURCE_1B else None
+
+
+def g_freeze_entry_invalid(x: Ctx):
+    """B2R5, B2R7, audit m8 (am22.freeze_record_error): the freeze record's source, dated its freeze date; under item
+    1(b) D and D + 1, five conditions whose records are dated by D and committed by the end of D, the frozen body the
+    draft at C_D but for the measurement's freeze cut (TMAN-B2-RULE-3); under item 1(f) the resolver's freeze date."""
+    from . import am22 as A
+    return A.freeze_record_error(x.records, x.cat, x.runs_root, x.entry_file(x.freeze_rel)[0], x.body,
+                                 x.freeze.moved_date or x.freeze.original_date)
+
+
+def g_am22_condition_unmet(x: Ctx):
+    """B2R6, B2R7: the check run again for the record's D from the records at C_D (audit M3): every condition holds,
+    and the recorded conditions are the recomputed ones (am22.condition_unmet_error)."""
+    from . import am22 as A
+    fr = _am22_freeze(x)
+    return None if fr is None else A.condition_unmet_error(x.records, x.cat, x.runs_root, fr, reader=x.trigger_reader,
+                                                           registered_cells=x.registered_cells, states=x.states)
+
+
+def g_am22_d_not_first(x: Ctx):
+    """B2R7, audit m4: the record's D is no later than 2026-11-02 and the first date from 2026-10-17 at whose end the
+    five conditions hold (am22.d_not_first_error)."""
+    from . import am22 as A
+    fr = _am22_freeze(x)
+    return None if fr is None else A.d_not_first_error(x.records, x.cat, x.runs_root, fr["d_date"],
+                                                       reader=x.trigger_reader, registered_cells=x.registered_cells,
+                                                       states=x.states)
+
+
+def g_freeze_entry_late(x: Ctx):
+    """Audit M4: an AM-22 item 1(b) freeze record's commit reaches the remote before the end of its freeze date (PA
+    :2345-2346). The evidence, a verbatim activity response and its tday_push_list/1 list naming the record under
+    "entry", is committed after that push and cited by the unlock entry's push_evidence (compulsory then): the
+    earliest push carrying the record's commit lies in [the first instant of its date, the end of its freeze date)
+    (push_evidence_error). Before the unlock entry exists nothing cites it yet."""
+    fr, u = _am22_freeze(x), _unlock_doc(x)
+    if fr is None or u is None:
+        return None
+    if not u.get("push_evidence"):
+        return "the unlock entry cites no push evidence of the AM-22 freeze record (audit M4)"
+    try:
+        err = push_evidence_error(x.records, u["push_evidence"], {"path": x.freeze_rel,
+                                                                  "sha256": x.entry_file(x.freeze_rel)[1]},
+                                  fr["date"], D.cutoff_instant(fr["freeze_date"]), key="entry")
+    except S.TmanRefused as e:
+        err = f"[{e.code}] {e.detail}"
+    return f"the AM-22 freeze record's push evidence: {err}" if err else None
+
+
 def g_cut_unentered_at_unlock(x: Ctx):
     """Every run and measurement slot has an entry from the freeze on: the cut list is fixed at the original freeze
     date (AM-19 items 1(d) and 3(c); plan §1.9), so a slot that is not entered as a run is entered as cut or not run
@@ -1433,8 +1499,8 @@ def g_clock_offset_invalid(x: Ctx):
         return "the clock-offset record is not the session host's, within 60 s, before any scoring record (AM-19a r21)"
 
 
-def push_evidence_error(records: R.Records, pe: dict, unlock_ref: dict, unlock_day: str,
-                        started_utc: str) -> str | None:
+def push_evidence_error(records: R.Records, pe: dict, unlock_ref: dict, unlock_day: str, started_utc,
+                        *, key: str = "unlock_entry") -> str | None:
     """TB11, the DL-109 pattern: AM-19a reading 10 as sweep_select.push_evidence reads it (DL-24 #57). The remote's
     activity response, saved verbatim, and the tday_push_list/1 list made from it were added in one commit, once,
     and are unchanged since. The list names that response, the unlock entry, the commit that added it, and T_lo,
@@ -1444,7 +1510,10 @@ def push_evidence_error(records: R.Records, pe: dict, unlock_ref: dict, unlock_d
     the commit when its own commit is or descends from it: by the clone wherever the clone holds the pushed commit
     (a served push's listed answer is checked there), by the listed answer for a served push the clone lacks. An
     unserved push the clone lacks carries nothing here: the reading counts it toward the lambda push day, which it
-    can only move earlier, and here it would vouch for an unlock that no record shows on the remote."""
+    can only move earlier, and here it would vouch for an unlock that no record shows on the remote.
+    Generalized by audit M4 to the AM-22 freeze record: `unlock_ref` is the entry the evidence proves, `unlock_day`
+    the day of T_lo, `started_utc` the window's end (a UTC text, or an instant: the end of the freeze date), and
+    `key` the list's key that names the entry (the freeze's list names it under "entry")."""
     rr, lr = pe["response"]["path"], pe["list"]["path"]
     data = {k: records.read(pe[k]["path"]) for k in ("response", "list")}
     for k in ("response", "list"):
@@ -1457,12 +1526,15 @@ def push_evidence_error(records: R.Records, pe: dict, unlock_ref: dict, unlock_d
         return f"{err}: the push evidence is settled once, its list committed with the response (AM-19a reading 10)"
     src = records.src
     commit = ss.adding_commit(src, unlock_ref["path"])
-    t_lo, started = D.day_start(unlock_day), D.parse_utc_any(started_utc)
+    started = D.parse_utc_any(started_utc) if isinstance(started_utc, str) else started_utc
+    t_lo = D.day_start(unlock_day)
     try:
         timed = ss._activity_times(ss.activity_entries(data["response"], rr), what=rr)
     except ss.SelectionRefused as e:
         return f"{e} (TB11)"
     lst = R.strict_json(data["list"], lr, code="push_evidence_invalid")
+    if key != "unlock_entry" and isinstance(lst, dict) and key in lst and "unlock_entry" not in lst:
+        lst = {("unlock_entry" if k == key else k): v for k, v in lst.items()}      # the entry's key (audit M4)
     if not (isinstance(lst, dict) and sorted(lst) == sorted(PUSH_LIST_KEYS) and lst["format"] == S.PUSH_LIST_FORMAT
             and lst["response"] == pe["response"] and lst["unlock_entry"] == unlock_ref
             and commit is not None and lst["adding_commit"] == commit and lst["t_lo_utc"] == ss.iso_utc(t_lo)
@@ -1499,7 +1571,7 @@ def push_evidence_error(records: R.Records, pe: dict, unlock_ref: dict, unlock_d
         return f"{rr}: no push carries the unlock entry's commit {commit[:12]} (TB11)"
     if not t_lo <= min(hits) < started:
         return f"{rr}: the earliest push carrying the unlock entry, at {ss.iso_utc(min(hits))}, is not in [T_lo " \
-               f"{ss.iso_utc(t_lo)}, the session's start {started_utc}) (TB11)"
+               f"{ss.iso_utc(t_lo)}, the end of its window {ss.iso_utc(started)}) (TB11; audit M4)"
     return None
 
 
@@ -1557,6 +1629,8 @@ GATES = [
     ("candidate_scored", ALL, g_candidate_scored), ("default_candidate_missing", FU, g_default_candidate_missing),
     ("listed_or_terminal_scored", ALL, g_listed_or_terminal_scored),
     ("run_added_after_freeze", U, g_run_added_after_freeze),
+    ("freeze_entry_invalid", U, g_freeze_entry_invalid), ("am22_condition_unmet", U, g_am22_condition_unmet),
+    ("am22_d_not_first", U, g_am22_d_not_first), ("freeze_entry_late", U, g_freeze_entry_late),     # B2R7
     ("cut_unentered_at_unlock", FU, g_cut_unentered_at_unlock),
     ("lane_unmet", U, g_lane_unmet), ("not_required_invalid", U, g_not_required_invalid),
     ("evaluator_files_changed", U, g_evaluator_files_changed), ("hasher_pin_mismatch", U, g_hasher_pin_mismatch),

@@ -59,7 +59,7 @@ class Unlock:
              "status": {"kind": "not_required", "dl": None, "merge_commit": None,
                         "entry": {"path": nr["path"], "sha256": nr["sha256"]}}}]}
         self.freeze = w.entry_file("freeze", [], {"body_sha256": S.canonical_sha256(w.doc["body"]),
-                                                  "freeze_date": VW.FREEZE_DAY, "source": "schedule"})
+                                                  "freeze_date": VW.FREEZE_DAY, **VW.FREEZE_1F})
         lanes = self.commit_lanes(self.lanes, "lanes, not-required entry, freeze record",
                                   {nr["path"]: w.files[nr["path"]], self.freeze["path"]: w.files[self.freeze["path"]]})
         self.unlock = w.entry_file("unlock", [], {
@@ -241,7 +241,7 @@ def refreeze(u: Unlock, doc: dict, nn: int) -> dict:
     """A freeze record of a changed body, committed (the unlock checks it before the unlock entry exists)."""
     S, w = u.S, u.w
     fr = w.entry_file("freeze", [], {"body_sha256": S.canonical_sha256(doc["body"]), "freeze_date": VW.FREEZE_DAY,
-                                     "source": "schedule"}, nn=nn)
+                                     **VW.FREEZE_1F}, nn=nn)
     w.commit({fr["path"]: w.files[fr["path"]]}, "a freeze record of a changed body")
     return fr
 
@@ -655,8 +655,13 @@ def case_push_evidence():
         u, "p24", activity(u, at, after="f" * 40), served=False), "no push carries the unlock entry's commit")
 
 
+AM22_GATES = ("freeze_entry_invalid", "am22_condition_unmet", "am22_d_not_first", "freeze_entry_late")  # B2R7
+
+
 def case_coverage():
-    want = [c for c in gate_codes("session") if c not in gate_codes("freeze")]
+    """Every unlock and session gate has a case here, B2R7's AM-22 gates aside: smoke_tman_am22's world has an AM-22
+    freeze record, and its cases reach each of them."""
+    want = [c for c in gate_codes("session") if c not in gate_codes("freeze") and c not in AM22_GATES]
     missing = [c for c in want if c not in WANTED]
     check("every_unlock_and_session_gate_has_a_case", not missing, str(missing))
 

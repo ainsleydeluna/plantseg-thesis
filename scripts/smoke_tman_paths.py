@@ -627,7 +627,8 @@ def case_cli_outputs():
         no_ec["body"]["execution_context"] = None
         (out / "m_no_context.json").write_bytes(S.json_file_bytes(no_ec))
         other = w.entry_file("freeze", [], {"body_sha256": "0" * 64, "freeze_date": VW.FREEZE_DAY,
-                                            "source": "schedule"}, nn=30)
+                                            "source": "AM-22 item 1(f)", "d_date": None, "conditions": None},
+                             nn=30)                                     # B2R5: kind freeze's AM-22 fields
         w.commit({other["path"]: w.files[other["path"]]}, "a freeze record of another body")   # after the log check
         for name, manifest, extra in (("cli_inventory_refused_writes_nothing_B61", "m_no_context.json", []),
                                       ("cli_inventory_freeze_record_of_another_body_B33", "m.json",

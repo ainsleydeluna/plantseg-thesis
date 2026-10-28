@@ -42,6 +42,7 @@ FREEZE_DAY = "2026-11-03"
 QAT_RULES_SHA256 = "76addc57d0367dda9a1163f749ec32c9c240b20736104dc12aa77488344f9568"
 CLIP_REL = "u4_clip/clip_selection.json"            # the U4 pilot's clip selection, under --runs
 LATE = "2026-11-04T10:00:00Z"                       # a derived model made after the freeze, appended
+FREEZE_1F = {"source": "AM-22 item 1(f)", "d_date": None, "conditions": None}   # B2R5: a freeze of item 1(f)
 REAL_FILES = ("configs/tday_catalogue.json", "configs/kd_schedule.json", "configs/qat_selection_rules.json",
               *[f"configs/calibration/ptq_calibration_seed{s}.json" for s in (42, 43, 44, 45)],
               "reports/derived/mde_entry_20261009T034825Z.json", "reports/strata/train_strata_v1.json",
@@ -523,7 +524,7 @@ class World:
         sha = self.S.canonical_sha256(self.doc["body"] if body is None else body)
         self.freeze_records = getattr(self, "freeze_records", {})
         if sha not in self.freeze_records:
-            ref = self.entry_file("freeze", [], {"body_sha256": sha, "freeze_date": FREEZE_DAY, "source": "schedule"},
+            ref = self.entry_file("freeze", [], {"body_sha256": sha, "freeze_date": FREEZE_DAY, **FREEZE_1F},
                                   nn=10 + len(self.freeze_records))
             self.commit({ref["path"]: self.files[ref["path"]]}, "the freeze record")
             self.freeze_records[sha] = ref
@@ -2081,7 +2082,7 @@ def case_printers():
     printed(w, "printer_clock_offset_passes", "clock_offset", [], clock, None, date="2026-11-05")
     printed(w, "printer_clock_offset_over_60_s_B9", "clock_offset", [], dict(clock, offset_seconds=75.0),
             "clock_offset_invalid", date="2026-11-05")
-    fr = {"body_sha256": w.S.canonical_sha256(w.doc["body"]), "freeze_date": FREEZE_DAY, "source": "schedule"}
+    fr = {"body_sha256": w.S.canonical_sha256(w.doc["body"]), "freeze_date": FREEZE_DAY, **FREEZE_1F}
     printed(w, "printer_freeze_record_of_this_body_passes", "freeze", [], fr, None, extra=["--manifest", man])
     printed(w, "printer_freeze_record_of_another_body_B9", "freeze", [], dict(fr, body_sha256="0" * 64),
             "run_added_after_freeze", extra=["--manifest", man])
@@ -2240,9 +2241,8 @@ def case_inventory():
         except Exception as e:  # noqa: BLE001 -- a crash fails the check by name
             return type(e).__name__
     body = S.canonical_sha256(w.doc["body"])
-    other = w.entry_file("freeze", [], {"body_sha256": "0" * 64, "freeze_date": FREEZE_DAY, "source": "schedule"},
-                         nn=30)
-    undecided = w.entry_file("freeze", [], {"body_sha256": body, "freeze_date": "2026-11-04", "source": "schedule"},
+    other = w.entry_file("freeze", [], {"body_sha256": "0" * 64, "freeze_date": FREEZE_DAY, **FREEZE_1F}, nn=30)
+    undecided = w.entry_file("freeze", [], {"body_sha256": body, "freeze_date": "2026-11-04", **FREEZE_1F},
                              nn=31)                         # bytes of its own: its sha256 only in a DECIDED row
     w.dl[undecided["dl"]] = ("DECIDED", w.dl[undecided["dl"]][1])
     w.commit({r["path"]: w.files[r["path"]] for r in (other, undecided)}, "freeze records: another body, undecided")
@@ -2381,7 +2381,7 @@ def case_draft_and_cli():
         check("cli_validate_freeze_without_runs_refused", rc == 2)
     finally:
         R.TRIGGER_READER = saved
-    check("gate_codes_unique_and_ordered", len(set(c for c, _, _ in V.GATES)) == len(V.GATES) == 84)
+    check("gate_codes_unique_and_ordered", len(set(c for c, _, _ in V.GATES)) == len(V.GATES) == 88)  # B2R7: +4
 
 
 WORLD: World | None = None

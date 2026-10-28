@@ -577,10 +577,41 @@ def not_required_error(v: View, lane: dict) -> str | None:
     return f"serves {left} with no cut entry entered by the end of {v.day}" if left else None
 
 
-def condition_5(v: View, **kw) -> Condition:
-    """The draft committed by X passes the validator in freeze mode (B2-3)."""
+def unentered(x, cat) -> list:
+    """The run and measurement slots the draft does not enter (validate.g_cut_unentered_at_unlock's rule: E6-KD only
+    when AM-3 triggered it)."""
+    kd_off = (x.body["trigger"] or {}).get("triggered") is not True
+    return [k for k, s in cat.slots.items() if s["class"] in ("run", "measurement") and k not in x.by_slot
+            and not (kd_off and s["stage"] == "E6-KD")]
+
+
+def condition_5(v: View, *, registered_cells=None) -> Condition:
+    """The draft committed by X, read as its blob at C_X (audit m5), passes the validator in freeze mode with AM-22's
+    candidate freeze for D = X (B2R6): its schedule block that candidate's, the evaluator commit among its entries.
+    The ARM latency measurement's freeze cut cannot exist before the freeze (item 1(g); AM-19 item 3(b), first point),
+    so a draft whose one unmet freeze-time item is that measurement's entry passes (TMAN-B2-RULE-3)."""
+    from . import validate as V
     c = Condition(5)
-    c.missing.append("the validator's freeze-mode verdict on the draft is not read here yet (B2-3)")
+    draft, why, rec = v.draft()
+    if draft is None:
+        c.missing.append(why)
+        return c
+    x = V.Ctx(mode="freeze", manifest_bytes=draft["data"], manifest_path=S.MANIFEST_REL, records=v.records,
+              runs_root=v.runs_root, registered_cells=registered_cells, trigger_reader=v.reader, am22_d=v.day)
+    try:
+        c.reports += V.validate(x).reports
+    except S.TmanRefused as e:
+        left = unentered(x, v.cat) if e.code == "cut_unentered_at_unlock" else []
+        if not (left and all(v.cat.slots[k]["class"] == "measurement" for k in left)):
+            c.missing.append(f"the validator refuses the draft in freeze mode with AM-22's freeze for D = {v.day}: "
+                             f"[{e.code}] {e.detail[:400]}")
+            return c
+        c.notes.append(f"{left}: the measurement is cut at the freeze, its cut entered then (AM-22 item 1(g); "
+                       "TMAN-B2-RULE-3)")
+    c.records.append(rec)
+    ev = ((draft["doc"].get("body") or {}).get("evaluator") or {}).get("commit")
+    if isinstance(ev, str):
+        c.records.append(Rec(v, "evaluator commit", ev, how="commit"))
     return c
 
 
@@ -600,13 +631,248 @@ class Check:
 
 
 def evaluate(records: R.Records, cat, runs_root, day: str, *, reader=None, states: dict | None = None,
-             **kw) -> Check:
-    """The five conditions at the end of `day`, from the records committed by then."""
+             quick: bool = False, **kw) -> Check:
+    """The five conditions at the end of `day`, from the records committed by then; `quick`, condition 5 (the
+    validator's run) only once conditions 1 to 4 hold."""
     v = View(records, cat, runs_root, day, reader=reader, states=states)
     if v.commit is None:
         return Check(day, v, [Condition(n, missing=[f"no commit of the records ref by the end of {day}"])
                               for n in range(1, 6)])
-    return Check(day, v, [fn(v, **kw) if fn is condition_5 else fn(v) for fn in CONDITIONS])
+    conds = [fn(v) for fn in CONDITIONS[:4]]
+    if quick and not all(c.met for c in conds):
+        conds.append(Condition(5, missing=["not read: a condition of 1 to 4 is MISSING"]))
+    else:
+        conds.append(condition_5(v, **kw))
+    return Check(day, v, conds)
+
+
+def days(first: str, last: str) -> list:
+    out, d = [], D.day(first)
+    while D.iso(d) <= last:
+        out.append(D.iso(d))
+        d += timedelta(days=1)
+    return out
+
+
+def first_d(records: R.Records, cat, runs_root, upto: str, *, reader=None, states: dict | None = None,
+            **kw) -> tuple:
+    """Audit m4: every date from AM-22's in-force day 2026-10-17 to `upto`, each from the records as of that day's end
+    (M3); (the first at whose end all five conditions hold, or None; the dates' checks)."""
+    states, checks = ({} if states is None else states), []
+    for day in days(AM22_IN_FORCE, upto):
+        checks.append(evaluate(records, cat, runs_root, day, reader=reader, states=states, quick=True, **kw))
+        if checks[-1].met:
+            return day, checks
+    return None, checks
+
+
+# ----------------------------------------------------------------------------- the AM-22 provider (B2R6, m10)
+def recorded_freezes(records: R.Records) -> list:
+    """The freeze records a RECORDED or IMPLEMENTED decision-log row enters: each entry file of kind freeze it names
+    that reads as entries.read_entry_file reads it (one that does not is no freeze of record)."""
+    names = sorted({m.group(0) for st, line in records.decision_log().rows.values()
+                    if st.startswith(("RECORDED", "IMPLEMENTED")) for m in ENTRY_PATH_RE.finditer(line)
+                    if m.group(0).rsplit("/", 1)[1].startswith("freeze__")})
+    out = []
+    for rel in names:
+        try:
+            out.append(E.read_entry_file(records, rel, "freeze")[0])
+        except S.TmanRefused:
+            continue
+    return out
+
+
+def providers(records: R.Records, *, d_date: str | None = None, freeze_doc: dict | None = None,
+              lookup: bool = False, conflict: bool = True) -> list:
+    """B2R6: the provider each freeze_instant call puts in front of B-1's: the candidate for D = `d_date` (--am22-d;
+    condition 5); else the freeze record `freeze_doc` (unlock mode: --freeze-record only); else, with `lookup`, the
+    AM-22 freeze recorded in the decision log. A record of item 1(f) gives none: B-1's providers answer (item 1(f);
+    AM-19 item 1(d)). With an item 1(b) freeze, a RECORDED or IMPLEMENTED row holding a TMAN freeze_delay or new_freeze
+    entry is freeze_source_conflict: under item 1 every never-cut run is complete at D (PA :2309-2311; audit m10)."""
+    if d_date is not None:
+        if not S.TYPES["day"](d_date):
+            raise S.TmanRefused("schedule_invalid", f"--am22-d {d_date!r} is not a date (YYYY-MM-DD)")
+        prov = D.am22_candidate(d_date)
+    else:
+        if freeze_doc is None and lookup:
+            found = [d for d in recorded_freezes(records) if d.get("source") == D.AM22_SOURCE_1B]
+            if len(found) > 1:
+                raise S.TmanRefused("freeze_source_conflict", f"{len(found)} AM-22 item 1(b) freeze records are "
+                                                              "entered: the freeze is made once (item 1(b))")
+            freeze_doc = found[0] if found else None
+        if not (isinstance(freeze_doc, dict) and freeze_doc.get("source") == D.AM22_SOURCE_1B
+                and S.TYPES["day"](freeze_doc.get("freeze_date"))):
+            return []
+        prov = D.am22_provider(freeze_doc["freeze_date"])
+    if conflict:
+        rows = [dl for dl, (st, line) in records.decision_log().rows.items()
+                if st.startswith(("RECORDED", "IMPLEMENTED"))
+                and ("TMAN freeze_delay entry" in line or "TMAN new_freeze entry" in line)]
+        if rows:
+            raise S.TmanRefused("freeze_source_conflict", f"{rows} enter an AM-19 item 1(d) freeze delay or new freeze "
+                                                          "while the freeze is AM-22 item 1(b)'s: under item 1 every "
+                                                          "never-cut run is complete at D (PA :2309-2311; audit m10)")
+    return [prov]
+
+
+# ------------------------------------------------------------------------- the freeze entry (B2R5, B2R7, m8, m9)
+def freeze_conditions(chk: Check) -> list:
+    """The freeze entry's conditions (B2R5): the five, numbered, each with the records the check read for D."""
+    return [{"number": c.number, "records": [r.entry() for r in c.records]} for c in chk.conditions]
+
+
+def conditions_error(recorded, chk: Check) -> str | None:
+    """am22_condition_unmet: the recorded conditions are the recomputed ones -- the same records (kind, ref, sha256)
+    for each, each dated no earlier than the day its commits give (audit M2: a push confirmed on a later day dates a
+    record later, never earlier) and no later than D."""
+    want = freeze_conditions(chk)
+    for got, w in zip(recorded, want):
+        g = {(r["kind"], r["ref"], r["sha256"]): r["date"] for r in got["records"]}
+        h = {(r["kind"], r["ref"], r["sha256"]): r["date"] for r in w["records"]}
+        if set(g) != set(h):
+            return f"condition {w['number']}'s records are not the ones recomputed for D: {sorted(set(g) ^ set(h))[:3]}"
+        early = sorted(k for k in g if g[k] < h[k] or g[k] > chk.day)
+        if early:
+            return f"condition {w['number']}'s records {early[:3]} are dated before their commits' day or after D"
+    return None
+
+
+def committed_by(v: View, rec: dict) -> bool:
+    """A record the freeze entry cites is committed by the end of D (the records at C_D): a decision-log row present
+    there, a commit in C_D's history, a records file there at its sha256; a run directory's record is not a
+    committed record (its date is checked)."""
+    ref, sha = rec["ref"], rec["sha256"]
+    if S.DL_ID_RE.fullmatch(ref):
+        return v.dl().has(ref)
+    if S.COMMIT_RE.fullmatch(ref):
+        return v.records.src.commit_exists(ref) and v.records.src.is_ancestor(ref, v.commit)
+    if ss.RecordsSource.is_record(ref):
+        return v.records.has(ref) and (sha is None or S.sha256_bytes(v.records.read(ref)) == sha)
+    return True
+
+
+def frozen_body_error(v: View, records: R.Records, body: dict, freeze_date: str) -> str | None:
+    """TMAN-B2-RULE-3 (amending audit m9): the body to freeze is the draft committed by the end of D (its blob at C_D)
+    plus, only when the ARM latency measurement is not complete at the freeze, its freeze cut -- rule freeze, dated the
+    freeze date, its row entered that day (`records`: the decision log's history). Nothing else differs. A measurement
+    entered complete at the freeze and not in the draft completed after C_D: a STOP to ask."""
+    draft, why, _ = v.draft()
+    if draft is None:
+        return f"no draft to freeze: {why}"
+    dbody = draft["doc"].get("body") if hasattr(draft["doc"], "keys") else None
+    ents = body.get("entries") if isinstance(body, dict) else None
+    if not (isinstance(dbody, dict) and isinstance(ents, list) and all(isinstance(e, dict) for e in ents)):
+        return "the body to freeze holds no entries"
+    have = {e.get("slot") for e in dbody["entries"]}
+    rest = dict(body, entries=[e for e in ents if e.get("slot") in have])
+    if S.canonical_sha256(rest) != S.canonical_sha256(dbody):
+        return (f"the body to freeze differs from the draft committed by the end of {v.day} beyond the measurement's "
+                "freeze cut (TMAN-B2-RULE-3)")
+    for e in (e for e in ents if e.get("slot") not in have):
+        s = v.cat.slots.get(e.get("slot"))
+        if s is None or s["class"] != "measurement":
+            return (f"{e.get('slot')}: only the ARM latency measurement's freeze cut joins the draft at the freeze "
+                    "(AM-22 item 1(g); TMAN-B2-RULE-3)")
+        if e.get("kind") != "cut":
+            return (f"{e['slot']}: entered {e.get('kind')} at the freeze, absent from the draft at C_D: it completed "
+                    "after C_D and by the freeze -- a STOP to ask (TMAN-B2-RULE-3)")
+        ref = e.get("entry") if isinstance(e.get("entry"), dict) else {}
+        entered = E.entered_day(records, ref["sha256"]) if isinstance(ref.get("sha256"), str) else None
+        if (e.get("rule"), e.get("cut_date"), entered) != ("freeze", freeze_date, freeze_date):
+            return (f"{e['slot']}: its freeze cut is rule {e.get('rule')!r} dated {e.get('cut_date')}, entered "
+                    f"{entered}; it is the freeze's cut, dated and entered on the freeze date {freeze_date} "
+                    "(TMAN-B2-RULE-3)")
+    return None
+
+
+def freeze_entry_error(doc: dict, resolver_date: str | None) -> str | None:
+    """freeze_entry_invalid's field relations (B2R5; m8): the source is item 1(b)'s or item 1(f)'s; the entry is dated
+    its freeze date; under 1(b), D and the freeze date D + 1, the five conditions numbered 1 to 5, no record dated
+    after D; under 1(f), neither D nor conditions, the freeze date the resolver's (`resolver_date`: its moved date,
+    else 2026-11-03)."""
+    src = doc.get("source")
+    if src not in (D.AM22_SOURCE_1B, D.AM22_SOURCE_1F):
+        return f"source {src!r} is neither {D.AM22_SOURCE_1B!r} nor {D.AM22_SOURCE_1F!r} (B2R5)"
+    if doc["date"] != doc["freeze_date"]:
+        return f"the freeze entry is dated {doc['date']}, not its freeze date {doc['freeze_date']} (audit m8)"
+    d, conds = doc["d_date"], doc["conditions"]
+    if src == D.AM22_SOURCE_1F:
+        if d is not None or conds is not None:
+            return "a freeze of item 1(f) names no D and no conditions (B2R5)"
+        if resolver_date is not None and doc["freeze_date"] != resolver_date:
+            return f"the freeze date {doc['freeze_date']} is not the resolver's {resolver_date} (item 1(f); audit m8)"
+        return None
+    if d is None or conds is None or D.iso(D.day(d) + timedelta(days=1)) != doc["freeze_date"]:
+        return f"a freeze of item 1(b) names D, and its freeze date is D + 1 (D {d}, freeze date {doc['freeze_date']})"
+    if [c["number"] for c in conds] != [1, 2, 3, 4, 5]:
+        return f"the conditions are the five, numbered 1 to 5, not {[c['number'] for c in conds]} (B2R5)"
+    late = sorted({r["ref"] for c in conds for r in c["records"] if r["date"] > d})
+    return f"records dated after D {d}: {late[:3]} (B2R7)" if late else None
+
+
+def freeze_record_error(records: R.Records, cat, runs_root, doc: dict, body: dict,
+                        resolver_date: str | None) -> str | None:
+    """freeze_entry_invalid (B2R7): the field relations; under item 1(b), every record committed by the end of D
+    (the records at C_D) and the frozen body the draft at C_D but for the measurement's freeze cut
+    (TMAN-B2-RULE-3)."""
+    err = freeze_entry_error(doc, resolver_date)
+    if err or doc["source"] != D.AM22_SOURCE_1B:
+        return err
+    v = View(records, cat, runs_root, doc["d_date"])
+    if v.commit is None:
+        return f"no commit of the records ref by the end of D {doc['d_date']}"
+    late = sorted({r["ref"] for c in doc["conditions"] for r in c["records"] if not committed_by(v, r)})
+    if late:
+        return f"records not committed by the end of D {doc['d_date']}: {late[:3]} (B2R7)"
+    return frozen_body_error(v, records, body, doc["freeze_date"])
+
+
+def condition_unmet_error(records: R.Records, cat, runs_root, doc: dict, *, reader=None, **kw) -> str | None:
+    """am22_condition_unmet (B2R6, B2R7): the check run again for the record's D from the records at C_D (M3); a
+    condition that does not hold, or recorded conditions that are not the recomputed ones."""
+    chk = evaluate(records, cat, runs_root, doc["d_date"], reader=reader, **kw)
+    unmet = [c for c in chk.conditions if not c.met]
+    if unmet:
+        return "; ".join(f"condition {c.number} does not hold at the end of D {doc['d_date']}: {c.missing[0]}"
+                         for c in unmet[:2])
+    return conditions_error(doc["conditions"], chk)
+
+
+def d_not_first_error(records: R.Records, cat, runs_root, d_date: str, *, reader=None, **kw) -> str | None:
+    """am22_d_not_first (B2R7; audit m4): D is no later than 2026-11-02, and no earlier date from 2026-10-17 has all
+    five conditions at its end."""
+    if d_date > LAST_D:
+        return f"D {d_date} is later than {LAST_D}: AM-22 item 1(f) applies"
+    earlier, _ = first_d(records, cat, runs_root, previous_day(d_date), reader=reader, **kw)
+    return (f"the five conditions already hold at the end of {earlier}: D is the first such date (item 1(a); audit "
+            "m4)") if earlier else None
+
+
+def freeze_fields(records: R.Records, cat, runs_root, d_date: str, body: dict, *, now: float, reader=None,
+                  **kw) -> dict:
+    """`entry freeze --d-date D` (audit m9 as TMAN-B2-RULE-3 amends it): D's end has passed; the check recomputed for
+    D and every earlier date from the records at each date's end, never pasted output (am22_d_not_first,
+    am22_condition_unmet); the body to freeze the draft at C_D but for the measurement's freeze cut
+    (freeze_entry_invalid); the fields {body_sha256 of that body, freeze_date D + 1, source item 1(b), d_date D, the
+    recomputed conditions}, condition 5 citing the draft at C_D."""
+    err = date_error(d_date, now)
+    if err:
+        raise err
+    states = {}
+    why = d_not_first_error(records, cat, runs_root, d_date, reader=reader, states=states, **kw)
+    if why:
+        raise S.TmanRefused("am22_d_not_first", why)
+    chk = evaluate(records, cat, runs_root, d_date, reader=reader, states=states, **kw)
+    unmet = [c for c in chk.conditions if not c.met]
+    if unmet:
+        raise S.TmanRefused("am22_condition_unmet", "; ".join(f"condition {c.number} does not hold at the end of "
+                                                              f"{d_date}: {c.missing[0]}" for c in unmet[:2]))
+    freeze_date = D.iso(D.day(d_date) + timedelta(days=1))
+    why = frozen_body_error(chk.view, records, body, freeze_date)
+    if why:
+        raise S.TmanRefused("freeze_entry_invalid", why)
+    return {"body_sha256": S.canonical_sha256(body), "freeze_date": freeze_date, "source": D.AM22_SOURCE_1B,
+            "d_date": d_date, "conditions": freeze_conditions(chk)}
 
 
 def date_error(day, now: float) -> S.TmanRefused | None:
@@ -626,22 +892,29 @@ def date_error(day, now: float) -> S.TmanRefused | None:
     return None
 
 
-def check_freeze(records: R.Records, cat, runs_root, day: str, *, now: float, reader=None, **kw) -> Check:
-    """`check-freeze --date X` (B2R4): X refused unless its end has passed and it is no later than 2026-11-02, then
-    the five conditions at its end."""
+def check_freeze(records: R.Records, cat, runs_root, day: str, *, now: float, reader=None, **kw) -> tuple:
+    """`check-freeze --date X` (B2R4): X refused unless its end has passed and it is no later than 2026-11-02; then
+    (the five conditions at the end of X; D, the first date from 2026-10-17 to X at whose end all five hold, or None
+    (audit m4); the earlier dates' checks)."""
     err = date_error(day, now)
     if err:
         raise err
-    return evaluate(records, cat, runs_root, day, reader=reader, **kw)
+    states = {}
+    chk = evaluate(records, cat, runs_root, day, reader=reader, states=states, **kw)
+    d, scans = first_d(records, cat, runs_root, previous_day(day), reader=reader, states=states, **kw)
+    return chk, (d if d is not None else (day if chk.met else None)), scans
 
 
-def lines(chk: Check) -> list:
-    """The check's printed lines: each condition MET with its records or MISSING with what is missing, every
-    record's commits (M2), the boundary-day REPORT for each commit made on X or X-1 (audit M2), the conditions'
-    REPORT lines and NOTE lines."""
+def lines(chk: Check, d: str | None = None, scans=()) -> list:
+    """The check's printed lines: each earlier date's verdict (audit m4); each condition at X MET with its records or
+    MISSING with what is missing, every record's commits (M2), the boundary-day REPORT for each commit made on X or
+    X-1 (audit M2), the conditions' REPORT lines and NOTE lines; then D, or that there is none by X."""
     v = chk.view
-    out = [f"CHECK-FREEZE {chk.day} (AM-22 item 1(a)): the records committed by its end, C_X "
-           f"{v.commit or 'none'}" + (f" (committed {C.utc_text(v.committed)})" if v.committed else "")]
+    out = [f"DATE {s.day} C_X {(s.view.commit or 'none')[:12]}: "
+           + ("MET" if s.met else "MISSING " + ", ".join(str(c.number) for c in s.conditions if not c.met))
+           for s in scans]
+    out.append(f"CHECK-FREEZE {chk.day} (AM-22 item 1(a)): the records committed by its end, C_X "
+               f"{v.commit or 'none'}" + (f" (committed {C.utc_text(v.committed)})" if v.committed else ""))
     boundary, reports = {}, []
     days = (chk.day, previous_day(chk.day))
     for c in chk.conditions:
@@ -665,4 +938,6 @@ def lines(chk: Check) -> list:
     out.append(f"RESULT: MET (all five conditions at the end of {chk.day})" if not unmet else
                f"RESULT: MISSING (condition{'s' if len(unmet) > 1 else ''} {', '.join(unmet)} at the end of "
                f"{chk.day})")
+    out.append(f"D: {d}" if d else f"NO D: no date from {AM22_IN_FORCE} to {chk.day} has all five conditions at its "
+                                    "end (AM-22 item 1(a))")
     return out
