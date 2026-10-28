@@ -659,7 +659,13 @@ def case_trigger_reader():
              "reports/derived/trig_bad.json": rec(0.40, 0.38, triggered=False)}
     FX.commit_files(repo, files)
     read = R.trigger_reader(R.Records.at_head(repo))
-    got = [read(rel, files[rel]) for rel in ("reports/derived/trig_fired.json", "reports/derived/trig_quiet.json")]
+
+    def verdict(rel):
+        try:
+            return read(rel, files[rel])
+        except ValueError as e:
+            return f"ValueError: {e}"[:200]
+    got = [verdict(rel) for rel in ("reports/derived/trig_fired.json", "reports/derived/trig_quiet.json")]
     check("l_am3_reader_gives_the_verdict_only_B2R13", got == [{"triggered": True}, {"triggered": False}], str(got))
     try:
         read("reports/derived/trig_bad.json", files["reports/derived/trig_bad.json"])
@@ -1073,7 +1079,13 @@ def case_unlock_world():
     `entry freeze --d-date`, holds D, D + 1 and the five conditions (B2R5), condition 5 citing the draft at C_D, and
     the frozen body's sha256 -- the draft at C_D and the ARM measurement's freeze cut (TMAN-B2-RULE-3)."""
     A, C, D, E, M, R, S = mods()
-    u = unlocked()
+    try:
+        u, why = unlocked(), None
+    except Exception as e:  # noqa: BLE001 -- the world's printers refused: its check fails by name
+        u, why = None, f"{type(e).__name__}: {e}"
+    check("am22_unlock_world_built_by_its_printers_B2R5_M4", u is not None, str(why)[:400])
+    if u is None:
+        return
     with stand_ins(u):
         code, passed, e = u.run("unlock")
         check("am22_unlock_world_passes_every_unlock_gate_B2R7_M4", code is None
