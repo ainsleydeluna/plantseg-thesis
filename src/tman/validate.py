@@ -85,7 +85,7 @@ class Ctx:
     def __init__(self, *, mode: str, manifest_bytes: bytes, manifest_path: str, records: R.Records, runs_root=None,
                  freeze_record: str | None = None, unlock_entry: str | None = None, registered_cells=None,
                  ptq_reader=None, trigger_reader=None, artifact_runtimes=(), now: float | None = None,
-                 repo_root=None, am22_dates=None, am22_d: str | None = None):
+                 repo_root=None, am22_d: str | None = None):
         if mode not in MODES:
             raise ValueError(f"mode {mode!r}")
         self.mode, self.data, self.path, self.records = mode, manifest_bytes, manifest_path, records
@@ -93,7 +93,6 @@ class Ctx:
         self.freeze_rel, self.unlock_rel = freeze_record, unlock_entry
         self.registered_cells, self.ptq_reader = registered_cells, ptq_reader
         self.trigger_reader = R.trigger_reader(records) if trigger_reader is None else trigger_reader
-        self.am22_dates = am22_dates          # AM-22 item 2(a)'s dates: a stand-in (smokes); else the committed text's
         self.am22_d = am22_d                  # --am22-d D: AM-22's candidate freeze for D (B2R6; condition 5)
         self.trigger_verdict: bool | None = None
         self.artifact_runtimes, self.now = list(artifact_runtimes), now
@@ -1016,15 +1015,10 @@ def cut_context(x: Ctx, docs: dict | None = None) -> E.CutContext:
                         decision_records=recs, attempts=idx.attempts, run_slot=idx.slot_of.get,
                         stopped=idx.stopped_ids(), status=x.slot_status, rule_record=E.rule_record_reader(x.records),
                         e3x=e3x, entered=entered, known_by=E.known_by_reader(x.records),
-                        reference_error=reference_error, am22=lambda: am22_dates(x),
+                        reference_error=reference_error, am22=lambda: D.am22_dates_of_record(x.records.src),
                         moving=E.moving_reader(x.cat, x.records, runs, pilot if isinstance(pilot, dict) else None),
                         last_row=E.last_row_reader(x.cat, runs), logged=E.logged_reader(x.records),
                         reads_runs=runs is not None)
-
-
-def am22_dates(x: Ctx) -> D.Am22Dates:
-    """AM-22 item 2(a)'s dates: the Ctx's stand-in, else the committed text's at the records' commit (B2R1)."""
-    return x.am22_dates if x.am22_dates is not None else D.am22_dates_of_record(x.records.src)
 
 
 def latest_finished(cat, index: C.RunIndex, stage: str, now) -> set:

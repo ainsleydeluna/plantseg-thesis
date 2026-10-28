@@ -1326,8 +1326,8 @@ M = [
     ("arm_cutoff_dated_by_each_run", ENT,
      [('    if len(groups) == 1 and all(ctx.cat.slots[k]["cut_group"] == groups[0] for k in keys):',
        "    if False:")],
-     "am22", "case_condition_5", "condition_5_met_its_one_unmet_item_the_arm_measurement_RULE3", ["cut_date_mismatch"],
-     None),
+     "cuts", "case_cutoff_dates", "dl168_l_arm_cut_by_its_first_run_s_date_through_the_moving_reader_R3_08",
+     ["cut_date_mismatch"], None),
     # ------------------------ B-2: AM-22 item 1(a)'s check (B2R3, B2R4, B2R11, B2R13; audit M2, M3, m7, n3, n4)
     ("c_x_is_the_tip", A22, [("    return next((c for c, t in chain[late + 1:] if D.meets(t, cutoff)), None)",
                               "    return next((c for c, t in chain[late + 1:]), None)")],
@@ -1799,6 +1799,141 @@ M = [
                                                        "        if False:\n            return")],
      "am22", "case_unlock_gates", "freeze_list_naming_the_record_under_unlock_entry_refused_R2_12",
      ["freeze_entry_late"], None),
+    # ------- B-2, B2-F2: the cutoff (R1-F3, R1-F7, R4, R4-2, R4-4, R3-07, R3-13, R3-15) and the teacher's rows (N2)
+    ("record_after_the_ceiling_counts", ENT, [('    written = [r["record"] for r in reads if r["record"] is not None '
+                                               'and r["record"]["date"] <= dates.ceiling]',
+                                               '    written = [r["record"] for r in reads if r["record"] is not '
+                                               'None]')],
+     "cuts", "case_cutoff_rules", "cutoff_2c_record_written_after_the_ceiling_is_unwritten_R1_F3",
+     ["cut_date_mismatch"], None),
+    ("one_unwritten_record_still_names_a_setter", ENT, [("    moved = not absent and last is not None and "
+                                                         "D.cutoff_day(dates, last) != dates.cutoff",
+                                                         "    moved = last is not None and D.cutoff_day(dates, last) "
+                                                         "!= dates.cutoff")],
+     "cuts", "case_cutoff_rules", "cutoff_2c_one_record_unwritten_rule_record_null_R4_4", ["cut_date_mismatch"], None),
+    ("repeat_row_dated_by_its_utc_day", ENT, [("        day = D.manila_day(last.at)",
+                                               '        day = __import__("time").strftime("%Y-%m-%d", '
+                                               '__import__("time").gmtime(last.at))')],
+     "cuts", "case_cutoff_rules", "cutoff_2b_row_after_16z_counts_from_its_manila_day_R4_2", ["cut_date_mismatch"],
+     None),
+    ("multi_slot_setters_unexplained", ENT, [("    if not allowed:\n        return None, None, (f\"the cut's slots' "
+                                              "cutoff date", "    if False:\n        return None, None, (f\"the "
+                                                             "cut's slots' cutoff date")],
+     "cuts", "case_cutoff_rules", "cutoff_slots_set_by_different_records_one_entry_each_R4", [], None),
+    ("diverged_attempt_awaits_a_repeat", ENT, [("    if ctx.status(slot) == C.DIVERGED:\n        return None, None, "
+                                                "f\"{slot}'s last attempt diverged",
+                                                "    if False:\n        return None, None, f\"{slot}'s last attempt "
+                                                "diverged")],
+     "cuts", "case_cutoff_rules", "cutoff_2b_after_a_diverged_attempt_refused_R3_15", ["cut_date_mismatch"], None),
+    ("slots_with_different_dates_unchecked", ENT, [('    if len(days) != 1:\n        return None, None, f"the cut\'s '
+                                                    'slots have different cutoff dates',
+                                                    '    if False:\n        return None, None, f"the cut\'s slots '
+                                                    'have different cutoff dates')],
+     "cuts", "case_cutoff_rules", "cutoff_slots_with_different_dates_refused_R3_15", [], None),
+    ("unread_cutoff_refused_in_a_draft", ENT, [('        return (doc["date"], None, None) if not ctx.reads_runs else '
+                                                '(None, None, why)', "        return (None, None, why)")],
+     "cuts", "case_cutoff_rules", "cutoff_unread_in_a_draft_s_context_stands_R3_15", [], None),
+    ("cutoff_2b_arm_run_exemption_dropped", ENT, [('    if doc["rule"] == "cutoff" and doc["launched"] and '
+                                                   'rule_day(doc, ctx) == doc["date"]:\n        return None\n'
+                                                   '    running', "    if False:\n        return None\n    running")],
+     "cuts", "case_cutoff_rules", "cutoff_2b_of_a_stopped_arm_run_passes_m1", ["arm_run_cut_while_running"], None),
+    ("cutoff_reason_rule_freeze_only", ENT, [('    if doc["rule"] in ("freeze", "cutoff"):\n        if doc["reason"] '
+                                              'not in S.NEVER_LAUNCHED_REASONS:',
+                                              '    if doc["rule"] in ("freeze",):\n        if doc["reason"] not in '
+                                              'S.NEVER_LAUNCHED_REASONS:')],
+     "cuts", "case_cutoff_rules", "cutoff_reason_outside_the_list_refused", ["cut_reason_invalid"], None),
+    ("evidence_unreadable_refuses", ENT, [('        except S.TmanRefused as e:\n            if e.code == "test_path":',
+                                           '        except ZeroDivisionError as e:\n            if e.code == '
+                                           '"test_path":')],
+     "cuts", "case_cutoff_printer", "printer_no_card_since_an_uncommitted_file_is_a_report_R1_F7", [], None),
+    ("alpha_dated_by_its_utc_day", ENT, [('"sha256": S.sha256_bytes(records.read(rel)), "date": D.manila_day(t)})',
+                                          '"sha256": S.sha256_bytes(records.read(rel)), "date": __import__("time")'
+                                          '.strftime("%Y-%m-%d", __import__("time").gmtime(t))})')],
+     "cuts", "case_cutoff_readers", "alpha_selection_dated_by_its_adding_commit_s_manila_day", [], None),
+    ("pilot_day_before_its_sha256", ENT, [("            m = S.ISO_DAY_RE.search(text, text.index(sha) + len(sha))",
+                                           "            m = S.ISO_DAY_RE.search(text)")],
+     "cuts", "case_cutoff_readers", "pilot_winner_dated_by_the_day_after_its_sha256_R3_15", [], None),
+    ("last_row_reader_unread", ENT, [("        return C.last_row(cat.slots[index.slot_of[run_id]], index.root / "
+                                      "run_id)", "        return None")],
+     "cuts", "case_cutoff_readers", "last_row_reader_reads_an_attempt_s_last_row_R3_13", [], None),
+    ("logged_reader_unread", ENT, [("    return lambda sha256: entered_day(records, sha256)",
+                                    "    return lambda sha256: None")],
+     "cuts", "case_cutoff_readers", "logged_reader_gives_the_manila_day_a_row_entered_R3_13", [], None),
+    ("no_moving_record_cut_at_the_ceiling", DAT, [("    if last_day is None:\n        return dates.cutoff",
+                                                   "    if last_day is None:\n        return dates.ceiling")],
+     "cuts", "case_cutoff_dates", "cutoff_without_a_moving_record_is_1020", ["cut_date_mismatch"], None),
+    ("cutoff_before_1020", DAT, [("    return min(dates.ceiling, max(dates.cutoff, moved))",
+                                  "    return min(dates.ceiling, moved)")],
+     "cuts", "case_cutoff_dates", "cutoff_never_before_1020_R3_15", ["cut_date_mismatch"], None),
+    ("am22_commit_not_an_ancestor_read", DAT, [("    if not (src.commit_exists(AM22_COMMIT) and src.is_ancestor("
+                                                "AM22_COMMIT, src.records_ref)):", "    if False:")],
+     "cuts", "case_cutoff_readers", "am22_dates_where_its_commit_is_not_an_ancestor_refused_B2R1",
+     ["schedule_invalid"], None),
+    ("am22_section_absent_read", DAT, [('    if text is None:\n        raise S.TmanRefused("schedule_invalid", '
+                                        'f"{S.AMENDMENTS_REL} at', '    if False:\n        raise S.TmanRefused('
+                                                                   '"schedule_invalid", f"{S.AMENDMENTS_REL} at')],
+     "cuts", "case_cutoff_readers", "am22_dates_without_an_am22_section_refused_R3_15", ["schedule_invalid"], None),
+    ("last_stamp_first_line", COM, [("    for line in reversed(text.splitlines()):",
+                                     "    for line in text.splitlines():")],
+     "cuts", "case_cutoff_readers", "last_row_of_a_teacher_is_its_last_of_two_stamped_lines_R3_15", [], None),
+    ("last_stamp_year_default", COM, [('int(m.group("year") or M12_DEFAULT_YEAR)', 'int(m.group("year") or 2025)')],
+     "cuts", "case_cutoff_readers", "last_row_of_a_teacher_is_its_last_stamped_line_utc_2026", [], None),
+    ("last_stamp_impossible_date_read", COM, [("            except ValueError:\n                _invalid(f\"a log "
+                                               "line's timestamp is not a date",
+                                               "            except ValueError:\n                continue\n"
+                                               "                _invalid(f\"a log line's timestamp is not a date")],
+     "cuts", "case_cutoff_readers", "last_row_of_a_teacher_with_an_impossible_stamp_refused_R3_15",
+     ["completion_record_invalid"], None),
+    ("last_row_first_row", COM, [("    for r in reversed(rows):\n        at = _second(",
+                                  "    for r in rows:\n        at = _second(")],
+     "cuts", "case_cutoff_readers", "last_row_of_a_stopped_qat_attempt_is_its_run_stop", [], None),
+    ("last_row_run_end_time_unread", COM, [('        at = _second(r.get("wall_clock_end") if r.get("event") == '
+                                            '"run_end" else r.get("wall_clock"))',
+                                            '        at = _second(r.get("wall_clock"))')],
+     "cuts", "case_cutoff_readers", "last_row_of_a_kd_attempt_with_its_end_is_its_run_end_R3_15", [], None),
+    ("teacher_last_row_unread", COM, [("            last = LastRow(rel, S.sha256_bytes(data), at)",
+                                       "            pass")],
+     "cuts", "case_cutoff_readers", "last_row_of_a_teacher_is_its_last_stamped_line_utc_2026", [], None),
+    ("teacher_earliest_log", COM, [("    for rel in logs:\n        p = work / rel", "    for rel in reversed(logs):\n"
+                                                                                  "        p = work / rel")],
+     "complete", "case_teacher", "teacher_complete_at_its_earliest_log_s_final_line_R3_15", [], None),
+    ("teacher_last_row_calls_before_matching", COM, [("work.iterdir() if M12_LOG_DIR_RE.match(d.name)\n"
+                                                      "                      and d.is_dir()):",
+                                                      "work.iterdir() if d.is_dir()\n                      and "
+                                                      "M12_LOG_DIR_RE.match(d.name)):")],
+     "complete", "case_teacher", "teacher_last_row_listing_matches_names_before_any_call_B2", [], None),
+    ("teacher_state_parses_every_stamp_N2", COM, [('        hit = m12_final_instant(data.decode("utf-8", "replace"))',
+                                                   '        hit = last_stamp(data.decode("utf-8", "replace")) and '
+                                                   'm12_final_instant(data.decode("utf-8", "replace"))')],
+     "complete", "case_teacher", "teacher_complete_with_a_later_malformed_stamp_reads_complete_N2", [], None),
+    ("printer_pilot_unread", CLI, [('        pilot = ((e or {}).get("inputs") or {}).get("clip_selection")',
+                                    "        pilot = None")],
+     "am22", "case_condition_5", "printer_cutoff_reads_the_pilot_s_winner_record_from_the_manifest_R3_15", [], None),
+    ("printer_reads_no_runs", CLI, [("                        logged=E.logged_reader(records), reads_runs=True)",
+                                     "                        logged=E.logged_reader(records), reads_runs=False)")],
+     "am22", "case_condition_5", "printer_cutoff_without_the_manifest_s_pilot_record_refused_R3_15", [], None),
+    ("printer_am22_dates_unread", CLI, [("                        am22=lambda: D.am22_dates_of_record(records.src),",
+                                         "                        am22=lambda: None,")],
+     "cuts", "case_cutoff_printer", "printer_cutoff_cut_passes", [], None),
+    ("printer_no_card_report_dropped", CLI, [("    rep = E.no_card_report(doc, E.evidence_reader(records))",
+                                              "    rep = None")],
+     "cuts", "case_cutoff_printer", "printer_no_card_cut_prints_its_report_B2R8_R3_07", [], None),
+    ("rule_flag_unchecked", CLI, [('                                  or fields.setdefault("rule", args.rule) != '
+                                   'args.rule):', '                                  or fields.setdefault("rule", '
+                                                  'args.rule) != fields["rule"]):')],
+     "cuts", "case_cutoff_printer", "printer_rule_flag_against_the_fields_refused", ["entry_field"], None),
+    ("push_evidence_on_any_entry", CLI, [('    if args.push_evidence is not None and args.kind != "unlock":',
+                                          "    if False:")],
+     "am22", "case_unlock_printer", "printer_push_evidence_is_the_unlock_entry_s_M4", ["entry_field"], None),
+    ("cut_context_reads_no_runs", VAL, [("                        reads_runs=runs is not None)",
+                                         "                        reads_runs=False)")],
+     "am22", "case_condition_5", "validator_cut_context_reads_runs_pilot_and_am22_dates_R3_15", [], None),
+    ("cut_context_pilot_unread", VAL, [("moving=E.moving_reader(x.cat, x.records, runs, pilot if isinstance(pilot, "
+                                        "dict) else None),", "moving=E.moving_reader(x.cat, x.records, runs, None),")],
+     "am22", "case_condition_5", "validator_cut_context_reads_runs_pilot_and_am22_dates_R3_15", [], None),
+    ("cut_context_am22_dates_unread", VAL, [("am22=lambda: D.am22_dates_of_record(x.records.src),",
+                                             "am22=lambda: None,")],
+     "am22", "case_condition_5", "validator_cut_context_reads_runs_pilot_and_am22_dates_R3_15", [], None),
 ]
 REFUSAL_EXTRA = ("inventory_invalid", "inventory_sha256_mismatch", "binding_invalid",       # read_inventory's codes
                  "output_location", "output_exists",                                       # the CLI's outputs

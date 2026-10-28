@@ -206,6 +206,20 @@ def case_teacher():
     check("m12_file_line_with_year", st.completion is not None and st.completion.at_utc == "2026-10-16T10:20:30Z")
     st = C.teacher_state(FX.teacher_run(root, "teacher-x_s42_40k_a1", final=None))
     check("m12_absent_is_running", st.status == C.RUNNING)
+    two = FX.teacher_run(root, "teacher-z_s42_40k_a1")
+    FX.teacher_run(root, "teacher-z_s42_40k_a1", folder="20261014_010203", final="10/15 01:00:00")
+    st = C.teacher_state(two)
+    check("teacher_complete_at_its_earliest_log_s_final_line_R3_15", st.completion is not None
+          and st.completion.record == "20261012_010203/20261012_010203.log"
+          and st.completion.at_utc == "2026-10-13T05:26:26Z", str(st.completion))
+    later = FX.teacher_run(root, "teacher-w_s42_40k_a1")
+    log = later / "20261012_010203" / "20261012_010203.log"
+    log.write_text(log.read_text() + "02/30 01:02:03 - mmengine - INFO - Iter(train) [   60/40000]\n")
+    try:
+        status = C.teacher_state(later).status
+    except Exception as e:  # noqa: BLE001 -- a refusal fails the check by name
+        status = getattr(e, "code", type(e).__name__)
+    check("teacher_complete_with_a_later_malformed_stamp_reads_complete_N2", status == C.COMPLETE, str(status))
     gi = C.M12_FINAL_RE.groupindex
     check("m12_regex_captures_the_timestamp_only_TB14", sorted(gi) == ["day", "hh", "mm", "month", "ss", "year"]
           and C.M12_FINAL_RE.pattern.endswith(r"M12 selection \(final\): "))
@@ -226,6 +240,16 @@ def case_teacher():
         Path.iterdir, Path.is_dir = saved_iterdir, saved_is_dir
     check("teacher_listing_matches_names_before_any_call", st.status == C.COMPLETE
           and probe.name not in calls, str(calls))
+    calls.clear()
+    other = work / "notes"                                    # never created; no log folder's name
+    try:
+        Path.iterdir = lambda self: iter([other, work / "20261012_010203"])
+        Path.is_dir = lambda self: calls.append(self.name) or saved_is_dir(self)
+        last = C.teacher_last_row(work)
+    finally:
+        Path.iterdir, Path.is_dir = saved_iterdir, saved_is_dir
+    check("teacher_last_row_listing_matches_names_before_any_call_B2", last.at == int(FX.utc("2026-10-13T05:26:26Z"))
+          and other.name not in calls, f"{last} {calls}")
 
 
 def case_arm_and_dispatch():

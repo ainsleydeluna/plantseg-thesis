@@ -114,8 +114,7 @@ class LastRow:
 @dataclass(frozen=True)
 class RunState:
     """What a run directory shows at the end of its records: its status, the completion record if complete, and
-    the instant, rule, cause and iteration (or epoch) of a divergence, stop or abort (identity and time only); a
-    teacher fine-tune's last time-stamped log line (`last`, AM-22 item 2(b))."""
+    the instant, rule, cause and iteration (or epoch) of a divergence, stop or abort (identity and time only)."""
     status: str
     completion: Completion | None = None
     ended_at: int | None = None
@@ -124,7 +123,6 @@ class RunState:
     iteration: int | None = None
     epoch: int | None = None
     telemetry_sha256: str | None = None
-    last: LastRow | None = None
 
     def complete_at(self, cutoff: int) -> bool:
         return self.status == COMPLETE and self.completion is not None and self.completion.meets(cutoff)
@@ -323,33 +321,47 @@ def last_stamp(text: str) -> int | None:
 
 
 def teacher_state(work_dir: Path, log_rel: str | None = None) -> RunState:
-    """A teacher fine-tune: complete at its M12 "(final)" line, the earliest log's that holds one. `log_rel` names
-    the log; without it the work dir's <timestamp>/<timestamp>.log files are read (one listing of the work dir; a
-    name is matched before any call on it). Its last time-stamped line, over the logs in order, is kept as `last`
-    (AM-22 item 2(b))."""
+    """A teacher fine-tune: complete at its M12 "(final)" line. `log_rel` names the log; without it the work dir's
+    <timestamp>/<timestamp>.log files are read (one listing of the work dir; a name is matched before any call on
+    it)."""
     work = Path(work_dir)
     S.refuse_test_path(work)
     if not work.is_dir():
         _invalid(f"{work}: the teacher's work dir is not a folder")
     logs = [log_rel] if log_rel else sorted(
         f"{d.name}/{d.name}.log" for d in work.iterdir() if M12_LOG_DIR_RE.match(d.name) and d.is_dir())
-    final, last = None, None
     for rel in logs:
         p = work / rel
         S.refuse_test_path(p)
         if not p.is_file():
             continue
         data = p.read_bytes()
-        text = data.decode("utf-8", "replace")
-        hit = m12_final_instant(text)
-        if hit and final is None:
-            final = Completion("teacher_m12", rel, S.sha256_bytes(data), hit[0], hit[1])
-        at = last_stamp(text)
+        hit = m12_final_instant(data.decode("utf-8", "replace"))
+        if hit:
+            return RunState(COMPLETE, Completion("teacher_m12", rel, S.sha256_bytes(data), hit[0], hit[1]),
+                            ended_at=hit[0])
+    return RunState(RUNNING)
+
+
+def teacher_last_row(work_dir: Path) -> LastRow:
+    """AM-22 item 2(b) for a teacher fine-tune, whose scalar rows carry no wall-clock time: the last time-stamped line
+    of its training logs, read in order as teacher_state lists them (one listing of the work dir; a name is matched
+    before any call on it; a line with no year is in 2026). Only this reader parses the other lines' stamps, so
+    teacher_state stays B-1's (DL-24 R1-N2)."""
+    work = Path(work_dir)
+    S.refuse_test_path(work)
+    if not work.is_dir():
+        raise S.TmanRefused("completion_record_invalid", f"{work}: the teacher's work dir is not a folder")
+    last = LastRow("", "", None)
+    for rel in sorted(f"{d.name}/{d.name}.log" for d in work.iterdir() if M12_LOG_DIR_RE.match(d.name)
+                      and d.is_dir()):
+        p = work / rel
+        S.refuse_test_path(p)
+        data = p.read_bytes() if p.is_file() else None
+        at = last_stamp(data.decode("utf-8", "replace")) if data is not None else None
         if at is not None:
             last = LastRow(rel, S.sha256_bytes(data), at)
-    if final is not None:
-        return RunState(COMPLETE, final, ended_at=final.at, last=last)
-    return RunState(RUNNING, last=last)
+    return last
 
 
 # --------------------------------------------------------------------------------------- the ARM measurement
@@ -543,11 +555,10 @@ ROW_TIMES = _EveryEvent()
 def last_row(slot: dict, run_dir: Path) -> LastRow:
     """The last time-stamped row a launched attempt of `slot` wrote (AM-22 item 2(b)): the last row of its telemetry
     that carries a wall_clock (a run_end's wall_clock_end), whatever its event; for a teacher fine-tune, whose scalar
-    rows carry no wall-clock time, the last time-stamped line of its training log (teacher_state). Time only."""
+    rows carry no wall-clock time, the last time-stamped line of its training log (teacher_last_row). Time only."""
     kind = slot["record_kind"]
     if kind == "teacher_m12":
-        st = teacher_state(run_dir)
-        return st.last or LastRow("", "", None)
+        return teacher_last_row(run_dir)
     rel = {"kd_run_end": kd_telemetry_name(slot["stage"]), "e1_val_result": E1_TELEMETRY,
            "qat_epoch15": QAT_TELEMETRY}.get(kind)
     if rel is None:

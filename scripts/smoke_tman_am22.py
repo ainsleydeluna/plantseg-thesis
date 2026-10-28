@@ -1027,7 +1027,9 @@ def case_conditions_in_the_world():
 def case_condition_5():
     """Condition 5 (B2R6; TMAN-B2-RULE-3): the draft at C_X passes freeze mode with AM-22's candidate for D = X, the
     ARM measurement's entry its one unmet freeze-time item (its freeze cut cannot exist before the freeze); MISSING
-    with a run slot unentered, or for a draft built without the candidate (schedule_invalid)."""
+    with a run slot unentered, or for a draft built without the candidate (schedule_invalid). The validator's cut
+    context reads the run directories, the pilot's winner record and AM-22's dates, and the cut printer the pilot's
+    winner record from --manifest (DL-24 R3-15)."""
     A, C, D, E, M, R, S = mods()
     w = world()
     with stand_ins(w):
@@ -1043,6 +1045,31 @@ def case_condition_5():
         check("condition_5_keeps_the_validator_s_reports_on_the_rule3_path_R1_F9", any(x.startswith(
             "REPORT deviation: 'no card' needs item 2(f)'s evidence (['G:s42:80k']") for x in c5.reports),
             str(c5.reports))
+        from src.tman import validate as V
+        x = w.ctx("freeze", am22_d=D_WORLD)
+        try:
+            V.validate(x)
+        except S.TmanRefused:
+            pass                                    # the ARM measurement's entry, condition 5's one unmet item
+        try:
+            cc = V.cut_context(x)
+            got = (cc.reads_runs, [(r["gate"], (r["record"] or {}).get("date")) for r in cc.moving("E5:s43:15ep")],
+                   cc.am22().cutoff)
+        except Exception as e:  # noqa: BLE001 -- a crash fails the check by name
+            got = f"{type(e).__name__}: {e}"
+        check("validator_cut_context_reads_runs_pilot_and_am22_dates_R3_15",
+              got == (True, [("pilot_winner", "2026-10-18")], "2026-10-20"), str(got))
+        # the cut printer reads the pilot's winner record from --manifest's E5:s42:sel inputs (DL-24 R3-15)
+        fields = {k: val for k, val in w.cut_refs["E5:s43:15ep"]["doc"].items() if k not in E.ENTRY_FILE_COMMON}
+        man = scratch_file("tmanman", "draft.json", w.data)
+        for n, (name, extra, want) in enumerate((
+                ("printer_cutoff_reads_the_pilot_s_winner_record_from_the_manifest_R3_15", ["--manifest", man], None),
+                ("printer_cutoff_without_the_manifest_s_pilot_record_refused_R3_15", [], "cut_date_mismatch"))):
+            rc, txt, made = w.print_entry("cut", "2026-10-20", fields, nn=81 + n, extra=[
+                "--slot", "E5:s43:15ep", "--slot", "E5:s44:15ep", "--rule", "cutoff", "--runs", w.runs, *extra])
+            ok = rc == 0 and made is not None if want is None else rc == 2 and f"REFUSED [{want}]" in txt \
+                and "the pilot's winner record is not named" in txt and made is None
+            check(name, ok, f"rc {rc}: {txt.strip()[-300:]}")
         draft, _, rec = v.draft()
         doc = copy.deepcopy(draft["doc"])
         doc["body"]["entries"] = [e for e in doc["body"]["entries"] if e["slot"] != "G:s42:80k"]

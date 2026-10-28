@@ -291,8 +291,10 @@ def case_static_file_access():
     from src.tman import schema as S
     mods = lane_python()
     listing = listing_sites(mods)
+    # B2-F2: teacher_last_row lists the teacher's work dir as teacher_state does (AM-22 item 2(b); DL-24 R1-N2)
     check("listings_are_the_teacher_log_and_the_runs_folder_only", len(mods) == 10          # B2R11: am22.py
           and listing == [("src/tman/completion.py", "__init__", "iterdir"),
+                          ("src/tman/completion.py", "teacher_last_row", "iterdir"),
                           ("src/tman/completion.py", "teacher_state", "iterdir")], str(listing))
     writes = sorted((rel, name) for rel, t in mods.items() for name, n in calls(t)
                     if name in WRITE_CALLS or (name == "replace" and isinstance(n.func, ast.Attribute)

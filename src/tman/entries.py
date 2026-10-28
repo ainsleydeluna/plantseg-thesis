@@ -352,17 +352,18 @@ def logged_reader(records: R.Records):
 def slot_cutoff(slot: str, ctx) -> tuple:
     """AM-22 item 2(a) for a run not launched: (its cutoff date, the rule_records that may name what set it, why it is
     not computable). The cutoff date is the later of item 2(a)'s cutoff date and the end of the second day after the
-    day of the last record its launch waits for, never past the ceiling; a record it waits for that is not written
-    leaves the ceiling (item 2(c): a parent still running exempts nothing). The record that set the date is the
-    last-dated one when it moves the date past the cutoff date; otherwise none (null)."""
+    day of the last record its launch waits for, never past the ceiling; a record it waits for that is not written by
+    the end of the ceiling -- none yet, or one dated after it -- leaves the ceiling (item 2(c): a parent still running
+    exempts nothing; the date is decided from the records that meet it, PA :2385-2386; DL-24 R1-F3). The record that
+    set the date is the last-dated one when it moves the date past the cutoff date; otherwise none (null)."""
     dates, reads = ctx.am22(), ctx.moving(slot)
     if dates is None or reads is None:
         return None, None, f"{slot}: AM-22's dates or its cutoff-moving records are not read"
     unread = [f"{slot} {r['gate']}: {r['unread']}" for r in reads if r.get("unread")]
     if unread:
         return None, None, "; ".join(unread)
-    absent = any(r["record"] is None for r in reads)
-    written = [r["record"] for r in reads if r["record"] is not None]
+    written = [r["record"] for r in reads if r["record"] is not None and r["record"]["date"] <= dates.ceiling]
+    absent = len(written) < len(reads)
     last = max((r["date"] for r in written), default=None)
     day = D.cutoff_day(dates, last, absent=absent)
     moved = not absent and last is not None and D.cutoff_day(dates, last) != dates.cutoff
@@ -410,19 +411,29 @@ def cutoff_rule(doc, ctx) -> tuple:
     days = sorted({d for d, _, _ in got})
     if len(days) != 1:
         return None, None, f"the cut's slots have different cutoff dates {days}"
-    return days[0], [r for r in got[0][1] if all(r in a for _, a, _ in got)], None
+    allowed = [r for r in got[0][1] if all(r in a for _, a, _ in got)]
+    if not allowed:
+        return None, None, (f"the cut's slots' cutoff date {days[0]} is set by different records: one cut entry per "
+                            "record that sets it (AM-22 item 2(a); B2R2; DL-24 R4)")
+    return days[0], allowed, None
 
 
 def evidence_reader(records: R.Records):
     """B2R8: a record cited as item 2(f)'s evidence is committed at its sha256 and held by a RECORDED or IMPLEMENTED
-    decision-log row."""
+    decision-log row; one that cannot be read is no evidence, so its REPORT is printed and nothing is refused (DL-24
+    R1-F7), a path naming "test" aside (project rule 4)."""
     def ok(ref) -> bool:
         if not (isinstance(ref.get("path"), str) and isinstance(ref.get("sha256"), str)):
             return False
-        if not records.has(ref["path"]):
+        try:
+            if not records.has(ref["path"]):
+                return False
+            return S.sha256_bytes(records.read(ref["path"])) == ref["sha256"] \
+                and bool(records.decision_log().recorded_rows_with(ref["sha256"]))
+        except S.TmanRefused as e:
+            if e.code == "test_path":
+                raise
             return False
-        return S.sha256_bytes(records.read(ref["path"])) == ref["sha256"] \
-            and bool(records.decision_log().recorded_rows_with(ref["sha256"]))
     return ok
 
 
