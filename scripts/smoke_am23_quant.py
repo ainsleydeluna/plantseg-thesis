@@ -80,7 +80,7 @@ END_T = {"R1": 1792650000.75, "R2": 1792650100.25, "R1no": 1792650200.5}
 HOST = "cloud-smoke"
 # O (381d73e): the run_qat source, QAT_CODE_PATHS and the evaluator's stages, as B-2 found them
 RUN_QAT_SHA256_AT_O = "14155c5a4ef2a4698754d3d98d0b1435c8ceb78ace858120e7d619e57c53b509"
-EM_RUN_SHA256 = "c3460683307f4e59d58ac0379fe682a532c93f33179f2b3c2583b8f50c0a0bfb"       # P34 (teacher_diag_drift)
+EM_RUN_SHA256 = "07e9da16fb7d81c7c3494f120082b6c4fd257862a86d1785b3aba80bef3fb9af"       # P34 (teacher_diag_drift)
 O_COMMIT = "381d73eb1ea67a2415344157a11a1e634b1c7bf8"
 QAT_CODE_PATHS_AT_O = (
     "src/quant/qat.py", "src/quant/qat_artifacts.py", "src/quant/qat_select.py",

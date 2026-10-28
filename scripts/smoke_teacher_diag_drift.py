@@ -33,7 +33,7 @@ if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
 RESULTS: list[tuple[str, bool, str]] = []
-EVALUATE_MODEL_RUN_SHA256 = "c3460683307f4e59d58ac0379fe682a532c93f33179f2b3c2583b8f50c0a0bfb"   # at b43ab55
+EVALUATE_MODEL_RUN_SHA256 = "07e9da16fb7d81c7c3494f120082b6c4fd257862a86d1785b3aba80bef3fb9af"   # at 0c50388
 DIAG_SCRIPTS = ("scripts/teacher_d1_nmf_sensitivity.py", "scripts/teacher_d2_calibration.py",
                 "scripts/score_teacher_train.py", "scripts/teacher_d3_perclass_strata.py",
                 "scripts/hash_split_files.py", "scripts/dedup_val_scores.py")
