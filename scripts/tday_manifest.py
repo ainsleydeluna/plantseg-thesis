@@ -11,6 +11,8 @@ Commands:
   append            a derived artifact's hashed form appended to the manifest, written into --out
   isolation-record  src/data/isolation.assert_trainval_only_root on --data-root, written as tday_isolation/1
   inventory         the inventory export tday-inventory/1 (IF§8; IF§11 v2), written into --out and read back
+  check-freeze      AM-22 item 1(a)'s check at the end of --date (src/tman/am22.py; B-2): each condition MET with its
+                    records or MISSING; it writes nothing
 
 Every output is a new file created exclusively in --out, a folder outside the repository; no command writes in the
 repository, and none reads TEST data. Records are read at HEAD of the repository at --root (default: this
@@ -30,6 +32,7 @@ REPO = Path(__file__).resolve().parents[1]
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
+from src.tman import am22 as A  # noqa: E402
 from src.tman import completion as C  # noqa: E402
 from src.tman import entries as E  # noqa: E402
 from src.tman import manifest as M  # noqa: E402
@@ -451,6 +454,25 @@ def cmd_inventory(args) -> int:
     return S.EXIT_PASS
 
 
+# ------------------------------------------------------------------------------------------ check-freeze
+def cmd_check_freeze(args) -> int:
+    """AM-22 item 1(a)'s check (B2R4; src/tman/am22.py): at the end of --date X, from the records committed by then
+    (C_X, audit M3) and the run directories under --runs, each condition MET with its records or MISSING with what is
+    missing, and REPORT lines. It writes nothing and decides nothing (the freeze entry's printer recomputes it).
+    Exit 0 when all five hold, 3 when one is MISSING, 2 refused (X whose end has not passed, audit m6; X later than
+    2026-11-02, item 1(f)), 4 error. --now stands in for the clock in the smokes only."""
+    if args.now is not None and not S.TYPES["utc"](args.now):
+        raise S.TmanRefused("am22_date_not_ended", f"--now {args.now!r} is not a UTC instant (YYYY-MM-DDTHH:MM:SSZ)")
+    records = records_at(args)
+    cat = catalogue(records)
+    now = time.time() if args.now is None else D.parse_utc_any(args.now)
+    chk = A.check_freeze(records, cat, Path(args.runs), args.date, now=now, reader=R.trigger_reader(records),
+                         registered_cells=registered(args))
+    for line in A.lines(chk):
+        print(line)
+    return S.EXIT_PASS if chk.met else S.EXIT_MISSING
+
+
 # ------------------------------------------------------------------------------------------------- main
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="tday_manifest.py", description=__doc__.split("\n")[0])
@@ -510,11 +532,17 @@ def parser() -> argparse.ArgumentParser:
     n.add_argument("--runs")
     n.add_argument("--registered-cells")
     n.add_argument("--freeze-record", help="the freeze record: its committed entry file (DL-24 #33)")
+    k = sub.add_parser("check-freeze")
+    k.add_argument("--date", required=True, help="X: the check reads the records committed by the end of X")
+    k.add_argument("--runs", required=True)
+    k.add_argument("--registered-cells")
+    k.add_argument("--now", help="the smokes only: the instant that stands in for the clock (YYYY-MM-DDTHH:MM:SSZ)")
     return p
 
 
 COMMANDS = {"build": cmd_build, "validate": cmd_validate, "entry": cmd_entry, "arithmetic": cmd_arithmetic,
-            "append": cmd_append, "isolation-record": cmd_isolation, "inventory": cmd_inventory}
+            "append": cmd_append, "isolation-record": cmd_isolation, "inventory": cmd_inventory,
+            "check-freeze": cmd_check_freeze}
 
 
 # Every path-valued argument (a run id under --runs, a file, a folder): refused for "test" before any call on any of

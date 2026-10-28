@@ -78,7 +78,7 @@ def case_cli_build():
     (out / "sources.json").write_bytes(S.json_file_bytes(w.sources))
     (out / "cells.json").write_text(json.dumps(PINS.IF6_CELLS), encoding="utf-8")
     from src.tman import records as R
-    got = []
+    got, saved = [], R.TRIGGER_READER
     try:
         R.TRIGGER_READER = w.trigger_reader()          # L-AM3's reader's stand-in (plan O-8)
         for n in (1, 2):
@@ -88,7 +88,7 @@ def case_cli_build():
                            "--runs", str(w.runs), "--registered-cells", str(out / "cells.json")])
             got.append((rc, (d / "tday_manifest.json").read_bytes()))
     finally:
-        R.TRIGGER_READER = None
+        R.TRIGGER_READER = saved                       # L-AM3's reader (B2R13)
     check("cli_build_twice_byte_identical_and_the_builder_s", got[0] == got[1] == (0, w.data), str([g[0] for g in got]))
 
 

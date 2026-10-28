@@ -247,8 +247,8 @@ def code_literals(path: Path) -> list[str]:
 def case_static_scan():
     from src.tman import records as R
     files = lane_python()
-    check("static_scan_reads_the_lane_s_nine_modules", len(files) == 9 and all(f.is_file() for f in files),
-          str([f.name for f in files]))
+    check("static_scan_reads_the_lane_s_ten_modules_B2R11", len(files) == 10 and all(f.is_file() for f in files)
+          and "am22.py" in [f.name for f in files], str([f.name for f in files]))
     hits = {f.name: [s for s in code_literals(f) if SCORE.search(s)] for f in files}
     check("no_score_key_literal_in_the_lane_s_code", not any(hits.values()), str({k: v for k, v in hits.items() if v}))
     holders = []

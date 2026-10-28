@@ -279,9 +279,10 @@ def case_cli():
         with contextlib.redirect_stdout(buf):
             rc = CLI.main(args)
         return rc, buf.getvalue()
-    saved = R.ptq_record_reader
+    saved, saved_trigger = R.ptq_record_reader, R.TRIGGER_READER
     try:
         R.ptq_record_reader = lambda: u.w.reader()
+        R.TRIGGER_READER = None                         # O8 without a reader (B2R13 wires L-AM3's)
         rc, out = cli(argv + ["--records", str(folder), "--records-commit", head])
         check("cli_unlock_without_a_trigger_reader_refused_O8", rc == 2 and "trigger_format_unknown" in out,
               out.strip()[-200:])
@@ -296,7 +297,7 @@ def case_cli():
         check("cli_records_without_its_commit_refused", rc == 2 and "go together" in out, out.strip()[-200:])
     finally:
         R.ptq_record_reader = saved
-        R.TRIGGER_READER = None
+        R.TRIGGER_READER = saved_trigger
 
 
 def case_unlock_printer():

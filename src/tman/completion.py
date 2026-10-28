@@ -43,6 +43,13 @@ from . import schema as S
 # The statuses a run directory gives (`status_at`); B-2 adds AM-22's settled ways (plan §0, boundary 3).
 COMPLETE, RUNNING, DIVERGED, ABORTED, STOPPED = "complete", "running", "diverged", "aborted", "stopped"
 STATUSES = (COMPLETE, RUNNING, DIVERGED, ABORTED, STOPPED)
+# AM-22's Definitions (docs/PREREGISTRATION_AMENDMENTS.md:2282-2310): the ways a registered run is settled at a date,
+# the enum src/tman/am22.py reads (B2R3). A never-cut run settles only by completion or supersession; a cuttable run
+# also by the rest. The run-directory statuses above stay as they are.
+SETTLED_COMPLETE, SETTLED_SUPERSEDED, SETTLED_DIVERGED = "complete", "superseded", "diverged"
+SETTLED_ABORTED, SETTLED_CUT, SETTLED_NOT_RUN = "aborted", "cut", "not_run"
+NEVER_CUT_SETTLED_WAYS = (SETTLED_COMPLETE, SETTLED_SUPERSEDED)
+SETTLED_WAYS = NEVER_CUT_SETTLED_WAYS + (SETTLED_DIVERGED, SETTLED_ABORTED, SETTLED_CUT, SETTLED_NOT_RUN)
 DIVERGENCE_RULES = ss.DIVERGENCE_RULES                 # ("AM-7(a)", "AM-7(b)"), sweep_select.py:206
 DIVERGENCE_CAUSE = ss.DIVERGENCE_CAUSE                 # "student_divergence", sweep_select.py:207
 
@@ -62,6 +69,11 @@ M12_LOG_DIR_RE = re.compile(r"^\d{8}_\d{6}$")          # mmengine's <work_dir>/<
 # Any time-stamped mmengine line: its timestamp only (AM-22 item 2(b): "MM/DD HH:MM:SS" from the pod's UTC clock)
 STAMP_RE = re.compile(r"^(?:(?P<year>\d{4})/)?(?P<month>\d{2})/(?P<day>\d{2}) (?P<hh>\d{2}):(?P<mm>\d{2}):"
                       r"(?P<ss>\d{2}) ")
+
+
+def settled_ways(never_cut: bool) -> tuple:
+    """The ways a registered run settles (AM-22 Definitions): a never-cut run's two, a cuttable run's six."""
+    return NEVER_CUT_SETTLED_WAYS if never_cut else SETTLED_WAYS
 
 
 def kd_telemetry_name(stage: str) -> str:

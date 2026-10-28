@@ -750,17 +750,23 @@ def case_record_gates():
         w.M.build_manifest, w.records, w.cat, dict(w.sources, entries=given), runs_root=w.runs) == "slot_unknown")
     expect_gate(w, "trigger_record_other_sha256_B1", "record_uncommitted",
                 doc=mutated(w, lambda d: d["body"]["trigger"].update(sha256="0" * 64)), detail="am3_trigger.json")
-    expect_gate(w, "trigger_format_unknown_without_a_reader_O8", "trigger_format_unknown", trigger_reader=None,
-                detail="L-AM3 has not fixed its format")
-    expect_gate(w, "trigger_reader_refusing_the_record_O8", "trigger_format_unknown",
-                trigger_reader=lambda path, data: {"triggered": "yes"}, detail="gives no triggered verdict")
-    expect_gate(w, "trigger_block_against_the_record_s_verdict_B1", "trigger_inconsistent",
-                trigger_reader=lambda path, data: {"triggered": True}, detail="the AM-3 trigger record says True")
-    expect_gate(w, "triggered_without_e6kd", "trigger_inconsistent", trigger_reader=lambda path, data: {
-        "triggered": True}, doc=mutated(w, lambda d: d["body"]["trigger"].update(triggered=True)),
-                detail="E6-KD:s42:15ep is not entered")
+    from src.tman import records as R
     from src.tman import validate as V
-    res = V.validate(w.ctx("draft", runs_root=None, trigger_reader=None))
+    saved = R.TRIGGER_READER
+    try:
+        R.TRIGGER_READER = None                                     # O8 without a reader (B2R13 wires L-AM3's)
+        expect_gate(w, "trigger_format_unknown_without_a_reader_O8", "trigger_format_unknown", trigger_reader=None,
+                    detail="L-AM3 has not fixed its format")
+        expect_gate(w, "trigger_reader_refusing_the_record_O8", "trigger_format_unknown",
+                    trigger_reader=lambda path, data: {"triggered": "yes"}, detail="gives no triggered verdict")
+        expect_gate(w, "trigger_block_against_the_record_s_verdict_B1", "trigger_inconsistent",
+                    trigger_reader=lambda path, data: {"triggered": True}, detail="the AM-3 trigger record says True")
+        expect_gate(w, "triggered_without_e6kd", "trigger_inconsistent", trigger_reader=lambda path, data: {
+            "triggered": True}, doc=mutated(w, lambda d: d["body"]["trigger"].update(triggered=True)),
+                    detail="E6-KD:s42:15ep is not entered")
+        res = V.validate(w.ctx("draft", runs_root=None, trigger_reader=None))
+    finally:
+        R.TRIGGER_READER = saved
     check("draft_lists_the_trigger_format_O8", res.exit_code == 3 and any(
         m.startswith("MISSING: trigger_format_unknown") for m in res.missing), str(res.missing))
 
@@ -2363,16 +2369,18 @@ def case_draft_and_cli():
     cells = out / "cells.json"
     cells.write_text(json.dumps(PINS.IF6_CELLS), encoding="utf-8")
     argv = ["--root", str(w.repo), "validate", "--manifest", str(out / "m.json"), "--registered-cells", str(cells)]
-    rc = CLI.main(argv + ["--mode", "draft"])
-    check("cli_validate_draft_lists_the_trigger_format_O8", rc == 3)
+    saved = R.TRIGGER_READER
     try:
+        R.TRIGGER_READER = None                         # O8 without a reader (B2R13 wires L-AM3's)
+        rc = CLI.main(argv + ["--mode", "draft"])
+        check("cli_validate_draft_lists_the_trigger_format_O8", rc == 3)
         R.TRIGGER_READER = w.trigger_reader()
         rc = CLI.main(argv + ["--mode", "draft"])
         check("cli_validate_draft_passes", rc == 0)
         rc = CLI.main(argv + ["--mode", "freeze"])
         check("cli_validate_freeze_without_runs_refused", rc == 2)
     finally:
-        R.TRIGGER_READER = None
+        R.TRIGGER_READER = saved
     check("gate_codes_unique_and_ordered", len(set(c for c, _, _ in V.GATES)) == len(V.GATES) == 84)
 
 

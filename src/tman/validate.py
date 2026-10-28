@@ -79,8 +79,8 @@ class Ctx:
     """Everything the gates read. `records` is the committed records; `runs_root` the local run directories
     (freeze, unlock, session); `freeze_record` and `unlock_entry` committed entry-file paths; `registered_cells`,
     `ptq_reader` and `trigger_reader` stand in for src.corruption_roles, lane LQP's reader and L-AM3's trigger reader
-    (records.TRIGGER_READER) until they merge; `artifact_runtimes` are projected eval_runtime records of scored
-    artifacts (B-3b) compared with the execution context."""
+    (records.trigger_reader: L-AM3's, wired by B-2's B2R13); `artifact_runtimes` are projected eval_runtime records
+    of scored artifacts (B-3b) compared with the execution context."""
 
     def __init__(self, *, mode: str, manifest_bytes: bytes, manifest_path: str, records: R.Records, runs_root=None,
                  freeze_record: str | None = None, unlock_entry: str | None = None, registered_cells=None,
@@ -92,7 +92,7 @@ class Ctx:
         self.runs_root = None if runs_root is None else Path(runs_root)
         self.freeze_rel, self.unlock_rel = freeze_record, unlock_entry
         self.registered_cells, self.ptq_reader = registered_cells, ptq_reader
-        self.trigger_reader = R.TRIGGER_READER if trigger_reader is None else trigger_reader
+        self.trigger_reader = R.trigger_reader(records) if trigger_reader is None else trigger_reader
         self.am22_dates = am22_dates          # AM-22 item 2(a)'s dates: a stand-in (smokes); else the committed text's
         self.trigger_verdict: bool | None = None
         self.artifact_runtimes, self.now = list(artifact_runtimes), now

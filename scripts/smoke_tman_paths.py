@@ -46,9 +46,10 @@ IF6_CELLS = ([f"{c}_s{s}" for c in ("motion_blur", "gaussian_noise", "jpeg_compr
              + [f"{c}_s{s}" for c in ("motion_blur", "jpeg_compression", "brightness", "fog") for s in (4, 5)])
 LANE_FILES = ("src/tman/__init__.py", "src/tman/schema.py", "src/tman/records.py", "src/tman/completion.py",
               "src/tman/schedule.py", "src/tman/entries.py", "src/tman/manifest.py", "src/tman/validate.py",
-              "configs/tday_catalogue.json", "scripts/tday_manifest.py", "docs/lane_reports/tman.md") + tuple(
+              "src/tman/am22.py", "configs/tday_catalogue.json", "scripts/tday_manifest.py",
+              "docs/lane_reports/tman.md") + tuple(
     f"scripts/smoke_tman_{n}.py" for n in ("schema", "cuts", "parent", "derived", "complete", "pins", "validate",
-                                           "unlock", "noscore", "determinism", "paths", "mutations"))
+                                           "unlock", "noscore", "determinism", "paths", "mutations", "am22"))
 MARKER = "nonexistent_tman_fx"          # a top-level folder that is never created
 
 
@@ -123,9 +124,9 @@ def case_created_names():
     bad = [n for n in names if S.created_name_error(n)]
     want = 4 + len(LANE_FILES) + len(file_ids) * (2 * len(S.ENTRY_FILE_KINDS) + 3 + len(IF6_CELLS))
     check("created_names_free_of_test_colon_and_reserved_TB7", not bad and len(file_ids) == 70
-          and len(IF6_CELLS) == 24 and len(names) == want == 3317, f"{len(names)} names (want {want}); bad {bad[:5]}")
+          and len(IF6_CELLS) == 24 and len(names) == want == 3319, f"{len(names)} names (want {want}); bad {bad[:5]}")
     check("lane_files_free_of_test_TB7", all(S.created_name_error(p) is None for p in LANE_FILES)
-          and len(LANE_FILES) == 23)
+          and len(LANE_FILES) == 25)                    # B-2 adds src/tman/am22.py and scripts/smoke_tman_am22.py
 
 
 def case_test_paths_refused_before_any_call():
@@ -290,7 +291,7 @@ def case_static_file_access():
     from src.tman import schema as S
     mods = lane_python()
     listing = listing_sites(mods)
-    check("listings_are_the_teacher_log_and_the_runs_folder_only", len(mods) == 9
+    check("listings_are_the_teacher_log_and_the_runs_folder_only", len(mods) == 10          # B2R11: am22.py
           and listing == [("src/tman/completion.py", "__init__", "iterdir"),
                           ("src/tman/completion.py", "teacher_state", "iterdir")], str(listing))
     writes = sorted((rel, name) for rel, t in mods.items() for name, n in calls(t)
@@ -542,14 +543,14 @@ def case_cli_outputs():
                                        str(dirs["arith"])])]
         import src.data.isolation as ISO
         from src.tman import records as R
-        saved = ISO.DEFAULT_EXPECTED_COUNTS
+        saved, saved_trigger = ISO.DEFAULT_EXPECTED_COUNTS, R.TRIGGER_READER
         try:
             ISO.DEFAULT_EXPECTED_COUNTS = {"train": 1, "val": 1}      # the fixture root's counts
             R.TRIGGER_READER = w.trigger_reader()                     # L-AM3's reader's stand-in (plan O-8)
             got = {name: _cli(argv) for name, argv in runs}
         finally:
             ISO.DEFAULT_EXPECTED_COUNTS = saved
-            R.TRIGGER_READER = None
+            R.TRIGGER_READER = saved_trigger                          # L-AM3's reader (B2R13)
         check("every_command_passes_once", all(rc == 0 for rc, _ in got.values()),
               str({k: (rc, txt.strip().splitlines()[-1:]) for k, (rc, txt) in got.items() if rc}))
         made = {k: sorted(p.name for p in v.iterdir()) for k, v in dirs.items()}
