@@ -563,8 +563,10 @@ def case_catalogue_cross_checks():
     gated = all(any(g["record"] == "code_merged" for g in (s["gates"] + (cat.slots[s["parent"]]["gates"]
                                                                         if s["parent"] else [])))
                 for s in cat.slots.values() if s["evaluator_stage"] in pend)
-    check("evaluator_stages_from_artifacts_STAGES_or_pending_code_TB8", gated and pend == [
-        "E6-E2", "E6-KD", "E6-R1", "E6-R2", "E7-E2"], f"pending {pend}")
+    # B2-0: master's STAGES (src/eval/artifacts.py :58-59 at 524116b) holds the five stages B-1 found pending (AM-23
+    # items 1-5; L-AM3 B-2), so every catalogue evaluator stage is an evaluator stage now
+    check("evaluator_stages_from_artifacts_STAGES_or_pending_code_TB8", gated and pend == []
+          and {"E6-E2", "E6-KD", "E6-R1", "E6-R2", "E7-E2"} <= set(STAGES), f"pending {pend}")
     # I1 (DL-24 #60, #94): each KD slot of a launcher stage is at a seed and a horizon the launcher can launch, and the
     # catalogue holds every seed it launches and every profile's horizon
     import scripts.preflight_distill as pd

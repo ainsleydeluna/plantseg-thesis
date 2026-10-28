@@ -34,8 +34,9 @@ FREEZE_DATES = {"T": "2026-11-03", "R": "2026-12-18"}        # AM-19 item 1(a): 
 TEST_DATES = {"T": "2026-11-08", "R": "2026-12-21"}          # AM-19 item 1(a): single TEST evaluation, no later than
 AM22_HEADING = "## AM-22 — "
 AM22_PUSH_BASE = "2026-10-17"                                # AM-22 header: dates move by the days after this one
-AM22_CUTOFF_RE = re.compile(r"Its cutoff date is (\d{4}-\d{2}-\d{2})")
-AM22_CEILING_RE = re.compile(r"in no case later than (\d{4}-\d{2}-\d{2})")
+# whitespace-tolerant: the committed text wraps "in no" / "case later than" across a line (PA :2375-2376; B2-0)
+AM22_CUTOFF_RE = re.compile(r"Its\s+cutoff\s+date\s+is\s+(\d{4}-\d{2}-\d{2})")
+AM22_CEILING_RE = re.compile(r"in\s+no\s+case\s+later\s+than\s+(\d{4}-\d{2}-\d{2})")
 AM22_TEST_DEADLINE = "2026-11-08"                            # AM-22 item 1(e)
 ENTERED_DAY_OFFSET = {"cutoff": 1}                           # AM-22 item 2(a): made on the day after its cutoff date
 
