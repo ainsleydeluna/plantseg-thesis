@@ -11,13 +11,14 @@ items are re-hashed here, never regenerated.
 
 Checks, in order, each a refusal by code: names (LC6: the cache root and the record directory);
 --confirm-test-split for test, before any read; the manifest (schema 2.0.0, canonical checksum,
-seed policy, vendored runtime); the manifest's split; for an official or provisional cache, the
-student image (PLANTSEG_IMAGE_DIGEST) and the pinned stack (LC2); the data root (the M11 isolation
-check for val, images/test alone for test); the sources against the split listing (each recorded
-manifest_index and file name, and all of them for a full cache); each source file's sha256; its
-core_preprocess window (shape, pixel sha256, mean-colour padding outside it); every item (file
-sha256, dtype, its source's resized shape, pixel sha256); the cell digests, the registered 24-cell
-set (also the pin's cells), the inferential digest and the pin's own sha256.
+seed policy, vendored runtime, item paths by index: item_path_mismatch); the manifest's split; for
+an official or provisional cache, the student image (PLANTSEG_IMAGE_DIGEST) and the pinned stack
+(LC2); the data root (the M11 isolation check for val, images/test alone for test); the sources
+against the split listing (each recorded manifest_index and file name, and all of them for a full
+cache); each source file's sha256; its core_preprocess window (shape, pixel sha256, mean-colour
+padding outside it); every item (file sha256, dtype, its source's resized shape, pixel sha256); the
+cell digests, the registered 24-cell set (also the pin's cells), the inferential digest and the
+pin's own sha256.
 
 On success it writes verification/<UTC>.json (outside the checksum) and prints the four recorded
 values of the TL interface section 5, one per line, each labelled:

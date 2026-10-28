@@ -11,6 +11,7 @@ image is read, under a zero-call tracer. torch and src.data stay out of sys.modu
   P  pin                 I  index          T  torch-free
   N  item paths by index (LCC1, LCC3): the path rule, no stem in any created name, resume and
      repair by index
+  K2 the 1.0.0 `severities` key removed from the manifest; the top-level split kept (LE3a)
   L  LC4 split surfaces, LC5 manifest_exists, LC7 the 32-px floor, LC8 repair
   X  every other refusal code of the generator, each reached with every earlier gate passing,
      and the CLI's run-flag, cache-dir, stack and location gates (X29-X32)
@@ -503,16 +504,35 @@ def h8():
 
 @case("H10")
 def h10():
-    """LC12: the manifest records severity 5 as pending; a smoke or provisional grid may hold
-    severity-5 items while it is pending, an official grid may not."""
-    dp = S["m1"]["dependency_pins"]
+    """LC12, the gate: with SEVERITY5_REFERENCE_VALIDATED patched False (the state before the L1
+    evidence commit), a smoke or provisional grid may hold severity-5 items and an official grid
+    may not."""
     grid = cc.full_grid(cc.load_roles(S["repo"]))
-    got = {s: code_of(cc.require_severity5_validated, s, grid)
-           for s in ("smoke", "provisional", "official")}
-    return (dp["severity5_reference_status"] == "pending"
-            and dp["severity5_reference_validated"] is False
-            and got == {"smoke": None, "provisional": None,
-                        "official": "severity5_reference_unvalidated"}), str(got)
+    with patched(cc, "SEVERITY5_REFERENCE_VALIDATED", False):
+        got = {s: code_of(cc.require_severity5_validated, s, grid)
+               for s in ("smoke", "provisional", "official")}
+    return got == {"smoke": None, "provisional": None,
+                   "official": "severity5_reference_unvalidated"}, str(got)
+
+
+@case("H10b")
+def h10b():
+    """The L1 evidence commit (LE24), with the real flag: the manifest's dependency_pins record
+    severity 5 as validated, with the student-image evidence, and an official 24-cell grid passes
+    require_severity5_validated."""
+    dp = S["m1"]["dependency_pins"]
+    live = cc.official_dependency_pins()
+    grid = cc.full_grid(cc.load_roles(S["repo"]))
+    evidence = dp["validation_evidence"].get("student_image_validation") or {}
+    gate = code_of(cc.require_severity5_validated, "official", grid)
+    return (dp["severity5_reference_status"] == live["severity5_reference_status"] == "validated"
+            and dp["severity5_reference_validated"] is True
+            and live["severity5_reference_validated"] is True
+            and evidence == cc.VALIDATION_EVIDENCE["student_image_validation"]
+            and "56/56" in evidence.get("reference_equivalence", "")
+            and len(grid) == 24 and sum(1 for _, s in grid if s == 5) == 4 and gate is None), \
+        (f"recorded {dp['severity5_reference_status']}, live "
+         f"{live['severity5_reference_status']}; gate {gate}; {len(grid)} cells")
 
 
 def _severity5_refused_beyond_official(status, grid):
@@ -905,6 +925,21 @@ def n4():
         f"rc={rc} restored at the index path: {restored}; marker names: {held[:2]}"
 
 
+@case("K2")
+def k2():
+    """LE3, LE3a (K2): the manifest no longer carries the 1.0.0 grid-wide `severities`; a consumer
+    reads coverage per cell (cells[].cell_id). The top-level `split` stays (the verifier and the
+    builder read it) and equals dataset.split and, for a CLI cache, the pin's parameters.split."""
+    m = S["m1"]
+    mm = cc.generate(S["caches"] / f"k2_mem_{next(_SEQ)}", _pair(7), corruptions=("fog",),
+                     severities=(1, 5), split="val")
+    held = [k for k in ("severities",) if k in m or k in mm]
+    return (not held and m["split"] == m["dataset"]["split"] == m["pin"]["parameters"]["split"]
+            and mm["split"] == mm["dataset"]["split"] == "val"
+            and [c["cell_id"] for c in mm["cells"]] == ["fog_s1", "fog_s5"]), \
+        f"keys held: {held}; cells {[c['cell_id'] for c in mm['cells']]}"
+
+
 # ---------------------------------------------------------------- T. torch-free
 def _imports(path: Path) -> set[str]:
     names = set()
@@ -1278,8 +1313,11 @@ def x09():
 
 @case("X10")
 def x10():
-    return _x("severity5_reference_unvalidated",
-              official_argv(never("x10") / cc.TDAY_CACHE_ROOT_NAME), ctx=env(**DIGEST))
+    """Run with SEVERITY5_REFERENCE_VALIDATED patched False (the state before the L1 evidence
+    commit)."""
+    with patched(cc, "SEVERITY5_REFERENCE_VALIDATED", False):
+        return _x("severity5_reference_unvalidated",
+                  official_argv(never("x10") / cc.TDAY_CACHE_ROOT_NAME), ctx=env(**DIGEST))
 
 
 @case("X11")
@@ -1638,6 +1676,8 @@ def mutations():
     mutant("M-worker_died", ["X33"], (cc, "worker_died", _reraise))
     mutant("M-provisional severity 5 refused too (LC12)", ["H10"],
            (cc, "require_severity5_validated", _severity5_refused_beyond_official))
+    mutant("M-severity 5 still pending: SEVERITY5_REFERENCE_VALIDATED reverted to False (LE24)",
+           ["H10b"], (cc, "SEVERITY5_REFERENCE_VALIDATED", False))
     mutant("M-name test after the filesystem gates (LC6)", ["X01"],
            (B, "generate_cmd", _names_late))
     mutant("M-pin names the KD image", ["P5"],
@@ -1648,6 +1688,15 @@ def mutations():
     mutant("M-item path built from the stem (LCC3b)", ["N2"], (cc, "write_entry", _stem_writer))
     mutant("M-resume reading the stem path (LCC3c)", ["N3"], (cc, "resume_keeps", _resume_at_stem))
     mutant("M-repair reading the stem path (LCC3c)", ["N4"], (cc, "repair_target", _repair_at_stem))
+    # LE3a: the 1.0.0 `severities` key is gone from the manifest
+    real_assemble = cc.assemble_manifest
+
+    def with_severities(**kw):
+        m = real_assemble(**kw)
+        m["severities"] = sorted({s for _, s in kw["grid"]})
+        m["canonical_manifest_sha256"] = cc.canonical_manifest_sha256(m)
+        return m
+    mutant("M-K2 severities kept (LE3a)", ["K2"], (cc, "assemble_manifest", with_severities))
 
     # the plan's eight
     def by_enumeration(pixels, image_id, corruption_id, severity, *, lift_floor):
@@ -1693,7 +1742,8 @@ LABELS = {
     "H6": "H6 every entry verifies",
     "H7": "H7 cell digests and the inferential digest recompute",
     "H8": "H8 the checksum recomputes and excludes versions and generation",
-    "H10": "H10 LC12: severity 5 recorded pending; smoke/provisional may hold it, official not",
+    "H10": "H10 LC12 (flag patched False): smoke/provisional may hold severity 5, official not",
+    "H10b": "H10b LE24: severity 5 recorded validated with L1's evidence; official grid passes",
     "D1": "D1 two runs, one checksum",
     "D2": "D2 workers 1 and 3, one checksum",
     "D3": "D3 reversed source order, one checksum",
@@ -1719,6 +1769,7 @@ LABELS = {
     "N2": "N2 no created name holds the zqmarker stem, 'test' or ':' (LCC3b, LCC6)",
     "N3": "N3 resume keeps the 50 journalled items at their index paths, none regenerated (LCC3c)",
     "N4": "N4 repair replaces the marked source's item at its index path (LCC3c)",
+    "K2": "K2 no 1.0.0 `severities` key; the top-level split stays, equal to the pin's (LE3, LE3a)",
     "T1": "T1 torch and src.data absent before; no generator module imports them",
     "T2": "T2 torch and src.data absent after",
     "L4a": "L4a VAL root never created -> data_root_missing from isolation, zero reads (LC4)",
@@ -1743,7 +1794,7 @@ LABELS = {
     "X07": "X07 provisional without --expected-pin-sha256 -> expected_pin_required",
     "X08": "X08 a malformed expected pin -> expected_pin_format",
     "X09": "X09 PLANTSEG_IMAGE_DIGEST not the student image -> image_digest_mismatch",
-    "X10": "X10 official while severity 5 is pending -> severity5_reference_unvalidated",
+    "X10": "X10 official, severity 5 pending (flag False) -> severity5_reference_unvalidated",
     "X11": "X11 no git repository -> git_unavailable",
     "X12": "X12 an untracked governed file -> governed_paths_dirty",
     "X13": "X13 an invalid protocol file -> protocol_invalid",

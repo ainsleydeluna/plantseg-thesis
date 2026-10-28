@@ -101,7 +101,7 @@ CODE_FILES = ("src/stats/rehearsal.py", "src/stats/report.py", "src/stats/driver
               "src/stats/ingest.py", "src/stats/noninferiority.py", "src/stats/robustness.py",
               "src/stats/tests.py", "src/stats/val_artifacts.py",
               "src/stats/corruption_protocol.py", "configs/corruption_protocol.json",
-              "scripts/run_stats.py")
+              "scripts/run_stats.py", "src/corruption_roles.py")
 
 
 class RehearsalRefusal(RuntimeError):
