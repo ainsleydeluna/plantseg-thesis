@@ -446,8 +446,50 @@ def test_cache() -> None:
 
 
 # ---------------------------------------------------------------- 5b. official dependency pins
+def recorded_count(record: dict) -> str:
+    """The leading count of a recorded reference_equivalence ('56/56 byte-identical, ...')."""
+    words = str(record.get("reference_equivalence") or "").split()
+    return words[0] if words else "?"
+
+
+def environment_validated(pins: dict) -> tuple[bool, str]:
+    """corruption_environment_validated (LE24). Its detail prints the counts as recorded, so a
+    failing row shows the count that changed (DL-24 F4)."""
+    evidence = pins["validation_evidence"]
+    l1 = evidence.get("student_image_validation") or {}
+    ok = (pins["official_dependency_environment_validated"] is True
+          and pins["byte_reproducibility_proven_under_these_pins"] is True
+          and "40/40" in evidence["reference_equivalence"]
+          and "56/56" in l1.get("reference_equivalence", "")
+          and l1.get("python") == "3.11.16"
+          and l1.get("image_digest") == cache.STUDENT_IMAGE_DIGEST
+          and l1.get("upstream_sdist_sha256") == prov.UPSTREAM_SDIST_SHA256)
+    return ok, (f"{evidence['validated_on_python']} ({recorded_count(evidence)}); student image "
+                f"{l1.get('python')} ({recorded_count(l1)})")
+
+
+def changed_count_case(pins: dict) -> tuple[bool, str]:
+    """DL-24 F4's case: the pins as recorded pass; with 40/40 read as 39/40, or 56/56 as 55/56, and
+    all else as recorded, the check fails and its detail prints the changed count."""
+    rows = []
+    cases = ((("validation_evidence",), "40/40", "39/40"),
+             (("validation_evidence", "student_image_validation"), "56/56", "55/56"))
+    for keys, old, new in cases:
+        changed = json.loads(json.dumps(pins))
+        record = changed
+        for key in keys:
+            record = record[key]
+        record["reference_equivalence"] = record["reference_equivalence"].replace(old, new, 1)
+        ok, detail = environment_validated(changed)
+        rows.append((not ok and f"({new})" in detail and f"({old})" not in detail, detail))
+    return (environment_validated(pins)[0] and all(r for r, _ in rows),
+            " | ".join(d for _, d in rows))
+
+
 def test_dependency_pins() -> None:
-    """The PIN DECISION is registered; EXECUTABLE VALIDATION is explicitly still pending."""
+    """The PIN DECISION is registered and EXECUTABLY VALIDATED: the 40/40 grid of 2026-09 (Python
+    3.11.15, severities 1-4) stays on record, and local block L1 ran the 56-case grid, severity 5
+    included, in the student image of record (Python 3.11.16; its log is committed)."""
     pins = cache.official_dependency_pins()
 
     check("official_pillow_machine_readable", pins["pillow"] == "12.3.0", pins["pillow"])
@@ -474,11 +516,36 @@ def test_dependency_pins() -> None:
 
     # two-phase honesty: both phases are now satisfied for the CORRUPTION CLOSURE ONLY
     check("versions_registered", pins["dependency_versions_registered"] is True)
-    check("corruption_environment_validated",
-          pins["official_dependency_environment_validated"] is True
-          and pins["byte_reproducibility_proven_under_these_pins"] is True
-          and "40/40" in pins["validation_evidence"]["reference_equivalence"],
-          pins["validation_evidence"]["validated_on_python"])
+    l1 = pins["validation_evidence"].get("student_image_validation") or {}
+    check("corruption_environment_validated", *environment_validated(pins))
+    check("changed_count_fails_and_is_printed", *changed_count_case(pins))
+    # DL-24 F4's mutation: the pre-fix detail, '(40/40)' and '(56/56)' as fixed text; killed only
+    # when the case fails by its own checks (a case that raised is no kill)
+    real = environment_validated
+
+    def fixed_counts(p: dict) -> tuple[bool, str]:
+        ev = p["validation_evidence"]
+        return real(p)[0], (f"{ev['validated_on_python']} (40/40); student image "
+                            f"{(ev.get('student_image_validation') or {}).get('python')} (56/56)")
+    globals()["environment_validated"] = fixed_counts
+    try:
+        ok_m, detail_m = changed_count_case(pins)
+    except Exception as e:                                    # noqa: BLE001 -- recorded, no kill
+        ok_m, detail_m = True, f"raised {type(e).__name__}: {e}"
+    finally:
+        globals()["environment_validated"] = real
+    print(f"MUTANT M-the detail's counts as fixed text (DL-24 F4) "
+          f"{'SURVIVED' if ok_m else 'killed'} by changed_count_fails_and_is_printed [{detail_m}]")
+    check("mutant_fixed_count_detail_killed", not ok_m,
+          f"killed by changed_count_fails_and_is_printed: {detail_m}")
+    log = REPO / l1["log"] if l1.get("log") else None
+    log_sha = hashlib.sha256(log.read_bytes()).hexdigest() if log and log.is_file() else None
+    check("severity5_reference_validated",
+          cache.SEVERITY5_REFERENCE_VALIDATED is True
+          and pins["severity5_reference_validated"] is True
+          and pins["severity5_reference_status"] == "validated"
+          and log_sha is not None and log_sha == l1.get("log_sha256"),
+          f"{l1.get('log')} sha256 {str(log_sha)[:16]}…")
     check("validation_scope_is_corruption_closure_only",
           pins["validation_scope"] == "corruption_dependency_closure_only"
           and pins["full_experiment_environment_validated"] is False,

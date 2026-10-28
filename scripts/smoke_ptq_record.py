@@ -1239,7 +1239,12 @@ def case_s8_e2e() -> None:
     out = BASE / "s8_eval_out"
     args = eval_parser().parse_args(["--stage", "E4", "--precision", "int8_ptq", "--provenance", str(e2e / meta4),
                                      "--split", "test", "--confirm-test-split", "--artifact-status", "official",
-                                     "--batch-size", "1", "--device", "cpu", "--out-dir", str(out)])
+                                     "--batch-size", "1", "--device", "cpu", "--out-dir", str(out),
+                                     # IF-T1's flags (lane LEFF B-1b), so the run still reaches the record gate
+                                     "--expected-checkpoint-sha256",
+                                     hashlib.sha256((e2e / meta4).read_bytes()).hexdigest(),
+                                     "--expected-converted-sha256", m["converted_artifact_sha256"],
+                                     "--threads", str(__import__("torch").get_num_threads())])
     counters = Counters(dataset=[], model=[])
     try:
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):

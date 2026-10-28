@@ -1,0 +1,138 @@
+2026-10-26T15:53:57Z
+Python 3.11.16
+044e173f24d5934899bdbf3596bfbec917e8083e507eed583ab217abebbe084d  /sdist/imagecorruptions-1.1.2.tar.gz
+==============================================================================
+CORRUPTION VENDOR SMOKE — synthetic only; no PlantSeg, no official cache
+numpy 1.26.4 | Pillow 12.3.0 | scikit-image 0.23.2
+temp: /tmp/smoke_corruption_1ar84not
+==============================================================================
+
+--- test_isolation ---
+
+--- test_source ---
+
+--- test_protocol_roles ---
+
+--- test_reference_equivalence ---
+
+--- test_seed_policy ---
+
+--- test_input_contract ---
+
+--- test_cache ---
+
+--- test_dependency_pins ---
+
+--- test_pipeline_position ---
+
+[CHECKS]
+  torch_absent_before                             : PASS  no torch/torchvision loaded when the vendor+cache imports ran
+  vendor_and_cache_never_import_torch_or_src_data : PASS  5 modules clean
+  cache_module_is_first_party_not_vendored        : PASS  thesis infrastructure lives outside src/vendor
+  vendor_subtree_relocated                        : PASS  src/vendor/imagecorruptions
+  no_compatibility_shim_left_behind               : PASS  old src/data paths fully removed
+  exact_five_ids                                  : PASS  ('motion_blur', 'gaussian_noise', 'jpeg_compression', 'brightness', 'fog')
+  upstream_identity_recorded                      : PASS
+  pristine_upstream_sha_recorded                  : PASS
+  patches_enumerated                              : PASS  np.float_ -> np.float64
+  not_claimed_pristine                            : PASS
+  runtime_hash_recomputes                         : PASS  caad653555d6d409…
+  checksum_not_self_referential                   : PASS
+  apache_license_vendored                         : PASS  LF-normalised, 11357 bytes
+  license_digest_verifiable_after_fresh_checkout  : PASS  worktree bytes == git index bytes
+  upstream_license_retrieval_digest_preserved     : PASS  retrieval evidence kept, never relabelled as the committed file
+  no_unrelated_corruptions_vendored               : PASS
+  no_cv2_or_scipy_import                          : PASS  resolved imports: ['PIL', 'io', 'math', 'numpy', 'skimage']
+  protocol_roles_parsed                           : PASS  24 cells under plantseg-corruptions/2.0.0
+  vendor_sets_equal_protocol                      : PASS  torch-free protocol loader == vendored dispatch, per corruption
+  upstream_sdist_hash_verified                    : PASS  sdist 044e173f24d59348…, member adb5944eccfafe01…, read in memory
+  upstream_source_available                       : PASS  isolated reference namespace built
+  equiv_square_motion_blur                        : PASS  severities [1, 2, 3, 4, 5] byte-identical
+  equiv_square_gaussian_noise                     : PASS  severities [1, 2, 3, 4] byte-identical
+  equiv_square_jpeg_compression                   : PASS  severities [1, 2, 3, 4, 5] byte-identical
+  equiv_square_brightness                         : PASS  severities [1, 2, 3, 4, 5] byte-identical
+  equiv_square_fog                                : PASS  severities [1, 2, 3, 4, 5] byte-identical
+  equiv_nonsquare_motion_blur                     : PASS  severities [1, 2, 3, 4, 5] byte-identical
+  equiv_nonsquare_gaussian_noise                  : PASS  severities [1, 2, 3, 4] byte-identical
+  equiv_nonsquare_jpeg_compression                : PASS  severities [1, 2, 3, 4, 5] byte-identical
+  equiv_nonsquare_brightness                      : PASS  severities [1, 2, 3, 4, 5] byte-identical
+  equiv_nonsquare_fog                             : PASS  severities [1, 2, 3, 4, 5] byte-identical
+  equiv_w512h512_motion_blur                      : PASS  severities [5] byte-identical
+  equiv_w512h512_jpeg_compression                 : PASS  severities [5] byte-identical
+  equiv_w512h512_brightness                       : PASS  severities [5] byte-identical
+  equiv_w512h512_fog                              : PASS  severities [5] byte-identical
+  equiv_w512h384_motion_blur                      : PASS  severities [5] byte-identical
+  equiv_w512h384_jpeg_compression                 : PASS  severities [5] byte-identical
+  equiv_w512h384_brightness                       : PASS  severities [5] byte-identical
+  equiv_w512h384_fog                              : PASS  severities [5] byte-identical
+  reference_equivalence_all_cases                 : PASS  56 cases: 5 corruptions x their severities (1-5; gaussian_noise 1-4) x {square, non-square} + 4 non-noise x severity 5 x {512x512, 512x384}
+  gaussian_noise_s5_not_in_grid                   : PASS  the excluded cell is never generated, even as a reference case
+  seed_deterministic                              : PASS
+  seed_changes_with_image                         : PASS
+  seed_changes_with_corruption                    : PASS
+  seed_changes_with_severity                      : PASS
+  seed_is_uint32                                  : PASS  1435063686
+  seed_payload_documented                         : PASS  ["plantseg-corruption-v1",42,"img_0001","fog",2]
+  image_id_normalised                             : PASS
+  numpy_rng_state_restored                        : PASS  no RNG leak to the caller
+  generation_order_independent                    : PASS  interleaving another item does not change bytes
+  gaussian_noise_s5_rejected                      : PASS  CorruptionInputError
+  non_noise_s5_accepted                           : PASS  AM-16 item 6: severity 5 of the four non-noise corruptions
+  severity_6_rejected                             : PASS  CorruptionInputError
+  severity_0_rejected                             : PASS  CorruptionInputError
+  unknown_corruption_rejected                     : PASS  CorruptionInputError
+  alias_rejected                                  : PASS  CorruptionInputError
+  float_input_rejected                            : PASS  CorruptionInputError
+  non_rgb_rejected                                : PASS  CorruptionInputError
+  jpeg_canonicalised_to_uint8_array               : PASS  upstream returns a PIL Image
+  cache_grid_size                                 : PASS  72 entries
+  cache_never_generates_gaussian_noise_s5         : PASS
+  cache_generates_non_noise_s5                    : PASS  severity 5 for the four non-noise corruptions only
+  cache_records_versions                          : PASS  1.26.4
+  cache_records_vendor_hash                       : PASS
+  cache_records_official_expectation              : PASS  official count is expectation metadata, not a fabricated actual
+  cache_lossless_roundtrip                        : PASS  array-identical, never re-encoded
+  cache_uses_npy_not_jpeg                         : PASS  a second JPEG pass would confound jpeg_compression
+  regeneration_byte_identical                     : PASS
+  manifest_checksum_stable                        : PASS
+  manifest_verifies                               : PASS
+  cache_is_pre_padding_pre_normalization          : PASS  resized corrupted pixels only; no padded/normalized tensor is cached
+  tampered_item_rejected                          : PASS  cache_file_hash_mismatch
+  missing_item_rejected                           : PASS  cache_file_missing
+  unknown_cell_rejected                           : PASS  cache_entry_missing
+  foreign_vendor_checksum_rejected                : PASS  vendor_checksum_mismatch
+  seed_policy_mismatch_rejected                   : PASS  seed_policy_mismatch
+  manifest_tamper_rejected                        : PASS  manifest_checksum_mismatch
+  cache_written_outside_repo                      : PASS
+  official_pillow_machine_readable                : PASS  12.3.0
+  official_scikit_image_machine_readable          : PASS  0.23.2
+  official_numpy_unchanged                        : PASS  1.26.4
+  official_python_recorded_not_inferred           : PASS  recorded in docs/reference/context.md and the contracts
+  pins_sourced_from_lock                          : PASS
+  pins_match_requirements_lock                    : PASS  no second source of truth
+  no_unregistered_corruption_dependency           : PASS  cv2/scipy/PyWavelets are not corruption-runtime imports
+  versions_registered                             : PASS
+  corruption_environment_validated                : PASS  3.11.15
+  validation_scope_is_corruption_closure_only     : PASS  torch/mmcv/mmseg/fvcore/CUDA/RunPod remain unvalidated
+  matching_runtime_has_no_mismatches              : PASS  {'python': '3.11.9', 'numpy': '1.26.4', 'pillow': '12.3.0', 'scikit_image': '0.23.2'}
+  mismatched_pillow_rejected                      : PASS  pillow '11.1.0' != 12.3.0
+  mismatched_scikit_rejected                      : PASS  scikit_image '0.25.0' != 0.23.2
+  mismatched_numpy_rejected                       : PASS  numpy '2.1.3' != 1.26.4
+  mismatched_python_rejected                      : PASS  python '3.13.5' != 3.11.x
+  unvalidated_environment_refuses_even_when_versions_match: PASS  official_dependency_environment_unvalidated
+  runtime_matches_registered_pins                 : PASS  running the validated corruption dependency stack
+  validated_stack_passes_gate                     : PASS  both phases satisfied
+  manifest_records_pins_and_runtime               : PASS  a reader can always compare the pins against the runtime that built the cache
+  dead_end_replaced                               : PASS
+  robustness_gates_preserved                      : PASS  vocabulary, uint8, severity, rCD and pairing gates intact
+  robustness_points_at_relocated_vendor           : PASS
+  mask_never_enters_corruption                    : PASS
+  torch_absent_after                              : PASS  corruption + cache work never pulled the model stack
+
+RESULT: PASS (102/102)
+
+NOTE: the corruption dependency closure (python 3.11 / numpy 1.26.4 / Pillow 12.3.0 / scikit-image 0.23.2) is executably validated; running this file on any OTHER interpreter is DEVELOPMENT evidence only. The full torch/mmcv/mmseg/CUDA/RunPod environment remains UNVALIDATED, and official cache generation is still a separate task.
+== host (Git Bash), appended by lcorr_l12_20261026.sh, sha256 08dd0e1f628497c1ed628bf579ba7dbf4375b67e98d172dc528e1a7f82ed9af8
+image ghcr.io/ainsleydeluna/plantseg-thesis@sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf RepoDigests ["plantseg-thesis@sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf","ghcr.io/ainsleydeluna/plantseg-thesis@sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf"]
+clone C:\Users\admin\anaconda3\Library\c\Users\admin\lcorr_eval_0859d3e HEAD 0859d3e2356c392fc672805a2d8d821897a4060a
+container lcorr_l12_l1 ExitCode=0 OOMKilled=false StartedAt=2026-10-26T15:53:56.84644671Z FinishedAt=2026-10-26T15:54:20.435110565Z

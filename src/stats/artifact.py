@@ -124,7 +124,7 @@ CONTRACT_REL = "docs/STATISTICAL_ANALYSIS_CONTRACT.md"
 METRICS_REL = "src/eval/metrics.py"
 #: Orchestrator ruling O3: clean at HEAD of the code repository for an official request.
 OFFICIAL_CODE_PATHS = ("src/stats", "src/stats/driver.py", "scripts/run_stats.py",
-                       "configs/corruption_protocol.json", CONTRACT_REL)
+                       "configs/corruption_protocol.json", CONTRACT_REL, "src/corruption_roles.py")
 
 #: The TEST-manifest binding (P2). "unbound" is the only value in this lane: no flag, environment
 #: variable, argument or context field sets it, and no code path reads another value. While it is
