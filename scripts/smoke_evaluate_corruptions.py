@@ -8,13 +8,20 @@ Only `fog` is generated here. It is pure NumPy, whereas `brightness` reaches int
 whose OpenMP runtime aborts this already-torch-loaded process on the Anaconda development box
 (importing the runner pulls `src.eval` -> torch). The full five-corruption grid is proven in a
 torch-free process by `scripts/smoke_corruption_vendor.py`.
+
+The work folder is `$TMPDIR/smoke_eval_corr_run_<16 hex>`: its absolute path is checked as a string,
+before any filesystem call, for "test" in any case and the TL interface section 2 characters, and
+only then created (LE21).
 """
 from __future__ import annotations
 
 import ast
+import builtins
+import contextlib
 import json
+import os
+import secrets
 import sys
-import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -26,9 +33,50 @@ from scripts.evaluate_corruptions import (build_parser, cached_image_loader,  # 
                                           resolve_corruption_cache)
 from src import corruption_cache as cache  # noqa: E402
 from src.corruption_cache import CorruptionCacheError  # noqa: E402
+from src.eval.corrupted import path_text_problem  # noqa: E402
 from src.eval.robustness import RobustnessError  # noqa: E402
 
-TMP = Path(tempfile.mkdtemp(prefix="smoke_eval_corr_run_"))
+
+class WorkDirRefused(RuntimeError):
+    """The work folder's path breaks the TL section 2 rule; nothing was created."""
+
+
+class FilesystemCallBlocked(Exception):
+    """A filesystem call reached under blocked_filesystem(): recorded, never performed."""
+
+
+def tmpdir_root() -> str:
+    """The temporary root, as the TMPDIR string (never tempfile.gettempdir(), which falls back to
+    another folder without saying so)."""
+    root = os.environ.get("TMPDIR")
+    if not root:
+        raise SystemExit("TMPDIR is not set: run this smoke with TMPDIR naming a folder whose path "
+                         "holds no 'test'")
+    return root
+
+
+def work_dir_problem(path: str) -> str | None:
+    """TL section 2 on the absolute work-folder path, as a string: 'test' in any case, or one of
+    :<>"\\|?* inside a component (src/eval/corrupted.py's rule)."""
+    if not os.path.isabs(path):
+        return f"{path!r} is not absolute"
+    return path_text_problem(path)
+
+
+def work_dir(root: str) -> Path:
+    """The work folder `<root>/smoke_eval_corr_run_<16 hex>` (RU-15's pattern, LE21): its absolute
+    path is checked as a string before any filesystem call, then made with mkdir(exist_ok=False)."""
+    path = os.path.normpath(os.path.join(root, f"smoke_eval_corr_run_{secrets.token_hex(8)}"))
+    problem = work_dir_problem(path)
+    if problem:
+        raise WorkDirRefused(f"the work folder {problem}; set TMPDIR to a folder whose path holds "
+                             "no 'test'")
+    folder = Path(path)
+    folder.mkdir(exist_ok=False)
+    return folder
+
+
+TMP = work_dir(tmpdir_root())
 RUNNER_PATH = REPO / "scripts/evaluate_corruptions.py"
 RUNNER_SRC = RUNNER_PATH.read_text(encoding="utf-8")
 results: list[tuple[str, bool, str]] = []
@@ -84,6 +132,63 @@ def build_cache(root: Path, severities=(1, 2), split="test", n=3):
     return images, manifest
 
 
+@contextlib.contextmanager
+def blocked_filesystem():
+    """The zero-call tracer: os's path entry points and builtins.open record the call and raise
+    instead of touching the disk."""
+    calls = []
+    names = ("stat", "lstat", "open", "listdir", "scandir", "mkdir", "makedirs", "access",
+             "getcwd", "rename", "replace", "remove", "unlink", "rmdir")
+
+    def blocked(name):
+        def fn(*a, **k):
+            calls.append((name, str(a[0]) if a else ""))
+            raise FilesystemCallBlocked(name)
+        return fn
+    saved = {n: getattr(os, n) for n in names}
+    saved_open = builtins.open
+    try:
+        for n in names:
+            setattr(os, n, blocked(n))
+        builtins.open = blocked("builtins.open")
+        yield calls
+    finally:
+        for n, fn in saved.items():
+            setattr(os, n, fn)
+        builtins.open = saved_open
+
+
+def work_dir_test_root_refused() -> tuple[bool, str]:
+    """LE21's case: the string '/tmp/Test_root' handed to the helper is refused by the helper
+    itself, before any filesystem call (the zero-call tracer records none)."""
+    with blocked_filesystem() as calls:
+        try:
+            work_dir("/tmp/Test_root")
+            got = "created"
+        except WorkDirRefused:
+            got = "refused"
+        except Exception as e:                                # noqa: BLE001 -- recorded
+            got = type(e).__name__
+    return got == "refused" and calls == [], f"{got}; filesystem calls {calls}"
+
+
+# ---------------------------------------------------------------- 0. the work folder (LE21)
+def test_work_folder() -> None:
+    ok, detail = work_dir_test_root_refused()
+    check("work_dir_test_named_root_refused", ok, detail)
+    # the mutation: the check removed; killed only when the case fails by its own checks
+    real = globals()["work_dir_problem"]
+    globals()["work_dir_problem"] = lambda path: None
+    try:
+        ok_m, detail_m = work_dir_test_root_refused()
+    finally:
+        globals()["work_dir_problem"] = real
+    print(f"MUTANT M-work_dir check removed {'SURVIVED' if ok_m else 'killed'} by "
+          f"work_dir_test_named_root_refused [{detail_m}]")
+    check("mutant_work_dir_check_removed_killed", not ok_m,
+          f"killed by work_dir_test_named_root_refused: {detail_m}")
+
+
 # ---------------------------------------------------------------- 1. architecture (source level)
 def test_runner_architecture() -> None:
     body = RUNNER_CODE[RUNNER_CODE.index("def main("):]
@@ -105,9 +210,12 @@ def test_runner_architecture() -> None:
     check("mask_never_enters_cache_path",
           "mask" not in RUNNER_CODE.lower(),
           "ground truth never reaches corruption/cache code")
-    check("no_plantseg_dataset_access",
-          all(t not in RUNNER_CODE for t in ("PlantSegEvalDataset", "build_eval_loader",
-                                             "build_dataloader", "PLANTSEG_DATA_ROOT")))
+    check("runner_dataset_only_corrupted_wrapper",
+          "PlantSegCorruptedEvalDataset" in RUNNER_CODE
+          and all(t not in RUNNER_CODE for t in ("PlantSegEvalDataset", "PlantSegDataset(",
+                                                 "build_protocol_adapter", "build_dataloader",
+                                                 "PLANTSEG_DATA_ROOT")),
+          "the completed runner builds the corrupted wrapper, and no other dataset")
     builder_src = (REPO / "scripts/build_corruption_cache.py").read_text(encoding="utf-8")
     builder = code_only(builder_src)
     check("direct_generation_still_owned_by_builder",
@@ -177,7 +285,9 @@ def test_refusals() -> None:
            root, "brightness", 2, split="test", official=False)
     expect("wrong_severity_rejected", CorruptionCacheError, resolve_corruption_cache,
            root, "fog", 3, split="test", official=False)
-    expect("severity_5_rejected", RobustnessError, load_severity_5, root, man)
+    expect("gaussian_noise_s5_rejected", RobustnessError, load_gaussian_noise_s5, root, man)
+    expect("fog_s5_cell_absent_rejected", CorruptionCacheError, resolve_corruption_cache,
+           root, "fog", 5, split="test", official=False)
     expect("split_mismatch_rejected", CorruptionCacheError, resolve_corruption_cache,
            root, "fog", 2, split="val", official=False)
     expect("missing_cache_root_rejected", CorruptionCacheError, resolve_corruption_cache,
@@ -198,10 +308,28 @@ def test_refusals() -> None:
     expect("official_requires_complete_cache", CorruptionCacheError, resolve_corruption_cache,
            root, "fog", 2, split="test", official=True)
 
+    # ... and names the cache it expects: a pinned, complete, official cache (forged, re-sealed)
+    # is still refused without --expected-cache-sha256 (G5)
+    root3 = TMP / "cache_official_forged"
+    build_cache(root3)
+    forged = json.loads((root3 / cache.MANIFEST_NAME).read_text(encoding="utf-8"))
+    forged.update(status="official", source_image_count=1561,
+                  pin={"parameters": {"split": "test"}})
+    forged["canonical_manifest_sha256"] = cache.canonical_manifest_sha256(forged)
+    (root3 / cache.MANIFEST_NAME).write_text(json.dumps(forged, indent=2, sort_keys=True),
+                                             encoding="utf-8")
+    try:
+        resolve_corruption_cache(root3, "fog", 2, split="test", official=True)
+        check("official_requires_expected_checksum", False, "no exception raised")
+    except CorruptionCacheError as e:
+        check("official_requires_expected_checksum", e.code == "expected_cache_sha256_required",
+              e.code)
 
-def load_severity_5(root, man):
-    """Severity 5 is never produced; the vocabulary gate must refuse before any cache lookup."""
-    return cached_image_loader(root, man, "fog", 5)("leaf_000")
+
+def load_gaussian_noise_s5(root, man):
+    """gaussian_noise at severity 5 is never produced (AM-16 item 6); the vocabulary gate must
+    refuse before any cache lookup."""
+    return cached_image_loader(root, man, "gaussian_noise", 5)("leaf_000")
 
 
 # ---------------------------------------------------------------- 4. CLI surface
@@ -223,7 +351,8 @@ def main() -> int:
     print("CORRUPTED-EVALUATION RUNNER SMOKE — synthetic cache only; no PlantSeg, no model, no GPU")
     print(f"temp: {TMP}")
     print("=" * 78)
-    for fn in (test_runner_architecture, test_shared_consumption, test_refusals, test_cli):
+    for fn in (test_work_folder, test_runner_architecture, test_shared_consumption, test_refusals,
+               test_cli):
         print(f"\n--- {fn.__name__} ---")
         fn()
     print("\n[CHECKS]")

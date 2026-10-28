@@ -1,0 +1,32 @@
+{
+  "format": "qat_selection_rules/1",
+  "note": "E6-KD's QAT epoch rules (lane L-AM3, B-2; LB18). E6-KD runs AM-4a item 1's recipe with E3's distillation terms (AM-3; DL-39, DL-51) and AM-4a item 2's selection as AM-21 amends it (its header applies items 2, 4 and 5 to E6-KD). Read by scripts/select_qat_epoch.py and scripts/qat_epoch_eval.py through src/quant/qat_select.py (RULES_FILES), which refuses a disagreement. The qat_epoch block is configs/qat_selection_rules_am23.json's but for stages and source; the clip is configs/qat_selection_rules.json's U4 winner (AM-4a item 3; its qat_clip.inherited_by names E6-KD), so this file holds no qat_clip block.",
+  "qat_epoch": {
+    "source": "AM-4; AM-4a item 2; AM-21 item 2(a) and its header; DL-09; DL-38; AM-3; DL-39; DL-51",
+    "stages": ["E6-KD"],
+    "epochs": 15,
+    "value": "dataset_level.all_class_miou of the epoch's converted QNNPACK TorchScript artifact, scored by scripts/evaluate_model.py",
+    "evaluator": {
+      "split": "val",
+      "expected_rows": 846,
+      "precision": "int8_qat",
+      "quant_backend": "qnnpack",
+      "device": "cpu",
+      "preprocess_protocol": "core_preprocess/1.0.0",
+      "artifact_status": "provisional",
+      "governed_paths_clean": true,
+      "eval_runtime": {"batch_size": 1, "forward_batches": 846, "num_workers": 0},
+      "gt_support_sum": 159279104
+    },
+    "equal_across_summaries": ["run.repo_commit", "run.metric_impl_sha256", "run.config_sha256",
+                               "dataset.split_manifest_sha256", "dataset.class_map_sha256", "run.env.torch",
+                               "run.eval_runtime.torch_num_threads", "run.eval_runtime.image_digest"],
+    "non_null": ["run.repo_commit", "run.eval_runtime.image_digest"],
+    "equal_across_evaluations": ["git_head", "host_label", "cpu_model", "purpose"],
+    "purpose": "record",
+    "compare": "strict_greater",
+    "tie": "earliest_epoch",
+    "excluded": "an epoch whose checkpoint fails item 1(a): excluded: non-finite state (AM-21 item 2(a))",
+    "never_selects": ["fake_quant_val_all_class_miou"]
+  }
+}

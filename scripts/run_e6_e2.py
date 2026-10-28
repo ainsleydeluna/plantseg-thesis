@@ -1,0 +1,28 @@
+#!/usr/bin/env python3
+"""E6-E2 — INT8 QAT from the E2 seed-42 student, the λ winner of record (AM-23 item 1; descriptive).
+
+E6's recipe; only the parent differs. The stage is PINNED below and is deliberately NOT a command-line
+option, so this entry point can never be redirected to another experiment. `src/quant/runner.py` main hands
+the QAT stages to `src/quant/qat.py`, which holds the AM-4/AM-4a recipe and every launch gate, AM-23's
+parent binding included.
+"""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[1]
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
+
+from src.quant.runner import main as _main  # noqa: E402
+
+STAGE = "e6-e2"
+
+
+def main(argv=None) -> int:
+    return _main(argv, stage_key=STAGE)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

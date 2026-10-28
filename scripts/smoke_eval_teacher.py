@@ -305,7 +305,9 @@ def test_cli_and_safety() -> None:
                     max_samples=10, checkpoint=str(tk)))
     # official status is NOT forbidden for the teacher -- nothing in the contract prohibits it
     validate_cli_args(args_for(split="test", artifact_status="official",
-                               confirm_test_split=True, checkpoint=str(tk)))
+                               confirm_test_split=True, checkpoint=str(tk),
+                               expected_checkpoint_sha256=hashlib.sha256(Path(tk).read_bytes()).hexdigest(),
+                               threads=1))
     check("teacher_official_status_permitted", True,
           "descriptive ROLE is a statistics concern, not an artifact-status ban")
 
