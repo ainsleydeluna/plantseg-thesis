@@ -5,10 +5,11 @@ ruling TB6) (lane TMAN, B-1, C4).
 The corrupted-TEST cache pin is L-CORR's JSON, embedded verbatim: the schema and each of AM-19 item 1(c)'s four
 fields (script, commit, library versions, parameters) with IF§3's keys; pin_sha256 recomputed over
 canonical_json_bytes (src/eval/artifacts.py:93) without pin_sha256; the cells against the registered ordered set,
-which comes from src.corruption_roles (imported lazily, absent until L-CORR merges) or, here, through a parameter
-holding IF§6's 24 cells (TB6), with one static case on the module name; the cells each scope asks for (15
-inferential, 9 descriptive); the image hasher's pin (B-3a's); and no value before the unlock record (M11; IF§5's
-four values and the hasher's).
+which comes from src.corruption_roles (imported lazily) or, here, through a parameter holding IF§6's 24 cells
+(TB6), with one static case on the module name and, since L-CORR merged, one live case (B-2, B2R10; audit M5:
+the live set is IF§6's in L-CORR's corruption-major order); the cells each scope asks for (15 inferential, 9
+descriptive); the image hasher's pin (B-3a's); and no value before the unlock record (M11; IF§5's four values and
+the hasher's).
 
 Run:  python -B scripts/smoke_tman_pins.py
 """
@@ -126,6 +127,31 @@ def case_cells():
     expect_refused("cell_id_malformed_refused", "generator_cells_mismatch", M.cell_severity, "fog-5")
 
 
+def case_live_cells():
+    """B2R10 (closing report §18 item 1; audit M5): with no parameter, registered_cells() is L-CORR's live ordered set,
+    list(src.corruption_roles.CELL_IDS) -- 24 ids, the IF§6 set these cases inject, in L-CORR's protocol order
+    (corruption-major), which differs from IF6_CELLS' severity-grouped order; so a pin carrying IF6_CELLS' order is
+    refused against the live set. src/corruption_cache.py's build_pin holds the cells under parameters.cells, the key
+    pin_cells_errors reads (read statically: of L-CORR's modules only src.corruption_roles is imported)."""
+    import ast
+    import importlib
+    from src.tman import manifest as M
+    live = M.registered_cells()
+    roles = importlib.import_module(M.CORRUPTION_ROLES_MODULE)
+    check("registered_cells_live_is_corruption_roles_cell_ids_B2R10_M5", live == list(roles.CELL_IDS)
+          and len(live) == 24 and len(set(live)) == 24, str(live[:3]))
+    check("live_set_is_if6_s_set_in_corruption_major_order_M5", set(live) == set(IF6_CELLS) and live != IF6_CELLS
+          and live[15] == "brightness_s2" and IF6_CELLS[15] == "gaussian_noise_s4", f"{live[15]} {IF6_CELLS[15]}")
+    check("pin_in_if6_order_refused_against_the_live_set_M5", bool(M.pin_cells_errors(pin()))
+          and not M.pin_cells_errors(pin(parameters=dict(pin()["parameters"], cells=list(live)))))
+    tree = ast.parse((REPO / "src/corruption_cache.py").read_text(encoding="utf-8"))
+    fn = next((n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "build_pin"), None)
+    keys = [x.value for node in (ast.walk(fn) if fn else ()) if isinstance(node, ast.Dict)
+            for k, v in zip(node.keys, node.values) if isinstance(k, ast.Constant) and k.value == "parameters"
+            and isinstance(v, ast.Dict) for x in v.keys if isinstance(x, ast.Constant)]
+    check("build_pin_holds_the_cells_under_parameters_cells_B2R10", M.PIN_CELLS_KEY in keys, str(keys))
+
+
 def case_values_and_hasher():
     from src.tman import manifest as M
     hasher = {"script": {"path": "scripts/tday_hash_images.py", "commit": "5" * 40, "sha256": "6" * 64},
@@ -153,4 +179,5 @@ def case_values_and_hasher():
 
 if __name__ == "__main__":
     raise SystemExit(FX.run_cases("TMAN PINS SMOKE (lane TMAN, B-1, C4)",
-                                  (case_pin_fields, case_pin_sha256, case_cells, case_values_and_hasher)))
+                                  (case_pin_fields, case_pin_sha256, case_cells, case_live_cells,
+                                   case_values_and_hasher)))
