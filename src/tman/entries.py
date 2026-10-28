@@ -192,11 +192,14 @@ class CutContext:
     belongs to, the run_ids stopped (a launch log's stopped line; a QAT run_stop row), each slot's status at the
     original instant from its own attempts (None: not read or never launched); the reading of a named rule's record
     (rule_record_reader) and E3-X's run of record; the day a committed cut entry was entered in the decision log; and
-    whether a record was committed by the end of a day."""
+    whether a record was committed by the end of a day. For AM-22 item 2's cutoff (B-2): its dates (am22: a callable
+    giving schedule.Am22Dates), each slot's cutoff-moving records (moving_reader), a launched attempt's last row
+    (completion.LastRow), the day a record's sha256 entered the decision log (logged), and whether the run
+    directories are read (reads_runs: without them a cutoff date is not recomputed, a draft's case)."""
 
     def __init__(self, catalogue, freeze, *, registry=None, decision_records=None, attempts=None, run_slot=None,
                  stopped=None, status=None, rule_record=None, e3x=None, entered=None, known_by=None,
-                 reference_error=None):
+                 reference_error=None, am22=None, moving=None, last_row=None, logged=None, reads_runs=False):
         self.cat, self.freeze = catalogue, freeze
         self.registry = registry or {}                      # run stage -> kd_arms.ArmSpec
         self.decision_records = decision_records or {}      # sweep key -> projected decision record
@@ -211,6 +214,11 @@ class CutContext:
         self.known_by = known_by or (lambda rel, sha256, day: None)
         # (an arithmetic's reference, the cut slot, the arithmetic) -> why it does not read again, or None
         self.reference_error = reference_error or (lambda ref, slot, arithmetic: None)
+        self.am22 = am22 or (lambda: None)                  # -> schedule.Am22Dates; None: not read
+        self.moving = moving or (lambda slot: None)          # slot -> [{gate, record, unread?}]; None: not read
+        self.last_row = last_row or (lambda run_id: None)    # run_id -> completion.LastRow; None: not read
+        self.logged = logged or (lambda sha256: None)        # a record's sha256 -> the day it entered the decision log
+        self.reads_runs = reads_runs
 
 
 def rule_record_reader(records: R.Records):
@@ -252,6 +260,180 @@ def known_by_reader(records: R.Records):
     return known_by
 
 
+# ------------------------------------------------------------------------------ the launch cutoff (AM-22 item 2)
+R1_TEACHER = "teacher-R1:s42:40k"            # AM-18 item 7(a): R2's teacher waits for R1's end-of-run record
+PILOT_SELECTION = "E5:s42:sel"               # its inputs name the pilot's winner record (TB9)
+RUN_END_GATES = {"parent_end": "parent", "arm_teacher_selection": "parent", "r1_end": R1_TEACHER}
+
+
+def moving_reader(cat, records: R.Records, index, pilot_winner: dict | None = None):
+    """CutContext.moving (AM-22 item 2(a)): for each of a slot's gates that moves its cutoff (CUTOFF_MOVING_GATES,
+    the catalogue's moves_cutoff), the record a registered rule writes, {"path", "sha256", "date"}, dated by its Manila
+    day (schedule.manila_day): an end-of-run record -- the parent's, R1's for R2's teacher, the arm teacher's M12
+    selection -- by its own time, read under the run directories (`index`, a completion.RunIndex; None: not read);
+    the α selection file or the α decision record by the committer time of the commit that added its committed
+    bytes; the pilot's winner record, kept uncommitted (DL-139), by the day the RECORDED or IMPLEMENTED decision-log
+    row holding its sha256 states after it. A record not written yet is {"record": None} (the run's launch still
+    waits for it); one that cannot be read is {"record": None, "unread": why}."""
+    def run_end(slot):
+        if index is None or index.root is None:
+            return {"record": None, "unread": "the run directories are not read (--runs)"}
+        att = index.attempts(slot)
+        if att is None:
+            return {"record": None, "unread": f"{slot}'s attempts are not read"}
+        done = sorted((index.state(r).completion.at, r) for r in att if index.state(r).completion is not None)
+        if not done:
+            return {"record": None}
+        c = index.state(done[0][1]).completion
+        return {"record": {"path": f"{done[0][1]}/{c.record}", "sha256": c.sha256, "date": D.manila_day(c.at)}}
+
+    def alpha():
+        recs = []
+        for rel in (ss.ALPHA_SELECTION_REL, ss.DECISION_RECORD_REL["alpha_cwd"]):
+            if records.has(rel):
+                commit = ss.adding_commit(records.src, rel)
+                t = records.commit_time(commit) if commit else None
+                if t is None:
+                    return {"record": None, "unread": f"{rel}: no commit adds its committed bytes"}
+                recs.append({"path": rel, "sha256": S.sha256_bytes(records.read(rel)), "date": D.manila_day(t)})
+        return {"record": max(recs, key=lambda r: (r["date"], r["path"])) if recs else None}
+
+    def pilot():
+        if pilot_winner is None:
+            return {"record": None, "unread": f"the pilot's winner record is not named ({PILOT_SELECTION}'s inputs)"}
+        sha, dl = pilot_winner["sha256"], records.decision_log()
+        for row in dl.recorded_rows_with(sha):
+            text = dl.row_text(row)
+            m = S.ISO_DAY_RE.search(text, text.index(sha) + len(sha))
+            if m and S.TYPES["day"](m.group(0)):
+                return {"record": {"path": pilot_winner["path"], "sha256": sha, "date": m.group(0)}}
+        return {"record": None, "unread": f"no RECORDED or IMPLEMENTED decision-log row holding the pilot's winner "
+                                          f"record's sha256 {sha[:12]} states its day after it (DL-139)"}
+
+    def read(slot_key):
+        s, out = cat.slots[slot_key], []
+        for g in s["gates"]:
+            if not g["moves_cutoff"]:
+                continue
+            gate = g["record"]
+            if gate in RUN_END_GATES:
+                src = s["parent"] if RUN_END_GATES[gate] == "parent" else RUN_END_GATES[gate]
+                got = run_end(src) if src else {"record": None, "unread": f"{slot_key} has no parent"}
+            elif gate == "alpha_selection":
+                got = alpha()
+            else:                                                     # pilot_winner
+                got = pilot()
+            out.append({"gate": gate, **got})
+        return out
+    return read
+
+
+def last_row_reader(cat, index):
+    """CutContext.last_row (AM-22 item 2(b)): a launched attempt's last time-stamped row (completion.last_row), read
+    under the run directories as its own slot's runs are read; None when they are not read."""
+    def last(run_id):
+        if index is None or index.root is None or run_id not in index.slot_of:
+            return None
+        S.refuse_test_path(run_id, index.root)
+        return C.last_row(cat.slots[index.slot_of[run_id]], index.root / run_id)
+    return last
+
+
+def logged_reader(records: R.Records):
+    """CutContext.logged: the Manila day a record's sha256 entered the decision log (entered_day)."""
+    return lambda sha256: entered_day(records, sha256)
+
+
+def slot_cutoff(slot: str, ctx) -> tuple:
+    """AM-22 item 2(a) for a run not launched: (its cutoff date, the rule_records that may name what set it, why it is
+    not computable). The cutoff date is the later of item 2(a)'s cutoff date and the end of the second day after the
+    day of the last record its launch waits for, never past the ceiling; a record it waits for that is not written
+    leaves the ceiling (item 2(c): a parent still running exempts nothing). The record that set the date is the
+    last-dated one when it moves the date past the cutoff date; otherwise none (null)."""
+    dates, reads = ctx.am22(), ctx.moving(slot)
+    if dates is None or reads is None:
+        return None, None, f"{slot}: AM-22's dates or its cutoff-moving records are not read"
+    unread = [f"{slot} {r['gate']}: {r['unread']}" for r in reads if r.get("unread")]
+    if unread:
+        return None, None, "; ".join(unread)
+    absent = any(r["record"] is None for r in reads)
+    written = [r["record"] for r in reads if r["record"] is not None]
+    last = max((r["date"] for r in written), default=None)
+    day = D.cutoff_day(dates, last, absent=absent)
+    moved = not absent and last is not None and D.cutoff_day(dates, last) != dates.cutoff
+    return day, ([r for r in written if r["date"] == last] if moved else [None]), None
+
+
+def slot_repeat(doc, slot: str, ctx) -> tuple:
+    """AM-22 item 2(b) for a repeat not launched: (the cutoff date, the rule_records allowed, why not computable). The
+    date is the third day after the day of the last row the attempt before it wrote -- its slot's last launched
+    attempt -- and that row is the record that set it; a teacher fine-tune with no time-stamped line takes the day
+    its stop is entered in the decision log, the stop record the cut cites."""
+    att = ctx.attempts(slot) or doc["run_ids"]
+    if not att:
+        return None, None, f"{slot}: no attempt before the repeat is named"
+    if ctx.status(slot) == C.DIVERGED:
+        return None, None, f"{slot}'s last attempt diverged: no repeat is awaited (AM-7a)"
+    rid = att[-1]
+    last = ctx.last_row(rid)
+    if last is None:
+        return None, None, f"{rid}'s rows are not read (--runs)"
+    if last.at is not None:
+        day = D.manila_day(last.at)
+        return D.repeat_cutoff_day(day), [{"path": f"{rid}/{last.record}", "sha256": last.sha256, "date": day}], None
+    rr = doc["rule_record"]
+    day = ctx.logged(rr["sha256"]) if rr else None
+    if day is None:
+        return None, None, (f"{rid} wrote no time-stamped line, and the cut cites no stop record entered in the "
+                            "decision log (AM-22 item 2(b))")
+    return D.repeat_cutoff_day(day), [{"path": rr["path"], "sha256": rr["sha256"], "date": day}], None
+
+
+def cutoff_rule(doc, ctx) -> tuple:
+    """A cutoff cut's (date, rule_records allowed -- None: not compared --, why not computable): item 2(a) for runs
+    not launched, item 2(b) for a repeat not launched (launched true, run_ids the earlier attempts). An arm cut from
+    its first cut run onward takes that run's date (AM-18 item 7(b); DL-168). Without the run directories (a draft's
+    context) the entry's date stands unrecomputed; with them, a date that cannot be computed is None."""
+    keys = [k for k in ctx.cat.slots if k in doc["slots"]]
+    groups = _arm_groups(doc, ctx)
+    if len(groups) == 1 and all(ctx.cat.slots[k]["cut_group"] == groups[0] for k in keys):
+        keys = keys[:1]
+    got = [slot_repeat(doc, k, ctx) if doc["launched"] else slot_cutoff(k, ctx) for k in keys]
+    why = "; ".join(w for _, _, w in got if w)
+    if why:
+        return (doc["date"], None, None) if not ctx.reads_runs else (None, None, why)
+    days = sorted({d for d, _, _ in got})
+    if len(days) != 1:
+        return None, None, f"the cut's slots have different cutoff dates {days}"
+    return days[0], [r for r in got[0][1] if all(r in a for _, a, _ in got)], None
+
+
+def evidence_reader(records: R.Records):
+    """B2R8: a record cited as item 2(f)'s evidence is committed at its sha256 and held by a RECORDED or IMPLEMENTED
+    decision-log row."""
+    def ok(ref) -> bool:
+        if not (isinstance(ref.get("path"), str) and isinstance(ref.get("sha256"), str)):
+            return False
+        if not records.has(ref["path"]):
+            return False
+        return S.sha256_bytes(records.read(ref["path"])) == ref["sha256"] \
+            and bool(records.decision_log().recorded_rows_with(ref["sha256"]))
+    return ok
+
+
+def no_card_report(doc: dict, evidenced) -> str | None:
+    """B2R8 (AM-22 item 2(f)): a cutoff cut whose reason is "no card" prints a REPORT unless its since.record is a
+    committed record of item 2(f)'s evidence (`evidenced(ref)`: committed at its sha256, held by a RECORDED or
+    IMPLEMENTED decision-log row). Never a refusal: such a deviation "does not undo the cut"."""
+    if doc.get("rule") != "cutoff" or doc.get("reason") != "no card":
+        return None
+    rec = (doc.get("since") or {}).get("record")
+    if isinstance(rec, dict) and evidenced(rec):
+        return None
+    return f"deviation: 'no card' needs item 2(f)'s evidence ({doc['slots']}; AM-22 item 2(f): it does not undo the " \
+           "cut)"
+
+
 def _slots(doc, ctx) -> list[dict]:
     return [ctx.cat.slots[k] for k in doc["slots"]]
 
@@ -280,14 +462,21 @@ def rule_day(doc, ctx) -> str | None:
             return D.manila_day(D.parse_utc_any(a["now_utc"])) if a else None
         except ValueError:
             return None
+    if rule == "cutoff":                                    # AM-22 item 2 (B-2): recomputed from the records
+        return cutoff_rule(doc, ctx)[0]
     return None
 
 
 def chk_rule(doc, ctx):
-    """A rule of AM-19 item 3(b); a named rule cites the record that names its cut, read through the records: an
-    AM-23 condition entry or an AM-18 go-rule record (rule_record_reader; DL-24 #16)."""
+    """A rule of AM-19 item 3(b) or AM-22 item 2 (cutoff, never of the ARM latency measurement: item 1(g)); a named
+    rule cites the record that names its cut, read through the records: an AM-23 condition entry or an AM-18 go-rule
+    record (rule_record_reader; DL-24 #16)."""
     if doc["rule"] not in S.CUT_RULES:
         return f"rule {doc['rule']!r} is not one of {S.CUT_RULES} (AM-19 3(b))"
+    measured = [s["slot"] for s in _slots(doc, ctx) if s["class"] == "measurement"] if doc["rule"] == "cutoff" else []
+    if measured:
+        return (f"{measured}: the ARM latency measurement falls under no cutoff; it is cut only at the freeze (AM-22 "
+                "item 1(g))")
     rec = ctx.rule_record(doc["rule_record"]) if doc["rule"] == "named_rule" else None
     if rec is not None and rec["kind"] not in NAMED_RULE_KINDS:
         return (f"a named rule cites the committed record that names its cut, an AM-23 condition entry or an AM-18 "
@@ -325,9 +514,9 @@ def chk_reason(doc, ctx):
             return f"run_id {r} is no launched attempt of {doc['slots']}"
     if doc["launched"] != bool(launched or (unread and doc["run_ids"])):
         return f"the entry says launched {doc['launched']}; the slots' launched attempts are {launched}"
-    if doc["launched"]:
+    if doc["launched"] and doc["rule"] != "cutoff":         # a repeat's cutoff cut takes (a)'s entry (AM-22 2(b))
         return None
-    if doc["rule"] == "freeze":
+    if doc["rule"] in ("freeze", "cutoff"):
         if doc["reason"] not in S.NEVER_LAUNCHED_REASONS:
             return (f"a never-launched run's cut gives why: one of {list(S.NEVER_LAUNCHED_REASONS)}, not "
                     f"{doc['reason']!r}")
@@ -339,18 +528,32 @@ def chk_reason(doc, ctx):
     return None
 
 
+def _cutoff_why(doc, ctx) -> str:
+    why = cutoff_rule(doc, ctx)[2] if doc["rule"] == "cutoff" else None
+    return f" ({why})" if why else ""
+
+
 def chk_date(doc, ctx):
     """The cut is dated its rule's day, and is not entered in the decision log before that day (AM-19 item 3(c):
-    "entered ... on the day it is made"; a later day is decision (xv)'s REPORT)."""
+    "entered ... on the day it is made"; a later day is decision (xv)'s REPORT). A cutoff cut (AM-22 item 2) is
+    dated its recomputed cutoff date, names as rule_record the record that set it (B2R2), and is entered no earlier
+    than the day after that date."""
     want = rule_day(doc, ctx)
     if want != doc["date"]:
-        return f"the cut is dated {doc['date']}; its rule's day is {want}"
+        return f"the cut is dated {doc['date']}; its rule's day is {want}" + _cutoff_why(doc, ctx)
     rr = doc["rule_record"] if doc["rule"] == "named_rule" else None
     if rr is not None and rr["date"] != want:
         return f"the cut cites its rule's record as dated {rr['date']}; the record's day is {want}"
+    allowed = cutoff_rule(doc, ctx)[1] if doc["rule"] == "cutoff" else None
+    if allowed is not None and doc["rule_record"] not in allowed:
+        return (f"the cutoff cut names {doc['rule_record']} as the record that set its date; the records give "
+                f"{allowed} (AM-22 item 2; B2R2)")
     entered = ctx.entered(doc)
     if entered is not None and entered < want:
         return f"the cut is entered in the decision log on {entered}, before its rule's day {want} (AM-19 item 3(c))"
+    if doc["rule"] == "cutoff" and entered is not None and entered < D.expected_entered_day("cutoff", want):
+        return (f"the cutoff cut is entered on {entered}, before the day after its cutoff date {want} (AM-22 item "
+                "2(a))")
     return None
 
 
@@ -421,9 +624,11 @@ def chk_arm_results(doc, ctx):
 
 
 def chk_arm_running(doc, ctx):
-    """A launched arm run is cut only by the freeze (AM-18 item 7(a)): its slots' launched attempts, each arm on its
-    own."""
+    """A launched arm run is cut only by the freeze (AM-18 item 7(a)), or, its attempt stopped and its repeat not
+    launched, by AM-22 item 2(b)'s cutoff on its date: its slots' launched attempts, each arm on its own."""
     if doc["rule"] == "freeze":
+        return None
+    if doc["rule"] == "cutoff" and doc["launched"] and rule_day(doc, ctx) == doc["date"]:
         return None
     running = [k for g in _arm_groups(doc, ctx) for k in ctx.cat.group_slots(g) if k in doc["slots"]
                and (ctx.attempts(k) or (ctx.attempts(k) is None and doc["launched"]))]
@@ -434,11 +639,14 @@ def chk_arm_running(doc, ctx):
 
 
 def chk_arm_partial(doc, ctx):
+    """An arm is cut from its first incomplete run onward (AM-18 item 7(b)); under AM-22 item 2(c) a run cut at its
+    cutoff leaves its parent unaffected, so the arm's earlier runs may still be running then."""
     for g in _arm_groups(doc, ctx):
         runs = [k for k in ctx.cat.group_slots(g) if ctx.cat.slots[k]["class"] == "run"]
         cut = [k for k in runs if k in doc["slots"]]
         first = runs.index(cut[0]) if cut else None
-        if not cut or cut != runs[first:] or any(ctx.status(k) not in (None, C.COMPLETE) for k in runs[:first]):
+        if not cut or cut != runs[first:] or any(ctx.status(k) not in (None, C.COMPLETE) for k in runs[:first]
+                                                 if doc["rule"] != "cutoff"):
             return (f"an arm is cut from its first incomplete run onward: arm {g}'s runs {runs}, cut {cut} (AM-18 item "
                     "7(b))")
     return None
@@ -456,6 +664,13 @@ def chk_order_position(doc, ctx):
 
 
 def chk_decision_date(doc, ctx):
+    """A decision-date cut is the sweep's decision record's (AM-19 items 2(g), 2(h)); a sweep candidate's on-course
+    repeat has no AM-22 item 2(b) cutoff (AM-19 item 2(b); AM-19a reading 7; audit m2)."""
+    cands = [s["slot"] for s in _slots(doc, ctx) if s["sweep"] and not s["sweep"]["default_candidate"]] \
+        if doc["rule"] == "cutoff" and doc["launched"] else []
+    if cands:
+        return (f"{cands}: a sweep candidate's repeat is governed by its decision date; it has no item 2(b) cutoff "
+                "(AM-22 item 2(b); AM-19 item 2(b); AM-19a reading 7)")
     if doc["rule"] != "decision_date":
         return None
     key = _sweep_key(doc, ctx)
@@ -478,8 +693,10 @@ def chk_stopped(doc, ctx):
     if not stopped or (doc["rule"] == "freeze" and doc["date"] == ctx.freeze.original_date) \
             or doc["rule"] == "decision_date":
         return None
-    return (f"{stopped} await a repeat (AM-19 item 3(a)); only the freeze, on the original freeze date, or the "
-            "sweep's decision record cuts them")
+    if doc["rule"] == "cutoff" and doc["launched"] and rule_day(doc, ctx) == doc["date"]:     # AM-22 item 2(b)
+        return None
+    return (f"{stopped} await a repeat (AM-19 item 3(a)); only the freeze, on the original freeze date, the sweep's "
+            "decision record, or AM-22 item 2(b)'s cutoff on its date cuts them")
 
 
 def chk_registered_arm(doc, ctx):

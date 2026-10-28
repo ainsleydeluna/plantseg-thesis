@@ -156,7 +156,18 @@ def manifest_body(args, code: str) -> dict:
 
 
 def check_cut_entry(args, records, cat, freeze, doc):
-    E.check_cut(doc, printer_cut_context(records, cat, freeze, doc, args.runs))
+    """The cut checks on the would-be record set; a cutoff cut (AM-22 item 2) reads the pilot's winner record from
+    --manifest's E5:s42:sel inputs when a gate of its slots waits for it, and prints B2R8's "no card" REPORT."""
+    pilot = None
+    if args.manifest:
+        e = next((x for x in manifest_body(args, "cut_date_mismatch")["entries"] if x["slot"] == E.PILOT_SELECTION),
+                 None)
+        pilot = ((e or {}).get("inputs") or {}).get("clip_selection")
+    E.check_cut(doc, printer_cut_context(records, cat, freeze, doc, args.runs,
+                                         pilot=pilot if isinstance(pilot, dict) else None))
+    rep = E.no_card_report(doc, E.evidence_reader(records))
+    if rep:
+        print(f"REPORT {rep}")
 
 
 def check_not_run(args, records, cat, freeze, doc):
@@ -266,6 +277,9 @@ def cmd_entry(args) -> int:
     records = records_at(args)
     cat = catalogue(records)
     fields = read_json(args.fields, "entry_field")
+    if args.rule is not None and (args.kind != "cut" or not isinstance(fields, dict)
+                                  or fields.setdefault("rule", args.rule) != args.rule):
+        raise S.TmanRefused("entry_field", f"--rule {args.rule} is a cut's rule: entry cut, its fields' rule the same")
     doc = E.make_entry(args.kind, args.slot or [], args.date, fields, amendment=args.amendment, script=SCRIPT_REL,
                        commit=records.src.head() or None)
     freeze = D.freeze_instant(D.schedule_block(records.src))
@@ -277,12 +291,13 @@ def cmd_entry(args) -> int:
     return S.EXIT_PASS
 
 
-def printer_cut_context(records: R.Records, cat, freeze, doc: dict, runs) -> E.CutContext:
+def printer_cut_context(records: R.Records, cat, freeze, doc: dict, runs, pilot: dict | None = None) -> E.CutContext:
     """The cut printer's context, the validator's (validate.cut_context): the registry, the decision records, every
     run slot's launched attempts and status from the launch log and the run directories under --runs
     (completion.RunIndex; never from the entry), a named rule's record and the records committed by a day (E3-X's
-    run of record is read from the manifest by the validator). A cut is printed from the run directories: --runs is
-    required."""
+    run of record is read from the manifest by the validator); AM-22 item 2's dates of record (B2R1), the slots'
+    cutoff-moving records (`pilot`: the pilot's winner record {path, sha256}), the attempts' last rows and the day a
+    record entered the decision log. A cut is printed from the run directories: --runs is required."""
     from src.training import sweep_select as ss
     if runs is None:
         raise S.TmanRefused("launched_attempt_without_directory", "a cut is printed from the run directories: each "
@@ -302,7 +317,10 @@ def printer_cut_context(records: R.Records, cat, freeze, doc: dict, runs) -> E.C
     return E.CutContext(cat, freeze, registry=E.arm_registry(records),
                         decision_records=recs, attempts=idx.attempts, run_slot=idx.slot_of.get,
                         stopped=idx.stopped_ids(), status=lambda slot: idx.status(slot, freeze.original_utc),
-                        rule_record=E.rule_record_reader(records), known_by=E.known_by_reader(records))
+                        rule_record=E.rule_record_reader(records), known_by=E.known_by_reader(records),
+                        am22=lambda: D.am22_dates_of_record(records.src),
+                        moving=E.moving_reader(cat, records, idx, pilot), last_row=E.last_row_reader(cat, idx),
+                        logged=E.logged_reader(records), reads_runs=True)
 
 
 # -------------------------------------------------------------------------------------------- arithmetic
@@ -463,6 +481,8 @@ def parser() -> argparse.ArgumentParser:
     e.add_argument("--nn", type=int, default=1)
     e.add_argument("--runs")
     e.add_argument("--manifest")
+    e.add_argument("--rule", help="entry cut: the cut's rule (cutoff: AM-22 item 2), filling the fields' rule or "
+                                  "equal to it")
     a = sub.add_parser("arithmetic")
     a.add_argument("--slot", required=True)
     a.add_argument("--iterations", type=int, help="optional: the slot's horizon (checked); a QAT run's, its "

@@ -39,6 +39,12 @@ AM22_CUTOFF_RE = re.compile(r"Its\s+cutoff\s+date\s+is\s+(\d{4}-\d{2}-\d{2})")
 AM22_CEILING_RE = re.compile(r"in\s+no\s+case\s+later\s+than\s+(\d{4}-\d{2}-\d{2})")
 AM22_TEST_DEADLINE = "2026-11-08"                            # AM-22 item 1(e)
 ENTERED_DAY_OFFSET = {"cutoff": 1}                           # AM-22 item 2(a): made on the day after its cutoff date
+# B2R1: AM-22's commit reached the remote on 2026-10-17 (docs/DECISION_LOG.md DL-137 :245 and DL-168 :276: "AM-22's
+# commit (ce29549) reached the remote on 2026-10-17, so no date moves"); its committer time is 2026-10-17T20:37:39+08:00
+AM22_PUSHED_DAY = "2026-10-17"
+AM22_COMMIT = "ce2954951e24a17fba9e871a0d927da0bb397dc3"
+CUTOFF_MOVE_DAYS = 2                                         # AM-22 item 2(a): the end of the second day after
+REPEAT_CUTOFF_DAYS = 3                                       # AM-22 item 2(b): the end of the third day after
 
 
 def iso(d: date) -> str:
@@ -195,6 +201,39 @@ def am22_dates(text: str, pushed_day: str | None) -> Am22Dates:
         shift = max(0, (day(pushed_day) - day(AM22_PUSH_BASE)).days)
     move = timedelta(days=shift)
     return Am22Dates(iso(day(c.group(1)) + move), iso(day(g.group(1)) + move), c.group(1), g.group(1), shift)
+
+
+def am22_dates_of_record(src: ss.HeadSource) -> Am22Dates:
+    """The dates provider of record (B2R1): item 2(a)'s cutoff date and ceiling read from AM-22's committed text at
+    the records' commit, its commit pushed on AM22_PUSHED_DAY. Refused (schedule_invalid) when AM-22's commit is not
+    an ancestor of the records' commit, or its text is not there."""
+    if not (src.commit_exists(AM22_COMMIT) and src.is_ancestor(AM22_COMMIT, src.records_ref)):
+        raise S.TmanRefused("schedule_invalid", f"AM-22's commit {AM22_COMMIT[:7]} is not an ancestor of the records' "
+                                                f"commit {src.records_ref[:12]}: item 2(a)'s dates are not of record "
+                                                "there (B2R1)")
+    data = src.show(src.records_ref, S.AMENDMENTS_REL)
+    text = am22_text(data.decode("utf-8")) if data is not None else None
+    if text is None:
+        raise S.TmanRefused("schedule_invalid", f"{S.AMENDMENTS_REL} at {src.records_ref[:12]} holds no AM-22 section")
+    return am22_dates(text, AM22_PUSHED_DAY)
+
+
+def cutoff_day(dates: Am22Dates, last_day: str | None, *, absent: bool = False) -> str:
+    """AM-22 item 2(a): a run's cutoff date, the later of the cutoff date and the end of the second day after the day
+    of the last record that moves it (`last_day`, None when it waits for none), and in no case later than the
+    ceiling. A record it waits for that is never written (`absent`) leaves the ceiling."""
+    if absent:
+        return dates.ceiling
+    if last_day is None:
+        return dates.cutoff
+    moved = iso(day(last_day) + timedelta(days=CUTOFF_MOVE_DAYS))
+    return min(dates.ceiling, max(dates.cutoff, moved))
+
+
+def repeat_cutoff_day(last_row_day: str) -> str:
+    """AM-22 item 2(b): a repeat not launched by the end of the third day after the day of the last row the attempt
+    before it wrote is cut on that date."""
+    return iso(day(last_row_day) + timedelta(days=REPEAT_CUTOFF_DAYS))
 
 
 # ---------------------------------------------------------------------------------- rule-aware dating (T-15)

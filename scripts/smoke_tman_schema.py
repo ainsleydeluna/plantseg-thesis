@@ -367,7 +367,7 @@ def case_formats():
           and "non_finite" not in S.KINDS_BY_CLASS["derived"])
     check("terminal_kinds_TB10", set(S.TERMINAL_KINDS) == {"cut", "not_run", "non_finite", "superseded", "diverged",
                                                            "aborted", "not_made"})
-    check("cut_rules_b1", S.CUT_RULES == ["freeze", "decision_date", "named_rule", "arithmetic"])
+    check("cut_rules_b1", S.CUT_RULES == ["freeze", "decision_date", "named_rule", "arithmetic", "cutoff"])  # B2R2
     check("inventory_precisions_TB5", S.INVENTORY_PRECISIONS == ("fp32", "int8_ptq", "int8_qat",
                                                                 "qat_fakequant_off"))
     check("image_digests_of_record_TB1", S.KD_IMAGE == "sha256:cb413304e2445e5c8ac3786f7a370f2ed05a07d11843b1168"

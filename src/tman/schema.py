@@ -127,7 +127,7 @@ def allowed_kinds(slot: dict) -> tuple:
 # The entry files' kinds (decision (iii)); B-2 adds rule "cutoff" and AM-22's fields of kind "freeze" (T-19).
 ENTRY_FILE_KINDS = ["cut", "not_run", "freeze_delay", "new_freeze", "not_required", "unlock", "condition",
                     "not_made", "freeze", "clock_offset"]
-CUT_RULES = ["freeze", "decision_date", "named_rule", "arithmetic"]          # AM-19 item 3(b); B-2 appends "cutoff"
+CUT_RULES = ["freeze", "decision_date", "named_rule", "arithmetic", "cutoff"]   # AM-19 item 3(b); AM-22 item 2 (B-2)
 NEVER_LAUNCHED_REASONS = ("gate not met", "code not merged", "no card")       # AM-19 item 3(b), first point
 NOT_RUN_REASONS = ("parent cut", "parent diverged")                           # AM-19 item 4(a)
 NOT_MADE_REASON = "code not merged"                                            # AM-23 item 4

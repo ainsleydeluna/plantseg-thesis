@@ -85,7 +85,7 @@ class Ctx:
     def __init__(self, *, mode: str, manifest_bytes: bytes, manifest_path: str, records: R.Records, runs_root=None,
                  freeze_record: str | None = None, unlock_entry: str | None = None, registered_cells=None,
                  ptq_reader=None, trigger_reader=None, artifact_runtimes=(), now: float | None = None,
-                 repo_root=None):
+                 repo_root=None, am22_dates=None):
         if mode not in MODES:
             raise ValueError(f"mode {mode!r}")
         self.mode, self.data, self.path, self.records = mode, manifest_bytes, manifest_path, records
@@ -93,6 +93,7 @@ class Ctx:
         self.freeze_rel, self.unlock_rel = freeze_record, unlock_entry
         self.registered_cells, self.ptq_reader = registered_cells, ptq_reader
         self.trigger_reader = R.TRIGGER_READER if trigger_reader is None else trigger_reader
+        self.am22_dates = am22_dates          # AM-22 item 2(a)'s dates: a stand-in (smokes); else the committed text's
         self.trigger_verdict: bool | None = None
         self.artifact_runtimes, self.now = list(artifact_runtimes), now
         self.repo_root = Path(records.src.root if repo_root is None else repo_root)
@@ -992,11 +993,21 @@ def cut_context(x: Ctx, docs: dict | None = None) -> E.CutContext:
     for key, rel in ss.DECISION_RECORD_REL.items():
         if x.records.has(rel):
             recs[key] = x.records.json(rel, R.DECISION_RECORD, code="decision_date_cut_mismatch")[0]
+    runs = idx if x.runs_root is not None else None
+    pilot = ((x.by_slot.get(E.PILOT_SELECTION) or {}).get("inputs") or {}).get("clip_selection")
     return E.CutContext(x.cat, x.freeze, registry=E.arm_registry(x.records),
                         decision_records=recs, attempts=idx.attempts, run_slot=idx.slot_of.get,
                         stopped=idx.stopped_ids(), status=x.slot_status, rule_record=E.rule_record_reader(x.records),
                         e3x=e3x, entered=entered, known_by=E.known_by_reader(x.records),
-                        reference_error=reference_error)
+                        reference_error=reference_error, am22=lambda: am22_dates(x),
+                        moving=E.moving_reader(x.cat, x.records, runs, pilot if isinstance(pilot, dict) else None),
+                        last_row=E.last_row_reader(x.cat, runs), logged=E.logged_reader(x.records),
+                        reads_runs=runs is not None)
+
+
+def am22_dates(x: Ctx) -> D.Am22Dates:
+    """AM-22 item 2(a)'s dates: the Ctx's stand-in, else the committed text's at the records' commit (B2R1)."""
+    return x.am22_dates if x.am22_dates is not None else D.am22_dates_of_record(x.records.src)
 
 
 def latest_finished(cat, index: C.RunIndex, stage: str, now) -> set:
@@ -1589,6 +1600,9 @@ def validate(x: Ctx) -> Result:
     for rel in dict.fromkeys(c["path"] for c in x.cited_entries() if c["kind"] in REPORTED_KINDS):
         doc, sha = x.entry_file(rel)
         rep = E.late_entry_report(doc, E.entered_day(x.records, sha))
+        if rep:
+            res.reports.append(f"REPORT {rep}")
+        rep = E.no_card_report(doc, E.evidence_reader(x.records)) if doc.get("kind") == "cut" else None
         if rep:
             res.reports.append(f"REPORT {rep}")
     return res
