@@ -5,7 +5,7 @@ has a mutation killed by a named case -- the precedence swapped, the last instea
 partition flag, the order of sha256-before-parse, the path guards, "xb" changed to "wb", the pin and module checks,
 expected_images among them.
 
-smoke_tman_mutations.py's form (:2-14, :1944-2039): a mutation replaces exact texts (each must occur once) in a scratch
+smoke_tman_mutations.py's form (:2-13, :2164-2260): a mutation replaces exact texts (each must occur once) in a scratch
 copy of the two files, under the system temp dir; a fresh interpreter imports the copy as src.tman.dedup and
 scripts.tday_hash_images (B-1's modules stay the checkout's) and runs one case of smoke_tman_dedup or smoke_tman_hasher
 up to its named check. The mutation is killed when that named check fails; a crash, or another check failing, is no

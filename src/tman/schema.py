@@ -23,7 +23,7 @@ Slot keys (decision (ii)) keep ":" and live inside JSON only; file names use the
 slot's cut group in the catalogue's relative cut order (TB8 item 2); kd_arm/1's cut_place, AM-18 item 7(b)'s
 numbering, is the catalogue's cut_order[].arm_cut_place.
 
-Canonical JSON is src/eval/artifacts.py's canonical_json_bytes (:93), imported: one definition (TB14). Field specs
+Canonical JSON is src/eval/artifacts.py's canonical_json_bytes (:97), imported: one definition (TB14). Field specs
 are additive per kind (T-19): a later sub-phase registers a kind or adds a field, and an unknown kind is refused.
 """
 from __future__ import annotations

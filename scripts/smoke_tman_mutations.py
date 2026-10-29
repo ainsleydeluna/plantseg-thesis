@@ -7,9 +7,10 @@ scripts/tday_manifest.py, scripts/tday_hash_images.py (B-3a part 2, P2R4: copied
 configs/tday_catalogue.json, and, for the reused arithmetic (decision (xvii)),
 scripts/preflight_arms.py -- and a fresh interpreter imports the copy as src.tman, scripts.tday_manifest and
 scripts.preflight_arms (the catalogue's bytes are served for the repository's path) and runs one case of one TMAN
-smoke up to its named check. The mutation is killed when a check the case records fails or the case raises.
-Each killing case first passes alone on the unmutated copy, its named checks among those it records. The
-repository's files are read, never written; the scratch copies live under the system temp dir and are removed.
+smoke up to its named check. The mutation is killed when that named check fails; a crash, or another check failing,
+is no kill (DL-24 #6). Each killing case first passes alone on the unmutated copy, its named checks among those it
+records. The repository's files are read, never written; the scratch copies live under the system temp dir and are
+removed.
 
 Run:  python -B scripts/smoke_tman_mutations.py          (a worker is the same file with --worker <spec>; --only
       <id>,<id> runs those mutations and their cases alone, a development aid whose RESULT is not the record)

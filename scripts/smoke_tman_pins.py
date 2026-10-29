@@ -4,7 +4,7 @@ ruling TB6) (lane TMAN, B-1, C4).
 
 The corrupted-TEST cache pin is L-CORR's JSON, embedded verbatim: the schema and each of AM-19 item 1(c)'s four
 fields (script, commit, library versions, parameters) with IF§3's keys; pin_sha256 recomputed over
-canonical_json_bytes (src/eval/artifacts.py:93) without pin_sha256; the cells against the registered ordered set,
+canonical_json_bytes (src/eval/artifacts.py:97) without pin_sha256; the cells against the registered ordered set,
 which comes from src.corruption_roles (imported lazily) or, here, through a parameter holding IF§6's 24 cells
 (TB6), with one static case on the module name and, since L-CORR merged, one live case (B-2, B2R10; audit M5:
 the live set is IF§6's in L-CORR's corruption-major order); the cells each scope asks for (15 inferential, 9

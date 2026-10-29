@@ -417,7 +417,7 @@ class World:
         S = self.S
         blob = FX.git(self.repo, "rev-parse", f"{self.E}:scripts/build_corruption_cache.py")
         pin = PINS.pin(script={"path": "scripts/build_corruption_cache.py", "git_blob": blob}, commit=self.E)
-        hasher = DD.hasher_pin(self.E)                  # a sources pin, when given, is the function's (P2R2)
+        hasher = DD.hasher_pin(self.E)                  # the builder ignores it: dedup.hasher_pin's (P2R2-AMEND-1)
         trig = (self.repo / "reports/derived/am3_trigger.json").read_bytes()
         return {"evaluator_commit": self.E,
                 "execution_context": {"model_device": "cpu", "input_devices": ["cpu"],
