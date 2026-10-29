@@ -53,6 +53,7 @@ READ_SHA = ('    if expect_sha256 is not None and S.sha256_bytes(data) != expect
             '                                             "is not parsed")\n')
 READ_PARSE = '    doc = S.strict_json(data, DEDUP_NAME, code="dedup_invalid")\n'
 DESC = 'DESCRIPTIVE = ("digest", "folder", "outputs", "rule", "split", "suffixes")'
+LISTING = "            entries = [(e.name, e.is_symlink(), e.is_file(follow_symlinks=False)) for e in it]\n"   # P2-F6
 
 # (id, file, [(old, new), ...], smoke, case, the check the case runs to, the refusal codes it guards)
 M = [
@@ -236,6 +237,18 @@ M = [
                                                               'man.get("format") == S.MANIFEST_FORMAT')],
      "hasher", "case_step2_records", "step2_manifest_of_another_format_refused_before_any_data_call",
      ["manifest_format"]),
+    ("manifest_object_unchecked", HSH, [('    if not (isinstance(man, dict) and man.get("format")',
+                                         '    if not (man.get("format")')],          # P2-F6: each sub-condition
+     "hasher", "case_step2_records", "step2_manifest_a_json_array_refused_before_any_data_call",
+     ["manifest_format"]),                                                                      # (DL-24 R3-F2)
+    ("manifest_appends_key_unchecked", HSH, [('and "appends" in man and "session" in man):',
+                                              'and "session" in man):')],
+     "hasher", "case_step2_records", "step2_manifest_without_appends_refused_before_any_data_call",
+     ["manifest_format"]),
+    ("manifest_session_key_unchecked", HSH, [('and "appends" in man and "session" in man):',
+                                              'and "appends" in man):')],
+     "hasher", "case_step2_records", "step2_manifest_without_session_refused_before_any_data_call",
+     ["manifest_format"]),
     ("pin_errors_ignored", HSH, [("    errs = pin_errors(pin)\n    if errs:", "    errs = []\n    if errs:")],
      "hasher", "case_step2_records", "step2_pin_script_sha256_other_refused_before_any_data_call",
      ["hasher_pin_mismatch"]),
@@ -281,10 +294,11 @@ M = [
     ("word_split_across_a_concatenation", DED, [("DEDUP_FORMAT = S.DEDUP_FORMAT ",
                                                  '_SPLIT = "te" + "st"\nDEDUP_FORMAT = S.DEDUP_FORMAT ')],
      "hasher", "case_static", "h10_dedup_no_word_in_identifiers_attributes_keys_fstrings_paths", []),   # P2-F5
-    ("a_second_listing", HSH, [("            entries = [(e.name, e.is_symlink(), e.is_file()) for e in it]\n",
-                                "            entries = [(e.name, e.is_symlink(), e.is_file()) for e in it]\n"
-                                "        os.listdir(folder)\n")],
+    ("a_second_listing", HSH, [(LISTING, LISTING + "        os.listdir(folder)\n")],
      "hasher", "case_pass_and_trace", "trace_no_listdir", []),
+    ("links_followed_to_list", HSH, [(LISTING, LISTING.replace("e.is_file(follow_symlinks=False)", "e.is_file()"))],
+     "hasher", "case_step3_listing", "step3_a_link_to_itself_R3F1_refused_before_any_image_or_list_read",
+     ["image_link_refused"]),                                                                   # P2-F6 (DL-24 R3-F1)
     ("folders_listed_as_images", HSH, [("    names = [n for n, _, is_file in entries if is_file]",
                                         "    names = [n for n, _, _ in entries]")],
      "hasher", "case_pass_and_trace", "hash_writes_both_outputs_exit_0", ["image_count_mismatch"]),
@@ -356,6 +370,13 @@ M = [
     # ---------------------------------- the pin (H8): its command in tday_hash_images.py, the pin in dedup.py (P2R2)
     ("print_pin_unchecked", HSH, [("    errs = M.hasher_pin_errors(pin)\n    if errs:", "    errs = []\n    if errs:")],
      "hasher", "case_print_pin", "print_pin_commit_upper_case_refused", ["generator_pin_incomplete"]),
+    ("running_script_unchecked_at_step2", HSH, [("    err = running_script_error()\n    if err:\n"
+                                                 "        errs.append(err)\n", "")],             # P2-F6 (DL-24 R1-F1)
+     "hasher", "case_running_script", "step2_a_copy_of_the_script_run_from_elsewhere_refused_R1F1",
+     ["hasher_pin_mismatch"]),
+    ("running_script_unchecked_at_print_pin", HSH, [("    err = running_script_error()\n    if err:\n        raise "
+                                                     'S.TmanRefused("hasher_pin_mismatch", err)\n', "")],
+     "hasher", "case_running_script", "print_pin_of_a_copy_run_from_elsewhere_refused_R1F1", ["hasher_pin_mismatch"]),
     ("usage_modes_unchecked", HSH, [('    if args.print_pin == (args.cmd == "hash"):\n        p.error("give '
                                      '--print-pin --commit <40 hex>, or the hash command")\n', "")],
      "hasher", "case_print_pin", "usage_both_modes_exit_2", []),

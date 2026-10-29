@@ -63,13 +63,24 @@ def running_python() -> str:
     return f"{sys.version_info[0]}.{sys.version_info[1]}"
 
 
+def running_script_error() -> str | None:
+    """The pin hashes the hasher under dedup.CODE_ROOT (dedup.code_bytes); this running file must be those bytes, or
+    step 2 and --print-pin would vouch for another script's (rulings H8, H9 step 2; DL-24 R1-F1)."""
+    if Path(__file__).read_bytes() != D.code_bytes()[D.SCRIPT_REL]:
+        return f"this running script is not the {D.SCRIPT_REL} under {D.CODE_ROOT} whose bytes the pin hashes"
+    return None
+
+
 def pin_errors(pin) -> list[str]:
     """Step 2: the manifest's image_hasher pin is this code's -- dedup.hasher_pin's form (its one definition, P2R2);
-    script.path this script's and script.sha256 its bytes'; modules exactly the dedup module's sha256; python this
-    interpreter's major.minor; the parameters this code fixes, its own."""
+    script.path this script's and script.sha256 its bytes', this running file being those bytes; modules exactly the
+    dedup module's sha256; python this interpreter's major.minor; the parameters this code fixes, its own."""
     errs = S.field_errors(pin, D.PIN_SPEC, "image_hasher.pin")
     if errs:
         return errs
+    err = running_script_error()
+    if err:
+        errs.append(err)
     script, module = D.code_sha256()
     if pin["script"]["path"] != D.SCRIPT_REL or pin["script"]["sha256"] != script:
         errs.append(f"the pinned script is {pin['script']['path']} with sha256 {pin['script']['sha256']}; this one is "
@@ -146,11 +157,11 @@ def image_folder(root, split: str) -> str:
 
 def list_images(folder: str, expected: int) -> list:
     """Step 3: [(stem, name)] sorted, from one os.scandir of the image folder. An entry that is a symbolic link, of any
-    name, is refused before any image is read (TMAN2-RULE-3 item 2, P2R8: image_link_refused); the folder's own path
-    is step 1's."""
+    name, is refused before any image is read (TMAN2-RULE-3 item 2, P2R8: image_link_refused), and no link is followed
+    to get there (a link to itself is refused so too: DL-24 R3-F1); the folder's own path is step 1's."""
     try:
         with os.scandir(folder) as it:
-            entries = [(e.name, e.is_symlink(), e.is_file()) for e in it]
+            entries = [(e.name, e.is_symlink(), e.is_file(follow_symlinks=False)) for e in it]
     except OSError as e:
         raise S.TmanRefused("images_unreadable", f"the image folder cannot be listed ({type(e).__name__})") from None
     links = [n for n, link, _ in entries if link]
@@ -234,6 +245,9 @@ def write_outputs(folder: Path, files: list) -> None:
 
 # ------------------------------------------------------------------------------------------------ commands
 def cmd_print_pin(args) -> int:
+    err = running_script_error()
+    if err:
+        raise S.TmanRefused("hasher_pin_mismatch", err)
     pin = D.hasher_pin(args.commit)
     errs = M.hasher_pin_errors(pin)
     if errs:

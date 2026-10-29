@@ -88,10 +88,11 @@ class World:
     register, the manifest with its image_hasher pin, the unlock entry -- a data root (images/ and annotations/ of
     the fixture split, synthetic bytes), a TRAIN/VAL list in scripts/hash_split_files.py's format and an empty --out.
     The options make one record or input wrong at a time; `links` adds symbolic links to the image folder (each to a
-    file outside it), `session_edit` a later commit of the manifest with its session part (P2R7)."""
+    file outside it), `loops` links to themselves (DL-24 R3-F1), `session_edit` a later commit of the manifest with
+    its session part (P2R7)."""
 
     def __init__(self, *, images=None, raw_names=(), pin_edit=None, unlock_edit=None, row_status="RECORDED",
-                 unlock_state="committed", manifest_bytes=None, mdata_edit=None, tv=None, links=(),
+                 unlock_state="committed", manifest_bytes=None, mdata_edit=None, tv=None, links=(), loops=(),
                  session_edit=None):
         from src.tman import dedup as D
         from src.tman import entries as E
@@ -117,6 +118,8 @@ class World:
             target = self.data / f"linked_{name}"
             target.write_bytes(b"linked " + name.encode())
             os.symlink(target, self.folder / name)
+        for name in loops:
+            os.symlink(name, self.folder / name)
         self.tv = DS.tv_bytes(TRAIN, VAL) if tv is None else tv
         self.tv_path = self.lists / "train_val_image_hashes.tsv"
         self.tv_path.write_bytes(self.tv)
@@ -500,6 +503,9 @@ def case_step2_records():
     def other_format(b):
         return b.replace(b'\n  "format": "' + S.MANIFEST_FORMAT.encode() + b'"', b'\n  "format": "tday_manifest/0"', 1)
 
+    def without(key):                                           # DL-24 R3-F2: each part of the manifest's shape
+        return lambda b: S.json_file_bytes({k: v for k, v in json.loads(b).items() if k != key})
+
     no_body = S.json_file_bytes({"format": S.MANIFEST_FORMAT, "appends": [], "session": None})
     variants = (
         ("unlock_entry_absent", {}, {"unlock_entry": "reports/derived/tday_entries/unlock__session__20261108__09.json"},
@@ -519,6 +525,9 @@ def case_step2_records():
         ("manifest_duplicate_key", {"mdata_edit": first_format_duplicated}, {}, "manifest_unreadable"),
         ("manifest_without_body", {"manifest_bytes": no_body}, {}, "manifest_format"),
         ("manifest_of_another_format", {"mdata_edit": other_format}, {}, "manifest_format"),
+        ("manifest_a_json_array", {"manifest_bytes": b"[]\n"}, {}, "manifest_format"),
+        ("manifest_without_appends", {"mdata_edit": without("appends")}, {}, "manifest_format"),
+        ("manifest_without_session", {"mdata_edit": without("session")}, {}, "manifest_format"),
         ("pin_script_sha256_other", {"pin_edit": script_sha}, {}, "hasher_pin_mismatch"),
         ("pin_script_path_other", {"pin_edit": script_path}, {}, "hasher_pin_mismatch"),
         ("pin_module_sha256_other", {"pin_edit": module}, {}, "hasher_pin_mismatch"),
@@ -594,6 +603,7 @@ def case_step3_listing():
     variants = (("image_folder_absent", {}, "tday_absent", "images_unreadable"),
                 ("an_image_name_linked_P2R8", {"links": ("kx_link.jpg",)}, SPLIT, "image_link_refused"),
                 ("another_name_linked_P2R8", {"links": ("kx_notes_link.txt",)}, SPLIT, "image_link_refused"),
+                ("a_link_to_itself_R3F1", {"loops": ("kx_loop.jpg",)}, SPLIT, "image_link_refused"),
                 ("two_images_one_stem", {"images": dict(IMAGES, **{"kx_u1.jpeg": b"U2"})}, SPLIT,
                  "image_ids_invalid"),
                 ("stems_equal_once_case_folded", {"images": dict(IMAGES, **{"KX_U1.jpg": b"U3"})}, SPLIT,
@@ -815,6 +825,36 @@ def case_print_pin():
               f"{rc} {txt[-120:]} {err.getvalue()[-120:]}")
 
 
+def case_running_script():
+    """The pin hashes the hasher under dedup.CODE_ROOT (dedup.code_bytes): a copy of the script run from elsewhere, a
+    comment line apart, is refused at step 2 and by --print-pin (hasher_pin_mismatch), so the bytes a pin vouches for
+    are the running file's (rulings H8, H9 step 2; DL-24 R1-F1)."""
+    import importlib.util
+    from src.tman import dedup as D
+    import scripts.tday_hash_images as H
+    folder = FX.scratch_dir("tmanhcopy") / "scripts"
+    folder.mkdir()
+    copy = folder / "tday_hash_images.py"
+    copy.write_bytes(Path(H.__file__).read_bytes() + b"# a copy run from elsewhere\n")
+    saved = list(sys.path)
+    try:                                                        # the copy puts its own parent first on sys.path
+        spec = importlib.util.spec_from_file_location("tday_hash_images_elsewhere", copy)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+    finally:
+        sys.path[:] = saved
+    errs = mod.pin_errors(D.hasher_pin(COMMIT))
+    check("step2_a_copy_of_the_script_run_from_elsewhere_refused_R1F1",
+          any("this running script is not" in e for e in errs), str(errs)[:200])
+    own = H.pin_errors(D.hasher_pin(COMMIT))
+    check("step2_the_checkout_s_own_script_passes_its_pin_R1F1", own == [], str(own)[:200])
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = mod.main(["--print-pin", "--commit", COMMIT])
+    check("print_pin_of_a_copy_run_from_elsewhere_refused_R1F1", refused(rc, buf.getvalue(), "hasher_pin_mismatch")
+          and "this running script is not" in buf.getvalue(), f"{rc} {buf.getvalue()[-160:]}")
+
+
 # =============================================================================================== static (H8, H10)
 def production_files() -> dict:
     from src.tman import dedup as D
@@ -945,4 +985,5 @@ if __name__ == "__main__":
                                   (case_pass_and_trace, case_step1_paths, case_step2_records, case_step2_repository,
                                    case_step2_session_part, case_step3_listing,
                                    case_step4_list, case_step5_hashing, case_step6_outputs, case_shuffled_scandir,
-                                   case_stdout_without_the_arrow, case_print_pin, case_static, case_created_names)))
+                                   case_stdout_without_the_arrow, case_print_pin, case_running_script, case_static,
+                                   case_created_names)))
