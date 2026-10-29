@@ -278,6 +278,9 @@ M = [
     ("split_written_as_a_literal", HSH, [("    from src.eval.stage_artifacts import OFFICIAL_SPLIT\n"
                                           "    return OFFICIAL_SPLIT", '    return "tday_fixture"')],
      "hasher", "case_static", "h0_split_read_by_import_inside_the_resolver", []),
+    ("word_split_across_a_concatenation", DED, [("DEDUP_FORMAT = S.DEDUP_FORMAT ",
+                                                 '_SPLIT = "te" + "st"\nDEDUP_FORMAT = S.DEDUP_FORMAT ')],
+     "hasher", "case_static", "h10_dedup_no_word_in_identifiers_attributes_keys_fstrings_paths", []),   # P2-F5
     ("a_second_listing", HSH, [("            entries = [(e.name, e.is_symlink(), e.is_file()) for e in it]\n",
                                 "            entries = [(e.name, e.is_symlink(), e.is_file()) for e in it]\n"
                                 "        os.listdir(folder)\n")],

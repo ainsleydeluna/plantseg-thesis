@@ -1885,11 +1885,11 @@ def inventory_errors(doc, cat=None) -> list[str]:
 
 def read_export_dedup(p: Path, d: dict) -> None:
     """P2R6(c)(i): the export's dedup block against the file it names. dedup.path is in P2R5's form
-    (dedup.relative_path_error) and is resolved against the export's folder, as binding.path is; the file's sha256 is
+    (schema.relative_path_error) and is resolved against the export's folder, as binding.path is; the file's sha256 is
     compared before it is parsed; dedup.read_dedup reads it strictly (the partition sum among its rules); its
     removed_by_reason is the export's. Every failure is dedup_invalid, as LREP's reader refuses it
     (src/stats/heldout_inputs.py :1416-1461 at lane/lrep 62ca0f8)."""
-    err = DD.relative_path_error(d["path"])
+    err = S.relative_path_error(d["path"])
     if err:
         raise S.TmanRefused("dedup_invalid", f"{p}: dedup.path {d['path']!r}: {err} (P2R5)")
     dp = p.parent / d["path"]

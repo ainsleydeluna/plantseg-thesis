@@ -839,12 +839,25 @@ def allowed_values(tree) -> dict:
     return out
 
 
+def folded(n):
+    """The value of a string constant, or of a `+` of string constants, else None: a word split across a
+    concatenation is the word (B-3a part 2, DL-24 R1-N1)."""
+    if isinstance(n, ast.Constant) and isinstance(n.value, str):
+        return n.value
+    if isinstance(n, ast.BinOp) and isinstance(n.op, ast.Add):
+        a, b = folded(n.left), folded(n.right)
+        return None if a is None or b is None else a + b
+    return None
+
+
 def word_violations(tree) -> list:
     allowed = allowed_values(tree)
     bad = []
     for n in ast.walk(tree):
         names = []
-        if isinstance(n, ast.Name):
+        if isinstance(n, ast.BinOp) and folded(n) is not None:
+            names = [folded(n)]
+        elif isinstance(n, ast.Name):
             names = [n.id]
         elif isinstance(n, ast.Attribute):
             names = [] if n.attr in GUARD_ATTRS else [n.attr]

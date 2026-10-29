@@ -26,8 +26,9 @@ pin's before it is parsed (ruling H9 step 4). The id fingerprints are LREP's (id
 The hasher's pin (ruling H8; P2R2) is built here, its one definition: the manifest's builder and the hasher's
 --print-pin both call hasher_pin. It holds the sha256 of the hasher script's bytes and of this module's, read from
 this checkout; manifest.TRAINVAL_HASH_LIST and src/eval/teacher_diag.py's split counts are imported inside
-data_parameters, so no module-level import cycle forms (manifest.py imports this module). The export's dedup.path
-(P2R5) and the dedup file's agreement with the pin (P2R6(c)(ii)) are checked here for the builder and the validator.
+data_parameters, so no module-level import cycle forms (manifest.py imports this module). The dedup file's agreement
+with the pin (P2R6(c)(ii)) is checked here for the builder and the validator; the export's dedup.path form (P2R5) is
+schema.relative_path_error, beside B-1's guards (DL-24 R1-N1).
 
 Otherwise pure functions: the standard library and B-1's schema helpers (src/tman/schema.py), by import. Refusals
 are schema.TmanRefused codes; a refusal names offending files by count and sha256, never by name.
@@ -381,21 +382,7 @@ def hasher_pin(commit) -> dict:
             "parameters": {**descriptive_parameters(), **data_parameters(), "modules": {DEDUP_REL: module}}}
 
 
-# ------------------------------------------------------------------------------ the export's dedup (P2R5, P2R6)
-def relative_path_error(value) -> str | None:
-    """Why `value` is not dedup.path's form (P2R5), or None: LREP's path_problem (src/stats/heldout_inputs.py :333-343
-    at lane/lrep 62ca0f8, restated; no LREP code is imported) -- a non-empty string without surrounding space; no
-    leading "/", no backslash, no ":", no NUL; no empty, "." or ".." component; project rule 4's word in no case."""
-    if not _is_id(value):
-        return "not a non-empty string without surrounding space"
-    if value.startswith("/") or "\\" in value or ":" in value or "\x00" in value \
-            or any(p in ("", ".", "..") for p in value.split("/")):
-        return "not a plain relative POSIX path"
-    if ("te" + "st") in value.lower():
-        return "it holds project rule 4's word (no created path holds it, in any case)"
-    return None
-
-
+# ------------------------------------------------------------------------- the export's dedup and the pin (P2R6)
 def dedup_pin_errors(doc: dict, pin) -> list[str]:
     """P2R6(c)(ii): a tday_dedup/1 doc (read_dedup's) against the manifest's image_hasher pin -- its script is the
     pinned script, its TRAIN/VAL list's sha256 the pin's, its n_images the pin's expected_images."""

@@ -992,7 +992,7 @@ def export_dedup(path, folder, pin) -> dict:
     except (OSError, RuntimeError) as e:          # Python 3.11's resolve() raises RuntimeError on a link loop
         raise S.TmanRefused("dedup_invalid", f"{path}: unresolvable ({type(e).__name__})") from None
     rel = f.relative_to(root).as_posix() if f.is_relative_to(root) else None
-    err = DD.relative_path_error(rel) if rel is not None else "not inside the export's folder"
+    err = S.relative_path_error(rel) if rel is not None else "not inside the export's folder"
     if err is None:
         try:
             rel.encode("utf-8")

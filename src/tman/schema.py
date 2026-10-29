@@ -253,6 +253,21 @@ def refuse_test_path(path, base=None) -> None:
         raise TmanRefused("test_path", err)
 
 
+def relative_path_error(value) -> str | None:
+    """Why `value` is not the form of the inventory export's dedup.path (P2R5), or None: LREP's path_problem
+    (src/stats/heldout_inputs.py :333-343 at lane/lrep 62ca0f8, restated; no LREP code is imported) -- a non-empty
+    string without surrounding space; no leading "/", no backslash, no ":", no NUL; no empty, "." or ".." component; no
+    "test" in any case. It sits with B-1's guards, so that dedup.py holds no guard literal (GO H10; DL-24 R1-N1)."""
+    if not (isinstance(value, str) and value != "" and value == value.strip()):
+        return "not a non-empty string without surrounding space"
+    if value.startswith("/") or "\\" in value or ":" in value or "\x00" in value \
+            or any(p in ("", ".", "..") for p in value.split("/")):
+        return "not a plain relative POSIX path"
+    if "test" in value.lower():
+        return "it holds project rule 4's word (no created path holds it, in any case)"
+    return None
+
+
 # ------------------------------------------------------------------------------------ canonical JSON (TB14)
 def canonical_sha256(obj) -> str:
     """sha256 of src.eval.artifacts.canonical_json_bytes(obj)."""
