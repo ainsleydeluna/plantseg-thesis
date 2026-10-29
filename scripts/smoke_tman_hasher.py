@@ -538,16 +538,18 @@ def case_step2_records():
 
 def case_step2_repository():
     """--repo a depth-1 clone of the records (B-1's written-once check cannot see a rewrite in it) or a repository
-    with no commit: refused before the unlock entry is read and before any data call."""
+    with no commit: refused before the unlock entry is read and before any data call. (Since P2R6(e), B-1's reader
+    refuses a shallow clone too, once it has read the entry: the step's own check is the one that reads nothing.)"""
     w = World()
     clone = FX.scratch_dir("tmanhclone")
     FX.git(clone, "clone", "-q", "--depth", "1", w.repo.resolve().as_uri(), ".")
     shallow = FX.git(clone, "rev-parse", "--is-shallow-repository")
     t = Trace()
     rc, txt = run(w.argv(repo=str(clone)), ctx=t)
+    read = [c for c in t.calls if c[0] in ("builtins.open", "io.open") and under(c[1], clone.resolve())]
     check("step2_shallow_clone_refused_before_any_data_call", shallow == "true"
-          and refused(rc, txt, "repository_shallow") and not w.data_calls(t) and not any(w.out.iterdir()),
-          f"{shallow} {rc} {txt[-200:]}")
+          and refused(rc, txt, "repository_shallow") and not read and not w.data_calls(t)
+          and not any(w.out.iterdir()), f"{shallow} {rc} {txt[-200:]} {read[:2]}")
     t = Trace()
     rc, txt = run(w.argv(repo=str(FX.new_repo())), ctx=t)
     check("step2_repository_without_a_commit_refused_before_any_data_call", refused(rc, txt, "record_uncommitted")

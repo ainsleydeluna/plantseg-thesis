@@ -4,7 +4,8 @@ Modes (plan §2.1): `draft` checks the structure, identity and hashes of what is
 freeze-time item as `MISSING: <code>: ...` (exit 3), never refusing it; `freeze` adds every freeze-time requirement at
 the original freeze instant (the moved one for never-cut runs); `unlock` adds the unlock's (the body unchanged since
 the freeze record, the appends, every cut entered, the lane register, S = E with the evaluator file set unchanged,
-the hasher's and generator's scripts at their pins, no session yet); `session` adds the session's own record (TB11).
+the hasher's and generator's scripts at their pins, no session yet); `session` adds the session's own record (TB11)
+and, once the in-session hasher's three values are recorded, tday_dedup.json given by --dedup (P2R6(a)).
 
 One gate per refusal code, in a fixed order (GATES); a gate runs in the modes it names. `Result.passed` lists the
 gates passed: the smokes' witness that a refusal is reached with every earlier gate passing. A refusal prints
@@ -14,8 +15,8 @@ No gate reads a score: records are read through records.py's allowlists, the inv
 hash checks, and run directories are read only under the explicit runs root.
 
 `read_inventory(path, *, expect_sha256=None)` reads, checks and returns the inventory export tday-inventory/1 (IF§8,
-IF§11 v2); once its binding is bound it verifies the binding file and returns its `artifacts` records under
-`binding.artifacts` (IF§11.6).
+IF§11 v2); its dedup block is checked against the tday_dedup.json it names (P2R6(c)(i)); once its binding is bound it
+verifies the binding file and returns its `artifacts` records under `binding.artifacts` (IF§11.6).
 """
 from __future__ import annotations
 
@@ -25,6 +26,7 @@ from pathlib import Path
 from src.training import sweep_select as ss
 
 from . import completion as C
+from . import dedup as DD
 from . import entries as E
 from . import manifest as M
 from . import records as R
@@ -80,16 +82,18 @@ class Ctx:
     (freeze, unlock, session); `freeze_record` and `unlock_entry` committed entry-file paths; `registered_cells`,
     `ptq_reader` and `trigger_reader` stand in for src.corruption_roles, lane LQP's reader and L-AM3's trigger reader
     (records.trigger_reader: L-AM3's, wired by B-2's B2R13); `artifact_runtimes` are projected eval_runtime records
-    of scored artifacts (B-3b) compared with the execution context."""
+    of scored artifacts (B-3b) compared with the execution context; `dedup` is the in-session hasher's tday_dedup.json,
+    read in session mode only (P2R6(a))."""
 
     def __init__(self, *, mode: str, manifest_bytes: bytes, manifest_path: str, records: R.Records, runs_root=None,
                  freeze_record: str | None = None, unlock_entry: str | None = None, registered_cells=None,
                  ptq_reader=None, trigger_reader=None, artifact_runtimes=(), now: float | None = None,
-                 repo_root=None, am22_d: str | None = None):
+                 repo_root=None, am22_d: str | None = None, dedup=None):
         if mode not in MODES:
             raise ValueError(f"mode {mode!r}")
         self.mode, self.data, self.path, self.records = mode, manifest_bytes, manifest_path, records
         self.runs_root = None if runs_root is None else Path(runs_root)
+        self.dedup = dedup                    # --dedup: tday_dedup.json (P2R6(a); the session gate reads it)
         self.freeze_rel, self.unlock_rel = freeze_record, unlock_entry
         self.registered_cells, self.ptq_reader = registered_cells, ptq_reader
         self.trigger_reader = R.trigger_reader(records) if trigger_reader is None else trigger_reader
@@ -274,8 +278,9 @@ def _err(errs, n: int = 4) -> str | None:
 # ================================================================================================ input gates
 def g_test_path(x: Ctx):
     """Each input path, before any call on it: the manifest, the runs root, the root S and the records folder, the
-    freeze record and the unlock entry (DL-24 #7)."""
-    for p in [x.path, x.runs_root, x.repo_root, getattr(x.records.src, "folder", None), x.freeze_rel, x.unlock_rel]:
+    freeze record, the unlock entry (DL-24 #7) and tday_dedup.json (P2R6(a))."""
+    for p in [x.path, x.runs_root, x.repo_root, getattr(x.records.src, "folder", None), x.freeze_rel, x.unlock_rel,
+              x.dedup]:
         if p is not None and S.test_path_error(p):
             return S.test_path_error(p)
 
@@ -712,6 +717,15 @@ def g_generator_pin_sha256_mismatch(x: Ctx):
 
 def g_generator_cells_mismatch(x: Ctx):
     return _err(M.pin_cells_errors(_pins(x)["corrupted_cache"]["pin"], x.registered_cells))
+
+
+def g_hasher_pin_data_mismatch(x: Ctx):
+    """P2R6(d), from freeze mode on: the image_hasher pin's data parameters are the code's (dedup.data_parameters):
+    expected_images is schema.EXPECTED_ROWS, which expected_rows_mismatch has held the body's expected rows to, and
+    train_val_list is manifest.TRAINVAL_HASH_LIST (DL-91, 6213 rows) with the TRAIN and VAL counts (5367 and 846)."""
+    params = _pins(x)["image_hasher"]["pin"]["parameters"]
+    return _err([f"image_hasher.parameters.{k} is {params.get(k)!r}, not {v!r}"
+                 for k, v in DD.data_parameters().items() if params.get(k) != v])
 
 
 def g_test_value_before_unlock(x: Ctx):
@@ -1209,9 +1223,29 @@ def _unlock_doc(x: Ctx) -> dict | None:
     return x.entry_file(x.unlock_rel)[0] if x.unlock_rel else None
 
 
+def unlock_manifest_errors(m: dict, doc: dict, data: bytes, *, file_binds: bool) -> dict:
+    """The session-mode rule (P2R7): is `doc`, whose bytes are `data`, the manifest the unlock entry's block `m`
+    records? Its path, its body's canonical sha256, its appends' and, when `file_binds`, its file's sha256. The file
+    binds in unlock mode; once the session part is committed it changes the file and not the body or the appends, so
+    the validator's session mode, and the hasher while the session part is not null, leave the file out. {part:
+    reason} of each part that differs ({} when none does): g_append_after_unlock reads "appends",
+    g_run_added_after_freeze the rest, the hasher's step 2 all of them."""
+    errs = {}
+    if m["path"] != S.MANIFEST_REL:
+        errs["path"] = f"the unlock entry names {m['path']}, not the manifest {S.MANIFEST_REL}"
+    if m["body_sha256"] != S.canonical_sha256(doc["body"]):
+        errs["body"] = "its body is not the body_sha256 the unlock entry records"
+    if file_binds and m["sha256"] != S.sha256_bytes(data):
+        errs["file"] = f"its file has sha256 {S.sha256_bytes(data)}; the unlock entry records {m['sha256']}"
+    if m["appends_sha256"] != S.canonical_sha256(doc["appends"]):
+        errs["appends"] = "its appends are not the appends_sha256 the unlock entry records"
+    return errs
+
+
 def g_append_after_unlock(x: Ctx):
     u = _unlock_doc(x)
-    if u is not None and S.canonical_sha256(x.doc["appends"]) != u["manifest"]["appends_sha256"]:
+    if u is not None and "appends" in unlock_manifest_errors(u["manifest"], x.doc, x.data,
+                                                               file_binds=x.mode == "unlock"):
         return "the appends changed after the unlock record (AM-19 item 4(c))"
 
 
@@ -1275,8 +1309,8 @@ def g_run_added_after_freeze(x: Ctx):
     if fr["body_sha256"] != S.canonical_sha256(x.body):
         return "the body changed after the freeze record (no run is added to TEST after the freeze)"
     m = u["manifest"] if u is not None else None
-    if m is not None and (m["path"] != S.MANIFEST_REL or m["body_sha256"] != S.canonical_sha256(x.body)
-                          or (x.mode == "unlock" and m["sha256"] != S.sha256_bytes(x.data))):
+    if m is not None and {"path", "body", "file"} & set(unlock_manifest_errors(m, x.doc, x.data,
+                                                                               file_binds=x.mode == "unlock")):
         return "the manifest is not the one the unlock entry records (its body; in unlock mode, its file)"
 
 
@@ -1435,6 +1469,8 @@ def g_evaluator_files_changed(x: Ctx):
 
 
 def g_hasher_pin_mismatch(x: Ctx):
+    """At S: the generator's script is its pinned blob; the hasher's script and the module it pins, src/tman/dedup.py,
+    have the pinned sha256 of their bytes (P2R6(b): parameters.modules holds that module alone)."""
     src, gp = x.records.src, _pins(x)
     pin, hasher = gp["corrupted_cache"]["pin"], gp["image_hasher"]["pin"]
     errs = []
@@ -1443,6 +1479,13 @@ def g_hasher_pin_mismatch(x: Ctx):
     hp = x.repo_root / hasher["script"]["path"]
     if not hp.is_file() or S.sha256_bytes(hp.read_bytes()) != hasher["script"]["sha256"]:
         errs.append(f"{hasher['script']['path']} at S is not the pinned script")
+    modules = hasher["parameters"].get("modules")
+    if not (isinstance(modules, dict) and list(modules) == [DD.DEDUP_REL]):
+        errs.append(f"the pinned modules are not {DD.DEDUP_REL} alone (P2R6(b))")
+    else:
+        mp = x.repo_root / DD.DEDUP_REL
+        if not mp.is_file() or S.sha256_bytes(mp.read_bytes()) != modules[DD.DEDUP_REL]:
+            errs.append(f"{DD.DEDUP_REL} at S is not the pinned module (P2R6(b))")
     return _err(errs)
 
 
@@ -1602,6 +1645,40 @@ def g_push_evidence_invalid(x: Ctx):
                                s["started_utc"])
 
 
+HASHER_VALUES_KEY = "image_hasher"       # the session part's values key of the hasher's three values (P2R6(a))
+
+
+def g_hasher_values_mismatch(x: Ctx):
+    """P2R6(a), (c)(ii): the in-session hasher's three values (manifest.HASHER_VALUES) sit in the session part's
+    values.image_hasher, and the validator reads tday_dedup.json from --dedup only: the two go together, and the
+    generator pins' values stay null (test_value_before_unlock). The file is read strictly (dedup.read_dedup:
+    dedup_invalid) and agrees with the manifest's image_hasher pin (dedup_pin_mismatch); the values are the sha256 of
+    its bytes, its removed_by_reason and its hash_list_sha256 field (the file names its hash list)."""
+    values = x.doc["session"]["values"]
+    held = HASHER_VALUES_KEY in values
+    if held != (x.dedup is not None):
+        return ("values.image_hasher and --dedup go together (P2R6(a)): " + (
+            "the session part records the hasher's values and --dedup gives no tday_dedup.json" if held else
+            "--dedup gives tday_dedup.json and the session part records no hasher's values"))
+    if not held:
+        return None
+    vals = values[HASHER_VALUES_KEY]
+    if not (isinstance(vals, dict) and sorted(vals) == sorted(M.HASHER_VALUES)):
+        return f"values.image_hasher does not hold exactly {list(M.HASHER_VALUES)} (P2R6(a))"
+    try:
+        data = Path(x.dedup).read_bytes()
+    except OSError as e:
+        raise S.TmanRefused("dedup_invalid", f"--dedup {x.dedup}: unreadable ({type(e).__name__})") from None
+    doc = DD.read_dedup(data)
+    errs = DD.dedup_pin_errors(doc, _pins(x)["image_hasher"]["pin"])
+    if errs:
+        raise S.TmanRefused("dedup_pin_mismatch", "; ".join(errs) + " (P2R6(c)(ii))")
+    file_values = {"hash_list_sha256": doc["hash_list_sha256"], "dedup_list_sha256": S.sha256_bytes(data),
+                   "counts_by_reason": doc["removed_by_reason"]}
+    bad = [k for k in M.HASHER_VALUES if vals[k] != file_values[k]]
+    return f"values.image_hasher {bad} are not tday_dedup.json's (P2R6(a))" if bad else None
+
+
 # ======================================================================================== the gate order
 GATES = [
     ("test_path", ALL, g_test_path), ("manifest_unreadable", ALL, g_manifest_unreadable),
@@ -1620,6 +1697,7 @@ GATES = [
     ("generator_pin_incomplete", FU, g_generator_pin_incomplete),
     ("generator_pin_sha256_mismatch", ALL, g_generator_pin_sha256_mismatch),
     ("generator_cells_mismatch", FU, g_generator_cells_mismatch),
+    ("hasher_pin_data_mismatch", FU, g_hasher_pin_data_mismatch),                                   # P2R6(d)
     ("test_value_before_unlock", ALL, g_test_value_before_unlock),
     ("trigger_format_unknown", FU, g_trigger_format_unknown), ("trigger_inconsistent", FU, g_trigger_inconsistent),
     ("launched_attempt_without_directory", FU, g_launched_attempt_without_directory),
@@ -1653,6 +1731,7 @@ GATES = [
     ("evaluator_files_changed", U, g_evaluator_files_changed), ("hasher_pin_mismatch", U, g_hasher_pin_mismatch),
     ("second_session", U, g_second_session), ("clock_offset_invalid", SES, g_clock_offset_invalid),
     ("session_after_deadline", U, g_session_after_deadline), ("push_evidence_invalid", SES, g_push_evidence_invalid),
+    ("hasher_values_mismatch", SES, g_hasher_values_mismatch),                                      # P2R6(a)
 ]
 REPORTED_KINDS = ("cut", "not_run", "not_made", "freeze_delay", "new_freeze")   # "entry later than its day" (xv)
 # F/U-only gates whose finding a draft prints as MISSING (plan §2.1) instead of skipping
@@ -1796,10 +1875,31 @@ def inventory_errors(doc, cat=None) -> list[str]:
     return errs
 
 
+def read_export_dedup(p: Path, d: dict) -> None:
+    """P2R6(c)(i): the export's dedup block against the file it names. dedup.path is in P2R5's form
+    (dedup.relative_path_error) and is resolved against the export's folder, as binding.path is; the file's sha256 is
+    compared before it is parsed; dedup.read_dedup reads it strictly (the partition sum among its rules); its
+    removed_by_reason is the export's. Every failure is dedup_invalid, as LREP's reader refuses it
+    (src/stats/heldout_inputs.py :1416-1461 at lane/lrep 62ca0f8)."""
+    err = DD.relative_path_error(d["path"])
+    if err:
+        raise S.TmanRefused("dedup_invalid", f"{p}: dedup.path {d['path']!r}: {err} (P2R5)")
+    dp = p.parent / d["path"]
+    S.refuse_test_path(dp)
+    try:
+        data = dp.read_bytes()
+    except OSError as e:
+        raise S.TmanRefused("dedup_invalid", f"{dp}: unreadable ({type(e).__name__})") from None
+    doc = DD.read_dedup(data, expect_sha256=d["sha256"])
+    if doc["removed_by_reason"] != d["removed_by_reason"]:
+        raise S.TmanRefused("dedup_invalid", f"{dp}: its removed_by_reason is not the export's dedup.removed_by_reason")
+
+
 def read_inventory(path, *, expect_sha256: str | None = None) -> dict:
-    """IF§11.6: read, check and return the inventory export; refuse inventory_sha256_mismatch, inventory_invalid or
-    binding_invalid. A bound binding is verified against binding.sha256 (its path relative to the export's folder) and
-    its artifacts records are returned under binding.artifacts."""
+    """IF§11.6: read, check and return the inventory export; refuse inventory_sha256_mismatch, inventory_invalid,
+    dedup_invalid or binding_invalid. A dedup block is checked against its file (read_export_dedup). A bound binding is
+    verified against binding.sha256 (its path relative to the export's folder) and its artifacts records are returned
+    under binding.artifacts."""
     S.refuse_test_path(path)
     p = Path(path)
     try:
@@ -1812,6 +1912,8 @@ def read_inventory(path, *, expect_sha256: str | None = None) -> dict:
     errs = inventory_errors(doc, S.load_catalogue((M.CODE_ROOT / S.CATALOGUE_REL).read_bytes(), S.CATALOGUE_REL))
     if errs:
         raise S.TmanRefused("inventory_invalid", f"{p}: " + "; ".join(errs[:6]))
+    if doc["dedup"] is not None:
+        read_export_dedup(p, doc["dedup"])
     if doc["binding"]["state"] == "bound":
         bp = p.parent / doc["binding"]["path"]
         S.refuse_test_path(bp)
@@ -1829,4 +1931,5 @@ def read_inventory(path, *, expect_sha256: str | None = None) -> dict:
     return doc
 
 
-__all__ = ["Ctx", "GATES", "MODES", "Result", "inventory_errors", "read_inventory", "slot_of_launch", "validate"]
+__all__ = ["Ctx", "GATES", "MODES", "Result", "inventory_errors", "read_inventory", "slot_of_launch",
+           "unlock_manifest_errors", "validate"]

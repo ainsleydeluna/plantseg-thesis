@@ -739,6 +739,17 @@ def case_record_gates():
                             .update(master_seed=43)))
     expect_gate(w, "generator_cells_reordered_TB6", "generator_cells_mismatch",
                 registered_cells=list(reversed(PINS.IF6_CELLS)))
+    for name, edit, detail in (            # P2R6(d): the pin's data parameters are the code's, from freeze mode on
+            ("hasher_pin_expected_images_not_1561_P2R6d", lambda p: p.update(expected_images=1560), "expected_images"),
+            ("hasher_pin_train_val_counts_swapped_P2R6d", lambda p: p["train_val_list"].update(train=846, val=5367),
+             "train_val_list"),
+            ("hasher_pin_train_val_list_of_another_sha256_P2R6d", lambda p: p["train_val_list"].update(
+                sha256="0" * 64), "train_val_list")):
+        expect_gate(w, name, "hasher_pin_data_mismatch", detail=detail, doc=mutated(
+            w, lambda d, edit=edit: edit(d["body"]["generator_pins"]["image_hasher"]["pin"]["parameters"])))
+    code, _, e = w.run("draft", mutated(w, lambda d: d["body"]["generator_pins"]["image_hasher"]["pin"]["parameters"]
+                                        .update(expected_images=1560)))
+    check("draft_mode_leaves_the_pin_s_data_parameters_P2R6d", code is None, f"{code}: {e.detail[:160] if e else ''}")
     expect_gate(w, "pin_value_before_unlock_M11", "test_value_before_unlock",
                 doc=mutated(w, lambda d: d["body"]["generator_pins"]["corrupted_cache"].update(value={"x": 1})),
                 detail="value is set before the unlock")
@@ -2452,6 +2463,125 @@ def case_inventory_dedup():
           and not any(folder.iterdir()), txt.strip()[-200:])
 
 
+def case_inventory_dedup_reader():
+    """P2R6(c)(i): read_inventory checks the export's dedup against the file it names -- DEDUP_SPEC's shape
+    (inventory_invalid), dedup.path in P2R5's form resolved against the export's folder (never the working folder),
+    the file's sha256 before it is parsed, dedup.read_dedup's strict reading and removed_by_reason equal to the
+    export's; every other failure is dedup_invalid. The paths given as strings only are never created."""
+    from src.tman import manifest as M
+    from src.tman import validate as V
+    w = WORLD
+    S = w.S
+    pin = w.doc["body"]["generator_pins"]["image_hasher"]["pin"]
+    folder = FX.scratch_dir("tmanddread")
+    data = dedup_fixture(pin)
+    (folder / "tday_dedup.json").write_bytes(data)
+    inv = M.build_inventory(w.doc, w.data, w.records, w.cat, runs_root=w.runs, registered=PINS.IF6_CELLS,
+                            dedup=(folder / "tday_dedup.json", folder))
+    (folder / "inv.json").write_bytes(S.json_file_bytes(inv))
+    try:
+        got = V.read_inventory(folder / "inv.json")
+    except Exception as e:  # noqa: BLE001 -- a refusal or a crash fails the check by name
+        got = f"{type(e).__name__}: {e}"
+    check("read_inventory_reads_the_dedup_file_against_the_export_s_folder_P2R6c", got == inv and Path.cwd()
+          != folder and not (Path.cwd() / "tday_dedup.json").exists(), str(got)[:200])
+    (folder / "hasher").mkdir()
+    (folder / "hasher" / "tday_dedup.json").write_bytes(data)
+    (folder / "x\\tday_dedup.json").write_bytes(data)
+    pretty = json.dumps(json.loads(data), indent=2).encode()
+    (folder / "pretty.json").write_bytes(pretty)
+    (folder / "broken.json").write_bytes(b"{ not JSON")
+    (folder / "sub").mkdir()
+    n = [0]
+
+    def variant(dedup: dict, where=folder) -> Path:
+        n[0] += 1
+        p = where / f"inv_{n[0]}.json"
+        p.write_bytes(S.json_file_bytes(dict(inv, dedup=dict(inv["dedup"], **dedup))))
+        return p
+    try:
+        ok = V.read_inventory(variant({"path": "hasher/tday_dedup.json"}))["dedup"]["path"]
+    except Exception as e:  # noqa: BLE001
+        ok = f"{type(e).__name__}: {e}"
+    check("read_inventory_dedup_in_a_subfolder_P2R5", ok == "hasher/tday_dedup.json", str(ok)[:200])
+    word = "te" + "st"
+    for name, dedup, where, detail in (
+            ("read_inventory_dedup_path_with_a_dot_dot_component_P2R5", {"path": "../tday_dedup.json"}, folder / "sub",
+             "not a plain relative POSIX path"),
+            ("read_inventory_dedup_path_with_a_backslash_P2R5", {"path": "x\\tday_dedup.json"}, folder,
+             "not a plain relative POSIX path"),
+            ("read_inventory_dedup_path_absolute_P2R5", {"path": str(folder / "tday_dedup.json")}, folder,
+             "not a plain relative POSIX path"),
+            ("read_inventory_dedup_path_with_a_colon_P2R5", {"path": "c" + ":" + "tday_dedup.json"}, folder,
+             "not a plain relative POSIX path"),
+            ("read_inventory_dedup_path_with_a_nul_P2R5", {"path": "tday_dedup.json\x00"}, folder,
+             "not a plain relative POSIX path"),
+            ("read_inventory_dedup_path_with_an_empty_component_P2R5", {"path": "hasher//tday_dedup.json"}, folder,
+             "not a plain relative POSIX path"),
+            ("read_inventory_dedup_path_with_a_dot_component_P2R5", {"path": "./tday_dedup.json"}, folder,
+             "not a plain relative POSIX path"),
+            ("read_inventory_dedup_path_with_surrounding_space_P2R5", {"path": "tday_dedup.json "}, folder,
+             "surrounding space"),
+            ("read_inventory_dedup_path_holding_the_word_P2R5", {"path": f"{word}_dedup.json"}, folder,
+             "project rule 4's word"),
+            ("read_inventory_dedup_file_absent", {"path": "absent_dedup.json"}, folder, "unreadable"),
+            ("read_inventory_dedup_sha256_compared_before_parsing", {"path": "broken.json", "sha256": "0" * 64}, folder,
+             "it is not parsed"),
+            ("read_inventory_dedup_read_strictly", {"path": "pretty.json", "sha256": S.sha256_bytes(pretty)}, folder,
+             "not the canonical JSON"),
+            ("read_inventory_dedup_removed_by_reason_the_export_s", {"removed_by_reason": dict(
+                inv["dedup"]["removed_by_reason"], equal_train=4)}, folder, "removed_by_reason is not the export's")):
+        inv_refused(name, "dedup_invalid", variant(dedup, where), detail=detail)
+    inv_refused("read_inventory_dedup_shape_stays_inventory_invalid", "inventory_invalid",
+                variant({"removed_by_reason": {"equal_train": "3"}}), detail="dedup")
+
+
+def case_shallow_records():
+    """P2R6(e): "written once" is read over the records' history, so in a depth-1 clone records.py's history readers
+    refuse (repository_shallow), once per Records: in the validator inside entry_file_rewritten, every earlier gate
+    passing; in entries.read_entry_file after its path and committed-file reads (the inventory's freeze record); on
+    the command line. A repository with no commit is record_uncommitted."""
+    from src.tman import manifest as M
+    from src.tman import records as R
+    w = WORLD
+    fr = w.freeze_record()                              # committed before the clone: the inventory reads it there
+    clone = FX.scratch_dir("tmanshallow")
+    FX.git(clone, "clone", "-q", "--depth", "1", w.repo.resolve().as_uri(), ".")
+    shallow = FX.git(clone, "rev-parse", "--is-shallow-repository")
+    code, passed, e = w.run("freeze", records=R.Records.at_head(clone), repo_root=clone)
+    order = gate_codes("freeze")
+    check("validator_refuses_a_shallow_clone_in_entry_file_rewritten_P2R6e", shallow == "true"
+          and code == "repository_shallow" and passed == order[:order.index("entry_file_rewritten")]
+          and "shallow" in e.detail, f"{shallow} {code} {len(passed or [])} {(e.detail[:160] if e else '')}")
+    check("inventory_freeze_record_read_in_a_shallow_clone_refused_P2R6e", FX.refused_code(
+        M.build_inventory, w.doc, w.data, R.Records.at_head(clone), w.cat, runs_root=w.runs,
+        registered=PINS.IF6_CELLS, freeze_record=fr["path"]) == "repository_shallow")
+    out = FX.scratch_dir("tmanshcli")
+    (out / "m.json").write_bytes(w.data)
+    (out / "cells.json").write_text(json.dumps(PINS.IF6_CELLS), encoding="utf-8")
+    rc, txt = _cli(["--root", str(clone), "validate", "--manifest", str(out / "m.json"), "--mode", "freeze", "--runs",
+                    str(w.runs), "--registered-cells", str(out / "cells.json")])
+    check("cli_validate_in_a_shallow_clone_refused_P2R6e", rc == 2 and "REFUSED [repository_shallow]" in txt,
+          f"{rc} {txt.strip()[-200:]}")
+    rel = w.cut_refs["G:s42:80k"]["path"]
+    check("each_history_reader_refuses_a_shallow_clone_first_P2R6e", [
+        FX.refused_code(getattr(R.Records.at_head(clone), fn), rel) for fn in ("written_once_error", "adding_commits",
+                                                                              "deleted_record_error")]
+        == ["repository_shallow"] * 3)
+    full = R.Records.at_head(w.repo)
+    calls, orig = [], full.src.require_not_shallow
+    full.src.require_not_shallow = lambda: (calls.append(1), orig())[1]
+    got = [(full.written_once_error(rel), full.adding_commits(rel) != [], full.deleted_record_error(rel))
+           for _ in range(2)]
+    check("history_readers_check_the_clone_once_per_records_P2R6e", calls == [1] and got == [(None, True, None)] * 2,
+          f"{calls} {got}")
+    empty = R.Records.at_head(FX.new_repo())
+    check("history_readers_without_a_head_commit_record_uncommitted_P2R6e", [
+        FX.refused_code(fn, "reports/derived/x.json") for fn in (empty.written_once_error, empty.adding_commits,
+                                                                 empty.deleted_record_error)]
+        == ["record_uncommitted"] * 3)
+
+
 def case_draft_and_cli():
     from src.tman import manifest as M
     from src.tman import validate as V
@@ -2486,7 +2616,8 @@ def case_draft_and_cli():
         check("cli_validate_freeze_without_runs_refused", rc == 2)
     finally:
         R.TRIGGER_READER = saved
-    check("gate_codes_unique_and_ordered", len(set(c for c, _, _ in V.GATES)) == len(V.GATES) == 88)  # B2R7: +4
+    check("gate_codes_unique_and_ordered", len(set(c for c, _, _ in V.GATES)) == len(V.GATES) == 90)  # B2R7: +4
+    # P2R6: +2, hasher_pin_data_mismatch (freeze mode on, after the pins' gates) and hasher_values_mismatch (session)
 
 
 WORLD: World | None = None
@@ -2507,7 +2638,8 @@ def main() -> int:
                              case_derived_sources, case_appends_history, case_checkpoint_sources, case_arm_teacher,
                              case_run_identity, case_measurement, case_aborted, case_non_finite_gate, case_scope_gates,
                              case_moved_freeze, case_printers, case_draft_and_cli, case_inventory,
-                             case_inventory_dedup, case_malformed_inputs_refused, case_coverage))
+                             case_inventory_dedup, case_inventory_dedup_reader, case_shallow_records,
+                             case_malformed_inputs_refused, case_coverage))
     finally:
         if REAL_TEACHER is not None:
             WORLD.M.TEACHER_OF_RECORD.clear()

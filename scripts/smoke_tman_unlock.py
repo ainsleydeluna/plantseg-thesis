@@ -6,7 +6,9 @@ gate, each reached with every earlier gate passing.
 
 The unlock world is smoke_tman_validate's world plus the lane register (one lane implemented, one not required with
 its covering cut entry), the freeze record and the unlock entry; S is a linked checkout of E in the scratch
-repository. The session world adds the session part: the clock-offset record and the push evidence (TB11).
+repository. The session world adds the session part: the clock-offset record and the push evidence (TB11), and, in
+its own worlds, the in-session hasher's three values with --dedup's tday_dedup.json (P2R6(a), (c)(ii)). B-3a part 2
+also checks the hasher's module at S (P2R6(b)) and the manifest path the unlock entry names (P2R7).
 
 Run:  python -B scripts/smoke_tman_unlock.py
 """
@@ -441,6 +443,14 @@ def case_unlock_gates():
                     detail="scripts/tday_hash_images.py at S is not the pinned script")
     finally:
         f.write_bytes(saved)
+    f = u.wt / "src/tman/dedup.py"
+    saved = f.read_bytes()
+    try:
+        f.write_bytes(saved + b"# edited\n")
+        expect_gate(u, "dedup_module_not_its_pin_P2R6b", "hasher_pin_mismatch",
+                    detail="src/tman/dedup.py at S is not the pinned module")
+    finally:
+        f.write_bytes(saved)
     hash_only_branch(u)
     records_outside_e_history(u)
     session_checkout_not_e(u)
@@ -456,6 +466,12 @@ def case_unlock_gates():
     w.commit({other["path"]: w.files[other["path"]]}, "an unlock entry of another body")
     expect_gate(u, "unlock_entry_of_another_body", "run_added_after_freeze", unlock_entry=other["path"],
                 detail="not the one the unlock entry records")
+    named = w.entry_file("unlock", [], {"manifest": dict(ud["manifest"], path="reports/derived/tday_manifest_v2.json"),
+                                        "lanes": ud["lanes"], "freeze_record": ud["freeze_record"]}, nn=4,
+                         date=UNLOCK_DAY)
+    w.commit({named["path"]: w.files[named["path"]]}, "an unlock entry naming another manifest path")
+    expect_gate(u, "unlock_entry_naming_another_manifest_path_P2R7", "run_added_after_freeze",
+                unlock_entry=named["path"], detail="not the one the unlock entry records")
     expect_gate(u, "second_unlock_entry_in_the_decision_log", "second_session", detail="two unlock entries")
     rel = committed_raw(u, "unlock", dict(ud, manifest=S.MANIFEST_REL), 3, UNLOCK_DAY)
     expect_gate(u, "unlock_entry_whose_manifest_is_a_string_B89", "entry_file_invalid", unlock_entry=rel,
@@ -529,6 +545,128 @@ def case_generator_pin_at_another_commit():
     u = Unlock(edit_world=g2_pin)
     expect_gate(u, "generator_script_not_its_pin_G2_B98", "hasher_pin_mismatch",
                 detail="scripts/build_corruption_cache.py at S is not the pinned blob")
+
+
+def second_module(w) -> None:
+    """P2R6(b): the manifest's image_hasher pin naming a second module beside src/tman/dedup.py (the builder never
+    makes one: its pin is dedup.hasher_pin's), committed before the freeze record."""
+    w.doc["body"]["generator_pins"]["image_hasher"]["pin"]["parameters"]["modules"]["src/tman/schema.py"] = "0" * 64
+    w.data = w.S.json_file_bytes(w.doc)
+    w.commit({w.S.MANIFEST_REL: w.data}, "the manifest whose hasher pin names a second module")
+
+
+def case_hasher_pin_modules():
+    """P2R6(b): the hasher pin's modules hold src/tman/dedup.py alone; another is refused at the unlock, every earlier
+    unlock gate passing (dedup.py edited at S: case_unlock_gates)."""
+    u = Unlock(edit_world=second_module)
+    expect_gate(u, "hasher_pin_naming_a_second_module_P2R6b", "hasher_pin_mismatch",
+                detail="the pinned modules are not src/tman/dedup.py alone")
+
+
+def hasher_session(u: Unlock, values_edit=None, **dedup_edits) -> tuple:
+    """The session part recording the in-session hasher's three values (values.image_hasher, P2R6(a)) of a
+    tday_dedup.json made for the manifest's pin (smoke_tman_validate.dedup_fixture; `dedup_edits` change the file),
+    `values_edit` changing the values first; committed once. (The manifest's bytes, the file.)"""
+    pin = u.doc["body"]["generator_pins"]["image_hasher"]["pin"]
+    data = VW.dedup_fixture(pin, **dedup_edits)
+    f = FX.scratch_dir("tmanddses") / "tday_dedup.json"
+    f.write_bytes(data)
+    doc = json.loads(data)
+    values = {"hash_list_sha256": doc["hash_list_sha256"], "dedup_list_sha256": u.S.sha256_bytes(data),
+              "counts_by_reason": doc["removed_by_reason"]}
+    if values_edit is not None:
+        values_edit(values)
+    return u.start_session(edit=lambda d: d["session"].update(values={"image_hasher": values})), f
+
+
+def expect_in_gate(u: Unlock, name: str, want: str, gate: str, data, detail: str = "", **kw) -> None:
+    """`want`, a code raised inside session mode's `gate` (dedup.read_dedup's, P2R6(c)(ii)'s), with every earlier
+    gate passing."""
+    code, passed, e = u.run("session", data, **kw)
+    order = gate_codes("session")
+    check(name, code == want and passed == order[:order.index(gate)] and detail in (e.detail if e else ""),
+          f"code {code} ({(e.detail[:160] if e else '')}); passed {len(passed or [])}")
+
+
+def case_session_hasher_values():
+    """P2R6(a), (c)(ii): the hasher's three values sit in the session part's values.image_hasher and go with --dedup,
+    the file read strictly and agreeing with the manifest's pin, each value its file's; each refusal reached with
+    every earlier session gate passing (a world per session part: a second part is a second session)."""
+    u = Unlock()
+    data, f = hasher_session(u)
+    code, passed, e = u.run("session", data, dedup=f)
+    check("session_with_the_hasher_s_values_and_dedup_passes_P2R6a", code is None and passed == gate_codes("session"),
+          f"{code}: {e.detail[:300] if e else ''}")
+    expect_gate(u, "hasher_values_without_dedup_P2R6a", "hasher_values_mismatch", mode="session", data=data,
+                detail="--dedup gives no tday_dedup.json")
+    pin = u.doc["body"]["generator_pins"]["image_hasher"]["pin"]
+    folder = f.parent
+    (folder / "pretty.json").write_bytes(json.dumps(json.loads(f.read_bytes()), indent=2).encode())
+    expect_in_gate(u, "session_dedup_unreadable_P2R6a", "dedup_invalid", "hasher_values_mismatch", data,
+                   dedup=folder / "absent_dedup.json", detail="unreadable")
+    expect_in_gate(u, "session_dedup_read_strictly_P2R6a", "dedup_invalid", "hasher_values_mismatch", data,
+                   dedup=folder / "pretty.json", detail="not the canonical JSON")
+    for name, edits, detail in (("script", {"script": {"path": "scripts/tday_hash_images.py", "sha256": "0" * 64}},
+                                 "script is not"),
+                                ("list", {"train_val_list_sha256": "0" * 64}, "train_val_list_sha256"),
+                                ("count", {"n_images": 1560}, "n_images")):
+        g = folder / f"dedup_{name}.json"
+        g.write_bytes(VW.dedup_fixture(pin, **edits))
+        expect_in_gate(u, f"session_dedup_of_another_{name}_P2R6c", "dedup_pin_mismatch", "hasher_values_mismatch",
+                       data, dedup=g, detail=detail)
+    v = Unlock()
+    expect_gate(v, "dedup_without_the_hasher_s_values_P2R6a", "hasher_values_mismatch", mode="session",
+                data=v.start_session(), dedup=f, detail="records no hasher's values")
+    for name, edit, detail in (
+            ("hasher_values_not_exactly_the_three_P2R6a", lambda x: x.pop("counts_by_reason"), "does not hold exactly"),
+            ("hasher_value_hash_list_sha256_not_the_file_s_P2R6a", lambda x: x.update(hash_list_sha256="0" * 64),
+             "['hash_list_sha256']"),
+            ("hasher_value_dedup_list_sha256_not_the_file_s_P2R6a", lambda x: x.update(dedup_list_sha256="0" * 64),
+             "['dedup_list_sha256']"),
+            ("hasher_value_counts_by_reason_not_the_file_s_P2R6a", lambda x: x.update(counts_by_reason=dict(
+                x["counts_by_reason"], equal_train=4)), "['counts_by_reason']")):
+        v = Unlock()
+        vdata, vf = hasher_session(v, values_edit=edit)
+        expect_gate(v, name, "hasher_values_mismatch", mode="session", data=vdata, dedup=vf, detail=detail)
+
+
+def case_cli_session_dedup():
+    """The command line's --dedup (P2R6(a)): read in session mode, where it goes with the session part's
+    values.image_hasher; refused in any other mode before any record is read."""
+    import contextlib
+    import io
+    import scripts.tday_manifest as CLI
+    from src.tman import records as R
+    u = Unlock()
+    _, f = hasher_session(u)
+    folder, head = u.export()
+    cells = FX.scratch_dir("tmancells") / "cells.json"
+    cells.write_text(json.dumps(PINS.IF6_CELLS), encoding="utf-8")
+    argv = ["--root", str(u.wt), "validate", "--manifest", str(folder / u.S.MANIFEST_REL), "--runs", str(u.w.runs),
+            "--freeze-record", u.freeze["path"], "--unlock-entry", u.unlock["path"], "--registered-cells", str(cells),
+            "--records", str(folder), "--records-commit", head]
+
+    def cli(args):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = CLI.main(args)
+        return rc, buf.getvalue()
+    saved, saved_trigger = R.ptq_record_reader, R.TRIGGER_READER
+    try:
+        R.ptq_record_reader = lambda: u.w.reader()
+        R.TRIGGER_READER = u.w.trigger_reader()
+        rc, out = cli(argv + ["--mode", "session", "--dedup", str(f)])
+        check("cli_session_with_dedup_passes_P2R6a", rc == 0 and
+              f"PASS: mode session; {len(gate_codes('session'))} gates passed" in out, out.strip()[-200:])
+        rc, out = cli(argv + ["--mode", "session"])
+        check("cli_session_without_dedup_refused_P2R6a", rc == 2 and "REFUSED [hasher_values_mismatch]" in out,
+              out.strip()[-200:])
+        rc, out = cli(argv + ["--mode", "unlock", "--dedup", str(f)])
+        check("cli_dedup_outside_session_mode_refused_P2R6a", rc == 2 and "REFUSED [hasher_values_mismatch]" in out
+              and "session mode only" in out, out.strip()[-200:])
+    finally:
+        R.ptq_record_reader = saved
+        R.TRIGGER_READER = saved_trigger
 
 
 def case_session():
@@ -679,7 +817,8 @@ def main() -> int:
     try:
         return FX.run_cases("TMAN UNLOCK SMOKE (lane TMAN, B-1, C5)",
                             (case_unlock_world, case_cli, case_unlock_printer, case_unlock_gates,
-                             case_generator_pin_at_another_commit, case_session, case_push_evidence, case_coverage))
+                             case_generator_pin_at_another_commit, case_hasher_pin_modules, case_session,
+                             case_session_hasher_values, case_cli_session_dedup, case_push_evidence, case_coverage))
     finally:
         if VW.REAL_TEACHER is not None:
             UW.w.M.TEACHER_OF_RECORD.clear()

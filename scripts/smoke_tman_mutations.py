@@ -519,8 +519,8 @@ M = [
      "validate", "case_appends", "isolation_record_not_the_cited_one", ["append_invalid"], None),
     ("cli_ptq_stand_in", CLI, [("ptq_record_ok=ok)", "ptq_record_ok=False)")],
      "paths", "case_cli_outputs", "cli_post_freeze_ptq_append_with_its_record_TB19_Q9", ["append_invalid"], None),
-    ("S08_appends_after_the_unlock", VAL, [('if u is not None and S.canonical_sha256(x.doc["appends"]) != '
-                                            'u["manifest"]["appends_sha256"]:', "if False:")],
+    ("S08_appends_after_the_unlock", VAL, [('    if m["appends_sha256"] != S.canonical_sha256(doc["appends"]):',
+                                            "    if False:")],                       # P2R7's factored rule
      "unlock", "case_unlock_gates", "appends_changed_after_the_unlock_record", ["append_after_unlock"], 8),
     ("hashed_at_the_unlock", VAL, [('bad = [e["slot"] for e in _derived(x) if e["hashed"] is None and e["slot"] '
                                     "not in hashed]", "bad = []")],
@@ -555,10 +555,9 @@ M = [
                                               'if False and (u.get("kind") != "unlock" or '
                                               'u["freeze_record"]["path"] != x.freeze_rel')],
      "unlock", "case_unlock_gates", "unlock_entry_citing_another_freeze_record", ["run_added_after_freeze"], None),
-    ("unlock_records_the_body", VAL, [('m["body_sha256"] != S.canonical_sha256(x.body)\n', "False\n")],
+    ("unlock_records_the_body", VAL, [('    if m["body_sha256"] != S.canonical_sha256(doc["body"]):', "    if False:")],
      "unlock", "case_unlock_gates", "unlock_entry_of_another_body", ["run_added_after_freeze"], None),
-    ("unlock_records_the_file", VAL, [('or (x.mode == "unlock" and m["sha256"] != S.sha256_bytes(x.data))):',
-                                       "or False):")],
+    ("unlock_records_the_file", VAL, [('    if file_binds and m["sha256"] != S.sha256_bytes(data):', "    if False:")],
      "unlock", "case_unlock_gates", "manifest_file_not_the_unlock_entry_s", ["run_added_after_freeze"], None),
     ("every_slot_entered", VAL, [('bad = [k for k, s in x.cat.slots.items() if s["class"] in ("run", "measurement") '
                                   "and k not in x.by_slot",

@@ -180,9 +180,9 @@ def case_values_and_hasher():
 def case_one_pin():
     """P2R2: the image_hasher pin has one definition, src/tman/dedup.py's hasher_pin (a static case over the lane's
     Python modules), which the builder and the hasher's --print-pin call; it passes hasher_pin_errors and
-    test_value_errors (GO H8's case). The builder, and the command line's build, take it whatever the sources hold.
-    (P2R2's refusal of a sources pin that is neither null nor the function's waits for ORCH's ruling: B-2's
-    smoke_tman_am22.py builds with such a pin, :378-380 and :1330.)"""
+    test_value_errors (GO H8's case). The builder, and the command line's build, take it whatever the sources hold:
+    the sources' generator_pins.image_hasher is ignored (ORCH-4's ruling P2R2-AMEND-1 withdrew the refusal of one
+    that is not the function's; it is to be retired in a later TMAN step)."""
     import ast
     import json
     from src.tman import dedup as D

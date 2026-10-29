@@ -188,8 +188,8 @@ def case_cli_test_named_arguments():
              for c in ("build", "validate", "entry", "arithmetic", "append", "inventory")]
     runs += [(f"cli_{c}_{flag[2:].replace('-', '_')}_holding_test", ["--root", plain] + with_arg(cmds[c], flag, bad))
              for c, flag in (("build", "--sources"), ("build", "--registered-cells"), ("validate", "--freeze-record"),
-                             ("validate", "--unlock-entry"), ("validate", "--records"), ("inventory", "--dedup"),
-                             ("entry", "--fields"),
+                             ("validate", "--unlock-entry"), ("validate", "--records"), ("validate", "--dedup"),
+                             ("inventory", "--dedup"), ("entry", "--fields"),
                              ("arithmetic", "--reference-telemetry"), ("arithmetic", "--reference-smoke"),
                              ("append", "--hashed"), ("append", "--ptq-record"))]
     for name, argv in runs:
@@ -628,6 +628,10 @@ def case_cli_outputs():
         with Tracer(MARKER) as t:
             code = FX.refused_code(V.validate, w.ctx("freeze", runs_root=f"/{MARKER}/te" + "st_runs"))
         check("validator_runs_root_test_path_refused_before_any_call", code == "test_path" and not t.calls)
+        with Tracer(MARKER) as t:
+            code = FX.refused_code(V.validate, w.ctx("session", dedup=f"/{MARKER}/te" + "st_dedup.json"))
+        check("validator_dedup_holding_test_refused_before_any_call_P2R6a", code == "test_path" and not t.calls,
+              f"{code} {t.calls[:2]}")
         from src.tman import records as R
         for name, ctx in (("validator_root_holding_test_refused_before_any_call_B7",
                            w.ctx("draft", repo_root=f"/{MARKER}/te" + "st_root")),

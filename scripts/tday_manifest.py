@@ -4,7 +4,8 @@
 Commands:
   build             a draft manifest from the committed records and a sources file (plan §1.2), validated in draft
                     mode, written as tday_manifest.json into --out; the image_hasher pin is dedup.hasher_pin's (P2R2)
-  validate          the validator (src/tman/validate.py) in mode draft, freeze, unlock or session
+  validate          the validator (src/tman/validate.py) in mode draft, freeze, unlock or session; in session mode,
+                    --dedup gives the in-session hasher's tday_dedup.json (P2R6(a))
   entry KIND        an entry file (tday_entry/1) checked, written into --out, and its decision-log row printed
   arithmetic        AM-19 item 3(b)'s arithmetic for a run (scripts/preflight_arms.py's cut_arithmetic, reused); with
                     --out, the cut entry it implies when the run does not fit
@@ -150,7 +151,12 @@ def cmd_build(args) -> int:
 # ---------------------------------------------------------------------------------------------- validate
 def cmd_validate(args) -> int:
     """Draft and freeze read the records at HEAD of --root; unlock and session run at the session checkout S = E
-    (--root) and read the records from --records, a folder written from --records-commit (PL-28; TB16)."""
+    (--root) and read the records from --records, a folder written from --records-commit (PL-28; TB16). --dedup, the
+    in-session hasher's tday_dedup.json, goes with the session part's values.image_hasher, in session mode only
+    (P2R6(a))."""
+    if args.dedup is not None and args.mode != "session":
+        raise S.TmanRefused("hasher_values_mismatch", f"--dedup is read in session mode only, not in {args.mode} mode "
+                                                      "(P2R6(a))")
     data = read_bytes(args.manifest, "manifest_unreadable")
     if args.am22_d is not None and args.mode in ("unlock", "session"):
         raise S.TmanRefused("schedule_invalid", f"--am22-d is read in draft and freeze modes: in {args.mode} mode the "
@@ -170,7 +176,7 @@ def cmd_validate(args) -> int:
         records = records_at(args)
     rel = records.src.rel(args.manifest)
     res = V.validate(V.Ctx(mode=args.mode, manifest_bytes=data, manifest_path=rel or str(args.manifest),
-                           records=records, runs_root=args.runs, freeze_record=args.freeze_record,
+                           records=records, runs_root=args.runs, dedup=args.dedup, freeze_record=args.freeze_record,
                            unlock_entry=args.unlock_entry, registered_cells=registered(args), now=time.time(),
                            am22_d=args.am22_d))
     return print_result(res)
@@ -634,6 +640,7 @@ def parser() -> argparse.ArgumentParser:
     v.add_argument("--records", help="unlock, session: the records folder written from --records-commit")
     v.add_argument("--records-commit")
     v.add_argument("--am22-d", help="draft, freeze: AM-22 item 1(b)'s candidate D (B2R6)")
+    v.add_argument("--dedup", help="session: the in-session hasher's tday_dedup.json (P2R6(a))")
     e = sub.add_parser("entry")
     e.add_argument("kind", choices=sorted(E.ENTRY_FILE_FIELDS))
     e.add_argument("--slot", action="append")

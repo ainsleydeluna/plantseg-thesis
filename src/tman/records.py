@@ -191,6 +191,7 @@ class Records:
     def __init__(self, src: ss.HeadSource):
         self.src = src
         self._dl: DecisionLog | None = None
+        self._full_history_checked = False
 
     @classmethod
     def at_head(cls, root=None) -> "Records":
@@ -237,13 +238,29 @@ class Records:
         S.refuse_test_path(rel, self.base(rel))
         return self.src.has(rel)
 
+    def full_history(self) -> None:
+        """P2R6(e): "written once" is read over the records' history, which a shallow clone cuts short, so the history
+        readers below first refuse one (sweep_select's require_not_shallow, once per Records): repository_shallow stays
+        repository_shallow; any other code (no git repository with a HEAD commit) is record_uncommitted."""
+        if self._full_history_checked:
+            return
+        try:
+            self.src.require_not_shallow()
+        except ss.SelectionRefused as e:
+            raise S.TmanRefused("repository_shallow" if e.code == "repository_shallow" else "record_uncommitted",
+                                str(e)) from None
+        self._full_history_checked = True
+
     def adding_commits(self, rel: str) -> list:
+        self.full_history()
         return ss._adding_commits(self.src, rel)
 
     def written_once_error(self, rel: str) -> str | None:
+        self.full_history()
         return ss.written_once_error(self.src, rel)
 
     def deleted_record_error(self, rel: str) -> str | None:
+        self.full_history()
         return ss.deleted_record_error(self.src, rel)
 
     def history(self, rel: str) -> list:
