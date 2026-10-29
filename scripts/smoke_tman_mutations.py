@@ -2135,6 +2135,13 @@ M = [
     ("builder_dedup_name_utf8_unchecked", MAN, [('            rel.encode("utf-8")\n',
                                                  '            rel.encode("utf-8", "surrogateescape")\n')],
      "validate", "case_inventory_dedup", "inventory_dedup_name_not_utf8_R1F2", ["dedup_invalid"], None),
+    # ------------------------------------------------- P2-F3: the dedup file's two rule-4 guards (DL-24 R3-F4)
+    ("builder_dedup_word_guard_dropped", MAN, [("    S.refuse_test_path(path)\n    try:\n        f, root =",
+                                                "    try:\n        f, root =")],
+     "paths", "case_paths_resolved_where_read", "inventory_dedup_given_resolved_where_read_R3F4", ["test_path"], None),
+    ("export_dedup_word_guard_dropped", VAL, [('    dp = p.parent / d["path"]\n    S.refuse_test_path(dp)\n',
+                                               '    dp = p.parent / d["path"]\n')],
+     "paths", "case_paths_resolved_where_read", "export_dedup_path_resolved_where_read_R3F4", ["test_path"], None),
 ]
 REFUSAL_EXTRA = ("inventory_invalid", "inventory_sha256_mismatch", "binding_invalid",       # read_inventory's codes
                  "output_location", "output_exists",                                       # the CLI's outputs

@@ -206,8 +206,9 @@ def case_cli_test_named_arguments():
 
 def case_paths_resolved_where_read():
     """A relative part is resolved under the folder it is read from -- the records' root or folder, the runs root,
-    a run directory -- not in the working folder (DL-24 #84, #113): os.path.realpath sends that one joined path to a
-    "test" location, and each reader refuses it before any call on it."""
+    a run directory, the export's folder for its dedup file -- not in the working folder (DL-24 #84, #113; B-3a
+    part 2's R3-F4): os.path.realpath sends that one joined path to a "test" location, and each reader refuses it
+    before any call on it."""
     import scripts.smoke_tman_pins as PINS
     import scripts.smoke_tman_validate as VW
     import scripts.tday_manifest as CLI
@@ -250,6 +251,16 @@ def case_paths_resolved_where_read():
         check("printer_run_ids_resolved_under_the_runs_root_B10", refused_where_read(
             w.runs / "g_s42_80k_a9", CLI.printer_cut_context, w.records, w.cat, freeze, {"run_ids": ["g_s42_80k_a9"]},
             w.runs) == "test_path")
+        dd = FX.scratch_dir("tmanpathdd")          # the dedup file's two guards, builder and reader (DL-24 R3-F4)
+        (dd / "tday_dedup.json").write_bytes(VW.dedup_fixture(w.doc["body"]["generator_pins"]["image_hasher"]["pin"]))
+        inv = dict(registered=PINS.IF6_CELLS, dedup=(dd / "tday_dedup.json", dd))
+        (dd / "inv.json").write_bytes(w.S.json_file_bytes(M.build_inventory(w.doc, w.data, w.records, w.cat,
+                                                                              runs_root=w.runs, **inv)))
+        check("inventory_dedup_given_resolved_where_read_R3F4", refused_where_read(
+            dd / "tday_dedup.json", M.build_inventory, w.doc, w.data, w.records, w.cat, runs_root=w.runs,
+            **inv) == "test_path")
+        check("export_dedup_path_resolved_where_read_R3F4",
+              refused_where_read(dd / "tday_dedup.json", V.read_inventory, dd / "inv.json") == "test_path")
     finally:
         if VW.REAL_TEACHER is not None:
             w.M.TEACHER_OF_RECORD.clear()
