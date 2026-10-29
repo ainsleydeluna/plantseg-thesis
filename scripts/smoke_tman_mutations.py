@@ -3,7 +3,8 @@
 case (the GO's STEP 5 rule), and plan §5's sample mutations are each killed by the case the plan names.
 
 A mutation replaces exact texts (each must occur once) in a scratch copy of the lane's code -- src/tman/*.py,
-scripts/tday_manifest.py and configs/tday_catalogue.json, and, for the reused arithmetic (decision (xvii)),
+scripts/tday_manifest.py, scripts/tday_hash_images.py (B-3a part 2, P2R4: copied, not imported here) and
+configs/tday_catalogue.json, and, for the reused arithmetic (decision (xvii)),
 scripts/preflight_arms.py -- and a fresh interpreter imports the copy as src.tman, scripts.tday_manifest and
 scripts.preflight_arms (the catalogue's bytes are served for the repository's path) and runs one case of one TMAN
 smoke up to its named check. The mutation is killed when a check the case records fails or the case raises.
@@ -38,11 +39,19 @@ REC, COM, CLI, CAT = "src/tman/records.py", "src/tman/completion.py", "scripts/t
     "configs/tday_catalogue.json"
 PRE = "scripts/preflight_arms.py"                     # reused, not the lane's: mutated in the scratch copy only
 A22, DAT = "src/tman/am22.py", "src/tman/schedule.py"                                  # B-2
+DED = "src/tman/dedup.py"                                                 # B-3a: in LANE_CODE_FILES since P2R4
 SMOKES = {k: f"scripts.smoke_tman_{k}" for k in ("schema", "paths", "complete", "cuts", "parent", "derived", "pins",
                                                   "validate", "unlock", "noscore", "determinism", "am22")}
 RESULT_TAG = "MUTATION-RESULT "
 AM22_D_RAISE = '            raise S.TmanRefused("schedule_invalid", f"--am22-d'          # am22.providers' bounds on D
 AM22_D_BOUNDS = '        if not (S.TYPES["day"](d_date) and AM22_IN_FORCE <= d_date <= LAST_D):\n' + AM22_D_RAISE
+# B-3a part 2: dedup.dedup_pin_errors' three equalities (P2R6(c)(ii)) and g_run_added_after_freeze's use of P2R7's rule
+DEDUP_SCRIPT_EQ = ('    if doc["script"] != {"path": SCRIPT_REL, "sha256": script.get("sha256") if isinstance(script, '
+                   'dict) else None}:')
+DEDUP_LIST_EQ = '    if doc["train_val_list_sha256"] != (tv.get("sha256") if isinstance(tv, dict) else None):'
+DEDUP_COUNT_EQ = '    if doc["n_images"] != (params.get("expected_images") if isinstance(params, dict) else None):'
+RUN_ADDED_RULE = ('{"path", "body", "file"} & set(unlock_manifest_errors(m, x.doc, x.data,\n' + " " * 79
+                  + 'file_binds=x.mode == "unlock")):')
 
 # (id, file, [(old, new), ...], smoke, case, the check the case runs to, the refusal codes it guards, plan sample)
 M = [
@@ -1933,11 +1942,191 @@ M = [
     ("cut_context_am22_dates_unread", VAL, [("am22=lambda: D.am22_dates_of_record(x.records.src),",
                                              "am22=lambda: None,")],
      "am22", "case_condition_5", "validator_cut_context_reads_runs_pilot_and_am22_dates_R3_15", [], None),
+    # ------------------------------------------------------- B-3a part 2 (P2R13): the builder and the command line
+    ("builder_takes_the_sources_hasher_pin", MAN, [('"image_hasher": {"pin": DD.hasher_pin(e), "value": None}',
+                                                    '"image_hasher": {"pin": pins["image_hasher"], "value": None}')],
+     "pins", "case_one_pin", "builder_takes_the_function_s_pin_whatever_the_sources_hold", [], None),
+    ("inventory_dedup_flag_ignored", CLI, [("dedup=None if args.dedup is None else (args.dedup, folder))",
+                                            "dedup=None)")],
+     "validate", "case_inventory_dedup", "cli_inventory_dedup_names_the_file_P2R4", [], None),
+    ("builder_dedup_outside_the_folder", MAN, [("    rel = f.relative_to(root).as_posix() if f.is_relative_to(root) "
+                                                "else None", "    rel = f.name")],
+     "validate", "case_inventory_dedup", "inventory_dedup_outside_the_export_s_folder_P2R5", ["dedup_invalid"], None),
+    ("builder_dedup_path_form_unchecked", MAN, [("    err = DD.relative_path_error(rel) if rel is not None else",
+                                                 "    err = None if rel is not None else")],
+     "validate", "case_inventory_dedup", "inventory_dedup_path_with_a_backslash_P2R5", ["dedup_invalid"], None),
+    ("builder_dedup_unreadable_uncaught", MAN, [
+        ('    except OSError as e:\n        raise S.TmanRefused("dedup_invalid", f"{path}: unreadable',
+         '    except KeyError as e:\n        raise S.TmanRefused("dedup_invalid", f"{path}: unreadable')],
+     "validate", "case_inventory_dedup", "inventory_dedup_absent_P2R4", ["dedup_invalid"], None),
+    ("builder_dedup_read_loosely", MAN, [("    ddoc = DD.read_dedup(data)",
+                                          '    ddoc = __import__("json").loads(data)')],
+     "validate", "case_inventory_dedup", "inventory_dedup_not_canonical_read_strictly_P2R4", ["dedup_invalid"], None),
+    ("builder_dedup_pin_unchecked", MAN, [("    errs = DD.dedup_pin_errors(ddoc, pin)", "    errs = []")],
+     "validate", "case_inventory_dedup", "inventory_dedup_of_another_script_P2R6c", ["dedup_pin_mismatch"], None),
+    ("builder_dedup_script_equality_dropped", DED, [(DEDUP_SCRIPT_EQ, "    if False:")],
+     "validate", "case_inventory_dedup", "inventory_dedup_of_another_script_P2R6c", ["dedup_pin_mismatch"], None),
+    ("builder_dedup_list_equality_dropped", DED, [(DEDUP_LIST_EQ, "    if False:")],
+     "validate", "case_inventory_dedup", "inventory_dedup_of_another_list_P2R6c", ["dedup_pin_mismatch"], None),
+    ("builder_dedup_count_equality_dropped", DED, [(DEDUP_COUNT_EQ, "    if False:")],
+     "validate", "case_inventory_dedup", "inventory_dedup_of_another_count_P2R6c", ["dedup_pin_mismatch"], None),
+    # ---------------------------------------------------- dedup.path's form (P2R5), killed through read_inventory
+    ("dedup_path_dot_dot_allowed", DED, [('            or any(p in ("", ".", "..") for p in value.split("/")):',
+                                          '            or any(p in ("", ".") for p in value.split("/")):')],
+     "validate", "case_inventory_dedup_reader", "read_inventory_dedup_path_with_a_dot_dot_component_P2R5",
+     ["dedup_invalid"], None),
+    ("dedup_path_backslash_allowed", DED, [('    if value.startswith("/") or "\\\\" in value or ":" in value',
+                                            '    if value.startswith("/") or ":" in value')],
+     "validate", "case_inventory_dedup_reader", "read_inventory_dedup_path_with_a_backslash_P2R5", ["dedup_invalid"],
+     None),
+    # no mutation drops the leading "/" (LREP's form keeps it): an absolute path's first component is empty, so the
+    # empty-component test refuses it alike -- an equivalent mutation (dev run p24only: SURVIVED; named in the report)
+    ("dedup_path_colon_allowed", DED, [('or ":" in value or "\\x00" in value', 'or "\\x00" in value')],
+     "validate", "case_inventory_dedup_reader", "read_inventory_dedup_path_with_a_colon_P2R5", ["dedup_invalid"], None),
+    ("dedup_path_nul_allowed", DED, [(' or "\\x00" in value \\\n', ' \\\n')],
+     "validate", "case_inventory_dedup_reader", "read_inventory_dedup_path_with_a_nul_P2R5", ["dedup_invalid"], None),
+    ("dedup_path_empty_component_allowed", DED, [('any(p in ("", ".", "..") for p', 'any(p in (".", "..") for p')],
+     "validate", "case_inventory_dedup_reader", "read_inventory_dedup_path_with_an_empty_component_P2R5",
+     ["dedup_invalid"], None),
+    ("dedup_path_dot_component_allowed", DED, [('any(p in ("", ".", "..") for p', 'any(p in ("", "..") for p')],
+     "validate", "case_inventory_dedup_reader", "read_inventory_dedup_path_with_a_dot_component_P2R5",
+     ["dedup_invalid"], None),
+    ("dedup_path_word_allowed", DED, [('    if ("te" + "st") in value.lower():', "    if False:")],
+     "validate", "case_inventory_dedup_reader", "read_inventory_dedup_path_holding_the_word_P2R5", ["dedup_invalid"],
+     None),
+    ("dedup_path_padding_allowed", DED, [("    if not _is_id(value):", "    if False:")],
+     "validate", "case_inventory_dedup_reader", "read_inventory_dedup_path_with_surrounding_space_P2R5",
+     ["dedup_invalid"], None),
+    # ---------------------------------------------------------------- read_inventory's export dedup (P2R6(c)(i))
+    ("export_dedup_unchecked", VAL, [('    if doc["dedup"] is not None:\n        read_export_dedup(p, doc["dedup"])',
+                                      '    if False:\n        read_export_dedup(p, doc["dedup"])')],
+     "validate", "case_inventory_dedup_reader", "read_inventory_dedup_removed_by_reason_the_export_s",
+     ["dedup_invalid"], None),
+    ("export_dedup_path_form_unchecked", VAL, [('    err = DD.relative_path_error(d["path"])', "    err = None")],
+     "validate", "case_inventory_dedup_reader", "read_inventory_dedup_path_with_a_dot_dot_component_P2R5",
+     ["dedup_invalid"], None),
+    ("export_dedup_resolved_in_the_working_folder", VAL, [('    dp = p.parent / d["path"]',
+                                                           '    dp = Path(d["path"])')],
+     "validate", "case_inventory_dedup_reader", "read_inventory_reads_the_dedup_file_against_the_export_s_folder_P2R6c",
+     ["dedup_invalid"], None),
+    ("export_dedup_unreadable_uncaught", VAL, [
+        ('    except OSError as e:\n        raise S.TmanRefused("dedup_invalid", f"{dp}: unreadable',
+         '    except KeyError as e:\n        raise S.TmanRefused("dedup_invalid", f"{dp}: unreadable')],
+     "validate", "case_inventory_dedup_reader", "read_inventory_dedup_file_absent", ["dedup_invalid"], None),
+    ("export_dedup_parsed_before_its_sha256", VAL, [('    doc = DD.read_dedup(data, expect_sha256=d["sha256"])',
+                                                     '    doc = DD.read_dedup(data)\n    doc = DD.read_dedup(data, '
+                                                     'expect_sha256=d["sha256"])')],
+     "validate", "case_inventory_dedup_reader", "read_inventory_dedup_sha256_compared_before_parsing",
+     ["dedup_invalid"], None),
+    ("export_dedup_read_loosely", VAL, [('    doc = DD.read_dedup(data, expect_sha256=d["sha256"])',
+                                         '    doc = __import__("json").loads(data)')],
+     "validate", "case_inventory_dedup_reader", "read_inventory_dedup_read_strictly", ["dedup_invalid"], None),
+    ("export_dedup_counts_unchecked", VAL, [('    if doc["removed_by_reason"] != d["removed_by_reason"]:',
+                                             "    if False:")],
+     "validate", "case_inventory_dedup_reader", "read_inventory_dedup_removed_by_reason_the_export_s",
+     ["dedup_invalid"], None),
+    # ------------------------------------------------------------ the session's hasher values (P2R6(a), (c)(ii))
+    ("hasher_values_without_dedup_accepted", VAL, [("    if held != (x.dedup is not None):",
+                                                    "    if not held and x.dedup is not None:")],
+     "unlock", "case_session_hasher_values", "hasher_values_without_dedup_P2R6a", ["hasher_values_mismatch"], None),
+    ("dedup_without_hasher_values_accepted", VAL, [("    if held != (x.dedup is not None):",
+                                                    "    if held and x.dedup is None:")],
+     "unlock", "case_session_hasher_values", "dedup_without_the_hasher_s_values_P2R6a", ["hasher_values_mismatch"],
+     None),
+    ("hasher_values_keys_unchecked", VAL, [("    if not (isinstance(vals, dict) and sorted(vals) == "
+                                            "sorted(M.HASHER_VALUES)):", "    if not isinstance(vals, dict):")],
+     "unlock", "case_session_hasher_values", "hasher_values_not_exactly_the_three_P2R6a", ["hasher_values_mismatch"],
+     None),
+    ("hasher_value_hash_list_not_compared", VAL, [('"hash_list_sha256": doc["hash_list_sha256"]',
+                                                   '"hash_list_sha256": vals["hash_list_sha256"]')],
+     "unlock", "case_session_hasher_values", "hasher_value_hash_list_sha256_not_the_file_s_P2R6a",
+     ["hasher_values_mismatch"], None),
+    ("hasher_value_dedup_list_not_compared", VAL, [('"dedup_list_sha256": S.sha256_bytes(data)',
+                                                    '"dedup_list_sha256": vals["dedup_list_sha256"]')],
+     "unlock", "case_session_hasher_values", "hasher_value_dedup_list_sha256_not_the_file_s_P2R6a",
+     ["hasher_values_mismatch"], None),
+    ("hasher_value_counts_not_compared", VAL, [('"counts_by_reason": doc["removed_by_reason"]',
+                                                '"counts_by_reason": vals["counts_by_reason"]')],
+     "unlock", "case_session_hasher_values", "hasher_value_counts_by_reason_not_the_file_s_P2R6a",
+     ["hasher_values_mismatch"], None),
+    ("session_dedup_unreadable_uncaught", VAL, [
+        ('    except OSError as e:\n        raise S.TmanRefused("dedup_invalid", f"--dedup {x.dedup}: unreadable',
+         '    except KeyError as e:\n        raise S.TmanRefused("dedup_invalid", f"--dedup {x.dedup}: unreadable')],
+     "unlock", "case_session_hasher_values", "session_dedup_unreadable_P2R6a", ["dedup_invalid"], None),
+    ("session_dedup_read_loosely", VAL, [("    doc = DD.read_dedup(data)\n",
+                                          '    doc = __import__("json").loads(data)\n')],
+     "unlock", "case_session_hasher_values", "session_dedup_read_strictly_P2R6a", ["dedup_invalid"], None),
+    ("session_dedup_pin_unchecked", VAL, [('    errs = DD.dedup_pin_errors(doc, _pins(x)["image_hasher"]["pin"])',
+                                           "    errs = []")],
+     "unlock", "case_session_hasher_values", "session_dedup_of_another_script_P2R6c", ["dedup_pin_mismatch"], None),
+    ("session_dedup_script_equality_dropped", DED, [(DEDUP_SCRIPT_EQ, "    if False:")],
+     "unlock", "case_session_hasher_values", "session_dedup_of_another_script_P2R6c", ["dedup_pin_mismatch"], None),
+    ("session_dedup_list_equality_dropped", DED, [(DEDUP_LIST_EQ, "    if False:")],
+     "unlock", "case_session_hasher_values", "session_dedup_of_another_list_P2R6c", ["dedup_pin_mismatch"], None),
+    ("session_dedup_count_equality_dropped", DED, [(DEDUP_COUNT_EQ, "    if False:")],
+     "unlock", "case_session_hasher_values", "session_dedup_of_another_count_P2R6c", ["dedup_pin_mismatch"], None),
+    ("dedup_read_outside_session_mode", CLI, [('    if args.dedup is not None and args.mode != "session":',
+                                               "    if False:")],
+     "unlock", "case_cli_session_dedup", "cli_dedup_outside_session_mode_refused_P2R6a", ["hasher_values_mismatch"],
+     None),
+    ("cli_dedup_not_passed", CLI, [("runs_root=args.runs, dedup=args.dedup, freeze_record",
+                                    "runs_root=args.runs, freeze_record")],
+     "unlock", "case_cli_session_dedup", "cli_session_with_dedup_passes_P2R6a", [], None),
+    ("dedup_path_not_guarded", VAL, [("x.freeze_rel, x.unlock_rel,\n              x.dedup]:",
+                                      "x.freeze_rel, x.unlock_rel]:")],
+     "paths", "case_cli_outputs", "validator_dedup_holding_test_refused_before_any_call_P2R6a", ["test_path"], None),
+    # ------------------------------------------------ the module at S (P2R6(b)), the pin's data (P2R6(d)), P2R7
+    ("dedup_module_at_s_unchecked", VAL, [("        if not mp.is_file() or S.sha256_bytes(mp.read_bytes()) != "
+                                           "modules[DD.DEDUP_REL]:", "        if False:")],
+     "unlock", "case_unlock_gates", "dedup_module_not_its_pin_P2R6b", ["hasher_pin_mismatch"], None),
+    ("hasher_modules_shape_unchecked", VAL, [("    if not (isinstance(modules, dict) and list(modules) == "
+                                              "[DD.DEDUP_REL]):", "    if not isinstance(modules, dict):")],
+     "unlock", "case_hasher_pin_modules", "hasher_pin_naming_a_second_module_P2R6b", ["hasher_pin_mismatch"], None),
+    ("hasher_pin_data_unchecked", VAL, [("for k, v in DD.data_parameters().items() if params.get(k) != v])",
+                                         "for k, v in DD.data_parameters().items() if False])")],
+     "validate", "case_record_gates", "hasher_pin_expected_images_not_1561_P2R6d", ["hasher_pin_data_mismatch"],
+     None),
+    ("unlock_records_the_path", VAL, [('    if m["path"] != S.MANIFEST_REL:', "    if False:")],
+     "unlock", "case_unlock_gates", "unlock_entry_naming_another_manifest_path_P2R7", ["run_added_after_freeze"],
+     None),
+    ("file_binds_in_session_mode", VAL, [(RUN_ADDED_RULE, RUN_ADDED_RULE.replace('x.mode == "unlock"', "True"))],
+     "unlock", "case_session", "session_world_passes_every_session_gate", [], None),
+    # ------------------------------------------------------------------------- shallow clones refused (P2R6(e))
+    ("shallow_refusal_dropped", REC, [("            self.src.require_not_shallow()\n", "            pass\n")],
+     "validate", "case_shallow_records", "validator_refuses_a_shallow_clone_in_entry_file_rewritten_P2R6e",
+     ["repository_shallow"], None),
+    ("shallow_code_not_kept", REC, [('"repository_shallow" if e.code == "repository_shallow" else "record_uncommitted"',
+                                     '"record_uncommitted"')],
+     "validate", "case_shallow_records", "validator_refuses_a_shallow_clone_in_entry_file_rewritten_P2R6e",
+     ["repository_shallow"], None),
+    ("no_head_commit_not_record_uncommitted", REC, [('"repository_shallow" if e.code == "repository_shallow" else '
+                                                     '"record_uncommitted"', '"repository_shallow"')],
+     "validate", "case_shallow_records", "history_readers_without_a_head_commit_record_uncommitted_P2R6e",
+     ["record_uncommitted"], None),
+    ("shallow_check_on_every_call", REC, [("        self._full_history_checked = True\n", "        pass\n")],
+     "validate", "case_shallow_records", "history_readers_check_the_clone_once_per_records_P2R6e", [], None),
+    ("adding_commits_unguarded", REC, [
+        ("        self.full_history()\n        return ss._adding_commits(self.src, rel)",
+         "        return ss._adding_commits(self.src, rel)")],
+     "validate", "case_shallow_records", "each_history_reader_refuses_a_shallow_clone_first_P2R6e",
+     ["repository_shallow"], None),
+    ("written_once_unguarded", REC, [
+        ("        self.full_history()\n        return ss.written_once_error(self.src, rel)",
+         "        return ss.written_once_error(self.src, rel)")],
+     "validate", "case_shallow_records", "each_history_reader_refuses_a_shallow_clone_first_P2R6e",
+     ["repository_shallow"], None),
+    ("deleted_record_unguarded", REC, [
+        ("        self.full_history()\n        return ss.deleted_record_error(self.src, rel)",
+         "        return ss.deleted_record_error(self.src, rel)")],
+     "validate", "case_shallow_records", "each_history_reader_refuses_a_shallow_clone_first_P2R6e",
+     ["repository_shallow"], None),
 ]
 REFUSAL_EXTRA = ("inventory_invalid", "inventory_sha256_mismatch", "binding_invalid",       # read_inventory's codes
                  "output_location", "output_exists",                                       # the CLI's outputs
-                 "am22_date_not_ended")                                                    # check-freeze (B2R7)
-MUTATED_FILES = (VAL, MAN, ENT, SCH, REC, COM, CLI, CAT, PRE, A22, DAT)
+                 "am22_date_not_ended",                                                    # check-freeze (B2R7)
+                 "dedup_invalid", "dedup_pin_mismatch",          # B-3a part 2: tday_dedup.json (P2R6(a), (c))
+                 "repository_shallow")                           # records.py's history readers (P2R6(e))
+MUTATED_FILES = (VAL, MAN, ENT, SCH, REC, COM, CLI, CAT, PRE, A22, DAT, DED)
 
 
 # ================================================================================================ the worker
@@ -2092,8 +2281,8 @@ def case_mutations():
             killed_codes |= set(m[6])
     if not ONLY:
         codes = {c for c, _, _ in V.GATES} | set(REFUSAL_EXTRA)
-        check("every_refusal_code_has_a_killed_mutation", codes <= killed_codes and len(codes) == 94,   # B-2: 89 -> 94
-              str(sorted(codes - killed_codes)))
+        check("every_refusal_code_has_a_killed_mutation", codes <= killed_codes and len(codes) == 99,   # B-2: 89 -> 94
+              str(sorted(codes - killed_codes)))       # B-3a part 2: 94 -> 99 (two gates, three REFUSAL_EXTRA codes)
         check("plan_s_sixteen_sample_mutations_present", sorted(m[7] for m in M if m[7]) == list(range(1, 17)))
     check("the_repository_files_are_unchanged", files_sha256() == before)
 
