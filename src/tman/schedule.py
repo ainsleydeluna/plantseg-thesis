@@ -1,7 +1,8 @@
 """The freeze instant, the TEST deadline and the dates of the cut rules (lane TMAN, B-1, C2; plan §2.3).
 
 `freeze_instant` walks an ordered list of providers and returns one answer:
-  1. the AM-22 freeze entry (B-2 puts its provider in front; absent in B-1);
+  1. the AM-22 freeze (B-2, B2R6: am22_provider, from the freeze record or for a candidate D, put in front by every
+     call site; src/tman/am22.py's providers);
   2. an AM-19 item 1(d) new-freeze entry after a delay entry dated the original freeze date;
   3. the schedule in force (configs/kd_schedule.json through sweep_select.load_schedule,
      src/training/sweep_select.py:799-819) and FREEZE_DATES[in_force].
@@ -34,10 +35,19 @@ FREEZE_DATES = {"T": "2026-11-03", "R": "2026-12-18"}        # AM-19 item 1(a): 
 TEST_DATES = {"T": "2026-11-08", "R": "2026-12-21"}          # AM-19 item 1(a): single TEST evaluation, no later than
 AM22_HEADING = "## AM-22 — "
 AM22_PUSH_BASE = "2026-10-17"                                # AM-22 header: dates move by the days after this one
-AM22_CUTOFF_RE = re.compile(r"Its cutoff date is (\d{4}-\d{2}-\d{2})")
-AM22_CEILING_RE = re.compile(r"in no case later than (\d{4}-\d{2}-\d{2})")
+# whitespace-tolerant: the committed text wraps "in no" / "case later than" across a line (PA :2375-2376; B2-0)
+AM22_CUTOFF_RE = re.compile(r"Its\s+cutoff\s+date\s+is\s+(\d{4}-\d{2}-\d{2})")
+AM22_CEILING_RE = re.compile(r"in\s+no\s+case\s+later\s+than\s+(\d{4}-\d{2}-\d{2})")
 AM22_TEST_DEADLINE = "2026-11-08"                            # AM-22 item 1(e)
 ENTERED_DAY_OFFSET = {"cutoff": 1}                           # AM-22 item 2(a): made on the day after its cutoff date
+# B2R1: AM-22's commit reached the remote on 2026-10-17 (docs/DECISION_LOG.md DL-137 :245 and DL-168 :276: "AM-22's
+# commit (ce29549) reached the remote on 2026-10-17, so no date moves"); its committer time is 2026-10-17T20:37:39+08:00
+AM22_PUSHED_DAY = "2026-10-17"
+AM22_COMMIT = "ce2954951e24a17fba9e871a0d927da0bb397dc3"
+CUTOFF_MOVE_DAYS = 2                                         # AM-22 item 2(a): the end of the second day after
+REPEAT_CUTOFF_DAYS = 3                                       # AM-22 item 2(b): the end of the third day after
+AM22_PROVIDER = "am22"                                       # B2R6: the AM-22 freeze provider, in front of B-1's
+AM22_SOURCE_1B, AM22_SOURCE_1F = "AM-22 item 1(b)", "AM-22 item 1(f)"      # the freeze record's sources (B2R5)
 
 
 def iso(d: date) -> str:
@@ -154,6 +164,25 @@ def freeze_instant(schedule: dict, *, delays=(), news=(), providers=()) -> Freez
     return new_freeze_provider(base, list(delays), list(news)) or base
 
 
+def am22_provider(freeze_date: str):
+    """B2R6: AM-22 item 1(b)'s freeze, put in front of B-1's providers: FreezeInstant(freeze_date, moved None, source
+    {provider "am22", path null, sha256 null}, the TEST deadline 2026-11-08 of item 1(e)), under Schedule T only (AM-22
+    header: under Schedule R nothing of it applies). The body never cites the freeze record; the record binds the
+    body through body_sha256, and the unlock entry binds the record."""
+    def provider(base: FreezeInstant) -> FreezeInstant | None:
+        if base.schedule.get("in_force") != "T":
+            return None
+        return FreezeInstant(base.schedule, freeze_date, None,
+                             {"provider": AM22_PROVIDER, "path": None, "sha256": None}, AM22_TEST_DEADLINE)
+    return provider
+
+
+def am22_candidate(d_date: str):
+    """B2R6's candidate provider for a date D: the same instant, the end of the day after D (item 1(b)), without a
+    record (condition 5; build and validate --am22-d D)."""
+    return am22_provider(iso(day(d_date) + timedelta(days=1)))
+
+
 def first_complete_day(instants: list, original_date: str) -> str | None:
     """AM-19 item 1(d): the first date later than the original freeze date at whose end every never-cut run is
     complete, from their completion instants; None when one of them is not complete (None). A run complete at an
@@ -194,6 +223,39 @@ def am22_dates(text: str, pushed_day: str | None) -> Am22Dates:
         shift = max(0, (day(pushed_day) - day(AM22_PUSH_BASE)).days)
     move = timedelta(days=shift)
     return Am22Dates(iso(day(c.group(1)) + move), iso(day(g.group(1)) + move), c.group(1), g.group(1), shift)
+
+
+def am22_dates_of_record(src: ss.HeadSource) -> Am22Dates:
+    """The dates provider of record (B2R1): item 2(a)'s cutoff date and ceiling read from AM-22's committed text at
+    the records' commit, its commit pushed on AM22_PUSHED_DAY. Refused (schedule_invalid) when AM-22's commit is not
+    an ancestor of the records' commit, or its text is not there."""
+    if not (src.commit_exists(AM22_COMMIT) and src.is_ancestor(AM22_COMMIT, src.records_ref)):
+        raise S.TmanRefused("schedule_invalid", f"AM-22's commit {AM22_COMMIT[:7]} is not an ancestor of the records' "
+                                                f"commit {src.records_ref[:12]}: item 2(a)'s dates are not of record "
+                                                "there (B2R1)")
+    data = src.show(src.records_ref, S.AMENDMENTS_REL)
+    text = am22_text(data.decode("utf-8")) if data is not None else None
+    if text is None:
+        raise S.TmanRefused("schedule_invalid", f"{S.AMENDMENTS_REL} at {src.records_ref[:12]} holds no AM-22 section")
+    return am22_dates(text, AM22_PUSHED_DAY)
+
+
+def cutoff_day(dates: Am22Dates, last_day: str | None, *, absent: bool = False) -> str:
+    """AM-22 item 2(a): a run's cutoff date, the later of the cutoff date and the end of the second day after the day
+    of the last record that moves it (`last_day`, None when it waits for none), and in no case later than the
+    ceiling. A record it waits for that is never written (`absent`) leaves the ceiling."""
+    if absent:
+        return dates.ceiling
+    if last_day is None:
+        return dates.cutoff
+    moved = iso(day(last_day) + timedelta(days=CUTOFF_MOVE_DAYS))
+    return min(dates.ceiling, max(dates.cutoff, moved))
+
+
+def repeat_cutoff_day(last_row_day: str) -> str:
+    """AM-22 item 2(b): a repeat not launched by the end of the third day after the day of the last row the attempt
+    before it wrote is cut on that date."""
+    return iso(day(last_row_day) + timedelta(days=REPEAT_CUTOFF_DAYS))
 
 
 # ---------------------------------------------------------------------------------- rule-aware dating (T-15)

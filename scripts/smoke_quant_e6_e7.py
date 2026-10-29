@@ -188,6 +188,11 @@ def test_shared_calibration() -> None:
 
 
 # ---------------------------------------------------------------- 4. E6/E7 preparation routing
+# Tools, not launchers (ruling AQ30): L-AM3 B-1's e6kd_trigger.py, L-AM23Q B-1's e6x_condition.py and L-AM3 B-2's
+# e6kd_eval.py.
+TOOL_SCRIPTS = frozenset({"e6kd_trigger.py", "e6x_condition.py", "e6kd_eval.py"})
+
+
 def test_stage_preparation() -> None:
     set_seed(42)
     good = TMP / "e3_good.pt"
@@ -216,7 +221,7 @@ def test_stage_preparation() -> None:
     # Any non-smoke e6/e7 script must be a stage-PINNED runner behind the real-run gates. (Before
     # the runners existed this asserted that none existed at all; that is now superseded.)
     scripts = sorted(set((REPO / "scripts").glob("*e6*")) | set((REPO / "scripts").glob("*e7*")))
-    launchers = [p for p in scripts if "smoke" not in p.name]
+    launchers = [p for p in scripts if "smoke" not in p.name and p.name not in TOOL_SCRIPTS]
     # The wrappers are thin: they pin STAGE and delegate to src/quant/runner.py, which owns the
     # --real-run/--confirm-real-run gates (verified behaviourally in scripts/smoke_quant_runners.py).
     guarded = []

@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import ast
 import importlib
+import posixpath
 import re
 from pathlib import Path
 
@@ -671,7 +672,8 @@ EVALUATOR_ROOTS = ("scripts/evaluate_model.py", "scripts/evaluate_corruptions.py
                    "scripts/build_corruption_cache.py", "scripts/verify_corruption_cache.py",
                    "scripts/run_corruption_grid.py", "scripts/report_robustness.py")
 EVALUATOR_DATA = ("configs/plantseg_class_map.json", "configs/corruption_protocol.json",
-                  "configs/teacher/segnext_mscan-b_1xb16-adamw-40k_plantseg116-512x512.py")
+                  "configs/teacher/segnext_mscan-b_1xb16-adamw-40k_plantseg116-512x512.py",
+                  "configs/teacher/arms/r1_bema.py", "configs/teacher/arms/r2_bema_rare.py")  # arm teachers (DL-24 #81)
 REFERENCE_FILES = {"mde_entry": ("reports/derived/mde_entry_20261009T034825Z.json", "DL-99"),
                    "strata": ("reports/strata/train_strata_v1.json", "DL-63")}
 TRAINVAL_HASH_LIST = {"path": "train_val_image_hashes.tsv", "dl": "DL-91", "rows": 6213,       # kept outside the repo
@@ -681,7 +683,7 @@ TEACHER_OF_RECORD = {"path": "iter_24000.pth", "dl": "DL-88", "bytes": 335_949_0
 EXPECTED_ROWS_CITES = ("reports/dataset_report.md:30", "src/eval/stage_artifacts.py:30")
 LANE_CODE_FILES = ("src/tman/__init__.py", "src/tman/schema.py", "src/tman/records.py", "src/tman/completion.py",
                    "src/tman/schedule.py", "src/tman/entries.py", "src/tman/manifest.py", "src/tman/validate.py",
-                   "scripts/tday_manifest.py", "configs/tday_catalogue.json")
+                   "src/tman/am22.py", "scripts/tday_manifest.py", "configs/tday_catalogue.json")   # am22: B2R11
 
 
 def hash_only(rel: str) -> bool:
@@ -694,8 +696,9 @@ def hash_only(rel: str) -> bool:
 def evaluator_files(src: ss.HeadSource, commit: str) -> dict:
     """The evaluator file set at `commit` (decision (x); IF§10): its roots present there, their import closure over
     src/, scripts/ and configs/ (absolute, relative and function-level imports, with the packages they pass
-    through), and its data files; {path: blob id}. A hash-only module is in the set but not parsed: its own imports
-    are not followed."""
+    through; a config's custom_imports, which mmengine imports when it builds the config, and its _base_ files: DL-24
+    #81), and its data files; {path: blob id}. A hash-only module is in the set but not parsed: its own imports are
+    not followed."""
     out, todo = {}, [r for r in EVALUATOR_ROOTS + EVALUATOR_DATA if src.blob_at(commit, r)]
     while todo:
         rel = todo.pop()
@@ -719,6 +722,16 @@ def evaluator_files(src: ss.HeadSource, commit: str) -> dict:
                     parts = pkg.split(".")
                     base = ".".join(parts[:len(parts) - node.level + 1] + ([base] if base else []))
                 mods = [base] + [f"{base}.{a.name}" for a in node.names]
+            elif isinstance(node, ast.Assign) and rel.startswith("configs/"):
+                names = {t.id for t in node.targets if isinstance(t, ast.Name)}
+                found = [c.value for c in ast.walk(node.value)
+                         if isinstance(c, ast.Constant) and isinstance(c.value, str)]
+                if "custom_imports" in names:
+                    mods = found
+                if "_base_" in names:
+                    bases = (posixpath.normpath(posixpath.join(posixpath.dirname(rel), f)) for f in found)
+                    todo += [b for b in bases if b.split("/")[0] in ("src", "scripts", "configs")
+                             and src.blob_at(commit, b) and b not in out]
             for m in mods:
                 parts = m.split(".")
                 if parts[0] not in ("src", "scripts", "configs"):
@@ -827,9 +840,10 @@ def build_entries(cat, given: dict, runs_root=None) -> list:
     return out
 
 
-def build_manifest(records: R.Records, cat, sources: dict, *, runs_root=None) -> dict:
+def build_manifest(records: R.Records, cat, sources: dict, *, runs_root=None, providers=()) -> dict:
     """A draft tday_manifest/1 from the committed records and the sources file (plan §1.2): the builder fills what
-    the records give and copies the rest; the validator checks both."""
+    the records give and copies the rest; the validator checks both. `providers` go in front of the freeze's (B2R6:
+    AM-22's candidate for --am22-d D, or its recorded freeze)."""
     errs = S.field_errors(sources, SOURCES_SPEC, "sources")
     if errs:
         raise S.TmanRefused("manifest_format", "; ".join(errs[:4]))
@@ -841,7 +855,7 @@ def build_manifest(records: R.Records, cat, sources: dict, *, runs_root=None) ->
     fe = sources["freeze_entries"]
     delays = [entry_ref(records, fe["delay"])] if fe["delay"] else []
     news = [entry_ref(records, fe["new_freeze"])] if fe["new_freeze"] else []
-    freeze = D.freeze_instant(D.schedule_block(src), delays=delays, news=news)
+    freeze = D.freeze_instant(D.schedule_block(src), delays=delays, news=news, providers=providers)
     e = sources["evaluator_commit"]
     pins = sources["generator_pins"]
     entries = build_entries(cat, sources["entries"], runs_root)

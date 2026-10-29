@@ -370,8 +370,13 @@ artifact field name changes.
 | descriptive-only corruption (AM-16 item 6) **[UPDATED 2026-09-24 — B65 CP-006]** | `"corruption"` | `motion_blur`, `jpeg_compression`, `brightness` or `fog` | **5** (never for `gaussian_noise`) |
 
 **[UPDATED 2026-09-24 — B65 CP-006]** Severity 5 of the four non-noise corruptions is descriptive (AM-16
-item 6) and never enters the inferential grid; `configs/corruption_protocol.json` and the evaluator still
-refuse severity 5 until lane L-AM16-SEV lands.
+item 6) and never enters the inferential grid; ~~`configs/corruption_protocol.json` and the evaluator still
+refuse severity 5 until lane L-AM16-SEV lands.~~ **[UPDATED 2026-10-26 — L-CORR]** the protocol file
+(`plantseg-corruptions/2.0.0`), the vendor and the generator score it descriptively (L-AM16-SEV 3e054d2,
+merged f1effa5), and so do both corruption runners, `scripts/evaluate_corruptions.py` and
+`scripts/run_corruption_grid.py` (L-CORR B-3, 9b452c0 and 188b5e4); (`gaussian_noise`, 5) stays refused
+everywhere; an official cache holds severity-5 items only since f3df0fc (`SEVERITY5_REFERENCE_VALIDATED`,
+local block L1 in the student image).
 
 Five exact IDs, frozen in `configs/corruption_protocol.json`:
 `motion_blur` · `gaussian_noise` · `jpeg_compression` · **`brightness`** · `fog`.
@@ -532,9 +537,19 @@ an evaluation-only need. The wrapper is strictly less invasive and requires no c
 `actual_rows == expected_rows` · IDs unique · ID set == split-manifest set · rows ordered by ascending
 `manifest_index` · zero invalid prediction labels · undefined-score count == 0 on val/test.
 
-**Corrupted conditions** reuse this contract unchanged: `image_id` becomes
+~~**Corrupted conditions** reuse this contract unchanged: `image_id` becomes
 `<stem>__<corruption>_s<severity>`, `clean_image_id` retains the bare stem, and `condition` carries the
-type/name/severity. Clean↔corrupted joins and mIoU-C aggregation therefore need no second schema.
+type/name/severity. Clean↔corrupted joins and mIoU-C aggregation therefore need no second schema.~~
+**[UPDATED 2026-10-26 — L-CORR; DL-74]** **Corrupted conditions** reuse this contract unchanged, with bare
+stems. In every corrupted row `image_id == clean_image_id ==` the file stem, `manifest_index` is the clean
+split's, and the condition is carried only by `condition` (type `corruption`, the corruption id, the
+severity) in every row and in `summary.json`. A corrupted artifact therefore has the same
+`split_manifest_sha256` as the clean artifact of its split (§5.3; the digest is over
+`<manifest_index>\t<image_id>\t<clean_image_id>` lines). The 37 inputs of STATISTICAL_ANALYSIS_CONTRACT
+§12.4.6 share one digest, and src/stats/artifact.py check 1 refuses a row with `image_id != clean_image_id`.
+One artifact holds one (stage, corruption, severity); joins key on `clean_image_id`. The suffixed form is
+never written. The cache the artifact scored is named by its sibling record
+`<artifact_dir>.corruption.json`.
 
 ---
 

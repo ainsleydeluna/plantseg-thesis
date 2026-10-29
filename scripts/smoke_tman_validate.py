@@ -42,9 +42,12 @@ FREEZE_DAY = "2026-11-03"
 QAT_RULES_SHA256 = "76addc57d0367dda9a1163f749ec32c9c240b20736104dc12aa77488344f9568"
 CLIP_REL = "u4_clip/clip_selection.json"            # the U4 pilot's clip selection, under --runs
 LATE = "2026-11-04T10:00:00Z"                       # a derived model made after the freeze, appended
+FREEZE_1F = {"source": "AM-22 item 1(f)", "d_date": None, "conditions": None}   # B2R5: a freeze of item 1(f)
+AFTER_1102 = "2026-11-03T02:00:00Z"     # --now of a 1(f) freeze printer: the end of 2026-11-02 has passed (PA :2353)
 REAL_FILES = ("configs/tday_catalogue.json", "configs/kd_schedule.json", "configs/qat_selection_rules.json",
               *[f"configs/calibration/ptq_calibration_seed{s}.json" for s in (42, 43, 44, 45)],
-              "reports/derived/mde_entry_20261009T034825Z.json", "reports/strata/train_strata_v1.json")
+              "reports/derived/mde_entry_20261009T034825Z.json", "reports/strata/train_strata_v1.json",
+              *[f"configs/kd_arms/{a}.json" for a in ("e3_flip", "e3_r1", "e3_r2")])      # the arm registry at S
 CODE_FIXTURES = {"scripts/evaluate_model.py": "import src.eval.fixture_scoring  # the evaluator's fixture root\n",
                  "src/eval/__init__.py": "", "src/eval/fixture_scoring.py": "VALUE = 1\n",
                  "configs/plantseg_class_map.json": "{}\n",
@@ -522,7 +525,7 @@ class World:
         sha = self.S.canonical_sha256(self.doc["body"] if body is None else body)
         self.freeze_records = getattr(self, "freeze_records", {})
         if sha not in self.freeze_records:
-            ref = self.entry_file("freeze", [], {"body_sha256": sha, "freeze_date": FREEZE_DAY, "source": "schedule"},
+            ref = self.entry_file("freeze", [], {"body_sha256": sha, "freeze_date": FREEZE_DAY, **FREEZE_1F},
                                   nn=10 + len(self.freeze_records))
             self.commit({ref["path"]: self.files[ref["path"]]}, "the freeze record")
             self.freeze_records[sha] = ref
@@ -749,17 +752,23 @@ def case_record_gates():
         w.M.build_manifest, w.records, w.cat, dict(w.sources, entries=given), runs_root=w.runs) == "slot_unknown")
     expect_gate(w, "trigger_record_other_sha256_B1", "record_uncommitted",
                 doc=mutated(w, lambda d: d["body"]["trigger"].update(sha256="0" * 64)), detail="am3_trigger.json")
-    expect_gate(w, "trigger_format_unknown_without_a_reader_O8", "trigger_format_unknown", trigger_reader=None,
-                detail="L-AM3 has not fixed its format")
-    expect_gate(w, "trigger_reader_refusing_the_record_O8", "trigger_format_unknown",
-                trigger_reader=lambda path, data: {"triggered": "yes"}, detail="gives no triggered verdict")
-    expect_gate(w, "trigger_block_against_the_record_s_verdict_B1", "trigger_inconsistent",
-                trigger_reader=lambda path, data: {"triggered": True}, detail="the AM-3 trigger record says True")
-    expect_gate(w, "triggered_without_e6kd", "trigger_inconsistent", trigger_reader=lambda path, data: {
-        "triggered": True}, doc=mutated(w, lambda d: d["body"]["trigger"].update(triggered=True)),
-                detail="E6-KD:s42:15ep is not entered")
+    from src.tman import records as R
     from src.tman import validate as V
-    res = V.validate(w.ctx("draft", runs_root=None, trigger_reader=None))
+    saved = R.TRIGGER_READER
+    try:
+        R.TRIGGER_READER = None                                     # O8 without a reader (B2R13 wires L-AM3's)
+        expect_gate(w, "trigger_format_unknown_without_a_reader_O8", "trigger_format_unknown", trigger_reader=None,
+                    detail="L-AM3 has not fixed its format")
+        expect_gate(w, "trigger_reader_refusing_the_record_O8", "trigger_format_unknown",
+                    trigger_reader=lambda path, data: {"triggered": "yes"}, detail="gives no triggered verdict")
+        expect_gate(w, "trigger_block_against_the_record_s_verdict_B1", "trigger_inconsistent",
+                    trigger_reader=lambda path, data: {"triggered": True}, detail="the AM-3 trigger record says True")
+        expect_gate(w, "triggered_without_e6kd", "trigger_inconsistent", trigger_reader=lambda path, data: {
+            "triggered": True}, doc=mutated(w, lambda d: d["body"]["trigger"].update(triggered=True)),
+                    detail="E6-KD:s42:15ep is not entered")
+        res = V.validate(w.ctx("draft", runs_root=None, trigger_reader=None))
+    finally:
+        R.TRIGGER_READER = saved
     check("draft_lists_the_trigger_format_O8", res.exit_code == 3 and any(
         m.startswith("MISSING: trigger_format_unknown") for m in res.missing), str(res.missing))
 
@@ -1060,6 +1069,22 @@ def case_cut_gates():
     finally:
         kd_arms.load_arms = saved
     check("world_still_passes_after_the_variants", w.run("freeze")[0] is None)
+    reg = w.repo / "configs/kd_arms/e3_r1.json"
+    saved = reg.read_bytes()
+    try:
+        reg.write_bytes(saved + b"\n")
+        code, _, e = w.run("freeze")                 # the cut gate reads the registry (record_uncommitted there)
+        check("arm_registry_file_uncommitted_at_S_B95", code == "record_uncommitted" and "kd_arms" in (
+            e.detail if e else ""), f"{code} {(e.detail[:160] if e else '')}")
+    finally:
+        reg.write_bytes(saved)
+    aside = w.repo / "configs/kd_arms_aside"
+    (w.repo / "configs/kd_arms").rename(aside)
+    try:
+        code, _, e = w.run("freeze")
+        check("arm_registry_absent_at_S_B95", code == "unregistered_arm", f"{code} {(e.detail[:160] if e else '')}")
+    finally:
+        aside.rename(w.repo / "configs/kd_arms")
     early = w.entry_file("cut", [A], dict(a, since=dict(a["since"], date="2026-10-19")), nn=30)
     w.commit({early["path"]: w.files[early["path"]]}, "an A cut entered early", date="2026-11-01T08:00:00+00:00")
     expect_gate(w, "cut_entered_before_its_rule_s_day_B75", "cut_date_mismatch",
@@ -1770,6 +1795,33 @@ def case_scope_gates():
                                                                           "teacher_ckpt_sha256")]))
     expect_gate(w, "listed_run_with_a_scope", "listed_or_terminal_scored",
                 doc=mutated(w, lambda d: w.entry(d, "E2:s42:lambda4:80k")["scope"].append("clean")))
+    tb2_pair(w)
+
+
+def tb2_pair(w: World) -> None:
+    """TB2 (DL-24 #97): when both runs of a seed's pair have a model (E1 scored, E6's selection derived), the builder
+    gives each the corrupted scope and the validator requires it; with E1 alone the builder gives none. The scope
+    gates read the builder's entries of that pair through a context holding just them (no fixture run of E6 seed
+    43 exists)."""
+    from src.tman import manifest as M
+    from src.tman import validate as V
+    pair = {"E1:s43:80k": {"kind": "scored_run"}, "E6:s43:sel": {"kind": "derived"}}
+    built = {e["slot"]: e for e in M.build_entries(w.cat, pair)}
+    alone = {e["slot"]: e for e in M.build_entries(w.cat, {"E1:s43:80k": {"kind": "scored_run"}})}
+    check("builder_gives_a_pair_with_both_models_the_corrupted_scope_TB2_B97",
+          all("corrupted" in built[k]["scope"] for k in pair) and "corrupted" not in alone["E1:s43:80k"]["scope"],
+          str([built[k]["scope"] for k in pair] + [alone["E1:s43:80k"]["scope"]]))
+
+    class Scopes:                                   # what the scope gates read of a Ctx
+        def __init__(self, entries):
+            self.entries, self.by_slot = entries, {e["slot"]: e for e in entries}
+
+        def slot(self, k):
+            return w.cat.slots[k]
+    e1 = built["E1:s43:80k"]
+    lacking = Scopes([dict(e1, scope=[s for s in e1["scope"] if s != "corrupted"]), built["E6:s43:sel"]])
+    check("validator_requires_the_corrupted_scope_of_a_pair_with_both_models_TB2_B97",
+          "corrupted" in (V.g_scope_required_missing(lacking) or ""), str(V.g_scope_required_missing(lacking)))
 
 
 def case_moved_freeze():
@@ -1837,6 +1889,27 @@ def case_moved_freeze():
             {"doc": new2["doc"], "path": new2["path"], "sha256": new2["sha256"]}]).as_block()
     expect_gate(w, "delay_listing_a_complete_run_too_B93", "freeze_source_conflict", doc=mutated(w, moved2),
                 detail="the never-cut runs not complete at the original freeze instant are ['E6:s42:15ep']")
+    empty = w.entry_file("freeze_delay", [], {"original_date": FREEZE_DAY, "runs": []}, nn=5)
+    w.commit({empty["path"]: w.files[empty["path"]]}, "a freeze delay listing no run")
+
+    def empty_delay(d, late: bool):
+        """The delay listing no run as the freeze source, E6 seed 42 entered by its late run (late) or not."""
+        if late:
+            moved(d, "2026-11-04")
+        d["body"]["schedule"] = D.freeze_instant(sch, delays=[{"doc": empty["doc"], "path": empty["path"],
+                                                               "sha256": empty["sha256"]}]).as_block()
+    expect_gate(w, "delay_missing_the_late_run_B93", "freeze_source_conflict",
+                doc=mutated(w, lambda d: empty_delay(d, True)), detail="the delay lists []; the never-cut runs not "
+                                                                       "complete at the original freeze instant are "
+                                                                       "['E6:s42:15ep']")
+    expect_gate(w, "delay_when_no_never_cut_run_is_late_B93", "freeze_source_conflict",
+                doc=mutated(w, lambda d: empty_delay(d, False)), detail="the delay lists []; the never-cut runs not "
+                                                                        "complete at the original freeze instant "
+                                                                        "are []")
+    cuttable_run_between_the_freezes(w, moved)
+    n4 = news["2026-11-04"]
+    deadline_at_the_gate(D.freeze_instant(sch, delays=[dict(dref, doc=delay["doc"])], news=[
+        {"doc": n4["doc"], "path": n4["path"], "sha256": n4["sha256"]}]))
     man = FX.scratch_dir("tmanmoved") / "m.json"
     man.write_bytes(w.S.json_file_bytes(mutated(w, lambda d: moved(d, "2026-11-04"))))
     extra = ["--manifest", str(man), "--runs", str(w.runs)]
@@ -1866,6 +1939,42 @@ def case_moved_freeze():
         detail="runs")
     check("freeze_delay_row_recorded", w.dl[dl][0] == "RECORDED")
     arithmetic_inputs(w)
+
+
+def cuttable_run_between_the_freezes(w: World, moved) -> None:
+    """R-016 (DL-24 #58): under the freeze moved to 2026-11-04, a cuttable run is still judged at the original freeze
+    instant. E2 lambda 2, complete at 2026-11-04 10:00Z (between the two freezes), entered as a listed run, is not
+    complete at its instant (the moved instant is a never-cut run's only)."""
+    from src.tman import completion as C
+    slot = "E2:s42:lambda2:80k"
+    tel = w.runs / KD_RUNS[slot][1] / "e2_telemetry.jsonl"
+    saved = tel.read_bytes()
+    rows = [json.loads(x) for x in saved.split(b"\n") if x.strip()]
+    for r in rows:
+        if r.get("event") == "run_end":
+            r["wall_clock_end"] = FX.utc("2026-11-04T10:00:00Z")
+    try:
+        FX.write_jsonl(tel, rows)
+        block = C.run_state(w.cat.slots[slot], tel.parent).completion.as_entry()
+        expect_gate(w, "cuttable_run_complete_between_the_freezes_R016_B58", "entry_not_complete", doc=mutated(
+            w, lambda d: moved(d, "2026-11-04") or w.entry(d, slot).update(completion=block)), detail=slot)
+    finally:
+        tel.write_bytes(saved)
+
+
+def deadline_at_the_gate(fi) -> None:
+    """TB14 (DL-24 #99): the session gate takes the TEST deadline from the freeze resolver, here moved a day with the
+    freeze (2026-11-09): an unlock at 15:59:59Z that day passes, one at 16:00:00Z is refused. The gate reads the
+    resolver's FreezeInstant through a context holding it, the mode and the instant."""
+    from types import SimpleNamespace
+    from src.tman import validate as V
+
+    def at(now: str):
+        return V.g_session_after_deadline(SimpleNamespace(freeze=fi, mode="unlock", unlock_rel=None, now=FX.utc(now)))
+    late = at("2026-11-09T16:00:00Z") or ""
+    check("moved_freeze_moves_the_test_deadline_at_the_gate_TB14_B99", fi.test_deadline == "2026-11-09"
+          and at("2026-11-09T15:59:59Z") is None and "after the TEST deadline 2026-11-09" in late,
+          f"{fi.test_deadline}: {at('2026-11-09T15:59:59Z')} / {late}")
 
 
 def arithmetic_inputs(w: World) -> None:
@@ -1974,8 +2083,9 @@ def case_printers():
     printed(w, "printer_clock_offset_passes", "clock_offset", [], clock, None, date="2026-11-05")
     printed(w, "printer_clock_offset_over_60_s_B9", "clock_offset", [], dict(clock, offset_seconds=75.0),
             "clock_offset_invalid", date="2026-11-05")
-    fr = {"body_sha256": w.S.canonical_sha256(w.doc["body"]), "freeze_date": FREEZE_DAY, "source": "schedule"}
-    printed(w, "printer_freeze_record_of_this_body_passes", "freeze", [], fr, None, extra=["--manifest", man])
+    fr = {"body_sha256": w.S.canonical_sha256(w.doc["body"]), "freeze_date": FREEZE_DAY, **FREEZE_1F}
+    printed(w, "printer_freeze_record_of_this_body_passes", "freeze", [], fr, None,
+            extra=["--manifest", man, "--runs", w.runs, "--now", AFTER_1102])          # item 1(f): DL-24 R1-F2
     printed(w, "printer_freeze_record_of_another_body_B9", "freeze", [], dict(fr, body_sha256="0" * 64),
             "run_added_after_freeze", extra=["--manifest", man])
     arm = {"path": w.cut_refs["ARM:latency"]["path"], "sha256": w.cut_refs["ARM:latency"]["sha256"]}
@@ -2133,9 +2243,8 @@ def case_inventory():
         except Exception as e:  # noqa: BLE001 -- a crash fails the check by name
             return type(e).__name__
     body = S.canonical_sha256(w.doc["body"])
-    other = w.entry_file("freeze", [], {"body_sha256": "0" * 64, "freeze_date": FREEZE_DAY, "source": "schedule"},
-                         nn=30)
-    undecided = w.entry_file("freeze", [], {"body_sha256": body, "freeze_date": "2026-11-04", "source": "schedule"},
+    other = w.entry_file("freeze", [], {"body_sha256": "0" * 64, "freeze_date": FREEZE_DAY, **FREEZE_1F}, nn=30)
+    undecided = w.entry_file("freeze", [], {"body_sha256": body, "freeze_date": "2026-11-04", **FREEZE_1F},
                              nn=31)                         # bytes of its own: its sha256 only in a DECIDED row
     w.dl[undecided["dl"]] = ("DECIDED", w.dl[undecided["dl"]][1])
     w.commit({r["path"]: w.files[r["path"]] for r in (other, undecided)}, "freeze records: another body, undecided")
@@ -2262,17 +2371,19 @@ def case_draft_and_cli():
     cells = out / "cells.json"
     cells.write_text(json.dumps(PINS.IF6_CELLS), encoding="utf-8")
     argv = ["--root", str(w.repo), "validate", "--manifest", str(out / "m.json"), "--registered-cells", str(cells)]
-    rc = CLI.main(argv + ["--mode", "draft"])
-    check("cli_validate_draft_lists_the_trigger_format_O8", rc == 3)
+    saved = R.TRIGGER_READER
     try:
+        R.TRIGGER_READER = None                         # O8 without a reader (B2R13 wires L-AM3's)
+        rc = CLI.main(argv + ["--mode", "draft"])
+        check("cli_validate_draft_lists_the_trigger_format_O8", rc == 3)
         R.TRIGGER_READER = w.trigger_reader()
         rc = CLI.main(argv + ["--mode", "draft"])
         check("cli_validate_draft_passes", rc == 0)
         rc = CLI.main(argv + ["--mode", "freeze"])
         check("cli_validate_freeze_without_runs_refused", rc == 2)
     finally:
-        R.TRIGGER_READER = None
-    check("gate_codes_unique_and_ordered", len(set(c for c, _, _ in V.GATES)) == len(V.GATES) == 84)
+        R.TRIGGER_READER = saved
+    check("gate_codes_unique_and_ordered", len(set(c for c, _, _ in V.GATES)) == len(V.GATES) == 88)  # B2R7: +4
 
 
 WORLD: World | None = None

@@ -21,7 +21,10 @@ sys.dont_write_bytecode = True
 
 import json  # noqa: E402
 import os  # noqa: E402
+import shutil  # noqa: E402
+import signal  # noqa: E402
 import subprocess  # noqa: E402
+import tempfile  # noqa: E402
 from concurrent.futures import ThreadPoolExecutor  # noqa: E402
 from pathlib import Path  # noqa: E402
 
@@ -34,9 +37,12 @@ VAL, MAN, ENT, SCH = "src/tman/validate.py", "src/tman/manifest.py", "src/tman/e
 REC, COM, CLI, CAT = "src/tman/records.py", "src/tman/completion.py", "scripts/tday_manifest.py", \
     "configs/tday_catalogue.json"
 PRE = "scripts/preflight_arms.py"                     # reused, not the lane's: mutated in the scratch copy only
+A22, DAT = "src/tman/am22.py", "src/tman/schedule.py"                                  # B-2
 SMOKES = {k: f"scripts.smoke_tman_{k}" for k in ("schema", "paths", "complete", "cuts", "parent", "derived", "pins",
-                                                  "validate", "unlock", "noscore", "determinism")}
+                                                  "validate", "unlock", "noscore", "determinism", "am22")}
 RESULT_TAG = "MUTATION-RESULT "
+AM22_D_RAISE = '            raise S.TmanRefused("schedule_invalid", f"--am22-d'          # am22.providers' bounds on D
+AM22_D_BOUNDS = '        if not (S.TYPES["day"](d_date) and AM22_IN_FORCE <= d_date <= LAST_D):\n' + AM22_D_RAISE
 
 # (id, file, [(old, new), ...], smoke, case, the check the case runs to, the refusal codes it guards, plan sample)
 M = [
@@ -79,7 +85,8 @@ M = [
     ("entry_file_sha", VAL, [('if c["sha256"] not in (None, sha):', "if False:")],
      "validate", "case_record_gates", "cut_entry_cited_with_another_sha", ["entry_file_rewritten"], None),
     # ------------------------------------------- the cited entry files (decision (iii); DL-24 #17 #38 #87-#89 #92)
-    ("entry_file_dl_row", VAL, [("        if not x.dl.recorded_rows_with(sha):\n            errs.append(f\"{rel}: sha256",
+    ("entry_file_dl_row", VAL, [("        if not x.dl.recorded_rows_with(sha):\n"
+                                 "            errs.append(f\"{rel}: sha256",
                                  "        if False:\n            errs.append(f\"{rel}: sha256")],
      "validate", "case_entry_files", "entry_file_whose_row_is_only_DECIDED_B92", ["dl_row_missing"], None),
     ("entry_file_written_once", VAL, [("        err = x.records.written_once_error(rel)\n        if err:",
@@ -91,7 +98,8 @@ M = [
     ("entry_file_name", ENT, [("    err = entry_name_error(rel, doc)\n    return [err] if err else []",
                                "    err = None\n    return [err] if err else []")],
      "validate", "case_entry_files", "cut_entry_file_outside_its_folder_B89", ["entry_file_invalid"], None),
-    ("entry_file_fields", ENT, [('        require_fields(doc)\n    except S.TmanRefused as e:\n        return [f"{rel}: ',
+    ("entry_file_fields", ENT, [('        require_fields(doc)\n    except S.TmanRefused as e:\n'
+                                 '        return [f"{rel}: ',
                                  '        pass\n    except S.TmanRefused as e:\n        return [f"{rel}: ')],
      "validate", "case_moved_freeze", "freeze_delay_file_without_runs_B88", ["entry_file_invalid"], None),
     ("entry_file_slots_known", VAL, [('unknown = [k for k in doc["slots"] if k not in x.cat.slots]', "unknown = []")],
@@ -194,7 +202,8 @@ M = [
                                         "if False:")],
      "validate", "case_record_gates", "trigger_block_against_the_record_s_verdict_B1", ["trigger_inconsistent"], None),
     ("kind_of_the_slot_s_role", SCH, [('    return model.get(slot["scope_class"], ("scored_run",)) + ends',
-                                       '    return model.get(slot["scope_class"], ("scored_run", "listed_run")) + ends')],
+                                       '    return model.get(slot["scope_class"], ("scored_run", "listed_run")) '
+                                       '+ ends')],
      "validate", "case_input_gates", "family_run_entered_as_listed_run_B2", ["derived_counted_as_run"], None),
     ("sweep_of_record_strict", SCH, [('    if sweep and not sweep["of_record"]:', "    if sweep:")],
      "validate", "case_input_gates", "lambda_of_record_entered_as_listed_run_B2", ["derived_counted_as_run"], None),
@@ -203,7 +212,8 @@ M = [
      "validate", "case_input_gates", "non_finite_entry_on_a_kd_slot", ["derived_counted_as_run"], None),
     ("evaluator_stage_of_the_catalogue", VAL, [('                and e["evaluator_stage"] != s["evaluator_stage"]:',
                                                 "                and False:")],
-     "validate", "case_input_gates", "evaluator_stage_other_than_the_catalogue_s_B91", ["derived_counted_as_run"], None),
+     "validate", "case_input_gates", "evaluator_stage_other_than_the_catalogue_s_B91", ["derived_counted_as_run"],
+     None),
     ("derived_method_of_the_slot", VAL, [('elif e["kind"] == "derived" and e["method"] != s["record_kind"]:',
                                           "elif False:")],
      "validate", "case_input_gates", "derived_method_other_than_the_slot_s_B21", ["derived_counted_as_run"], None),
@@ -262,7 +272,8 @@ M = [
                                                 '("cut_unentered_at_unlock", U, g_cut_unentered_at_unlock)')],
      "validate", "case_cut_attribution", "cuttable_slot_without_entry_at_the_freeze_B4", ["cut_unentered_at_unlock"],
      None),
-    ("kd_attempts_from_the_launch_log", COM, [("                    self._add(found, rid, slot_of_launch(log.launch[rid]),",
+    ("kd_attempts_from_the_launch_log", COM, [("                    self._add(found, rid, "
+                                               "slot_of_launch(log.launch[rid]),",
                                                "                    if False: self._add(found, rid, "
                                                "slot_of_launch(log.launch[rid]),")],
      "validate", "case_cut_attribution", "launched_kd_run_cut_as_never_launched_B13", ["cut_reason_invalid"], None),
@@ -274,8 +285,8 @@ M = [
                                                       "                return None",
                                                       "            if True:\n                return None")],
      "validate", "case_cut_attribution", "cut_of_a_complete_arm_teacher_AM18_7b", ["cut_of_complete_run"], None),
-    ("slot_status_from_its_own_attempts", COM, [("return list(self.by_slot.get(slot, [])) if self.known(slot) else None",
-                                                 "return [] if self.known(slot) else None")],
+    ("slot_status_from_its_own_attempts", COM, [("return list(self.by_slot.get(slot, [])) if self.known(slot) "
+                                                 "else None", "return [] if self.known(slot) else None")],
      "validate", "case_cut_attribution", "group_cut_naming_a_complete_run_first_B0", ["cut_of_complete_run"], None),
     ("checkpoint_sources", VAL, [('if src["sha256"] != ck["sha256"] or (src["dl"] and ck["sha256"] not in '
                                   '(x.dl.row_text(src["dl"]) or "")):', "if False:")],
@@ -289,7 +300,8 @@ M = [
      ["restored_checkpoint_unrecorded"], None),
     # ------------------------------------------------------------------------------------------- cut checks
     ("S03_rule_operator_allowed", ENT, [('    if doc["rule"] not in S.CUT_RULES:\n        return f"rule {doc',
-                                         '    if doc["rule"] not in S.CUT_RULES + ["operator"]:\n        return f"rule {doc')],
+                                         '    if doc["rule"] not in S.CUT_RULES + ["operator"]:\n'
+                                         '        return f"rule {doc')],
      "cuts", "case_gate_order", "rule_operator_refused", ["cut_rule_unknown"], 3),
     ("S04_never_cut_test_skipped", ENT, [('bad = [s["slot"] for s in _slots(doc, ctx) if s["never_cut"]]',
                                           "bad = []")],
@@ -313,10 +325,10 @@ M = [
                                   'ctx.known_by(rel, None, doc["date"])]', "        missing = []")],
      "validate", "case_cut_gates", "arm_cut_without_its_teacher_record_known_by_its_day_B69",
      ["arm_cut_results_missing"], None),
-    ("arm_checks_per_group", ENT, [('    return [g for g in ctx.cat.groups if g in ARM_GROUPS and any(s["cut_group"] == g '
-                                    "for s in _slots(doc, ctx))]",
-                                    '    return [g for g in ctx.cat.groups if g in ARM_GROUPS and all(s["cut_group"] == g '
-                                    "for s in _slots(doc, ctx))]")],
+    ("arm_checks_per_group", ENT, [('    return [g for g in ctx.cat.groups if g in ARM_GROUPS and '
+                                    'any(s["cut_group"] == g for s in _slots(doc, ctx))]',
+                                    '    return [g for g in ctx.cat.groups if g in ARM_GROUPS and '
+                                    'all(s["cut_group"] == g for s in _slots(doc, ctx))]')],
      "cuts", "case_gate_order", "two_group_named_rule_cut_of_a_running_arm_run_B15", ["arm_run_cut_while_running"],
      None),
     ("S05_arithmetic_ge", PRE, [("    cut = needed > left\n", "    cut = needed >= left\n")],
@@ -372,7 +384,8 @@ M = [
     ("stopped_run", ENT, [('if not stopped or (doc["rule"] == "freeze" and doc["date"] == ctx.freeze.original_date)',
                            'if True or (doc["rule"] == "freeze" and doc["date"] == ctx.freeze.original_date)')],
      "cuts", "case_gate_order", "stopped_run_cut_by_named_rule_refused", ["stopped_run_cut_early"], None),
-    ("stopped_candidate_at_its_decision_date", ENT, [('            or doc["rule"] == "decision_date":\n        return None',
+    ("stopped_candidate_at_its_decision_date", ENT, [('            or doc["rule"] == "decision_date":\n'
+                                                      '        return None',
                                                       "            or False:\n        return None")],
      "cuts", "case_gate_order", "stopped_candidate_cut_at_its_decision_date_AM19_2b", ["stopped_run_cut_early"], None),
     ("launched_attempts_named", ENT, [("    if omitted:\n        return f\"the slots' launched attempts",
@@ -411,7 +424,8 @@ M = [
     ("go_rule_record_read", ENT, [('if isinstance(doc, dict) and doc.get("format") == _pa().GO_RULE_FORMAT:',
                                    "if False:")],
      "validate", "case_cut_gates", "launched_arm_cut_by_a_named_rule", ["arm_run_cut_while_running"], None),
-    ("condition_entry_read", ENT, [('and doc.get("kind") == "condition" \\\n', 'and doc.get("kind") == "conditions" \\\n')],
+    ("condition_entry_read", ENT, [('and doc.get("kind") == "condition" \\\n',
+                                    'and doc.get("kind") == "conditions" \\\n')],
      "validate", "case_cut_gates", "e6x_cut_citing_a_yes_condition_AM23_3b", ["condition_unmet"], None),
     ("rule_records_committed", VAL, [("    cited += x.rule_records()", "    cited += []")],
      "validate", "case_cut_gates", "named_rule_record_at_another_sha256_B16", ["record_uncommitted"], None),
@@ -469,7 +483,8 @@ M = [
     ("builder_reads_the_rules", MAN, [('x["inputs"].setdefault("rules_sha256", rules)',
                                        'x["inputs"].setdefault("rules_sha256", None)')],
      "validate", "case_record_gates", "builder_reads_the_rules_sha256_TB13", [], None),
-    ("calibration_lists_in_dl10", MAN, [('        if item["file_sha256"] not in (dl10_text or ""):', "        if False:")],
+    ("calibration_lists_in_dl10", MAN, [('        if item["file_sha256"] not in (dl10_text or ""):',
+                                         "        if False:")],
      "validate", "case_record_gates", "calibration_list_not_dl10_s_B30", ["calibration_index_mismatch"], None),
     ("calibration_checksum_in_dl10", MAN, [('    if str(ci["of_record"]["checksum_sha256"]) not in (dl10_text or ""):',
                                             "    if False:")],
@@ -479,19 +494,20 @@ M = [
      "validate", "case_record_gates", "calibration_list_seed_not_its_key_B40", ["calibration_index_mismatch"], None),
     ("calibration_role_of_its_list", MAN, [('or doc.get("role") != CALIBRATION_ROLES.get(seed):', ":")],
      "validate", "case_record_gates", "calibration_list_role_not_am16_s_B40", ["calibration_index_mismatch"], None),
-    ("appended_selection_conflict", VAL, [("            errs += M.selection_conflict_errors(M.appended_entry(app, listed))",
+    ("appended_selection_conflict", VAL, [("            errs += "
+                                           "M.selection_conflict_errors(M.appended_entry(app, listed))",
                                            "            pass")],
      "validate", "case_parent_and_derived_gates", "appended_qat_selection_second_evaluation_without_report_B24",
      ["derived_selection_conflict"], None),
     ("fault_reports_committed", VAL, [("    cited += x.fault_reports()", "    cited += []")],
      "validate", "case_parent_and_derived_gates", "qat_fault_report_not_committed_B77", ["record_uncommitted"], None),
-    ("cli_second_append", CLI, [('    if any(isinstance(a, dict) and a.get("slot") == args.slot for a in doc["appends"]):',
-                                 "    if False:")],
+    ("cli_second_append", CLI, [('    if any(isinstance(a, dict) and a.get("slot") == args.slot '
+                                 'for a in doc["appends"]):', "    if False:")],
      "paths", "case_cli_outputs", "cli_append_refuses_a_second_append_of_its_slot_B63", ["append_invalid"], None),
     ("cli_append_reads_a_manifest", CLI, [("            and isinstance(doc.get(\"appends\"), list)):\n        raise "
                                            "S.TmanRefused(\"manifest_format\"",
-                                           "            and isinstance(doc.get(\"appends\"), list)) and False:\n        "
-                                           "raise S.TmanRefused(\"manifest_format\"")],
+                                           "            and isinstance(doc.get(\"appends\"), list)) and False:\n"
+                                           "        raise S.TmanRefused(\"manifest_format\"")],
      "paths", "case_cli_outputs", "cli_append_refuses_a_file_that_is_no_manifest_B63", ["manifest_format"], None),
     ("non_finite_flags", MAN, [('elif len(ends) != 15 or any(r.get("state_finite") is not False for r in ends):',
                                 "elif len(ends) != 15:")],
@@ -884,10 +900,12 @@ M = [
     ("out_inside_the_repository", CLI, [("if p == repo or repo in p.parents:", "if p == repo:")],
      "paths", "case_cli_outputs", "out_in_the_repository_at_root_refused", ["output_location"], None),
     ("output_exists_code_of_the_cli", CLI, [('raise S.TmanRefused("output_exists", f"{out} exists: outputs are',
-                                             'raise S.TmanRefused("entry_file_rewritten", f"{out} exists: outputs are')],
+                                             'raise S.TmanRefused("entry_file_rewritten", '
+                                             'f"{out} exists: outputs are')],
      "paths", "case_cli_outputs", "a_second_build_is_refused_and_the_first_kept_B110", ["output_exists"], None),
     ("output_exists_code_of_the_printer", ENT, [('raise S.TmanRefused("output_exists", f"{out} exists: an output',
-                                                 'raise S.TmanRefused("entry_file_rewritten", f"{out} exists: an output')],
+                                                 'raise S.TmanRefused("entry_file_rewritten", '
+                                                 'f"{out} exists: an output')],
      "cuts", "case_printers_and_committed_files", "printer_writes_once_B110", ["output_exists"], None),
     ("output_location_code", CLI, [('raise S.TmanRefused("output_location", f"--out {p} is inside the repository',
                                     'raise S.TmanRefused("test_path", f"--out {p} is inside the repository')],
@@ -939,12 +957,15 @@ M = [
      "unlock", "case_unlock_printer", "printer_unlock_after_an_unlock_entry_B9", ["second_session"], None),
     ("printer_condition_slot", CLI, [("    if doc[\"slots\"] != [f\"E6-{doc['arm']}:s42:15ep\"]:", "    if False:")],
      "validate", "case_printers", "printer_condition_naming_another_arm_s_slot_B16", ["entry_field"], None),
-    ("printer_not_made_gated", CLI, [('    bad = [k for k in doc["slots"] if not M.code_gated(k, cat)]', "    bad = []")],
+    ("printer_not_made_gated", CLI, [('    bad = [k for k in doc["slots"] if not M.code_gated(k, cat)]',
+                                      "    bad = []")],
      "validate", "case_printers", "printer_not_made_for_a_slot_without_a_code_gate_B9", ["derived_missing"], None),
     ("printer_not_made_class", CLI, [('    E.check_slots(doc, cat, kinds_of_class=("derived",))', "    pass")],
      "validate", "case_printers", "printer_not_made_naming_a_run_slot", ["derived_counted_as_run"], None),
-    ("printer_freeze_record_body", CLI, [('    if doc["body_sha256"] != S.canonical_sha256(manifest_body(args, '
-                                          '"run_added_after_freeze")):', "    if False:")],
+    ("printer_freeze_record_body", CLI, [('    if doc["body_sha256"] != S.canonical_sha256(body):\n        raise '
+                                          'S.TmanRefused("run_added_after_freeze"', '    if False:\n        raise '
+                                                                                    'S.TmanRefused('
+                                                                                    '"run_added_after_freeze"')],
      "validate", "case_printers", "printer_freeze_record_of_another_body_B9", ["run_added_after_freeze"], None),
     ("printer_clock_offset", CLI, [('    if abs(doc["offset_seconds"]) > S.CLOCK_OFFSET_LIMIT_S:', "    if False:")],
      "validate", "case_printers", "printer_clock_offset_over_60_s_B9", ["clock_offset_invalid"], None),
@@ -1168,10 +1189,756 @@ M = [
                                        'g_session_after_deadline),\n    ("clock_offset_invalid", SES, '
                                        'g_clock_offset_invalid), ')],
      "unlock", "case_session", "session_part_null_refused_B101", ["clock_offset_invalid"], None),
+    # ------------------------------------------------------------- the evaluator closure and the arm registry (C6g5)
+    ("closure_custom_imports", MAN, [('                if "custom_imports" in names:\n                    mods = found',
+                                      '                if "custom_imports" in names:\n                    mods = []')],
+     "paths", "case_evaluator_closure_never_reads_a_test_named_module",
+     "closure_follows_a_config_s_custom_imports_B81", [], None),
+    ("closure_bases", MAN, [('                if "_base_" in names:', "                if False:")],
+     "paths", "case_evaluator_closure_never_reads_a_test_named_module",
+     "closure_follows_a_config_s_bases_in_the_three_roots_B81", [], None),
+    ("closure_bases_in_the_three_roots", MAN, [('if b.split("/")[0] in ("src", "scripts", "configs")\n', "if True\n")],
+     "paths", "case_evaluator_closure_never_reads_a_test_named_module",
+     "closure_follows_a_config_s_bases_in_the_three_roots_B81", [], None),
+    ("closure_arm_teacher_configs", MAN, [(',\n                  "configs/teacher/arms/r1_bema.py", '
+                                           '"configs/teacher/arms/r2_bema_rare.py")', ")")],
+     "paths", "case_evaluator_closure_never_reads_a_test_named_module", "closure_holds_the_arm_teacher_configs_B81",
+     [], None),
+    ("arm_registry_at_s", ENT, [("kd_arms.load_arms(Path(records.src.root) / KD_ARMS_REL)", "kd_arms.load_arms()")],
+     "validate", "case_cut_gates", "arm_registry_absent_at_S_B95", ["unregistered_arm"], None),
+    ("arm_registry_files_committed", ENT, [('        records.read(f"{KD_ARMS_REL}/{Path(spec.path).name}")',
+                                            "        pass")],
+     "validate", "case_cut_gates", "arm_registry_file_uncommitted_at_S_B95", ["record_uncommitted"], None),
+    ("arm_registry_refusal_named", ENT, [("    except kd_arms.ArmSpecError as e:", "    except KeyError as e:")],
+     "validate", "case_cut_gates", "arm_registry_absent_at_S_B95", ["unregistered_arm"], None),
+    ("arm_teacher_first_nonfinite_iteration", REC, [('"first_nonfinite": {"iteration": True},',
+                                                     '"first_nonfinite": True,')],
+     "schema", "case_readers", "arm_teacher_record_keeps_the_first_non_finite_iteration_only_B112", [], None),
+    # -------------------------------------------------------------------------- coverage the verifiers asked for (C6h)
+    ("instant_moved_for_every_slot", VAL, [('        return self.freeze.moved_utc if self.slot(slot)["never_cut"] else '
+                                            'self.freeze.original_utc',
+                                            "        return self.freeze.moved_utc or self.freeze.original_utc")],
+     "validate", "case_moved_freeze", "cuttable_run_complete_between_the_freezes_R016_B58", ["entry_not_complete"],
+     None),
+    ("freeze_delay_lists_every_late_run", ENT, [('    if not late or sorted(doc["runs"]) != late:',
+                                                 '    if not late or not set(doc["runs"]) <= set(late):')],
+     "validate", "case_moved_freeze", "delay_missing_the_late_run_B93", ["freeze_source_conflict"], None),
+    ("freeze_delay_needs_a_late_run", ENT, [('    if not late or sorted(doc["runs"]) != late:',
+                                             '    if sorted(doc["runs"]) != late:')],
+     "validate", "case_moved_freeze", "delay_when_no_never_cut_run_is_late_B93", ["freeze_source_conflict"], None),
+    ("pair_models_at_the_gate", VAL, [('    return e1.get("kind") == "scored_run" and e6.get("kind") == "derived"',
+                                       "    return False")],
+     "validate", "case_scope_gates", "validator_requires_the_corrupted_scope_of_a_pair_with_both_models_TB2_B97",
+     ["scope_required_missing"], None),
+    ("pair_models_in_the_builder", MAN, [('        return kinds.get(f"E1:s{seed}:80k") == "scored_run" and '
+                                          'kinds.get(f"E6:s{seed}:sel") == "derived"', "        return False")],
+     "validate", "case_scope_gates", "builder_gives_a_pair_with_both_models_the_corrupted_scope_TB2_B97", [], None),
+    ("generator_script_at_s_against_its_pin", VAL, [('    if src.blob_at("HEAD", pin["script"]["path"]) != '
+                                                     'pin["script"]["git_blob"]:', "    if False:")],
+     "unlock", "case_generator_pin_at_another_commit", "generator_script_not_its_pin_G2_B98",
+     ["hasher_pin_mismatch"], None),
+    ("test_deadline_from_the_resolver", VAL, [("    cutoff = D.cutoff_instant(x.freeze.test_deadline)",
+                                               "    cutoff = D.cutoff_instant(D.AM22_TEST_DEADLINE)")],
+     "validate", "case_moved_freeze", "moved_freeze_moves_the_test_deadline_at_the_gate_TB14_B99",
+     ["session_after_deadline"], None),
+    ("evaluator_roots_of_if10", MAN, [(',\n                   "scripts/build_corruption_cache.py", '
+                                       '"scripts/verify_corruption_cache.py",\n                   '
+                                       '"scripts/run_corruption_grid.py", "scripts/report_robustness.py")', ")")],
+     "paths", "case_evaluator_closure_never_reads_a_test_named_module",
+     "evaluator_roots_are_decision_x_s_scripts_and_IF10_s_B79", [], None),
+    ("kd_slot_at_a_seed_the_launcher_lacks", CAT, [('"seed": 42,\n      "slot": "A:s42:alpha25:80k"',
+                                                    '"seed": 43,\n      "slot": "A:s42:alpha25:80k"')],
+     "schema", "case_catalogue_cross_checks", "kd_slots_at_the_launcher_s_seeds_and_profiles_I1_B60", [], None),
+    # a gate or a printer that reads a score: the noscore comparisons see it (DL-24 #59)
+    ("unlock_gate_reading_a_score", VAL, [('    hp = x.repo_root / hasher["script"]["path"]\n',
+                                           '    hp = x.repo_root / hasher["script"]["path"]\n'
+                                           "    if b'\"all_class_miou\": 0.36,' not in (x.runs_root / "
+                                           '"e1_s42_80k" / "e1_telemetry.jsonl").read_bytes():\n'
+                                           '        errs.append("a score read")\n')],
+     "noscore", "case_mutation_invariance", "mutation_finite_unlock_and_session_verdicts_identical_B59", [], None),
+    ("append_printer_reading_a_score", CLI, [('    if not (isinstance(doc, dict) and isinstance(doc.get("body"), dict) '
+                                              'and isinstance(doc["body"].get("entries"), list)',
+                                              "    if b'\"all_class_miou\": 0.31,' not in (Path(args.runs) / "
+                                              '"e2_s42_lambda0.5_80k_a1" / "e2_telemetry.jsonl").read_bytes():\n'
+                                              '        raise S.TmanRefused("append_invalid", "a score read")\n'
+                                              '    if not (isinstance(doc, dict) and isinstance(doc.get("body"), dict) '
+                                              'and isinstance(doc["body"].get("entries"), list)')],
+     "noscore", "case_mutation_invariance",
+     "mutation_finite_printed_freeze_record_and_append_identical_but_hashes_B59", [], None),
+    # ----------------------------------- B-2: AM-22 item 2's cutoff (B2R1, B2R2, B2R8; audit M1, m1, m2, m3, m7)
+    ("am22_ceiling_regex_single_space", DAT,
+     [(r'AM22_CEILING_RE = re.compile(r"in\s+no\s+case\s+later\s+than\s+(\d{4}-\d{2}-\d{2})")',
+       r'AM22_CEILING_RE = re.compile(r"in no case later than (\d{4}-\d{2}-\d{2})")')],
+     "cuts", "case_cutoff_readers", "am22_dates_of_the_committed_text_M1", ["schedule_invalid"], None),
+    ("cutoff_ceiling_dropped", DAT, [("    return min(dates.ceiling, max(dates.cutoff, moved))",
+                                      "    return max(dates.cutoff, moved)")],
+     "cuts", "case_cutoff_dates", "cutoff_never_past_the_ceiling_1029", ["cut_date_mismatch"], None),
+    ("cutoff_one_day_after_its_record", DAT, [("CUTOFF_MOVE_DAYS = 2", "CUTOFF_MOVE_DAYS = 1")],
+     "cuts", "case_cutoff_dates", "cutoff_two_days_after_the_last_record", ["cut_date_mismatch"], None),
+    ("repeat_cutoff_two_days_after_the_row", DAT, [("REPEAT_CUTOFF_DAYS = 3", "REPEAT_CUTOFF_DAYS = 2")],
+     "cuts", "case_cutoff_dates", "repeat_cutoff_three_days_after_the_last_row", ["cut_date_mismatch"], None),
+    ("unwritten_record_leaves_no_ceiling", DAT, [("    if absent:\n        return dates.ceiling",
+                                                  "    if False:\n        return dates.ceiling")],
+     "cuts", "case_cutoff_dates", "cutoff_of_a_record_not_written_is_the_ceiling", ["cut_date_mismatch"], None),
+    ("moving_gate_treated_as_non_moving", ENT,
+     [('            if not g["moves_cutoff"]:',
+       '            if not g["moves_cutoff"] or g["record"] == "parent_end":')],
+     "cuts", "case_cutoff_readers", "moving_records_of_e6r1_parent_end_and_pilot_m3", ["cut_date_mismatch"], None),
+    ("run_end_dated_by_its_utc_day", ENT, [('"sha256": c.sha256, "date": D.manila_day(c.at)}}',
+                                            '"sha256": c.sha256, "date": __import__("time").strftime("%Y-%m-%d", '
+                                            '__import__("time").gmtime(c.at))}}')],
+     "cuts", "case_cutoff_dates", "dl137_e6r1_cut_at_the_end_of_1024_m3", ["cut_date_mismatch"], None),
+    ("cut_entered_day_from_the_entry_s_date", ENT, [("    entered = ctx.entered(doc)", '    entered = doc["date"]')],
+     "cuts", "case_cutoff_rules", "cutoff_entered_the_day_after_passes", ["cut_date_mismatch"], None),
+    ("cutoff_entered_on_its_cutoff_date", ENT, [('    if doc["rule"] == "cutoff" and entered is not None and entered < '
+                                                 'D.expected_entered_day("cutoff", want):', "    if False:")],
+     "cuts", "case_cutoff_rules", "cutoff_entered_on_its_cutoff_date_refused", ["cut_date_mismatch"], None),
+    ("cutoff_s_setting_record_not_compared", ENT, [('    if allowed is not None and doc["rule_record"] not in allowed:',
+                                                    "    if False:")],
+     "cuts", "case_cutoff_rules", "cutoff_2a_moved_record_not_named_refused", ["cut_date_mismatch"], None),
+    ("cutoff_2b_without_2a_s_reason", ENT, [('    if doc["launched"] and doc["rule"] != "cutoff":',
+                                             '    if doc["launched"]:')],
+     "cuts", "case_cutoff_rules", "cutoff_2b_takes_2a_s_reason_m1", ["cut_reason_invalid"], None),
+    ("cutoff_2b_of_a_stopped_run_refused", ENT,
+     [('    if doc["rule"] == "cutoff" and doc["launched"] and rule_day(doc, ctx) == doc["date"]:'
+       '     # AM-22 item 2(b)', "    if False:")],
+     "cuts", "case_cutoff_rules", "cutoff_2b_repeat_three_days_after_the_last_row_passes", ["stopped_run_cut_early"],
+     None),
+    ("cutoff_2c_arm_s_earlier_runs_complete", ENT, [(" " * 49 + 'if doc["rule"] != "cutoff"):', " " * 49 + "):")],
+     "cuts", "case_cutoff_rules", "cutoff_2c_arm_run_cut_while_its_teacher_runs", ["arm_cut_partial"], None),
+    ("cutoff_of_the_measurement", ENT, [('    measured = [s["slot"] for s in _slots(doc, ctx) if s["class"] == '
+                                         '"measurement"] if doc["rule"] == "cutoff" else []', "    measured = []")],
+     "cuts", "case_cutoff_rules", "cutoff_of_the_arm_measurement_refused_1g_m7", ["cut_rule_unknown"], None),
+    ("cutoff_2b_of_a_sweep_candidate", ENT, [('        if doc["rule"] == "cutoff" and doc["launched"] else []',
+                                              "        if False else []")],
+     "cuts", "case_cutoff_rules", "cutoff_2b_of_a_sweep_candidate_s_repeat_refused_m2", ["decision_date_cut_mismatch"],
+     None),
+    ("cutoff_2b_teacher_stop_entry_unread", ENT, [('    day = ctx.logged(rr["sha256"]) if rr else None',
+                                                   "    day = None")],
+     "cuts", "case_cutoff_rules", "cutoff_2b_teacher_without_a_stamped_line_takes_its_stop_entry_m2",
+     ["cut_date_mismatch"], None),
+    ("no_card_refused_instead_of_reported", ENT,
+     [('    if doc["rule"] in ("freeze", "cutoff"):\n        if doc["reason"] not in S.NEVER_LAUNCHED_REASONS:',
+       '    if doc["rule"] in ("freeze", "cutoff"):\n'
+       '        if doc["rule"] == "cutoff" and doc["reason"] == "no card":\n            return "no card"\n'
+       '        if doc["reason"] not in S.NEVER_LAUNCHED_REASONS:')],
+     "cuts", "case_cutoff_rules", "no_card_cut_is_never_refused_B2R8", [], None),
+    ("arm_cutoff_dated_by_each_run", ENT,
+     [('    if len(groups) == 1 and all(ctx.cat.slots[k]["cut_group"] == groups[0] for k in keys):',
+       "    if False:")],
+     "cuts", "case_cutoff_dates", "dl168_l_arm_cut_by_its_first_run_s_date_through_the_moving_reader_R3_08",
+     ["cut_date_mismatch"], None),
+    # ------------------------ B-2: AM-22 item 1(a)'s check (B2R3, B2R4, B2R11, B2R13; audit M2, M3, m7, n3, n4)
+    ("c_x_is_the_tip", A22, [("    return next((c for c, t in chain[late + 1:] if D.meets(t, cutoff)), None)",
+                              "    return next((c for c, t in chain[late + 1:]), None)")],
+     "am22", "case_commit_at_end", "c_x_walks_back_from_the_tip_M3", [], None),
+    ("records_read_at_head_not_c_x", A22, [("        self.records = records.at_commit(self.commit) if self.commit else "
+                                            "None", "        self.records = records if self.commit else None")],
+     "am22", "case_settled_ways", "entry_committed_after_x_is_not_read_at_x_M3", [], None),
+    ("e6kd_registered_untriggered", A22, [("            if triggered is not True:", "            if False:")],
+     "am22", "case_registered", "registered_are_the_run_slots_but_e6kd_untriggered", [], None),
+    ("go_rule_no_go_keeps_e6x", A22, [('                    excluded[e6x] = f"E3-{arm} is excluded (AM-23 item 3(c))"',
+                                       "                    pass")],
+     "am22", "case_registered", "go_rule_no_go_excludes_e3_r1_and_e6_r1_m7", [], None),
+    ("condition_entry_no_ignored", A22, [('                elif cond == "no" and e6x not in excluded:',
+                                          "                elif False:")],
+     "am22", "case_registered", "condition_entry_no_excludes_e6_r2_AM23_3c", [], None),
+    ("never_cut_settles_every_way", COM, [("    return NEVER_CUT_SETTLED_WAYS if never_cut else SETTLED_WAYS",
+                                           "    return SETTLED_WAYS")],
+     "am22", "case_settled_ways", "never_cut_diverged_is_not_settled_until_superseded", [], None),
+    ("never_cut_aborted_not_a_stop", A22, [('            if way == C.SETTLED_ABORTED and s["never_cut"]:',
+                                            "            if False:")],
+     "am22", "case_settled_ways", "never_cut_aborted_is_a_stop_to_ask", [], None),
+    ("never_cut_run_settled_by_a_cut", A22, [("            if s[\"never_cut\"]:\n                return None, [], "
+                                              "(f\"{d['path']} enters it as",
+                                              "            if False:\n                return None, [], "
+                                              "(f\"{d['path']} enters it as")],
+     "am22", "case_settled_ways", "never_cut_cut_is_not_settled", [], None),
+    ("freeze_cut_settles_a_run", A22, [('            if doc["rule"] != "freeze":\n                return C.SETTLED_CUT',
+                                        "            if True:\n                return C.SETTLED_CUT")],
+     "am22", "case_settled_ways", "a_freeze_cut_settles_no_run", [], None),
+    ("am7_consequence_not_a_stop", A22, [("    if fired:\n", "    if False:\n")],
+     "am22", "case_settled_ways", "am7_full_consequence_is_a_stop_to_ask_n3", [], None),
+    ("condition_2_reads_the_trigger_s_score", A22,
+     [('            return got["triggered"], [Rec(self, "AM-3 trigger record", rel, sha, how="entry")], None',
+       '            return __import__("json").loads(data).get("drop_pp", 0) >= 2.0, '
+       '[Rec(self, "AM-3 trigger record", rel, sha, how="entry")], None')],
+     "am22", "case_condition_2_cases", "triggered_e6kd_not_settled_condition_2_missing", [], None),
+    ("late_trigger_fails_condition_2", A22, [('            c.reports.append(f"REPORT deviation: trigger entered late',
+                                              '            c.missing.append(f"REPORT deviation: trigger entered late')],
+     "am22", "case_condition_2_cases", "trigger_entered_late_is_a_report_never_a_failure", [], None),
+    ("trigger_due_by_the_third_day", A22, [("TRIGGER_DUE_DAYS = 2", "TRIGGER_DUE_DAYS = 3")],
+     "am22", "case_condition_2_cases", "trigger_entered_late_is_a_report_never_a_failure", [], None),
+    ("non_finite_e6s42_read_on", A22, [('    if (v.by_slot().get(E6_S42) or {}).get("kind") == "non_finite":',
+                                        "    if False:")],
+     "am22", "case_condition_2_cases", "e6s42_non_finite_needs_the_new_amendment_n4", [], None),
+    ("condition_4_reads_l_am16_arm", A22, [("        if name == ARM_LANE:", "        if False:")],
+     "am22", "case_conditions_in_the_world", "condition_4_reads_implemented_and_not_required_lanes_not_arm_1g", [],
+     None),
+    ("lane_row_status_not_read", A22, [('            ok = bool(st["dl"] and (dl.status(st["dl"]) or "").startswith('
+                                        '"IMPLEMENTED") and mc', '            ok = bool(st["dl"] and mc')],
+     "am22", "case_condition_4_rows_at_c_x", "lane_row_implemented_after_x_is_missing_at_x_M3", [], None),
+    ("boundary_day_report_dropped", A22, [("                if t is not None and cm not in v.pushed and "
+                                           "D.manila_day(t) in days:", "                if False:")],
+     "am22", "case_report_lines", "boundary_day_reports_name_the_commits_of_x_M2", [], None),
+    ("trigger_not_triggered_refused", REC, [('        if getattr(e, "code", None) == TRIGGER_NOT_TRIGGERED:',
+                                             "        if False:")],
+     "am22", "case_trigger_reader", "l_am3_reader_gives_the_verdict_only_B2R13", [], None),
+    ("trigger_reader_unwired", REC, [("TRIGGER_READER = l_am3_trigger", "TRIGGER_READER = None")],
+     "am22", "case_static", "trigger_reader_is_l_am3_s_B2R13", [], None),
+    # ---------------- B-2: AM-22's freeze (B2R4-B2R7; audit M4, m4, m5, m6, m8, m10; TMAN-B2-RULE-3, amending m9)
+    ("date_whose_end_has_not_passed", A22, [("    if not D.cutoff_instant(day) < now:", "    if False:")],
+     "am22", "case_cli", "cli_date_not_ended_refused_m6", ["am22_date_not_ended"], None),
+    ("date_after_1102_checked", A22, [("    if day > LAST_D:\n", "    if False:\n")],
+     "am22", "case_cli", "cli_date_after_1102_refused_1f", ["am22_d_not_first"], None),
+    ("d_from_x_alone", A22, [("    return chk, (d if d is not None else (day if chk.met else None)), scans",
+                              "    return chk, (day if chk.met else None), scans")],
+     "am22", "case_d_first", "d_is_the_first_date_whose_end_has_all_five_m4", [], None),
+    ("d_scanned_from_the_day_before", A22, [("    for day in days(AM22_IN_FORCE, upto):",
+                                             "    for day in days(upto, upto):")],
+     "am22", "case_d_first", "d_is_the_first_date_whose_end_has_all_five_m4", [], None),
+    ("d_accepted_when_an_earlier_date_passes", A22, [("    earlier, _ = first_d(records, cat, runs_root, "
+                                                      "previous_day(d_date), reader=reader, **kw)",
+                                                      "    earlier = None")],
+     "am22", "case_d_first", "unlock_freeze_of_a_later_d_refused_B2R7_m4", ["am22_d_not_first"], None),
+    ("printer_skips_d_first", A22, [("    why = d_not_first_error(records, cat, runs_root, d_date, reader=reader, "
+                                     "states=states, pushed=pushed, **kw)", "    why = None")],
+     "am22", "case_d_first", "printer_freeze_of_a_later_d_refused_m4", ["am22_d_not_first"], None),
+    ("condition_5_accepts_any_unentered_slot", A22, [('        if not (left and all(v.cat.slots[k]["class"] == '
+                                                      '"measurement" for k in left)):', "        if not left:")],
+     "am22", "case_condition_5", "condition_5_missing_with_a_run_slot_unentered_RULE3", [], None),
+    ("condition_5_refuses_the_measurement_s_entry", A22, [('        left = unentered(x, v.cat) if e.code == '
+                                                           '"cut_unentered_at_unlock" else []', "        left = []")],
+     "am22", "case_condition_5", "condition_5_met_its_one_unmet_item_the_arm_measurement_RULE3", [], None),
+    ("condition_5_without_the_draft", A22, [("    c.records.append(rec)\n    ev = ", "    ev = ")],
+     "am22", "case_condition_5", "condition_5_records_the_draft_at_c_x_and_the_evaluator_commit", [], None),
+    ("frozen_body_differs_from_the_draft", A22, [("    if S.canonical_sha256(rest) != S.canonical_sha256(dbody):",
+                                                  "    if False:")],
+     "am22", "case_freeze_printer", "printer_body_differing_beyond_the_arm_freeze_cut_RULE3", ["freeze_entry_invalid"],
+     None),
+    ("frozen_body_any_slot_joins", A22,
+     [('        if s is None or s["class"] != "measurement":', "        if s is None:")],
+     "am22", "case_freeze_printer", "printer_another_slot_joining_the_draft_RULE3", ["freeze_entry_invalid"], None),
+    ("frozen_body_any_arm_cut", A22, [('        if (e.get("rule"), e.get("cut_date"), entered) != ("freeze", '
+                                       'freeze_date, freeze_date):', "        if False:")],
+     "am22", "case_freeze_printer", "printer_arm_cut_dated_after_the_freeze_date_RULE3", ["freeze_entry_invalid"],
+     None),
+    ("frozen_cut_entered_by_its_date", A22, [('        entered = E.entered_day(records, ref["sha256"]) if '
+                                              'isinstance(ref.get("sha256"), str) else None',
+                                              '        entered = e.get("cut_date")')],
+     "am22", "case_freeze_printer", "printer_arm_cut_entered_on_another_day_RULE3", ["freeze_entry_invalid"], None),
+    ("arm_measured_after_c_d_not_a_stop", A22, [('        if e.get("kind") != "cut":', "        if False:")],
+     "am22", "case_freeze_printer", "printer_arm_measurement_complete_after_c_d_is_a_stop_RULE3",
+     ["freeze_entry_invalid"], None),
+    ("body_sha256_of_the_draft", A22, [('    return ({"body_sha256": S.canonical_sha256(body), "freeze_date": '
+                                        'freeze_date,',
+                                        '    return ({"body_sha256": S.canonical_sha256(chk.view.draft()[0]["doc"]'
+                                        '["body"]), "freeze_date": freeze_date,')],
+     "am22", "case_unlock_world", "am22_freeze_printer_passes_in_the_world_B2R5", [], None),
+    ("freeze_dated_any_day", A22, [('    if doc["date"] != doc["freeze_date"]:', "    if False:")],
+     "am22", "case_freeze_printer", "printer_freeze_dated_other_than_d_plus_1_m8", ["freeze_entry_invalid"], None),
+    ("freeze_date_not_d_plus_1", A22, [('    if d is None or conds is None or D.iso(D.day(d) + timedelta(days=1)) != '
+                                        'doc["freeze_date"]:', "    if d is None or conds is None:")],
+     "am22", "case_unlock_gates", "unlock_freeze_date_not_d_plus_1_refused_B2R7", ["freeze_entry_invalid"], None),
+    ("freeze_entry_invalid_unchecked", VAL, [("    return A.freeze_record_error(x.records, x.cat, x.runs_root, "
+                                              "x.entry_file(x.freeze_rel)[0], x.body,",
+                                              "    return None and A.freeze_record_error(x.records, x.cat, "
+                                              "x.runs_root, x.entry_file(x.freeze_rel)[0], x.body,")],
+     "am22", "case_unlock_gates", "unlock_freeze_date_not_d_plus_1_refused_B2R7", ["freeze_entry_invalid"], None),
+    ("condition_unmet_unchecked", VAL, [("    return None if fr is None else A.condition_unmet_error(",
+                                         "    return None if True else A.condition_unmet_error(")],
+     "am22", "case_unlock_gates", "unlock_freeze_conditions_not_recomputed_refused_B2R7", ["am22_condition_unmet"],
+     None),
+    ("freeze_push_evidence_ignored", VAL, [('        return "the unlock entry cites no push evidence of the AM-22 '
+                                           'freeze record (audit M4)"', "        return None")],
+     "am22", "case_unlock_gates", "unlock_entry_without_the_freeze_push_evidence_refused_M4", ["freeze_entry_late"],
+     None),
+    ("freeze_push_window_unbounded", VAL, [('                                  fr["date"], '
+                                           'D.cutoff_instant(fr["freeze_date"]), key="entry")',
+                                           '                                  fr["date"], '
+                                           'D.cutoff_instant("2026-12-31"), key="entry")')],
+     "am22", "case_unlock_gates", "freeze_record_pushed_after_the_end_of_its_date_refused_M4", ["freeze_entry_late"],
+     None),
+    ("freeze_list_s_entry_key_unread", VAL, [('    if key != "unlock_entry" and isinstance(lst, dict):',
+                                              "    if False:")],
+     "am22", "case_unlock_world", "am22_unlock_printer_passes_in_the_world_M4", ["freeze_entry_late"], None),
+    ("unlock_printer_skips_m4", CLI, [('    if fr.get("source") == D.AM22_SOURCE_1B:                    # audit M4: '
+                                       'the freeze record\'s push, before its end', "    if False:")],
+     "am22", "case_unlock_printer", "printer_unlock_without_the_freeze_push_evidence_M4", ["freeze_entry_late"], None),
+    ("unlock_freeze_record_unread", VAL, [("        return A.providers(x.records, freeze_doc=x.entry_doc("
+                                           "x.freeze_rel) if x.freeze_rel else None,",
+                                           "        return A.providers(x.records, freeze_doc=None,")],
+     "am22", "case_unlock_world", "am22_unlock_world_passes_every_unlock_gate_B2R7_M4", ["schedule_invalid"], None),
+    ("unlock_takes_the_candidate_for_am22_d", VAL, [("        return A.providers(x.records, freeze_doc=x.entry_doc("
+                                                     "x.freeze_rel) if x.freeze_rel else None,",
+                                                     "        return A.providers(x.records, d_date=x.am22_d, "
+                                                     "freeze_doc=x.entry_doc(x.freeze_rel) if x.freeze_rel else "
+                                                     "None,")],
+     "am22", "case_unlock_world", "unlock_reads_the_freeze_record_not_am22_d_R2_3", [], None),
+    ("printer_item_1b_without_d_date", CLI, [('    if doc["source"] == D.AM22_SOURCE_1B and args.d_date is None:',
+                                              "    if False:")],
+     "am22", "case_freeze_printer", "printer_item_1b_freeze_without_d_date_m9", ["freeze_entry_invalid"], None),
+    ("printer_takes_given_fields", CLI,
+     [('    if args.kind != "freeze" or fields != {}:', '    if args.kind != "freeze":')],
+     "am22", "case_freeze_printer", "printer_freeze_fields_given_with_d_date_m9", ["entry_field"], None),
+    ("build_ignores_am22_d", CLI, [("                           providers=A.providers(records, d_date=args.am22_d, "
+                                    "lookup=True))", "                           providers=A.providers(records, "
+                                                     "lookup=True))")],
+     "am22", "case_cli_am22_d", "cli_build_am22_d_writes_the_candidate_s_draft_B2R6_m5", [], None),
+    ("validate_ignores_am22_d", CLI, [("now=time.time(),\n                           am22_d=args.am22_d))",
+                                       "now=time.time(),\n                           am22_d=None))")],
+     "am22", "case_cli_am22_d", "cli_validate_am22_d_leaves_the_arm_measurement_RULE3", [], None),
+    ("append_without_am22_s_provider", CLI, [("    freeze = D.freeze_instant(D.schedule_block(records.src), "
+                                              "providers=A.providers(records, lookup=True))",
+                                              "    freeze = D.freeze_instant(D.schedule_block(records.src))")],
+     "am22", "case_providers", "every_freeze_instant_call_puts_am22_s_provider_in_front_B2R6", [], None),
+    ("am22_provider_under_schedule_r", DAT, [('        if base.schedule.get("in_force") != "T":', "        if False:")],
+     "am22", "case_providers", "schedule_r_takes_no_am22_freeze_B2R6", [], None),
+    ("candidate_freeze_at_the_end_of_d", DAT, [("    return am22_provider(iso(day(d_date) + timedelta(days=1)))",
+                                                "    return am22_provider(d_date)")],
+     "am22", "case_providers", "candidate_freeze_is_the_end_of_d_plus_1_B2R6", [], None),
+    ("item_1f_record_gives_a_provider", A22,
+     [('        if not (isinstance(freeze_doc, dict) and freeze_doc.get("source") == D.AM22_SOURCE_1B',
+       "        if not (isinstance(freeze_doc, dict)")],
+     "am22", "case_providers", "item_1f_record_gives_no_provider_B2R6", [], None),
+    ("two_item_1b_freezes_no_conflict", A22, [("            if len(found) > 1 and conflict:", "            if False:")],
+     "am22", "case_providers", "two_item_1b_freeze_records_conflict_B2R6", ["freeze_source_conflict"], None),
+    ("freeze_delay_beside_item_1b_no_conflict", A22,
+     [('                and ("TMAN freeze_delay entry" in line or "TMAN new_freeze entry" in line)]',
+       "                and False]")],
+     "am22", "case_providers", "freeze_delay_beside_an_item_1b_freeze_conflicts_m10", ["freeze_source_conflict"],
+     None),
+    ("item_1b_provider_source_carries_a_sha256", A22, [
+        ('        prov = D.am22_provider(freeze_doc["freeze_date"])',
+         '        base, sha = D.am22_provider(freeze_doc["freeze_date"]), freeze_doc.get("body_sha256")\n'
+         "        prov = lambda b: (lambda f: f if f is None else D.FreezeInstant(f.schedule, f.original_date, None, "
+         "dict(f.source, sha256=sha), f.test_deadline))(base(b))")],
+     "am22", "case_unlock_world", "am22_unlock_world_passes_every_unlock_gate_B2R7_M4", ["schedule_invalid"], None),
+    ("freeze_kind_requires_d", ENT, [('S.register_kind(ENTRY_FILE_FIELDS, "freeze", {"d_date": "?day",',
+                                      'S.register_kind(ENTRY_FILE_FIELDS, "freeze", {"d_date": "day",')],
+     "validate", "case_printers", "printer_freeze_record_of_this_body_passes", ["entry_field"], None),
+    # ------------------------- B-2, DL-24 fixes B2-F1: C_X and confirmed pushes (audit M2; R2-4, R3-09, R4-1, R3)
+    ("c_x_ignores_confirmed_push_days", A22, [("    late = max((i for i, (c, _) in enumerate(chain) if pushed.get(c, "
+                                               "day) > day), default=-1)", "    late = -1")],
+     "am22", "case_commit_at_end", "c_x_stops_before_a_commit_pushed_later_M2", [], None),
+    ("c_x_at_the_end_of_the_utc_day", A22, [("    cutoff, pushed = D.cutoff_instant(day), pushed or {}",
+                                             "    cutoff, pushed = D.cutoff_instant(day) + 8 * 3600, pushed or {}")],
+     "am22", "case_commit_at_end", "c_x_is_read_at_the_end_of_the_manila_day_R3_09", [], None),
+    ("c_x_off_the_first_parent_chain", A22, [('        "log", "--first-parent", "--format=%H %ct", src.records_ref)',
+                                              '        "log", "--format=%H %ct", src.records_ref)')],
+     "am22", "case_commit_at_end", "c_x_reads_the_first_parent_chain_R3", [], None),
+    ("record_dated_by_its_commit_day_only", A22, [('        days = [max(D.manila_day(t), self.view.pushed.get(c, "")) '
+                                                   'for _, c, t in self.commits if t is not None]',
+                                                   "        days = [D.manila_day(t) for _, c, t in self.commits if t "
+                                                   "is not None]")],
+     "am22", "case_confirmed_push", "confirmed_push_keeps_d_and_dates_the_trigger_by_its_push_M2", [], None),
+    ("late_trigger_by_its_commit_day_only", A22, [('        entered = max(D.manila_day(t), v.pushed.get(cm, "")) if t '
+                                                   'is not None else None      # audit M2',
+                                                   "        entered = D.manila_day(t) if t is not None else None")],
+     "am22", "case_confirmed_push", "trigger_confirmed_pushed_after_its_due_day_is_late_M2", [], None),
+    ("freeze_conditions_drop_confirmed_pushes", A22, [("            for cm, day in sorted(chk.view.pushed.items()) if "
+                                                       "cm in held]})", "            for cm, day in sorted("
+                                                                        "chk.view.pushed.items()) if False]})")],
+     "am22", "case_confirmed_push", "freeze_conditions_carry_each_confirmed_push_M2", [], None),
+    ("boundary_report_asks_a_confirmed_commit_again", A22, [("                if t is not None and cm not in v.pushed "
+                                                             "and D.manila_day(t) in days:",
+                                                             "                if t is not None and D.manila_day(t) in "
+                                                             "days:")],
+     "am22", "case_confirmed_push", "confirmed_commit_asked_no_boundary_report_again_M2", [], None),
+    ("record_line_hides_the_push_day", A22, [('                             + (f", pushed {v.pushed[cm]} (confirmed)" '
+                                              'if cm in v.pushed else "")', '                             + ""')],
+     "am22", "case_confirmed_push", "record_lines_print_the_confirmed_push_day_M2", [], None),
+    ("unlock_recheck_ignores_confirmed_pushes", A22, [('    chk = evaluate(records, cat, runs_root, doc["d_date"], '
+                                                       'reader=reader, pushed=confirmed(doc), **kw)',
+                                                       '    chk = evaluate(records, cat, runs_root, doc["d_date"], '
+                                                       'reader=reader, **kw)')],
+     "am22", "case_unlock_gates", "freeze_record_with_a_confirmed_push_recomputed_with_it_M2", [], None),
+    ("pushed_not_commit_equals_day_read", CLI, [("        if not sep or c in out:", "        if False:")],
+     "am22", "case_cli", "cli_pushed_not_commit_equals_day_refused_M2", [], None),
+    ("pushed_not_a_commit_accepted", A22, [('        if t is None or not S.TYPES["day"](day) or not '
+                                            'records.src.is_ancestor(cm, records.ref):', "        if False:")],
+     "am22", "case_cli", "cli_pushed_not_a_commit_refused_M2", [], None),
+    ("pushed_on_its_committer_day_accepted", A22, [("        if day <= D.manila_day(t):", "        if False:")],
+     "am22", "case_cli", "cli_pushed_on_its_committer_day_refused_M2", [], None),
+    ("pushed_commit_no_record_needs_accepted", A22, [("        if chk is not None and not any(cm == c for x in "
+                                                      "chk.conditions for r in x.records for _, c, _ in r.commits):",
+                                                      "        if False:")],
+     "am22", "case_freeze_printer", "printer_pushed_commit_no_record_needs_refused_M2", [], None),
+    ("pushed_on_any_entry", CLI, [('    if args.pushed and (args.kind != "freeze" or args.d_date is None):',
+                                   "    if False:")],
+     "am22", "case_measurement_cut_printer", "printer_pushed_is_the_freeze_entry_s_M2", [], None),
+    # --------------------------- B-2, B2-F1: the check's lines (R3-02, R3-10, R2-6), its records (R1-F5, R1-F9, R2-14)
+    ("boundary_reports_of_x_only", A22, [("    v, days, seen = chk.view, (chk.day, previous_day(chk.day)), {}",
+                                          "    v, days, seen = chk.view, (chk.day,), {}")],
+     "am22", "case_report_lines", "boundary_day_report_of_x_minus_1_by_its_manila_day_R3_10", [], None),
+    ("boundary_report_by_the_utc_day", A22, [("                if t is not None and cm not in v.pushed and "
+                                              "D.manila_day(t) in days:\n                    seen.setdefault(",
+                                              "                if t is not None and cm not in v.pushed and "
+                                              '__import__("time").strftime("%Y-%m-%d", __import__("time").gmtime(t)) '
+                                              "in days:\n                    seen.setdefault(")],
+     "am22", "case_report_lines", "boundary_day_report_of_x_minus_1_by_its_manila_day_R3_10", [], None),
+    ("d_s_own_check_not_printed", A22, [("    if d and d != chk.day and scans and scans[-1].day == d:",
+                                         "    if False:")],
+     "am22", "case_d_first", "check_freeze_prints_d_s_own_check_and_boundary_reports_R3_02", [], None),
+    ("printer_prints_no_boundary_report", CLI, [("        reports = A.boundary_reports(chk)", "        reports = []")],
+     "am22", "case_freeze_printer", "printer_prints_d_s_boundary_day_reports_R3_02", [], None),
+    ("draft_dated_by_its_adding_commit", A22, [('            out = self.records.src._out("log", "-1", "--no-renames", '
+                                                '"--format=%H %ct", self.records.ref, "--", rel)',
+                                                '            out = self.records.src._out("log", "-1", "--no-renames", '
+                                                '"--diff-filter=A", "--format=%H %ct", self.records.ref, "--", rel)')],
+     "am22", "case_d_first", "draft_record_names_the_commit_of_its_last_change_R2_6", [], None),
+    ("index_reads_the_launch_log_at_c_x", A22, [('            log = self.head.launch_log(code='
+                                                 '"completion_record_invalid") if self.head.has(ss.LAUNCH_LOG_REL) '
+                                                 'else None',
+                                                 '            log = self.records.launch_log(code='
+                                                 '"completion_record_invalid") if self.records.has('
+                                                 'ss.LAUNCH_LOG_REL) else None')],
+     "am22", "case_settled_ways", "run_complete_at_x_its_launch_lines_committed_later_settles_R1_F5", [], None),
+    ("condition_5_drops_the_reports_on_the_rule3_path", A22, [("        c.reports += V.report_lines(x)          # "
+                                                               "every gate before the last passed (DL-24 R1-F9)",
+                                                               "        pass")],
+     "am22", "case_condition_5", "condition_5_keeps_the_validator_s_reports_on_the_rule3_path_R1_F9", [], None),
+    ("e6s42_record_cites_the_artifact_s_sha256", A22, [('        c.records.append(Rec(v, f"derived artifacts of '
+                                                        '{E6_S42}", str(rec.get("path")), rec.get("sha256"),',
+                                                        '        c.records.append(Rec(v, f"derived artifacts of '
+                                                        '{E6_S42}", str(rec.get("path")), h.get("artifact_sha256"),')],
+     "am22", "case_condition_2_cases", "e6s42_made_artifacts_read_from_the_draft", [], None),
+    # ------------------------------ B-2, B2-F1: the conditions' branches (R3-11, R3-12, R3-15, R3-17, R3-09)
+    ("trigger_due_day_by_the_utc_day", A22, [("        due = D.iso(D.day(D.manila_day(done[1].at)) + timedelta(days="
+                                              "TRIGGER_DUE_DAYS))",
+                                              '        due = D.iso(D.day(__import__("time").strftime("%Y-%m-%d", '
+                                              '__import__("time").gmtime(done[1].at))) + timedelta('
+                                              "days=TRIGGER_DUE_DAYS))")],
+     "am22", "case_condition_2_cases", "trigger_due_day_counts_from_the_manila_day_R3_09", [], None),
+    ("trigger_due_by_the_end_of_the_first_day", A22, [("TRIGGER_DUE_DAYS = 2", "TRIGGER_DUE_DAYS = 1")],
+     "am22", "case_conditions_in_the_world", "trigger_entered_on_its_due_day_prints_no_report_R3_11", [], None),
+    ("trigger_late_on_its_due_day", A22, [("        if entered is not None and entered > due:",
+                                           "        if entered is not None and entered >= due:")],
+     "am22", "case_conditions_in_the_world", "trigger_entered_on_its_due_day_prints_no_report_R3_11", [], None),
+    ("trigger_not_entered_read", A22, [("            if not self.dl().recorded_rows_with(sha):\n                return "
+                                        "None, [], (f\"{rel} (sha256", "            if False:\n                return "
+                                                                        "None, [], (f\"{rel} (sha256")],
+     "am22", "case_condition_2_cases", "trigger_committed_in_no_recorded_row_is_missing_R3_15", [], None),
+    ("trigger_reader_refusal_read_as_no_trigger", A22, [('                return None, [], f"{rel}: the trigger reader '
+                                                         'refuses it ({type(e).__name__}: {e})"',
+                                                         "                return False, [], None")],
+     "am22", "case_condition_2_cases", "trigger_reader_refusal_is_missing_R3_15", [], None),
+    ("trigger_reader_without_a_verdict_read_as_no_trigger", A22, [('                return None, [], f"{rel}: the '
+                                                                   'trigger reader gives no triggered verdict"',
+                                                                   "                return False, [], None")],
+     "am22", "case_condition_2_cases", "trigger_reader_without_a_boolean_verdict_is_missing_R3_15", [], None),
+    ("condition_entries_disagreeing_read_as_one", A22, [('                if cond == "conflict":',
+                                                         "                if False:")],
+     "am22", "case_registered", "condition_entries_that_disagree_are_missing_AM23_3b", [], None),
+    ("condition_3_reads_no_hash", A22, [('    errs = M.e6s42_errors(draft["by_slot"])\n    c.missing += errs',
+                                         "    errs = []\n    c.missing += errs")],
+     "am22", "case_condition_3", "condition_3_missing_while_e6s42_is_not_hashed_R3_12", [], None),
+    ("lane_register_out_of_form_or_empty_read", A22, [('    if errs or not doc["lanes"]:', "    if False:")],
+     "am22", "case_condition_4_rows_at_c_x", "lane_register_listing_no_lane_R3_15", [], None),
+    ("lane_register_unrecorded_read", A22, [('    if not v.dl().recorded_rows_with(sha):\n        c.missing.append('
+                                             'f"{rel}: sha256', '    if False:\n        c.missing.append('
+                                                                'f"{rel}: sha256')],
+     "am22", "case_condition_4_rows_at_c_x", "lane_register_in_no_recorded_row_R3_15", [], None),
+    ("lane_merge_commit_unchecked", A22, [("                      and src.commit_exists(mc) and src.is_ancestor(mc, "
+                                           "v.commit))", "                      )")],
+     "am22", "case_condition_4_rows_at_c_x", "lane_merge_commit_not_in_the_records_is_missing", [], None),
+    ("lane_row_naming_unchecked", A22, [('            elif not all(n in (dl.row_text(st["dl"]) or "") for n in (name, '
+                                         'mc[:7])):', "            elif False:")],
+     "am22", "case_condition_4_rows_at_c_x", "lane_row_not_naming_the_lane_and_its_merge_is_missing_R3_15", [], None),
+    ("not_required_without_its_entry_read", A22, [('    if not ref:\n        return "not required without its entry"',
+                                                   "    if not ref:\n        return None")],
+     "am22", "case_condition_4_rows_at_c_x", "lane_not_required_without_its_entry_is_missing_R3_15", [], None),
+    ("not_required_entry_unentered_read", A22, [("        return f\"its not-required entry {ref['path']} is not "
+                                                 "entered by the end of {v.day}\"", "        return None")],
+     "am22", "case_condition_4_rows_at_c_x", "lane_not_required_entry_not_entered_is_missing_R3_15", [], None),
+    ("not_required_coverage_unchecked", A22, [('    return f"serves {left} with no cut entry entered by the end of '
+                                               '{v.day}" if left else None', "    return None")],
+     "am22", "case_condition_4_rows_at_c_x", "lane_not_required_serving_an_uncut_slot_is_missing_R3_15", [], None),
+    # ---------------------------------- B-2, B2-F1: item 1(f)'s precondition (R1-F2, R2-2) and its resolver (m8)
+    ("fallback_unchecked_at_the_unlock", VAL, [("        return A.fallback_error(x.records, x.cat, x.runs_root, **kw)",
+                                                "        return None")],
+     "am22", "case_fallback_1f", "unlock_item_1f_freeze_with_a_d_refused_R1_F2", ["am22_d_not_first"], None),
+    ("fallback_finds_no_candidate_draft", A22, [("        return sch == D.freeze_instant(D.schedule_block("
+                                                 "v.records.src), providers=[D.am22_candidate(v.day)]).as_block()",
+                                                 "        return False")],
+     "am22", "case_fallback_1f", "printer_item_1f_with_a_d_refused_R1_F2", [], None),
+    ("printer_item_1f_without_the_fallback", CLI, [("        why = A.fallback_error(records, cat, Path(args.runs), "
+                                                    "reader=R.trigger_reader(records),",
+                                                    "        why = None and A.fallback_error(records, cat, "
+                                                    "Path(args.runs), reader=R.trigger_reader(records),")],
+     "am22", "case_fallback_1f", "printer_item_1f_with_a_d_refused_R1_F2", ["am22_d_not_first"], None),
+    ("printer_item_1f_before_the_end_of_1102", CLI, [("        if not D.cutoff_instant(A.LAST_D) < clock(args):",
+                                                      "        if False:")],
+     "am22", "case_fallback_1f", "printer_item_1f_before_the_end_of_1102_refused_R1_F2", [], None),
+    ("printer_item_1f_without_the_run_directories", CLI, [('        if args.runs is None:\n            raise '
+                                                           'S.TmanRefused("launched_attempt_without_directory", "a '
+                                                           'freeze of item 1(f)',
+                                                           '        if False:\n            raise '
+                                                           'S.TmanRefused("launched_attempt_without_directory", "a '
+                                                           'freeze of item 1(f)')],
+     "am22", "case_fallback_1f", "printer_item_1f_without_the_run_directories_refused_R1_F2", [], None),
+    ("printer_item_1f_resolver_from_the_body", CLI, [("        if sch != resolver.as_block():", "        if False:")],
+     "am22", "case_fallback_1f", "printer_item_1f_of_a_body_at_am22_s_freeze_refused_m8", [], None),
+    # ------------------------------------- B-2, B2-F1: the freeze entry's relations, one each (R3-05, R3-06, R3)
+    ("freeze_source_unchecked", A22, [("    if src not in (D.AM22_SOURCE_1B, D.AM22_SOURCE_1F):", "    if False:")],
+     "am22", "case_freeze_entry_units", "freeze_entry_of_another_source_refused_B2R5", [], None),
+    ("item_1f_freeze_naming_d_accepted", A22, [("        if d is not None or conds is not None:", "        if False:")],
+     "am22", "case_freeze_entry_units", "item_1f_freeze_naming_d_refused_B2R5", [], None),
+    ("item_1f_freeze_before_1103_accepted", A22, [('        if doc["freeze_date"] < FALLBACK_FREEZE:',
+                                                   "        if False:")],
+     "am22", "case_freeze_entry_units", "item_1f_freeze_before_1103_refused_R2_3", [], None),
+    ("item_1f_resolver_unread", A22, [('        if resolver_date is not None and doc["freeze_date"] != resolver_date:',
+                                       "        if False:")],
+     "am22", "case_freeze_entry_units", "item_1f_freeze_off_the_resolver_s_date_refused_m8", [], None),
+    ("conditions_misnumbered_accepted", A22, [('    if [c["number"] for c in conds] != [1, 2, 3, 4, 5]:',
+                                               "    if False:")],
+     "am22", "case_freeze_entry_units", "item_1b_conditions_misnumbered_refused_B2R5", [], None),
+    ("records_dated_after_d_accepted", A22, [('    late = sorted({r["ref"] for c in conds for r in c["records"] if '
+                                              'r["date"] > d})', "    late = []")],
+     "am22", "case_freeze_entry_units", "item_1b_record_dated_after_d_refused_B2R7", [], None),
+    ("recorded_condition_dated_early_accepted", A22, [("        early = sorted(k for k in g if g[k] < h[k] or g[k] > "
+                                                       "chk.day)", "        early = []")],
+     "am22", "case_freeze_entry_units", "recorded_condition_dated_before_its_commits_day_refused_M2", [], None),
+    ("unlock_recheck_skips_unmet_conditions", A22, [("    unmet = [c for c in chk.conditions if not c.met]\n    if "
+                                                     "unmet:\n        return", "    unmet = [c for c in chk.conditions "
+                                                                               "if not c.met]\n    if False:\n        "
+                                                                               "return")],
+     "am22", "case_freeze_entry_units", "unlock_recheck_at_a_d_whose_conditions_do_not_hold_R3_05",
+     ["am22_condition_unmet"], None),
+    ("printer_skips_unmet_conditions", A22, [('    if unmet:\n        raise S.TmanRefused("am22_condition_unmet"',
+                                              '    if False:\n        raise S.TmanRefused("am22_condition_unmet"')],
+     "am22", "case_freeze_printer", "printer_d_whose_conditions_do_not_hold_B2R7", ["am22_condition_unmet"], None),
+    ("freeze_record_after_d_accepted", A22, [('    late = sorted({r["ref"] for c in doc["conditions"] for r in '
+                                              'c["records"] if not committed_by(v, r)})', "    late = []")],
+     "am22", "case_unlock_gates", "freeze_record_citing_a_record_committed_after_d_B2R7", [], None),
+    ("d_not_first_unbounded_above", A22, [('    if d_date > LAST_D:\n        return f"D {d_date} is later than',
+                                           '    if False:\n        return f"D {d_date} is later than')],
+     "am22", "case_d_first", "d_not_first_d_after_1102_is_item_1f_R3", [], None),
+    ("d_not_first_unbounded_below", A22, [('    if d_date < AM22_IN_FORCE:\n        return f"D {d_date} is before',
+                                           '    if False:\n        return f"D {d_date} is before')],
+     "am22", "case_d_first", "d_not_first_d_before_1017_refused_R2_15", [], None),
+    ("date_not_a_date_unchecked", A22, [('    if not S.TYPES["day"](day):\n        return S.TmanRefused('
+                                         '"am22_date_not_ended"', '    if False:\n        return S.TmanRefused('
+                                                                  '"am22_date_not_ended"')],
+     "am22", "case_cli", "cli_date_not_a_date_refused", [], None),
+    ("date_before_am22_unchecked", A22, [('    if day < AM22_IN_FORCE:\n        return S.TmanRefused('
+                                          '"am22_d_not_first"', '    if False:\n        return S.TmanRefused('
+                                                                '"am22_d_not_first"')],
+     "am22", "case_cli", "cli_date_before_am22_refused", [], None),
+    ("check_freeze_now_unparsed", CLI, [('    if args.now is not None and not S.TYPES["utc"](args.now):\n        raise '
+                                         'S.TmanRefused(code, f"--now', '    if False:\n        raise '
+                                                                       'S.TmanRefused(code, f"--now')],
+     "am22", "case_cli", "cli_now_not_a_utc_instant_refused", [], None),
+    # ------------------------- B-2, B2-F1: the provider's bounds and its conflict (R2-15, R2, R2-13, R3-20, N9, R2-3)
+    ("am22_d_unbounded", A22, [(AM22_D_BOUNDS, '        if not S.TYPES["day"](d_date):\n' + AM22_D_RAISE)],
+     "am22", "case_providers", "am22_d_before_1017_refused_R2_15", ["schedule_invalid"], None),
+    ("am22_d_unbounded_above", A22, [(AM22_D_BOUNDS, '        if not (S.TYPES["day"](d_date) and AM22_IN_FORCE <= '
+                                                     'd_date):\n' + AM22_D_RAISE)],
+     "am22", "case_providers", "am22_d_after_1102_refused_R2", [], None),
+    ("am22_d_format_unchecked", A22, [(AM22_D_BOUNDS, "        if not (AM22_IN_FORCE <= d_date <= LAST_D):\n"
+                                       + AM22_D_RAISE)],
+     "am22", "case_providers", "am22_d_not_a_date_refused_B2R6", [], None),
+    ("two_item_1b_conflict_flag_ignored", A22, [("            if len(found) > 1 and conflict:",
+                                                 "            if len(found) > 1:")],
+     "am22", "case_providers", "two_item_1b_records_without_the_conflict_check_give_the_first_R2_13", [], None),
+    ("schedule_gate_raises_the_conflict", VAL, [("        x.freeze_conflict, x.freeze = e, D.freeze_instant(sch, "
+                                                 "providers=am22_providers(x, conflict=False))\n        return None",
+                                                 "        raise e")],
+     "am22", "case_unlock_gates", "two_item_1b_records_refused_at_their_gate_in_freeze_mode_R2_13",
+     ["freeze_source_conflict"], None),
+    ("corrected_freeze_record_kept", A22, [("    return [(rel, d) for rel, d, sha in out if sha not in corrected]",
+                                            "    return [(rel, d) for rel, d, sha in out]")],
+     "am22", "case_providers", "a_corrected_item_1b_record_is_no_freeze_of_record_N9", [], None),
+    ("validate_reads_am22_d_in_unlock_mode", CLI, [('    if args.am22_d is not None and args.mode in ("unlock", '
+                                                    '"session"):', "    if False:")],
+     "am22", "case_cli", "cli_validate_am22_d_in_unlock_mode_refused_R2_3", ["schedule_invalid"], None),
+    ("build_validates_without_am22_d", CLI, [("                           am22_d=args.am22_d))                       "
+                                              "                # a refusal writes nothing (#61)",
+                                              "                           am22_d=None))")],
+     "am22", "case_cli_am22_d", "cli_build_am22_d_writes_the_candidate_s_draft_B2R6_m5", ["schedule_invalid"], None),
+    # ---------------- B-2, B2-F1: the body to freeze and its printers (R1-F1, R2-8, R3-01, R2, R3-14, R1-F8, R2-12)
+    ("d_date_cut_of_any_slot", CLI, [('        if not (isinstance(fields, dict) and fields.get("rule") == "freeze" and '
+                                      'measured and measured == args.slot):', "        if False:")],
+     "am22", "case_measurement_cut_printer", "printer_d_date_cut_of_a_run_slot_refused_R1_F1", [], None),
+    ("freeze_body_adds_no_cut", A22, [('    body["entries"] = sorted(body["entries"] + M.build_entries(cat, given), '
+                                       'key=lambda e: order.get(e["slot"], -1))', "    pass")],
+     "am22", "case_unlock_world", "am22_body_to_freeze_printed_by_freeze_body_R2_8", [], None),
+    ("freeze_body_duplicates_a_draft_entry", A22, [('    if held:\n        raise S.TmanRefused("freeze_entry_invalid", '
+                                                    'f"{held}', '    if False:\n        raise S.TmanRefused('
+                                                                '"freeze_entry_invalid", f"{held}')],
+     "am22", "case_freeze_body", "freeze_body_of_a_slot_the_draft_enters_refused_R2_8", [], None),
+    ("freeze_body_without_its_check", A22, [("    why = frozen_body_error(v, records, body, D.iso(D.day(d_date) + "
+                                             "timedelta(days=1)))", "    why = None")],
+     "am22", "case_freeze_body", "freeze_body_of_a_cut_entered_after_the_freeze_date_refused_R2_8", [], None),
+    ("freeze_body_d_date_unbounded", A22, [('        raise S.TmanRefused("schedule_invalid", f"--d-date {d_date!r} '
+                                            'is not a date from {AM22_IN_FORCE} to {LAST_D}")', "        pass")],
+     "am22", "case_freeze_body", "freeze_body_d_date_after_1102_refused_R2_8", [], None),
+    ("frozen_body_measurement_gone_unchecked", A22, [("    if gone:", "    if False:")],
+     "am22", "case_freeze_printer", "printer_measurement_in_neither_draft_nor_body_RULE3_R3_01", [], None),
+    ("printer_body_not_validated", A22, [("    if manifest is not None:                                       # DL-24 "
+                                          "R2: the body as the unlock will read it", "    if False:")],
+     "am22", "case_freeze_printer", "printer_body_refused_in_freeze_mode_R2", [], None),
+    ("second_item_1b_freeze_printed", A22, [("    if entered_1b(records):", "    if False:")],
+     "am22", "case_freeze_printer", "printer_second_item_1b_freeze_refused_R3_14", [], None),
+    ("printer_without_the_run_directories", CLI, [('    if args.runs is None:\n        raise S.TmanRefused('
+                                                   '"launched_attempt_without_directory", "the freeze entry\'s check '
+                                                   'reads the run "', '    if False:\n        raise S.TmanRefused('
+                                                   '"launched_attempt_without_directory", "the freeze entry\'s check '
+                                                   'reads the run "')],
+     "am22", "case_freeze_printer", "printer_without_the_run_directories_refused", [], None),
+    ("unlock_printer_row_commit_unchecked", CLI, [("        if added is None or A.row_commit(records, fsha) != added:",
+                                                   "        if False:")],
+     "am22", "case_unlock_printer", "printer_freeze_row_entered_by_a_later_commit_R1_F8", [], None),
+    ("unlock_printer_window_unbounded", CLI, [(" " * 40 + 'D.cutoff_instant(fr["freeze_date"]), key="entry")',
+                                               " " * 40 + 'D.cutoff_instant("2026-12-31"), key="entry")')],
+     "am22", "case_unlock_printer", "printer_freeze_pushed_after_the_end_of_its_date_M4", ["freeze_entry_late"], None),
+    ("freeze_row_entered_later_accepted", VAL, [("    if added is None or entered != added:", "    if False:")],
+     "am22", "case_unlock_gates", "freeze_row_entered_by_a_later_commit_refused_R1_F8_R2_7", ["freeze_entry_late"],
+     None),
+    ("freeze_list_keyed_unlock_entry_accepted", VAL, [('        if "unlock_entry" in lst:\n            return',
+                                                       "        if False:\n            return")],
+     "am22", "case_unlock_gates", "freeze_list_naming_the_record_under_unlock_entry_refused_R2_12",
+     ["freeze_entry_late"], None),
+    # ------- B-2, B2-F2: the cutoff (R1-F3, R1-F7, R4, R4-2, R4-4, R3-07, R3-13, R3-15) and the teacher's rows (N2)
+    ("record_after_the_ceiling_counts", ENT, [('    written = [r["record"] for r in reads if r["record"] is not None '
+                                               'and r["record"]["date"] <= dates.ceiling]',
+                                               '    written = [r["record"] for r in reads if r["record"] is not '
+                                               'None]')],
+     "cuts", "case_cutoff_rules", "cutoff_2c_record_written_after_the_ceiling_is_unwritten_R1_F3",
+     ["cut_date_mismatch"], None),
+    ("one_unwritten_record_still_names_a_setter", ENT, [("    moved = not absent and last is not None and "
+                                                         "D.cutoff_day(dates, last) != dates.cutoff",
+                                                         "    moved = last is not None and D.cutoff_day(dates, last) "
+                                                         "!= dates.cutoff")],
+     "cuts", "case_cutoff_rules", "cutoff_2c_one_record_unwritten_rule_record_null_R4_4", ["cut_date_mismatch"], None),
+    ("repeat_row_dated_by_its_utc_day", ENT, [("        day = D.manila_day(last.at)",
+                                               '        day = __import__("time").strftime("%Y-%m-%d", '
+                                               '__import__("time").gmtime(last.at))')],
+     "cuts", "case_cutoff_rules", "cutoff_2b_row_after_16z_counts_from_its_manila_day_R4_2", ["cut_date_mismatch"],
+     None),
+    ("multi_slot_setters_unexplained", ENT, [("    if not allowed:\n        return None, None, (f\"the cut's slots' "
+                                              "cutoff date", "    if False:\n        return None, None, (f\"the "
+                                                             "cut's slots' cutoff date")],
+     "cuts", "case_cutoff_rules", "cutoff_slots_set_by_different_records_one_entry_each_R4", [], None),
+    ("diverged_attempt_awaits_a_repeat", ENT, [("    if ctx.status(slot) == C.DIVERGED:\n        return None, None, "
+                                                "f\"{slot}'s last attempt diverged",
+                                                "    if False:\n        return None, None, f\"{slot}'s last attempt "
+                                                "diverged")],
+     "cuts", "case_cutoff_rules", "cutoff_2b_after_a_diverged_attempt_refused_R3_15", ["cut_date_mismatch"], None),
+    ("slots_with_different_dates_unchecked", ENT, [('    if len(days) != 1:\n        return None, None, f"the cut\'s '
+                                                    'slots have different cutoff dates',
+                                                    '    if False:\n        return None, None, f"the cut\'s slots '
+                                                    'have different cutoff dates')],
+     "cuts", "case_cutoff_rules", "cutoff_slots_with_different_dates_refused_R3_15", [], None),
+    ("unread_cutoff_refused_in_a_draft", ENT, [('        return (doc["date"], None, None) if not ctx.reads_runs else '
+                                                '(None, None, why)', "        return (None, None, why)")],
+     "cuts", "case_cutoff_rules", "cutoff_unread_in_a_draft_s_context_stands_R3_15", [], None),
+    ("cutoff_2b_arm_run_exemption_dropped", ENT, [('    if doc["rule"] == "cutoff" and doc["launched"] and '
+                                                   'rule_day(doc, ctx) == doc["date"]:\n        return None\n'
+                                                   '    running', "    if False:\n        return None\n    running")],
+     "cuts", "case_cutoff_rules", "cutoff_2b_of_a_stopped_arm_run_passes_m1", ["arm_run_cut_while_running"], None),
+    ("cutoff_reason_rule_freeze_only", ENT, [('    if doc["rule"] in ("freeze", "cutoff"):\n        if doc["reason"] '
+                                              'not in S.NEVER_LAUNCHED_REASONS:',
+                                              '    if doc["rule"] in ("freeze",):\n        if doc["reason"] not in '
+                                              'S.NEVER_LAUNCHED_REASONS:')],
+     "cuts", "case_cutoff_rules", "cutoff_reason_outside_the_list_refused", ["cut_reason_invalid"], None),
+    ("evidence_unreadable_refuses", ENT, [('        except S.TmanRefused as e:\n            if e.code == "test_path":',
+                                           '        except ZeroDivisionError as e:\n            if e.code == '
+                                           '"test_path":')],
+     "cuts", "case_cutoff_printer", "printer_no_card_since_an_uncommitted_file_is_a_report_R1_F7", [], None),
+    ("alpha_dated_by_its_utc_day", ENT, [('"sha256": S.sha256_bytes(records.read(rel)), "date": D.manila_day(t)})',
+                                          '"sha256": S.sha256_bytes(records.read(rel)), "date": __import__("time")'
+                                          '.strftime("%Y-%m-%d", __import__("time").gmtime(t))})')],
+     "cuts", "case_cutoff_readers", "alpha_selection_dated_by_its_adding_commit_s_manila_day", [], None),
+    ("pilot_day_before_its_sha256", ENT, [("            m = S.ISO_DAY_RE.search(text, text.index(sha) + len(sha))",
+                                           "            m = S.ISO_DAY_RE.search(text)")],
+     "cuts", "case_cutoff_readers", "pilot_winner_dated_by_the_day_after_its_sha256_R3_15", [], None),
+    ("last_row_reader_unread", ENT, [("        return C.last_row(cat.slots[index.slot_of[run_id]], index.root / "
+                                      "run_id)", "        return None")],
+     "cuts", "case_cutoff_readers", "last_row_reader_reads_an_attempt_s_last_row_R3_13", [], None),
+    ("logged_reader_unread", ENT, [("    return lambda sha256: entered_day(records, sha256)",
+                                    "    return lambda sha256: None")],
+     "cuts", "case_cutoff_readers", "logged_reader_gives_the_manila_day_a_row_entered_R3_13", [], None),
+    ("no_moving_record_cut_at_the_ceiling", DAT, [("    if last_day is None:\n        return dates.cutoff",
+                                                   "    if last_day is None:\n        return dates.ceiling")],
+     "cuts", "case_cutoff_dates", "cutoff_without_a_moving_record_is_1020", ["cut_date_mismatch"], None),
+    ("cutoff_before_1020", DAT, [("    return min(dates.ceiling, max(dates.cutoff, moved))",
+                                  "    return min(dates.ceiling, moved)")],
+     "cuts", "case_cutoff_dates", "cutoff_never_before_1020_R3_15", ["cut_date_mismatch"], None),
+    ("am22_commit_not_an_ancestor_read", DAT, [("    if not (src.commit_exists(AM22_COMMIT) and src.is_ancestor("
+                                                "AM22_COMMIT, src.records_ref)):", "    if False:")],
+     "cuts", "case_cutoff_readers", "am22_dates_where_its_commit_is_not_an_ancestor_refused_B2R1",
+     ["schedule_invalid"], None),
+    ("am22_section_absent_read", DAT, [('    if text is None:\n        raise S.TmanRefused("schedule_invalid", '
+                                        'f"{S.AMENDMENTS_REL} at', '    if False:\n        raise S.TmanRefused('
+                                                                   '"schedule_invalid", f"{S.AMENDMENTS_REL} at')],
+     "cuts", "case_cutoff_readers", "am22_dates_without_an_am22_section_refused_R3_15", ["schedule_invalid"], None),
+    ("last_stamp_first_line", COM, [("    for line in reversed(text.splitlines()):",
+                                     "    for line in text.splitlines():")],
+     "cuts", "case_cutoff_readers", "last_row_of_a_teacher_is_its_last_of_two_stamped_lines_R3_15", [], None),
+    ("last_stamp_year_default", COM, [('int(m.group("year") or M12_DEFAULT_YEAR)', 'int(m.group("year") or 2025)')],
+     "cuts", "case_cutoff_readers", "last_row_of_a_teacher_is_its_last_stamped_line_utc_2026", [], None),
+    ("last_stamp_impossible_date_read", COM, [("            except ValueError:\n                _invalid(f\"a log "
+                                               "line's timestamp is not a date",
+                                               "            except ValueError:\n                continue\n"
+                                               "                _invalid(f\"a log line's timestamp is not a date")],
+     "cuts", "case_cutoff_readers", "last_row_of_a_teacher_with_an_impossible_stamp_refused_R3_15",
+     ["completion_record_invalid"], None),
+    ("last_row_first_row", COM, [("    for r in reversed(rows):\n        at = _second(",
+                                  "    for r in rows:\n        at = _second(")],
+     "cuts", "case_cutoff_readers", "last_row_of_a_stopped_qat_attempt_is_its_run_stop", [], None),
+    ("last_row_run_end_time_unread", COM, [('        at = _second(r.get("wall_clock_end") if r.get("event") == '
+                                            '"run_end" else r.get("wall_clock"))',
+                                            '        at = _second(r.get("wall_clock"))')],
+     "cuts", "case_cutoff_readers", "last_row_of_a_kd_attempt_with_its_end_is_its_run_end_R3_15", [], None),
+    ("teacher_last_row_unread", COM, [("            last = LastRow(rel, S.sha256_bytes(data), at)",
+                                       "            pass")],
+     "cuts", "case_cutoff_readers", "last_row_of_a_teacher_is_its_last_stamped_line_utc_2026", [], None),
+    ("teacher_earliest_log", COM, [("    for rel in logs:\n        p = work / rel", "    for rel in reversed(logs):\n"
+                                                                                  "        p = work / rel")],
+     "complete", "case_teacher", "teacher_complete_at_its_earliest_log_s_final_line_R3_15", [], None),
+    ("teacher_last_row_calls_before_matching", COM, [("work.iterdir() if M12_LOG_DIR_RE.match(d.name)\n"
+                                                      "                      and d.is_dir()):",
+                                                      "work.iterdir() if d.is_dir()\n                      and "
+                                                      "M12_LOG_DIR_RE.match(d.name)):")],
+     "complete", "case_teacher", "teacher_last_row_listing_matches_names_before_any_call_B2", [], None),
+    ("teacher_state_parses_every_stamp_N2", COM, [('        hit = m12_final_instant(data.decode("utf-8", "replace"))',
+                                                   '        hit = last_stamp(data.decode("utf-8", "replace")) and '
+                                                   'm12_final_instant(data.decode("utf-8", "replace"))')],
+     "complete", "case_teacher", "teacher_complete_with_a_later_malformed_stamp_reads_complete_N2", [], None),
+    ("printer_pilot_unread", CLI, [('        pilot = ((e or {}).get("inputs") or {}).get("clip_selection")',
+                                    "        pilot = None")],
+     "am22", "case_condition_5", "printer_cutoff_reads_the_pilot_s_winner_record_from_the_manifest_R3_15", [], None),
+    ("printer_reads_no_runs", CLI, [("                        logged=E.logged_reader(records), reads_runs=True)",
+                                     "                        logged=E.logged_reader(records), reads_runs=False)")],
+     "am22", "case_condition_5", "printer_cutoff_without_the_manifest_s_pilot_record_refused_R3_15", [], None),
+    ("printer_am22_dates_unread", CLI, [("                        am22=lambda: D.am22_dates_of_record(records.src),",
+                                         "                        am22=lambda: None,")],
+     "cuts", "case_cutoff_printer", "printer_cutoff_cut_passes", [], None),
+    ("printer_no_card_report_dropped", CLI, [("    rep = E.no_card_report(doc, E.evidence_reader(records))",
+                                              "    rep = None")],
+     "cuts", "case_cutoff_printer", "printer_no_card_cut_prints_its_report_B2R8_R3_07", [], None),
+    ("rule_flag_unchecked", CLI, [('                                  or fields.setdefault("rule", args.rule) != '
+                                   'args.rule):', '                                  or fields.setdefault("rule", '
+                                                  'args.rule) != fields["rule"]):')],
+     "cuts", "case_cutoff_printer", "printer_rule_flag_against_the_fields_refused", ["entry_field"], None),
+    ("push_evidence_on_any_entry", CLI, [('    if args.push_evidence is not None and args.kind != "unlock":',
+                                          "    if False:")],
+     "am22", "case_unlock_printer", "printer_push_evidence_is_the_unlock_entry_s_M4", ["entry_field"], None),
+    ("cut_context_reads_no_runs", VAL, [("                        reads_runs=runs is not None)",
+                                         "                        reads_runs=False)")],
+     "am22", "case_condition_5", "validator_cut_context_reads_runs_pilot_and_am22_dates_R3_15", [], None),
+    ("cut_context_pilot_unread", VAL, [("moving=E.moving_reader(x.cat, x.records, runs, pilot if isinstance(pilot, "
+                                        "dict) else None),", "moving=E.moving_reader(x.cat, x.records, runs, None),")],
+     "am22", "case_condition_5", "validator_cut_context_reads_runs_pilot_and_am22_dates_R3_15", [], None),
+    ("cut_context_am22_dates_unread", VAL, [("am22=lambda: D.am22_dates_of_record(x.records.src),",
+                                             "am22=lambda: None,")],
+     "am22", "case_condition_5", "validator_cut_context_reads_runs_pilot_and_am22_dates_R3_15", [], None),
 ]
 REFUSAL_EXTRA = ("inventory_invalid", "inventory_sha256_mismatch", "binding_invalid",       # read_inventory's codes
-                 "output_location", "output_exists")                                       # the CLI's outputs
-MUTATED_FILES = (VAL, MAN, ENT, SCH, REC, COM, CLI, CAT, PRE)
+                 "output_location", "output_exists",                                       # the CLI's outputs
+                 "am22_date_not_ended")                                                    # check-freeze (B2R7)
+MUTATED_FILES = (VAL, MAN, ENT, SCH, REC, COM, CLI, CAT, PRE, A22, DAT)
 
 
 # ================================================================================================ the worker
@@ -1228,7 +1995,8 @@ def worker(spec: dict) -> dict:
     except Exception as e:  # noqa: BLE001 -- a case that raises fails by name
         raised = f"{type(e).__name__}: {e}"[:300]
     FX.remove_scratch()
-    return {"results": [(n, ok, d[:200]) for n, ok, d in FX.RESULTS], "raised": raised}
+    return {"results": [(n, ok, d[:200]) for n, ok, d in FX.RESULTS], "raised": raised,
+            "tmp": tempfile.gettempdir()}
 
 
 # ================================================================================================ the parent
@@ -1248,16 +2016,27 @@ def scratch_root(edits_by_file: dict, FX) -> Path:
     return root
 
 
-def run_worker(spec: dict) -> dict:
-    env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", PYTHONPATH=str(REPO))
+def run_worker(spec: dict, timeout: int = 900) -> dict:
+    """A worker in a fresh interpreter and its own session, its temp folder one the parent made: a worker killed at
+    its timeout is killed with its children, and the folder is removed however the worker ends (DL-24 #108)."""
+    import scripts.smoke_tman_schema as FX
+    tmp = FX.scratch_dir("tmanworker")
+    env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", PYTHONPATH=str(REPO), TMPDIR=str(tmp))
     try:
-        r = subprocess.run([sys.executable, "-B", str(Path(__file__).resolve()), "--worker", json.dumps(spec)],
-                           capture_output=True, text=True, env=env, cwd=str(REPO), timeout=900)
-    except subprocess.TimeoutExpired:
-        return {"error": "timeout"}
-    lines = [ln for ln in r.stdout.splitlines() if ln.startswith(RESULT_TAG)]
+        with subprocess.Popen([sys.executable, "-B", str(Path(__file__).resolve()), "--worker", json.dumps(spec)],
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env, cwd=str(REPO),
+                              start_new_session=True) as p:
+            try:
+                out, err = p.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                os.killpg(p.pid, signal.SIGKILL)
+                p.communicate()
+                return {"error": "timeout"}
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    lines = [ln for ln in out.splitlines() if ln.startswith(RESULT_TAG)]
     if not lines:
-        return {"error": (r.stderr or r.stdout)[-400:]}
+        return {"error": (err or out)[-400:]}
     return json.loads(lines[-1][len(RESULT_TAG):])
 
 
@@ -1314,10 +2093,29 @@ def case_mutations():
             killed_codes |= set(m[6])
     if not ONLY:
         codes = {c for c, _, _ in V.GATES} | set(REFUSAL_EXTRA)
-        check("every_refusal_code_has_a_killed_mutation", codes <= killed_codes and len(codes) == 89,
+        check("every_refusal_code_has_a_killed_mutation", codes <= killed_codes and len(codes) == 94,   # B-2: 89 -> 94
               str(sorted(codes - killed_codes)))
         check("plan_s_sixteen_sample_mutations_present", sorted(m[7] for m in M if m[7]) == list(range(1, 17)))
     check("the_repository_files_are_unchanged", files_sha256() == before)
+
+
+def case_worker_scratch():
+    """A worker's scratch is inside the temp folder its parent gave it, and that folder is removed when the worker
+    ends or is killed at its timeout (DL-24 #108). The harness mutates the lane's code only, so this case's own
+    mutations are made by hand (named in the report)."""
+    import scripts.smoke_tman_schema as FX
+    clean = scratch_root({}, FX)
+
+    def given():
+        return [p for p in FX.SCRATCH_DIRS if p.name.startswith("tmanworker_")][-1]
+    out = run_worker({"root": str(clean), "smoke": "schema", "case": "case_readers", "check": None})
+    tmp = given()
+    FX.check("worker_scratch_inside_the_folder_its_parent_gave_B108", out.get("tmp") == str(tmp)
+             and not tmp.exists(), f"{out.get('tmp') or out.get('error')} {tmp} {tmp.exists()}")
+    out = run_worker({"root": str(clean), "smoke": "validate", "case": "case_cut_gates", "check": None}, timeout=3)
+    tmp = given()
+    FX.check("killed_worker_leaves_no_scratch_B108", out == {"error": "timeout"} and not tmp.exists(),
+             f"{out} {tmp.exists()}")
 
 
 def main() -> int:
@@ -1330,7 +2128,8 @@ def main() -> int:
         if unknown:
             raise SystemExit(f"--only names no mutation: {sorted(unknown)}")
     import scripts.smoke_tman_schema as FX
-    return FX.run_cases("TMAN MUTATIONS SMOKE (lane TMAN, B-1, C6)", (case_mutations,))
+    return FX.run_cases("TMAN MUTATIONS SMOKE (lane TMAN, B-1, C6)", (case_mutations,) if ONLY else (
+        case_mutations, case_worker_scratch))
 
 
 if __name__ == "__main__":

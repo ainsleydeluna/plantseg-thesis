@@ -11,6 +11,10 @@ Commands:
   append            a derived artifact's hashed form appended to the manifest, written into --out
   isolation-record  src/data/isolation.assert_trainval_only_root on --data-root, written as tday_isolation/1
   inventory         the inventory export tday-inventory/1 (IF§8; IF§11 v2), written into --out and read back
+  check-freeze      AM-22 item 1(a)'s check at the end of --date (src/tman/am22.py; B-2): each condition MET with its
+                    records or MISSING; it writes nothing
+  freeze-body       the body to freeze for AM-22 item 1(b)'s D: the draft committed by the end of D and the
+                    measurement's freeze cut (TMAN-B2-RULE-3), written as tday_manifest.json into --out
 
 Every output is a new file created exclusively in --out, a folder outside the repository; no command writes in the
 repository, and none reads TEST data. Records are read at HEAD of the repository at --root (default: this
@@ -30,6 +34,7 @@ REPO = Path(__file__).resolve().parents[1]
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
+from src.tman import am22 as A  # noqa: E402
 from src.tman import completion as C  # noqa: E402
 from src.tman import entries as E  # noqa: E402
 from src.tman import manifest as M  # noqa: E402
@@ -94,6 +99,25 @@ def registered(args):
     return None if args.registered_cells is None else list(read_json(args.registered_cells, "generator_cells_mismatch"))
 
 
+def clock(args, code: str = "am22_date_not_ended") -> float:
+    """The clock, or --now standing in for it in the smokes."""
+    if args.now is not None and not S.TYPES["utc"](args.now):
+        raise S.TmanRefused(code, f"--now {args.now!r} is not a UTC instant (YYYY-MM-DDTHH:MM:SSZ)")
+    return time.time() if args.now is None else D.parse_utc_any(args.now)
+
+
+def pushed_days(args) -> dict:
+    """--pushed COMMIT=DAY: a commit the orchestrator confirmed, from the remote's activity, reached it on a day later
+    than its committer day (audit M2), each commit once; am22.pushed_error checks each."""
+    out = {}
+    for p in getattr(args, "pushed", None) or []:
+        c, sep, day = p.partition("=")
+        if not sep or c in out:
+            raise S.TmanRefused("entry_field", f"--pushed {p!r}: COMMIT=DAY, each commit once (audit M2)")
+        out[c] = day
+    return out
+
+
 def print_result(res: V.Result) -> int:
     for line in res.missing + res.reports:
         print(line)
@@ -104,14 +128,19 @@ def print_result(res: V.Result) -> int:
 
 # ------------------------------------------------------------------------------------------------- build
 def cmd_build(args) -> int:
+    """The draft; with --am22-d D its schedule block is AM-22's candidate freeze for D (B2R6; audit m5: the draft of
+    each candidate day is built so, for condition 5), otherwise the AM-22 freeze recorded in the decision log, if
+    any."""
     records = records_at(args)
     cat = catalogue(records)
     sources = read_json(args.sources, "manifest_format")
-    doc = M.build_manifest(records, cat, sources, runs_root=args.runs)
+    doc = M.build_manifest(records, cat, sources, runs_root=args.runs,
+                           providers=A.providers(records, d_date=args.am22_d, lookup=True))
     data = S.json_file_bytes(doc)
     folder = out_folder(args.out, args.root)
     res = V.validate(V.Ctx(mode="draft", manifest_bytes=data, manifest_path=str(folder / "tday_manifest.json"),
-                           records=records, registered_cells=registered(args)))       # a refusal writes nothing (#61)
+                           records=records, registered_cells=registered(args),
+                           am22_d=args.am22_d))                                       # a refusal writes nothing (#61)
     out = write_new(folder, "tday_manifest.json", data)
     print(f"WROTE {out} sha256 {S.sha256_bytes(data)} body_sha256 {S.canonical_sha256(doc['body'])}")
     return print_result(res)
@@ -122,6 +151,10 @@ def cmd_validate(args) -> int:
     """Draft and freeze read the records at HEAD of --root; unlock and session run at the session checkout S = E
     (--root) and read the records from --records, a folder written from --records-commit (PL-28; TB16)."""
     data = read_bytes(args.manifest, "manifest_unreadable")
+    if args.am22_d is not None and args.mode in ("unlock", "session"):
+        raise S.TmanRefused("schedule_invalid", f"--am22-d is read in draft and freeze modes: in {args.mode} mode the "
+                                                "AM-22 freeze is the freeze record's (--freeze-record; B2R6; DL-24 "
+                                                "R2-3)")
     if (args.records is None) != (args.records_commit is None):
         raise S.TmanRefused("record_uncommitted", "--records and --records-commit go together (PL-28)")
     if args.mode in ("unlock", "session") and args.records is None:
@@ -137,7 +170,8 @@ def cmd_validate(args) -> int:
     rel = records.src.rel(args.manifest)
     res = V.validate(V.Ctx(mode=args.mode, manifest_bytes=data, manifest_path=rel or str(args.manifest),
                            records=records, runs_root=args.runs, freeze_record=args.freeze_record,
-                           unlock_entry=args.unlock_entry, registered_cells=registered(args), now=time.time()))
+                           unlock_entry=args.unlock_entry, registered_cells=registered(args), now=time.time(),
+                           am22_d=args.am22_d))
     return print_result(res)
 
 
@@ -156,7 +190,18 @@ def manifest_body(args, code: str) -> dict:
 
 
 def check_cut_entry(args, records, cat, freeze, doc):
-    E.check_cut(doc, printer_cut_context(records, cat, freeze, doc, args.runs))
+    """The cut checks on the would-be record set; a cutoff cut (AM-22 item 2) reads the pilot's winner record from
+    --manifest's E5:s42:sel inputs when a gate of its slots waits for it, and prints B2R8's "no card" REPORT."""
+    pilot = None
+    if args.manifest:
+        e = next((x for x in manifest_body(args, "cut_date_mismatch")["entries"] if x["slot"] == E.PILOT_SELECTION),
+                 None)
+        pilot = ((e or {}).get("inputs") or {}).get("clip_selection")
+    E.check_cut(doc, printer_cut_context(records, cat, freeze, doc, args.runs,
+                                         pilot=pilot if isinstance(pilot, dict) else None))
+    rep = E.no_card_report(doc, E.evidence_reader(records))
+    if rep:
+        print(f"REPORT {rep}")
 
 
 def check_not_run(args, records, cat, freeze, doc):
@@ -223,6 +268,23 @@ def check_unlock(args, records, cat, freeze, doc):
     fr, fsha = E.read_entry_file(records, doc["freeze_record"]["path"], "freeze")
     if fsha != doc["freeze_record"]["sha256"] or fr["body_sha256"] != m["body_sha256"]:
         raise S.TmanRefused("run_added_after_freeze", "the unlock entry cites the freeze record of this body")
+    if fr.get("source") == D.AM22_SOURCE_1B:                    # audit M4: the freeze record's push, before its end
+        from src.training import sweep_select as ss
+        added = ss.adding_commit(records.src, doc["freeze_record"]["path"])
+        if added is None or A.row_commit(records, fsha) != added:
+            raise S.TmanRefused("freeze_entry_late", "the AM-22 freeze record's decision-log row is entered by the "
+                                                     "commit that adds the record: item 1(b) times the commit of the "
+                                                     "freeze's decision-log entry (PA :2345-2346; DL-24 R1-F8)")
+        if not doc["push_evidence"]:
+            raise S.TmanRefused("freeze_entry_late", "the unlock entry of an AM-22 item 1(b) freeze cites the freeze "
+                                                     "record's push evidence (--push-evidence; audit M4)")
+        try:
+            err = V.push_evidence_error(records, doc["push_evidence"], doc["freeze_record"], fr["date"],
+                                        D.cutoff_instant(fr["freeze_date"]), key="entry")
+        except S.TmanRefused as e:
+            err = f"[{e.code}] {e.detail}"
+        if err:
+            raise S.TmanRefused("freeze_entry_late", f"the AM-22 freeze record's push evidence: {err}")
     if doc["lanes"] != {"path": S.LANES_REL, "sha256": S.sha256_bytes(records.read(S.LANES_REL))}:
         raise S.TmanRefused("lane_unmet", f"the unlock entry cites the committed {S.LANES_REL}")
     rows = [dl for dl, (_, line) in records.decision_log().rows.items() if "TMAN unlock entry" in line]
@@ -244,8 +306,42 @@ def check_not_made(args, records, cat, freeze, doc):
 
 
 def check_freeze_record(args, records, cat, freeze, doc):
-    if doc["body_sha256"] != S.canonical_sha256(manifest_body(args, "run_added_after_freeze")):
+    """The freeze record records --manifest's body; its AM-22 fields (am22.freeze_entry_error; audit m8): a freeze of
+    item 1(b) only through --d-date, its conditions recomputed (audit m9); one of item 1(f) at the resolver's freeze
+    for the body -- AM-19's as committed, as the freeze delay or new freeze its schedule block cites moves it, that
+    block the resolver's (audit m8; DL-24 R1) -- once the end of 2026-11-02 has passed with no D, read from the
+    records at each date's end and the run directories (--runs; PA :2353; DL-24 R1-F2, R2-2)."""
+    body = manifest_body(args, "run_added_after_freeze")
+    if doc["body_sha256"] != S.canonical_sha256(body):
         raise S.TmanRefused("run_added_after_freeze", "the freeze record records --manifest's body")
+    if doc["source"] == D.AM22_SOURCE_1B and args.d_date is None:
+        raise S.TmanRefused("freeze_entry_invalid", "a freeze of AM-22 item 1(b) is printed with --d-date D: its "
+                                                    "conditions are recomputed, never given (audit m9)")
+    resolver = freeze
+    if doc["source"] == D.AM22_SOURCE_1F:
+        sch = body.get("schedule") if isinstance(body.get("schedule"), dict) else {}
+        delays, news = V.freeze_docs(sch, lambda rel: (lambda r: (r["doc"], r["sha256"]))(M.entry_ref(records, rel)))
+        resolver = D.freeze_instant(D.schedule_block(records.src), delays=delays, news=news,
+                                    providers=A.providers(records, freeze_doc=doc))          # none for item 1(f)
+        if sch != resolver.as_block():
+            raise S.TmanRefused("freeze_entry_invalid", "a freeze of item 1(f) records a body whose schedule block is "
+                                                        "the resolver's: AM-19's freeze as committed, as its freeze "
+                                                        "delay or new freeze moves it (audit m8)")
+    err = A.freeze_entry_error(doc, resolver.moved_date or resolver.original_date)
+    if err:
+        raise S.TmanRefused("freeze_entry_invalid", err)
+    if doc["source"] == D.AM22_SOURCE_1F:
+        if args.runs is None:
+            raise S.TmanRefused("launched_attempt_without_directory", "a freeze of item 1(f) reads item 1(a)'s "
+                                                                      f"check to {A.LAST_D} from the run directories "
+                                                                      "(--runs)")
+        if not D.cutoff_instant(A.LAST_D) < clock(args):
+            raise S.TmanRefused("am22_date_not_ended", f"a freeze of item 1(f) is printed once the end of {A.LAST_D} "
+                                                       "has passed with no D (PA :2353)")
+        why = A.fallback_error(records, cat, Path(args.runs), reader=R.trigger_reader(records),
+                               registered_cells=registered(args))
+        if why:
+            raise S.TmanRefused("am22_d_not_first", why)
 
 
 def check_clock_offset(args, records, cat, freeze, doc):
@@ -266,24 +362,65 @@ def cmd_entry(args) -> int:
     records = records_at(args)
     cat = catalogue(records)
     fields = read_json(args.fields, "entry_field")
+    if args.rule is not None and (args.kind != "cut" or not isinstance(fields, dict)
+                                  or fields.setdefault("rule", args.rule) != args.rule):
+        raise S.TmanRefused("entry_field", f"--rule {args.rule} is a cut's rule: entry cut, its fields' rule the same")
+    if args.pushed and (args.kind != "freeze" or args.d_date is None):
+        raise S.TmanRefused("entry_field", "--pushed is the freeze entry's of AM-22 item 1(b): entry freeze --d-date D "
+                                           "(audit M2)")
+    reports = []
+    if args.d_date is not None and args.kind == "cut":
+        measured = [k for k in args.slot or [] if (cat.slots.get(k) or {}).get("class") == "measurement"]
+        if not (isinstance(fields, dict) and fields.get("rule") == "freeze" and measured and measured == args.slot):
+            raise S.TmanRefused("entry_field", "--d-date D prints a cut only for the measurement's freeze cut at "
+                                               "AM-22's freeze for D: rule freeze, measurement slots (item 1(g); "
+                                               "TMAN-B2-RULE-3; DL-24 R1-F1)")
+    elif args.d_date is not None:
+        fields, chk = am22_freeze_fields(args, records, cat, fields)
+        reports = A.boundary_reports(chk)
+    if args.push_evidence is not None and args.kind != "unlock":
+        raise S.TmanRefused("entry_field", "--push-evidence is the unlock entry's (audit M4)")
+    pe = read_json(args.push_evidence, "freeze_entry_late") if args.push_evidence else None
     doc = E.make_entry(args.kind, args.slot or [], args.date, fields, amendment=args.amendment, script=SCRIPT_REL,
-                       commit=records.src.head() or None)
-    freeze = D.freeze_instant(D.schedule_block(records.src))
+                       commit=records.src.head() or None, push_evidence=pe)
+    freeze = D.freeze_instant(D.schedule_block(records.src),
+                              providers=A.providers(records, d_date=args.d_date, lookup=True))
     ENTRY_CHECKS[doc["kind"]](args, records, cat, freeze, doc)
     path, rel, sha = E.write_entry(doc, out_folder(args.out, args.root), nn=args.nn, records=records)
+    for line in reports:
+        print(line)
     print(f"WROTE {path} sha256 {sha}")
     print("DECISION-LOG ROW (the orchestrator assigns the ID; commit the file at its path with it):")
     print(E.dl_row(doc, rel, sha, args.summary))
     return S.EXIT_PASS
 
 
-def printer_cut_context(records: R.Records, cat, freeze, doc: dict, runs) -> E.CutContext:
+def am22_freeze_fields(args, records, cat, fields) -> tuple:
+    """`entry freeze --d-date D` (B2R5; audit m9 as TMAN-B2-RULE-3 amends it): the freeze entry of AM-22 item 1(b),
+    its fields recomputed, never given (--fields is {}), from the records at the end of D and every earlier date, each
+    commit's confirmed push day (--pushed; audit M2) and the run directories (--runs); --manifest is the body to
+    freeze, validated in freeze mode; --now stands in for the clock in the smokes. Returns (the fields, D's check)."""
+    if args.kind != "freeze" or fields != {}:
+        raise S.TmanRefused("entry_field", "--d-date D prints the freeze entry of AM-22 item 1(b): entry freeze with "
+                                           "the fields {}, which it recomputes (audit m9)")
+    if args.runs is None:
+        raise S.TmanRefused("launched_attempt_without_directory", "the freeze entry's check reads the run "
+                                                                  "directories (--runs)")
+    now = clock(args)
+    body = manifest_body(args, "run_added_after_freeze")
+    data = read_bytes(args.manifest, "manifest_unreadable")
+    return A.freeze_fields(records, cat, Path(args.runs), args.d_date, body, now=now, reader=R.trigger_reader(records),
+                           registered_cells=registered(args), pushed=pushed_days(args),
+                           manifest=(data, records.src.rel(args.manifest) or str(args.manifest)))
+
+
+def printer_cut_context(records: R.Records, cat, freeze, doc: dict, runs, pilot: dict | None = None) -> E.CutContext:
     """The cut printer's context, the validator's (validate.cut_context): the registry, the decision records, every
     run slot's launched attempts and status from the launch log and the run directories under --runs
     (completion.RunIndex; never from the entry), a named rule's record and the records committed by a day (E3-X's
-    run of record is read from the manifest by the validator). A cut is printed from the run directories: --runs is
-    required."""
-    from src.training import kd_arms
+    run of record is read from the manifest by the validator); AM-22 item 2's dates of record (B2R1), the slots'
+    cutoff-moving records (`pilot`: the pilot's winner record {path, sha256}), the attempts' last rows and the day a
+    record entered the decision log. A cut is printed from the run directories: --runs is required."""
     from src.training import sweep_select as ss
     if runs is None:
         raise S.TmanRefused("launched_attempt_without_directory", "a cut is printed from the run directories: each "
@@ -300,10 +437,13 @@ def printer_cut_context(records: R.Records, cat, freeze, doc: dict, runs) -> E.C
         raise S.TmanRefused("launched_attempt_without_directory", f"launched attempts without a directory under "
                                                                   f"--runs: {missing} (AM-19a reading 20)")
 
-    return E.CutContext(cat, freeze, registry={s.run_stage: s for s in kd_arms.load_arms().values()},
+    return E.CutContext(cat, freeze, registry=E.arm_registry(records),
                         decision_records=recs, attempts=idx.attempts, run_slot=idx.slot_of.get,
                         stopped=idx.stopped_ids(), status=lambda slot: idx.status(slot, freeze.original_utc),
-                        rule_record=E.rule_record_reader(records), known_by=E.known_by_reader(records))
+                        rule_record=E.rule_record_reader(records), known_by=E.known_by_reader(records),
+                        am22=lambda: D.am22_dates_of_record(records.src),
+                        moving=E.moving_reader(cat, records, idx, pilot), last_row=E.last_row_reader(cat, idx),
+                        logged=E.logged_reader(records), reads_runs=True)
 
 
 # -------------------------------------------------------------------------------------------- arithmetic
@@ -346,7 +486,8 @@ def cmd_arithmetic(args) -> int:
             "run_ids": [], "since": None, "arithmetic": a, "telemetry": [], "comparator": None, "results_known": [],
             "cut_order_position": None, "rule_record": None}, amendment="AM-19 item 3(b)", script=SCRIPT_REL,
             commit=records.src.head() or None)
-        E.check_cut(doc, printer_cut_context(records, cat, D.freeze_instant(sch), doc, args.runs))
+        E.check_cut(doc, printer_cut_context(records, cat, D.freeze_instant(sch, providers=A.providers(
+            records, lookup=True)), doc, args.runs))
         path, rel, sha = E.write_entry(doc, out_folder(args.out, args.root), records=records)
         print(f"WROTE {path} sha256 {sha}")
         print(E.dl_row(doc, rel, sha, "cut before its launch by AM-19 item 3(b)'s arithmetic."))
@@ -371,7 +512,7 @@ def cmd_append(args) -> int:
     if errs:
         raise S.TmanRefused("append_invalid", "; ".join(errs))
     cat = catalogue(records)
-    freeze = D.freeze_instant(D.schedule_block(records.src))
+    freeze = D.freeze_instant(D.schedule_block(records.src), providers=A.providers(records, lookup=True))
     rec = None
     if args.ptq_record:
         if args.runs is None:
@@ -434,6 +575,39 @@ def cmd_inventory(args) -> int:
     return S.EXIT_PASS
 
 
+# ------------------------------------------------------------------------------------------ check-freeze
+def cmd_check_freeze(args) -> int:
+    """AM-22 item 1(a)'s check (B2R4; src/tman/am22.py): at the end of --date X, from the records committed by then
+    (C_X, audit M3) and the run directories under --runs, each condition MET with its records or MISSING with what is
+    missing, and REPORT lines; then D, the first date from 2026-10-17 to X at whose end all five hold (audit m4). It
+    writes nothing and decides nothing (the freeze entry's printer recomputes it). Exit 0 with `D: <date>`, 3 when no
+    date qualifies, 2 refused (X whose end has not passed, audit m6; X later than 2026-11-02, item 1(f)), 4 error.
+    --pushed COMMIT=DAY is a commit's confirmed later push day (audit M2); --now stands in for the clock in the smokes
+    only."""
+    now = clock(args)
+    records = records_at(args)
+    cat = catalogue(records)
+    chk, d, scans = A.check_freeze(records, cat, Path(args.runs), args.date, now=now, pushed=pushed_days(args),
+                                   reader=R.trigger_reader(records), registered_cells=registered(args))
+    for line in A.lines(chk, d, scans):
+        print(line)
+    return S.EXIT_PASS if d else S.EXIT_MISSING
+
+
+# ------------------------------------------------------------------------------------------- freeze-body
+def cmd_freeze_body(args) -> int:
+    """The body to freeze (TMAN-B2-RULE-3; DL-24 R2-8): the draft committed by the end of --d-date D (its blob at C_D,
+    with --pushed's confirmed push days, audit M2) and the body entries of the measurement's freeze cut (--cut, its
+    committed and entered entry file), every other block as the draft holds it; written as tday_manifest.json into
+    --out for `entry freeze --d-date D --manifest`."""
+    records = records_at(args)
+    doc = A.freeze_body(records, catalogue(records), args.d_date, args.cut, pushed=pushed_days(args))
+    data = S.json_file_bytes(doc)
+    out = write_new(out_folder(args.out, args.root), "tday_manifest.json", data)
+    print(f"WROTE {out} sha256 {S.sha256_bytes(data)} body_sha256 {S.canonical_sha256(doc['body'])}")
+    return S.EXIT_PASS
+
+
 # ------------------------------------------------------------------------------------------------- main
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="tday_manifest.py", description=__doc__.split("\n")[0])
@@ -444,6 +618,7 @@ def parser() -> argparse.ArgumentParser:
     b.add_argument("--out", required=True)
     b.add_argument("--runs")
     b.add_argument("--registered-cells")
+    b.add_argument("--am22-d", help="AM-22 item 1(b)'s candidate D: the draft's freeze is the end of D + 1 (B2R6)")
     v = sub.add_parser("validate")
     v.add_argument("--manifest", required=True)
     v.add_argument("--mode", required=True, choices=V.MODES)
@@ -453,6 +628,7 @@ def parser() -> argparse.ArgumentParser:
     v.add_argument("--registered-cells")
     v.add_argument("--records", help="unlock, session: the records folder written from --records-commit")
     v.add_argument("--records-commit")
+    v.add_argument("--am22-d", help="draft, freeze: AM-22 item 1(b)'s candidate D (B2R6)")
     e = sub.add_parser("entry")
     e.add_argument("kind", choices=sorted(E.ENTRY_FILE_FIELDS))
     e.add_argument("--slot", action="append")
@@ -464,6 +640,15 @@ def parser() -> argparse.ArgumentParser:
     e.add_argument("--nn", type=int, default=1)
     e.add_argument("--runs")
     e.add_argument("--manifest")
+    e.add_argument("--rule", help="entry cut: the cut's rule (cutoff: AM-22 item 2), filling the fields' rule or "
+                                  "equal to it")
+    e.add_argument("--d-date", help="entry freeze: AM-22 item 1(b)'s D, its fields recomputed (audit m9)")
+    e.add_argument("--registered-cells")
+    e.add_argument("--push-evidence", help="entry unlock: the AM-22 freeze record's push evidence {response, list} "
+                                           "(audit M4)")
+    e.add_argument("--pushed", action="append", help="entry freeze --d-date: COMMIT=DAY, the confirmed later push day "
+                                                     "of a commit (audit M2)")
+    e.add_argument("--now", help="the smokes only: the instant that stands in for the clock (YYYY-MM-DDTHH:MM:SSZ)")
     a = sub.add_parser("arithmetic")
     a.add_argument("--slot", required=True)
     a.add_argument("--iterations", type=int, help="optional: the slot's horizon (checked); a QAT run's, its "
@@ -491,17 +676,31 @@ def parser() -> argparse.ArgumentParser:
     n.add_argument("--runs")
     n.add_argument("--registered-cells")
     n.add_argument("--freeze-record", help="the freeze record: its committed entry file (DL-24 #33)")
+    k = sub.add_parser("check-freeze")
+    k.add_argument("--date", required=True, help="X: the check reads the records committed by the end of X")
+    k.add_argument("--runs", required=True)
+    k.add_argument("--registered-cells")
+    k.add_argument("--pushed", action="append", help="COMMIT=DAY: the confirmed later push day of a commit (audit M2)")
+    k.add_argument("--now", help="the smokes only: the instant that stands in for the clock (YYYY-MM-DDTHH:MM:SSZ)")
+    f = sub.add_parser("freeze-body")
+    f.add_argument("--d-date", required=True, help="AM-22 item 1(b)'s D: the draft committed by its end")
+    f.add_argument("--cut", action="append", required=True, help="the measurement's freeze cut: its committed entry "
+                                                                 "file (TMAN-B2-RULE-3)")
+    f.add_argument("--out", required=True)
+    f.add_argument("--pushed", action="append", help="COMMIT=DAY: the confirmed later push day of a commit (audit M2)")
     return p
 
 
 COMMANDS = {"build": cmd_build, "validate": cmd_validate, "entry": cmd_entry, "arithmetic": cmd_arithmetic,
-            "append": cmd_append, "isolation-record": cmd_isolation, "inventory": cmd_inventory}
+            "append": cmd_append, "isolation-record": cmd_isolation, "inventory": cmd_inventory,
+            "check-freeze": cmd_check_freeze, "freeze-body": cmd_freeze_body}
 
 
 # Every path-valued argument (a run id under --runs, a file, a folder): refused for "test" before any call on any of
 # them (DL-24 #7, #10); a part read under --runs or --root is checked there again where it is joined.
 PATH_ARGS = ("root", "sources", "out", "runs", "registered_cells", "manifest", "freeze_record", "unlock_entry",
-             "records", "fields", "reference_telemetry", "reference_smoke", "hashed", "ptq_record", "data_root")
+             "records", "fields", "reference_telemetry", "reference_smoke", "hashed", "ptq_record", "data_root",
+             "push_evidence", "cut")
 
 
 def main(argv=None) -> int:

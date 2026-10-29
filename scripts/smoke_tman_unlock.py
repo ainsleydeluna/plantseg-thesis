@@ -39,9 +39,11 @@ WANTED: set = set()
 class Unlock:
     """The fixture world at the unlock (and, after `start_session`, in the session)."""
 
-    def __init__(self):
+    def __init__(self, edit_world=None):
         from src.tman import schema as S
         self.w = w = VW.World()
+        if edit_world is not None:
+            edit_world(w)                     # a variant world: its manifest committed again before the freeze record
         self.S = S
         self.wt = FX.scratch_dir("tmanwt")
         self.wt.rmdir()
@@ -57,7 +59,7 @@ class Unlock:
              "status": {"kind": "not_required", "dl": None, "merge_commit": None,
                         "entry": {"path": nr["path"], "sha256": nr["sha256"]}}}]}
         self.freeze = w.entry_file("freeze", [], {"body_sha256": S.canonical_sha256(w.doc["body"]),
-                                                  "freeze_date": VW.FREEZE_DAY, "source": "schedule"})
+                                                  "freeze_date": VW.FREEZE_DAY, **VW.FREEZE_1F})
         lanes = self.commit_lanes(self.lanes, "lanes, not-required entry, freeze record",
                                   {nr["path"]: w.files[nr["path"]], self.freeze["path"]: w.files[self.freeze["path"]]})
         self.unlock = w.entry_file("unlock", [], {
@@ -239,7 +241,7 @@ def refreeze(u: Unlock, doc: dict, nn: int) -> dict:
     """A freeze record of a changed body, committed (the unlock checks it before the unlock entry exists)."""
     S, w = u.S, u.w
     fr = w.entry_file("freeze", [], {"body_sha256": S.canonical_sha256(doc["body"]), "freeze_date": VW.FREEZE_DAY,
-                                     "source": "schedule"}, nn=nn)
+                                     **VW.FREEZE_1F}, nn=nn)
     w.commit({fr["path"]: w.files[fr["path"]]}, "a freeze record of a changed body")
     return fr
 
@@ -277,9 +279,10 @@ def case_cli():
         with contextlib.redirect_stdout(buf):
             rc = CLI.main(args)
         return rc, buf.getvalue()
-    saved = R.ptq_record_reader
+    saved, saved_trigger = R.ptq_record_reader, R.TRIGGER_READER
     try:
         R.ptq_record_reader = lambda: u.w.reader()
+        R.TRIGGER_READER = None                         # O8 without a reader (B2R13 wires L-AM3's)
         rc, out = cli(argv + ["--records", str(folder), "--records-commit", head])
         check("cli_unlock_without_a_trigger_reader_refused_O8", rc == 2 and "trigger_format_unknown" in out,
               out.strip()[-200:])
@@ -294,7 +297,7 @@ def case_cli():
         check("cli_records_without_its_commit_refused", rc == 2 and "go together" in out, out.strip()[-200:])
     finally:
         R.ptq_record_reader = saved
-        R.TRIGGER_READER = None
+        R.TRIGGER_READER = saved_trigger
 
 
 def case_unlock_printer():
@@ -508,6 +511,26 @@ def records_outside_e_history(u: Unlock) -> None:
                 records=R.Records.at_records_commit(folder, h, root=u.wt), detail="the records' history")
 
 
+def g2_pin(w) -> None:
+    """G2 (DL-24 #98): the corrupted-cache pin printed at a later commit whose build_corruption_cache.py is not E's
+    (S = E); the manifest built again with that pin and committed."""
+    rel = "scripts/build_corruption_cache.py"
+    c = w.commit({rel: b"# the cache generator, edited after E\n"}, "the cache generator edited after E")
+    w.sources["generator_pins"]["corrupted_cache"] = PINS.pin(
+        script={"path": rel, "git_blob": FX.git(w.repo, "rev-parse", f"{c}:{rel}")}, commit=c)
+    w.doc = w.M.build_manifest(w.records, w.cat, w.sources, runs_root=w.runs)
+    w.data = w.S.json_file_bytes(w.doc)
+    w.commit({w.S.MANIFEST_REL: w.data}, "the manifest with the G2 pin")
+
+
+def case_generator_pin_at_another_commit():
+    """G2 (DL-24 #98): a pin printed at a commit whose generator script is not S's blob is refused at the unlock,
+    every earlier unlock gate passing."""
+    u = Unlock(edit_world=g2_pin)
+    expect_gate(u, "generator_script_not_its_pin_G2_B98", "hasher_pin_mismatch",
+                detail="scripts/build_corruption_cache.py at S is not the pinned blob")
+
+
 def case_session():
     """The session (AM-17 item 9; TB11, TB14; AM-19a reading 21): one session part over the manifest's history, its
     values only added (DL-24 #56); a variant of the part each in a world of its own (a second part is a second
@@ -632,8 +655,13 @@ def case_push_evidence():
         u, "p24", activity(u, at, after="f" * 40), served=False), "no push carries the unlock entry's commit")
 
 
+AM22_GATES = ("freeze_entry_invalid", "am22_condition_unmet", "am22_d_not_first", "freeze_entry_late")  # B2R7
+
+
 def case_coverage():
-    want = [c for c in gate_codes("session") if c not in gate_codes("freeze")]
+    """Every unlock and session gate has a case here, B2R7's AM-22 gates aside: smoke_tman_am22's world has an AM-22
+    freeze record, and its cases reach each of them."""
+    want = [c for c in gate_codes("session") if c not in gate_codes("freeze") and c not in AM22_GATES]
     missing = [c for c in want if c not in WANTED]
     check("every_unlock_and_session_gate_has_a_case", not missing, str(missing))
 
@@ -650,8 +678,8 @@ def main() -> int:
         return FX.run_cases("TMAN UNLOCK SMOKE (lane TMAN, B-1, C5)", ())
     try:
         return FX.run_cases("TMAN UNLOCK SMOKE (lane TMAN, B-1, C5)",
-                            (case_unlock_world, case_cli, case_unlock_printer, case_unlock_gates, case_session,
-                             case_push_evidence, case_coverage))
+                            (case_unlock_world, case_cli, case_unlock_printer, case_unlock_gates,
+                             case_generator_pin_at_another_commit, case_session, case_push_evidence, case_coverage))
     finally:
         if VW.REAL_TEACHER is not None:
             UW.w.M.TEACHER_OF_RECORD.clear()

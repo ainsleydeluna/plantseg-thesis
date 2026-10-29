@@ -67,7 +67,7 @@ from configs.quant import QUANT                                             # no
 from .prepare import (disable_observers, freeze_bn_stats, prepare_qat_model,  # noqa: E402
                       qat_freeze_steps, unfused_batchnorm)
 from .qconfig import QUANT_BACKEND, QuantBackendUnavailable, select_qnnpack_backend  # noqa: E402
-from .stages import resolve_quant_stage                                       # noqa: E402
+from .stages import AM23_STAGES, E6X_PARENT_ARM, resolve_quant_stage          # noqa: E402
 from .x86_latency import QAT_SIDECAR_KIND, QAT_SIDECAR_ROLE                   # noqa: E402
 
 LANE = "L-AM4 + L-AM1q (docs/lane_specs/part2.md lane 6)"
@@ -110,6 +110,10 @@ TF32_DEFAULTS = {"cuda_matmul_allow_tf32": False, "cudnn_allow_tf32": True,
                  "NVIDIA_TF32_OVERRIDE": None, "TORCH_ALLOW_TF32_CUBLAS_OVERRIDE": None}
 _HEX40 = re.compile(r"^[0-9a-f]{40}$")
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
+AM23_SEED = 42                   # AM-23 items 1-3: every AM-23 stage runs at seed 42 only
+AM23_HORIZON = 80000             # E3-X's iterations and poly horizon (AM-18 item 3)
+DECISION_LOG_REL = "docs/DECISION_LOG.md"
+_DL_ID = re.compile(r"DL-\d+[a-z]?")             # scripts/preflight_arms.py DL_ID_RE
 
 # The code paths whose cleanliness at HEAD a real launch requires and whose sha256 its run_meta
 # records, through src/quant/ptq.py code_provenance.
@@ -125,6 +129,9 @@ QAT_CODE_PATHS = (
     "configs/model.py", "configs/e1_student.py", "reports/e1_class_weights.json",
     "scripts/run_e5.py", "scripts/run_e6.py", "scripts/qat_epoch_eval.py",
     "scripts/select_qat_epoch.py", "scripts/select_clip.py",
+    # AM-23 (lane L-AM23Q): the E6-X condition's reader, AM-23's epoch rules and the three entry points
+    "src/quant/e6x_condition.py", "configs/qat_selection_rules_am23.json", "scripts/run_e6_e2.py",
+    "scripts/run_e6_r1.py", "scripts/run_e6_r2.py",
 )
 
 EXIT_OK, EXIT_STOP, EXIT_REFUSED, EXIT_ABORTED, EXIT_ERROR = 0, 1, 2, 3, 4
@@ -472,7 +479,8 @@ def resolve_parent(stage: dict, run_dir, expect_sha256: str, seed: int, *,
 
     E1 (train_e1): e1_telemetry.jsonl holds exactly one run_meta row (mode, seed; no stage key) and the
     VAL row at its max_iters. E3 (train_distill): e3_run_meta.jsonl holds exactly one run_meta row with
-    stage "E3", and e3_telemetry.jsonl a run_end record with checks_passed and no run_abort row. In both,
+    stage "E3", and e3_telemetry.jsonl a run_end record with checks_passed and no run_abort row; E2
+    (AM-23 items 1, 2 and 4) likewise, with e2_run_meta.jsonl, e2_telemetry.jsonl and stage "E2". In all,
     best.json names a file in the directory whose sha256 equals --expect-source-sha256.
     """
     d = Path(run_dir) if run_dir else None
@@ -504,8 +512,9 @@ def resolve_parent(stage: dict, run_dir, expect_sha256: str, seed: int, *,
 
     if stage["source_stage"] == "E1":
         meta_p = tel_p = d / "e1_telemetry.jsonl"
-    else:
-        meta_p, tel_p = d / "e3_run_meta.jsonl", d / "e3_telemetry.jsonl"
+    else:                                                  # train_distill's e2_ or e3_ files
+        key = stage["source_stage"].lower()
+        meta_p, tel_p = d / f"{key}_run_meta.jsonl", d / f"{key}_telemetry.jsonl"
     for p, what in ((meta_p, "run_meta"), (tel_p, "telemetry")):
         if not p.is_file():
             _refuse("parent_records_missing", f"the parent's {what} file {p.name} is missing")
@@ -521,8 +530,8 @@ def resolve_parent(stage: dict, run_dir, expect_sha256: str, seed: int, *,
     if meta["seed"] != seed:
         _refuse("parent_seed_mismatch", f"the parent ran seed {meta['seed']!r}; --seed is {seed} (AM-1: E5/E6 "
                                         "take the seed of their FP32 parent)")
-    if stage["source_stage"] == "E3":
-        if meta.get("stage") != "E3":
+    if stage["source_stage"] in ("E2", "E3"):
+        if meta.get("stage") != stage["source_stage"]:
             _refuse("parent_stage_mismatch", f"the parent's run_meta row has stage {meta.get('stage')!r}; E6 "
                                              "takes an E3 parent")
         rows, _torn = read_jsonl(tel_p)
@@ -671,6 +680,198 @@ def e6_parent_binding(parent: dict, seed: int, lam: dict, alpha: dict) -> dict:
         _refuse("parent_run_id_mismatch", f"at seed 42 E6's parent must be the α winner run "
                                           f"{alpha['winner'].get('run_id')!r}, not {parent.get('run_id')!r}")
     return {"lambda_selection": lam, "alpha_selection": alpha}
+
+
+# ------------------------------------------------------------------ AM-23's parents (items 1, 3(b) and 4; lane L-AM23Q)
+def e2_selection(args, repo_root: Path = REPO) -> dict:
+    """E6-E2's selection (AM-23 item 1): the λ selection of record, read as E6 reads it. E2 has no α."""
+    if args.alpha_selection is not None or args.alpha_selection_sha256 is not None:
+        _refuse("selection_not_applicable", "E6-E2's parent is E2, which has no α: it takes the λ selection only")
+    return read_tracked_selection(args.lambda_selection, args.lambda_selection_sha256, LAMBDA_SELECTION_FORMAT,
+                                  "lambda", repo_root)
+
+
+def lambda_selection_input(lam: dict, run_id: str, repo_root: Path = REPO) -> dict:
+    """The λ selection's one `inputs` entry for `run_id` (its run_dir's last component): the best.json, run_meta and
+    checkpoint sweep_select hashed when it selected (PL-14), read from the bytes read_tracked_selection checked."""
+    data = (Path(repo_root) / lam["path"]).read_bytes()
+    if sha256_bytes(data) != lam["sha256"]:
+        _refuse("selection_changed_since_head", f"{lam['path']} changed after it was read: sha256 "
+                                                f"{sha256_bytes(data)}, read as {lam['sha256']}")
+    doc = json.loads(data.decode("utf-8"))
+    entries = [e for e in (doc.get("inputs") or []) if isinstance(e, dict)
+               and Path(str(e.get("run_dir", ""))).name == run_id]
+    if len(entries) != 1:
+        _refuse("selection_input_missing", f"{lam['path']} holds {len(entries)} inputs entries for run {run_id!r}; "
+                                           "exactly one is required")
+    return entries[0]
+
+
+def e2_parent_binding(parent: dict, seed: int, lam: dict, repo_root: Path = REPO) -> dict:
+    """AM-23 items 1 and 2: the parent is E2 seed 42's best.json checkpoint, the λ winner of record. The λ selection
+    names the run, its λ and its checkpoint; its `inputs` entry for that run names the best.json and run_meta that
+    sweep_select hashed (PL-14), so the KD launch log is not read here (AQ21). E2 trains no CWD projection: a
+    projection.pt beside the checkpoint refuses the directory before anything is loaded."""
+    from src.distill.cwd_projection import PROJECTION_FILE
+    win = lam["winner"]
+    if parent.get("stage") != "E2":
+        _refuse("parent_stage_mismatch", f"E6-E2's parent run_meta has stage {parent.get('stage')!r}, not 'E2'")
+    if seed != AM23_SEED or parent.get("seed") != AM23_SEED:
+        _refuse("am23_seed", f"AM-23's stages run at seed {AM23_SEED} only (items 1-3): --seed {seed}, the parent "
+                             f"ran seed {parent.get('seed')!r}")
+    if parent.get("run_id") != win.get("run_id"):
+        _refuse("parent_run_id_mismatch", f"E6-E2's parent is the λ winner run {win.get('run_id')!r}, not "
+                                          f"{parent.get('run_id')!r}")
+    if parent.get("lambda_logit") != win.get("lambda"):
+        _refuse("parent_lambda_mismatch", f"the parent's lambda_logit {parent.get('lambda_logit')!r} != the λ "
+                                          f"selection's winner {win.get('lambda')!r}")
+    if parent.get("checkpoint_sha256") != win.get("ckpt_sha256"):
+        _refuse("parent_checkpoint_not_selected", f"the λ selection chose checkpoint {win.get('ckpt_sha256')}, "
+                                                  f"best.json names {parent.get('checkpoint_sha256')}")
+    entry = lambda_selection_input(lam, parent["run_id"], repo_root)
+    differ = [k for k in ("best_json_sha256", "run_meta_sha256", "checkpoint") if entry.get(k) != parent.get(k)]
+    if differ:
+        _refuse("parent_not_selection_input", f"the directory's {differ} differ from the λ selection's inputs entry "
+                                              f"for {parent['run_id']} (the files sweep_select selected from)")
+    if (Path(parent["run_dir"]) / PROJECTION_FILE).exists():
+        _refuse("parent_projection_present", f"{parent['run_dir']} holds {PROJECTION_FILE}: E2 trains no CWD "
+                                             "projection, so this is not E2's run directory as written")
+    return {"stage": "E2", "run_id": parent["run_id"], "seed": parent["seed"],
+            "lambda_logit": parent["lambda_logit"], "checkpoint": parent["checkpoint"],
+            "checkpoint_sha256": parent["checkpoint_sha256"], "best_json_sha256": parent["best_json_sha256"],
+            "run_meta_sha256": parent["run_meta_sha256"],
+            "lambda_selection": {k: lam[k] for k in ("path", "sha256", "winner")}, "selection_input": entry}
+
+
+def _whole_token(token: str, row: str) -> bool:
+    """`token` stands whole in `row`: not inside a longer number, sign or hex string (DL-24 B1-01)."""
+    return re.search(rf"(?<![0-9A-Za-z.+-]){re.escape(token)}(?![0-9A-Za-z])", row) is not None
+
+
+def condition_dl_row(dl_id, stage_name: str, rec: dict, rec_sha256: str, repo_root: Path = REPO) -> str:
+    """AQ3: the decision-log row --condition-dl names, in docs/DECISION_LOG.md at HEAD: RECORDED, and carrying the
+    record's sha256, "E6-<X> condition (AM-23 item 3(b)): yes", the value's repr, best.json's sha256 and the
+    checkpoint's (the tokens of the text scripts/e6x_condition.py prints). A row is read as
+    scripts/preflight_arms.py's dl_row and row_status read one (:219-234), mirrored, not imported."""
+    if not isinstance(dl_id, str) or not _DL_ID.fullmatch(dl_id):
+        _refuse("condition_dl_row", f"--condition-dl {dl_id!r} is not a decision-log id DL-<n>")
+    data = _git_head_bytes(Path(repo_root), DECISION_LOG_REL)
+    if data is None:
+        _refuse("condition_dl_row", f"{DECISION_LOG_REL} is not tracked at HEAD")
+    row = next((ln for ln in data.decode("utf-8").splitlines() if ln.lstrip().startswith("|")
+                and ln.strip().strip("|").split("|")[0].strip() == dl_id), None)
+    if row is None:
+        _refuse("condition_dl_row", f"{dl_id} is not a row of {DECISION_LOG_REL} at HEAD")
+    cells = [c.strip() for c in row.strip().strip("|").split("|")]
+    status = (cells[1].split() or [""])[0] if len(cells) > 1 else ""
+    if status != "RECORDED":
+        _refuse("condition_dl_row", f"{dl_id} has status {status!r}, not RECORDED")
+    need = (rec_sha256, f"{stage_name} condition (AM-23 item 3(b)): yes", rec["value"]["repr"],
+            rec["best_json"]["sha256"], rec["checkpoint"]["sha256"])
+    missing = [n for n in need if not _whole_token(n, row)]
+    if missing:
+        _refuse("condition_dl_row", f"{dl_id} does not carry {missing} (AQ3)")
+    return row
+
+
+def e6x_parent_binding(stage: dict, parent: dict, args, lam: dict, alpha: dict, *, repo_root: Path = REPO) -> dict:
+    """AM-23 items 3(b) and 4: E6-X's parent is E3-X's run at seed 42 (its run_meta names arm E3-X, descriptive and
+    never a parent of E4-E7), and the condition record committed for that run (B-1's e6x_condition/1, read with its
+    reader at the path of record, AQ15) says yes, as recomputed here from the parent's best.json, with its RECORDED
+    decision-log row (AQ3)."""
+    from . import e6x_condition as X                     # E6-X only; never imported at module level (AQ28)
+    want_arm = stage["parent_arm"]
+    arm = want_arm.split("-", 1)[1]
+    if args.seed != AM23_SEED or parent.get("seed") != AM23_SEED:
+        _refuse("am23_seed", f"AM-23's stages run at seed {AM23_SEED} only (items 1-3): --seed {args.seed}, the "
+                             f"parent ran seed {parent.get('seed')!r}")
+    rows = _run_meta_rows(Path(parent["run_dir"]) / parent["run_meta_file"])
+    meta = rows[0] if len(rows) == 1 else {}
+    if meta.get("arm") != want_arm:
+        _refuse("parent_arm_mismatch", f"{stage['name']}'s parent is {want_arm}'s run; its run_meta names arm "
+                                       f"{meta.get('arm')!r}")
+    not_arm = [k for k, ok in (("descriptive", meta.get("descriptive") is True),
+                               ("parent_of_e4_e7", meta.get("parent_of_e4_e7") is False),
+                               ("max_iters", type(meta.get("max_iters")) is int
+                                and meta.get("max_iters") == AM23_HORIZON),
+                               ("poly_horizon", type(meta.get("poly_horizon")) is int
+                                and meta.get("poly_horizon") == AM23_HORIZON),
+                               ("target_construction", meta.get("target_construction") is not None)) if not ok]
+    if not_arm:
+        _refuse("parent_not_arm_run", f"the parent's run_meta is not {want_arm}'s run: "
+                                      f"{ {k: meta.get(k) for k in not_arm} }")
+    if parent.get("lambda_logit") != lam["winner"].get("lambda"):
+        _refuse("parent_lambda_mismatch", f"the parent's lambda_logit {parent.get('lambda_logit')!r} != the λ "
+                                          f"selection's winner {lam['winner'].get('lambda')!r}")
+    if parent.get("alpha_cwd") != alpha["winner"].get("alpha"):
+        _refuse("parent_alpha_mismatch", f"the parent's alpha_cwd {parent.get('alpha_cwd')!r} != the α selection's "
+                                         f"winner {alpha['winner'].get('alpha')!r}")
+    rel, want_sha, dl_id = (getattr(args, k, None) for k in ("condition_record", "condition_sha256", "condition_dl"))
+    if not rel or not want_sha or not dl_id:
+        _refuse("condition_flags_missing", f"{stage['name']} requires --condition-record, --condition-sha256 and "
+                                           "--condition-dl (AM-23 item 3(b))")
+    rec, rec_sha = X.read_condition(rel, want_sha, repo_root)
+    if Path(str(rel)).as_posix() != X.RECORD_REL.format(arm=rec["arm"]):
+        _refuse("condition_path_not_of_record", f"{rel!r} is not {X.RECORD_REL.format(arm=rec['arm'])}, where "
+                                                f"{rec['stage']}'s condition record is committed (AQ2)")
+    if rec["arm"] != arm:
+        _refuse("condition_arm_mismatch", f"the condition record is {rec['stage']}'s; {stage['name']} reads E6-{arm}'s")
+    differ = [k for k, ok in (("run_id", rec["run_id"] == parent["run_id"]),
+                              ("best_json", rec["best_json"]["sha256"] == parent["best_json_sha256"]),
+                              ("checkpoint", rec["checkpoint"]["file"] == parent["checkpoint"]
+                               and rec["checkpoint"]["sha256"] == parent["checkpoint_sha256"]),
+                              ("run_meta", rec["run_meta"]["sha256"] == parent["run_meta_sha256"]),
+                              ("telemetry", rec["telemetry"]["sha256"] == parent["telemetry_sha256"]),
+                              ("value", rec["value"]["repr"] == repr(parent["best_val_miou_all_class"]))) if not ok]
+    if differ:
+        _refuse("condition_parent_mismatch", f"the condition record is not this parent's: {differ} differ")
+    if X.verdict(parent["best_val_miou_all_class"]) != "yes":
+        _refuse("condition_no", f"the parent's best VAL all-class mIoU {parent['best_val_miou_all_class']!r} is not "
+                                f"above {X.THRESHOLD}: {stage['name']} is ruled out (AM-23 item 3(b))")
+    condition_dl_row(dl_id, stage["name"], rec, rec_sha, repo_root)
+    return {"stage": "E3", "arm": want_arm, "run_id": parent["run_id"], "seed": parent["seed"],
+            "lambda_logit": parent["lambda_logit"], "alpha_cwd": parent["alpha_cwd"],
+            "checkpoint": parent["checkpoint"], "checkpoint_sha256": parent["checkpoint_sha256"],
+            "best_json_sha256": parent["best_json_sha256"], "run_meta_sha256": parent["run_meta_sha256"],
+            "lambda_selection": {k: lam[k] for k in ("path", "sha256", "winner")},
+            "alpha_selection": {k: alpha[k] for k in ("path", "sha256", "winner")},
+            "condition": {"path": X.RECORD_REL.format(arm=arm), "sha256": rec_sha, "verdict": rec["verdict"],
+                          "value": rec["value"]["repr"], "dl": dl_id}}
+
+
+def am23_parent_binding(stage: dict, parent: dict, args, sel: tuple, *, repo_root: Path = REPO) -> dict:
+    """AM-23 item 4's parent check of an AM-23 QAT stage: E6-E2's (the λ selection) or E6-X's (λ, α and the
+    condition)."""
+    if stage["source_stage"] == "E2":
+        return e2_parent_binding(parent, args.seed, sel[0], repo_root)
+    return e6x_parent_binding(stage, parent, args, *sel, repo_root=repo_root)
+
+
+def am23_profile(meta: dict, args, repo_root: Path = REPO) -> dict:
+    """check-run-meta's AM-23 part (scripts/qat_epoch_eval.py profile_mismatches): the parent binding, re-run from the
+    run_meta row's parent and the selections (and E6-X's condition) the check names, equals the am23_parent the run
+    recorded; no E6 selections; the projection flag false. {key: (got, want)}."""
+    stage = resolve_quant_stage(args.stage)
+    bad = {}
+    try:
+        if stage["source_stage"] == "E2":
+            sel = (e2_selection(args, repo_root),)
+        else:
+            sel = (read_tracked_selection(args.lambda_selection, args.lambda_selection_sha256, LAMBDA_SELECTION_FORMAT,
+                                          "lambda", repo_root),
+                   read_tracked_selection(args.alpha_selection, args.alpha_selection_sha256, ALPHA_SELECTION_FORMAT,
+                                          "alpha", repo_root))
+        want = am23_parent_binding(stage, meta.get("parent") or {}, args, sel, repo_root=repo_root)
+        got = meta.get("am23_parent")
+        if json.dumps(got, sort_keys=True) != json.dumps(want, sort_keys=True):
+            bad["am23_parent"] = (got, want)
+    except QATRefused as e:
+        bad["am23_binding"] = (e.code, str(e))
+    if meta.get("e6_selections") is not None:
+        bad["e6_selections"] = (meta.get("e6_selections"), None)
+    if meta.get("cwd_projection_loaded") is not False:
+        bad["cwd_projection_loaded"] = (meta.get("cwd_projection_loaded"), False)
+    return bad
 
 
 def tf32_error(state: dict | None = None) -> str | None:
@@ -1120,6 +1321,10 @@ def build_parser(stage: dict) -> argparse.ArgumentParser:
     p.add_argument("--num-workers", type=int, default=None)
     p.add_argument("--out-dir", default=None)
     p.add_argument("--device", default="cuda")
+    if stage["name"] in E6X_PARENT_ARM:                  # E6-R1, E6-R2: the condition of record (AM-23 item 3(b))
+        p.add_argument("--condition-record", default=None)
+        p.add_argument("--condition-sha256", default=None)
+        p.add_argument("--condition-dl", default=None)
     return p
 
 
@@ -1156,7 +1361,9 @@ def real_run_gates(args, stage: dict, *, repo_root: Path = REPO) -> dict:
     sel = None
     e6_flags = (args.lambda_selection, args.lambda_selection_sha256, args.alpha_selection,
                 args.alpha_selection_sha256)
-    if stage["source_stage"] == "E3":
+    if stage["source_stage"] == "E2":                    # E6-E2: the λ selection only (AM-23 item 1)
+        sel = (e2_selection(args, repo_root),)
+    elif stage["source_stage"] == "E3":
         lam = read_tracked_selection(args.lambda_selection, args.lambda_selection_sha256,
                                      LAMBDA_SELECTION_FORMAT, "lambda", repo_root)
         alpha = read_tracked_selection(args.alpha_selection, args.alpha_selection_sha256,
@@ -1193,15 +1400,17 @@ def real_run_gates(args, stage: dict, *, repo_root: Path = REPO) -> dict:
     if ident["code_clean_at_head"] is not True:
         _refuse("code_not_clean", "the QAT code paths are not clean at HEAD")
     parent = resolve_parent(stage, args.source_run_dir, args.expect_source_sha256, args.seed)
-    binding = None
-    if sel is not None:
+    binding = am23 = None
+    if stage["name"] in AM23_STAGES:                     # E6-E2, E6-R1, E6-R2 (AM-23 item 4)
+        am23 = am23_parent_binding(stage, parent, args, sel, repo_root=repo_root)
+    elif sel is not None:
         binding = e6_parent_binding(parent, args.seed, *sel)
-    return {"clip": clip, "parent": parent, "e6_binding": binding, "isolation": iso,
+    return {"clip": clip, "parent": parent, "e6_binding": binding, "am23_binding": am23, "isolation": iso,
             "data_root": str(DATA["root"]), "identity": ident}
 
 
 def load_source(stage: dict, parent: dict):
-    """The parent's best.json checkpoint through the strict E1/E3 loaders (src/quant/checkpoint.py)."""
+    """The parent's best.json checkpoint through the strict E1/E2/E3 loaders (src/quant/checkpoint.py)."""
     from .runner import QuantRunError, check_source
     try:
         model, _ckpt, meta = check_source(stage, parent["checkpoint_path"])
@@ -1209,8 +1418,8 @@ def load_source(stage: dict, parent: dict):
         _refuse(e.code, str(e))
     if meta["sha256"] != parent["checkpoint_sha256"]:
         _refuse("source_changed", "the source checkpoint changed between the gate and the load")
-    if stage["source_stage"] == "E3" and any("cwd" in k.lower() or "projection" in k.lower()
-                                             for k in model.state_dict()):
+    if stage["source_stage"] in ("E2", "E3") and any("cwd" in k.lower() or "projection" in k.lower()
+                                                     for k in model.state_dict()):
         _refuse("source_projection_keys", "the E3 student carries projection keys (AM-4a item 5)")
     return model, meta
 
@@ -1241,6 +1450,10 @@ def main(argv, stage_key: str) -> int:
              "e6_selections": gates["e6_binding"], "data_root": gates["data_root"],
              "isolation_counts": gates["isolation"].get("counts"),
              "expect_head": args.expect_head, "expect_source_sha256": args.expect_source_sha256}
+    if gates.get("am23_binding") is not None:            # AM-23 item 4: the parent binding, on record
+        extra["am23_parent"] = gates["am23_binding"]
+        if stage["source_stage"] == "E2":                # run_qat itself records the flag for E3 sources
+            extra["cwd_projection_loaded"] = False
     try:
         summary = run_qat(stage=stage["key"], mode="real", model=model, source_meta=source_meta,
                           out_dir=args.out_dir, seed=args.seed, clip_norm=args.grad_clip_norm,
@@ -1266,9 +1479,11 @@ def main(argv, stage_key: str) -> int:
 __all__ = [
     "BATCH_SIZE", "BN_FREEZE_EPOCH", "CLIP_CANDIDATES", "EPOCHS", "EPOCH_DIR", "LEARNING_RATE", "MOMENTUM",
     "OBS_FREEZE_EPOCH", "QAT_CODE_PATHS", "QATHooks", "QATRefused", "QATStop", "REAL_SEEDS",
-    "REAL_STEPS_PER_EPOCH", "REAL_T_MAX", "TELEMETRY_NAME", "WEIGHT_DECAY", "batch_sha256",
-    "bn_buffer_digest", "build_parser", "build_qat_loaders", "clip_binding", "config_pins_error",
-    "e6_parent_binding", "fake_quant_modules", "flag_summary", "main", "names_test", "never_observed_modules",
+    "REAL_STEPS_PER_EPOCH", "REAL_T_MAX", "TELEMETRY_NAME", "WEIGHT_DECAY", "am23_parent_binding", "am23_profile",
+    "batch_sha256", "bn_buffer_digest", "build_parser", "build_qat_loaders", "clip_binding",
+    "condition_dl_row", "config_pins_error", "e2_parent_binding", "e2_selection", "e6_parent_binding",
+    "e6x_parent_binding", "fake_quant_modules", "flag_summary", "lambda_selection_input", "main", "names_test",
+    "never_observed_modules",
     "observer_buffer_digest", "observer_census", "read_clip_selection", "read_jsonl",
     "read_tracked_selection", "real_run_gates", "resolve_parent", "run_qat", "save_epoch_checkpoint",
     "state_digest", "state_kinds", "state_predicate", "strict_row",

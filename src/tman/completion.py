@@ -43,6 +43,13 @@ from . import schema as S
 # The statuses a run directory gives (`status_at`); B-2 adds AM-22's settled ways (plan §0, boundary 3).
 COMPLETE, RUNNING, DIVERGED, ABORTED, STOPPED = "complete", "running", "diverged", "aborted", "stopped"
 STATUSES = (COMPLETE, RUNNING, DIVERGED, ABORTED, STOPPED)
+# AM-22's Definitions (docs/PREREGISTRATION_AMENDMENTS.md:2282-2310): the ways a registered run is settled at a date,
+# the enum src/tman/am22.py reads (B2R3). A never-cut run settles only by completion or supersession; a cuttable run
+# also by the rest. The run-directory statuses above stay as they are.
+SETTLED_COMPLETE, SETTLED_SUPERSEDED, SETTLED_DIVERGED = "complete", "superseded", "diverged"
+SETTLED_ABORTED, SETTLED_CUT, SETTLED_NOT_RUN = "aborted", "cut", "not_run"
+NEVER_CUT_SETTLED_WAYS = (SETTLED_COMPLETE, SETTLED_SUPERSEDED)
+SETTLED_WAYS = NEVER_CUT_SETTLED_WAYS + (SETTLED_DIVERGED, SETTLED_ABORTED, SETTLED_CUT, SETTLED_NOT_RUN)
 DIVERGENCE_RULES = ss.DIVERGENCE_RULES                 # ("AM-7(a)", "AM-7(b)"), sweep_select.py:206
 DIVERGENCE_CAUSE = ss.DIVERGENCE_CAUSE                 # "student_divergence", sweep_select.py:207
 
@@ -59,6 +66,14 @@ M12_FINAL_RE = re.compile(r"^(?:(?P<year>\d{4})/)?(?P<month>\d{2})/(?P<day>\d{2}
                           r"(?P<ss>\d{2}) - \S+ - \S*INFO\S* - M12 selection \(final\): ")
 M12_DEFAULT_YEAR = 2026                                # AM-22 item 2(b): a line with no year is in 2026
 M12_LOG_DIR_RE = re.compile(r"^\d{8}_\d{6}$")          # mmengine's <work_dir>/<timestamp>/<timestamp>.log
+# Any time-stamped mmengine line: its timestamp only (AM-22 item 2(b): "MM/DD HH:MM:SS" from the pod's UTC clock)
+STAMP_RE = re.compile(r"^(?:(?P<year>\d{4})/)?(?P<month>\d{2})/(?P<day>\d{2}) (?P<hh>\d{2}):(?P<mm>\d{2}):"
+                      r"(?P<ss>\d{2}) ")
+
+
+def settled_ways(never_cut: bool) -> tuple:
+    """The ways a registered run settles (AM-22 Definitions): a never-cut run's two, a cuttable run's six."""
+    return NEVER_CUT_SETTLED_WAYS if never_cut else SETTLED_WAYS
 
 
 def kd_telemetry_name(stage: str) -> str:
@@ -85,6 +100,15 @@ class Completion:
     def as_entry(self) -> dict:
         """IF§11.2's completion block of a scored entry."""
         return {"record": self.record, "at_utc": self.at_utc, "sha256": self.sha256, "line": self.line}
+
+
+@dataclass(frozen=True)
+class LastRow:
+    """The last time-stamped row a launched attempt wrote (AM-22 item 2(b)): its file, relative to the run directory,
+    that file's sha256, and its Unix time floored to the second (None: no row or line carries a time)."""
+    record: str
+    sha256: str
+    at: int | None
 
 
 @dataclass(frozen=True)
@@ -281,6 +305,21 @@ def m12_final_instant(text: str) -> tuple[int, int] | None:
     return None
 
 
+def last_stamp(text: str) -> int | None:
+    """The Unix time of a log's last time-stamped line, read as UTC (a line with no year is in 2026, AM-22 item
+    2(b)); None when no line carries a time. Only the timestamp is read."""
+    for line in reversed(text.splitlines()):
+        m = STAMP_RE.match(line)
+        if m:
+            try:
+                return int(datetime(int(m.group("year") or M12_DEFAULT_YEAR), int(m.group("month")),
+                                    int(m.group("day")), int(m.group("hh")), int(m.group("mm")), int(m.group("ss")),
+                                    tzinfo=timezone.utc).timestamp())
+            except ValueError:
+                _invalid(f"a log line's timestamp is not a date: {line[:19]!r}")
+    return None
+
+
 def teacher_state(work_dir: Path, log_rel: str | None = None) -> RunState:
     """A teacher fine-tune: complete at its M12 "(final)" line. `log_rel` names the log; without it the work dir's
     <timestamp>/<timestamp>.log files are read (one listing of the work dir; a name is matched before any call on
@@ -302,6 +341,27 @@ def teacher_state(work_dir: Path, log_rel: str | None = None) -> RunState:
             return RunState(COMPLETE, Completion("teacher_m12", rel, S.sha256_bytes(data), hit[0], hit[1]),
                             ended_at=hit[0])
     return RunState(RUNNING)
+
+
+def teacher_last_row(work_dir: Path) -> LastRow:
+    """AM-22 item 2(b) for a teacher fine-tune, whose scalar rows carry no wall-clock time: the last time-stamped line
+    of its training logs, read in order as teacher_state lists them (one listing of the work dir; a name is matched
+    before any call on it; a line with no year is in 2026). Only this reader parses the other lines' stamps, so
+    teacher_state stays B-1's (DL-24 R1-N2)."""
+    work = Path(work_dir)
+    S.refuse_test_path(work)
+    if not work.is_dir():
+        raise S.TmanRefused("completion_record_invalid", f"{work}: the teacher's work dir is not a folder")
+    last = LastRow("", "", None)
+    for rel in sorted(f"{d.name}/{d.name}.log" for d in work.iterdir() if M12_LOG_DIR_RE.match(d.name)
+                      and d.is_dir()):
+        p = work / rel
+        S.refuse_test_path(p)
+        data = p.read_bytes() if p.is_file() else None
+        at = last_stamp(data.decode("utf-8", "replace")) if data is not None else None
+        if at is not None:
+            last = LastRow(rel, S.sha256_bytes(data), at)
+    return last
 
 
 # --------------------------------------------------------------------------------------- the ARM measurement
@@ -479,3 +539,33 @@ def run_state(slot: dict, run_dir: Path, **kw) -> RunState:
                                                              "its output and agreement record, not a run directory")
         return arm_state(run_dir, kw["output_rel"], kw["agreement_rel"], kw["at_utc"])
     raise S.TmanRefused("completion_record_invalid", f"slot {slot['slot']}: record kind {kind!r} has no run reader")
+
+
+# --------------------------------------------------------------------------- the last row (AM-22 item 2(b))
+class _EveryEvent(dict):
+    """read_jsonl's allowlist by event, the same keys for every event: a row's time and nothing else."""
+
+    def get(self, key, default=None):
+        return {"event": True, "wall_clock": True, "wall_clock_end": True}
+
+
+ROW_TIMES = _EveryEvent()
+
+
+def last_row(slot: dict, run_dir: Path) -> LastRow:
+    """The last time-stamped row a launched attempt of `slot` wrote (AM-22 item 2(b)): the last row of its telemetry
+    that carries a wall_clock (a run_end's wall_clock_end), whatever its event; for a teacher fine-tune, whose scalar
+    rows carry no wall-clock time, the last time-stamped line of its training log (teacher_last_row). Time only."""
+    kind = slot["record_kind"]
+    if kind == "teacher_m12":
+        return teacher_last_row(run_dir)
+    rel = {"kd_run_end": kd_telemetry_name(slot["stage"]), "e1_val_result": E1_TELEMETRY,
+           "qat_epoch15": QAT_TELEMETRY}.get(kind)
+    if rel is None:
+        raise S.TmanRefused("completion_record_invalid", f"slot {slot['slot']}: record kind {kind!r} writes no rows")
+    rows, _, sha = R.read_jsonl(Path(run_dir) / rel, ROW_TIMES, code="completion_record_invalid")
+    for r in reversed(rows):
+        at = _second(r.get("wall_clock_end") if r.get("event") == "run_end" else r.get("wall_clock"))
+        if at is not None:
+            return LastRow(rel, sha, at)
+    return LastRow(rel, sha, None)

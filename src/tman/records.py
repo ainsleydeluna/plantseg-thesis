@@ -98,7 +98,8 @@ CLIP_SELECTION = {"format": True, "rules_sha256": True, "stage": True, "seed": T
                   "winner": _CLIP_SIDE, "loser": _CLIP_SIDE}
 # arm records (scripts/arm_teacher_record.py:219-223 selection, :236-258 the record; scripts/arm_go_rule.py:245-262;
 # scripts/run_ptq_arm.py:206-226; scripts/launch_teacher_arm.py:623-639)
-ARM_TEACHER_RECORD = {"format": True, "arm": True, "status": True, "first_nonfinite": True, "generated_utc": True,
+ARM_TEACHER_RECORD = {"format": True, "arm": True, "status": True, "first_nonfinite": {"iteration": True},  # DL-24 #112
+                      "generated_utc": True,
                       "work_dir": {"name": True, "attempt": True},
                       "selection": {"status": True, "selected_iteration": True, "recorded_checkpoint_sha256": True,
                                     "teacher_selection_json_sha256": True,
@@ -279,6 +280,48 @@ class Records:
                                                                    "records_mismatch") else code,
                                 f"[{e.code}] {e}") from None
 
+    def at_commit(self, commit: str) -> "Records":
+        """The records as committed by `commit` (CommitSource; AM-22 item 1(a)'s "by the end of X", audit M3)."""
+        return Records(CommitSource(self.src, commit))
+
+
+class CommitSource(ss.HeadSource):
+    """The records committed by a commit (audit M3): a records file (sweep_select.RecordsSource.is_record: reports/
+    and the decision log) is its blob at `commit`, and "exists" means there; code and configs are read at HEAD of the
+    checkout, as HeadSource reads them (PL-28's split). The records' history (held_by, entered_day, the adding
+    commits) ends at `commit`."""
+    kind = "commit"
+    is_record = staticmethod(ss.RecordsSource.is_record)
+
+    def __init__(self, src: ss.HeadSource, commit: str):
+        super().__init__(src.root)
+        self.commit = commit
+
+    @property
+    def records_ref(self) -> str:
+        return self.commit
+
+    def has(self, rel: str) -> bool:
+        return self.blob_at(self.commit, rel) is not None if self.is_record(rel) else super().has(rel)
+
+    def _record(self, rel: str, *, missing: str) -> bytes:
+        ss.refuse_test_path(self.root / rel)
+        data = self.show(self.commit, rel)
+        if data is None:
+            raise ss.SelectionRefused(missing, f"{rel} does not exist at {self.commit[:12]}")
+        return data
+
+    def read(self, path, *, missing: str, uncommitted: str, record: bool = False) -> tuple[str, bytes]:
+        rel = self.rel(path)
+        if rel is not None and (record or self.is_record(rel)):
+            return rel, self._record(rel, missing=missing)
+        return super().read(path, missing=missing, uncommitted=uncommitted)
+
+    def read_at_head(self, rel: str, *, missing: str) -> bytes:
+        if self.is_record(rel):
+            return self._record(rel, missing=missing)
+        return super().read_at_head(rel, missing=missing)
+
 
 # ------------------------------------------------------------------------------------------- run directories
 def read_jsonl(path: Path, rows_allow: dict, *, code: str) -> tuple[list[dict], bool, str]:
@@ -322,11 +365,43 @@ def _read_bytes(path, code: str) -> bytes:
         raise S.TmanRefused(code, f"{path}: unreadable ({type(e).__name__})") from None
 
 
-# ------------------------------------------------------------------------------- the AM-3 trigger record (O-8)
-# L-AM3's reader of the AM-3 trigger record, read(path, bytes) -> {"triggered": bool}. No format exists in code until
-# L-AM3 merges (plan O-8): the slot stays empty, so freeze, unlock and session refuse trigger_format_unknown and a
-# draft lists it as MISSING; the smokes fill it, or the validator's Ctx, with a fixture reader.
-TRIGGER_READER = None
+# ------------------------------------------------------------------------- the AM-3 trigger record (O-8; B2R13)
+# L-AM3's reader of the committed AM-3 trigger record (merged at ebc1201, DL-140), read(path, bytes) ->
+# {"triggered": bool}. Its module is imported when a record is read, as manifest.registered_cells imports
+# src.corruption_roles (TB6); the smokes keep a fixture reader through the validator's Ctx(trigger_reader=...).
+TRIGGER_MODULE = "src.quant.e6kd_trigger"
+TRIGGER_RECORD_REL = "reports/derived/e6kd_trigger.json"       # src/quant/e6kd_trigger.py:75, the committed copy
+TRIGGER_NOT_TRIGGERED = "trigger_not_triggered"                # its reader's last refusal: a record of triggered false
+
+
+def l_am3_trigger(path: str, data: bytes, *, root=None) -> dict:
+    """B2R13: the record at `path` read by L-AM3's read_trigger_record (src/quant/e6kd_trigger.py:594-637) -- tracked
+    and unchanged at HEAD of `root` (the records' checkout; L-AM3's own without one), at the sha256 of `data`, the
+    bytes the records hold, its decision following from its own values -- and its verdict kept, nothing else:
+    {"triggered": True}, or {"triggered": False} when the reader's one refusal is that the record reads triggered
+    false. Any other refusal is a ValueError (the validator's trigger_format_unknown)."""
+    mod = importlib.import_module(TRIGGER_MODULE)
+    kw = {} if root is None else {"repo_root": Path(root)}
+    try:
+        mod.read_trigger_record(path, S.sha256_bytes(data), **kw)
+    except mod.QATRefused as e:
+        if getattr(e, "code", None) == TRIGGER_NOT_TRIGGERED:
+            return {"triggered": False}
+        raise ValueError(f"L-AM3's reader refuses {path}: [{getattr(e, 'code', None)}] {e}") from None
+    return {"triggered": True}
+
+
+TRIGGER_READER = l_am3_trigger
+
+
+def trigger_reader(records: Records):
+    """The trigger reader of a validation or a check that names none: TRIGGER_READER -- L-AM3's, bound to the
+    records' checkout -- or the stand-in a smoke put in its place (None: no reader)."""
+    reader = TRIGGER_READER
+    if reader is l_am3_trigger:
+        root = records.src.root
+        return lambda path, data: l_am3_trigger(path, data, root=root)
+    return reader
 
 
 # ------------------------------------------------------------------------------------- PTQ records (A2; lane LQP)

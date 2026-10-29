@@ -46,9 +46,10 @@ IF6_CELLS = ([f"{c}_s{s}" for c in ("motion_blur", "gaussian_noise", "jpeg_compr
              + [f"{c}_s{s}" for c in ("motion_blur", "jpeg_compression", "brightness", "fog") for s in (4, 5)])
 LANE_FILES = ("src/tman/__init__.py", "src/tman/schema.py", "src/tman/records.py", "src/tman/completion.py",
               "src/tman/schedule.py", "src/tman/entries.py", "src/tman/manifest.py", "src/tman/validate.py",
-              "configs/tday_catalogue.json", "scripts/tday_manifest.py", "docs/lane_reports/tman.md") + tuple(
+              "src/tman/am22.py", "configs/tday_catalogue.json", "scripts/tday_manifest.py",
+              "docs/lane_reports/tman.md") + tuple(
     f"scripts/smoke_tman_{n}.py" for n in ("schema", "cuts", "parent", "derived", "complete", "pins", "validate",
-                                           "unlock", "noscore", "determinism", "paths", "mutations"))
+                                           "unlock", "noscore", "determinism", "paths", "mutations", "am22"))
 MARKER = "nonexistent_tman_fx"          # a top-level folder that is never created
 
 
@@ -123,9 +124,9 @@ def case_created_names():
     bad = [n for n in names if S.created_name_error(n)]
     want = 4 + len(LANE_FILES) + len(file_ids) * (2 * len(S.ENTRY_FILE_KINDS) + 3 + len(IF6_CELLS))
     check("created_names_free_of_test_colon_and_reserved_TB7", not bad and len(file_ids) == 70
-          and len(IF6_CELLS) == 24 and len(names) == want == 3317, f"{len(names)} names (want {want}); bad {bad[:5]}")
+          and len(IF6_CELLS) == 24 and len(names) == want == 3319, f"{len(names)} names (want {want}); bad {bad[:5]}")
     check("lane_files_free_of_test_TB7", all(S.created_name_error(p) is None for p in LANE_FILES)
-          and len(LANE_FILES) == 23)
+          and len(LANE_FILES) == 25)                    # B-2 adds src/tman/am22.py and scripts/smoke_tman_am22.py
 
 
 def case_test_paths_refused_before_any_call():
@@ -290,8 +291,10 @@ def case_static_file_access():
     from src.tman import schema as S
     mods = lane_python()
     listing = listing_sites(mods)
-    check("listings_are_the_teacher_log_and_the_runs_folder_only", len(mods) == 9
+    # B2-F2: teacher_last_row lists the teacher's work dir as teacher_state does (AM-22 item 2(b); DL-24 R1-N2)
+    check("listings_are_the_teacher_log_and_the_runs_folder_only", len(mods) == 10          # B2R11: am22.py
           and listing == [("src/tman/completion.py", "__init__", "iterdir"),
+                          ("src/tman/completion.py", "teacher_last_row", "iterdir"),
                           ("src/tman/completion.py", "teacher_state", "iterdir")], str(listing))
     writes = sorted((rel, name) for rel, t in mods.items() for name, n in calls(t)
                     if name in WRITE_CALLS or (name == "replace" and isinstance(n.func, ast.Attribute)
@@ -345,6 +348,26 @@ def case_evaluator_closure_never_reads_a_test_named_module():
                                        "src/stats/artifact.py", hidden]), err or str(sorted(files)))
     check("hash_only_is_a_name_test", M.hash_only(hidden) and M.hash_only("x/TEST_y.py")
           and not M.hash_only("src/stats/artifact.py"))
+    teacher, r1, r2 = ("configs/teacher/segnext_mscan-b_1xb16-adamw-40k_plantseg116-512x512.py",
+                       "configs/teacher/arms/r1_bema.py", "configs/teacher/arms/r2_bema_rare.py")
+    src = ClosureSource({teacher: b"custom_imports = dict(imports=['src.training.teacher_components'])\n",
+                         r1: b"_base_ = ['../base_only.py']\n",
+                         "configs/teacher/base_only.py": b"_base_ = ['mmseg::x/y.py', '../../../outside.py']\n",
+                         "../outside.py": b"", r2: b"_base_ = ['./r1_bema.py']\ncustom_imports = "
+                                                  b"dict(imports=['src.training.arm_components'])\n",
+                         "src/__init__.py": b"", "src/training/__init__.py": b"",
+                         "src/training/teacher_components.py": b"", "src/training/arm_components.py": b""})
+    files = M.evaluator_files(src, "0" * 40)
+    check("closure_holds_the_arm_teacher_configs_B81", r1 in files and r2 in files, str(sorted(files)))
+    check("closure_follows_a_config_s_custom_imports_B81", "src/training/teacher_components.py" in files
+          and "src/training/arm_components.py" in files, str(sorted(files)))
+    check("closure_follows_a_config_s_bases_in_the_three_roots_B81", sorted(files) == sorted(
+        [teacher, r1, r2, "configs/teacher/base_only.py", "src/__init__.py", "src/training/__init__.py",
+         "src/training/teacher_components.py", "src/training/arm_components.py"]), str(sorted(files)))
+    check("evaluator_roots_are_decision_x_s_scripts_and_IF10_s_B79", sorted(M.EVALUATOR_ROOTS) == sorted(
+        ["scripts/evaluate_model.py", "scripts/evaluate_corruptions.py", "scripts/profile_efficiency.py",   # (x)
+         "scripts/build_corruption_cache.py", "scripts/verify_corruption_cache.py",                       # IF§10
+         "scripts/run_corruption_grid.py", "scripts/report_robustness.py"]), str(M.EVALUATOR_ROOTS))
 
 
 def post_freeze_ptq_append(w, out: Path, base: list) -> None:
@@ -522,14 +545,14 @@ def case_cli_outputs():
                                        str(dirs["arith"])])]
         import src.data.isolation as ISO
         from src.tman import records as R
-        saved = ISO.DEFAULT_EXPECTED_COUNTS
+        saved, saved_trigger = ISO.DEFAULT_EXPECTED_COUNTS, R.TRIGGER_READER
         try:
             ISO.DEFAULT_EXPECTED_COUNTS = {"train": 1, "val": 1}      # the fixture root's counts
             R.TRIGGER_READER = w.trigger_reader()                     # L-AM3's reader's stand-in (plan O-8)
             got = {name: _cli(argv) for name, argv in runs}
         finally:
             ISO.DEFAULT_EXPECTED_COUNTS = saved
-            R.TRIGGER_READER = None
+            R.TRIGGER_READER = saved_trigger                          # L-AM3's reader (B2R13)
         check("every_command_passes_once", all(rc == 0 for rc, _ in got.values()),
               str({k: (rc, txt.strip().splitlines()[-1:]) for k, (rc, txt) in got.items() if rc}))
         made = {k: sorted(p.name for p in v.iterdir()) for k, v in dirs.items()}
@@ -606,7 +629,8 @@ def case_cli_outputs():
         no_ec["body"]["execution_context"] = None
         (out / "m_no_context.json").write_bytes(S.json_file_bytes(no_ec))
         other = w.entry_file("freeze", [], {"body_sha256": "0" * 64, "freeze_date": VW.FREEZE_DAY,
-                                            "source": "schedule"}, nn=30)
+                                            "source": "AM-22 item 1(f)", "d_date": None, "conditions": None},
+                             nn=30)                                     # B2R5: kind freeze's AM-22 fields
         w.commit({other["path"]: w.files[other["path"]]}, "a freeze record of another body")   # after the log check
         for name, manifest, extra in (("cli_inventory_refused_writes_nothing_B61", "m_no_context.json", []),
                                       ("cli_inventory_freeze_record_of_another_body_B33", "m.json",

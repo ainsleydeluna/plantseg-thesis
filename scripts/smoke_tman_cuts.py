@@ -467,7 +467,392 @@ def case_printers_and_committed_files():
                    R.Records.at_head(renamed), wrong)
 
 
+# =============================================================================== AM-22 item 2: the launch cutoff (B-2)
+DL135_E3R1 = ("e3-r1_s42_lambda0.5_alpha25_80k_a2", "2026-10-21T16:58:32.849198Z")   # wall_clock_end 1792601912.849198
+DL136_E3R2 = ("e3-r2_s42_lambda0.5_alpha25_80k_a2", "2026-10-22T10:36:31.508631Z")   # 1792665391.5086315 (DL-136)
+E3R1, E3R2 = "E3-R1:s42:lambda0.5:alpha25:80k", "E3-R2:s42:lambda0.5:alpha25:80k"
+L_ARM = ["teacher-L:s42:40k", "E2-L:s42:lambda0.5:80k", "E3-L:s42:lambda0.5:alpha25:80k"]
+
+
+def am22_dates():
+    from src.tman import schedule as D
+    return D.Am22Dates("2026-10-20", "2026-10-29", "2026-10-20", "2026-10-29", 0)
+
+
+class Index:
+    """completion.RunIndex's surface the cutoff readers read: the launched attempts by slot under a runs root."""
+
+    def __init__(self, root, runs: dict):
+        self.root, self.cat, self.runs = root, catalogue(), runs
+        self.slot_of = {r: k for k, rs in runs.items() for r in rs}
+
+    def attempts(self, slot):
+        return list(self.runs.get(slot, []))
+
+    def state(self, rid):
+        from src.tman import completion as C
+        return C.run_state(self.cat.slots[self.slot_of[rid]], self.root / rid)
+
+
+def cctx(moving=None, **kw):
+    """A cut context reading AM-22's dates and, per slot, the cutoff-moving records `moving` gives (none: [])."""
+    mv = moving if callable(moving) else (lambda slot: (moving or {}).get(slot, []))
+    return ctx(am22=am22_dates, moving=mv, reads_runs=True, **kw)
+
+
+def cutoff_cut(slots, date, **kw) -> dict:
+    """A never-launched cutoff cut (AM-22 item 2(a)) dated `date`, its reason and since AM-19 item 3(b)'s."""
+    fields = dict(pos=None, rule="cutoff", date=date, reason="gate not met",
+                  since={"date": "2026-10-14", "record": dict(REF)}, rule_record=None)
+    fields.update(kw)
+    return freeze_cut(slots=list(slots), **fields)
+
+
+def written(path: str, day: str, sha: str = "3" * 64) -> dict:
+    return {"record": {"path": path, "sha256": sha, "date": day}}
+
+
+def dl_fixture(e3x: str, run: tuple):
+    """DL-137 / DL-138's records, synthetic: E3-X's end-of-run record under the run directories (DL-135/DL-136's
+    wall_clock_end, a Manila day the UTC day is not for R1), the pilot's winner record named by a RECORDED row that
+    states its day after its sha256 (DL-139's form). (the cut context's moving reader, E3-X's record)."""
+    from src.tman import entries as E
+    from src.tman import records as R
+    root = FX.scratch_dir("tmanruns")
+    FX.kd_run(root, run[0], stage_key="e3", end=run[1])
+    clip = {"path": "u4_clip/clip_selection.json", "sha256": "c4" * 32}
+    repo = FX.new_repo()
+    FX.commit_files(repo, {"docs/DECISION_LOG.md": FX.dl_table({"DL-139": (
+        "RECORDED", f"The U4 pilot's winner record is u4_clip/clip_selection.json, sha256 {clip['sha256']}, written "
+                    "by that block B on 2026-10-18; never committed")})})
+    mv = E.moving_reader(catalogue(), R.Records.at_head(repo), Index(root, {e3x: [run[0]]}), clip)
+    tel = root / run[0] / "e3_telemetry.jsonl"
+    from src.tman import schema as S
+    return mv, {"path": f"{run[0]}/e3_telemetry.jsonl", "sha256": S.sha256_bytes(tel.read_bytes()),
+                "date": "2026-10-22"}
+
+
+def case_cutoff_dates():
+    """AM-22 item 2(a)'s dates (B2R1) and DL-137, DL-138 and DL-168 reproduced on synthetic records (B2R2)."""
+    from src.tman import entries as E
+    from src.tman import schedule as D
+    d = am22_dates()
+    check("cutoff_without_a_moving_record_is_1020", D.cutoff_day(d, None) == "2026-10-20")
+    check("cutoff_two_days_after_the_last_record", (D.cutoff_day(d, "2026-10-22"), D.cutoff_day(d, "2026-10-18"))
+          == ("2026-10-24", "2026-10-20"))
+    check("cutoff_never_before_1020_R3_15", D.cutoff_day(d, "2026-10-17") == "2026-10-20")
+    check("cutoff_never_past_the_ceiling_1029", D.cutoff_day(d, "2026-10-28") == "2026-10-29")
+    check("cutoff_of_a_record_not_written_is_the_ceiling", D.cutoff_day(d, "2026-10-18", absent=True) == "2026-10-29")
+    check("repeat_cutoff_three_days_after_the_last_row", D.repeat_cutoff_day("2026-10-21") == "2026-10-24")
+    mv, e3r1 = dl_fixture(E3R1, DL135_E3R1)
+    dl137 = cutoff_cut(["E6-R1:s42:15ep"], "2026-10-24", since={"date": "2026-10-22", "record": dict(REF)},
+                       rule_record=e3r1)
+    expect_gate("dl137_e6r1_cut_at_the_end_of_1024_m3", dl137, cctx(mv), None)
+    expect_gate("dl137_dated_by_the_utc_day_refused_m3", dict(dl137, date="2026-10-23"), cctx(mv), "cut_date_mismatch")
+    expect_gate("dl137_naming_the_pilot_record_as_its_setter_refused_B2R2",
+                dict(dl137, rule_record={"path": "u4_clip/clip_selection.json", "sha256": "c4" * 32,
+                                         "date": "2026-10-18"}), cctx(mv), "cut_date_mismatch")
+    rep = E.late_entry_report(dl137, "2026-10-26")
+    check("dl137_entered_a_day_late_is_a_report", rep is not None and "due 2026-10-25, entered 2026-10-26" in rep,
+          str(rep))
+    mv2, e3r2 = dl_fixture(E3R2, DL136_E3R2)
+    dl138 = cutoff_cut(["E6-R2:s42:15ep"], "2026-10-24", since={"date": "2026-10-22", "record": dict(REF)},
+                       rule_record=e3r2)
+    expect_gate("dl138_e6r2_cut_at_the_end_of_1024", dl138, cctx(mv2), None)
+    known = [{"dl": "DL-118", "path": "reports/arms/arm_teacher_record_R1.json", "sha256": "4" * 64}]
+    dl168 = cutoff_cut(L_ARM, "2026-10-20", reason="code not merged", results_known=known)
+    expect_gate("dl168_l_arm_cut_at_the_end_of_1020_m7", dl168, cctx(), None)
+    from src.tman import records as R
+    lrepo = FX.new_repo()                  # the L arm's runs never launched: E2-L and E3-L wait on teacher-L's end
+    FX.commit_files(lrepo, {"docs/DECISION_LOG.md": FX.dl_table({"DL-129": ("RECORDED", "L: code not merged")})})
+    lmv = E.moving_reader(catalogue(), R.Records.at_head(lrepo), Index(FX.scratch_dir("tmanruns"), {}), None)
+    expect_gate("dl168_l_arm_cut_by_its_first_run_s_date_through_the_moving_reader_R3_08", dl168, cctx(lmv), None)
+    expect_gate("dl168_teacher_and_one_kd_run_only_refused_m7", dict(dl168, slots=L_ARM[:2]), cctx(),
+                "arm_cut_partial")
+    expect_gate("dl168_without_its_known_results_refused", dict(dl168, results_known=[]), cctx(),
+                "arm_cut_results_missing")
+    rep = E.late_entry_report(dl168, "2026-10-27")
+    check("dl168_entered_six_days_late_is_a_report", rep is not None and "due 2026-10-21, entered 2026-10-27" in rep,
+          str(rep))
+
+
+def case_cutoff_rules():
+    """2(a) with and without a moving record, the ceiling, 2(b), 2(c), 2(d), reason and since, the measurement, a
+    sweep candidate's repeat, the entered day, and B2R8's "no card" REPORT."""
+    from src.tman import completion as C
+    from src.tman import entries as E
+    g = "G:s42:80k"
+    expect_gate("cutoff_2a_without_a_moving_record_passes", cutoff_cut([g], "2026-10-20"), cctx(), None)
+    expect_gate("cutoff_2a_dated_off_1020_refused", cutoff_cut([g], "2026-10-21"), cctx(), "cut_date_mismatch")
+    expect_gate("cutoff_2a_naming_a_record_none_set_refused", cutoff_cut([g], "2026-10-20", rule_record={
+        "path": "x.json", "sha256": "3" * 64, "date": "2026-10-20"}), cctx(), "cut_date_mismatch")
+    e3s43 = "E3:s43:lambda0.5:alpha25:80k"
+    alpha = written("reports/derived/alpha_selection.json", "2026-10-19")
+    moved = {e3s43: [dict(gate="alpha_selection", **alpha)]}
+    expect_gate("cutoff_2a_moved_by_the_alpha_selection_passes", cutoff_cut([e3s43], "2026-10-21",
+                                                                            rule_record=alpha["record"]),
+                cctx(moved), None)
+    expect_gate("cutoff_2a_moved_record_not_named_refused", cutoff_cut([e3s43], "2026-10-21"), cctx(moved),
+                "cut_date_mismatch")
+    late = {e3s43: [dict(gate="alpha_selection", **written("reports/derived/alpha_selection.json", "2026-10-28"))]}
+    expect_gate("cutoff_2a_ceiling_1029", cutoff_cut([e3s43], "2026-10-29", rule_record=late[e3s43][0]["record"]),
+                cctx(late), None)
+    expect_gate("cutoff_2a_past_the_ceiling_refused", cutoff_cut([e3s43], "2026-10-30",
+                                                                 rule_record=late[e3s43][0]["record"]),
+                cctx(late), "cut_date_mismatch")
+    e6s43 = "E6:s43:15ep"
+    waiting = {e6s43: [{"gate": "parent_end", "record": None},
+                       dict(gate="pilot_winner", **written("u4_clip/clip_selection.json", "2026-10-18"))]}
+    expect_gate("cutoff_2c_parent_still_running_cut_at_the_ceiling", cutoff_cut([e6s43], "2026-10-29"),
+                cctx(waiting), None)
+    after = {e6s43: [dict(gate="parent_end", **written("e3_s43_a1/e3_telemetry.jsonl", "2026-10-31")),
+                     dict(gate="pilot_winner", **written("u4_clip/clip_selection.json", "2026-10-18"))]}
+    expect_gate("cutoff_2c_record_written_after_the_ceiling_is_unwritten_R1_F3", cutoff_cut([e6s43], "2026-10-29"),
+                cctx(after), None)
+    one = {e6s43: [{"gate": "parent_end", "record": None},
+                   dict(gate="pilot_winner", **written("u4_clip/clip_selection.json", "2026-10-25"))]}
+    expect_gate("cutoff_2c_one_record_unwritten_rule_record_null_R4_4", cutoff_cut([e6s43], "2026-10-29"), cctx(one),
+                None)
+    expect_gate("cutoff_2c_one_record_unwritten_naming_the_other_refused_R4_4",
+                cutoff_cut([e6s43], "2026-10-29", rule_record=one[e6s43][1]["record"]), cctx(one), "cut_date_mismatch")
+    e6s44 = "E6:s44:15ep"
+    pilot = dict(gate="pilot_winner", **written("u4_clip/clip_selection.json", "2026-10-18"))
+    two = {k: [dict(gate="parent_end", **written(f"e3_s{k[4:6]}_a1/e3_telemetry.jsonl", "2026-10-22")), pilot]
+           for k in (e6s43, e6s44)}
+    why = E.cutoff_rule(cutoff_cut([e6s43, e6s44], "2026-10-24"), cctx(two))[2]
+    check("cutoff_slots_set_by_different_records_one_entry_each_R4", "one cut entry per record that sets it"
+          in str(why), str(why))
+    why = E.cutoff_rule(cutoff_cut([e3s43, g], "2026-10-21", rule_record=alpha["record"]), cctx(moved))[2]
+    check("cutoff_slots_with_different_dates_refused_R3_15", "have different cutoff dates" in str(why), str(why))
+    unread = {e6s43: [{"gate": "parent_end", "record": None, "unread": "the run directories are not read"}]}
+    expect_gate("cutoff_2a_moving_record_unread_refused", cutoff_cut([e6s43], "2026-10-29"), cctx(unread),
+                "cut_date_mismatch")
+    expect_gate("cutoff_unread_in_a_draft_s_context_stands_R3_15", cutoff_cut([e6s43], "2026-10-29"),
+                ctx(am22=am22_dates, moving=lambda slot: unread.get(slot, []), reads_runs=False), None)
+    known = [{"dl": "DL-118", "path": "reports/arms/arm_teacher_record_R1.json", "sha256": "4" * 64}]
+    arm = cutoff_cut([E3R1], "2026-10-29", results_known=known)
+    teacher_running = {E3R1: [{"gate": "arm_teacher_selection", "record": None},
+                              dict(gate="alpha_selection", **alpha)]}
+    expect_gate("cutoff_2c_arm_run_cut_while_its_teacher_runs", arm,
+                cctx(teacher_running, status=lambda s: "running" if s.startswith("teacher") else None), None)
+    expect_gate("freeze_cut_of_the_same_arm_run_still_refused_AM18_7b", freeze_cut(slots=[E3R1], pos=7,
+                                                                                   results_known=known),
+                ctx(status=lambda s: "running" if s.startswith("teacher") else None), "arm_cut_partial")
+    expect_gate("cutoff_2d_never_cut_run_refused", cutoff_cut(["E1:s42:80k"], "2026-10-20"), cctx(),
+                "cut_of_never_cut")
+    expect_gate("cutoff_of_the_arm_measurement_refused_1g_m7", cutoff_cut(["ARM:latency"], "2026-10-20"), cctx(),
+                "cut_rule_unknown")
+    expect_gate("cutoff_reason_outside_the_list_refused", cutoff_cut([g], "2026-10-20", reason="cards busy"),
+                cctx(), "cut_reason_invalid")
+    expect_gate("cutoff_without_since_refused", cutoff_cut([g], "2026-10-20", since=None), cctx(),
+                "cut_reason_invalid")
+    expect_gate("cutoff_entered_on_its_cutoff_date_refused", cutoff_cut([g], "2026-10-20"),
+                cctx(entered=lambda d: "2026-10-20"), "cut_date_mismatch")
+    expect_gate("cutoff_entered_the_day_after_passes", cutoff_cut([g], "2026-10-20"),
+                cctx(entered=lambda d: "2026-10-21"), None)
+    # 2(b): a repeat not launched within three days of the last row its attempt wrote
+    row = C.LastRow("e3_telemetry.jsonl", "5" * 64, int(FX.utc("2026-10-21T10:00:00Z")))
+    rr = {"path": "g_s42_80k_a1/e3_telemetry.jsonl", "sha256": "5" * 64, "date": "2026-10-21"}
+    rep = cutoff_cut([g], "2026-10-24", rule_record=rr, **dict(launched_fields("g_s42_80k_a1"), reason="no card",
+                                                                since={"date": "2026-10-21", "record": dict(REF)}))
+    stopped = dict(runs={g: ["g_s42_80k_a1"]}, stopped={"g_s42_80k_a1"}, last_row=lambda rid: row)
+    expect_gate("cutoff_2b_repeat_three_days_after_the_last_row_passes", rep, cctx(**stopped), None)
+    late_row = C.LastRow("e3_telemetry.jsonl", "5" * 64, int(FX.utc("2026-10-21T16:30:00Z")))   # Manila 10-22
+    expect_gate("cutoff_2b_row_after_16z_counts_from_its_manila_day_R4_2",
+                dict(rep, date="2026-10-25", rule_record=dict(rr, date="2026-10-22")),
+                cctx(**dict(stopped, last_row=lambda rid: late_row)), None)
+    expect_gate("cutoff_2b_after_a_diverged_attempt_refused_R3_15", rep,
+                cctx(**dict(stopped, status=lambda s: C.DIVERGED if s == g else None)), "cut_date_mismatch")
+    expect_gate("cutoff_2b_dated_two_days_after_refused", dict(rep, date="2026-10-23"), cctx(**stopped),
+                "cut_date_mismatch")
+    expect_gate("cutoff_2b_takes_2a_s_reason_m1", dict(rep, reason="not complete at the freeze"), cctx(**stopped),
+                "cut_reason_invalid")
+    expect_gate("cutoff_2b_rows_unread_refused", rep, cctx(**dict(stopped, last_row=lambda rid: None)),
+                "cut_date_mismatch")
+    flip = "E3-flip:s42:lambda0.5:alpha25:80k"
+    arm_rep = cutoff_cut([flip], "2026-10-24", rule_record=dict(rr, path="e3-flip_s42_80k_a1/e3_telemetry.jsonl"),
+                         results_known=known, **dict(launched_fields("e3-flip_s42_80k_a1"), reason="gate not met",
+                                                     since={"date": "2026-10-21", "record": dict(REF)}))
+    expect_gate("cutoff_2b_of_a_stopped_arm_run_passes_m1", arm_rep,
+                cctx(runs={flip: ["e3-flip_s42_80k_a1"]}, stopped={"e3-flip_s42_80k_a1"}, last_row=lambda rid: row),
+                None)
+    stop = {"path": "reports/kd_teacher-r2_s42_40k_a1_stop.md", "sha256": "7" * 64, "date": "2026-10-21"}
+    teach = cutoff_cut(["teacher-R2:s42:40k", E3R2], "2026-10-24", rule_record=stop, results_known=known,
+                       **dict(launched_fields("teacher-r2_s42_40k_a1"), reason="gate not met",
+                              since={"date": "2026-10-21", "record": dict(REF)}))
+    no_line = dict(runs={"teacher-R2:s42:40k": ["teacher-r2_s42_40k_a1"]}, last_row=lambda rid: C.LastRow("", "", None))
+    expect_gate("cutoff_2b_teacher_without_a_stamped_line_takes_its_stop_entry_m2", teach,
+                cctx(**no_line, logged=lambda sha: "2026-10-21" if sha == "7" * 64 else None), None)
+    expect_gate("cutoff_2b_teacher_stop_not_in_the_log_refused_m2", teach, cctx(**no_line), "cut_date_mismatch")
+    a100 = "E3:s42:lambda0.5:alpha100:80k"
+    cand = cutoff_cut([a100], "2026-10-24", rule_record=dict(rr, path="e3_s42_a100_a1/e3_telemetry.jsonl"),
+                      **dict(launched_fields("e3_s42_a100_a1"), reason="no card",
+                             since={"date": "2026-10-21", "record": dict(REF)}))
+    expect_gate("cutoff_2b_of_a_sweep_candidate_s_repeat_refused_m2", cand,
+                cctx(runs={a100: ["e3_s42_a100_a1"]}, last_row=lambda rid: row), "decision_date_cut_mismatch")
+    card = cutoff_cut([g], "2026-10-20", reason="no card")
+    rep_line = E.no_card_report(card, lambda ref: False)
+    check("no_card_without_2f_evidence_is_a_report_B2R8", rep_line is not None
+          and rep_line.startswith("deviation: 'no card' needs item 2(f)'s evidence"), str(rep_line))
+    check("no_card_with_its_committed_evidence_no_report_B2R8", E.no_card_report(card, lambda ref: True) is None
+          and E.no_card_report(cutoff_cut([g], "2026-10-20"), lambda ref: False) is None)
+    expect_gate("no_card_cut_is_never_refused_B2R8", card, cctx(), None)
+
+
+def case_cutoff_readers():
+    """The cutoff's readers on synthetic run directories and records: an end-of-run record by its Manila day, the
+    α selection by its adding commit, the pilot's winner record by its row; a launched attempt's last row; and AM-22's
+    dates of record from the committed text (M1), tied to DL-137 and DL-168 (B2R1)."""
+    from src.tman import completion as C
+    from src.tman import entries as E
+    from src.tman import records as R
+    from src.tman import schedule as D
+    from src.tman import schema as S
+    from src.training import sweep_select as ss
+    mv, e3r1 = dl_fixture(E3R1, DL135_E3R1)
+    got = {r["gate"]: r["record"] for r in mv("E6-R1:s42:15ep")}
+    check("moving_records_of_e6r1_parent_end_and_pilot_m3", got == {
+        "parent_end": e3r1, "pilot_winner": {"path": "u4_clip/clip_selection.json", "sha256": "c4" * 32,
+                                             "date": "2026-10-18"}}, str(got))
+    repo = FX.new_repo()
+    FX.commit_files(repo, {"reports/derived/alpha_selection.json": {"format": "alpha_selection/1"},
+                           "docs/DECISION_LOG.md": FX.dl_table({"DL-121": ("RECORDED", "alpha")})},
+                    date="2026-10-13T17:00:00+00:00")
+    alpha = {r["gate"]: r["record"] for r in E.moving_reader(catalogue(), R.Records.at_head(repo), None)(
+        "E3:s43:lambda0.5:alpha25:80k")}["alpha_selection"]
+    check("alpha_selection_dated_by_its_adding_commit_s_manila_day", alpha["date"] == "2026-10-14"
+          and alpha["path"] == "reports/derived/alpha_selection.json", str(alpha))
+    unread = E.moving_reader(catalogue(), R.Records.at_head(repo), None)("E6:s43:15ep")
+    check("moving_records_unread_without_runs_or_pilot", unread and all(r.get("unread") for r in unread), str(unread))
+    prepo, psha = FX.new_repo(), "c4" * 32         # a day before the sha256 is not the record's day (DL-139's form)
+    FX.commit_files(prepo, {"docs/DECISION_LOG.md": FX.dl_table({"DL-139": (
+        "RECORDED", f"2026-10-16: the U4 pilot's winner record is u4_clip/clip_selection.json, sha256 {psha}, written "
+                    "by that block B on 2026-10-18; never committed")})})
+    got = {r["gate"]: r["record"] for r in E.moving_reader(catalogue(), R.Records.at_head(prepo), Index(
+        FX.scratch_dir("tmanruns"), {}), {"path": "u4_clip/clip_selection.json", "sha256": psha})("E6:s43:15ep")}
+    check("pilot_winner_dated_by_the_day_after_its_sha256_R3_15", (got.get("pilot_winner") or {}).get("date")
+          == "2026-10-18", str(got))
+    root = FX.scratch_dir("tmanruns")
+    cat = catalogue()
+    FX.qat_run(root, "e6_s43_a1", epochs=7, stop=True)
+    q = C.last_row(cat.slots["E6:s43:15ep"], root / "e6_s43_a1")
+    check("last_row_of_a_stopped_qat_attempt_is_its_run_stop", q.record == "qat_telemetry.jsonl"
+          and q.at == int(FX.utc("2026-10-24T00:00:00Z")) + 705, str(q))
+    lr = E.last_row_reader(cat, Index(root, {"E6:s43:15ep": ["e6_s43_a1"]}))
+    check("last_row_reader_reads_an_attempt_s_last_row_R3_13", lr("e6_s43_a1") == q and lr("e6_s44_a1") is None,
+          str(lr("e6_s43_a1")))
+    lrepo = FX.new_repo()
+    FX.commit_files(lrepo, {"docs/DECISION_LOG.md": FX.dl_table({"DL-140": ("RECORDED",
+                                                                            f"a stop: sha256 {'7' * 64}")})},
+                    date="2026-10-21T16:30:00+00:00")
+    check("logged_reader_gives_the_manila_day_a_row_entered_R3_13",
+          E.logged_reader(R.Records.at_head(lrepo))("7" * 64) == "2026-10-22")
+    FX.kd_run(root, "g_a1", stage_key="g", end=None)
+    k = C.last_row(cat.slots["G:s42:80k"], root / "g_a1")
+    check("last_row_of_a_kd_attempt_without_an_end", k.at == int(FX.utc("2026-10-10T00:00:00Z")) + 3, str(k))
+    FX.kd_run(root, "g_a2", stage_key="g", end="2026-10-20T10:00:00Z")
+    k = C.last_row(cat.slots["G:s42:80k"], root / "g_a2")
+    check("last_row_of_a_kd_attempt_with_its_end_is_its_run_end_R3_15", k.at == int(FX.utc("2026-10-20T10:00:00Z")),
+          str(k))
+    FX.teacher_run(root, "teacher-r2_s42_40k_a1", final=None)
+    t = C.last_row(cat.slots["teacher-R2:s42:40k"], root / "teacher-r2_s42_40k_a1")
+    check("last_row_of_a_teacher_is_its_last_stamped_line_utc_2026", t.at == int(FX.utc("2026-10-12T01:02:03Z"))
+          and t.record == "20261012_010203/20261012_010203.log", str(t))
+    FX.teacher_run(root, "teacher-l_s42_40k_a1")              # its train line, then its M12 final line
+    t = C.last_row(cat.slots["teacher-L:s42:40k"], root / "teacher-l_s42_40k_a1")
+    check("last_row_of_a_teacher_is_its_last_of_two_stamped_lines_R3_15", t.at == int(FX.utc("2026-10-13T05:26:26Z")),
+          str(t))
+    bad = root / "teacher-e_s42_40k_a1" / "20261012_010203"
+    bad.mkdir(parents=True)
+    (bad / "20261012_010203.log").write_text("10/12 01:02:03 - mmengine - INFO - Iter(train) [   50/40000]\n"
+                                             "02/30 01:02:03 - mmengine - INFO - Iter(train) [  100/40000]\n")
+    expect_refused("last_row_of_a_teacher_with_an_impossible_stamp_refused_R3_15", "completion_record_invalid",
+                   C.last_row, cat.slots["teacher-R2:s42:40k"], root / "teacher-e_s42_40k_a1")
+    (root / "teacher-r1_s42_40k_a1" / "20261012_010203").mkdir(parents=True)
+    (root / "teacher-r1_s42_40k_a1" / "20261012_010203" / "20261012_010203.log").write_text("no stamp\n")
+    n = C.last_row(cat.slots["teacher-R1:s42:40k"], root / "teacher-r1_s42_40k_a1")
+    check("last_row_of_a_teacher_without_a_stamped_line_m2", n.at is None, str(n))
+    text = (REPO / S.AMENDMENTS_REL).read_text(encoding="utf-8")
+    try:
+        d = D.am22_dates(D.am22_text(text), D.AM22_PUSHED_DAY)
+        got = (d.cutoff, d.ceiling, d.shift_days)
+    except Exception as e:  # noqa: BLE001 -- a refusal fails the check by name
+        got = getattr(e, "code", type(e).__name__)
+    check("am22_dates_of_the_committed_text_M1", got == ("2026-10-20", "2026-10-29", 0), str(got))
+    rows = [ln for ln in (REPO / S.DECISION_LOG_REL).read_text(encoding="utf-8").splitlines()
+            if ln.startswith(("| DL-137 |", "| DL-168 |"))]
+    said = f"AM-22's commit ({D.AM22_COMMIT[:7]}) reached the remote on {D.AM22_PUSHED_DAY}, so no date moves"
+    check("am22_pushed_day_is_dl137_and_dl168_s_B2R1", len(rows) == 2 and all(said in ln for ln in rows)
+          and D.AM22_PUSHED_DAY == "2026-10-17", said)
+    try:
+        live = D.am22_dates_of_record(ss.HeadSource(REPO))
+        live = (live.cutoff, live.ceiling, live.shift_days)
+    except Exception as e:  # noqa: BLE001
+        live = getattr(e, "code", type(e).__name__)
+    check("am22_dates_of_record_at_this_checkout_B2R1", live == ("2026-10-20", "2026-10-29", 0), str(live))
+
+    def refusal(src):
+        try:
+            return D.am22_dates_of_record(src)
+        except Exception as e:  # noqa: BLE001 -- a crash fails the check by name
+            return getattr(e, "code", type(e).__name__), getattr(e, "detail", str(e))
+    got = refusal(ss.HeadSource(repo))
+    check("am22_dates_where_its_commit_is_not_an_ancestor_refused_B2R1", isinstance(got, tuple)
+          and got[0] == "schedule_invalid" and "is not an ancestor" in got[1], str(got))
+    saved = D.AM22_COMMIT
+    try:
+        D.AM22_COMMIT = FX.git(repo, "rev-parse", "HEAD")       # an ancestor whose tree holds no AM-22 section
+        got = refusal(ss.HeadSource(repo))
+    finally:
+        D.AM22_COMMIT = saved
+    check("am22_dates_without_an_am22_section_refused_R3_15", isinstance(got, tuple) and got[0] == "schedule_invalid"
+          and "holds no AM-22 section" in got[1], str(got))
+
+
+def case_cutoff_printer():
+    """`entry cut --rule cutoff` prints a cutoff cut from the records (AM-22's text committed in the fixture world,
+    its commit standing in for ce29549) and refuses one dated off its cutoff date."""
+    import scripts.smoke_tman_validate as VW
+    from src.tman import schedule as D
+    from src.tman import schema as S
+    w = VW.World()
+    saved = D.AM22_COMMIT
+    try:
+        text = (REPO / S.AMENDMENTS_REL).read_text(encoding="utf-8")
+        D.AM22_COMMIT = w.commit({S.AMENDMENTS_REL: D.am22_text(text)}, "AM-22's text (fixture)")
+        fields = {k: v for k, v in cutoff_cut(["G:s42:80k"], "2026-10-20").items() if k in (
+            "reason", "launched", "run_ids", "since", "arithmetic", "telemetry", "comparator", "results_known",
+            "cut_order_position", "rule_record")}
+        for name, date, want, extra in (("printer_cutoff_cut_passes", "2026-10-20", None, ["--rule", "cutoff"]),
+                                        ("printer_cutoff_cut_dated_off_its_cutoff_refused", "2026-10-22",
+                                         "cut_date_mismatch", ["--rule", "cutoff"])):
+            VW.printed(w, name, "cut", ["G:s42:80k"], fields, want, date=date, extra=extra + ["--runs", w.runs])
+        VW.printed(w, "printer_rule_flag_against_the_fields_refused", "cut", ["G:s42:80k"],
+                   dict(fields, rule="freeze"), "entry_field", date="2026-10-20", extra=["--rule", "cutoff"])
+        note = "reports/derived/card_note.json"            # in the working tree, never committed (DL-24 R1-F7)
+        (w.repo / note).write_bytes(b"{}\n")
+        for n, (name, since) in enumerate((
+                ("printer_no_card_cut_prints_its_report_B2R8_R3_07", fields["since"]),
+                ("printer_no_card_since_an_uncommitted_file_is_a_report_R1_F7",
+                 {"date": fields["since"]["date"], "record": {"path": note, "sha256": S.sha256_bytes(b"{}\n")}}))):
+            out = FX.scratch_dir("tmanprint")
+            (out / "fields.json").write_bytes(S.json_file_bytes(dict(fields, reason="no card", since=since)))
+            (out / "out").mkdir()
+            rc, txt = VW._cli(["--root", str(w.repo), "entry", "cut", "--slot", "G:s42:80k", "--date", "2026-10-20",
+                               "--fields", str(out / "fields.json"), "--amendment", "AM-22", "--summary",
+                               "printed by a smoke.", "--out", str(out / "out"), "--nn", str(71 + n), "--rule",
+                               "cutoff", "--runs", str(w.runs)])
+            check(name, rc == 0 and "REPORT deviation: 'no card' needs item 2(f)'s evidence (['G:s42:80k']" in txt,
+                  f"rc {rc}: {txt.strip()[-300:]}")
+    finally:
+        D.AM22_COMMIT = saved
+        if VW.REAL_TEACHER is not None:
+            w.M.TEACHER_OF_RECORD.clear()
+            w.M.TEACHER_OF_RECORD.update(VW.REAL_TEACHER)
+
+
 if __name__ == "__main__":
-    raise SystemExit(FX.run_cases("TMAN CUTS SMOKE (lane TMAN, B-1, C3)",
+    raise SystemExit(FX.run_cases("TMAN CUTS SMOKE (lane TMAN, B-1, C3; B-2)",
                                   (case_gate_order, case_input_gates, case_arithmetic, case_references,
-                                   case_freeze_delay_and_new_freeze, case_printers_and_committed_files)))
+                                   case_freeze_delay_and_new_freeze, case_printers_and_committed_files,
+                                   case_cutoff_dates, case_cutoff_rules, case_cutoff_readers, case_cutoff_printer)))

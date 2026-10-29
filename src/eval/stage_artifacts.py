@@ -47,6 +47,15 @@ STAGE_ARTIFACTS: dict[str, dict] = {
     "E5": {"kind": "int8_artifact", "precision": "int8_qat", "source_stage": "E1", "method": "qat"},
     "E6": {"kind": "int8_artifact", "precision": "int8_qat", "source_stage": "E3", "method": "qat"},
     "E7": {"kind": "int8_artifact", "precision": "int8_ptq", "source_stage": "E3", "method": "ptq"},
+    # AM-23 items 1-4: descriptive INT8 stages, never comparators (DESCRIPTIVE_ONLY_STAGES). E6-E2 and E7-E2 derive
+    # from E2 seed 42, E6-R1 and E6-R2 from the arm runs E3-R1 and E3-R2 (stage "E3" in their run_meta).
+    "E6-E2": {"kind": "int8_artifact", "precision": "int8_qat", "source_stage": "E2", "method": "qat"},
+    "E7-E2": {"kind": "int8_artifact", "precision": "int8_ptq", "source_stage": "E2", "method": "ptq"},
+    "E6-R1": {"kind": "int8_artifact", "precision": "int8_qat", "source_stage": "E3", "method": "qat"},
+    "E6-R2": {"kind": "int8_artifact", "precision": "int8_qat", "source_stage": "E3", "method": "qat"},
+    # AM-3 (lane L-AM3, B-2): E6-KD, E6's QAT with the teacher of record and E3's terms at 0.5x; descriptive, never
+    # a comparator. Its conversion records method "qat", as E6's does (src/quant/qat_artifacts.py).
+    "E6-KD": {"kind": "int8_artifact", "precision": "int8_qat", "source_stage": "E3", "method": "qat"},
     # The frozen schema (EVALUATION_CONTRACT 5.x) already admits stage/model_role "teacher" at fp32.
     # The teacher is a DESCRIPTIVE REFERENCE: its clean artifact may legitimately be `official`
     # (nothing in the committed contract forbids that), but it never becomes an inferential
@@ -54,7 +63,7 @@ STAGE_ARTIFACTS: dict[str, dict] = {
     "TEACHER": {"kind": "teacher_checkpoint", "precision": "fp32", "source_stage": None,
                 "method": None},
 }
-PROJECTION_FREE_STAGES = ("E6", "E7")
+PROJECTION_FREE_STAGES = ("E6", "E7", "E6-E2", "E7-E2", "E6-R1", "E6-R2", "E6-KD")
 # FP32 checkpoints train_distill writes, which record their stage (DL-52): refused when they record none.
 # E1 (train_e1) records none and is not listed.
 STAGE_DECLARING_FP32_STAGES = ("E2", "E3", "A", "F", "G")
@@ -64,7 +73,7 @@ TEACHER_STAGE = "TEACHER"
 STUDENT_ROLE, TEACHER_ROLE = "student", "teacher"
 # Never a comparator in an inferential test. Nothing in the evaluator enforces this; the statistics
 # driver must refuse these stages as comparators.
-DESCRIPTIVE_ONLY_STAGES = ("TEACHER", "A", "F", "G")
+DESCRIPTIVE_ONLY_STAGES = ("TEACHER", "A", "F", "G", "E6-E2", "E7-E2", "E6-R1", "E6-R2", "E6-KD")
 
 
 class StageArtifactError(RuntimeError):
@@ -185,6 +194,61 @@ def int8_official_calibration_error(resolved: dict, repo_root: str | Path | None
     root = Path(repo_root) if repo_root else Path(__file__).resolve().parents[2]
     err = list_of_record_error(prov.get("calibration") or {}, root)
     return None if err is None else f"refusing an official {resolved['spec']['stage']} score: {err}"
+
+
+def int8_official_error(resolved: dict, repo_root: str | Path | None = None) -> str | None:
+    """PRE-RUN: may this INT8 artifact be scored as the OFFICIAL E4-E7? None when it may.
+
+    The one function an official INT8 path calls (LQP, ruling R2): int8_official_calibration_error's
+    refusal first (the committed AM-10 list of record), then the PTQ record gate's (ruling Q1-R2,
+    L-CKPT-GUARD Q-part). QAT artifacts (E5, E6) pass the record gate.
+    """
+    return int8_official_calibration_error(resolved, repo_root) or _ptq_record_error(resolved)
+
+
+def _ptq_record_error(resolved: dict) -> str | None:
+    """The record gate: an official E4, E7 or E7-E2 is scripts/run_ptq.py's TorchScript artifact whose directory
+    holds its <stage>_ptq_record.json (src/quant/ptq_record.py, imported here only) of the stage's role of record
+    (role_of_record: of_record; quant_descriptive for E7-E2, AM-23 item 2), written by the run that wrote this
+    run provenance. legacy_ptq_artifact: a src/quant/runner.py state_dict PTQ artifact; ptq_record_missing: no
+    record (an E7-X or E7-flip arm directory holds e7_arm_record.json and none); ptq_record_invalid;
+    ptq_record_role: another role (calibration_sensitivity, d3_replicate, or quant_descriptive for E4/E7);
+    ptq_record_mismatch: the stage, the run provenance, the TorchScript artifact, the source checkpoint or the
+    list checksum differ.
+    """
+    spec, prov = resolved["spec"], resolved["provenance"]
+    if spec["method"] != "ptq":
+        return None
+    stage = spec["stage"]
+    lead = f"refusing an official {stage} score: "
+    if prov.get("artifact_format", "state_dict") != "torchscript":
+        return (lead + "[legacy_ptq_artifact] a src/quant/runner.py state_dict PTQ artifact makes no "
+                f"{stage} of record (ruling Q1-R2); the PTQ of record is scripts/run_ptq.py's TorchScript artifact")
+    from src.quant.ptq import artifact_names
+    from src.quant.ptq_record import RECORD_NAME, read_record, role_of_record
+    run_dir = Path(resolved["artifact_path"]).parent
+    path = run_dir / RECORD_NAME.format(key=stage.lower())
+    if not path.is_file():
+        return (lead + f"[ptq_record_missing] {path} is absent: an official {stage} is made by scripts/run_ptq.py's "
+                "bound path, which writes its PTQ record last")
+    try:
+        record, _ = read_record(path)
+        run_meta = json.loads((run_dir / artifact_names(stage.lower())["run_meta"]).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        return lead + f"[ptq_record_invalid] {path}: {e}"
+    if record["role"] != role_of_record(stage):
+        return (lead + f"[ptq_record_role] {path} has role {record['role']!r}; only a PTQ record of role "
+                f"{role_of_record(stage)!r} is official for {stage} (calibration-sensitivity runs and d3 "
+                "replicates are descriptive)")
+    differ = [k for k, ok in (
+        ("stage", record["stage"] == stage), ("run provenance", run_meta == prov),
+        ("torchscript", record["artifacts"]["torchscript"]["sha256"] == resolved["artifact_sha256"]),
+        ("source checkpoint", record["parent"].get("checkpoint_sha256") == prov.get("source_checkpoint_sha256")),
+        ("list checksum", record["calibration"].get("checksum_sha256")
+         == (prov.get("calibration") or {}).get("checksum_sha256"))) if not ok]
+    if differ:
+        return lead + f"[ptq_record_mismatch] {path} is not this run's record: {differ} differ"
+    return None
 
 
 # ------------------------------------------------------------------ FP32 (E1-E3, A, F, G)

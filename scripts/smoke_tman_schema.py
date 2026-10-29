@@ -367,7 +367,7 @@ def case_formats():
           and "non_finite" not in S.KINDS_BY_CLASS["derived"])
     check("terminal_kinds_TB10", set(S.TERMINAL_KINDS) == {"cut", "not_run", "non_finite", "superseded", "diverged",
                                                            "aborted", "not_made"})
-    check("cut_rules_b1", S.CUT_RULES == ["freeze", "decision_date", "named_rule", "arithmetic"])
+    check("cut_rules_b1", S.CUT_RULES == ["freeze", "decision_date", "named_rule", "arithmetic", "cutoff"])  # B2R2
     check("inventory_precisions_TB5", S.INVENTORY_PRECISIONS == ("fp32", "int8_ptq", "int8_qat",
                                                                 "qat_fakequant_off"))
     check("image_digests_of_record_TB1", S.KD_IMAGE == "sha256:cb413304e2445e5c8ac3786f7a370f2ed05a07d11843b1168"
@@ -560,11 +560,23 @@ def case_catalogue_cross_checks():
           str(winners))
     pend = sorted({s["evaluator_stage"] for s in cat.slots.values()
                    if s["evaluator_stage"] and s["evaluator_stage"] not in STAGES})
-    gated = all(any(g["record"] == "code_merged" for g in (s["gates"] + (cat.slots[s["parent"]]["gates"]
-                                                                        if s["parent"] else [])))
-                for s in cat.slots.values() if s["evaluator_stage"] in pend)
-    check("evaluator_stages_from_artifacts_STAGES_or_pending_code_TB8", gated and pend == [
-        "E6-E2", "E6-KD", "E6-R1", "E6-R2", "E7-E2"], f"pending {pend}")
+    # B2-0: master's STAGES (src/eval/artifacts.py :58-59 at 524116b) holds the five stages B-1 found pending (AM-23
+    # items 1-5; L-AM3 B-2), so every catalogue evaluator stage is an evaluator stage now; with none pending, B-1's
+    # code-gate conjunct over the pending stages held vacuously and is dropped (DL-24 R3-17)
+    check("evaluator_stages_from_artifacts_STAGES_or_pending_code_TB8", pend == []
+          and {"E6-E2", "E6-KD", "E6-R1", "E6-R2", "E7-E2"} <= set(STAGES), f"pending {pend}")
+    # I1 (DL-24 #60, #94): each KD slot of a launcher stage is at a seed and a horizon the launcher can launch, and the
+    # catalogue holds every seed it launches and every profile's horizon
+    import scripts.preflight_distill as pd
+    from src.tman import entries as E
+    horizons = {p["horizon"] for p in pd.PROFILES.values()}
+    kd = {key: [s for s in cat.slots.values() if s["stage"] == name] for key, name in pd.STAGE_NAMES.items()}
+    off = [s["slot"] for key, v in kd.items() for s in v
+           if s["seed"] not in pd.SEEDS[key] or E.slot_iterations(s) not in horizons]
+    seeds = {key: sorted({s["seed"] for s in v}) for key, v in kd.items()}
+    check("kd_slots_at_the_launcher_s_seeds_and_profiles_I1_B60", not off
+          and all(seeds[key] == sorted(pd.SEEDS[key]) for key in kd)
+          and {E.slot_iterations(s) for v in kd.values() for s in v} == horizons, f"off {off}; seeds {seeds}")
 
 
 def case_names():
@@ -673,6 +685,9 @@ def case_readers():
         walk(a)
     check("allowlists_hold_no_score_key", not [k for k in allow_keys if SCORE_KEY_RE.search(k)],
           str([k for k in allow_keys if SCORE_KEY_RE.search(k)]))
+    rec = {"first_nonfinite": {"iteration": 5, "source": "val", "key": "mIoU_" + "full", "value": "nan"}}
+    check("arm_teacher_record_keeps_the_first_non_finite_iteration_only_B112",
+          R.project(rec, R.ARM_TEACHER_RECORD) == {"first_nonfinite": {"iteration": 5}})
     d = scratch_dir()
     kd = kd_run(d, "e2_s42_lambda0.5_80k_a1")
     got, torn, sha = with_sentinel(lambda: R.read_jsonl(kd / "e2_telemetry.jsonl", R.KD_ROWS,

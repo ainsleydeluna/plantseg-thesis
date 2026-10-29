@@ -13,7 +13,8 @@
                       (item 3(d)); otherwise the higher selected value wins, and a tie within 0.1 pp, exact
                       (|Fraction(a) - Fraction(b)| <= 1/1000), goes to 5.0
 
-The rules are configs/qat_selection_rules.json, checked against configs/quant.py. Every input is
+The rules are configs/qat_selection_rules.json (E5, E6) or, for AM-23's stages, configs/qat_selection_rules_am23.json
+or, for E6-KD, configs/e6kd_selection_rules.json (RULES_FILES), checked against configs/quant.py. Every input is
 re-verified from disk: the run's record (AM-19), every checkpoint's sha256 and state, the conversion and
 score records, and for each scored epoch the chain checkpoint -> provenance -> TorchScript identity ->
 evaluator summary. Every refusal is named; a selection is written once.
@@ -34,6 +35,14 @@ from .qat import QATRefused
 
 REPO = Q.REPO
 RULES_PATH = REPO / "configs" / "qat_selection_rules.json"
+# Each rules file's stages and whether it holds the U4 clip rules (AM-23 items 1 and 3(a): AM-23's runs have their
+# own file, so that no later lane's addition can void a stored selection's rules_sha256). A file not listed is
+# checked as Q2's.
+RULES_FILES = {
+    "configs/qat_selection_rules.json": {"stages": ["E5", "E6"], "qat_clip": True},
+    "configs/qat_selection_rules_am23.json": {"stages": ["E6-E2", "E6-R1", "E6-R2"], "qat_clip": False},
+    "configs/e6kd_selection_rules.json": {"stages": ["E6-KD"], "qat_clip": False},
+}
 RULES_FORMAT = "qat_selection_rules/1"
 EPOCH_SELECTION_FORMAT = "qat_selection/1"
 CLIP_SELECTION_FORMAT = Q.CLIP_SELECTION_FORMAT
@@ -59,19 +68,58 @@ def _get(d: dict, dotted: str):
 
 
 # ------------------------------------------------------------------ rules
+def rules_spec(path) -> dict:
+    """RULES_FILES' entry of a rules file by its path; Q2's for a file it does not list."""
+    p = Path(path).resolve()
+    return next((spec for rel, spec in RULES_FILES.items() if (REPO / rel).resolve() == p),
+                RULES_FILES["configs/qat_selection_rules.json"])
+
+
+def rules_path_for_stage(stage) -> Path:
+    """The rules file whose stages list `stage`: Q2's for E5, E6 and any stage no file lists (its stage check
+    refuses that stage), configs/qat_selection_rules_am23.json for E6-E2, E6-R1 and E6-R2."""
+    name = str(stage).upper()
+    return next((REPO / rel for rel, spec in RULES_FILES.items() if name in spec["stages"]), RULES_PATH)
+
+
+def rules_path_for_run(run_dir) -> Path:
+    """The rules file for a run directory, by its run_meta row's stage. It never raises and opens nothing whose name
+    holds TEST: on any doubt it gives Q2's file, so every refusal epoch_selection makes still comes, in its order."""
+    try:
+        if Q.names_test(run_dir) or Q.names_test(Path(run_dir) / Q.TELEMETRY_NAME):    # DL-24 D2-02
+            return RULES_PATH
+        with open(Path(run_dir) / Q.TELEMETRY_NAME, encoding="utf-8") as fh:
+            meta = json.loads(fh.readline())
+        return rules_path_for_stage(meta.get("stage")) if isinstance(meta, dict) else RULES_PATH
+    except Exception:                                    # noqa: BLE001 -- epoch_selection reads the run next
+        return RULES_PATH
+
+
+def rules_rel_of(rules: dict) -> str:
+    """The rules file these rules were read from, by the stages they list (load_rules checked them against it)."""
+    stages = _get(rules, "qat_epoch.stages")
+    return next((rel for rel, spec in RULES_FILES.items() if spec["stages"] == stages),
+                "configs/qat_selection_rules.json")
+
+
 def load_rules(path=RULES_PATH) -> tuple[dict, str]:
     p = Path(path)
     raw = p.read_bytes()
     rules = json.loads(raw.decode("utf-8"))
     from configs.quant import QUANT
     pilot = QUANT["qat_grad_clip_pilot"]
+    spec = rules_spec(p)
     want = {("format",): RULES_FORMAT, ("qat_epoch", "epochs"): QUANT["qat"]["epochs"],
-            ("qat_epoch", "stages"): ["E5", "E6"], ("qat_epoch", "compare"): "strict_greater",
-            ("qat_epoch", "tie"): "earliest_epoch", ("qat_clip", "candidates"): list(pilot["candidates"]),
-            ("qat_clip", "stage"): pilot["run_on"], ("qat_clip", "seed"): pilot["seed"], ("qat_clip", "tie"): 5.0,
-            ("qat_clip", "band", "numerator"): 1, ("qat_clip", "band", "denominator"): 1000,
-            ("qat_clip", "inherited_by"): list(pilot["inherited_by"]),
+            ("qat_epoch", "stages"): spec["stages"], ("qat_epoch", "compare"): "strict_greater",
+            ("qat_epoch", "tie"): "earliest_epoch",
             ("qat_epoch", "equal_across_evaluations"): list(EVAL_IDENTITY_KEYS), ("qat_epoch", "purpose"): "record"}
+    if spec["qat_clip"]:
+        want.update({("qat_clip", "candidates"): list(pilot["candidates"]), ("qat_clip", "stage"): pilot["run_on"],
+                     ("qat_clip", "seed"): pilot["seed"], ("qat_clip", "tie"): 5.0,
+                     ("qat_clip", "band", "numerator"): 1, ("qat_clip", "band", "denominator"): 1000,
+                     ("qat_clip", "inherited_by"): list(pilot["inherited_by"])})
+    else:                                                # AM-23's and E6-KD's files: the clip is Q2's (AM-4a item 3)
+        want[("qat_clip",)] = None
     wrong = {".".join(k): _get(rules, ".".join(k)) for k, v in want.items() if _get(rules, ".".join(k)) != v}
     if pilot["tie_band"] != "1/1000":
         wrong["configs/quant.py qat_grad_clip_pilot.tie_band"] = pilot["tie_band"]
@@ -445,7 +493,7 @@ def epoch_selection(run_dir, eval_dir, *, expect_telemetry_sha256: str | None, r
     first = summaries[min(summaries)]
     summary_fields = {k: _get(first, k) for k in rules["qat_epoch"]["equal_across_summaries"]}
     # the rule
-    trace.insert(0, f"rule configs/qat_selection_rules.json qat_epoch (sha256 {rules_sha256}): highest converted "
+    trace.insert(0, f"rule {rules_rel_of(rules)} qat_epoch (sha256 {rules_sha256}): highest converted "
                     "QNNPACK VAL all-class mIoU, strict >, tie -> the earlier epoch; fake-quant VAL never selects; "
                     "an epoch whose checkpoint fails item 1(a) is excluded (AM-21 item 2(a))")
     best = None
@@ -653,6 +701,7 @@ def clip_selection(candidates: list[tuple[str, str]], *, expect_telemetry_sha256
 
 
 __all__ = ["CLIP_EXEMPT_KEYS", "EPOCH_SELECTION_FORMAT", "EVAL_IDENTITY_KEYS", "NO_MODEL_ENTRY", "NO_WINNER",
-           "REJECTED_NONFINITE", "RULES_PATH", "SELECTION_PATH_KEYS", "band", "checkpoint_states", "clip_selection",
-           "epoch_selection", "exact_tie", "load_rules", "records_text", "rejected_records", "rejected_report",
+           "REJECTED_NONFINITE", "RULES_FILES", "RULES_PATH", "SELECTION_PATH_KEYS", "band", "checkpoint_states",
+           "clip_selection", "epoch_selection", "exact_tie", "load_rules", "records_text", "rejected_records",
+           "rejected_report", "rules_path_for_run", "rules_path_for_stage", "rules_rel_of", "rules_spec",
            "run_rejected", "selection_differences", "step_fingerprints"]
