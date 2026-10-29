@@ -2128,6 +2128,13 @@ M = [
     ("cli_records_commit_unchecked", CLI, [("root=args.root)\n        records.full_history()", "root=args.root)")],
      "validate", "case_shallow_records", "cli_validate_at_a_records_commit_refuses_a_shallow_clone_first_R2F1",
      ["repository_shallow"], None),
+    # ------------------------------------ P2-F2: export_dedup's link loop and a name not UTF-8 (DL-24 R1-F2)
+    ("builder_dedup_link_loop_uncaught", MAN, [("    except (OSError, RuntimeError) as e:          # Python 3.11's",
+                                                "    except OSError as e:          # Python 3.11's")],
+     "validate", "case_inventory_dedup", "inventory_dedup_link_loop_R1F2", ["dedup_invalid"], None),
+    ("builder_dedup_name_utf8_unchecked", MAN, [('            rel.encode("utf-8")\n',
+                                                 '            rel.encode("utf-8", "surrogateescape")\n')],
+     "validate", "case_inventory_dedup", "inventory_dedup_name_not_utf8_R1F2", ["dedup_invalid"], None),
 ]
 REFUSAL_EXTRA = ("inventory_invalid", "inventory_sha256_mismatch", "binding_invalid",       # read_inventory's codes
                  "output_location", "output_exists",                                       # the CLI's outputs

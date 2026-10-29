@@ -2382,8 +2382,8 @@ def dedup_fixture(pin: dict, **edits) -> bytes:
 def case_inventory_dedup():
     """P2R4, P2R5, P2R6(c)(ii) at the builder: with tday_dedup.json, the export's dedup is {its path relative to the
     export's folder, in LREP's path_problem form; the sha256 of its bytes; its removed_by_reason}, the file read
-    strictly and agreeing with the manifest's image_hasher pin; each refusal with the export otherwise built; the
-    command line's `inventory --dedup`."""
+    strictly and agreeing with the manifest's image_hasher pin; each refusal with the export otherwise built, a link
+    loop and a name that is not UTF-8 included (DL-24 R1-F2); the command line's `inventory --dedup`."""
     from src.tman import manifest as M
     from src.tman import validate as V
     w = WORLD
@@ -2401,6 +2401,9 @@ def case_inventory_dedup():
                    ("count_other.json", dedup_fixture(pin, n_images=1560))):
         (out / rel).write_bytes(b)
     (out / "a_folder.json").mkdir()
+    os.symlink("loop_dedup.json", out / "loop_dedup.json")            # a link to itself (DL-24 R1-F2)
+    latin = out / os.fsdecode(b"dedup_\xe9.json")                      # a name that is not UTF-8
+    latin.write_bytes(data)
 
     def build(path, folder=out):
         return M.build_inventory(w.doc, w.data, w.records, w.cat, runs_root=w.runs, registered=PINS.IF6_CELLS,
@@ -2435,6 +2438,8 @@ def case_inventory_dedup():
              "surrounding space"),
             ("inventory_dedup_absent_P2R4", out / "absent_dedup.json", out, "dedup_invalid", "unreadable"),
             ("inventory_dedup_a_folder_P2R4", out / "a_folder.json", out, "dedup_invalid", "unreadable"),
+            ("inventory_dedup_link_loop_R1F2", out / "loop_dedup.json", out, "dedup_invalid", "unresolvable"),
+            ("inventory_dedup_name_not_utf8_R1F2", latin, out, "dedup_invalid", "not UTF-8"),
             ("inventory_dedup_not_canonical_read_strictly_P2R4", out / "pretty.json", out, "dedup_invalid",
              "not the canonical JSON"),
             ("inventory_dedup_of_another_script_P2R6c", out / "script_other.json", out, "dedup_pin_mismatch",
@@ -2444,7 +2449,7 @@ def case_inventory_dedup():
             ("inventory_dedup_of_another_count_P2R6c", out / "count_other.json", out, "dedup_pin_mismatch",
              "n_images")):
         got = outcome(path, folder)
-        check(name, got[0] == want and detail in got[1], str(got)[:240])
+        check(name, got[0] == want and detail in got[1], ascii(got)[:240])     # ascii: a name may not be UTF-8
     cells = out / "cells.json"
     cells.write_text(json.dumps(PINS.IF6_CELLS), encoding="utf-8")
     (out / "m.json").write_bytes(w.data)

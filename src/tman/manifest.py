@@ -984,11 +984,20 @@ def export_dedup(path, folder, pin) -> dict:
     """IF§11.5's dedup block (P2R4): tday_dedup.json at `path`, named relative to `folder`, the export's folder, in
     P2R5's form (dedup_invalid otherwise, a file outside the folder included); the sha256 of its bytes and its
     removed_by_reason. The file is read strictly (dedup.read_dedup: dedup_invalid) and agrees with the manifest's
-    image_hasher pin `pin` (P2R6(c)(ii): dedup_pin_mismatch)."""
+    image_hasher pin `pin` (P2R6(c)(ii): dedup_pin_mismatch). A link loop, and a name the export's UTF-8 JSON cannot
+    hold, are dedup_invalid too (DL-24 R1-F2)."""
     S.refuse_test_path(path)
-    f, root = Path(path).resolve(), Path(folder).resolve()
+    try:
+        f, root = Path(path).resolve(), Path(folder).resolve()
+    except (OSError, RuntimeError) as e:          # Python 3.11's resolve() raises RuntimeError on a link loop
+        raise S.TmanRefused("dedup_invalid", f"{path}: unresolvable ({type(e).__name__})") from None
     rel = f.relative_to(root).as_posix() if f.is_relative_to(root) else None
     err = DD.relative_path_error(rel) if rel is not None else "not inside the export's folder"
+    if err is None:
+        try:
+            rel.encode("utf-8")
+        except UnicodeEncodeError:                # named by ascii(): the refusal's line is printed
+            raise S.TmanRefused("dedup_invalid", f"{ascii(str(path))}: a name that is not UTF-8") from None
     if err:
         raise S.TmanRefused("dedup_invalid", f"{path} relative to the export's folder {root}: {err} (P2R5)")
     try:
