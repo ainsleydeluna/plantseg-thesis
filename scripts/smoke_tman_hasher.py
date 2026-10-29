@@ -63,6 +63,8 @@ SPLIT = "tday_fixture"
 MARKER = "nonexistent_tman_hfx"                      # a top-level folder that is never created
 COMMIT = "3" * 40
 FREEZE_DAY, UNLOCK_DAY = "2026-11-03", "2026-11-08"
+# B-2's freeze fields (B2R5, src/tman/entries.py :65-69): a freeze of AM-22 item 1(f), as smoke_tman_validate.py :45
+FREEZE_1F = {"source": "AM-22 item 1(f)", "d_date": None, "conditions": None}
 IMAGES = {"kx_t1.jpg": b"T1", "kx_tb.JPG": b"TB", "kx_v1.jpeg": b"V1", "kx_B1.jpg": b"G1", "kx_a1.jpg": b"G1",
           "kx_x10.jpg": b"G2", "kx_x9.jpg": b"G2", "kx_u1.jpg": b"U1"}
 OTHERS = {"kx_notes.txt": b"notes", "kx_mask.png": b"png"}          # not images: never listed as one
@@ -127,7 +129,7 @@ class World:
             self.mdata = mdata_edit(self.mdata)
         lanes = S.json_file_bytes({"format": S.LANES_FORMAT, "lanes": []})
         freeze = E.make_entry("freeze", [], FREEZE_DAY, {"body_sha256": S.canonical_sha256(body),
-                                                         "freeze_date": FREEZE_DAY, "source": "schedule"},
+                                                         "freeze_date": FREEZE_DAY, **FREEZE_1F},
                               amendment="AM-19", script="scripts/tday_manifest.py", commit=COMMIT)
         self.freeze_rel = S.entry_file_rel(E.entry_name(freeze))
         fdata = S.json_file_bytes(freeze)
