@@ -3,11 +3,12 @@
 §1.7 and §5; rulings H8-H10).
 
 - Each step of the hash mode (H9), each refusal reached with every earlier gate passing: 1. the paths (B-1's guard;
-  a string holding project rule 4's word gets no call: B-1's tracer form, smoke_tman_paths.py :55-81); 2. the
+  a string holding project rule 4's word gets no call: B-1's tracer form, smoke_tman_paths.py :58-84); 2. the
   records -- no unlock entry, an uncommitted, unrecorded, rewritten or other-kind entry, a manifest that is not the
-  one the entry records, a pin that is not this code's (script, module, python, parameters), a shallow clone and a
-  repository with no commit -- each refused before any data call; 3. the listing; 4. the TRAIN/VAL list; 5. hashing;
-  6. the outputs.
+  one the entry records by validate.py's session-mode rule (a run after a session-part commit verifies: P2R7), a pin
+  that is not this code's (script, module, python, parameters), a shallow clone and a repository with no commit --
+  each refused before any data call; 3. the listing (a symbolic link in the image folder refused: P2R8); 4. the
+  TRAIN/VAL list; 5. hashing; 6. the outputs.
 - The call trace of a run: one os.scandir, one binary read per image and one of the list, two exclusive creates, no
   annotation path, no PIL or cv2 call (PIL.Image.open and the cv2 module raise). PIL and torch are in sys.modules
   through src.tman.schema -> src.eval.artifacts -> src.eval.protocols and src/eval/__init__.py: recorded, accepted.
@@ -58,12 +59,12 @@ import scripts.smoke_tman_schema as FX  # noqa: E402  (the TMAN fixture library)
 
 check = FX.check
 WORD = "te" + "st"                                   # project rule 4's word, never written whole here
-GUARD_CODE = WORD + "_path"                          # B-1's guard's refusal code (schema.py :248-251)
+GUARD_CODE = WORD + "_path"                          # B-1's guard's refusal code (schema.py :250-253)
 SPLIT = "tday_fixture"
 MARKER = "nonexistent_tman_hfx"                      # a top-level folder that is never created
 COMMIT = "3" * 40
 FREEZE_DAY, UNLOCK_DAY = "2026-11-03", "2026-11-08"
-# B-2's freeze fields (B2R5, src/tman/entries.py :65-69): a freeze of AM-22 item 1(f), as smoke_tman_validate.py :45
+# B-2's freeze fields (B2R5, src/tman/entries.py :65-69): a freeze of AM-22 item 1(f), as smoke_tman_validate.py :46
 FREEZE_1F = {"source": "AM-22 item 1(f)", "d_date": None, "conditions": None}
 IMAGES = {"kx_t1.jpg": b"T1", "kx_tb.JPG": b"TB", "kx_v1.jpeg": b"V1", "kx_B1.jpg": b"G1", "kx_a1.jpg": b"G1",
           "kx_x10.jpg": b"G2", "kx_x9.jpg": b"G2", "kx_u1.jpg": b"U1"}
@@ -86,10 +87,12 @@ class World:
     """A scratch repository whose HEAD holds the records the hasher reads -- the decision log, a freeze entry, the lane
     register, the manifest with its image_hasher pin, the unlock entry -- a data root (images/ and annotations/ of
     the fixture split, synthetic bytes), a TRAIN/VAL list in scripts/hash_split_files.py's format and an empty --out.
-    The options make one record or input wrong at a time."""
+    The options make one record or input wrong at a time; `links` adds symbolic links to the image folder (each to a
+    file outside it), `session_edit` a later commit of the manifest with its session part (P2R7)."""
 
     def __init__(self, *, images=None, raw_names=(), pin_edit=None, unlock_edit=None, row_status="RECORDED",
-                 unlock_state="committed", manifest_bytes=None, mdata_edit=None, tv=None):
+                 unlock_state="committed", manifest_bytes=None, mdata_edit=None, tv=None, links=(),
+                 session_edit=None):
         from src.tman import dedup as D
         from src.tman import entries as E
         from src.tman import manifest as M
@@ -110,6 +113,10 @@ class World:
         for raw in raw_names:
             with open(os.fsencode(self.folder) + b"/" + raw, "wb") as fh:
                 fh.write(b"raw " + raw)
+        for name in links:                                      # names free of the word and ":" (P2R8)
+            target = self.data / f"linked_{name}"
+            target.write_bytes(b"linked " + name.encode())
+            os.symlink(target, self.folder / name)
         self.tv = DS.tv_bytes(TRAIN, VAL) if tv is None else tv
         self.tv_path = self.lists / "train_val_image_hashes.tsv"
         self.tv_path.write_bytes(self.tv)
@@ -155,6 +162,10 @@ class World:
             (self.repo / self.unlock_rel).write_bytes(udata)
         elif unlock_state == "rewritten":
             FX.commit_files(self.repo, {self.unlock_rel: udata + b"\n"}, "the unlock entry rewritten")
+        if session_edit is not None:                            # the session part, committed after the unlock entry
+            doc = json.loads(self.mdata)
+            session_edit(doc)
+            FX.commit_files(self.repo, {S.MANIFEST_REL: S.json_file_bytes(doc)}, "the manifest's session part")
 
     def argv(self, **over) -> list:
         a = {"repo": str(self.repo), "unlock_entry": self.unlock_rel, "root": str(self.data),
@@ -261,7 +272,7 @@ class Trace:
 
 
 class Resolving:
-    """os.path.realpath sends `target` alone to a location holding the word (smoke_tman_paths.py :84-100)."""
+    """os.path.realpath sends `target` alone to a location holding the word (smoke_tman_paths.py :87-103)."""
 
     HIT = f"/{MARKER}/resolved/la" + WORD + "/target"
 
@@ -557,10 +568,32 @@ def case_step2_repository():
           f"{rc} {txt[-200:]}")
 
 
+def case_step2_session_part():
+    """P2R7 (TMAN2-RULE-3 item 1 (b)): step 2 reads the committed manifest by validate.py's session-mode rule, by
+    import. A run after a session-part commit still verifies (the file's sha256 binds only while the session part is
+    null); a session commit that also changes the body or the appends is refused (unlock_manifest_mismatch) before
+    any data call."""
+    session = {"started_utc": "2026-11-08T02:00:00Z"}
+    w = World(session_edit=lambda d: d.update(session=session))
+    t = Trace()
+    rc, txt = run(w.argv(), ctx=t)
+    check("step2_after_a_session_part_commit_verifies_P2R7", rc == 0 and len(list(w.out.iterdir())) == 2,
+          f"{rc} {txt[-200:]}")
+    for name, edit in (("body", lambda d: d["body"]["expected_rows"]["cites"].append("a later cite")),
+                       ("appends", lambda d: d["appends"].append({"slot": "E4:s42:list43"}))):
+        w = World(session_edit=lambda d, edit=edit: (d.update(session=session), edit(d)))
+        t = Trace()
+        rc, txt = run(w.argv(), ctx=t)
+        check(f"step2_session_commit_changing_the_{name}_refused_P2R7", refused(rc, txt, "unlock_manifest_mismatch")
+              and not w.data_calls(t) and not any(w.out.iterdir()), f"{rc} {txt[-200:]}")
+
+
 # ===================================================================================== step 3: the listing
 def case_step3_listing():
     from src.tman import dedup as D
     variants = (("image_folder_absent", {}, "tday_absent", "images_unreadable"),
+                ("an_image_name_linked_P2R8", {"links": ("kx_link.jpg",)}, SPLIT, "image_link_refused"),
+                ("another_name_linked_P2R8", {"links": ("kx_notes_link.txt",)}, SPLIT, "image_link_refused"),
                 ("two_images_one_stem", {"images": dict(IMAGES, **{"kx_u1.jpeg": b"U2"})}, SPLIT,
                  "image_ids_invalid"),
                 ("stems_equal_once_case_folded", {"images": dict(IMAGES, **{"KX_U1.jpg": b"U3"})}, SPLIT,
@@ -789,7 +822,7 @@ def production_files() -> dict:
     return {"dedup": Path(D.__file__), "hasher": Path(H.__file__)}
 
 
-GUARD_ATTRS = {"refuse_" + WORD + "_path"}            # B-1's guard (schema.py :248), the one name allowed
+GUARD_ATTRS = {"refuse_" + WORD + "_path"}            # B-1's guard (schema.py :250), the one name allowed
 
 
 def allowed_values(tree) -> dict:
@@ -897,6 +930,6 @@ def case_created_names():
 if __name__ == "__main__":
     raise SystemExit(FX.run_cases("TMAN HASHER SMOKE (lane TMAN, B-3a part 1, B3A-2)",
                                   (case_pass_and_trace, case_step1_paths, case_step2_records, case_step2_repository,
-                                   case_step3_listing,
+                                   case_step2_session_part, case_step3_listing,
                                    case_step4_list, case_step5_hashing, case_step6_outputs, case_shuffled_scandir,
                                    case_stdout_without_the_arrow, case_print_pin, case_static, case_created_names)))

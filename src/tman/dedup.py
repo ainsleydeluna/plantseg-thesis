@@ -6,7 +6,7 @@ annotation and no model output is read -- and this module turns the hashes into 
   tday_image_hashes.tsv  header stem, file, bytes, sha256 (tab-separated), one row per image sorted by stem, LF,
                          UTF-8 (ruling H6); its sha256 is hash_list_sha256
   tday_dedup.json        tday_dedup/1 (ruling H5): canonical JSON (schema.canonical_json_bytes, src/eval/artifacts.py
-                         :93), the kept (duplicate-free) ids and the removed ids by reason; its sha256 is
+                         :97), the kept (duplicate-free) ids and the removed ids by reason; its sha256 is
                          dedup_list_sha256
 
 The rule (AM-18 item 8(c), docs/PREREGISTRATION_AMENDMENTS.md :1217-1219 at ee5593e; plan :571-578; ruling H3). An
@@ -49,7 +49,7 @@ TRAINVAL_SPLITS = ("train", "val")
 DIGITS_RE = re.compile(r"[0-9]+")
 SHA1_RE = re.compile(r"[0-9a-f]{40}")
 TSV_UNSAFE = ("\t", "\n", "\r")                     # a name holding one would break its hash-list row
-# manifest.HASHER_VALUES (src/tman/manifest.py :544), restated in its order; a smoke case compares the two
+# manifest.HASHER_VALUES (src/tman/manifest.py :547), restated in its order; a smoke case compares the two
 VALUE_KEYS = ("hash_list_sha256", "dedup_list_sha256", "counts_by_reason")
 
 # ---------------------------------------------------------------------------------------------- the rule (H3)
@@ -270,7 +270,7 @@ def doc_errors(doc) -> list[str]:
 
 
 def doc_bytes(doc: dict) -> bytes:
-    """tday_dedup.json's bytes: schema's canonical JSON (src/eval/artifacts.py :93), one definition (TB14)."""
+    """tday_dedup.json's bytes: schema's canonical JSON (src/eval/artifacts.py :97), one definition (TB14)."""
     return S.canonical_json_bytes(doc)
 
 

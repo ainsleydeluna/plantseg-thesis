@@ -13,7 +13,7 @@ decision (ix); rulings H3-H7).
 - Deterministic canonical bytes; the hash list; the strict reader's refusals (each form rule of doc_errors with every
   earlier rule passing, and a lone surrogate escape); the listed ids' refusals.
 - LREP's reader rules restated (src/stats/heldout_inputs.py :126-127 and :1369-1377 at lane/lrep 6c222c9; no LREP
-  code is imported: it is not on this branch), the export's DEDUP_SPEC (src/tman/validate.py :1612) and B-4's
+  code is imported: it is not on this branch), the export's DEDUP_SPEC (src/tman/validate.py :1804) and B-4's
   partition equality.
 - Issue #11's counts and the plan's labels as values only; HASHER_VALUES; a no-score static scan in B-1's noscore form.
 
@@ -388,7 +388,7 @@ def case_lrep_rules():
     except ValueError:
         refused = True
     check("lrep_restatement_refuses_another_count", refused)
-    check("export_passes_dedup_spec_validate_1612", S.value_errors(export, V.DEDUP_SPEC, "dedup") == [],
+    check("export_passes_validate_s_dedup_spec", S.value_errors(export, V.DEDUP_SPEC, "dedup") == [],
           str(S.value_errors(export, V.DEDUP_SPEC, "dedup")))
     every = list(IMAGES)
     check("b4_partition_equality_all_minus_kept_is_the_sum", len(set(every)) - len(doc["kept_ids"])
@@ -447,7 +447,7 @@ def case_hasher_values():
     doc["hash_list_sha256"] = sha(tsv)
     data = D.doc_bytes(doc)
     got = outcome(D.hasher_values, tsv, data)
-    check("hasher_values_keys_are_manifest_s_544", got[0] == "ok" and tuple(got[1]) == M.HASHER_VALUES
+    check("hasher_values_keys_are_manifest_s", got[0] == "ok" and tuple(got[1]) == M.HASHER_VALUES
           and D.VALUE_KEYS == M.HASHER_VALUES, str(got)[:200])
     check("hasher_values_are_the_sha256_and_the_counts", got[0] == "ok" and got[1] == {
         "hash_list_sha256": sha(tsv), "dedup_list_sha256": sha(data), "counts_by_reason": doc["removed_by_reason"]})

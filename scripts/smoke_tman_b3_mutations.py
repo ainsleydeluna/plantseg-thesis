@@ -5,7 +5,7 @@ has a mutation killed by a named case -- the precedence swapped, the last instea
 partition flag, the order of sha256-before-parse, the path guards, "xb" changed to "wb", the pin and module checks,
 expected_images among them.
 
-smoke_tman_mutations.py's form (:2-14, :1178-1261): a mutation replaces exact texts (each must occur once) in a scratch
+smoke_tman_mutations.py's form (:2-14, :1944-2039): a mutation replaces exact texts (each must occur once) in a scratch
 copy of the two files, under the system temp dir; a fresh interpreter imports the copy as src.tman.dedup and
 scripts.tday_hash_images (B-1's modules stay the checkout's) and runs one case of smoke_tman_dedup or smoke_tman_hasher
 up to its named check. The mutation is killed when that named check fails; a crash, or another check failing, is no
@@ -40,7 +40,7 @@ DED, HSH = "src/tman/dedup.py", "scripts/tday_hash_images.py"
 SMOKES = {"dedup": "scripts.smoke_tman_dedup", "hasher": "scripts.smoke_tman_hasher"}
 RESULT_TAG = "MUTATION-RESULT "
 WORD = "te" + "st"                                   # project rule 4's word, never written whole here
-GUARD = "refuse_" + WORD + "_path"                   # B-1's guard (schema.py :248)
+GUARD = "refuse_" + WORD + "_path"                   # B-1's guard (schema.py :250)
 LISTED = "        if len(f) != len(TRAINVAL_HEADER) or f[0] not in sets or not DIGITS_RE.fullmatch(f[3]) \\\n" \
          "                or not S.SHA256_RE.fullmatch(f[4]) or not SHA1_RE.fullmatch(f[5]):"
 LIST_SHA = ('    got = S.sha256_bytes(data)\n    if got != sha256:\n        raise S.TmanRefused("train_val_list_mismatch", '
@@ -187,7 +187,7 @@ M = [
      "dedup", "case_lrep_rules", "ids_sha256_is_lrep_s_definition_no_trailing_lf", []),
     ("value_keys_reordered", DED, [('VALUE_KEYS = ("hash_list_sha256", "dedup_list_sha256", "counts_by_reason")',
                                     'VALUE_KEYS = ("dedup_list_sha256", "hash_list_sha256", "counts_by_reason")')],
-     "dedup", "case_hasher_values", "hasher_values_keys_are_manifest_s_544", []),
+     "dedup", "case_hasher_values", "hasher_values_keys_are_manifest_s", []),
     ("values_of_another_hash_list", DED, [('    if doc["hash_list_sha256"] != h:', "    if False:")],
      "dedup", "case_hasher_values", "hasher_values_refuse_a_dedup_of_another_hash_list", ["dedup_invalid"]),
     ("issue_count_changed", DED, [(f'("{WORD} \u2194 train", 70)', f'("{WORD} \u2194 train", 71)')],
@@ -215,13 +215,19 @@ M = [
                                      "    doc, _ = E.read_entry_file(records, args.unlock_entry)")],
      "hasher", "case_step2_records", "step2_unlock_entry_of_another_kind_refused_before_any_data_call",
      ["entry_file_invalid"]),
-    ("manifest_path_unchecked", HSH, [('    if m["path"] != S.MANIFEST_REL:', "    if False:")],
+    # step 2 reads the manifest by validate.py's session-mode rule (P2R7); its branches are mutated in
+    # smoke_tman_mutations (S08_appends_after_the_unlock, unlock_records_the_body, _file and _path)
+    ("manifest_rule_ignored", HSH, [('    errs = V.unlock_manifest_errors(doc["manifest"], man, data, '
+                                     'file_binds=man["session"] is None)\n    if errs:',
+                                     "    errs = {}\n    if errs:")],
      "hasher", "case_step2_records", "step2_manifest_path_other_refused_before_any_data_call",
      ["unlock_manifest_mismatch"]),
-    ("manifest_sha256_unchecked", HSH, [('    if S.sha256_bytes(data) != m["sha256"]:', "    if False:")],
+    ("manifest_file_never_binds", HSH, [('file_binds=man["session"] is None)', "file_binds=False)")],
      "hasher", "case_step2_records", "step2_manifest_sha256_other_refused_before_any_data_call",
      ["unlock_manifest_mismatch"]),
-    ("manifest_not_strict_json", HSH, [('    man = S.strict_json(data, m["path"], code="manifest_unreadable")',
+    ("manifest_file_binds_after_the_session", HSH, [('file_binds=man["session"] is None)', "file_binds=True)")],
+     "hasher", "case_step2_session_part", "step2_after_a_session_part_commit_verifies_P2R7", []),
+    ("manifest_not_strict_json", HSH, [('    man = S.strict_json(data, S.MANIFEST_REL, code="manifest_unreadable")',
                                         '    man = __import__("json").loads(data)')],
      "hasher", "case_step2_records", "step2_manifest_duplicate_key_refused_before_any_data_call",
      ["manifest_unreadable"]),
@@ -230,13 +236,6 @@ M = [
                                                               'man.get("format") == S.MANIFEST_FORMAT')],
      "hasher", "case_step2_records", "step2_manifest_of_another_format_refused_before_any_data_call",
      ["manifest_format"]),
-    ("manifest_body_unchecked", HSH, [('    if S.canonical_sha256(man["body"]) != m["body_sha256"]:', "    if False:")],
-     "hasher", "case_step2_records", "step2_manifest_body_sha256_other_refused_before_any_data_call",
-     ["unlock_manifest_mismatch"]),
-    ("manifest_appends_unchecked", HSH, [('    if S.canonical_sha256(man["appends"]) != m["appends_sha256"]:',
-                                          "    if False:")],
-     "hasher", "case_step2_records", "step2_manifest_appends_sha256_other_refused_before_any_data_call",
-     ["unlock_manifest_mismatch"]),
     ("pin_errors_ignored", HSH, [("    errs = pin_errors(pin)\n    if errs:", "    errs = []\n    if errs:")],
      "hasher", "case_step2_records", "step2_pin_script_sha256_other_refused_before_any_data_call",
      ["hasher_pin_mismatch"]),
@@ -279,14 +278,19 @@ M = [
     ("split_written_as_a_literal", HSH, [("    from src.eval.stage_artifacts import OFFICIAL_SPLIT\n"
                                           "    return OFFICIAL_SPLIT", '    return "tday_fixture"')],
      "hasher", "case_static", "h0_split_read_by_import_inside_the_resolver", []),
-    ("a_second_listing", HSH, [("            names = [e.name for e in it if e.is_file()]\n",
-                                "            names = [e.name for e in it if e.is_file()]\n        os.listdir(folder)\n")],
+    ("a_second_listing", HSH, [("            entries = [(e.name, e.is_symlink(), e.is_file()) for e in it]\n",
+                                "            entries = [(e.name, e.is_symlink(), e.is_file()) for e in it]\n"
+                                "        os.listdir(folder)\n")],
      "hasher", "case_pass_and_trace", "trace_no_listdir", []),
-    ("folders_listed_as_images", HSH, [("[e.name for e in it if e.is_file()]", "[e.name for e in it]")],
+    ("folders_listed_as_images", HSH, [("    names = [n for n, _, is_file in entries if is_file]",
+                                        "    names = [n for n, _, _ in entries]")],
      "hasher", "case_pass_and_trace", "hash_writes_both_outputs_exit_0", ["image_count_mismatch"]),
     ("suffix_case_sensitive", HSH, [("os.path.splitext(n)[1].lower() in D.SUFFIXES",
                                      "os.path.splitext(n)[1] in D.SUFFIXES")],
      "hasher", "case_pass_and_trace", "hash_writes_both_outputs_exit_0", ["image_count_mismatch"]),
+    ("link_check_dropped", HSH, [("    if links:", "    if False:")],                          # P2R8
+     "hasher", "case_step3_listing", "step3_an_image_name_linked_P2R8_refused_before_any_image_or_list_read",
+     ["image_link_refused"]),
     ("ids_unchecked", HSH, [("    errs = D.image_id_errors(pairs)\n    if errs:", "    errs = []\n    if errs:")],
      "hasher", "case_step3_listing", "step3_two_images_one_stem_refused_before_any_image_or_list_read",
      ["image_ids_invalid"]),
@@ -368,9 +372,9 @@ M = [
 # The refusal codes the two files raise (schema.TmanRefused, and strict_json's code=), and B-1's guard's: each has a
 # killed mutation (a static case ties this list to the files)
 CODES = ("dedup_invalid", "generator_pin_incomplete", "hasher_pin_mismatch", "image_count_mismatch",
-         "image_ids_invalid", "images_unreadable", "manifest_format", "manifest_unreadable", "output_exists",
-         "output_location", "record_uncommitted", "repository_shallow", "train_val_list_invalid",
-         "train_val_list_mismatch", "unlock_manifest_mismatch")
+         "image_ids_invalid", "image_link_refused", "images_unreadable", "manifest_format", "manifest_unreadable",
+         "output_exists", "output_location", "record_uncommitted", "repository_shallow", "train_val_list_invalid",
+         "train_val_list_mismatch", "unlock_manifest_mismatch")                     # image_link_refused: P2R8
 GUARD_CODES = (WORD + "_path",)                     # raised by B-1's guard from the hasher's step 1
 
 
@@ -510,7 +514,7 @@ def case_mutations():
             killed_codes |= set(m[6])
     if not ONLY:
         need = set(CODES) | set(GUARD_CODES)
-        check("every_refusal_code_has_a_killed_mutation", need <= killed_codes and len(need) == 16,
+        check("every_refusal_code_has_a_killed_mutation", need <= killed_codes and len(need) == 17,   # P2R8: +1
               str(sorted(need - killed_codes)))
         check("every_mutation_has_its_own_id", len({m[0] for m in M}) == len(M))
     check("the_repository_files_are_unchanged", files_sha256() == before)

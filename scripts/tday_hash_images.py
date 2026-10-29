@@ -9,27 +9,28 @@ scripts/tday_manifest.py.
                                   the freeze (manifest.py :879).
   hash                            the session's run, after the unlock record, in Ice's block outside Claude Code
                                   (TB19 Q5). Each step passes before the next starts:
-    1. paths: --repo, --root, --train-val-list and --out go through B-1's path guard (schema.py :248) as given and
+    1. paths: --repo, --root, --train-val-list and --out go through B-1's path guard (schema.py :250) as given and
        then resolved, and --unlock-entry as given and then resolved under --repo: a refused string gets no call.
     2. records, at HEAD of --repo through B-1's readers, in a clone with its full history (a shallow clone, where
        B-1's written-once check cannot see a rewrite, src/training/sweep_select.py :2400-2420, and a repository with
        no commit are refused): the unlock entry at --unlock-entry (a repository path; nothing is listed) is
        committed, written once, of kind unlock, its sha256 in a RECORDED or IMPLEMENTED row
-       (entries.read_entry_file, :753); the manifest it names is the committed one, by its file, body and appends
-       sha256; that manifest's image_hasher pin is this script's and this dedup module's (the sha256 of their bytes),
-       with this interpreter's python major.minor.
+       (entries.read_entry_file, :1003); the committed manifest is the one it records, by validate.py's session-mode
+       rule (unlock_manifest_errors :1226, P2R7): its path, body and appends sha256, and its file's while its session
+       part is null; that manifest's image_hasher pin is this script's and this dedup module's (the sha256 of their
+       bytes), with this interpreter's python major.minor.
     3. listing: only now is the split resolved (src.eval.stage_artifacts.OFFICIAL_SPLIT, imported in
-       split_of_record). One os.scandir of <root>/images/<split>; its files whose suffix, lower-cased, is .jpg or
-       .jpeg (scripts/hash_split_files.py :96 and :104); a stem is the name without it. The ids are refused when the
-       outputs cannot carry them, when two images share a stem and when two stems are equal once case-folded; their
-       number is the pin's expected_images.
+       split_of_record). One os.scandir of <root>/images/<split>; an entry that is a symbolic link is refused (P2R8);
+       its files whose suffix, lower-cased, is .jpg or .jpeg (scripts/hash_split_files.py :96 and :104); a stem is
+       the name without it. The ids are refused when the outputs cannot carry them, when two images share a stem and
+       when two stems are equal once case-folded; their number is the pin's expected_images.
     4. the TRAIN/VAL list (DL-91): its sha256 is the pin's before it is parsed; its header, rows and TRAIN and VAL
        counts are the pin's (dedup.parse_train_val_list).
     5. hashing: one binary read per image, SHA-256 only. No image library is imported or called, and no annotation
        is touched.
     6. outputs: tday_image_hashes.tsv and tday_dedup.json are built, then created exclusively in --out, an existing
        folder outside the repository at --repo and outside this checkout, once resolved; both or neither (a failure
-       removes what the run created). Printed: the three values of manifest.HASHER_VALUES (:544) and, beside them,
+       removes what the run created). Printed: the three values of manifest.HASHER_VALUES (:547) and, beside them,
        issue #11's counts; never an id. A character stdout cannot encode is printed escaped.
 
 Exit codes (scripts/tday_manifest.py's): 0 printed or written, 2 refused (REFUSED [<code>] -- <detail>), 4 error.
@@ -51,6 +52,7 @@ from src.tman import entries as E  # noqa: E402
 from src.tman import manifest as M  # noqa: E402
 from src.tman import records as R  # noqa: E402
 from src.tman import schema as S  # noqa: E402
+from src.tman import validate as V  # noqa: E402  (its session-mode rule, P2R7; validate.py imports no script)
 from src.training.sweep_select import SelectionRefused  # noqa: E402
 
 READ_BLOCK = 1 << 20
@@ -84,9 +86,9 @@ def pin_errors(pin) -> list[str]:
 
 # ------------------------------------------------------------------------------------------ steps 1 and 2
 def check_paths(args) -> None:
-    """Step 1: --repo, --root, --train-val-list and --out through B-1's guard (schema.py :248), as given and then
+    """Step 1: --repo, --root, --train-val-list and --out through B-1's guard (schema.py :250), as given and then
     resolved; --unlock-entry, a repository path, resolved under --repo, where it is read. (B-1's reader resolves it
-    against the working folder first, entries.py :757, and under the records' root only after, records.py :212.)"""
+    against the working folder first, entries.py :1007, and under the records' root only after, records.py :214.)"""
     for p in (args.repo, args.root, args.train_val_list, args.out):
         S.refuse_test_path(p)
     S.refuse_test_path(args.unlock_entry, args.repo)
@@ -100,7 +102,10 @@ def _at(doc, *keys):
 
 def check_records(args) -> dict:
     """Step 2, at HEAD of --repo, a clone with its full history (in a shallow one, B-1's written-once check cannot see
-    a rewrite): the unlock entry (B-1's reader), the manifest it names, and the pin; returns the pin."""
+    a rewrite): the unlock entry (B-1's reader); the committed manifest, read by validate.py's session-mode rule
+    (unlock_manifest_errors, by import: its path, body and appends, and its file's sha256 while its session part is
+    null; TMAN2-RULE-3 item 1, P2R7), so a run after a session-part commit still verifies; and the pin. Returns the
+    pin."""
     records = R.Records.at_head(args.repo)
     try:
         records.src.require_not_shallow()
@@ -112,24 +117,15 @@ def check_records(args) -> dict:
         raise S.TmanRefused("record_uncommitted", f"--repo {records.src.root} is no git repository with a HEAD "
                                                   "commit: the records are read at HEAD") from None
     doc, _ = E.read_entry_file(records, args.unlock_entry, "unlock")
-    m = doc["manifest"]
-    if m["path"] != S.MANIFEST_REL:
-        raise S.TmanRefused("unlock_manifest_mismatch", f"the unlock entry names {m['path']}, not the manifest "
-                                                        f"{S.MANIFEST_REL}")
-    data = records.read(m["path"])
-    if S.sha256_bytes(data) != m["sha256"]:
-        raise S.TmanRefused("unlock_manifest_mismatch", f"{m['path']} has sha256 {S.sha256_bytes(data)}; the unlock "
-                                                        f"entry records {m['sha256']}")
-    man = S.strict_json(data, m["path"], code="manifest_unreadable")
+    data = records.read(S.MANIFEST_REL)
+    man = S.strict_json(data, S.MANIFEST_REL, code="manifest_unreadable")
     if not (isinstance(man, dict) and man.get("format") == S.MANIFEST_FORMAT and isinstance(man.get("body"), dict)
-            and "appends" in man):
-        raise S.TmanRefused("manifest_format", f"{m['path']} is not a {S.MANIFEST_FORMAT} with body and appends")
-    if S.canonical_sha256(man["body"]) != m["body_sha256"]:
-        raise S.TmanRefused("unlock_manifest_mismatch", f"{m['path']}'s body is not the body_sha256 the unlock entry "
-                                                        "records")
-    if S.canonical_sha256(man["appends"]) != m["appends_sha256"]:
-        raise S.TmanRefused("unlock_manifest_mismatch", f"{m['path']}'s appends are not the appends_sha256 the unlock "
-                                                        "entry records")
+            and "appends" in man and "session" in man):
+        raise S.TmanRefused("manifest_format", f"{S.MANIFEST_REL} is not a {S.MANIFEST_FORMAT} with body, appends and "
+                                               "session")
+    errs = V.unlock_manifest_errors(doc["manifest"], man, data, file_binds=man["session"] is None)
+    if errs:
+        raise S.TmanRefused("unlock_manifest_mismatch", "; ".join(errs.values()))
     pin = _at(man, "body", "generator_pins", "image_hasher", "pin")
     errs = pin_errors(pin)
     if errs:
@@ -149,12 +145,19 @@ def image_folder(root, split: str) -> str:
 
 
 def list_images(folder: str, expected: int) -> list:
-    """Step 3: [(stem, name)] sorted, from one os.scandir of the image folder."""
+    """Step 3: [(stem, name)] sorted, from one os.scandir of the image folder. An entry that is a symbolic link, of any
+    name, is refused before any image is read (TMAN2-RULE-3 item 2, P2R8: image_link_refused); the folder's own path
+    is step 1's."""
     try:
         with os.scandir(folder) as it:
-            names = [e.name for e in it if e.is_file()]
+            entries = [(e.name, e.is_symlink(), e.is_file()) for e in it]
     except OSError as e:
         raise S.TmanRefused("images_unreadable", f"the image folder cannot be listed ({type(e).__name__})") from None
+    links = [n for n, link, _ in entries if link]
+    if links:
+        raise S.TmanRefused("image_link_refused", f"the image folder holds symbolic links: {D.name_digests(links)} "
+                                                  "(P2R8)")
+    names = [n for n, _, is_file in entries if is_file]
     pairs = sorted((os.path.splitext(n)[0], n) for n in names if os.path.splitext(n)[1].lower() in D.SUFFIXES)
     errs = D.image_id_errors(pairs)
     if errs:
