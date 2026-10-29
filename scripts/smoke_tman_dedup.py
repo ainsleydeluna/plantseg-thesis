@@ -13,7 +13,7 @@ decision (ix); rulings H3-H7).
 - Deterministic canonical bytes; the hash list; the strict reader's refusals (each form rule of doc_errors with every
   earlier rule passing, and a lone surrogate escape); the listed ids' refusals.
 - LREP's reader rules restated (src/stats/heldout_inputs.py :126-127 and :1369-1377 at lane/lrep 6c222c9; no LREP
-  code is imported: it is not on this branch), the export's DEDUP_SPEC (src/tman/validate.py :1804) and B-4's
+  code is imported: it is not on this branch), the export's DEDUP_SPEC (src/tman/validate.py :1812) and B-4's
   partition equality.
 - Issue #11's counts and the plan's labels as values only; HASHER_VALUES; a no-score static scan in B-1's noscore form.
 

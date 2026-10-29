@@ -16,7 +16,7 @@ scripts/tday_manifest.py.
        no commit are refused): the unlock entry at --unlock-entry (a repository path; nothing is listed) is
        committed, written once, of kind unlock, its sha256 in a RECORDED or IMPLEMENTED row
        (entries.read_entry_file, :1003); the committed manifest is the one it records, by validate.py's session-mode
-       rule (unlock_manifest_errors :1226, P2R7): its path, body and appends sha256, and its file's while its session
+       rule (unlock_manifest_errors :1229, P2R7): its path, body and appends sha256, and its file's while its session
        part is null; that manifest's image_hasher pin is this script's and this dedup module's (the sha256 of their
        bytes), with this interpreter's python major.minor.
     3. listing: only now is the split resolved (src.eval.stage_artifacts.OFFICIAL_SPLIT, imported in
