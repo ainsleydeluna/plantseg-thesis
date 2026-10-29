@@ -77,7 +77,7 @@ class FakePackedNet(torch.nn.Module):
 # ---------------------------------------------------------------- 1. resolution
 def test_resolution() -> None:
     kinds = {s: resolve_stage_artifact(s)["kind"] for s in eff.STAGES}
-    check("all_stages_route_through_existing_resolver", len(kinds) == 8,
+    check("all_stages_route_through_existing_resolver", len(kinds) == 11,
           f"{sorted(set(kinds.values()))}")
     check("int8_stages_identified",
           all(kinds[s] == "int8_artifact" for s in eff.INT8_STAGES),
@@ -369,7 +369,7 @@ def test_scientific_role() -> None:
     check("record_labelled_descriptive",
           rec["measurement_role"] == "descriptive" and rec["cpu_proxy"] is True
           and rec["on_device"] is False and rec["no_arm_claim"] is True)
-    check("record_uses_own_schema", rec["schema"] == "plantseg-efficiency/1.0.0",
+    check("record_uses_own_schema", rec["schema"] == "plantseg-efficiency/2.0.0",
           "frozen evaluation/statistics schemas are not widened")
     check("provenance_identifies_artifact",
           {"stage", "model_role", "precision", "artifact_role", "backend",
