@@ -563,10 +563,11 @@ def case_hasher_pin_modules():
                 detail="the pinned modules are not src/tman/dedup.py alone")
 
 
-def hasher_session(u: Unlock, values_edit=None, **dedup_edits) -> tuple:
+def hasher_session(u: Unlock, values_edit=None, values_of=None, **dedup_edits) -> tuple:
     """The session part recording the in-session hasher's three values (values.image_hasher, P2R6(a)) of a
     tday_dedup.json made for the manifest's pin (smoke_tman_validate.dedup_fixture; `dedup_edits` change the file),
-    `values_edit` changing the values first; committed once. (The manifest's bytes, the file.)"""
+    `values_edit` changing the values first, `values_of` replacing them; committed once. (The manifest's bytes, the
+    file.)"""
     pin = u.doc["body"]["generator_pins"]["image_hasher"]["pin"]
     data = VW.dedup_fixture(pin, **dedup_edits)
     f = FX.scratch_dir("tmanddses") / "tday_dedup.json"
@@ -576,6 +577,8 @@ def hasher_session(u: Unlock, values_edit=None, **dedup_edits) -> tuple:
               "counts_by_reason": doc["removed_by_reason"]}
     if values_edit is not None:
         values_edit(values)
+    if values_of is not None:
+        values = values_of(values)
     return u.start_session(edit=lambda d: d["session"].update(values={"image_hasher": values})), f
 
 
@@ -624,10 +627,22 @@ def case_session_hasher_values():
             ("hasher_value_dedup_list_sha256_not_the_file_s_P2R6a", lambda x: x.update(dedup_list_sha256="0" * 64),
              "['dedup_list_sha256']"),
             ("hasher_value_counts_by_reason_not_the_file_s_P2R6a", lambda x: x.update(counts_by_reason=dict(
-                x["counts_by_reason"], equal_train=4)), "['counts_by_reason']")):
+                x["counts_by_reason"], equal_train=4)), "['counts_by_reason']"),
+            ("hasher_values_with_a_fourth_key_R3F3", lambda x: x.update(n_images=1561), "unexpected ['n_images']"),
+            ("hasher_value_counts_as_floats_R2F2", lambda x: x.update(counts_by_reason={
+                k: float(n) for k, n in x["counts_by_reason"].items()}), "is not int"),
+            ("hasher_value_count_true_for_one_R2F2", lambda x: x.update(counts_by_reason=dict(
+                x["counts_by_reason"], duplicate_in_split=True)), "duplicate_in_split: True is not int")):
         v = Unlock()
         vdata, vf = hasher_session(v, values_edit=edit)
         expect_gate(v, name, "hasher_values_mismatch", mode="session", data=vdata, dedup=vf, detail=detail)
+    v = Unlock()
+    vdata, vf = hasher_session(v, values_of=sorted)
+    expect_gate(v, "hasher_values_a_list_of_the_three_names_R3F3", "hasher_values_mismatch", mode="session",
+                data=vdata, dedup=vf, detail="not a JSON object")
+    from src.tman import manifest as M
+    from src.tman import validate as V
+    check("hasher_values_spec_keys_are_manifest_s_R2F2", sorted(V.HASHER_VALUES_SPEC) == sorted(M.HASHER_VALUES))
 
 
 def case_cli_session_dedup():

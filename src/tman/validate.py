@@ -722,10 +722,13 @@ def g_generator_cells_mismatch(x: Ctx):
 def g_hasher_pin_data_mismatch(x: Ctx):
     """P2R6(d), from freeze mode on: the image_hasher pin's data parameters are the code's (dedup.data_parameters):
     expected_images is schema.EXPECTED_ROWS, which expected_rows_mismatch has held the body's expected rows to, and
-    train_val_list is manifest.TRAINVAL_HASH_LIST (DL-91, 6213 rows) with the TRAIN and VAL counts (5367 and 846)."""
+    train_val_list is manifest.TRAINVAL_HASH_LIST (DL-91, 6213 rows) with the TRAIN and VAL counts (5367 and 846);
+    each typed as dedup.PIN_SPEC types it, the hasher's own rule at its step 2 (1561.0 is no int: DL-24 R4-1)."""
     params = _pins(x)["image_hasher"]["pin"]["parameters"]
-    return _err([f"image_hasher.parameters.{k} is {params.get(k)!r}, not {v!r}"
-                 for k, v in DD.data_parameters().items() if params.get(k) != v])
+    data, spec = DD.data_parameters(), DD.PIN_SPEC["parameters"][1]
+    errs = [e for k in data for e in S.value_errors(params.get(k), spec[k], f"image_hasher.parameters.{k}")]
+    return _err(errs or [f"image_hasher.parameters.{k} is {params.get(k)!r}, not {v!r}"
+                         for k, v in data.items() if params.get(k) != v])
 
 
 def g_test_value_before_unlock(x: Ctx):
@@ -1646,14 +1649,17 @@ def g_push_evidence_invalid(x: Ctx):
 
 
 HASHER_VALUES_KEY = "image_hasher"       # the session part's values key of the hasher's three values (P2R6(a))
+HASHER_VALUES_SPEC = {"hash_list_sha256": "sha256", "dedup_list_sha256": "sha256",     # manifest.HASHER_VALUES, typed
+                      "counts_by_reason": ("map", "int")}                              # as the hasher prints them
 
 
 def g_hasher_values_mismatch(x: Ctx):
     """P2R6(a), (c)(ii): the in-session hasher's three values (manifest.HASHER_VALUES) sit in the session part's
     values.image_hasher, and the validator reads tday_dedup.json from --dedup only: the two go together, and the
-    generator pins' values stay null (test_value_before_unlock). The file is read strictly (dedup.read_dedup:
-    dedup_invalid) and agrees with the manifest's image_hasher pin (dedup_pin_mismatch); the values are the sha256 of
-    its bytes, its removed_by_reason and its hash_list_sha256 field (the file names its hash list)."""
+    generator pins' values stay null (test_value_before_unlock). The values hold exactly the three keys, typed as the
+    hasher prints them (a count is an int: 1.0 and true are not; DL-24 R2-F2). The file is read strictly
+    (dedup.read_dedup: dedup_invalid) and agrees with the manifest's image_hasher pin (dedup_pin_mismatch); the values
+    are the sha256 of its bytes, its removed_by_reason and its hash_list_sha256 field (the file names its hash list)."""
     values = x.doc["session"]["values"]
     held = HASHER_VALUES_KEY in values
     if held != (x.dedup is not None):
@@ -1663,8 +1669,10 @@ def g_hasher_values_mismatch(x: Ctx):
     if not held:
         return None
     vals = values[HASHER_VALUES_KEY]
-    if not (isinstance(vals, dict) and sorted(vals) == sorted(M.HASHER_VALUES)):
-        return f"values.image_hasher does not hold exactly {list(M.HASHER_VALUES)} (P2R6(a))"
+    errs = S.field_errors(vals, HASHER_VALUES_SPEC, "values.image_hasher")
+    if errs:
+        return (f"values.image_hasher does not hold exactly {list(M.HASHER_VALUES)} as the hasher prints them: "
+                + "; ".join(errs) + " (P2R6(a))")
     try:
         data = Path(x.dedup).read_bytes()
     except OSError as e:

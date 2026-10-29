@@ -744,7 +744,10 @@ def case_record_gates():
             ("hasher_pin_train_val_counts_swapped_P2R6d", lambda p: p["train_val_list"].update(train=846, val=5367),
              "train_val_list"),
             ("hasher_pin_train_val_list_of_another_sha256_P2R6d", lambda p: p["train_val_list"].update(
-                sha256="0" * 64), "train_val_list")):
+                sha256="0" * 64), "train_val_list"),
+            ("hasher_pin_expected_images_1561_0_R4_1", lambda p: p.update(expected_images=1561.0), "is not int"),
+            ("hasher_pin_train_val_rows_6213_0_R4_1", lambda p: p["train_val_list"].update(rows=6213.0),
+             "train_val_list.rows: 6213.0 is not int")):
         expect_gate(w, name, "hasher_pin_data_mismatch", detail=detail, doc=mutated(
             w, lambda d, edit=edit: edit(d["body"]["generator_pins"]["image_hasher"]["pin"]["parameters"])))
     code, _, e = w.run("draft", mutated(w, lambda d: d["body"]["generator_pins"]["image_hasher"]["pin"]["parameters"]

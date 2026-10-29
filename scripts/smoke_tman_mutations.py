@@ -2033,10 +2033,14 @@ M = [
                                                     "    if held and x.dedup is None:")],
      "unlock", "case_session_hasher_values", "dedup_without_the_hasher_s_values_P2R6a", ["hasher_values_mismatch"],
      None),
-    ("hasher_values_keys_unchecked", VAL, [("    if not (isinstance(vals, dict) and sorted(vals) == "
-                                            "sorted(M.HASHER_VALUES)):", "    if not isinstance(vals, dict):")],
-     "unlock", "case_session_hasher_values", "hasher_values_not_exactly_the_three_P2R6a", ["hasher_values_mismatch"],
-     None),
+    ("hasher_values_keys_unchecked", VAL, [
+        ('    errs = S.field_errors(vals, HASHER_VALUES_SPEC, "values.image_hasher")',
+         '    errs = S.value_errors(vals, ("map", "any"), "values.image_hasher")')],
+     "unlock", "case_session_hasher_values", "hasher_values_with_a_fourth_key_R3F3", ["hasher_values_mismatch"],
+     None),                                                                  # P2-F4: killed by acceptance (R3-F3)
+    ("hasher_values_types_unchecked", VAL, [('                      "counts_by_reason": ("map", "int")}',
+                                             '                      "counts_by_reason": ("map", "any")}')],
+     "unlock", "case_session_hasher_values", "hasher_value_counts_as_floats_R2F2", ["hasher_values_mismatch"], None),
     ("hasher_value_hash_list_not_compared", VAL, [('"hash_list_sha256": doc["hash_list_sha256"]',
                                                    '"hash_list_sha256": vals["hash_list_sha256"]')],
      "unlock", "case_session_hasher_values", "hasher_value_hash_list_sha256_not_the_file_s_P2R6a",
@@ -2082,10 +2086,14 @@ M = [
     ("hasher_modules_shape_unchecked", VAL, [("    if not (isinstance(modules, dict) and list(modules) == "
                                               "[DD.DEDUP_REL]):", "    if not isinstance(modules, dict):")],
      "unlock", "case_hasher_pin_modules", "hasher_pin_naming_a_second_module_P2R6b", ["hasher_pin_mismatch"], None),
-    ("hasher_pin_data_unchecked", VAL, [("for k, v in DD.data_parameters().items() if params.get(k) != v])",
-                                         "for k, v in DD.data_parameters().items() if False])")],
+    ("hasher_pin_data_unchecked", VAL, [("for k, v in data.items() if params.get(k) != v])",
+                                         "for k, v in data.items() if False])")],
      "validate", "case_record_gates", "hasher_pin_expected_images_not_1561_P2R6d", ["hasher_pin_data_mismatch"],
      None),
+    ("hasher_pin_data_types_unchecked", VAL, [("    errs = [e for k in data for e in S.value_errors(params.get(k), "
+                                               "spec[k], f\"image_hasher.parameters.{k}\")]", "    errs = []")],
+     "validate", "case_record_gates", "hasher_pin_expected_images_1561_0_R4_1", ["hasher_pin_data_mismatch"],
+     None),                                                                                  # P2-F4 (DL-24 R4-1)
     ("unlock_records_the_path", VAL, [('    if m["path"] != S.MANIFEST_REL:', "    if False:")],
      "unlock", "case_unlock_gates", "unlock_entry_naming_another_manifest_path_P2R7", ["run_added_after_freeze"],
      None),
