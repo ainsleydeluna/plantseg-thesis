@@ -466,13 +466,13 @@ def case_unlock_gates():
     w.commit({other["path"]: w.files[other["path"]]}, "an unlock entry of another body")
     expect_gate(u, "unlock_entry_of_another_body", "run_added_after_freeze", unlock_entry=other["path"],
                 detail="not the one the unlock entry records")
+    expect_gate(u, "second_unlock_entry_in_the_decision_log", "second_session", detail="two unlock entries")
     named = w.entry_file("unlock", [], {"manifest": dict(ud["manifest"], path="reports/derived/tday_manifest_v2.json"),
                                         "lanes": ud["lanes"], "freeze_record": ud["freeze_record"]}, nn=4,
-                         date=UNLOCK_DAY)
+                         date=UNLOCK_DAY)            # after the check above, which counts exactly two unlock rows
     w.commit({named["path"]: w.files[named["path"]]}, "an unlock entry naming another manifest path")
     expect_gate(u, "unlock_entry_naming_another_manifest_path_P2R7", "run_added_after_freeze",
                 unlock_entry=named["path"], detail="not the one the unlock entry records")
-    expect_gate(u, "second_unlock_entry_in_the_decision_log", "second_session", detail="two unlock entries")
     rel = committed_raw(u, "unlock", dict(ud, manifest=S.MANIFEST_REL), 3, UNLOCK_DAY)
     expect_gate(u, "unlock_entry_whose_manifest_is_a_string_B89", "entry_file_invalid", unlock_entry=rel,
                 detail="manifest")
