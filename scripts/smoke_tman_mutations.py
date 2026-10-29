@@ -2120,6 +2120,14 @@ M = [
          "        return ss.deleted_record_error(self.src, rel)")],
      "validate", "case_shallow_records", "each_history_reader_refuses_a_shallow_clone_first_P2R6e",
      ["repository_shallow"], None),
+    # ------------------------------------- P2-F1: the command line refuses a shallow clone first (DL-24 R2-F1)
+    ("cli_records_at_head_unchecked", CLI, [("    records = R.Records.at_head(args.root)\n    records.full_history()\n",
+                                             "    records = R.Records.at_head(args.root)\n")],
+     "validate", "case_shallow_records", "every_cli_command_at_head_refuses_a_shallow_clone_first_R2F1",
+     ["repository_shallow"], None),
+    ("cli_records_commit_unchecked", CLI, [("root=args.root)\n        records.full_history()", "root=args.root)")],
+     "validate", "case_shallow_records", "cli_validate_at_a_records_commit_refuses_a_shallow_clone_first_R2F1",
+     ["repository_shallow"], None),
 ]
 REFUSAL_EXTRA = ("inventory_invalid", "inventory_sha256_mismatch", "binding_invalid",       # read_inventory's codes
                  "output_location", "output_exists",                                       # the CLI's outputs

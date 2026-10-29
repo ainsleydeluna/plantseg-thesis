@@ -2540,7 +2540,8 @@ def case_shallow_records():
     """P2R6(e): "written once" is read over the records' history, so in a depth-1 clone records.py's history readers
     refuse (repository_shallow), once per Records: in the validator inside entry_file_rewritten, every earlier gate
     passing; in entries.read_entry_file after its path and committed-file reads (the inventory's freeze record); on
-    the command line. A repository with no commit is record_uncommitted."""
+    the command line, where every command refuses the clone as it opens the records, before any AM-22 lookup can
+    catch the refusal (DL-24 R2-F1). A repository with no commit is record_uncommitted."""
     from src.tman import manifest as M
     from src.tman import records as R
     w = WORLD
@@ -2564,6 +2565,34 @@ def case_shallow_records():
     check("cli_validate_in_a_shallow_clone_refused_P2R6e", rc == 2 and "REFUSED [repository_shallow]" in txt,
           f"{rc} {txt.strip()[-200:]}")
     rel = w.cut_refs["G:s42:80k"]["path"]
+    slot = next(e["slot"] for e in w.doc["body"]["entries"]
+                if all(a.get("slot") != e["slot"] for a in w.doc["appends"]))
+    commands = {"build": ["build", "--sources", str(out / "absent_sources.json"), "--out", str(out)],
+                "validate": ["validate", "--manifest", str(out / "m.json"), "--mode", "draft"],
+                "entry": ["entry", "cut", "--date", "2026-10-20", "--fields", str(out / "absent_fields.json"),
+                          "--amendment", "AM-19", "--summary", "a cut", "--out", str(out)],
+                "arithmetic": ["arithmetic", "--slot", slot],
+                "append": ["append", "--manifest", str(out / "m.json"), "--slot", slot, "--hashed",
+                           str(out / "absent_hashed.json"), "--out", str(out)],
+                "inventory": ["inventory", "--manifest", str(out / "m.json"), "--out", str(out)],
+                "check-freeze": ["check-freeze", "--date", "2026-10-20", "--runs", str(w.runs), "--now",
+                                 "2026-10-21T00:00:00Z"],
+                "freeze-body": ["freeze-body", "--d-date", "2026-10-20", "--cut", rel, "--out", str(out)]}
+    got = {k: _cli(["--root", str(clone)] + a) for k, a in commands.items()}
+    bad = {k: f"{rc} {t.strip()[-90:]}" for k, (rc, t) in got.items()
+           if rc != 2 or "REFUSED [repository_shallow]" not in t}
+    check("every_cli_command_at_head_refuses_a_shallow_clone_first_R2F1", not bad, str(bad)[:300])
+    import scripts.tday_manifest as CLI
+    calls, orig = [], CLI.V.validate
+    CLI.V.validate = lambda ctx: (calls.append(ctx.mode), orig(ctx))[1]
+    try:
+        rc, txt = _cli(["--root", str(clone), "validate", "--manifest", str(out / "m.json"), "--mode", "unlock",
+                        "--records", str(FX.scratch_dir("tmanshrec")), "--records-commit",
+                        FX.git(clone, "rev-parse", "HEAD")])
+    finally:
+        CLI.V.validate = orig
+    check("cli_validate_at_a_records_commit_refuses_a_shallow_clone_first_R2F1", rc == 2
+          and "REFUSED [repository_shallow]" in txt and not calls, f"{rc} {calls} {txt.strip()[-160:]}")
     check("each_history_reader_refuses_a_shallow_clone_first_P2R6e", [
         FX.refused_code(getattr(R.Records.at_head(clone), fn), rel) for fn in ("written_once_error", "adding_commits",
                                                                               "deleted_record_error")]

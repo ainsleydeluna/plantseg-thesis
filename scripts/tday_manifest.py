@@ -20,8 +20,8 @@ Commands:
 
 Every output is a new file created exclusively in --out, a folder outside the repository; no command writes in the
 repository, and none reads TEST data. Records are read at HEAD of the repository at --root (default: this
-checkout). Exit codes follow the select scripts (src/training/sweep_select.py:203): 0 pass or written, 2 refused,
-3 incomplete (draft), 4 error.
+checkout); a shallow clone is refused first (repository_shallow; P2R6(e)). Exit codes follow the select scripts
+(src/training/sweep_select.py:203): 0 pass or written, 2 refused, 3 incomplete (draft), 4 error.
 """
 from __future__ import annotations
 
@@ -90,7 +90,11 @@ def read_json(path, code: str):
 
 
 def records_at(args) -> R.Records:
-    return R.Records.at_head(args.root)
+    """The records at HEAD of --root, a shallow clone refused before any command reads them (P2R6(e)): B-2's AM-22
+    lookups catch a refusal raised inside them, so the check cannot wait for a history reader (DL-24 R2-F1)."""
+    records = R.Records.at_head(args.root)
+    records.full_history()
+    return records
 
 
 def catalogue(records: R.Records):
@@ -172,6 +176,7 @@ def cmd_validate(args) -> int:
         if not S.COMMIT_RE.fullmatch(args.records_commit):
             raise S.TmanRefused("record_uncommitted", f"--records-commit {args.records_commit!r} is not 40 hex")
         records = R.Records.at_records_commit(args.records, args.records_commit, root=args.root)
+        records.full_history()                                                  # as records_at (DL-24 R2-F1)
     else:
         records = records_at(args)
     rel = records.src.rel(args.manifest)
