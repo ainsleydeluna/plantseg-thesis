@@ -19,8 +19,9 @@ record (its path under the run directories and its sha256, so the validator read
 
 Generator pins (AM-19 item 1(c)): the corrupted-TEST cache pin is L-CORR's JSON, embedded verbatim (IF§3): the
 validator recomputes pin_sha256 and compares its cells with the registered set (src.corruption_roles, imported
-lazily; until master has the module the set comes through a parameter, TB6). The image hasher's pin is B-3a's.
-Neither carries a value before the unlock record (M11; test_value_before_unlock).
+lazily; until master has the module the set comes through a parameter, TB6). The image hasher's pin is B-3a's: the
+builder takes it from dedup.hasher_pin, its one definition (P2R2). Neither carries a value before the unlock record
+(M11; test_value_before_unlock).
 """
 from __future__ import annotations
 
@@ -32,6 +33,7 @@ from pathlib import Path
 
 from src.training import sweep_select as ss
 
+from . import dedup as DD
 from . import records as R
 from . import schedule as D
 from . import schema as S
@@ -683,7 +685,8 @@ TEACHER_OF_RECORD = {"path": "iter_24000.pth", "dl": "DL-88", "bytes": 335_949_0
 EXPECTED_ROWS_CITES = ("reports/dataset_report.md:30", "src/eval/stage_artifacts.py:30")
 LANE_CODE_FILES = ("src/tman/__init__.py", "src/tman/schema.py", "src/tman/records.py", "src/tman/completion.py",
                    "src/tman/schedule.py", "src/tman/entries.py", "src/tman/manifest.py", "src/tman/validate.py",
-                   "src/tman/am22.py", "scripts/tday_manifest.py", "configs/tday_catalogue.json")   # am22: B2R11
+                   "src/tman/am22.py", "src/tman/dedup.py", "scripts/tday_manifest.py",
+                   "scripts/tday_hash_images.py", "configs/tday_catalogue.json")   # am22: B2R11; B-3a's two: P2R4
 
 
 def hash_only(rel: str) -> bool:
@@ -872,7 +875,8 @@ def build_manifest(records: R.Records, cat, sources: dict, *, runs_root=None, pr
             "evaluator": {"commit": e, "files": evaluator_files(src, e) if e else {}},
             "execution_context": sources["execution_context"],
             "expected_rows": {"value": S.EXPECTED_ROWS, "cites": list(EXPECTED_ROWS_CITES)},
-            "generator_pins": {k: {"pin": pins[k], "value": None} for k in ("corrupted_cache", "image_hasher")},
+            "generator_pins": {"corrupted_cache": {"pin": pins["corrupted_cache"], "value": None},
+                               "image_hasher": {"pin": DD.hasher_pin(e), "value": None}},     # P2R2: one pin
             "lane_code": lane_code(), "references": references(records), "schedule": freeze.as_block(),
             "trigger": sources["trigger"]}
     return {"format": S.MANIFEST_FORMAT, "body": body, "appends": [], "session": None}
@@ -976,12 +980,35 @@ def inventory_entries(body: dict, cat, records: R.Records, runs_root=None, appen
     return out
 
 
+def export_dedup(path, folder, pin) -> dict:
+    """IF§11.5's dedup block (P2R4): tday_dedup.json at `path`, named relative to `folder`, the export's folder, in
+    P2R5's form (dedup_invalid otherwise, a file outside the folder included); the sha256 of its bytes and its
+    removed_by_reason. The file is read strictly (dedup.read_dedup: dedup_invalid) and agrees with the manifest's
+    image_hasher pin `pin` (P2R6(c)(ii): dedup_pin_mismatch)."""
+    S.refuse_test_path(path)
+    f, root = Path(path).resolve(), Path(folder).resolve()
+    rel = f.relative_to(root).as_posix() if f.is_relative_to(root) else None
+    err = DD.relative_path_error(rel) if rel is not None else "not inside the export's folder"
+    if err:
+        raise S.TmanRefused("dedup_invalid", f"{path} relative to the export's folder {root}: {err} (P2R5)")
+    try:
+        data = f.read_bytes()
+    except OSError as e:
+        raise S.TmanRefused("dedup_invalid", f"{path}: unreadable ({type(e).__name__})") from None
+    ddoc = DD.read_dedup(data)
+    errs = DD.dedup_pin_errors(ddoc, pin)
+    if errs:
+        raise S.TmanRefused("dedup_pin_mismatch", "; ".join(errs) + " (P2R6(c)(ii))")
+    return {"path": rel, "sha256": S.sha256_bytes(data), "removed_by_reason": dict(ddoc["removed_by_reason"])}
+
+
 def build_inventory(doc: dict, manifest_bytes: bytes, records: R.Records, cat, *, runs_root=None, registered=None,
-                    freeze_record: str | None = None) -> dict:
+                    freeze_record: str | None = None, dedup: tuple | None = None) -> dict:
     """tday-inventory/1 (IF§8; IF§11 v2): manifest_sha256 is the body's canonical sha256 (the freeze record's
-    body_sha256), manifest_file_sha256 the manifest file's; dedup null and binding unbound until B-3. `freeze` names
-    the decision-log row of `freeze_record`, the committed freeze entry file of this body (DL-24 #33, #82); null
-    before the freeze."""
+    body_sha256), manifest_file_sha256 the manifest file's; binding unbound until B-3b. `freeze` names the decision-log
+    row of `freeze_record`, the committed freeze entry file of this body (DL-24 #33, #82); null before the freeze.
+    `dedup` is (tday_dedup.json's path, the folder the export is written into): the export's dedup block
+    (export_dedup; P2R4); without it, dedup is null."""
     from . import entries as E
     body = doc["body"]
     msha = S.canonical_sha256(body)
@@ -992,10 +1019,12 @@ def build_inventory(doc: dict, manifest_bytes: bytes, records: R.Records, cat, *
             raise S.TmanRefused("inventory_invalid", f"{freeze_record}: its body_sha256 {fdoc['body_sha256'][:12]} is "
                                                      f"not this manifest's {msha[:12]}")
         freeze = {"dl_row": records.decision_log().recorded_rows_with(fsha)[0], "manifest_sha256": msha}
+    models = inventory_rows(body, doc["appends"], cat, registered)
+    entries = inventory_entries(body, cat, records, runs_root, doc["appends"])
+    hp = body["generator_pins"].get("image_hasher") if isinstance(body["generator_pins"], dict) else None
+    pin = hp.get("pin") if isinstance(hp, dict) else None
     return {"schema": S.INVENTORY_FORMAT, "evaluator_commit": body["evaluator"]["commit"],
             "execution_context": body["execution_context"], "manifest_sha256": msha,
-            "manifest_file_sha256": S.sha256_bytes(manifest_bytes),
-            "models": inventory_rows(body, doc["appends"], cat, registered),
-            "entries": inventory_entries(body, cat, records, runs_root, doc["appends"]), "dedup": None,
-            "freeze": freeze,
+            "manifest_file_sha256": S.sha256_bytes(manifest_bytes), "models": models, "entries": entries,
+            "dedup": None if dedup is None else export_dedup(*dedup, pin), "freeze": freeze,
             "binding": {"state": "unbound", "path": None, "sha256": None}}

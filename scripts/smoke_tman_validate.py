@@ -33,6 +33,7 @@ if str(REPO) not in sys.path:
 
 import scripts.smoke_tman_pins as PINS  # noqa: E402
 import scripts.smoke_tman_schema as FX  # noqa: E402  (the TMAN fixture library)
+from src.tman import dedup as DD  # noqa: E402  (the hasher's pin reads the code as it runs: P2R2)
 
 check, expect_refused = FX.check, FX.expect_refused
 E3S42 = "E3:s42:lambda0.5:alpha25:80k"
@@ -52,7 +53,9 @@ CODE_FIXTURES = {"scripts/evaluate_model.py": "import src.eval.fixture_scoring  
                  "src/eval/__init__.py": "", "src/eval/fixture_scoring.py": "VALUE = 1\n",
                  "configs/plantseg_class_map.json": "{}\n",
                  "scripts/build_corruption_cache.py": "# the cache generator's fixture\n",
-                 "scripts/tday_hash_images.py": "# the in-session hasher's fixture\n"}
+                 # the hasher and its dedup module as they run: the builder's pin holds their sha256 (P2R2), which
+                 # the unlock checks at S (hasher_pin_mismatch)
+                 **{rel: data.decode("utf-8") for rel, data in DD.code_bytes().items()}}
 CUT_GROUPS = {   # group -> (slots cut at the freeze, reason, arm)
     "E2-s4344": (["E2:s43:lambda0.5:80k", "E2:s44:lambda0.5:80k"], "no card", False),
     "E3-s4344": (["E3:s43:lambda0.5:alpha25:80k", "E3:s44:lambda0.5:alpha25:80k"], "no card", False),
@@ -414,9 +417,7 @@ class World:
         S = self.S
         blob = FX.git(self.repo, "rev-parse", f"{self.E}:scripts/build_corruption_cache.py")
         pin = PINS.pin(script={"path": "scripts/build_corruption_cache.py", "git_blob": blob}, commit=self.E)
-        hasher = {"script": {"path": "scripts/tday_hash_images.py", "commit": self.E,
-                             "sha256": S.sha256_bytes(CODE_FIXTURES["scripts/tday_hash_images.py"].encode())},
-                  "python": "3.11", "parameters": {"folder": "images/<split>", "suffixes": [".jpg", ".jpeg"]}}
+        hasher = DD.hasher_pin(self.E)                  # a sources pin, when given, is the function's (P2R2)
         trig = (self.repo / "reports/derived/am3_trigger.json").read_bytes()
         return {"evaluator_commit": self.E,
                 "execution_context": {"model_device": "cpu", "input_devices": ["cpu"],
@@ -2349,6 +2350,108 @@ def case_inventory():
         "state": "bound", "path": "tday_binding_dedup.json", "sha256": S.sha256_bytes(bad)})), detail="scope")
 
 
+def dedup_fixture(pin: dict, **edits) -> bytes:
+    """A tday_dedup.json agreeing with the image_hasher pin `pin` (P2R6(c)(ii)): the pin's expected_images synthetic
+    ids d0000... (each image's sha256 that of its own text; three equal a TRAIN image, two a VAL image, d0006 is d0005
+    again), named with the pin's script sha256 and TRAIN/VAL list sha256. `edits` replace fields of the built doc
+    (n_images builds that many images instead)."""
+    from src.tman import schema as S
+    n = edits.pop("n_images", pin["parameters"]["expected_images"])
+    images = {f"d{i:04d}": S.sha256_bytes(f"image {i}".encode()) for i in range(n)}
+    images["d0006"] = images["d0005"]
+    sets = {"train": frozenset(images[k] for k in ("d0000", "d0001", "d0002")),
+            "val": frozenset(images[k] for k in ("d0003", "d0004"))}
+    doc = DD.build_doc(images, sets, hash_list_sha256="4" * 64,
+                       train_val_list_sha256=pin["parameters"]["train_val_list"]["sha256"],
+                       script={"path": DD.SCRIPT_REL, "sha256": pin["script"]["sha256"]})
+    doc.update(edits)
+    return DD.doc_bytes(doc)
+
+
+def case_inventory_dedup():
+    """P2R4, P2R5, P2R6(c)(ii) at the builder: with tday_dedup.json, the export's dedup is {its path relative to the
+    export's folder, in LREP's path_problem form; the sha256 of its bytes; its removed_by_reason}, the file read
+    strictly and agreeing with the manifest's image_hasher pin; each refusal with the export otherwise built; the
+    command line's `inventory --dedup`."""
+    from src.tman import manifest as M
+    from src.tman import validate as V
+    w = WORLD
+    S = w.S
+    pin = w.doc["body"]["generator_pins"]["image_hasher"]["pin"]
+    out = FX.scratch_dir("tmanddinv")
+    data = dedup_fixture(pin)
+    counts = {"equal_train": 3, "equal_val": 2, "duplicate_in_split": 1}
+    (out / "hasher").mkdir()
+    for rel, b in (("tday_dedup.json", data), ("hasher/tday_dedup.json", data),
+                   ("x\\tday_dedup.json", data), (" tday_dedup.json", data),
+                   ("pretty.json", json.dumps(json.loads(data), indent=2).encode()),
+                   ("script_other.json", dedup_fixture(pin, script={"path": DD.SCRIPT_REL, "sha256": "0" * 64})),
+                   ("list_other.json", dedup_fixture(pin, train_val_list_sha256="0" * 64)),
+                   ("count_other.json", dedup_fixture(pin, n_images=1560))):
+        (out / rel).write_bytes(b)
+    (out / "a_folder.json").mkdir()
+
+    def build(path, folder=out):
+        return M.build_inventory(w.doc, w.data, w.records, w.cat, runs_root=w.runs, registered=PINS.IF6_CELLS,
+                                 dedup=(path, folder))
+
+    def outcome(path, folder=out):
+        try:
+            return "ok", build(path, folder)["dedup"]
+        except S.TmanRefused as e:
+            return e.code, e.detail
+        except Exception as e:  # noqa: BLE001 -- a crash fails the check by name
+            return type(e).__name__, str(e)
+    got = outcome(out / "tday_dedup.json")
+    check("inventory_dedup_is_the_file_relative_to_the_export_s_folder_P2R4", got == ("ok", {
+        "path": "tday_dedup.json", "sha256": S.sha256_bytes(data), "removed_by_reason": counts}), str(got)[:300])
+    check("inventory_dedup_passes_dedup_spec", got[0] == "ok" and S.value_errors(got[1], V.DEDUP_SPEC, "dedup") == [])
+    got = outcome(out / "hasher" / "tday_dedup.json")
+    check("inventory_dedup_in_a_subfolder_P2R5", got[0] == "ok" and got[1]["path"] == "hasher/tday_dedup.json",
+          str(got)[:200])
+    check("inventory_without_dedup_null", M.build_inventory(w.doc, w.data, w.records, w.cat, runs_root=w.runs,
+                                                            registered=PINS.IF6_CELLS)["dedup"] is None)
+    elsewhere = FX.scratch_dir("tmanddout")
+    (elsewhere / "tday_dedup.json").write_bytes(data)
+    for name, path, folder, want, detail in (
+            ("inventory_dedup_outside_the_export_s_folder_P2R5", elsewhere / "tday_dedup.json", out, "dedup_invalid",
+             "not inside the export's folder"),
+            ("inventory_dedup_reached_by_dot_dot_P2R5", out / "tday_dedup.json", out / "hasher", "dedup_invalid",
+             "not inside the export's folder"),
+            ("inventory_dedup_path_with_a_backslash_P2R5", out / "x\\tday_dedup.json", out, "dedup_invalid",
+             "not a plain relative POSIX path"),
+            ("inventory_dedup_path_with_surrounding_space_P2R5", out / " tday_dedup.json", out, "dedup_invalid",
+             "surrounding space"),
+            ("inventory_dedup_absent_P2R4", out / "absent_dedup.json", out, "dedup_invalid", "unreadable"),
+            ("inventory_dedup_a_folder_P2R4", out / "a_folder.json", out, "dedup_invalid", "unreadable"),
+            ("inventory_dedup_not_canonical_read_strictly_P2R4", out / "pretty.json", out, "dedup_invalid",
+             "not the canonical JSON"),
+            ("inventory_dedup_of_another_script_P2R6c", out / "script_other.json", out, "dedup_pin_mismatch",
+             "script is not"),
+            ("inventory_dedup_of_another_list_P2R6c", out / "list_other.json", out, "dedup_pin_mismatch",
+             "train_val_list_sha256"),
+            ("inventory_dedup_of_another_count_P2R6c", out / "count_other.json", out, "dedup_pin_mismatch",
+             "n_images")):
+        got = outcome(path, folder)
+        check(name, got[0] == want and detail in got[1], str(got)[:240])
+    cells = out / "cells.json"
+    cells.write_text(json.dumps(PINS.IF6_CELLS), encoding="utf-8")
+    (out / "m.json").write_bytes(w.data)
+    folder = FX.scratch_dir("tmanddcli")
+    (folder / "tday_dedup.json").write_bytes(data)
+    rc, txt = _cli(["--root", str(w.repo), "inventory", "--manifest", str(out / "m.json"), "--out", str(folder),
+                    "--runs", str(w.runs), "--registered-cells", str(cells),
+                    "--dedup", str(folder / "tday_dedup.json")])
+    made = json.loads((folder / "tday_inventory.json").read_bytes()) if rc == 0 else {}
+    check("cli_inventory_dedup_names_the_file_P2R4", rc == 0 and made.get("dedup") == {
+        "path": "tday_dedup.json", "sha256": S.sha256_bytes(data), "removed_by_reason": counts}, txt.strip()[-200:])
+    folder = FX.scratch_dir("tmanddcli")
+    rc, txt = _cli(["--root", str(w.repo), "inventory", "--manifest", str(out / "m.json"), "--out", str(folder),
+                    "--runs", str(w.runs), "--registered-cells", str(cells), "--dedup", str(out / "tday_dedup.json")])
+    check("cli_inventory_dedup_outside_out_refused_writes_nothing", rc == 2 and "REFUSED [dedup_invalid]" in txt
+          and not any(folder.iterdir()), txt.strip()[-200:])
+
+
 def case_draft_and_cli():
     from src.tman import manifest as M
     from src.tman import validate as V
@@ -2404,7 +2507,7 @@ def main() -> int:
                              case_derived_sources, case_appends_history, case_checkpoint_sources, case_arm_teacher,
                              case_run_identity, case_measurement, case_aborted, case_non_finite_gate, case_scope_gates,
                              case_moved_freeze, case_printers, case_draft_and_cli, case_inventory,
-                             case_malformed_inputs_refused, case_coverage))
+                             case_inventory_dedup, case_malformed_inputs_refused, case_coverage))
     finally:
         if REAL_TEACHER is not None:
             WORLD.M.TEACHER_OF_RECORD.clear()

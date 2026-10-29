@@ -3,14 +3,15 @@
 
 Commands:
   build             a draft manifest from the committed records and a sources file (plan §1.2), validated in draft
-                    mode, written as tday_manifest.json into --out
+                    mode, written as tday_manifest.json into --out; the image_hasher pin is dedup.hasher_pin's (P2R2)
   validate          the validator (src/tman/validate.py) in mode draft, freeze, unlock or session
   entry KIND        an entry file (tday_entry/1) checked, written into --out, and its decision-log row printed
   arithmetic        AM-19 item 3(b)'s arithmetic for a run (scripts/preflight_arms.py's cut_arithmetic, reused); with
                     --out, the cut entry it implies when the run does not fit
   append            a derived artifact's hashed form appended to the manifest, written into --out
   isolation-record  src/data/isolation.assert_trainval_only_root on --data-root, written as tday_isolation/1
-  inventory         the inventory export tday-inventory/1 (IF§8; IF§11 v2), written into --out and read back
+  inventory         the inventory export tday-inventory/1 (IF§8; IF§11 v2), written into --out and read back; with
+                    --dedup, its dedup block names the hasher's tday_dedup.json relative to --out (P2R4, P2R5)
   check-freeze      AM-22 item 1(a)'s check at the end of --date (src/tman/am22.py; B-2): each condition MET with its
                     records or MISSING; it writes nothing
   freeze-body       the body to freeze for AM-22 item 1(b)'s D: the draft committed by the end of D and the
@@ -559,16 +560,20 @@ def cmd_isolation(args) -> int:
 
 # --------------------------------------------------------------------------------------------- inventory
 def cmd_inventory(args) -> int:
+    """The export, written into --out and read back; --dedup names the hasher's tday_dedup.json, which the export's
+    dedup block names relative to --out (P2R4, P2R5)."""
     data = read_bytes(args.manifest, "manifest_unreadable")
     doc = S.strict_json(data, args.manifest, code="manifest_unreadable")
     records = records_at(args)
     cat = catalogue(records)
+    folder = out_folder(args.out, args.root)
     inv = M.build_inventory(doc, data, records, cat, runs_root=args.runs, registered=registered(args),
-                            freeze_record=args.freeze_record)
+                            freeze_record=args.freeze_record,
+                            dedup=None if args.dedup is None else (args.dedup, folder))
     errs = V.inventory_errors(S.strict_json(S.json_file_bytes(inv), "the inventory", code="inventory_invalid"), cat)
     if errs:                                                      # a refusal writes nothing (DL-24 #61)
         raise S.TmanRefused("inventory_invalid", "; ".join(errs[:6]))
-    out = write_new(out_folder(args.out, args.root), "tday_inventory.json", S.json_file_bytes(inv))
+    out = write_new(folder, "tday_inventory.json", S.json_file_bytes(inv))
     V.read_inventory(out)
     print(f"WROTE {out} sha256 {S.sha256_bytes(out.read_bytes())} ({len(inv['models'])} model rows, "
           f"{len(inv['entries'])} entries)")
@@ -676,6 +681,7 @@ def parser() -> argparse.ArgumentParser:
     n.add_argument("--runs")
     n.add_argument("--registered-cells")
     n.add_argument("--freeze-record", help="the freeze record: its committed entry file (DL-24 #33)")
+    n.add_argument("--dedup", help="the hasher's tday_dedup.json, inside --out: the export's dedup block (P2R4)")
     k = sub.add_parser("check-freeze")
     k.add_argument("--date", required=True, help="X: the check reads the records committed by the end of X")
     k.add_argument("--runs", required=True)
@@ -700,7 +706,7 @@ COMMANDS = {"build": cmd_build, "validate": cmd_validate, "entry": cmd_entry, "a
 # them (DL-24 #7, #10); a part read under --runs or --root is checked there again where it is joined.
 PATH_ARGS = ("root", "sources", "out", "runs", "registered_cells", "manifest", "freeze_record", "unlock_entry",
              "records", "fields", "reference_telemetry", "reference_smoke", "hashed", "ptq_record", "data_root",
-             "push_evidence", "cut")
+             "push_evidence", "cut", "dedup")
 
 
 def main(argv=None) -> int:

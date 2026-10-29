@@ -477,9 +477,19 @@ def case_static():
     tree = ast.parse(path.read_text(encoding="utf-8"))
     mods = sorted({a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names}
                   | {("." * n.level) + (n.module or "") for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)})
-    check("dedup_imports_the_standard_library_and_schema_only", mods == [".", "__future__", "re"]
-          and [a.name for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) and n.level == 1 for a in n.names]
-          == ["schema"], str(mods))
+    top = sorted({a.name for n in tree.body if isinstance(n, ast.Import) for a in n.names}
+                 | {("." * n.level) + (n.module or "") for n in tree.body if isinstance(n, ast.ImportFrom)})
+    check("dedup_imports_the_standard_library_and_schema_at_module_level_P2R2", top == [".", "__future__", "pathlib",
+                                                                                         "re"]
+          and [a.name for n in tree.body if isinstance(n, ast.ImportFrom) and n.level == 1 for a in n.names]
+          == ["schema"], str(top))
+    fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "data_parameters")
+    inner = [(("." * n.level) + (n.module or ""), [a.name for a in n.names]) for n in ast.walk(tree)
+             if isinstance(n, (ast.Import, ast.ImportFrom)) and n not in tree.body]
+    check("the_pin_s_data_imported_inside_data_parameters_only_P2R2", inner == [
+        ("src.eval.teacher_diag", ["TRAIN_ROWS", "VAL_ROWS"]), (".", ["manifest"])]
+          and all(any(n is m for m in ast.walk(fn)) for n in ast.walk(tree)
+                  if isinstance(n, (ast.Import, ast.ImportFrom)) and n not in tree.body), str(inner))
     check("dedup_imports_no_src_stats", not any("src.stats" in m for m in mods) and "src.stats" not in sys.modules)
 
 

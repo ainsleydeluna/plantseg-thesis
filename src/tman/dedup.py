@@ -23,17 +23,24 @@ counts are pinned string values and numbers (REASON_LABELS, ISSUE_ROWS); no JSON
 The TRAIN/VAL list is DL-91's file of record, in scripts/hash_split_files.py's format (:232-233); its sha256 is the
 pin's before it is parsed (ruling H9 step 4). The id fingerprints are LREP's (ids_sha256).
 
-Pure functions: the standard library and B-1's schema helpers (src/tman/schema.py), by import. Refusals are
-schema.TmanRefused codes; a refusal names offending files by count and sha256, never by name.
+The hasher's pin (ruling H8; P2R2) is built here, its one definition: the manifest's builder and the hasher's
+--print-pin both call hasher_pin. It holds the sha256 of the hasher script's bytes and of this module's, read from
+this checkout; manifest.TRAINVAL_HASH_LIST and src/eval/teacher_diag.py's split counts are imported inside
+data_parameters, so no module-level import cycle forms (manifest.py imports this module). The export's dedup.path
+(P2R5) and the dedup file's agreement with the pin (P2R6(c)(ii)) are checked here for the builder and the validator.
+
+Otherwise pure functions: the standard library and B-1's schema helpers (src/tman/schema.py), by import. Refusals
+are schema.TmanRefused codes; a refusal names offending files by count and sha256, never by name.
 """
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 from . import schema as S
 
 # ------------------------------------------------------------------------------------------- formats and names
-DEDUP_FORMAT = "tday_dedup/1"                       # here, not in schema.py (ruling H2(a)); part 2 wires it there
+DEDUP_FORMAT = S.DEDUP_FORMAT                       # schema.py's, one definition (P2R3)
 HASH_LIST_NAME = "tday_image_hashes.tsv"            # plan :539
 DEDUP_NAME = "tday_dedup.json"
 HASH_LIST_HEADER = ("stem", "file", "bytes", "sha256")                     # ruling H6
@@ -313,3 +320,93 @@ def issue_counts_line() -> str:
     counts, not recomputed (the issue counts SHA-1 groups over the whole release)."""
     parts = [f"{r} {ISSUE_ROWS[r][1]} ({ISSUE_ROWS[r][0]})" for r in REASONS]
     return "issue #11's counts beside them (AM-18 item 8(a), not recomputed): " + "; ".join(parts)
+
+
+# -------------------------------------------------------------------------------------------- the pin (H8; P2R2)
+SCRIPT_REL = "scripts/tday_hash_images.py"
+DEDUP_REL = "src/tman/dedup.py"
+CODE_ROOT = Path(__file__).resolve().parents[2]         # the checkout this module runs from (manifest.CODE_ROOT's form)
+PYTHON = "3.11"                                         # the pin's python (ruling H8): the environment of record
+FOLDER = "images/{split}"                               # plan §1.7: images/<split> under the data root
+SPLIT_FROM = "src.eval.stage_artifacts.OFFICIAL_SPLIT"  # read by import in the hasher's split_of_record (H0)
+SUFFIXES = (".jpeg", ".jpg")                            # scripts/hash_split_files.py :50
+DIGEST = "sha256 of the file bytes"
+IDS_RULE = "the file stem; sorted is Python's sorted(), in code-point order"
+KEEP_RULE = "of each group of identical images equal to no TRAIN or VAL image, its first sorted id"
+# the parameters this code fixes; expected_images, train_val_list and modules are the pin's data
+DESCRIPTIVE = ("digest", "folder", "outputs", "rule", "split", "suffixes")
+PIN_SPEC = {"script": ("obj", {"path": "str", "commit": "commit", "sha256": "sha256"}), "python": "str",
+            "parameters": ("obj", {"folder": "str", "split": ("obj", {"from": "str"}), "suffixes": ("list", "str"),
+                                   "digest": "str", "expected_images": "int",
+                                   "train_val_list": ("obj", {"path": "str", "dl": "dl", "rows": "int",
+                                                              "sha256": "sha256", "train": "int", "val": "int"}),
+                                   "rule": ("obj", {"precedence": ("list", "str"), "ids": "str", "keep": "str"}),
+                                   "outputs": ("obj", {"hash_list": "str", "dedup": "str", "dedup_format": "str"}),
+                                   "modules": ("map", "sha256")})}
+
+
+def code_bytes() -> dict:
+    """{path: bytes} of the hasher script and this module as they run, from this checkout (CODE_ROOT)."""
+    return {SCRIPT_REL: (CODE_ROOT / SCRIPT_REL).read_bytes(), DEDUP_REL: Path(__file__).read_bytes()}
+
+
+def code_sha256() -> tuple[str, str]:
+    """(the hasher script's sha256, this module's): the code as it runs."""
+    code = code_bytes()
+    return S.sha256_bytes(code[SCRIPT_REL]), S.sha256_bytes(code[DEDUP_REL])
+
+
+def descriptive_parameters() -> dict:
+    return {"folder": FOLDER, "split": {"from": SPLIT_FROM}, "suffixes": list(SUFFIXES), "digest": DIGEST,
+            "rule": {"precedence": list(REASONS), "ids": IDS_RULE, "keep": KEEP_RULE},
+            "outputs": {"hash_list": HASH_LIST_NAME, "dedup": DEDUP_NAME, "dedup_format": DEDUP_FORMAT}}
+
+
+def data_parameters() -> dict:
+    """The pin's data parameters (ruling H8; P2R6(d)): expected_images is schema.EXPECTED_ROWS, and train_val_list is
+    manifest.TRAINVAL_HASH_LIST (DL-91) with the TRAIN and VAL counts of src/eval/teacher_diag.py :78, imported here
+    inside the call (manifest.py imports this module)."""
+    from src.eval.teacher_diag import TRAIN_ROWS, VAL_ROWS
+    from . import manifest as M
+    return {"expected_images": S.EXPECTED_ROWS,
+            "train_val_list": dict(M.TRAINVAL_HASH_LIST, train=TRAIN_ROWS, val=VAL_ROWS)}
+
+
+def hasher_pin(commit) -> dict:
+    """The image_hasher pin (plan §1.7; ruling H8), its one definition (P2R2): script {path, commit, sha256}, python and
+    parameters -- the descriptive ones, data_parameters' and modules, the dedup module's sha256 (TMAN2-RULE-2). No key
+    is one of manifest.PIN_VALUES or HASHER_VALUES."""
+    script, module = code_sha256()
+    return {"script": {"path": SCRIPT_REL, "commit": commit, "sha256": script}, "python": PYTHON,
+            "parameters": {**descriptive_parameters(), **data_parameters(), "modules": {DEDUP_REL: module}}}
+
+
+# ------------------------------------------------------------------------------ the export's dedup (P2R5, P2R6)
+def relative_path_error(value) -> str | None:
+    """Why `value` is not dedup.path's form (P2R5), or None: LREP's path_problem (src/stats/heldout_inputs.py :333-343
+    at lane/lrep 62ca0f8, restated; no LREP code is imported) -- a non-empty string without surrounding space; no
+    leading "/", no backslash, no ":", no NUL; no empty, "." or ".." component; project rule 4's word in no case."""
+    if not _is_id(value):
+        return "not a non-empty string without surrounding space"
+    if value.startswith("/") or "\\" in value or ":" in value or "\x00" in value \
+            or any(p in ("", ".", "..") for p in value.split("/")):
+        return "not a plain relative POSIX path"
+    if ("te" + "st") in value.lower():
+        return "it holds project rule 4's word (no created path holds it, in any case)"
+    return None
+
+
+def dedup_pin_errors(doc: dict, pin) -> list[str]:
+    """P2R6(c)(ii): a tday_dedup/1 doc (read_dedup's) against the manifest's image_hasher pin -- its script is the
+    pinned script, its TRAIN/VAL list's sha256 the pin's, its n_images the pin's expected_images."""
+    p = pin if isinstance(pin, dict) else {}
+    script, params = p.get("script") or {}, p.get("parameters") or {}
+    tv = params.get("train_val_list") if isinstance(params, dict) else None
+    errs = []
+    if doc["script"] != {"path": SCRIPT_REL, "sha256": script.get("sha256") if isinstance(script, dict) else None}:
+        errs.append(f"{DEDUP_NAME}'s script is not {SCRIPT_REL} with the pin's sha256")
+    if doc["train_val_list_sha256"] != (tv.get("sha256") if isinstance(tv, dict) else None):
+        errs.append(f"{DEDUP_NAME}'s train_val_list_sha256 is not the pin's train_val_list.sha256")
+    if doc["n_images"] != (params.get("expected_images") if isinstance(params, dict) else None):
+        errs.append(f"{DEDUP_NAME}'s n_images is not the pin's expected_images")
+    return errs

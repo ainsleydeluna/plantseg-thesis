@@ -16,9 +16,9 @@
   order gives identical bytes.
 - The printed lines: H7's three values and the issue's counts, the latter pinned as a literal line (70, 11, 13); a
   stdout that cannot encode the labels' U+2194 (cp1252) still gives exit 0, the arrow escaped.
-- --print-pin: its pin passes manifest.hasher_pin_errors and test_value_errors in the builder's wrapping
-  (manifest.py :861), which fails when a HASHER_VALUES key is injected; its parameters are H8's. A usage error is
-  exit 2 with argparse's message and no refusal.
+- --print-pin: its pin, dedup.hasher_pin's (P2R2), passes manifest.hasher_pin_errors and test_value_errors in the
+  builder's wrapping (manifest.py :879), which fails when a HASHER_VALUES key is injected; its parameters are H8's. A
+  usage error is exit 2 with argparse's message and no refusal.
 - Static cases (H8, H10): the word in no identifier, attribute, key, f-string or path-like literal of the two new
   production files (REASON_LABELS' and ISSUE_ROWS' values and B-1's guard name excepted, each named here); no PIL or
   cv2 import; no src.stats import; the split read by import, never written; expected_images, the suffixes and the
@@ -90,10 +90,10 @@ class World:
 
     def __init__(self, *, images=None, raw_names=(), pin_edit=None, unlock_edit=None, row_status="RECORDED",
                  unlock_state="committed", manifest_bytes=None, mdata_edit=None, tv=None):
+        from src.tman import dedup as D
         from src.tman import entries as E
         from src.tman import manifest as M
         from src.tman import schema as S
-        import scripts.tday_hash_images as H
         self.repo, self.data = FX.new_repo(), FX.scratch_dir("tmanhdata")
         self.lists, self.out = FX.scratch_dir("tmanhlist"), FX.scratch_dir("tmanhout")
         self.images = dict(IMAGES if images is None else images)
@@ -113,7 +113,7 @@ class World:
         self.tv = DS.tv_bytes(TRAIN, VAL) if tv is None else tv
         self.tv_path = self.lists / "train_val_image_hashes.tsv"
         self.tv_path.write_bytes(self.tv)
-        pin = H.hasher_pin(COMMIT)
+        pin = D.hasher_pin(COMMIT)
         pin["parameters"]["expected_images"] = len(self.images) + len(raw_names)
         pin["parameters"]["train_val_list"].update(rows=len(TRAIN) + len(VAL), sha256=sha(self.tv), train=len(TRAIN),
                                                    val=len(VAL))
@@ -447,14 +447,14 @@ def case_step1_paths():
 
 # ===================================================================================== step 2: the records
 def case_step2_records():
+    from src.tman import dedup as D
     from src.tman import schema as S
-    import scripts.tday_hash_images as H
 
     def m_edit(key, value):
         return lambda m: m.update({key: value})
 
     def module(p):
-        p["parameters"]["modules"] = {H.DEDUP_REL: "8" * 64}
+        p["parameters"]["modules"] = {D.DEDUP_REL: "8" * 64}
 
     def script_sha(p):
         p["script"]["sha256"] = "8" * 64
@@ -727,11 +727,12 @@ def case_print_pin():
         pin = json.loads(txt)
     except ValueError:
         pin = None
-    check("print_pin_exit_0_prints_the_pin_function_s", rc == 0 and pin == H.hasher_pin(COMMIT), f"{rc} {txt[-200:]}")
-    pin = pin if isinstance(pin, dict) else H.hasher_pin(COMMIT)
-    check("print_pin_passes_hasher_pin_errors_609", M.hasher_pin_errors(pin) == [], str(M.hasher_pin_errors(pin)))
+    check("print_pin_exit_0_prints_the_pin_function_s_P2R2", rc == 0 and pin == D.hasher_pin(COMMIT),
+          f"{rc} {txt[-200:]}")
+    pin = pin if isinstance(pin, dict) else D.hasher_pin(COMMIT)
+    check("print_pin_passes_hasher_pin_errors", M.hasher_pin_errors(pin) == [], str(M.hasher_pin_errors(pin)))
     wrapped = {"image_hasher": {"pin": pin, "value": None}}
-    check("print_pin_passes_the_builder_s_wrapping_861", M.test_value_errors(wrapped) == [],
+    check("print_pin_passes_the_builder_s_wrapping", M.test_value_errors(wrapped) == [],
           str(M.test_value_errors(wrapped)))
     for key in M.HASHER_VALUES:
         bad = json.loads(json.dumps(pin))
@@ -759,9 +760,9 @@ def case_print_pin():
                                                           "dedup": "tday_dedup.json", "dedup_format": "tday_dedup/1"})
     check("pin_modules_hold_the_dedup_module_s_sha256", p["modules"] == {"src/tman/dedup.py":
                                                                          sha(Path(D.__file__).read_bytes())})
-    opened = sorted({c[1] for c in t.calls if c[0] in ("builtins.open", "io.open")})
+    opened = sorted({str(Path(c[1]).resolve()) for c in t.calls if c[0] in ("builtins.open", "io.open")})
     check("print_pin_reads_no_data", not [c for c in t.calls if c[0] in ("os.scandir", "os.listdir")]
-          and opened == sorted({str(Path(H.__file__)), str(Path(D.__file__))}), str(opened))
+          and opened == sorted({str(Path(H.__file__).resolve()), str(Path(D.__file__).resolve())}), str(opened))
     for name, argv in (("commit_upper_case_refused", ["--print-pin", "--commit", "A" * 40]),
                        ("commit_of_39_hex_refused", ["--print-pin", "--commit", "3" * 39])):
         rc, txt = run(argv)
@@ -860,10 +861,10 @@ def case_static():
     fn = next(n for n in ast.walk(trees["hasher"]) if isinstance(n, ast.FunctionDef) and n.name == "split_of_record")
     inner = [(n.module, [a.name for a in n.names]) for n in ast.walk(fn) if isinstance(n, ast.ImportFrom)]
     check("h0_split_read_by_import_inside_the_resolver", inner == [("src.eval.stage_artifacts", ["OFFICIAL_SPLIT"])]
-          and H.SPLIT_FROM == "src.eval.stage_artifacts.OFFICIAL_SPLIT"
+          and D.SPLIT_FROM == "src.eval.stage_artifacts.OFFICIAL_SPLIT"
           and not [n for n in ast.walk(trees["hasher"]) if isinstance(n, ast.ImportFrom)
                    and n.module == "src.eval.stage_artifacts" and n not in ast.walk(fn)], str(inner))
-    check("h9_suffixes_are_hash_split_files_50", set(H.SUFFIXES) == set(HSF.IMAGE_SUFFIXES))
+    check("h9_suffixes_are_hash_split_files_50", set(D.SUFFIXES) == set(HSF.IMAGE_SUFFIXES))
     modes = sorted(n.args[1].value for n in ast.walk(trees["hasher"]) if isinstance(n, ast.Call)
                    and isinstance(n.func, ast.Name) and n.func.id == "open" and len(n.args) > 1
                    and isinstance(n.args[1], ast.Constant))

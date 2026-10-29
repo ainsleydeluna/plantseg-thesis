@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Smoke for decision (vi), no check reads a score (plan §4 (vi); lane TMAN, B-1, C5).
 
-1. The static scan: the lane's code (src/tman/*.py and scripts/tday_manifest.py) holds no score-key literal outside
-   its docstrings; the one allowlist that keeps a value(s) key is records.DECISION_RECORD, whose value is a grid
-   value; the lane references no function of src/training/sweep_select.py that reads a score.
+1. The static scan: the lane's code (manifest.LANE_CODE_FILES' Python modules: src/tman's, scripts/tday_manifest.py
+   and, since P2R4, the in-session hasher scripts/tday_hash_images.py) holds no score-key literal outside its
+   docstrings; the one allowlist that keeps a value(s) key is records.DECISION_RECORD, whose value is a grid value;
+   the lane references no function of src/training/sweep_select.py that reads a score; the format line tday_dedup/1
+   is a code literal of schema.py alone (P2R3).
 2. The sentinel: the readers' JSON objects raise on a score key (scripts/smoke_tman_schema.SentinelDict) while the
    world is built and every mode runs -- draft, freeze, unlock and session -- with the builder, the inventory
    export, the cut-entry check and the arithmetic printer; a sweep decision record with scores beside its grid
@@ -248,9 +250,14 @@ def code_literals(path: Path) -> list[str]:
 
 def case_static_scan():
     from src.tman import records as R
+    from src.tman import schema as S
     files = lane_python()
-    check("static_scan_reads_the_lane_s_ten_modules_B2R11", len(files) == 10 and all(f.is_file() for f in files)
-          and "am22.py" in [f.name for f in files], str([f.name for f in files]))
+    check("static_scan_reads_the_lane_s_twelve_modules_B2R11_P2R11", len(files) == 12              # P2R4: B-3a's two
+          and all(f.is_file() for f in files) and {"am22.py", "dedup.py", "tday_hash_images.py"}
+          <= {f.name for f in files}, str([f.name for f in files]))
+    fmt = [f.name for f in files for s in code_literals(f) if s == S.DEDUP_FORMAT]
+    check("dedup_format_literal_once_in_the_lane_s_code_schema_s_P2R3", fmt == ["schema.py"]
+          and S.DEDUP_FORMAT == "tday_dedup/1", str(fmt))
     # B2R5's field of kind freeze, AM-22's five conditions with their records: the one literal of that name, at the
     # freeze kind's sites only (its fields, entries.py; its printer and reader, am22.py; DL-24 R3); the go-rule
     # record's score-derived block of the same name is kept by no allowlist (checked below)

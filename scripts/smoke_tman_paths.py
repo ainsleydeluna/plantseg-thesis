@@ -9,9 +9,10 @@ and the command line's outputs).
   os.scandir, os.listdir, open and io.open on never-created strings and must record zero (LANGUAGE=C, as DL-90).
   The resolved form is shown with os.path.realpath patched for one call and restored in a finally block; no file
   or folder whose name contains "test" is created.
-- C5, static: the lane's code walks no directory (one listing: a teacher work dir's log folders), searches neither
-  the repository root nor docs/ (its docs/ literals are two record paths), and writes only through two exclusive
-  opens ("xb"): no write path reaches docs/DECISION_LOG.md.
+- C5, static: the lane's code walks no directory (its listings: a teacher work dir's log folders, the runs folder and,
+  in the hasher, the image folder), searches neither the repository root nor docs/ (its docs/ literals are two record
+  paths), and writes only through three exclusive opens ("xb"), the hasher's cleanup of its own outputs aside: no
+  write path reaches docs/DECISION_LOG.md (P2R11 adds B-3a's two code files).
 - C5, the command line: every command writes only new files in --out, a folder outside the repository at --root
   and this checkout; a second write is refused; the scratch repository is unchanged and its decision log is never
   written (the entry command prints the row); a "test" path given to a command or a reader is refused before any
@@ -46,10 +47,11 @@ IF6_CELLS = ([f"{c}_s{s}" for c in ("motion_blur", "gaussian_noise", "jpeg_compr
              + [f"{c}_s{s}" for c in ("motion_blur", "jpeg_compression", "brightness", "fog") for s in (4, 5)])
 LANE_FILES = ("src/tman/__init__.py", "src/tman/schema.py", "src/tman/records.py", "src/tman/completion.py",
               "src/tman/schedule.py", "src/tman/entries.py", "src/tman/manifest.py", "src/tman/validate.py",
-              "src/tman/am22.py", "configs/tday_catalogue.json", "scripts/tday_manifest.py",
-              "docs/lane_reports/tman.md") + tuple(
+              "src/tman/am22.py", "src/tman/dedup.py", "configs/tday_catalogue.json", "scripts/tday_manifest.py",
+              "scripts/tday_hash_images.py", "docs/lane_reports/tman.md", "docs/lane_reports/tman_b3.md") + tuple(
     f"scripts/smoke_tman_{n}.py" for n in ("schema", "cuts", "parent", "derived", "complete", "pins", "validate",
-                                           "unlock", "noscore", "determinism", "paths", "mutations", "am22"))
+                                           "unlock", "noscore", "determinism", "paths", "mutations", "am22", "dedup",
+                                           "hasher", "b3_mutations"))
 MARKER = "nonexistent_tman_fx"          # a top-level folder that is never created
 
 
@@ -124,9 +126,9 @@ def case_created_names():
     bad = [n for n in names if S.created_name_error(n)]
     want = 4 + len(LANE_FILES) + len(file_ids) * (2 * len(S.ENTRY_FILE_KINDS) + 3 + len(IF6_CELLS))
     check("created_names_free_of_test_colon_and_reserved_TB7", not bad and len(file_ids) == 70
-          and len(IF6_CELLS) == 24 and len(names) == want == 3319, f"{len(names)} names (want {want}); bad {bad[:5]}")
+          and len(IF6_CELLS) == 24 and len(names) == want == 3325, f"{len(names)} names (want {want}); bad {bad[:5]}")
     check("lane_files_free_of_test_TB7", all(S.created_name_error(p) is None for p in LANE_FILES)
-          and len(LANE_FILES) == 25)                    # B-2 adds src/tman/am22.py and scripts/smoke_tman_am22.py
+          and len(LANE_FILES) == 31)    # B-2 adds am22.py and its smoke; P2R11 B-3a's six (code, report, smokes)
 
 
 def case_test_paths_refused_before_any_call():
@@ -186,7 +188,8 @@ def case_cli_test_named_arguments():
              for c in ("build", "validate", "entry", "arithmetic", "append", "inventory")]
     runs += [(f"cli_{c}_{flag[2:].replace('-', '_')}_holding_test", ["--root", plain] + with_arg(cmds[c], flag, bad))
              for c, flag in (("build", "--sources"), ("build", "--registered-cells"), ("validate", "--freeze-record"),
-                             ("validate", "--unlock-entry"), ("validate", "--records"), ("entry", "--fields"),
+                             ("validate", "--unlock-entry"), ("validate", "--records"), ("inventory", "--dedup"),
+                             ("entry", "--fields"),
                              ("arithmetic", "--reference-telemetry"), ("arithmetic", "--reference-smoke"),
                              ("append", "--hashed"), ("append", "--ptq-record"))]
     for name, argv in runs:
@@ -291,18 +294,27 @@ def case_static_file_access():
     from src.tman import schema as S
     mods = lane_python()
     listing = listing_sites(mods)
-    # B2-F2: teacher_last_row lists the teacher's work dir as teacher_state does (AM-22 item 2(b); DL-24 R1-N2)
-    check("listings_are_the_teacher_log_and_the_runs_folder_only", len(mods) == 10          # B2R11: am22.py
-          and listing == [("src/tman/completion.py", "__init__", "iterdir"),
+    hasher = "scripts/tday_hash_images.py"
+    # B2-F2: teacher_last_row lists the teacher's work dir as teacher_state does (AM-22 item 2(b); DL-24 R1-N2);
+    # P2R11: the hasher's one os.scandir of the image folder
+    check("listings_are_the_teacher_log_the_runs_folder_and_the_image_folder_only", len(mods) == 12   # B2R11, P2R11
+          and listing == [(hasher, "list_images", "scandir"),
+                          ("src/tman/completion.py", "__init__", "iterdir"),
                           ("src/tman/completion.py", "teacher_last_row", "iterdir"),
                           ("src/tman/completion.py", "teacher_state", "iterdir")], str(listing))
     writes = sorted((rel, name) for rel, t in mods.items() for name, n in calls(t)
                     if name in WRITE_CALLS or (name == "replace" and isinstance(n.func, ast.Attribute)
                                                and isinstance(n.func.value, ast.Name) and n.func.value.id == "os"))
+    # the hasher's write_outputs removes the files it created when a create or write fails (B3A-F1: both or neither)
+    cleanup = [(rel, name) for rel, t in mods.items() if rel == hasher for fn in ast.walk(t)
+               if isinstance(fn, ast.FunctionDef) and fn.name == "write_outputs" for name, _ in calls(fn)
+               if name in WRITE_CALLS]
     opens = sorted((rel, n.args[1].value if len(n.args) > 1 and isinstance(n.args[1], ast.Constant) else None)
                    for rel, t in mods.items() for name, n in calls(t) if name == "open")
-    check("writes_only_through_two_exclusive_opens", not writes
-          and opens == [("scripts/tday_manifest.py", "xb"), ("src/tman/entries.py", "xb")], f"{writes} {opens}")
+    check("writes_only_through_three_exclusive_opens_and_the_hasher_s_cleanup_P2R11",
+          writes == cleanup == [(hasher, "unlink")]
+          and opens == [(hasher, "rb"), (hasher, "rb"), (hasher, "xb"), ("scripts/tday_manifest.py", "xb"),
+                        ("src/tman/entries.py", "xb")], f"{writes} {cleanup} {opens}")
     docs = sorted({n.value for t in mods.values() for n in ast.walk(t) if isinstance(n, ast.Constant)
                    and isinstance(n.value, str) and n.value.startswith("docs") and id(n) not in docstrings(t)})
     check("docs_literals_are_two_record_paths_no_search_root", docs == sorted([S.DECISION_LOG_REL,

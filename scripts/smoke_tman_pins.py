@@ -8,8 +8,8 @@ canonical_json_bytes (src/eval/artifacts.py:93) without pin_sha256; the cells ag
 which comes from src.corruption_roles (imported lazily) or, here, through a parameter holding IF§6's 24 cells
 (TB6), with one static case on the module name and, since L-CORR merged, one live case (B-2, B2R10; audit M5:
 the live set is IF§6's in L-CORR's corruption-major order); the cells each scope asks for (15 inferential, 9
-descriptive); the image hasher's pin (B-3a's); and no value before the unlock record (M11; IF§5's four values and
-the hasher's).
+descriptive); the image hasher's pin (B-3a's: one definition, dedup.hasher_pin, which the builder takes, P2R2); and
+no value before the unlock record (M11; IF§5's four values and the hasher's).
 
 Run:  python -B scripts/smoke_tman_pins.py
 """
@@ -177,7 +177,74 @@ def case_values_and_hasher():
     check("hasher_pin_not_an_object", bool(M.hasher_pin_errors(None)))
 
 
+def case_one_pin():
+    """P2R2: the image_hasher pin has one definition, src/tman/dedup.py's hasher_pin (a static case over the lane's
+    Python modules), which the builder and the hasher's --print-pin call; it passes hasher_pin_errors and
+    test_value_errors (GO H8's case). The builder, and the command line's build, take it whatever the sources hold.
+    (P2R2's refusal of a sources pin that is neither null nor the function's waits for ORCH's ruling: B-2's
+    smoke_tman_am22.py builds with such a pin, :378-380 and :1330.)"""
+    import ast
+    import json
+    from src.tman import dedup as D
+    from src.tman import manifest as M
+    import scripts.smoke_tman_validate as VW
+    trees = {rel: ast.parse((M.CODE_ROOT / rel).read_text(encoding="utf-8")) for rel in M.LANE_CODE_FILES
+             if rel.endswith(".py")}
+    defs = sorted(rel for rel, t in trees.items() for n in ast.walk(t)
+                  if isinstance(n, ast.FunctionDef) and n.name == "hasher_pin")
+    check("one_definition_of_the_hasher_pin_P2R2", defs == ["src/tman/dedup.py"] and len(trees) == 12, str(defs))
+    calls = sorted((rel, fn.name) for rel, t in trees.items() for fn in ast.walk(t) if isinstance(fn, ast.FunctionDef)
+                   for n in ast.walk(fn) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                   and n.func.attr == "hasher_pin")
+    check("builder_and_print_pin_call_the_one_pin_P2R2", calls == [
+        ("scripts/tday_hash_images.py", "cmd_print_pin"), ("src/tman/manifest.py", "build_manifest")], str(calls))
+    shaped = sorted({rel for rel, t in trees.items() for n in ast.walk(t) if isinstance(n, ast.Dict)
+                     and {"script", "python", "parameters"} <= {k.value for k in n.keys
+                                                                if isinstance(k, ast.Constant)}})
+    check("no_other_module_builds_the_pin_s_shape_P2R2", shaped == ["src/tman/dedup.py"], str(shaped))
+    pin = D.hasher_pin("5" * 40)
+    check("the_pin_passes_hasher_pin_errors_and_test_value_errors_H8", not M.hasher_pin_errors(pin)
+          and not M.test_value_errors({"image_hasher": {"pin": pin, "value": None}}))
+    w = VW.World()
+    try:
+        own = D.hasher_pin(w.E)
+        check("builder_takes_the_function_s_pin_P2R2", w.doc["body"]["generator_pins"]["image_hasher"] == {
+            "pin": own, "value": None})
+        other = dict(own, python="3.12")
+        built = {name: M.build_manifest(w.records, w.cat, dict(w.sources, generator_pins=dict(
+            w.sources["generator_pins"], image_hasher=given)), runs_root=w.runs)["body"]["generator_pins"]
+            ["image_hasher"]["pin"] for name, given in (("null", None), ("other", other))}
+        check("builder_takes_the_function_s_pin_whatever_the_sources_hold", built == {"null": own, "other": own})
+        out = FX.scratch_dir("tmanpinbuild")
+        cells = out / "cells.json"
+        cells.write_text(json.dumps(IF6_CELLS), encoding="utf-8")
+        from src.tman import records as R
+        saved = R.TRIGGER_READER
+        R.TRIGGER_READER = w.trigger_reader()                     # L-AM3's reader's stand-in (plan O-8)
+        try:
+            for i, (name, given) in enumerate((("cli_build_sources_pin_null_writes_the_function_s_pin", None),
+                                               ("cli_build_sources_pin_of_another_python_writes_the_function_s",
+                                                other))):
+                src, folder = out / f"sources_{i}.json", out / f"build_{i}"
+                src.write_bytes(w.S.json_file_bytes(dict(w.sources, generator_pins=dict(
+                    w.sources["generator_pins"], image_hasher=given))))
+                folder.mkdir()
+                rc, txt = VW._cli(["--root", str(w.repo), "build", "--sources", str(src), "--out", str(folder),
+                                   "--runs", str(w.runs), "--registered-cells", str(cells)])
+                made = sorted(p.name for p in folder.iterdir())
+                got = json.loads((folder / "tday_manifest.json").read_bytes()) if made else {}
+                check(name, rc == 0 and made == ["tday_manifest.json"]
+                      and got["body"]["generator_pins"]["image_hasher"]["pin"] == own,
+                      f"{rc} {txt.strip()[-160:]} {made}")
+        finally:
+            R.TRIGGER_READER = saved
+    finally:
+        if VW.REAL_TEACHER is not None:
+            w.M.TEACHER_OF_RECORD.clear()
+            w.M.TEACHER_OF_RECORD.update(VW.REAL_TEACHER)
+
+
 if __name__ == "__main__":
     raise SystemExit(FX.run_cases("TMAN PINS SMOKE (lane TMAN, B-1, C4)",
                                   (case_pin_fields, case_pin_sha256, case_cells, case_live_cells,
-                                   case_values_and_hasher)))
+                                   case_values_and_hasher, case_one_pin)))

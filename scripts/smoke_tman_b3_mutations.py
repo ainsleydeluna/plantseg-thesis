@@ -240,38 +240,39 @@ M = [
     ("pin_errors_ignored", HSH, [("    errs = pin_errors(pin)\n    if errs:", "    errs = []\n    if errs:")],
      "hasher", "case_step2_records", "step2_pin_script_sha256_other_refused_before_any_data_call",
      ["hasher_pin_mismatch"]),
-    ("pin_form_unchecked", HSH, [('    errs = S.field_errors(pin, PIN_SPEC, "image_hasher.pin")\n    if errs:\n'
+    ("pin_form_unchecked", HSH, [('    errs = S.field_errors(pin, D.PIN_SPEC, "image_hasher.pin")\n    if errs:\n'
                                   '        return errs', "    errs = []\n    if errs:\n        return errs")],
      "hasher", "case_step2_records", "step2_pin_commit_not_lower_hex_refused_before_any_data_call",
      ["hasher_pin_mismatch"]),
-    ("pin_script_unchecked", HSH, [('    if pin["script"]["path"] != SCRIPT_REL or pin["script"]["sha256"] != script:',
-                                    "    if False:")],
+    ("pin_script_unchecked", HSH, [('    if pin["script"]["path"] != D.SCRIPT_REL or pin["script"]["sha256"] != '
+                                    'script:', "    if False:")],
      "hasher", "case_step2_records", "step2_pin_script_sha256_other_refused_before_any_data_call",
      ["hasher_pin_mismatch"]),
-    ("pin_script_path_unchecked", HSH, [('pin["script"]["path"] != SCRIPT_REL or ', "")],
+    ("pin_script_path_unchecked", HSH, [('pin["script"]["path"] != D.SCRIPT_REL or ', "")],
      "hasher", "case_step2_records", "step2_pin_script_path_other_refused_before_any_data_call",
      ["hasher_pin_mismatch"]),
-    ("pin_module_unchecked", HSH, [('    if pin["parameters"]["modules"] != {DEDUP_REL: module}:', "    if False:")],
+    ("pin_module_unchecked", HSH, [('    if pin["parameters"]["modules"] != {D.DEDUP_REL: module}:', "    if False:")],
      "hasher", "case_step2_records", "step2_pin_module_sha256_other_refused_before_any_data_call",
      ["hasher_pin_mismatch"]),
     ("pin_python_unchecked", HSH, [('    if pin["python"] != running_python():', "    if False:")],
      "hasher", "case_step2_records", "step2_pin_python_other_refused_before_any_data_call", ["hasher_pin_mismatch"]),
-    ("pin_parameters_unchecked", HSH, [('    if {k: pin["parameters"][k] for k in DESCRIPTIVE} != '
-                                        '{k: own[k] for k in DESCRIPTIVE}:', "    if False:")],
+    ("pin_parameters_unchecked", HSH, [('    if {k: pin["parameters"][k] for k in D.DESCRIPTIVE} != '
+                                        '{k: own[k] for k in D.DESCRIPTIVE}:', "    if False:")],
      "hasher", "case_step2_records", "step2_pin_parameters_other_refused_before_any_data_call",
      ["hasher_pin_mismatch"]),
-    # each name of DESCRIPTIVE dropped in turn, killed by the variant that changes that parameter (DL-24 r3-F3)
-    ("descriptive_without_digest", HSH, [(DESC, DESC.replace('"digest", ', ""))],
+    # each name of DESCRIPTIVE (dedup.py since P2R2) dropped in turn, killed by the variant that changes that
+    # parameter (DL-24 r3-F3)
+    ("descriptive_without_digest", DED, [(DESC, DESC.replace('"digest", ', ""))],
      "hasher", "case_step2_records", "step2_pin_digest_other_refused_before_any_data_call", ["hasher_pin_mismatch"]),
-    ("descriptive_without_folder", HSH, [(DESC, DESC.replace('"folder", ', ""))],
+    ("descriptive_without_folder", DED, [(DESC, DESC.replace('"folder", ', ""))],
      "hasher", "case_step2_records", "step2_pin_folder_other_refused_before_any_data_call", ["hasher_pin_mismatch"]),
-    ("descriptive_without_outputs", HSH, [(DESC, DESC.replace('"outputs", ', ""))],
+    ("descriptive_without_outputs", DED, [(DESC, DESC.replace('"outputs", ', ""))],
      "hasher", "case_step2_records", "step2_pin_outputs_other_refused_before_any_data_call", ["hasher_pin_mismatch"]),
-    ("descriptive_without_rule", HSH, [(DESC, DESC.replace('"rule", ', ""))],
+    ("descriptive_without_rule", DED, [(DESC, DESC.replace('"rule", ', ""))],
      "hasher", "case_step2_records", "step2_pin_rule_other_refused_before_any_data_call", ["hasher_pin_mismatch"]),
-    ("descriptive_without_split", HSH, [(DESC, DESC.replace('"split", ', ""))],
+    ("descriptive_without_split", DED, [(DESC, DESC.replace('"split", ', ""))],
      "hasher", "case_step2_records", "step2_pin_split_other_refused_before_any_data_call", ["hasher_pin_mismatch"]),
-    ("descriptive_without_suffixes", HSH, [(DESC, DESC.replace(', "suffixes"', ""))],
+    ("descriptive_without_suffixes", DED, [(DESC, DESC.replace(', "suffixes"', ""))],
      "hasher", "case_step2_records", "step2_pin_parameters_other_refused_before_any_data_call",
      ["hasher_pin_mismatch"]),
     # ----------------------------------------------------------------------- tday_hash_images.py: steps 3 to 6
@@ -283,7 +284,8 @@ M = [
      "hasher", "case_pass_and_trace", "trace_no_listdir", []),
     ("folders_listed_as_images", HSH, [("[e.name for e in it if e.is_file()]", "[e.name for e in it]")],
      "hasher", "case_pass_and_trace", "hash_writes_both_outputs_exit_0", ["image_count_mismatch"]),
-    ("suffix_case_sensitive", HSH, [("os.path.splitext(n)[1].lower() in SUFFIXES", "os.path.splitext(n)[1] in SUFFIXES")],
+    ("suffix_case_sensitive", HSH, [("os.path.splitext(n)[1].lower() in D.SUFFIXES",
+                                     "os.path.splitext(n)[1] in D.SUFFIXES")],
      "hasher", "case_pass_and_trace", "hash_writes_both_outputs_exit_0", ["image_count_mismatch"]),
     ("ids_unchecked", HSH, [("    errs = D.image_id_errors(pairs)\n    if errs:", "    errs = []\n    if errs:")],
      "hasher", "case_step3_listing", "step3_two_images_one_stem_refused_before_any_image_or_list_read",
@@ -344,7 +346,7 @@ M = [
      "hasher", "case_pass_and_trace", "prints_the_issue_s_pinned_counts_70_11_13_H7", []),
     ("stdout_not_escaped", HSH, [('        reconfigure(errors="backslashreplace")', "        pass")],
      "hasher", "case_stdout_without_the_arrow", "cp1252_stdout_exit_0_four_lines_arrow_escaped", []),
-    # ------------------------------------------------------------------------- tday_hash_images.py: the pin (H8)
+    # ---------------------------------- the pin (H8): its command in tday_hash_images.py, the pin in dedup.py (P2R2)
     ("print_pin_unchecked", HSH, [("    errs = M.hasher_pin_errors(pin)\n    if errs:", "    errs = []\n    if errs:")],
      "hasher", "case_print_pin", "print_pin_commit_upper_case_refused", ["generator_pin_incomplete"]),
     ("usage_modes_unchecked", HSH, [('    if args.print_pin == (args.cmd == "hash"):\n        p.error("give '
@@ -353,14 +355,14 @@ M = [
     ("usage_commit_flag_unchecked", HSH, [("    if args.print_pin != (args.commit is not None):\n        p.error("
                                            '"--commit goes with --print-pin, and only with it")\n', "")],
      "hasher", "case_print_pin", "usage_print_pin_without_commit_exit_2", []),
-    ("pin_expected_images_not_1561", HSH, [('"expected_images": S.EXPECTED_ROWS,',
+    ("pin_expected_images_not_1561", DED, [('"expected_images": S.EXPECTED_ROWS,',
                                             '"expected_images": S.EXPECTED_ROWS - 1,')],
      "hasher", "case_print_pin", "pin_expected_images_is_schema_s_and_official_rows", []),
-    ("pin_without_the_module", HSH, [('"modules": {DEDUP_REL: module}}}', '"modules": {}}}')],
+    ("pin_without_the_module", DED, [('"modules": {DEDUP_REL: module}}}', '"modules": {}}}')],
      "hasher", "case_print_pin", "pin_modules_hold_the_dedup_module_s_sha256", []),
-    ("pin_python_other", HSH, [('PYTHON = "3.11"', 'PYTHON = "3.12"')],
+    ("pin_python_other", DED, [('PYTHON = "3.11"', 'PYTHON = "3.12"')],
      "hasher", "case_print_pin", "pin_python_3_11", []),
-    ("pin_counts_swapped", HSH, [("train=TRAIN_ROWS, val=VAL_ROWS", "train=VAL_ROWS, val=TRAIN_ROWS")],
+    ("pin_counts_swapped", DED, [("train=TRAIN_ROWS, val=VAL_ROWS", "train=VAL_ROWS, val=TRAIN_ROWS")],
      "hasher", "case_print_pin", "pin_train_val_list_is_b1_s_with_the_split_counts", []),
 ]
 # The refusal codes the two files raise (schema.TmanRefused, and strict_json's code=), and B-1's guard's: each has a

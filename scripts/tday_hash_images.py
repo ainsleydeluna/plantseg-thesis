@@ -3,9 +3,10 @@
 §1.7; rulings H8 and H9). It is not scripts/hash_split_files.py (plan :501, :532) and not a command of
 scripts/tday_manifest.py.
 
-  --print-pin --commit <40 hex>   prints the image_hasher pin and reads no data: script {path, commit, sha256 of its
-                                  bytes}, python, parameters (with the sha256 of src/tman/dedup.py). The manifest
-                                  embeds it before the freeze (manifest.py :861; part 2 wires hasher_pin in).
+  --print-pin --commit <40 hex>   prints the image_hasher pin, dedup.hasher_pin's (its one definition, P2R2), and
+                                  reads no data: script {path, commit, sha256 of its bytes}, python, parameters (with
+                                  the sha256 of src/tman/dedup.py). The manifest's builder embeds the same pin before
+                                  the freeze (manifest.py :879).
   hash                            the session's run, after the unlock record, in Ice's block outside Claude Code
                                   (TB19 Q5). Each step passes before the next starts:
     1. paths: --repo, --root, --train-val-list and --out go through B-1's path guard (schema.py :248) as given and
@@ -52,79 +53,32 @@ from src.tman import records as R  # noqa: E402
 from src.tman import schema as S  # noqa: E402
 from src.training.sweep_select import SelectionRefused  # noqa: E402
 
-SCRIPT_REL = "scripts/tday_hash_images.py"
-DEDUP_REL = "src/tman/dedup.py"
-PYTHON = "3.11"                                         # the pin's python (ruling H8): the environment of record
-FOLDER = "images/{split}"                               # plan §1.7: images/<split> under the data root
-SPLIT_FROM = "src.eval.stage_artifacts.OFFICIAL_SPLIT"  # read by import in split_of_record, never written (H0)
-SUFFIXES = (".jpeg", ".jpg")                            # scripts/hash_split_files.py :50
-DIGEST = "sha256 of the file bytes"
-IDS_RULE = "the file stem; sorted is Python's sorted(), in code-point order"
-KEEP_RULE = "of each group of identical images equal to no TRAIN or VAL image, its first sorted id"
 READ_BLOCK = 1 << 20
-# the parameters this code fixes; expected_images, train_val_list and modules are the pin's data
-DESCRIPTIVE = ("digest", "folder", "outputs", "rule", "split", "suffixes")
-PIN_SPEC = {"script": ("obj", {"path": "str", "commit": "commit", "sha256": "sha256"}), "python": "str",
-            "parameters": ("obj", {"folder": "str", "split": ("obj", {"from": "str"}), "suffixes": ("list", "str"),
-                                   "digest": "str", "expected_images": "int",
-                                   "train_val_list": ("obj", {"path": "str", "dl": "dl", "rows": "int",
-                                                              "sha256": "sha256", "train": "int", "val": "int"}),
-                                   "rule": ("obj", {"precedence": ("list", "str"), "ids": "str", "keep": "str"}),
-                                   "outputs": ("obj", {"hash_list": "str", "dedup": "str", "dedup_format": "str"}),
-                                   "modules": ("map", "sha256")})}
 
 
 # ------------------------------------------------------------------------------------------------- the pin
-def file_sha256(path) -> str:
-    return S.sha256_bytes(Path(path).read_bytes())
-
-
-def code_sha256() -> tuple[str, str]:
-    """(this script's sha256, the dedup module's): the code as it runs."""
-    return file_sha256(__file__), file_sha256(D.__file__)
-
-
-def descriptive_parameters() -> dict:
-    return {"folder": FOLDER, "split": {"from": SPLIT_FROM}, "suffixes": list(SUFFIXES), "digest": DIGEST,
-            "rule": {"precedence": list(D.REASONS), "ids": IDS_RULE, "keep": KEEP_RULE},
-            "outputs": {"hash_list": D.HASH_LIST_NAME, "dedup": D.DEDUP_NAME, "dedup_format": D.DEDUP_FORMAT}}
-
-
-def hasher_pin(commit: str) -> dict:
-    """The image_hasher pin (plan §1.7; ruling H8): script {path, commit, sha256}, python and parameters, whose
-    expected_images is schema.EXPECTED_ROWS and whose train_val_list is manifest.TRAINVAL_HASH_LIST (DL-91) with the
-    TRAIN and VAL counts of src/eval/teacher_diag.py :78; modules holds the dedup module's sha256 (TMAN2-RULE-2). No
-    key is one of manifest.PIN_VALUES or HASHER_VALUES."""
-    from src.eval.teacher_diag import TRAIN_ROWS, VAL_ROWS
-    script, module = code_sha256()
-    return {"script": {"path": SCRIPT_REL, "commit": commit, "sha256": script}, "python": PYTHON,
-            "parameters": {**descriptive_parameters(), "expected_images": S.EXPECTED_ROWS,
-                           "train_val_list": dict(M.TRAINVAL_HASH_LIST, train=TRAIN_ROWS, val=VAL_ROWS),
-                           "modules": {DEDUP_REL: module}}}
-
-
 def running_python() -> str:
     return f"{sys.version_info[0]}.{sys.version_info[1]}"
 
 
 def pin_errors(pin) -> list[str]:
-    """Step 2: the manifest's image_hasher pin is this code's -- hasher_pin's form; script.path this script's and
-    script.sha256 its bytes'; modules exactly the dedup module's sha256; python this interpreter's major.minor; the
-    parameters this code fixes, its own."""
-    errs = S.field_errors(pin, PIN_SPEC, "image_hasher.pin")
+    """Step 2: the manifest's image_hasher pin is this code's -- dedup.hasher_pin's form (its one definition, P2R2);
+    script.path this script's and script.sha256 its bytes'; modules exactly the dedup module's sha256; python this
+    interpreter's major.minor; the parameters this code fixes, its own."""
+    errs = S.field_errors(pin, D.PIN_SPEC, "image_hasher.pin")
     if errs:
         return errs
-    script, module = code_sha256()
-    if pin["script"]["path"] != SCRIPT_REL or pin["script"]["sha256"] != script:
+    script, module = D.code_sha256()
+    if pin["script"]["path"] != D.SCRIPT_REL or pin["script"]["sha256"] != script:
         errs.append(f"the pinned script is {pin['script']['path']} with sha256 {pin['script']['sha256']}; this one is "
-                    f"{SCRIPT_REL} with {script}")
-    if pin["parameters"]["modules"] != {DEDUP_REL: module}:
-        errs.append(f"the pinned modules are not {DEDUP_REL} with sha256 {module}")
+                    f"{D.SCRIPT_REL} with {script}")
+    if pin["parameters"]["modules"] != {D.DEDUP_REL: module}:
+        errs.append(f"the pinned modules are not {D.DEDUP_REL} with sha256 {module}")
     if pin["python"] != running_python():
         errs.append(f"the pinned python is {pin['python']}; this one is {running_python()}")
-    own = descriptive_parameters()
-    if {k: pin["parameters"][k] for k in DESCRIPTIVE} != {k: own[k] for k in DESCRIPTIVE}:
-        errs.append(f"the pinned parameters {list(DESCRIPTIVE)} are not this code's")
+    own = D.descriptive_parameters()
+    if {k: pin["parameters"][k] for k in D.DESCRIPTIVE} != {k: own[k] for k in D.DESCRIPTIVE}:
+        errs.append(f"the pinned parameters {list(D.DESCRIPTIVE)} are not this code's")
     return errs
 
 
@@ -191,7 +145,7 @@ def split_of_record() -> str:
 
 
 def image_folder(root, split: str) -> str:
-    return os.path.join(root, *FOLDER.format(split=split).split("/"))
+    return os.path.join(root, *D.FOLDER.format(split=split).split("/"))
 
 
 def list_images(folder: str, expected: int) -> list:
@@ -201,7 +155,7 @@ def list_images(folder: str, expected: int) -> list:
             names = [e.name for e in it if e.is_file()]
     except OSError as e:
         raise S.TmanRefused("images_unreadable", f"the image folder cannot be listed ({type(e).__name__})") from None
-    pairs = sorted((os.path.splitext(n)[0], n) for n in names if os.path.splitext(n)[1].lower() in SUFFIXES)
+    pairs = sorted((os.path.splitext(n)[0], n) for n in names if os.path.splitext(n)[1].lower() in D.SUFFIXES)
     errs = D.image_id_errors(pairs)
     if errs:
         raise S.TmanRefused("image_ids_invalid", "; ".join(errs))
@@ -277,7 +231,7 @@ def write_outputs(folder: Path, files: list) -> None:
 
 # ------------------------------------------------------------------------------------------------ commands
 def cmd_print_pin(args) -> int:
-    pin = hasher_pin(args.commit)
+    pin = D.hasher_pin(args.commit)
     errs = M.hasher_pin_errors(pin)
     if errs:
         raise S.TmanRefused("generator_pin_incomplete", "; ".join(errs))
@@ -294,7 +248,7 @@ def cmd_hash(args) -> int:
     rows = hash_images(folder, pairs)
     tsv = D.hash_list_bytes(rows)
     doc = D.build_doc({r["stem"]: r["sha256"] for r in rows}, train_val, hash_list_sha256=S.sha256_bytes(tsv),
-                      train_val_list_sha256=tv_sha, script={"path": SCRIPT_REL, "sha256": code_sha256()[0]})
+                      train_val_list_sha256=tv_sha, script={"path": D.SCRIPT_REL, "sha256": D.code_sha256()[0]})
     data = D.doc_bytes(doc)
     write_outputs(out_folder(args.out, args.repo), [(D.HASH_LIST_NAME, tsv), (D.DEDUP_NAME, data)])
     values = D.hasher_values(tsv, data)

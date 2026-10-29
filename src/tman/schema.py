@@ -15,6 +15,7 @@ Formats:
   tday_binding/1    B-3b's binding; B-1 reserves references.mde_entry {path, sha256} (TB11) and the `artifacts`
                     records of IF§11.4.
   tday_isolation/1  the isolation record of a derived artifact made after the freeze (decision (xi)).
+  tday_dedup/1      tday_dedup.json, the duplicate-free list the in-session hasher writes (B-3a; src/tman/dedup.py).
 
 Slot keys (decision (ii)) keep ":" and live inside JSON only; file names use the slot's file_id, the slot key with
 ":" read as "_" (TB7). A manifest entry carries IF§11.2's fields: slot, kind, class, stage, seed, catalogue
@@ -46,6 +47,7 @@ INVENTORY_FORMAT = "tday-inventory/1"
 BINDING_FORMAT = "tday_binding/1"
 ISOLATION_FORMAT = "tday_isolation/1"
 PUSH_LIST_FORMAT = "tday_push_list/1"           # the session's push list (TB11; sweep_select.push_list_doc's form)
+DEDUP_FORMAT = "tday_dedup/1"                   # B-3a's duplicate-free list (ruling H5): its one definition (P2R3)
 
 MANIFEST_REL = "reports/derived/tday_manifest.json"
 ENTRIES_DIR_REL = "reports/derived/tday_entries"
