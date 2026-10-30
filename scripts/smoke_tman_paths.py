@@ -333,14 +333,15 @@ def case_static_file_access():
     writes = sorted((rel, name) for rel, t in mods.items() for name, n in calls(t)
                     if name in WRITE_CALLS or (name == "replace" and isinstance(n.func, ast.Attribute)
                                                and isinstance(n.func.value, ast.Name) and n.func.value.id == "os"))
-    # the hasher's write_outputs removes the files it created when a create or write fails (B3A-F1: both or neither)
-    cleanup = [(rel, name) for rel, t in mods.items() if rel == hasher for fn in ast.walk(t)
-               if isinstance(fn, ast.FunctionDef) and fn.name == "write_outputs" for name, _ in calls(fn)
-               if name in WRITE_CALLS]
+    # the hasher's write_outputs and bind remove the files they created when a create or write fails (B3A-F1; DL-24
+    # R3-F3: both or neither)
+    cleanup = sorted((rel, name) for rel, t in mods.items() for fn in ast.walk(t) if isinstance(fn, ast.FunctionDef)
+                     and (rel, fn.name) in ((hasher, "write_outputs"), ("scripts/tday_manifest.py", "cmd_bind"))
+                     for name, _ in calls(fn) if name in WRITE_CALLS)
     opens = sorted((rel, n.args[1].value if len(n.args) > 1 and isinstance(n.args[1], ast.Constant) else None)
                    for rel, t in mods.items() for name, n in calls(t) if name == "open")
-    check("writes_only_through_three_exclusive_opens_and_the_hasher_s_cleanup_P2R11",
-          writes == cleanup == [(hasher, "unlink")]
+    check("writes_only_through_three_exclusive_opens_and_two_cleanups_P2R11_R3F3",
+          writes == cleanup == [(hasher, "unlink"), ("scripts/tday_manifest.py", "unlink")]
           and opens == [(hasher, "rb"), (hasher, "rb"), (hasher, "xb"), ("scripts/tday_manifest.py", "xb"),
                         ("src/tman/entries.py", "xb")], f"{writes} {cleanup} {opens}")
     # B3R12: bind's reads and its two exclusive writes (write_new, once per name of BIND_NAMES), and the binding's

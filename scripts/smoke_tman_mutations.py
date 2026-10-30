@@ -2214,6 +2214,13 @@ M = [
     ("binding_mde_entry_any", SCH, [('"mde_entry": REF, "written_utc": "utc"}),',
                                      '"mde_entry": ("map", "any"), "written_utc": "utc"}),')],
      "binding", "case_file_check", "mde_entry_with_another_key_TB11", ["binding_invalid"], None),
+    # B-3b (DL-24 R3-F2): a name that is not UTF-8 in the export's paths is refused, never a crash
+    ("read_binding_path_utf8_unchecked", VAL, [('            doc["binding"]["path"].encode("utf-8")\n',
+                                                "            pass\n")],
+     "binding", "case_bound_export", "read_inventory_binding_path_not_utf8_refused_R3F2", ["binding_invalid"], None),
+    ("read_dedup_path_utf8_unchecked", VAL, [('        d["path"].encode("utf-8")\n', "        pass\n")],
+     "validate", "case_inventory_dedup_reader", "read_inventory_dedup_path_not_utf8_refused_R3F2", ["dedup_invalid"],
+     None),
     # B-3b (B3R11; TMAN2P2-RULE-1 item 2): the export of a session that holds the hasher's values
     ("builder_session_values_without_dedup_accepted", MAN, [
         ('    if dedup is None and isinstance(svalues, dict) and "image_hasher" in svalues:', "    if False:")],
@@ -2234,6 +2241,12 @@ M = [
                                                      '"hash_list_sha256": recorded["hash_list_sha256"]')],
      "validate", "case_inventory_dedup", "inventory_session_value_hash_list_sha256_not_the_file_s_B3R11",
      ["hasher_values_mismatch"], None),
+    ("builder_session_values_compared_loosely", MAN, [
+        ("        bad = [k for k in sorted(set(held) | set(got)) if k not in held or k not in got\n"
+         "               or S.canonical_json_bytes(held[k]) != S.canonical_json_bytes(got[k])]\n",
+         "        bad = [k for k in HASHER_VALUES if held.get(k) != got[k]]\n")],
+     "validate", "case_inventory_dedup", "inventory_session_value_count_true_refused_R3F6", ["hasher_values_mismatch"],
+     None),
 ]
 REFUSAL_EXTRA = ("inventory_invalid", "inventory_sha256_mismatch", "binding_invalid",       # read_inventory's codes
                  "output_location", "output_exists",                                       # the CLI's outputs

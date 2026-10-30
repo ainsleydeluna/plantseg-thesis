@@ -1888,6 +1888,10 @@ def read_export_dedup(p: Path, d: dict) -> None:
     removed_by_reason is the export's. Every failure is dedup_invalid, as LREP's reader refuses it
     (src/stats/heldout_inputs.py :1416-1461 at lane/lrep 62ca0f8)."""
     err = S.relative_path_error(d["path"])
+    try:
+        d["path"].encode("utf-8")
+    except UnicodeEncodeError:                     # a lone surrogate: refused, never a crash (DL-24 R3-F2)
+        err = err or "a name that is not UTF-8"
     if err:
         raise S.TmanRefused("dedup_invalid", f"{p}: dedup.path {d['path']!r}: {err} (P2R5)")
     dp = p.parent / d["path"]
@@ -1923,6 +1927,10 @@ def read_inventory(path, *, expect_sha256: str | None = None) -> dict:
         read_export_dedup(p, doc["dedup"])
     if doc["binding"]["state"] == "bound":
         err = S.relative_path_error(doc["binding"]["path"])
+        try:
+            doc["binding"]["path"].encode("utf-8")
+        except UnicodeEncodeError:                 # a lone surrogate: refused, never a crash (DL-24 R3-F2)
+            err = err or "a name that is not UTF-8"
         if err:
             raise S.TmanRefused("binding_invalid", f"{p}: binding.path {doc['binding']['path']!r}: {err} (B3R4)")
         bp = p.parent / doc["binding"]["path"]

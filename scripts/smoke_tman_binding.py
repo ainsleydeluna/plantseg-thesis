@@ -1067,7 +1067,7 @@ def case_bind():
     b, si = out / BIND_NAMES[0], out / BIND_NAMES[1]
     check("bind_writes_the_binding_and_the_stats_inputs_B3R8", rc == 0 and b.is_file() and si.is_file()
           and txt.count("WROTE ") == 2 and f"READ {w.inventory} sha256 {S.sha256_bytes(w.inventory.read_bytes())}"
-          in txt, txt[-400:])
+          in txt and all(f"WROTE {f} sha256 {S.sha256_bytes(f.read_bytes())}" in txt for f in (b, si)), txt[-400:])
     if rc != 0:
         return
     doc = B.read(b.read_bytes())
@@ -1104,7 +1104,9 @@ def case_bind():
               and not (o / BIND_NAMES[0]).exists(), txt.strip()[-300:])
     pre = FX.scratch_dir("tmanbindp")
     (pre / BIND_NAMES[1]).write_bytes(b"{}\n")
-    refused("bind_refuses_when_either_output_exists_both_or_neither_B3R8", "output_exists", BIND_NAMES[1], out=pre)
+    rc, txt, o = w.bind(out=pre)
+    check("bind_refuses_when_either_output_exists_both_or_neither_B3R8", rc == 2 and "REFUSED [output_exists]" in txt
+          and BIND_NAMES[1] in txt and not (o / BIND_NAMES[0]).exists() and "READ " not in txt, txt.strip()[-300:])
     refused("bind_records_commit_not_40_hex", "record_uncommitted", "is not 40 hex",
             **{"--records-commit": "e1" * 19})
     pretty = FX.scratch_dir("tmanbindd") / "tday_dedup.json"
@@ -1139,6 +1141,68 @@ def case_bind():
     with edited(w, up, "per_image.jsonl", shift):
         rc, txt, _ = w.bind()
         check("bind_upstream_artifact_stems_exempt_DL74", rc == 0, txt.strip()[-300:])
+    first = w.path(E1_CLEAN)                  # an input's artifact: the export check's "names no record" (R3-F8)
+    first.rename(first.with_name(first.name + "_away"))
+    try:
+        refused("bind_input_artifact_absent_names_no_record_R3F8", "binding_invalid", "names no record")
+    finally:
+        first.with_name(first.name + "_away").rename(first)
+    bind_cleanup_cases(w)
+    bind_single_read_case(w)
+    for name, place in (("bind_out_inside_the_repository_refused_DL37", REPO / "nonexistent_tman_out"),
+                        ("bind_out_inside_the_session_checkout_refused_DL37", w.u.wt / "reports")):
+        rc, txt, o = w.bind(out=place)
+        check(name, rc == 2 and "REFUSED [output_location]" in txt and not (o / BIND_NAMES[0]).exists()
+              and not (REPO / "nonexistent_tman_out").exists(), txt.strip()[-300:])
+
+
+def bind_cleanup_cases(w: BindWorld) -> None:
+    """Both outputs or neither (DL-24 R3-F3): the second create failing after the first succeeded -- its write
+    failing (the files this call created removed, exit 4), or its name taken meanwhile (theirs kept, ours removed)."""
+    import scripts.tday_manifest as CLI
+    real = CLI.write_new
+
+    def second_fails(fail):
+        made = []
+
+        def write(folder, name, data):
+            made.append(name)
+            return fail(folder, name, data) if len(made) == 2 else real(folder, name, data)
+        return write
+
+    def enospc(folder, name, data):
+        (folder / name).write_bytes(data[:7])
+        raise OSError(28, "No space left on device")
+
+    def taken(folder, name, data):
+        (folder / name).write_bytes(b"theirs\n")
+        return real(folder, name, data)
+    for name, fail, want, kept in (("bind_second_write_failing_leaves_neither_output_R3F3", enospc, 4, None),
+                                   ("bind_second_name_taken_meanwhile_keeps_theirs_drops_ours_R3F3", taken, 2,
+                                    b"theirs\n")):
+        CLI.write_new = second_fails(fail)
+        try:
+            rc, txt, o = w.bind()
+        finally:
+            CLI.write_new = real
+        second = o / BIND_NAMES[1]
+        check(name, rc == want and not (o / BIND_NAMES[0]).exists() and "WROTE" not in txt
+              and (second.is_file() and second.read_bytes() == kept if kept else not second.exists()),
+              txt.strip()[-300:])
+
+
+def bind_single_read_case(w: BindWorld) -> None:
+    """The export's sha256 bind prints is that of the bytes it parses (DL-24 R3-F7): bytes that change between the
+    hash and the parse are refused inventory_sha256_mismatch."""
+    import scripts.tday_manifest as CLI
+    real = CLI.read_bytes
+    CLI.read_bytes = lambda path, code: real(path, code) + (b" " if str(path) == str(w.inventory) else b"")
+    try:
+        rc, txt, o = w.bind()
+    finally:
+        CLI.read_bytes = real
+    check("bind_export_hashed_and_parsed_from_the_same_bytes_R3F7", rc == 2
+          and "REFUSED [inventory_sha256_mismatch]" in txt and not (o / BIND_NAMES[0]).exists(), txt.strip()[-300:])
 
 
 def case_score_blind_reads():
@@ -1176,6 +1240,21 @@ def case_score_blind_reads():
     rel = w.path(key).relative_to(w.u.wt)
     check("bind_artifact_path_resolved_under_the_root_B3R9", PT.refused_where_read(
         w.u.wt / rel, CLI.read_artifact, w.u.wt, key) == "test_path")
+    check("bind_artifact_file_resolved_under_the_root_R3F1", all(PT.refused_where_read(
+        w.u.wt / rel / n, CLI.read_artifact, w.u.wt, key) == "test_path" for n in ("summary.json", "per_image.jsonl")))
+    from src.tman import schema as S
+    calls, real = [], S.strict_json
+
+    def spy(data, what, *a, **kw):
+        calls.append((str(what), getattr(kw.get("object_type"), "__qualname__", None)))
+        return real(data, what, *a, **kw)
+    S.strict_json = spy
+    try:
+        CLI.read_artifact(w.u.wt, key)
+    finally:
+        S.strict_json = real
+    check("every_artifact_parse_goes_through_the_hook_B3R8", len(calls) == 4 and all(
+        (q or "").startswith("blind.") for _, q in calls), str(calls))
 
 
 def case_bound_export():
@@ -1257,6 +1336,13 @@ def case_bound_export():
     expect_refused("read_inventory_binding_not_strict_json_B3R3", "binding_invalid", V.read_inventory, variant(
         lambda d: d["binding"].update(path="sub/loose.json", sha256=S.sha256_bytes(loose))))
     got = V.read_inventory(inv_path)
+    sur = variant(lambda d: d["binding"].update(path="tday_binding_SURR.json"))
+    sur.write_bytes(sur.read_bytes().replace(b"tday_binding_SURR.json", b"tday_binding_\\ud800.json"))
+    try:
+        code = FX.refused_code(V.read_inventory, sur)
+    except Exception as e:  # noqa: BLE001 -- a crash fails the check by name
+        code = type(e).__name__
+    check("read_inventory_binding_path_not_utf8_refused_R3F2", code == "binding_invalid", str(code))
     check("read_inventory_bound_returns_the_artifacts_IF11_6", got["binding"]["artifacts"] == json.loads(
         (out / BIND_NAMES[0]).read_bytes())["artifacts"])
 

@@ -619,8 +619,9 @@ def blind(keep):
 def read_artifact(root, key) -> dict | None:
     """bind's reads of one required artifact, at its layout path under the session checkout `root` (B3R8, B3R9):
     None when its folder is absent (the full check names it); else its four files' sha256 and, through `blind`,
-    summary.json's three values and recorded TB1 fields and per_image.jsonl's two ids per row. A file absent or
-    unreadable, not strict JSON, or without a value bind reads is binding_artifact_invalid."""
+    summary.json's three values and recorded TB1 fields and per_image.jsonl's two ids per row. Each file is refused
+    for "test" where it is joined, as the folder is (DL-24 R3-F1). A file absent or unreadable, not strict JSON, or
+    without a value bind reads is binding_artifact_invalid."""
     slot, precision, scope, cell = key
     rel = B.artifact_rel(S.file_id_of(slot), precision, scope, cell)
     S.refuse_test_path(rel, root)
@@ -629,6 +630,7 @@ def read_artifact(root, key) -> dict | None:
         return None
     data = {}
     for name in B.file_names():
+        S.refuse_test_path(f"{rel}/{name}", root)
         try:
             data[name] = (folder / name).read_bytes()
         except OSError as e:
@@ -661,11 +663,14 @@ def read_artifact(root, key) -> dict | None:
 def cmd_bind(args) -> int:
     """B3R8: after the single TEST session, the binding tday_binding/1 and the statistics input list. The manifest is
     validated in session mode (the records from --records at --records-commit, S = E at --root, --dedup, --runs; TB9's
-    pilot-winner check among its gates); the unbound export is read (its sha256 printed, for the runbook to compare);
-    each artifact its rows require is read at its layout path under --root (read_artifact); the full check runs on
-    the binding built (binding.full_check); tday_binding.json (canonical JSON) and tday_stats_inputs.json (the 37 in
-    load_input_list's format) are then created, both or neither, in --out, a folder outside the repository. Nothing
-    is written inside the repository, and the manifest is never edited."""
+    pilot-winner check among its gates); the unbound export is read once (its sha256 printed, for the runbook to
+    compare, is that of the bytes parsed); each artifact its rows require is read at its layout path under --root
+    (read_artifact); the full check runs on the binding built (binding.full_check), the inputs naming the catalogue's
+    seed-42 family slots and the slots of record they are held to being the export's (R-065). An absent artifact is
+    binding_incomplete, or binding_invalid when an input names it (the export check comes first, B3R5).
+    tday_binding.json (canonical JSON) and tday_stats_inputs.json (the 37 in load_input_list's format) are then
+    created, both or neither, in --out, a folder outside the repository: a failed create or write removes the files
+    this call created (B3A-F1's rule). Nothing is written inside the repository, and the manifest is never edited."""
     folder = out_folder(args.out, args.root)
     for name in BIND_NAMES:                                      # both outputs or neither, before any read
         if os.path.lexists(folder / name):
@@ -680,13 +685,16 @@ def cmd_bind(args) -> int:
               records=records, dedup=args.dedup, runs_root=args.runs, freeze_record=args.freeze_record,
               unlock_entry=args.unlock_entry, registered_cells=registered(args), now=clock(args))
     V.validate(x)
-    export = V.read_inventory(args.inventory)
-    print(f"READ {args.inventory} sha256 {S.sha256_bytes(read_bytes(args.inventory, 'inventory_invalid'))}")
+    esha = S.sha256_bytes(read_bytes(args.inventory, "inventory_invalid"))
+    export = V.read_inventory(args.inventory, expect_sha256=esha)       # the bytes hashed are the bytes parsed
+    print(f"READ {args.inventory} sha256 {esha}")
     body, reg = x.body, registered(args)
     cells = {scope: M.cells_for({scope}, reg) for scope in B.CELL_SCOPES}
     identities = B.stats_identities()
     scopes = {m["slot"]: sorted(V.scope_rule_of(x, m["slot"])[0]) for m in export["models"]}
     family = {s["evaluator_stage"]: k for k, s in x.cat.slots.items() if "family" in s["roles"] and s["seed"] == 42}
+    of_record = {m["stage"]: m["slot"] for m in export["models"] if "family" in m["role"] and m["seed"] == 42
+                 and m["precision"] == B.STATS_PRECISION.get(m["stage"])}      # the frozen manifest's rows (R-065)
     reads = {}
     for key in sorted(B.required_keys(export, scopes, cells), key=repr):
         got = read_artifact(args.root, key)
@@ -708,12 +716,19 @@ def cmd_bind(args) -> int:
                ["clean", None] if cond == B.CLEAN else ["corrupted", B.cell_of(cond)])} for st, cond in identities]}
     values = x.doc["session"]["values"].get(V.HASHER_VALUES_KEY) or {}
     B.full_check(doc, {"export": export, "manifest": manifest, "scopes": scopes, "cells": cells, "reads": reads,
-                       "runtime_keys": tuple(R.EVAL_RUNTIME), "slots_of_record": family,
+                       "runtime_keys": tuple(R.EVAL_RUNTIME), "slots_of_record": of_record,
                        "dedup_list_sha256": values.get("dedup_list_sha256"), "identities": identities,
                        "precision": B.STATS_PRECISION})
-    for name, blob in ((BIND_NAMES[0], S.canonical_json_bytes(doc)),
-                       (BIND_NAMES[1], S.json_file_bytes(B.stats_inputs(doc)))):
-        out = write_new(folder, name, blob)
+    blobs = ((BIND_NAMES[0], S.canonical_json_bytes(doc)), (BIND_NAMES[1], S.json_file_bytes(B.stats_inputs(doc))))
+    made = []
+    try:
+        for name, blob in blobs:
+            made.append(write_new(folder, name, blob))
+    except BaseException as e:               # both or neither: what this call created, a create whose write failed too
+        for out in made + ([] if isinstance(e, S.TmanRefused) else [folder / name]):
+            out.unlink(missing_ok=True)
+        raise
+    for out, (_, blob) in zip(made, blobs):
         print(f"WROTE {out} sha256 {S.sha256_bytes(blob)}")
     return S.EXIT_PASS
 

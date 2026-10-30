@@ -1015,7 +1015,9 @@ def export_dedup(path, folder, pin, session_values=None) -> dict:
         recorded = session_values["image_hasher"]
         got = {"hash_list_sha256": ddoc["hash_list_sha256"], "dedup_list_sha256": S.sha256_bytes(data),
                "counts_by_reason": ddoc["removed_by_reason"]}
-        bad = [k for k in HASHER_VALUES if not isinstance(recorded, dict) or recorded.get(k) != got[k]]
+        held = recorded if isinstance(recorded, dict) else {}       # exactly the three, typed (DL-24 R3-F6)
+        bad = [k for k in sorted(set(held) | set(got)) if k not in held or k not in got
+               or S.canonical_json_bytes(held[k]) != S.canonical_json_bytes(got[k])]
         if bad:
             raise S.TmanRefused("hasher_values_mismatch", f"values.image_hasher {bad} are not {rel}'s: the export "
                                                           "names the session's tday_dedup.json (B3R11)")

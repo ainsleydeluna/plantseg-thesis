@@ -2493,6 +2493,13 @@ def case_inventory_dedup():
         got = in_session(dict(vals, **{k: v}))
         check(f"inventory_session_value_{k}_not_the_file_s_B3R11", got[0] == "hasher_values_mismatch"
               and f"['{k}']" in got[1], str(got)[:200])
+    for name, values in (("inventory_session_value_count_true_refused_R3F6", dict(vals, counts_by_reason=dict(
+                                vals["counts_by_reason"], duplicate_in_split=True))),
+                         ("inventory_session_value_count_float_refused_R3F6", dict(vals, counts_by_reason=dict(
+                             vals["counts_by_reason"], equal_val=2.0))),
+                         ("inventory_session_values_with_a_fourth_key_refused_R3F6", dict(vals, extra="x"))):
+        got = in_session(values)
+        check(name, got[0] == "hasher_values_mismatch", str(got)[:200])
     (out / "m_session.json").write_bytes(S.json_file_bytes(dict(json.loads(w.data),
                                                                 session={"values": {"image_hasher": vals}})))
     folder = FX.scratch_dir("tmanddcli")
@@ -2571,6 +2578,9 @@ def case_inventory_dedup_reader():
             ("read_inventory_dedup_removed_by_reason_the_export_s", {"removed_by_reason": dict(
                 inv["dedup"]["removed_by_reason"], equal_train=4)}, folder, "removed_by_reason is not the export's")):
         inv_refused(name, "dedup_invalid", variant(dedup, where), detail=detail)
+    sur = variant({"path": "dedup_SURR.json"})
+    sur.write_bytes(sur.read_bytes().replace(b"dedup_SURR.json", b"dedup_\\ud800.json"))
+    inv_refused("read_inventory_dedup_path_not_utf8_refused_R3F2", "dedup_invalid", sur, detail="not UTF-8")
     inv_refused("read_inventory_dedup_shape_stays_inventory_invalid", "inventory_invalid",
                 variant({"removed_by_reason": {"equal_train": "3"}}), detail="dedup")
 
