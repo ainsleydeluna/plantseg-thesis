@@ -5,9 +5,9 @@
                    --synthetic-inputs [--repo-root DIR] [--B 10000] [--jobs N]
       The 37 inputs of STATISTICAL_ANALYSIS_CONTRACT section 12.4.6, named in an input-list file
       (plantseg-stats-inputs/1.0.0), under the OFFICIAL policy and the official namespace, written as
-      a section 12 artifact at DIR/ID. Door order (P13): the confirmation flag; the binding rule (while
-      the TEST-manifest binding is unbound, only inputs declared synthetic, so no official artifact
-      can be written); the out-dir pre-check; the pinned stack; then reads. --repo-root (accepted only
+      a section 12 artifact at DIR/ID. Door order (P13): the confirmation flag; the binding rule
+      (inputs not declared synthetic need the binding's file, TEST_MANIFEST_BINDING, which the writer
+      verifies); the out-dir pre-check; the pinned stack; then reads. --repo-root (accepted only
       with --synthetic-inputs) resolves input paths only; the contract, the corruption protocol and
       the code provenance always come from this repository (P16).
   --mode smoke     --inputs LIST.json --out-dir DIR --run-id ID [--repo-root DIR] [--B N] [--jobs N]
@@ -55,7 +55,7 @@ def parse(argv):
     ap.add_argument("--run-id", help="the artifact directory name, ^[a-z0-9][a-z0-9._-]{0,63}$")
     ap.add_argument("--confirm-official-test-analysis", action="store_true")
     ap.add_argument("--synthetic-inputs", action="store_true",
-                    help="declare the inputs synthetic (official mode, while the binding is unbound)")
+                    help="declare the inputs synthetic (official mode, until the binding is bound)")
     ap.add_argument("--repo-root", type=Path, help="resolve input paths here (synthetic or smoke)")
     ap.add_argument("--B", type=int, help="bootstrap replicates (default and official: 10000)")
     ap.add_argument("--jobs", type=int, help="worker processes, whole tasks each (default 1)")

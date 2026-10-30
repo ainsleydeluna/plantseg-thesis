@@ -40,6 +40,8 @@ STATS_INPUT_LIST: Final = "plantseg-stats-inputs/1.0.0"
 CLEAN: Final = ("clean", None, None)
 CELL_SCOPES: Final = ("corrupted", "corrupted_sev45")             # the scopes whose records name a cell
 UPSTREAM: Final = "upstream"                                      # the one scope scored under its own protocol
+# the record fields an input's own provenance record carries too, compared byte for byte (B3R6(d); P14)
+INPUT_FIELDS: Final = ("repo_relative_path", "checkpoint_sha256", "repo_commit", "split_manifest_sha256")
 
 
 # --------------------------------------------------------------------------------------------- names and rules
@@ -170,6 +172,45 @@ def export_errors(doc, export: dict, identities, precision) -> list[str]:
     return errs
 
 
-__all__ = ["BINDING_REL", "CELL_SCOPES", "CLEAN", "STATS_CELL_STAGES", "STATS_INPUT_LIST", "STATS_PRECISION",
-           "STATS_STAGES", "TDAY_REL", "artifact_rel", "cell_of", "condition_of", "export_errors", "file_errors",
-           "file_names", "key_of", "read", "stats_identities"]
+# ------------------------------------------------------------------------------- the statistics code's check
+def inputs_reason(doc: dict, got: dict) -> str | None:
+    """Why the binding's 37 inputs are not `got` ({(stage, condition tuple): fields}), or None (B3R6(d), (e); P14):
+    the same identities, and each input's record equal to its fields on INPUT_FIELDS and, where `got` gives an
+    input's files_sha256, on the four files' sha256."""
+    recs = {key_of(r): r for r in doc["artifacts"]}
+    want = {(it["stage"], tuple(it["condition"])): recs[tuple(it["key"])] for it in doc["inputs"]}
+    if sorted(got, key=repr) != sorted(want, key=repr):
+        return f"the inputs are not the binding's {len(want)} identities"
+    for (stage, cond), rec in want.items():
+        fields = got[(stage, cond)]
+        bad = [k for k in INPUT_FIELDS if fields.get(k) != rec[k]]
+        if "files_sha256" in fields and fields["files_sha256"] != rec["files_sha256"]:
+            bad.append("files_sha256")
+        if bad:
+            return f"input {stage} {list(cond)} is not its binding record {rec['repo_relative_path']} at {bad}"
+    return None
+
+
+def bound_reason(root, identities, precision, got: dict) -> str | None:
+    """The statistics loader's check (B3R6(a), (d), (e)): None when the binding is bound -- a file at the repository
+    root's BINDING_REL that file_errors accepts -- and its 37 inputs are `got` (inputs_reason); otherwise why not,
+    the unbound state named "unbound". src/stats/artifact.py passes its driver's identities and precisions."""
+    import os
+    from pathlib import Path
+    from . import schema as S
+    path = os.path.join(root, BINDING_REL)
+    if not os.path.isfile(path):
+        return f"the TEST-manifest binding is unbound: no file {BINDING_REL} under {root}"
+    try:
+        doc = read(Path(path).read_bytes(), path)
+    except (OSError, S.TmanRefused) as e:
+        return f"the TEST-manifest binding {BINDING_REL} is not bound: binding_invalid: {e}"
+    errs = file_errors(doc, identities, precision)
+    if errs:
+        return f"the TEST-manifest binding {BINDING_REL} is not bound: binding_invalid: " + "; ".join(errs[:3])
+    return inputs_reason(doc, got)
+
+
+__all__ = ["BINDING_REL", "CELL_SCOPES", "CLEAN", "INPUT_FIELDS", "STATS_CELL_STAGES", "STATS_INPUT_LIST",
+           "STATS_PRECISION", "STATS_STAGES", "TDAY_REL", "artifact_rel", "bound_reason", "cell_of", "condition_of",
+           "export_errors", "file_errors", "file_names", "inputs_reason", "key_of", "read", "stats_identities"]

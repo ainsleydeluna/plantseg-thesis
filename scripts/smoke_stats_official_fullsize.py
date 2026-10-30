@@ -98,8 +98,9 @@ def doors(work: Path, fs, lst: Path) -> None:
     base = ["--mode", "official", "--inputs", missing, "--out-dir", out, "--run-id", "door-0001"]
     refused("D1 no --confirm-official-test-analysis (non-existent --inputs: no read happened)",
             cli(*base), "--confirm-official-test-analysis", out / "door-0001")
-    refused("D2 confirmed, not declared synthetic: the binding rule (still before any read)",
-            cli(*base, "--confirm-official-test-analysis"), "binding is unbound", out / "door-0001")
+    refused("D2 confirmed, not declared synthetic, no binding file: the bound door refuses (still before "
+            "any read)", cli(*base, "--confirm-official-test-analysis"), "binding is unbound: no",
+            out / "door-0001")
     refused("D3 --repo-root without --synthetic-inputs (Q2, P16; its own rule, ahead of the binding "
             "rule)", cli(*base, "--confirm-official-test-analysis", "--repo-root", fs.input_root),
             "accepted in official mode only with --synthetic-inputs", out / "door-0001")

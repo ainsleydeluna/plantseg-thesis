@@ -136,6 +136,34 @@ M = [
     ("export_context_unchecked", BIN, [('    if refs["execution_context"] != export["execution_context"]:',
                                         "    if False:")],
      "binding", "case_export_check", "references_of_another_execution_context_B3R5", [INV]),
+    # ------------------------------------------------- binding.py: the statistics code's check (B3R6(a), (d), (e))
+    ("inputs_identities_unchecked", BIN, [("    if sorted(got, key=repr) != sorted(want, key=repr):", "    if False:")],
+     "binding", "case_inputs_reason", "inputs_of_other_identities_reason_B3R6d", [INV]),
+    ("inputs_fields_unchecked", BIN, [("        bad = [k for k in INPUT_FIELDS if fields.get(k) != rec[k]]",
+                                       "        bad = []")],
+     "binding", "case_inputs_reason", "input_checkpoint_sha256_differing_reason_B3R6d", [INV]),
+    ("inputs_repo_commit_dropped", BIN, [('INPUT_FIELDS: Final = ("repo_relative_path", "checkpoint_sha256", '
+                                          '"repo_commit", "split_manifest_sha256")',
+                                          'INPUT_FIELDS: Final = ("repo_relative_path", "checkpoint_sha256", '
+                                          '"split_manifest_sha256")')],
+     "binding", "case_inputs_reason", "input_repo_commit_differing_reason_B3R6d", [INV]),
+    ("inputs_files_unchecked", BIN, [('        if "files_sha256" in fields and fields["files_sha256"] != '
+                                      'rec["files_sha256"]:', "        if False:")],
+     "binding", "case_stats_loader", "one_byte_changed_in_one_per_image_jsonl_listed_B3R6d", [INV]),
+    ("inputs_files_always_compared", BIN, [('        if "files_sha256" in fields and fields["files_sha256"] != '
+                                            'rec["files_sha256"]:',
+                                            '        if fields.get("files_sha256") != rec["files_sha256"]:')],
+     "binding", "case_inputs_reason", "inputs_equal_on_the_fields_and_the_files_give_no_reason_B3R6d", [INV]),
+    ("bound_absent_not_unbound", BIN, [("    if not os.path.isfile(path):", "    if False:")],
+     "binding", "case_stats_loader", "no_binding_file_lists_the_binding_unbound_B3R6a", [INV]),
+    ("bound_strict_read_uncaught", BIN, [("    except (OSError, S.TmanRefused) as e:", "    except OSError as e:")],
+     "binding", "case_stats_loader", "binding_not_strict_json_listed_with_its_reason_B3R3", [INV]),
+    ("bound_file_check_skipped", BIN, [("    errs = file_errors(doc, identities, precision)\n    if errs:\n"
+                                        '        return f"the TEST-manifest binding',
+                                        '    errs = []\n    if errs:\n        return f"the TEST-manifest binding')],
+     "binding", "case_stats_loader", "binding_the_file_check_refuses_listed_with_its_reason_B3R6a", [INV]),
+    ("bound_inputs_unchecked", BIN, [("    return inputs_reason(doc, got)", "    return None")],
+     "binding", "case_stats_loader", "binding_naming_another_record_for_one_identity_listed_B3R6d", [INV]),
 ]
 # The refusal codes the binding's code raises (schema.TmanRefused, and strict_json's code=), and B-1's guard's: each
 # has a killed mutation (a static case ties this list to the files)
