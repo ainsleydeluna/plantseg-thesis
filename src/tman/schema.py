@@ -12,8 +12,8 @@ Formats:
   tday_lanes/1      reports/derived/tday_lanes.json, the lane register (AM-19 item 3(d)).
   tday_catalogue/1  configs/tday_catalogue.json, the registered runs and derived artifacts (decision (xii); Q12).
   tday-inventory/1  the inventory export (IF§8; IF§11 v2); TMAN owns the format and may add keys.
-  tday_binding/1    B-3b's binding; B-1 reserves references.mde_entry {path, sha256} (TB11) and the `artifacts`
-                    records of IF§11.4.
+  tday_binding/1    B-3b's binding (src/tman/binding.py; BINDING_FILE_SPEC): its references, among them B-1's reserved
+                    mde_entry {path, sha256} (TB11), the `artifacts` records of IF§11.4 and the 37 `inputs`.
   tday_isolation/1  the isolation record of a derived artifact made after the freeze (decision (xi)).
   tday_dedup/1      tday_dedup.json, the duplicate-free list the in-session hasher writes (B-3a; src/tman/dedup.py).
 
@@ -440,6 +440,17 @@ BINDING_ARTIFACT_FIELDS = {"slot": "slot", "precision": ("enum", INVENTORY_PRECI
                            "files_sha256": ("map", "sha256"), "checkpoint_sha256": "sha256", "repo_commit": "commit",
                            "split_manifest_sha256": "sha256"}
 BINDING_RESERVED = {"references": ("mde_entry",), "artifacts": tuple(sorted(BINDING_ARTIFACT_FIELDS))}
+# B-3b's file (B3R3; B3R16: `inputs` added): the references exactly; the 37 inputs, each naming a record by its key
+BINDING_INPUT_FIELDS = {"stage": "str", "condition": ("list", "any"), "key": ("list", "any")}
+BINDING_FILE_SPEC = {"format": ("enum", (BINDING_FORMAT,)),
+                     "references": ("obj", {"manifest": ("obj", {"path": "str", "sha256": "sha256",
+                                                                 "body_sha256": "sha256", "freeze_dl": "dl"}),
+                                            "evaluator": ("obj", {"commit": "commit"}),
+                                            "execution_context": ("map", "any"),
+                                            "session": ("obj", {"dedup": ("obj", {"sha256": "sha256"})}),
+                                            "mde_entry": REF, "written_utc": "utc"}),
+                     "artifacts": ("list", ("obj", BINDING_ARTIFACT_FIELDS)),
+                     "inputs": ("list", ("obj", BINDING_INPUT_FIELDS))}
 
 # ------------------------------------------------------------------------------------ the catalogue (Q12; TB8)
 SLOT_SPEC = {"slot": "slot", "file_id": "str", "class": ("enum", SLOT_CLASSES), "stage": "str", "seed": "?int",

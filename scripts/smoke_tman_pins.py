@@ -192,7 +192,8 @@ def case_one_pin():
              if rel.endswith(".py")}
     defs = sorted(rel for rel, t in trees.items() for n in ast.walk(t)
                   if isinstance(n, ast.FunctionDef) and n.name == "hasher_pin")
-    check("one_definition_of_the_hasher_pin_P2R2", defs == ["src/tman/dedup.py"] and len(trees) == 12, str(defs))
+    check("one_definition_of_the_hasher_pin_P2R2", defs == ["src/tman/dedup.py"] and len(trees) == 13,   # B3R2
+          str(defs))
     calls = sorted((rel, fn.name) for rel, t in trees.items() for fn in ast.walk(t) if isinstance(fn, ast.FunctionDef)
                    for n in ast.walk(fn) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
                    and n.func.attr == "hasher_pin")

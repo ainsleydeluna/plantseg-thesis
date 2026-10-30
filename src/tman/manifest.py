@@ -685,8 +685,8 @@ TEACHER_OF_RECORD = {"path": "iter_24000.pth", "dl": "DL-88", "bytes": 335_949_0
 EXPECTED_ROWS_CITES = ("reports/dataset_report.md:30", "src/eval/stage_artifacts.py:30")
 LANE_CODE_FILES = ("src/tman/__init__.py", "src/tman/schema.py", "src/tman/records.py", "src/tman/completion.py",
                    "src/tman/schedule.py", "src/tman/entries.py", "src/tman/manifest.py", "src/tman/validate.py",
-                   "src/tman/am22.py", "src/tman/dedup.py", "scripts/tday_manifest.py",
-                   "scripts/tday_hash_images.py", "configs/tday_catalogue.json")   # am22: B2R11; B-3a's two: P2R4
+                   "src/tman/am22.py", "src/tman/dedup.py", "src/tman/binding.py", "scripts/tday_manifest.py",
+                   "scripts/tday_hash_images.py", "configs/tday_catalogue.json")   # B2R11; P2R4; binding.py: B3R2
 
 
 def hash_only(rel: str) -> bool:

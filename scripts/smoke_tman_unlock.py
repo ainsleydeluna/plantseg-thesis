@@ -725,7 +725,8 @@ def case_session():
     expect_gate(v, "second_session_part_over_the_first_B56", "second_session", mode="session",
                 data=v.commit_manifest(again), detail="holds another session part")
     v.commit_manifest(json.loads(data))
-    v.w.commit({"reports/derived/tday_binding.json": b"{}\n"}, "a binding")
+    from src.tman import binding as B
+    v.w.commit({B.BINDING_REL: b"{}\n"}, "a binding")                   # the path's one literal is binding.py's (B3R2)
     expect_gate(v, "binding_already_written", "second_session", mode="session", data=data,
                 detail="a binding is written once")
     for name, edit in (("session_part_null_refused_B101", lambda d: d.update(session=None)),

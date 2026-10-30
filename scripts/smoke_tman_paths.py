@@ -47,11 +47,12 @@ IF6_CELLS = ([f"{c}_s{s}" for c in ("motion_blur", "gaussian_noise", "jpeg_compr
              + [f"{c}_s{s}" for c in ("motion_blur", "jpeg_compression", "brightness", "fog") for s in (4, 5)])
 LANE_FILES = ("src/tman/__init__.py", "src/tman/schema.py", "src/tman/records.py", "src/tman/completion.py",
               "src/tman/schedule.py", "src/tman/entries.py", "src/tman/manifest.py", "src/tman/validate.py",
-              "src/tman/am22.py", "src/tman/dedup.py", "configs/tday_catalogue.json", "scripts/tday_manifest.py",
-              "scripts/tday_hash_images.py", "docs/lane_reports/tman.md", "docs/lane_reports/tman_b3.md") + tuple(
+              "src/tman/am22.py", "src/tman/dedup.py", "src/tman/binding.py", "configs/tday_catalogue.json",
+              "scripts/tday_manifest.py", "scripts/tday_hash_images.py", "docs/lane_reports/tman.md",
+              "docs/lane_reports/tman_b3.md") + tuple(
     f"scripts/smoke_tman_{n}.py" for n in ("schema", "cuts", "parent", "derived", "complete", "pins", "validate",
                                            "unlock", "noscore", "determinism", "paths", "mutations", "am22", "dedup",
-                                           "hasher", "b3_mutations"))
+                                           "hasher", "b3_mutations", "binding", "b3b_mutations"))
 MARKER = "nonexistent_tman_fx"          # a top-level folder that is never created
 
 
@@ -126,9 +127,10 @@ def case_created_names():
     bad = [n for n in names if S.created_name_error(n)]
     want = 4 + len(LANE_FILES) + len(file_ids) * (2 * len(S.ENTRY_FILE_KINDS) + 3 + len(IF6_CELLS))
     check("created_names_free_of_test_colon_and_reserved_TB7", not bad and len(file_ids) == 70
-          and len(IF6_CELLS) == 24 and len(names) == want == 3325, f"{len(names)} names (want {want}); bad {bad[:5]}")
+          and len(IF6_CELLS) == 24 and len(names) == want == 3328, f"{len(names)} names (want {want}); bad {bad[:5]}")
     check("lane_files_free_of_test_TB7", all(S.created_name_error(p) is None for p in LANE_FILES)
-          and len(LANE_FILES) == 31)    # B-2 adds am22.py and its smoke; P2R11 B-3a's six (code, report, smokes)
+          and len(LANE_FILES) == 34)    # B-2 adds am22.py and its smoke; P2R11 B-3a's six (code, report, smokes);
+    #                                     B3R12 B-3b's three (binding.py and its two smokes)
 
 
 def case_test_paths_refused_before_any_call():
@@ -308,7 +310,7 @@ def case_static_file_access():
     hasher = "scripts/tday_hash_images.py"
     # B2-F2: teacher_last_row lists the teacher's work dir as teacher_state does (AM-22 item 2(b); DL-24 R1-N2);
     # P2R11: the hasher's one os.scandir of the image folder
-    check("listings_are_the_teacher_log_the_runs_folder_and_the_image_folder_only", len(mods) == 12   # B2R11, P2R11
+    check("listings_are_the_teacher_log_the_runs_folder_and_the_image_folder_only", len(mods) == 13   # P2R11, B3R2
           and listing == [(hasher, "list_images", "scandir"),
                           ("src/tman/completion.py", "__init__", "iterdir"),
                           ("src/tman/completion.py", "teacher_last_row", "iterdir"),

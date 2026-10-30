@@ -32,6 +32,7 @@ from . import manifest as M
 from . import records as R
 from . import schedule as D
 from . import schema as S
+from .binding import BINDING_REL
 
 MODES = ("draft", "freeze", "unlock", "session")
 ALL, FU, U, SES = MODES, ("freeze", "unlock", "session"), ("unlock", "session"), ("session",)
@@ -62,7 +63,6 @@ BODY_SPECS = {"schedule": ("obj", {k: "any" for k in ("in_force", "file_sha256",
               "lane_code": ("obj", {"commit": "?commit", "files_sha256": ("map", "sha256")}),
               "trigger": S.nullable(("obj", {"path": "any", "sha256": "any", "triggered": "any"}))}
 PUSH_LIST_KEYS = ("format", "response", "unlock_entry", "adding_commit", "t_lo_utc", "remote", "pushes")   # TB11
-BINDING_REL = "reports/derived/tday_binding.json"
 
 
 @dataclass

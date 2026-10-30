@@ -252,8 +252,8 @@ def case_static_scan():
     from src.tman import records as R
     from src.tman import schema as S
     files = lane_python()
-    check("static_scan_reads_the_lane_s_twelve_modules_B2R11_P2R11", len(files) == 12              # P2R4: B-3a's two
-          and all(f.is_file() for f in files) and {"am22.py", "dedup.py", "tday_hash_images.py"}
+    check("static_scan_reads_the_lane_s_thirteen_modules_P2R11_B3R2", len(files) == 13   # P2R4: B-3a's two; B3R2
+          and all(f.is_file() for f in files) and {"am22.py", "dedup.py", "tday_hash_images.py", "binding.py"}
           <= {f.name for f in files}, str([f.name for f in files]))
     fmt = [f.name for f in files for s in code_literals(f) if s == S.DEDUP_FORMAT]
     check("dedup_format_literal_once_in_the_lane_s_code_schema_s_P2R3", fmt == ["schema.py"]
