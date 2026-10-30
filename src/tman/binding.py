@@ -26,6 +26,7 @@ every other import sits inside a function (B3R2).
 """
 from __future__ import annotations
 
+import json
 from typing import Final
 
 BINDING_REL: Final[str] = "reports/derived/tday_binding.json"
@@ -59,10 +60,14 @@ def condition_of(cell: str) -> tuple:
     return ("corruption", name, int(severity))
 
 
-def stats_identities(cells) -> tuple:
-    """The 37 (stage, condition) identities of STATS §12.4.6 in official_inventory()'s order: the seven clean stages,
-    then the inferential cells `cells` (the corrupted scope's, in the frozen corruption order) of E1, then of E6."""
-    corr = [condition_of(c) for c in cells]
+def stats_identities() -> tuple:
+    """The 37 (stage, condition) identities of STATS §12.4.6, built as src.stats.driver.official_inventory() builds
+    them and from what it reads (B3B-CLAR-1): the seven clean stages, then E1's and E6's cells over the frozen
+    corruption order of configs/corruption_protocol.json at its inferential severities, read through
+    src.corruption_roles (never src.stats; never a registered cell list)."""
+    from src import corruption_roles as CR
+    roles = CR.load()
+    corr = [("corruption", name, sev) for name in roles.order for sev in roles.inferential_severities]
     return tuple((stage, CLEAN) for stage in STATS_STAGES) + tuple(
         (stage, cond) for stage in STATS_CELL_STAGES for cond in corr)
 
@@ -84,6 +89,11 @@ def artifact_rel(file_id: str, precision: str, scope: str, cell: str | None) -> 
     return rel
 
 
+def same(a, b) -> bool:
+    """Equal as JSON values, types included (B3R3: copied exactly, byte for byte): 1, 1.0 and true differ."""
+    return json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True)
+
+
 def key_of(record: dict) -> tuple:
     """A record's key: (slot, precision, scope, cell)."""
     return (record["slot"], record["precision"], record["scope"], record["cell"])
@@ -100,13 +110,18 @@ def file_errors(doc, identities, precision) -> list[str]:
     """Every way `doc` is not a binding (B3R3, B3R5), with no manifest: the format's exact keys and types; records
     unique by key, keyed by file_names(), in schema.relative_path_error's form, a cell exactly for the cell scopes and
     the upstream protocol exactly for the upstream scope; every record's repo_commit the evaluator commit; one
-    split_manifest_sha256 across the canvas records and one across the upstream records; `inputs` exactly the
-    `identities` in their order, each key a record of the stage's `precision`, scope clean and no cell for the clean
-    condition, scope corrupted and cell_of(condition) for a corruption, no record named twice."""
+    split_manifest_sha256 across the canvas records and one across the upstream records; the references' two paths
+    repository-relative; `inputs` exactly the `identities` in their order, types included (a severity 1.0 or true
+    is not 1), each key a record of the stage's `precision`, scope clean and no cell for the clean condition, scope
+    corrupted and cell_of(condition) for a corruption, no record named twice."""
     from . import schema as S
     errs = S.field_errors(doc, S.BINDING_FILE_SPEC, "binding")
     if errs:
         return errs
+    for part in ("manifest", "mde_entry"):                       # B3R3: repository-relative
+        err = S.relative_path_error(doc["references"][part]["path"])
+        if err:
+            errs.append(f"references.{part}.path {doc['references'][part]['path']!r}: {err}")
     names, commit = list(file_names()), doc["references"]["evaluator"]["commit"]
     recs, digests = {}, {"canvas": set(), UPSTREAM: set()}
     for i, r in enumerate(doc["artifacts"]):
@@ -130,10 +145,10 @@ def file_errors(doc, identities, precision) -> list[str]:
         if len(found) > 1:
             errs.append(f"the {kind} records score {len(found)} split manifests; one is required (DL-74)")
     got = [(it["stage"], tuple(it["condition"])) for it in doc["inputs"]]
-    if got != list(identities):
+    if not same(got, list(identities)):
         return errs + [f"inputs are not the {len(identities)} identities of STATS §12.4.6 in their order"]
     named = set()
-    for (stage, cond), it in zip(got, doc["inputs"]):
+    for (stage, cond), it in zip(identities, doc["inputs"]):
         key = tuple(it["key"]) if len(it["key"]) == 4 and all(k is None or isinstance(k, str) for k in it["key"]) \
             else None
         want = (precision.get(stage), "clean" if cond == CLEAN else "corrupted", cell_of(cond))
@@ -152,7 +167,8 @@ def file_errors(doc, identities, precision) -> list[str]:
 def export_errors(doc, export: dict, identities, precision) -> list[str]:
     """file_errors, then each record against the export's own rows and cells (B3R5; read_inventory's bound branch and
     inventory --binding): its (slot, precision) a row's, its cell one of that row's cells, its repo_commit the
-    export's evaluator_commit; and the references of the export's manifest: its body sha256 and execution context."""
+    export's evaluator_commit; and the references of the export's manifest and session: its body and file sha256,
+    its execution context (exactly), and the dedup list the export names."""
     errs = file_errors(doc, identities, precision)
     if errs:
         return errs
@@ -168,8 +184,12 @@ def export_errors(doc, export: dict, identities, precision) -> list[str]:
     refs = doc["references"]
     if refs["manifest"]["body_sha256"] != export["manifest_sha256"]:
         errs.append("references.manifest.body_sha256 is not the export's manifest_sha256")
-    if refs["execution_context"] != export["execution_context"]:
+    if refs["manifest"]["sha256"] != export["manifest_file_sha256"]:
+        errs.append("references.manifest.sha256 is not the export's manifest_file_sha256")
+    if not same(refs["execution_context"], export["execution_context"]):
         errs.append("references.execution_context is not the export's execution_context")
+    if export.get("dedup") is not None and refs["session"]["dedup"]["sha256"] != export["dedup"].get("sha256"):
+        errs.append("references.session.dedup.sha256 is not the export's dedup.sha256")
     return errs
 
 
@@ -271,7 +291,9 @@ def _manifest_item(doc, plan):
         ("the export's manifest_sha256", export["manifest_sha256"] == m["body_sha256"]),
         ("the export's manifest_file_sha256", export["manifest_file_sha256"] == m["sha256"]),
         ("references.manifest", refs["manifest"] == {k: m[k] for k in MANIFEST_REFERENCE}),
-        ("references.mde_entry", refs["mde_entry"] == m["mde_entry"])) if not ok]
+        ("references.mde_entry", refs["mde_entry"] == m["mde_entry"]),
+        ("references.execution_context", same(refs["execution_context"], m["execution_context"])),
+        ("references.evaluator", refs["evaluator"] == {"commit": m["evaluator_commit"]})) if not ok]
     return f"{bad} are not the frozen manifest's" if bad else None
 
 
@@ -350,5 +372,5 @@ def stats_inputs(doc: dict) -> dict:
 __all__ = ["BINDING_REL", "CELL_SCOPES", "CLEAN", "FULL_CHECKS", "INPUT_FIELDS", "STATS_CELL_STAGES",
            "STATS_INPUT_LIST", "STATS_PRECISION", "STATS_STAGES", "STEM_SCOPES", "TDAY_REL", "artifact_rel",
            "bound_reason", "cell_of", "condition_of", "export_errors", "file_errors", "file_names", "full_check",
-           "identity", "inputs_reason", "key_of", "read", "record_of", "required_keys", "stats_identities",
+           "identity", "inputs_reason", "key_of", "read", "record_of", "required_keys", "same", "stats_identities",
            "stats_inputs"]

@@ -440,13 +440,17 @@ BINDING_ARTIFACT_FIELDS = {"slot": "slot", "precision": ("enum", INVENTORY_PRECI
                            "files_sha256": ("map", "sha256"), "checkpoint_sha256": "sha256", "repo_commit": "commit",
                            "split_manifest_sha256": "sha256"}
 BINDING_RESERVED = {"references": ("mde_entry",), "artifacts": tuple(sorted(BINDING_ARTIFACT_FIELDS))}
-# B-3b's file (B3R3; B3R16: `inputs` added): the references exactly; the 37 inputs, each naming a record by its key
+# TB1's execution-context tuple, its keys (validate.TUPLE_KEYS names this one definition)
+TUPLE_KEYS = ("model_device", "input_devices", "determinism_policy_applied", "batch_size", "num_workers",
+              "torch_num_threads", "image_digest", "evaluator_commit", "host", "processes")
+# B-3b's file (B3R3; B3R16: `inputs` added): the references exactly -- execution_context TB1's tuple, keyed exactly
+# (B3R3) -- and the 37 inputs, each naming a record by its key
 BINDING_INPUT_FIELDS = {"stage": "str", "condition": ("list", "any"), "key": ("list", "any")}
 BINDING_FILE_SPEC = {"format": ("enum", (BINDING_FORMAT,)),
                      "references": ("obj", {"manifest": ("obj", {"path": "str", "sha256": "sha256",
                                                                  "body_sha256": "sha256", "freeze_dl": "dl"}),
                                             "evaluator": ("obj", {"commit": "commit"}),
-                                            "execution_context": ("map", "any"),
+                                            "execution_context": ("obj", {k: "any" for k in TUPLE_KEYS}),
                                             "session": ("obj", {"dedup": ("obj", {"sha256": "sha256"})}),
                                             "mde_entry": REF, "written_utc": "utc"}),
                      "artifacts": ("list", ("obj", BINDING_ARTIFACT_FIELDS)),

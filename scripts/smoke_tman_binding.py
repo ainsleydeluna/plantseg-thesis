@@ -97,12 +97,12 @@ def fixture_binding(export: dict) -> dict:
                          "checkpoint_sha256": identity(m), "repo_commit": export["evaluator_commit"],
                          "split_manifest_sha256": h(6) if scope == "upstream" else h(5)})
     inputs = []
-    for stage, cond in B.stats_identities(INFERENTIAL):
+    for stage, cond in B.stats_identities():
         slot, prec = FAMILY[stage]
         inputs.append({"stage": stage, "condition": list(cond),
                        "key": [slot, prec, "clean" if cond == B.CLEAN else "corrupted", B.cell_of(cond)]})
     return {"format": S.BINDING_FORMAT,
-            "references": {"manifest": {"path": S.MANIFEST_REL, "sha256": h(2),
+            "references": {"manifest": {"path": S.MANIFEST_REL, "sha256": export["manifest_file_sha256"],
                                         "body_sha256": export["manifest_sha256"],
                                         "freeze_dl": "DL-150"},
                            "evaluator": {"commit": export["evaluator_commit"]},
@@ -116,7 +116,7 @@ def fixture_binding(export: dict) -> dict:
 def tman_data() -> tuple:
     """The 37 identities and stage precisions TMAN passes (its restatement, src.stats never imported)."""
     from src.tman import binding as B
-    return B.stats_identities(INFERENTIAL), B.STATS_PRECISION
+    return B.stats_identities(), B.STATS_PRECISION
 
 
 def record(doc: dict, slot: str, scope: str, cell=None, precision=None) -> dict:
@@ -159,6 +159,16 @@ def sev45_input(doc: dict) -> None:
     doc["inputs"][7]["key"] = ["E1:s42:80k", "fp32", "corrupted_sev45", cell]
 
 
+def retyped(doc: dict, severity) -> None:
+    """E1's first corruption input with its severity retyped (1.0 or true for 1), its key's and its record's cell
+    renamed to match: only the severity's JSON type differs from the identity's (DL-24 R1-F1, R4-1)."""
+    it = doc["inputs"][7]
+    name, sev = it["condition"][1], it["condition"][2]
+    record(doc, it["key"][0], "corrupted", f"{name}_s{sev}").update(cell=f"{name}_s{severity}")
+    it["condition"][2] = severity
+    it["key"][3] = f"{name}_s{severity}"
+
+
 def export_refused(name: str, edit, detail: str, edit_export=None) -> None:
     from src.tman import binding as B
     export = fixture_export()
@@ -176,6 +186,24 @@ def lane_python() -> dict:
     return {rel: (M.CODE_ROOT / rel).read_text(encoding="utf-8") for rel in M.LANE_CODE_FILES if rel.endswith(".py")}
 
 
+def src_stats_imports(rel: str, text: str) -> list:
+    """The modules a lane file `rel` imports that are src.stats or inside it: absolute imports, and relative ones
+    resolved against the file's package (`from ..stats import driver`, `from .. import stats`), at any depth (B3R2;
+    DL-24 R1-F3)."""
+    pkg = rel[:-3].split("/")[:-1]
+    out = []
+    for n in ast.walk(ast.parse(text)):
+        if isinstance(n, ast.Import):
+            names = [a.name for a in n.names]
+        elif isinstance(n, ast.ImportFrom):
+            base = ".".join((pkg[:len(pkg) - n.level + 1] if n.level else []) + ([n.module] if n.module else []))
+            names = [base] + [f"{base}.{a.name}" for a in n.names]
+        else:
+            continue
+        out += [m for m in names if m == "src.stats" or m.startswith("src.stats.")]
+    return out
+
+
 def case_one_definition():
     """B3R2: binding.py defines the path once; validate.py imports it; no lane module imports src.stats."""
     from src.tman import binding as B
@@ -189,12 +217,15 @@ def case_one_definition():
     imports = [(n.module, n.level, [a.name for a in n.names]) for n in tree.body if isinstance(n, ast.ImportFrom)]
     check("validate_imports_binding_rel_from_binding_B3R2", ("binding", 1, ["BINDING_REL"]) in imports
           and V.BINDING_REL is B.BINDING_REL, str(imports))
-    found = []
-    for rel, t in lane_python().items():
-        for n in ast.walk(ast.parse(t)):
-            mods = ([a.name for a in n.names] if isinstance(n, ast.Import) else
-                    [n.module or ""] if isinstance(n, ast.ImportFrom) and n.level == 0 else [])
-            found += [(rel, m) for m in mods if m == "src.stats" or m.startswith("src.stats.")]
+    probes = {"def f():\n    from ..stats import driver\n": True,
+              "from ..stats.driver import official_inventory\n": True,
+              "from .. import stats\n": True,
+              "from src.stats import driver\n": True,
+              "import src.stats.driver\n": True,
+              "from . import schema\nfrom ..eval import artifacts\nimport src.tman\n": False}
+    check("the_import_scan_resolves_relative_imports_B3R2", all(
+        bool(src_stats_imports("src/tman/x.py", t)) is want for t, want in probes.items()))
+    found = [(rel, m) for rel, t in lane_python().items() for m in src_stats_imports(rel, t)]
     check("no_lane_module_imports_src_stats_B3R2", not found, str(found))
 
 
@@ -229,13 +260,19 @@ def case_stats_restated():
     from src.eval import artifacts as EA
     from src.stats import driver as D
     from src.tman import binding as B
-    from src.tman import manifest as M
     from src.tman import schema as S
     want = D.official_inventory()
-    check("stats_identities_are_official_inventory_s_37_in_order_B3R5",
-          B.stats_identities(CR.INFERENTIAL_CELL_IDS) == want == B.stats_identities(INFERENTIAL) and len(want) == 37)
-    check("stats_identities_from_the_registered_cells_B3R5",
-          B.stats_identities(M.cells_for({"corrupted"})) == want, str(M.cells_for({"corrupted"}))[:200])
+    check("stats_identities_are_official_inventory_s_37_in_order_B3R5", B.stats_identities() == want
+          and len(want) == 37 and want[7:22] == tuple(("E1", B.condition_of(c)) for c in INFERENTIAL))
+    real = CR.load                           # B3B-CLAR-1: read from the protocol through src.corruption_roles
+    order = tuple(reversed(real().order))
+    CR.load = lambda *a, **kw: type("Protocol", (), {"order": order, "inferential_severities": (1, 2)})
+    try:
+        got = B.stats_identities()
+    finally:
+        CR.load = real
+    check("stats_identities_read_the_protocol_through_corruption_roles_CLAR1", got[:7] == want[:7] and got[7:] == tuple(
+        (st, ("corruption", n, s)) for st in ("E1", "E6") for n in order for s in (1, 2)), str(got[7:10]))
     check("stats_precision_stages_and_input_list_schema_are_the_driver_s",
           B.STATS_PRECISION == D.STAGE_PRECISION and B.STATS_STAGES == D.STAGES
           and B.STATS_CELL_STAGES == D.CORRUPTION_STAGES and B.STATS_INPUT_LIST == D.INPUT_LIST_SCHEMA)
@@ -333,7 +370,31 @@ def case_file_check():
                 key=["E1:s42:80k", "fp32", "corrupted", "fog_s1"]), "is not of (precision, scope, cell)"),
             ("input_key_sev45_scope_for_a_cell_B3R5", sev45_input, "is not of (precision, scope, cell)"),
             ("two_inputs_naming_one_record_B3R5", lambda d: d["inputs"][2].update(key=list(d["inputs"][1]["key"])),
-             "is another input's")):
+             "is another input's"),
+            ("input_severity_float_B3R5", lambda d: retyped(d, 1.0), "are not the 37 identities"),
+            ("input_severity_true_B3R5", lambda d: retyped(d, True), "are not the 37 identities"),
+            ("input_extra_key_B3R3", lambda d: d["inputs"][0].update(path="runs/x"), "unexpected ['path']"),
+            ("input_without_its_key_B3R3", lambda d: d["inputs"][0].pop("key"), "missing ['key']"),
+            ("input_without_its_stage_B3R3", lambda d: d["inputs"][0].pop("stage"), "missing ['stage']"),
+            ("input_without_its_condition_B3R3", lambda d: d["inputs"][0].pop("condition"), "missing ['condition']"),
+            ("session_with_another_block_B3R16", lambda d: d["references"]["session"].update(values={}),
+             "unexpected ['values']"),
+            ("session_dedup_with_another_key_B3R16", lambda d: d["references"]["session"]["dedup"].update(path="x"),
+             "unexpected ['path']"),
+            ("evaluator_with_another_key_B3R3", lambda d: d["references"]["evaluator"].update(image="x"),
+             "unexpected ['image']"),
+            ("manifest_with_another_key_B3R3", lambda d: d["references"]["manifest"].update(bytes=1),
+             "unexpected ['bytes']"),
+            ("mde_entry_with_another_key_TB11", lambda d: d["references"]["mde_entry"].update(bytes=1),
+             "unexpected ['bytes']"),
+            ("execution_context_without_a_tb1_key_B3R3",
+             lambda d: d["references"]["execution_context"].pop("host"), "missing ['host']"),
+            ("execution_context_with_another_key_B3R3",
+             lambda d: d["references"]["execution_context"].update(gpu="x"), "unexpected ['gpu']"),
+            ("manifest_path_absolute_B3R3", lambda d: d["references"]["manifest"].update(path="/reports/m.json"),
+             "references.manifest.path"),
+            ("mde_entry_path_backslash_B3R3", lambda d: d["references"]["mde_entry"].update(path="reports\\m.json"),
+             "references.mde_entry.path")):
         file_refused(name, edit, detail)
     for name, data in (("binding_duplicate_key_read_strictly_B3R3", b'{"format": 1, "format": 2}'),
                        ("binding_nan_read_strictly_B3R3", b'{"format": NaN}'),
@@ -363,6 +424,19 @@ def case_export_check():
     export_refused("references_of_another_execution_context_B3R5", lambda d: None,
                    "execution_context is not the export's",
                    edit_export=lambda e: e["execution_context"].update(torch_num_threads=8))
+    export_refused("references_execution_context_not_an_exact_copy_B3R3",
+                   lambda d: d["references"]["execution_context"].update(batch_size=1.0),
+                   "execution_context is not the export's")
+    export_refused("references_of_another_manifest_file_B3R7", lambda d: None,
+                   "manifest.sha256 is not the export's manifest_file_sha256",
+                   edit_export=lambda e: e.update(manifest_file_sha256=h(9)))
+    dedup = {"path": "tday_dedup.json", "sha256": h(3), "removed_by_reason": {"equal_train": 1}}
+    export_refused("references_of_another_dedup_list_B3R7", lambda d: None, "dedup.sha256 is not the export's",
+                   edit_export=lambda e: e.update(dedup=dict(dedup, sha256=h(9))))
+    export = fixture_export()
+    export["dedup"] = dict(dedup)
+    errs = errors_of(B.export_errors, fixture_binding(export), export, *tman_data())
+    check("export_naming_the_binding_s_dedup_list_passes_B3R7", errs == [], str(errs[:3]))
 
 
 # ===================================================================================== the statistics cases
@@ -586,6 +660,31 @@ def case_stats_doors():
     check("bound_door_passes_real_inputs_with_a_binding_file_B3R6b", outcome["bound_real"] is None, str(outcome))
     check("synthetic_inputs_pass_the_door_bound_or_unbound_B3R6b",
           outcome["unbound_synthetic"] is None and outcome["bound_synthetic"] is None, str(outcome))
+    from src.tman import binding as B
+    junk, folder = FX.scratch_dir("tmanstatsdj"), FX.scratch_dir("tmanstatsdf")
+    (junk / B.BINDING_REL).parent.mkdir(parents=True)
+    (junk / B.BINDING_REL).write_bytes(b"not a binding")
+    (folder / B.BINDING_REL).mkdir(parents=True)
+    opened, watching = [], [True]
+
+    def hook(event, args):                    # an audit hook stays installed; it records only while watching
+        if watching[0] and event == "open" and args and B.BINDING_REL.rpartition("/")[2] in str(args[0]):
+            opened.append(str(args[0]))
+    sys.addaudithook(hook)
+    try:
+        for name, root in (("junk_real", junk), ("folder_real", folder)):
+            with code_repo(A, root):
+                try:
+                    D.official_doors(confirm=True, synthetic=False)
+                    outcome[name] = None
+                except D.DriverRefusal as e:
+                    outcome[name] = str(e)
+    finally:
+        watching[0] = False
+    check("bound_door_takes_any_file_and_opens_none_B3R6b", outcome["junk_real"] is None and not opened,
+          str((outcome["junk_real"], opened)))
+    check("bound_door_refuses_a_folder_at_the_binding_path_B3R6b",
+          "binding is unbound: no" in (outcome["folder_real"] or ""), str(outcome["folder_real"]))
 
     class Stop(Exception):
         pass
@@ -740,6 +839,20 @@ def both_checkpoints(doc: dict, plan: dict) -> None:
     plan["reads"][E1_UP]["checkpoint_sha256"] = h(8)
 
 
+def context_commit_other(doc: dict, plan: dict) -> None:
+    """The frozen tuple's evaluator_commit another, the binding's and the export's copies with it: only the artifacts'
+    commits differ from it (TB1)."""
+    for ec in (doc["references"]["execution_context"], plan["export"]["execution_context"],
+               plan["manifest"]["execution_context"]):
+        ec.update(evaluator_commit="e2" * 20)
+
+
+def manifest_file_other(doc: dict, plan: dict) -> None:
+    """The export and the binding of another manifest file than the frozen one (the export check passing)."""
+    plan["export"].update(manifest_file_sha256=h(8))
+    doc["references"]["manifest"].update(sha256=h(8))
+
+
 def case_full_check():
     """B3R5's full check on plain dicts: the fixture passes every item in its order; each item refused alone, reached
     with every earlier item passing (.passed), with its own code."""
@@ -752,8 +865,8 @@ def case_full_check():
              "identities"),
             ("export_of_another_manifest_body_B3R8", "binding_manifest_mismatch",
              lambda d, p: p["manifest"].update(body_sha256=h(8)), "manifest_sha256"),
-            ("export_of_another_manifest_file_B3R8", "binding_manifest_mismatch",
-             lambda d, p: p["export"].update(manifest_file_sha256=h(8)), "manifest_file_sha256"),
+            ("export_of_another_manifest_file_B3R8", "binding_manifest_mismatch", manifest_file_other,
+             "manifest_file_sha256"),
             ("references_freeze_row_not_the_manifest_s_B3R3", "binding_manifest_mismatch",
              lambda d, p: d["references"]["manifest"].update(freeze_dl="DL-151"), "references.manifest"),
             ("references_mde_entry_not_the_manifest_s_TB11", "binding_manifest_mismatch",
@@ -776,8 +889,12 @@ def case_full_check():
              lambda d, p: p["reads"][E1_CLEAN]["runtime"].update(torch_num_threads=8), "TB1"),
             ("artifact_tuple_key_missing_TB1", "binding_context_split",
              lambda d, p: p["reads"][E1_CLEAN]["runtime"].pop("image_digest"), "TB1"),
-            ("artifact_commit_not_the_context_s_evaluator_TB1", "binding_context_split",
-             lambda d, p: p["manifest"]["execution_context"].update(evaluator_commit="e2" * 20), "TB1"),
+            ("artifact_commit_not_the_context_s_evaluator_TB1", "binding_context_split", context_commit_other, "TB1"),
+            ("references_execution_context_not_the_manifest_s_B3R3", "binding_manifest_mismatch",
+             lambda d, p: p["manifest"]["execution_context"].update(torch_num_threads=8),
+             "references.execution_context"),
+            ("references_evaluator_not_the_manifest_s_B3R3", "binding_manifest_mismatch",
+             lambda d, p: p["manifest"].update(evaluator_commit="e2" * 20), "references.evaluator"),
             ("clean_artifact_stem_differs_DL74", "binding_stem_mismatch",
              lambda d, p: p["reads"][E1_CLEAN].update(ids=[("i0001", "i0001"), ("i0002", "i0002_shift")]), "DL-74"),
             ("fq_off_artifact_stem_differs_DL74", "binding_stem_mismatch",

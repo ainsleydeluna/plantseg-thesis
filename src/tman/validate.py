@@ -39,8 +39,7 @@ MODES = ("draft", "freeze", "unlock", "session")
 ALL, FU, U, SES = MODES, ("freeze", "unlock", "session"), ("unlock", "session"), ("session",)
 MODEL_KINDS = ("scored_run", "default_candidate", "arm_teacher", "derived")
 RUN_KINDS = ("scored_run", "default_candidate", "arm_teacher", "listed_run", "non_finite", "diverged", "aborted")
-TUPLE_KEYS = ("model_device", "input_devices", "determinism_policy_applied", "batch_size", "num_workers",
-              "torch_num_threads", "image_digest", "evaluator_commit", "host", "processes")
+TUPLE_KEYS = S.TUPLE_KEYS                                     # TB1's tuple (schema's one definition; B3R3)
 TUPLE_FIXED = {"model_device": "cpu", "input_devices": ["cpu"], "determinism_policy_applied": False, "batch_size": 1,
                "num_workers": 0, "image_digest": S.KD_IMAGE}                        # TB1; IF§1
 LANES_SPEC = {"format": ("enum", (S.LANES_FORMAT,)),
@@ -1935,7 +1934,7 @@ def read_inventory(path, *, expect_sha256: str | None = None) -> dict:
         if S.sha256_bytes(bdata) != doc["binding"]["sha256"]:
             raise S.TmanRefused("binding_invalid", f"{bp}: its sha256 is not binding.sha256")
         bdoc = B.read(bdata, str(bp))
-        berrs = B.export_errors(bdoc, doc, B.stats_identities(M.cells_for({"corrupted"})), B.STATS_PRECISION)
+        berrs = B.export_errors(bdoc, doc, B.stats_identities(), B.STATS_PRECISION)
         if berrs:
             raise S.TmanRefused("binding_invalid", f"{bp}: " + "; ".join(berrs[:4]) + " (B3R7)")
         doc["binding"]["artifacts"] = bdoc["artifacts"]

@@ -1022,7 +1022,7 @@ def export_dedup(path, folder, pin, session_values=None) -> dict:
     return {"path": rel, "sha256": S.sha256_bytes(data), "removed_by_reason": dict(ddoc["removed_by_reason"])}
 
 
-def export_binding(path, folder, export: dict, registered=None) -> dict:
+def export_binding(path, folder, export: dict) -> dict:
     """IF§11.5's binding block, bound (B3R7): the binding file at `path`, named relative to `folder`, the export's
     folder, in P2R5's form (B3R4: a file outside the folder, a link loop and a name that is not UTF-8 included), read
     strictly and passing binding.py's export check against this export; the sha256 of its bytes. Every failure is
@@ -1046,8 +1046,7 @@ def export_binding(path, folder, export: dict, registered=None) -> dict:
         data = bf.read_bytes()
     except OSError as e:
         raise S.TmanRefused("binding_invalid", f"{path}: unreadable ({type(e).__name__})") from None
-    errs = B.export_errors(B.read(data, str(path)), export, B.stats_identities(cells_for({"corrupted"}, registered)),
-                           B.STATS_PRECISION)
+    errs = B.export_errors(B.read(data, str(path)), export, B.stats_identities(), B.STATS_PRECISION)
     if errs:
         raise S.TmanRefused("binding_invalid", f"{path}: " + "; ".join(errs[:4]) + " (B3R7)")
     return {"state": "bound", "path": brel, "sha256": S.sha256_bytes(data)}
@@ -1086,5 +1085,5 @@ def build_inventory(doc: dict, manifest_bytes: bytes, records: R.Records, cat, *
            "dedup": None if dedup is None else export_dedup(*dedup, pin, svalues), "freeze": freeze,
            "binding": {"state": "unbound", "path": None, "sha256": None}}
     if binding is not None:
-        inv["binding"] = export_binding(*binding, inv, registered)
+        inv["binding"] = export_binding(*binding, inv)
     return inv

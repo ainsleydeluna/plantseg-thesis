@@ -2169,8 +2169,8 @@ M = [
     ("export_binding_loop_uncaught", MAN, [("    except (RuntimeError, OSError) as e:", "    except OSError as e:")],
      "binding", "case_bound_export", "inventory_binding_link_loop_refused_B3R4", ["binding_invalid"], None),
     ("export_binding_export_check_dropped", MAN, [
-        ('    errs = B.export_errors(B.read(data, str(path)), export, B.stats_identities(cells_for({"corrupted"}, '
-         'registered)),\n                           B.STATS_PRECISION)\n', "    errs = []\n")],
+        ('    errs = B.export_errors(B.read(data, str(path)), export, B.stats_identities(), B.STATS_PRECISION)\n',
+         "    errs = []\n")],
      "binding", "case_bound_export", "inventory_binding_failing_the_export_check_refused_B3R7", ["binding_invalid"],
      None),
     ("export_binding_sha256_other", MAN, [
@@ -2184,8 +2184,8 @@ M = [
                                                 "        err = None\n")],
      "binding", "case_bound_export", "read_inventory_binding_path_absolute_refused_B3R4", ["binding_invalid"], None),
     ("read_binding_export_check_dropped", VAL, [
-        ('        berrs = B.export_errors(bdoc, doc, B.stats_identities(M.cells_for({"corrupted"})), '
-         'B.STATS_PRECISION)\n', "        berrs = []\n")],
+        ('        berrs = B.export_errors(bdoc, doc, B.stats_identities(), B.STATS_PRECISION)\n',
+         "        berrs = []\n")],
      "binding", "case_bound_export", "read_inventory_binding_failing_the_export_check_B3R7", ["binding_invalid"], None),
     ("read_binding_not_strict", VAL, [("        bdoc = B.read(bdata, str(bp))\n",
                                        '        bdoc = __import__("json").loads(bdata)\n')],
@@ -2198,6 +2198,22 @@ M = [
                                                  "        S.refuse_test_path(bp)\n",
                                                  '        bp = p.parent / doc["binding"]["path"]\n')],
      "paths", "case_paths_resolved_where_read", "export_binding_path_resolved_where_read_B3R7", ["test_path"], None),
+    # B-3b (DL-24 R1-F2, R4-2): the binding's exact keys, schema.BINDING_FILE_SPEC's (B3R3, B3R16)
+    ("binding_inputs_items_any", SCH, [('"inputs": ("list", ("obj", BINDING_INPUT_FIELDS))}',
+                                        '"inputs": ("list", ("map", "any"))}')],
+     "binding", "case_file_check", "input_extra_key_B3R3", ["binding_invalid"], None),
+    ("binding_session_any", SCH, [('"session": ("obj", {"dedup": ("obj", {"sha256": "sha256"})}),',
+                                   '"session": ("map", "any"),')],
+     "binding", "case_file_check", "session_with_another_block_B3R16", ["binding_invalid"], None),
+    ("binding_evaluator_any", SCH, [('"evaluator": ("obj", {"commit": "commit"}),\n',
+                                     '"evaluator": ("map", "any"),\n')],
+     "binding", "case_file_check", "evaluator_with_another_key_B3R3", ["binding_invalid"], None),
+    ("binding_execution_context_any", SCH, [('"execution_context": ("obj", {k: "any" for k in TUPLE_KEYS}),',
+                                             '"execution_context": ("map", "any"),')],
+     "binding", "case_file_check", "execution_context_without_a_tb1_key_B3R3", ["binding_invalid"], None),
+    ("binding_mde_entry_any", SCH, [('"mde_entry": REF, "written_utc": "utc"}),',
+                                     '"mde_entry": ("map", "any"), "written_utc": "utc"}),')],
+     "binding", "case_file_check", "mde_entry_with_another_key_TB11", ["binding_invalid"], None),
     # B-3b (B3R11; TMAN2P2-RULE-1 item 2): the export of a session that holds the hasher's values
     ("builder_session_values_without_dedup_accepted", MAN, [
         ('    if dedup is None and isinstance(svalues, dict) and "image_hasher" in svalues:', "    if False:")],

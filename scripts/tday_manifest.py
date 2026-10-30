@@ -684,7 +684,7 @@ def cmd_bind(args) -> int:
     print(f"READ {args.inventory} sha256 {S.sha256_bytes(read_bytes(args.inventory, 'inventory_invalid'))}")
     body, reg = x.body, registered(args)
     cells = {scope: M.cells_for({scope}, reg) for scope in B.CELL_SCOPES}
-    identities = B.stats_identities(cells["corrupted"])
+    identities = B.stats_identities()
     scopes = {m["slot"]: sorted(V.scope_rule_of(x, m["slot"])[0]) for m in export["models"]}
     family = {s["evaluator_stage"]: k for k, s in x.cat.slots.items() if "family" in s["roles"] and s["seed"] == 42}
     reads = {}
