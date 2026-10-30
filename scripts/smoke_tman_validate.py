@@ -2384,7 +2384,9 @@ def case_inventory_dedup():
     """P2R4, P2R5, P2R6(c)(ii) at the builder: with tday_dedup.json, the export's dedup is {its path relative to the
     export's folder, in LREP's path_problem form; the sha256 of its bytes; its removed_by_reason}, the file read
     strictly and agreeing with the manifest's image_hasher pin; each refusal with the export otherwise built, a link
-    loop and a name that is not UTF-8 included (DL-24 R1-F2); the command line's `inventory --dedup`."""
+    loop and a name that is not UTF-8 included (DL-24 R1-F2); the command line's `inventory --dedup`. B3R11: when
+    the session part holds the hasher's values, --dedup is required and the file is the one they record, each value
+    refused alone with the file otherwise passing (hasher_values_mismatch)."""
     from src.tman import manifest as M
     from src.tman import validate as V
     w = WORLD
@@ -2467,6 +2469,37 @@ def case_inventory_dedup():
                     "--runs", str(w.runs), "--registered-cells", str(cells), "--dedup", str(out / "tday_dedup.json")])
     check("cli_inventory_dedup_outside_out_refused_writes_nothing", rc == 2 and "REFUSED [dedup_invalid]" in txt
           and not any(folder.iterdir()), txt.strip()[-200:])
+    ddoc = json.loads(data)                     # B3R11 (TMAN2P2-RULE-1 item 2): the session's three values
+    vals = {"hash_list_sha256": ddoc["hash_list_sha256"], "dedup_list_sha256": S.sha256_bytes(data),
+            "counts_by_reason": ddoc["removed_by_reason"]}
+
+    def in_session(values, dedup=(out / "tday_dedup.json", out)):
+        d = dict(w.doc, session={"values": {"image_hasher": values}})
+        try:
+            return "ok", M.build_inventory(d, w.data, w.records, w.cat, runs_root=w.runs, registered=PINS.IF6_CELLS,
+                                           dedup=dedup)["dedup"]
+        except S.TmanRefused as e:
+            return e.code, e.detail
+        except Exception as e:  # noqa: BLE001 -- a crash fails the check by name
+            return type(e).__name__, str(e)
+    got = in_session(dict(vals))
+    check("inventory_session_values_with_their_file_B3R11", got == ("ok", {
+        "path": "tday_dedup.json", "sha256": S.sha256_bytes(data), "removed_by_reason": counts}), str(got)[:200])
+    got = in_session(dict(vals), dedup=None)
+    check("inventory_session_values_without_dedup_refused_B3R11", got[0] == "hasher_values_mismatch"
+          and "requires --dedup" in got[1], str(got)[:200])
+    for k, v in (("dedup_list_sha256", "0" * 64), ("counts_by_reason", dict(counts, equal_val=9)),
+                 ("hash_list_sha256", "0" * 64)):
+        got = in_session(dict(vals, **{k: v}))
+        check(f"inventory_session_value_{k}_not_the_file_s_B3R11", got[0] == "hasher_values_mismatch"
+              and f"['{k}']" in got[1], str(got)[:200])
+    (out / "m_session.json").write_bytes(S.json_file_bytes(dict(json.loads(w.data),
+                                                                session={"values": {"image_hasher": vals}})))
+    folder = FX.scratch_dir("tmanddcli")
+    rc, txt = _cli(["--root", str(w.repo), "inventory", "--manifest", str(out / "m_session.json"), "--out",
+                    str(folder), "--runs", str(w.runs), "--registered-cells", str(cells)])
+    check("cli_inventory_of_a_session_without_dedup_refused_B3R11", rc == 2
+          and "REFUSED [hasher_values_mismatch]" in txt and not any(folder.iterdir()), txt.strip()[-200:])
 
 
 def case_inventory_dedup_reader():

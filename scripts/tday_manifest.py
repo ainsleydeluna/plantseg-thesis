@@ -577,8 +577,9 @@ def cmd_isolation(args) -> int:
 # --------------------------------------------------------------------------------------------- inventory
 def cmd_inventory(args) -> int:
     """The export, written into --out and read back; --dedup names the hasher's tday_dedup.json, which the export's
-    dedup block names relative to --out (P2R4, P2R5); --binding names the binding bind wrote, which the export's
-    binding names relative to --out, bound, after binding.py's export check (B3R7)."""
+    dedup block names relative to --out (P2R4, P2R5), required, and the file the values recorded, once the session
+    part holds the hasher's values (B3R11); --binding names the binding bind wrote, which the export's binding names
+    relative to --out, bound, after binding.py's export check (B3R7)."""
     data = read_bytes(args.manifest, "manifest_unreadable")
     doc = S.strict_json(data, args.manifest, code="manifest_unreadable")
     records = records_at(args)
@@ -819,7 +820,8 @@ def parser() -> argparse.ArgumentParser:
     n.add_argument("--runs")
     n.add_argument("--registered-cells")
     n.add_argument("--freeze-record", help="the freeze record: its committed entry file (DL-24 #33)")
-    n.add_argument("--dedup", help="the hasher's tday_dedup.json, inside --out: the export's dedup block (P2R4)")
+    n.add_argument("--dedup", help="the hasher's tday_dedup.json, inside --out: the export's dedup block (P2R4); "
+                                   "required once the session part holds the hasher's values (B3R11)")
     n.add_argument("--binding", help="the binding bind wrote, inside --out: the export's binding, bound (B3R7)")
     bd = sub.add_parser("bind")
     bd.add_argument("--manifest", required=True, help="the frozen manifest with its session part")

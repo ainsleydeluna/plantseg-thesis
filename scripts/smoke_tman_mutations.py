@@ -2198,6 +2198,26 @@ M = [
                                                  "        S.refuse_test_path(bp)\n",
                                                  '        bp = p.parent / doc["binding"]["path"]\n')],
      "paths", "case_paths_resolved_where_read", "export_binding_path_resolved_where_read_B3R7", ["test_path"], None),
+    # B-3b (B3R11; TMAN2P2-RULE-1 item 2): the export of a session that holds the hasher's values
+    ("builder_session_values_without_dedup_accepted", MAN, [
+        ('    if dedup is None and isinstance(svalues, dict) and "image_hasher" in svalues:', "    if False:")],
+     "validate", "case_inventory_dedup", "inventory_session_values_without_dedup_refused_B3R11",
+     ["hasher_values_mismatch"], None),
+    ("builder_session_values_not_passed", MAN, [("export_dedup(*dedup, pin, svalues)", "export_dedup(*dedup, pin)")],
+     "validate", "case_inventory_dedup", "inventory_session_value_dedup_list_sha256_not_the_file_s_B3R11",
+     ["hasher_values_mismatch"], None),
+    ("builder_session_dedup_list_not_compared", MAN, [('"dedup_list_sha256": S.sha256_bytes(data)',
+                                                      '"dedup_list_sha256": recorded["dedup_list_sha256"]')],
+     "validate", "case_inventory_dedup", "inventory_session_value_dedup_list_sha256_not_the_file_s_B3R11",
+     ["hasher_values_mismatch"], None),
+    ("builder_session_counts_not_compared", MAN, [('"counts_by_reason": ddoc["removed_by_reason"]',
+                                                  '"counts_by_reason": recorded["counts_by_reason"]')],
+     "validate", "case_inventory_dedup", "inventory_session_value_counts_by_reason_not_the_file_s_B3R11",
+     ["hasher_values_mismatch"], None),
+    ("builder_session_hash_list_not_compared", MAN, [('"hash_list_sha256": ddoc["hash_list_sha256"]',
+                                                     '"hash_list_sha256": recorded["hash_list_sha256"]')],
+     "validate", "case_inventory_dedup", "inventory_session_value_hash_list_sha256_not_the_file_s_B3R11",
+     ["hasher_values_mismatch"], None),
 ]
 REFUSAL_EXTRA = ("inventory_invalid", "inventory_sha256_mismatch", "binding_invalid",       # read_inventory's codes
                  "output_location", "output_exists",                                       # the CLI's outputs

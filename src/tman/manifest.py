@@ -980,12 +980,15 @@ def inventory_entries(body: dict, cat, records: R.Records, runs_root=None, appen
     return out
 
 
-def export_dedup(path, folder, pin) -> dict:
+def export_dedup(path, folder, pin, session_values=None) -> dict:
     """IF§11.5's dedup block (P2R4): tday_dedup.json at `path`, named relative to `folder`, the export's folder, in
     P2R5's form (dedup_invalid otherwise, a file outside the folder included); the sha256 of its bytes and its
     removed_by_reason. The file is read strictly (dedup.read_dedup: dedup_invalid) and agrees with the manifest's
     image_hasher pin `pin` (P2R6(c)(ii): dedup_pin_mismatch). A link loop, and a name the export's UTF-8 JSON cannot
-    hold, are dedup_invalid too (DL-24 R1-F2)."""
+    hold, are dedup_invalid too (DL-24 R1-F2). When the session part's values `session_values` hold the hasher's
+    (values.image_hasher), the file is the one they record: its sha256, its removed_by_reason and its
+    hash_list_sha256 are dedup_list_sha256, counts_by_reason and hash_list_sha256 (B3R11; the session gate's code,
+    hasher_values_mismatch)."""
     S.refuse_test_path(path)
     try:
         f, root = Path(path).resolve(), Path(folder).resolve()
@@ -1008,6 +1011,14 @@ def export_dedup(path, folder, pin) -> dict:
     errs = DD.dedup_pin_errors(ddoc, pin)
     if errs:
         raise S.TmanRefused("dedup_pin_mismatch", "; ".join(errs) + " (P2R6(c)(ii))")
+    if isinstance(session_values, dict) and "image_hasher" in session_values:            # B3R11
+        recorded = session_values["image_hasher"]
+        got = {"hash_list_sha256": ddoc["hash_list_sha256"], "dedup_list_sha256": S.sha256_bytes(data),
+               "counts_by_reason": ddoc["removed_by_reason"]}
+        bad = [k for k in HASHER_VALUES if not isinstance(recorded, dict) or recorded.get(k) != got[k]]
+        if bad:
+            raise S.TmanRefused("hasher_values_mismatch", f"values.image_hasher {bad} are not {rel}'s: the export "
+                                                          "names the session's tday_dedup.json (B3R11)")
     return {"path": rel, "sha256": S.sha256_bytes(data), "removed_by_reason": dict(ddoc["removed_by_reason"])}
 
 
@@ -1048,8 +1059,9 @@ def build_inventory(doc: dict, manifest_bytes: bytes, records: R.Records, cat, *
     body_sha256), manifest_file_sha256 the manifest file's. `freeze` names the decision-log row of `freeze_record`,
     the committed freeze entry file of this body (DL-24 #33, #82); null before the freeze. `dedup` is (tday_dedup.json's
     path, the folder the export is written into): the export's dedup block (export_dedup; P2R4); without it, dedup is
-    null. `binding` is (the binding file's path, that folder): the binding bound (export_binding; B3R7); without it,
-    the binding is unbound."""
+    null, refused when the manifest's session part holds the hasher's values (B3R11: hasher_values_mismatch), which
+    the file must then match. `binding` is (the binding file's path, that folder): the binding bound (export_binding;
+    B3R7); without it, the binding is unbound."""
     from . import entries as E
     body = doc["body"]
     msha = S.canonical_sha256(body)
@@ -1064,10 +1076,14 @@ def build_inventory(doc: dict, manifest_bytes: bytes, records: R.Records, cat, *
     entries = inventory_entries(body, cat, records, runs_root, doc["appends"])
     hp = body["generator_pins"].get("image_hasher") if isinstance(body["generator_pins"], dict) else None
     pin = hp.get("pin") if isinstance(hp, dict) else None
+    svalues = doc["session"].get("values") if isinstance(doc.get("session"), dict) else None
+    if dedup is None and isinstance(svalues, dict) and "image_hasher" in svalues:
+        raise S.TmanRefused("hasher_values_mismatch", "the session part records the hasher's values "
+                                                      "(values.image_hasher): the export requires --dedup (B3R11)")
     inv = {"schema": S.INVENTORY_FORMAT, "evaluator_commit": body["evaluator"]["commit"],
            "execution_context": body["execution_context"], "manifest_sha256": msha,
            "manifest_file_sha256": S.sha256_bytes(manifest_bytes), "models": models, "entries": entries,
-           "dedup": None if dedup is None else export_dedup(*dedup, pin), "freeze": freeze,
+           "dedup": None if dedup is None else export_dedup(*dedup, pin, svalues), "freeze": freeze,
            "binding": {"state": "unbound", "path": None, "sha256": None}}
     if binding is not None:
         inv["binding"] = export_binding(*binding, inv, registered)
