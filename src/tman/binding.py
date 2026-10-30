@@ -16,9 +16,10 @@ The format (B3R3): exactly {format, references, artifacts, inputs} (schema.BINDI
 
 The checks hold plain dicts, in layers (B3R5): file_errors needs no manifest (read_inventory, the statistics loader,
 bind); export_errors adds each record against the export's rows and cells (read_inventory's bound branch, inventory
---binding). The 37 identities and the stage precisions are passed in as data: the statistics code passes its driver's,
-and TMAN, which imports no src.stats module, passes stats_identities() and STATS_PRECISION, which
-smoke_tman_binding holds equal to the driver's.
+--binding); full_check, bind's, adds the frozen manifest's and the artifacts bind reads, item by item, each its own
+refusal code (FULL_CHECKS). The 37 identities and the stage precisions are passed in as data: the statistics code
+passes its driver's, and TMAN, which imports no src.stats module, passes stats_identities() and STATS_PRECISION,
+which smoke_tman_binding holds equal to the driver's.
 
 The module level imports the standard library only, since src/stats/artifact.py imports BINDING_REL at module level:
 every other import sits inside a function (B3R2).
@@ -211,6 +212,143 @@ def bound_reason(root, identities, precision, got: dict) -> str | None:
     return inputs_reason(doc, got)
 
 
-__all__ = ["BINDING_REL", "CELL_SCOPES", "CLEAN", "INPUT_FIELDS", "STATS_CELL_STAGES", "STATS_INPUT_LIST",
-           "STATS_PRECISION", "STATS_STAGES", "TDAY_REL", "artifact_rel", "bound_reason", "cell_of", "condition_of",
-           "export_errors", "file_errors", "file_names", "inputs_reason", "key_of", "read", "stats_identities"]
+# ------------------------------------------------------------------------------------------- the full check
+# bind's checks in their order (B3R5; B3R8), each its own refusal code: the export check, then the manifest's
+# export and references, completeness, identity (TB17), the execution context (TB1), bare stems (DL-74), the 37
+# (R-065) and the session's dedup list
+FULL_CHECKS: Final = ("binding_invalid", "binding_manifest_mismatch", "binding_incomplete",
+                      "binding_identity_mismatch", "binding_context_split", "binding_stem_mismatch",
+                      "binding_inputs_mismatch", "binding_session_mismatch")
+STEM_SCOPES: Final = ("clean", "corrupted", "corrupted_sev45", "fq_off")       # bare stems (DL-74); upstream aside
+INT8: Final = ("int8_ptq", "int8_qat")
+MANIFEST_REFERENCE: Final = ("path", "sha256", "body_sha256", "freeze_dl")
+
+
+def identity(row: dict) -> str:
+    """TB17's identity of an export row (B1GO :196-197): its converted_artifact_sha256 for INT8 rows, else its
+    source.sha256 (a qat_fakequant_off row's is the winner's checkpoint, T-FQ7)."""
+    return row["converted_artifact_sha256"] if row["precision"] in INT8 else row["source"]["sha256"]
+
+
+def required_keys(export: dict, scopes: dict, cells: dict) -> set:
+    """The records the export's rows require (B3R5 full check 1): a qat_fakequant_off row's one record, scope fq_off;
+    for any other row each scope `scopes` gives its slot (schema.scope_rule's required) that has a scored artifact --
+    clean and upstream with no cell, corrupted and corrupted_sev45 with each of the row's planned cells `cells` names
+    under that scope (dedup and efficiency have none)."""
+    out = set()
+    for m in export["models"]:
+        if m["precision"] == "qat_fakequant_off":
+            out.add((m["slot"], m["precision"], "fq_off", None))
+            continue
+        for scope in scopes[m["slot"]]:
+            if scope in ("clean", UPSTREAM):
+                out.add((m["slot"], m["precision"], scope, None))
+            elif scope in CELL_SCOPES:
+                out |= {(m["slot"], m["precision"], scope, c) for c in m["cells"] if c in cells[scope]}
+    return out
+
+
+def record_of(key: tuple, read: dict) -> dict:
+    """The record of the artifact read at `key`'s layout path (artifact_rel): the protocol of its scope, its four
+    files' sha256, and the three values bind reads from its summary.json."""
+    from . import schema as S
+    slot, precision, scope, cell = key
+    return {"slot": slot, "precision": precision, "scope": scope, "cell": cell,
+            "protocol": UPSTREAM if scope == UPSTREAM else "canvas",
+            "repo_relative_path": artifact_rel(S.file_id_of(slot), precision, scope, cell),
+            "files_sha256": dict(read["files_sha256"]), "checkpoint_sha256": read["checkpoint_sha256"],
+            "repo_commit": read["repo_commit"], "split_manifest_sha256": read["split_manifest_sha256"]}
+
+
+def _export_item(doc, plan):
+    errs = export_errors(doc, plan["export"], plan["identities"], plan["precision"])
+    return "; ".join(errs[:4]) if errs else None
+
+
+def _manifest_item(doc, plan):
+    m, export, refs = plan["manifest"], plan["export"], doc["references"]
+    bad = [what for what, ok in (
+        ("the export's manifest_sha256", export["manifest_sha256"] == m["body_sha256"]),
+        ("the export's manifest_file_sha256", export["manifest_file_sha256"] == m["sha256"]),
+        ("references.manifest", refs["manifest"] == {k: m[k] for k in MANIFEST_REFERENCE}),
+        ("references.mde_entry", refs["mde_entry"] == m["mde_entry"])) if not ok]
+    return f"{bad} are not the frozen manifest's" if bad else None
+
+
+def _complete_item(doc, plan):
+    want = required_keys(plan["export"], plan["scopes"], plan["cells"])
+    have = {key_of(r) for r in doc["artifacts"]}
+    missing, extra = sorted(want - have, key=repr), sorted(have - want, key=repr)
+    if missing or extra:
+        return (f"records missing {len(missing)} (e.g. {[list(k) for k in missing[:3]]}), extra {len(extra)} "
+                f"(e.g. {[list(k) for k in extra[:3]]}): exactly one record per required artifact")
+    return None
+
+
+def _identity_item(doc, plan):
+    rows = {(m["slot"], m["precision"]): m for m in plan["export"]["models"]}
+    bad = [list(key_of(r)) for r in doc["artifacts"] if key_of(r) not in plan["reads"]
+           or r != record_of(key_of(r), plan["reads"][key_of(r)])
+           or r["checkpoint_sha256"] != identity(rows[(r["slot"], r["precision"])])]
+    return f"records not their artifact's, or not their row's identity (TB17; R-068): {bad[:3]}" if bad else None
+
+
+def _context_item(doc, plan):
+    ec = plan["manifest"]["execution_context"]
+    bad = [list(key_of(r)) for r in doc["artifacts"]
+           if any(plan["reads"][key_of(r)]["runtime"].get(k) != ec.get(k) for k in plan["runtime_keys"])
+           or plan["reads"][key_of(r)]["repo_commit"] != ec.get("evaluator_commit")]
+    return f"artifacts whose execution context is not the manifest's (TB1): {bad[:3]}" if bad else None
+
+
+def _stem_item(doc, plan):
+    bad = [list(key_of(r)) for r in doc["artifacts"] if r["scope"] in STEM_SCOPES
+           and any(image_id != clean_id for image_id, clean_id in plan["reads"][key_of(r)]["ids"])]
+    return f"artifacts with a row whose image_id is not its clean_image_id (DL-74): {bad[:3]}" if bad else None
+
+
+def _inputs_item(doc, plan):
+    bad = sorted({it["stage"] for it in doc["inputs"] if it["key"][0] != plan["slots_of_record"].get(it["stage"])})
+    return f"the inputs of {bad} do not name the stage's seed-42 slot of record (R-065)" if bad else None
+
+
+def _session_item(doc, plan):
+    got = doc["references"]["session"]["dedup"]["sha256"]
+    return None if got == plan["dedup_list_sha256"] else \
+        f"references.session.dedup.sha256 {got} is not the session's values.image_hasher.dedup_list_sha256"
+
+
+def full_check(doc, plan: dict) -> list:
+    """B3R5's full check, bind's, in FULL_CHECKS' order: the export check; the export and the references of the
+    frozen manifest; completeness with no extras; each record its artifact's and its checkpoint its row's identity;
+    each artifact's TB1 tuple the manifest's; bare stems; the 37 naming the seed-42 slots of record; the session's
+    dedup list. `plan` is the plain data bind reads: export, manifest, scopes, cells, reads, runtime_keys,
+    slots_of_record, dedup_list_sha256, identities, precision. Returns the codes passed; the first failing item is
+    refused (schema.TmanRefused) with .passed, the codes before it."""
+    from . import schema as S
+    passed = []
+    for code, item in zip(FULL_CHECKS, (_export_item, _manifest_item, _complete_item, _identity_item, _context_item,
+                                        _stem_item, _inputs_item, _session_item)):
+        err = item(doc, plan)
+        if err:
+            refusal = S.TmanRefused(code, err)
+            refusal.passed = list(passed)
+            raise refusal
+        passed.append(code)
+    return passed
+
+
+def stats_inputs(doc: dict) -> dict:
+    """tday_stats_inputs.json (B3R8): the 37 in src.stats.driver.load_input_list's format, in the binding's inputs
+    order, each path its record's repo_relative_path."""
+    recs = {key_of(r): r for r in doc["artifacts"]}
+    return {"schema": STATS_INPUT_LIST, "inputs": [
+        {"stage": it["stage"], "condition": dict(zip(("type", "name", "severity"), it["condition"])),
+         "path": recs[tuple(it["key"])]["repo_relative_path"]} for it in doc["inputs"]]}
+
+
+__all__ = ["BINDING_REL", "CELL_SCOPES", "CLEAN", "FULL_CHECKS", "INPUT_FIELDS", "STATS_CELL_STAGES",
+           "STATS_INPUT_LIST", "STATS_PRECISION", "STATS_STAGES", "STEM_SCOPES", "TDAY_REL", "artifact_rel",
+           "bound_reason", "cell_of", "condition_of", "export_errors", "file_errors", "file_names", "full_check",
+           "identity", "inputs_reason", "key_of", "read", "record_of", "required_keys", "stats_identities",
+           "stats_inputs"]

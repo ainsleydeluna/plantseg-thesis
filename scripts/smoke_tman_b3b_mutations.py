@@ -53,8 +53,8 @@ M = [
      "binding", "case_stats_restated", "stats_identities_are_official_inventory_s_37_in_order_B3R5", [INV]),
     ("identities_clean_last", BIN, [("    return tuple((stage, CLEAN) for stage in STATS_STAGES) + tuple(\n"
                                      "        (stage, cond) for stage in STATS_CELL_STAGES for cond in corr)",
-                                     "    return tuple(\n        (stage, cond) for stage in STATS_CELL_STAGES for cond in "
-                                     "corr) + tuple((stage, CLEAN) for stage in STATS_STAGES)")],
+                                     "    return tuple(\n        (stage, cond) for stage in STATS_CELL_STAGES "
+                                     "for cond in corr) + tuple((stage, CLEAN) for stage in STATS_STAGES)")],
      "binding", "case_stats_restated", "stats_identities_are_official_inventory_s_37_in_order_B3R5", [INV]),
     ("precision_e4_other", BIN, [('"E4": "int8_ptq", "E5"', '"E4": "int8_qat", "E5"')],
      "binding", "case_stats_restated", "stats_precision_stages_and_input_list_schema_are_the_driver_s", [INV]),
@@ -164,11 +164,167 @@ M = [
      "binding", "case_stats_loader", "binding_the_file_check_refuses_listed_with_its_reason_B3R6a", [INV]),
     ("bound_inputs_unchecked", BIN, [("    return inputs_reason(doc, got)", "    return None")],
      "binding", "case_stats_loader", "binding_naming_another_record_for_one_identity_listed_B3R6d", [INV]),
+    # ------------------------------------------------------------------------------- binding.py: the full check (B3R5)
+    ("full_checks_order_other", BIN, [('FULL_CHECKS: Final = ("binding_invalid", "binding_manifest_mismatch", '
+                                       '"binding_incomplete",',
+                                       'FULL_CHECKS: Final = ("binding_invalid", "binding_incomplete", '
+                                       '"binding_manifest_mismatch",')],
+     "binding", "case_full_check", "full_check_order_is_b3r5_s_B3R5", []),
+    ("full_check_items_swapped", BIN, [("_identity_item, _context_item,\n" + " " * 40 + "_stem_item,",
+                                        "_identity_item, _stem_item,\n" + " " * 40 + "_context_item,")],
+     "binding", "case_full_check", "artifact_tuple_key_other_TB1", ["binding_context_split"]),
+    ("full_check_passed_not_carried", BIN, [("            refusal.passed = list(passed)\n",
+                                             "            refusal.passed = []\n")],
+     "binding", "case_full_check", "export_of_another_manifest_body_B3R8", ["binding_manifest_mismatch"]),
+    ("full_check_refusal_not_raised", BIN, [("            raise refusal\n", "            continue\n")],
+     "binding", "case_full_check", "full_check_carries_the_export_check_B3R5", [INV]),
+    ("full_export_item_dropped", BIN, [('    errs = export_errors(doc, plan["export"], plan["identities"], '
+                                        'plan["precision"])\n', "    errs = []\n")],
+     "binding", "case_full_check", "full_check_carries_the_export_check_B3R5", [INV]),
+    ("manifest_body_unchecked", BIN, [('export["manifest_sha256"] == m["body_sha256"])', "True)")],
+     "binding", "case_full_check", "export_of_another_manifest_body_B3R8", ["binding_manifest_mismatch"]),
+    ("manifest_file_unchecked", BIN, [('export["manifest_file_sha256"] == m["sha256"])', "True)")],
+     "binding", "case_full_check", "export_of_another_manifest_file_B3R8", ["binding_manifest_mismatch"]),
+    ("manifest_references_unchecked", BIN, [('refs["manifest"] == {k: m[k] for k in MANIFEST_REFERENCE})', "True)")],
+     "binding", "case_full_check", "references_freeze_row_not_the_manifest_s_B3R3", ["binding_manifest_mismatch"]),
+    ("manifest_mde_entry_unchecked", BIN, [('refs["mde_entry"] == m["mde_entry"])', "True)")],
+     "binding", "case_full_check", "references_mde_entry_not_the_manifest_s_TB11", ["binding_manifest_mismatch"]),
+    ("missing_records_allowed", BIN, [("    missing, extra = sorted(want - have, key=repr), sorted(have - want, "
+                                       "key=repr)", "    missing, extra = [], sorted(have - want, key=repr)")],
+     "binding", "case_full_check", "a_required_record_missing_B3R5", ["binding_incomplete"]),
+    ("extra_records_allowed", BIN, [("    missing, extra = sorted(want - have, key=repr), sorted(have - want, "
+                                     "key=repr)", "    missing, extra = sorted(want - have, key=repr), []")],
+     "binding", "case_full_check", "an_extra_record_fq_off_of_an_int8_row_T_FQ7", ["binding_incomplete"]),
+    ("required_fq_off_scope_other", BIN, [('out.add((m["slot"], m["precision"], "fq_off", None))',
+                                           'out.add((m["slot"], m["precision"], "clean", None))')],
+     "binding", "case_full_check", "fixture_passes_the_full_check_B3R5", ["binding_incomplete"]),
+    ("required_upstream_dropped", BIN, [('            if scope in ("clean", UPSTREAM):',
+                                         '            if scope == "clean":')],
+     "binding", "case_full_check", "fixture_passes_the_full_check_B3R5", ["binding_incomplete"]),
+    ("required_cells_unfiltered", BIN, [('for c in m["cells"] if c in cells[scope]}', 'for c in m["cells"]}')],
+     "binding", "case_full_check", "fixture_passes_the_full_check_B3R5", ["binding_incomplete"]),
+    ("identity_unread_record_allowed", BIN, [('in doc["artifacts"] if key_of(r) not in plan["reads"]\n',
+                                              'in doc["artifacts"] if False\n')],
+     "binding", "case_full_check", "record_whose_artifact_was_not_read_B3R8", ["binding_identity_mismatch"]),
+    ("identity_record_uncompared", BIN, [('\n           or r != record_of(key_of(r), plan["reads"][key_of(r)])', "")],
+     "binding", "case_full_check", "record_files_not_its_artifact_s_B3R8", ["binding_identity_mismatch"]),
+    ("identity_row_uncompared", BIN, [('\n           or r["checkpoint_sha256"] != identity(rows[(r["slot"], '
+                                       'r["precision"])])]', "]")],
+     "binding", "case_full_check", "artifact_and_record_not_the_row_s_identity_TB17", ["binding_identity_mismatch"]),
+    ("identity_int8_rule_dropped", BIN, [('    return row["converted_artifact_sha256"] if row["precision"] in INT8 '
+                                          'else row["source"]["sha256"]', '    return row["source"]["sha256"]')],
+     "binding", "case_full_check", "fixture_passes_the_full_check_B3R5", ["binding_identity_mismatch"]),
+    ("record_protocol_canvas_always", BIN, [('"protocol": UPSTREAM if scope == UPSTREAM else "canvas",',
+                                             '"protocol": "canvas",')],
+     "binding", "case_full_check", "fixture_passes_the_full_check_B3R5", ["binding_identity_mismatch"]),
+    ("context_runtime_uncompared", BIN, [('           if any(plan["reads"][key_of(r)]["runtime"].get(k) != ec.get(k) '
+                                          'for k in plan["runtime_keys"])\n           or ', "           if ")],
+     "binding", "case_full_check", "artifact_tuple_key_other_TB1", ["binding_context_split"]),
+    ("context_commit_uncompared", BIN, [('\n           or plan["reads"][key_of(r)]["repo_commit"] != '
+                                         'ec.get("evaluator_commit")]', "]")],
+     "binding", "case_full_check", "artifact_commit_not_the_context_s_evaluator_TB1", ["binding_context_split"]),
+    ("stems_unchecked", BIN, [('           and any(image_id != clean_id for image_id, clean_id in '
+                               'plan["reads"][key_of(r)]["ids"])]', "           and False]")],
+     "binding", "case_full_check", "clean_artifact_stem_differs_DL74", ["binding_stem_mismatch"]),
+    ("stem_scopes_without_fq_off", BIN, [('STEM_SCOPES: Final = ("clean", "corrupted", "corrupted_sev45", "fq_off")',
+                                          'STEM_SCOPES: Final = ("clean", "corrupted", "corrupted_sev45")')],
+     "binding", "case_full_check", "fq_off_artifact_stem_differs_DL74", ["binding_stem_mismatch"]),
+    ("stem_scopes_with_upstream", BIN, [('STEM_SCOPES: Final = ("clean", "corrupted", "corrupted_sev45", "fq_off")',
+                                         'STEM_SCOPES: Final = ("clean", "corrupted", "corrupted_sev45", "fq_off", '
+                                         '"upstream")')],
+     "binding", "case_full_check", "upstream_artifact_stems_exempt_DL74", ["binding_stem_mismatch"]),
+    ("inputs_slots_unchecked", BIN, [('if it["key"][0] != plan["slots_of_record"].get(it["stage"])})', "if False})")],
+     "binding", "case_full_check", "input_naming_another_slot_than_the_slot_of_record_R065",
+     ["binding_inputs_mismatch"]),
+    ("session_unchecked", BIN, [('    return None if got == plan["dedup_list_sha256"] else \\',
+                                 "    return None if True else \\")],
+     "binding", "case_full_check", "session_dedup_list_not_the_session_s_TB11", ["binding_session_mismatch"]),
+    ("stats_inputs_path_other", BIN, [('"path": recs[tuple(it["key"])]["repo_relative_path"]}',
+                                       '"path": recs[tuple(it["key"])]["slot"]}')],
+     "binding", "case_bind", "stats_inputs_load_through_the_driver_B3R8", []),
+    ("stats_inputs_condition_other", BIN, [('dict(zip(("type", "name", "severity"), it["condition"]))',
+                                            'dict(zip(("name", "type", "severity"), it["condition"]))')],
+     "binding", "case_bind", "stats_inputs_load_through_the_driver_B3R8", []),
+    # ------------------------------------------------------------- tday_manifest.py: bind (B3R8, B3R9; decision (vi))
+    ("bind_outputs_not_prechecked", CLI, [("        if os.path.lexists(folder / name):", "        if False:")],
+     "binding", "case_bind", "bind_refuses_when_either_output_exists_both_or_neither_B3R8", ["output_exists"]),
+    ("bind_records_commit_unchecked", CLI, [("    S.refuse_test_path(args.records)\n    if not S.COMMIT_RE.fullmatch("
+                                             "args.records_commit):\n        raise S.TmanRefused("
+                                             "\"record_uncommitted\", "
+                                             "f\"--records-commit {args.records_commit!r} is not 40 hex\")\n",
+                                             "    S.refuse_test_path(args.records)\n")],
+     "binding", "case_bind", "bind_records_commit_not_40_hex", ["record_uncommitted"]),
+    # (dropping V.validate leaves x.body unset, so bind ends before the named check: its refusal is swallowed instead)
+    ("bind_session_refusal_ignored", CLI, [("    V.validate(x)\n    export = V.read_inventory(args.inventory)\n",
+                                            "    try:\n        V.validate(x)\n    except S.TmanRefused:\n        pass\n"
+                                            "    export = V.read_inventory(args.inventory)\n")],
+     "binding", "case_bind", "bind_validates_the_session_its_dedup_read_strictly_B3R8", []),
+    ("bind_dedup_not_passed", CLI, [("records=records, dedup=args.dedup, runs_root=args.runs,",
+                                     "records=records, runs_root=args.runs,")],
+     "binding", "case_bind", "bind_writes_the_binding_and_the_stats_inputs_B3R8", []),
+    ("bind_inventory_sha_other", CLI, [("{S.sha256_bytes(read_bytes(args.inventory, 'inventory_invalid'))}",
+                                        "{S.sha256_bytes(data)}")],
+     "binding", "case_bind", "bind_writes_the_binding_and_the_stats_inputs_B3R8", []),
+    ("bind_full_check_skipped", CLI, [("    B.full_check(doc, {", "    (lambda *a: None)(doc, {")],
+     "binding", "case_bind", "bind_required_artifact_absent_B3R5", ["binding_incomplete"]),
+    ("bind_absent_folder_read", CLI, [("    if not folder.is_dir():\n        return None\n", "")],
+     "binding", "case_bind", "bind_required_artifact_absent_B3R5", ["binding_incomplete"]),
+    ("bind_unreadable_uncaught", CLI, [('        except OSError as e:\n            raise S.TmanRefused('
+                                        '"binding_artifact_invalid", f"{rel}/{name}: unreadable',
+                                        '        except KeyError as e:\n            raise S.TmanRefused('
+                                        '"binding_artifact_invalid", f"{rel}/{name}: unreadable')],
+     "binding", "case_bind", "bind_artifact_file_absent_B3R8", ["binding_artifact_invalid"]),
+    ("bind_summary_values_unchecked", CLI, [('    if not (hasattr(rt, "keys") and hasattr(ds, "keys")',
+                                             '    if False and (hasattr(rt, "keys") and hasattr(ds, "keys")')],
+     "binding", "case_bind", "bind_artifact_without_its_runtime_record_B3R8", ["binding_artifact_invalid"]),
+    ("bind_summary_strict_code_other", CLI, [('code="binding_artifact_invalid",\n' + " " * 22
+                                              + "object_type=blind(SUMMARY_KEEP))",
+                                              'code="inventory_invalid",\n' + " " * 22
+                                              + "object_type=blind(SUMMARY_KEEP))")],
+     "binding", "case_bind", "bind_artifact_summary_not_strict_json_B3R8", ["binding_artifact_invalid"]),
+    ("bind_row_strict_code_other", CLI, [('code="binding_artifact_invalid",\n' + " " * 28
+                                          + "object_type=blind(ROW_KEEP))",
+                                          'code="inventory_invalid",\n' + " " * 28 + "object_type=blind(ROW_KEEP))")],
+     "binding", "case_bind", "bind_artifact_row_not_strict_json_B3R8", ["binding_artifact_invalid"]),
+    ("bind_row_ids_unchecked", CLI, [('\n                and isinstance(row.get("clean_image_id"), str)):', "):")],
+     "binding", "case_bind", "bind_artifact_row_without_its_clean_id_B3R8", ["binding_artifact_invalid"]),
+    ("bind_inputs_scope_sev45", CLI, [('["clean", None] if cond == B.CLEAN else ["corrupted", B.cell_of(cond)])',
+                                       '["clean", None] if cond == B.CLEAN else ["corrupted_sev45", '
+                                       'B.cell_of(cond)])')],
+     "binding", "case_bind", "bind_writes_the_binding_and_the_stats_inputs_B3R8", [INV]),
+    ("bind_family_seed_other", CLI, [('if "family" in s["roles"] and s["seed"] == 42}',
+                                      'if "family" in s["roles"] and s["seed"] == 43}')],
+     "binding", "case_bind", "bind_writes_the_binding_and_the_stats_inputs_B3R8", [INV]),
+    ("bind_session_dedup_other", CLI, [('"session": {"dedup": {"sha256": S.sha256_bytes(read_bytes(args.dedup, '
+                                        '"dedup_invalid"))}},',
+                                        '"session": {"dedup": {"sha256": S.sha256_bytes(data)}},')],
+     "binding", "case_bind", "bind_writes_the_binding_and_the_stats_inputs_B3R8", ["binding_session_mismatch"]),
+    ("bind_written_utc_wall_clock", CLI, [('"written_utc": C.utc_text(int(clock(args)))},',
+                                           '"written_utc": C.utc_text(int(time.time()))},')],
+     "binding", "case_bind", "references_of_the_session_the_freeze_row_and_the_clock_B3R3", []),
+    ("bind_binding_not_canonical", CLI, [("(BIND_NAMES[0], S.canonical_json_bytes(doc))",
+                                          "(BIND_NAMES[0], S.json_file_bytes(doc))")],
+     "binding", "case_bind", "binding_is_canonical_json_B3R3", []),
+    ("bind_blind_keeps_every_key", CLI, [("    return lambda pairs: R.JSON_OBJECT([(k, v) for k, v in pairs if k in "
+                                          "keep])", "    return lambda pairs: R.JSON_OBJECT(pairs)")],
+     "binding", "case_score_blind_reads", "no_score_key_enters_an_object_bind_reads_B3R8", []),
+    ("bind_summary_keep_a_score_key", CLI, [('"eval_runtime", *R.EVAL_RUNTIME))',
+                                            '"eval_runtime", "all_class_miou", *R.EVAL_RUNTIME))')],
+     "binding", "case_score_blind_reads", "no_score_key_enters_an_object_bind_reads_B3R8", []),
+    ("bind_row_keep_a_score_key", CLI, [('ROW_KEEP = frozenset(("image_id", "clean_image_id"))',
+                                        'ROW_KEEP = frozenset(("image_id", "clean_image_id", "all_class_miou"))')],
+     "binding", "case_score_blind_reads", "no_score_key_enters_an_object_bind_reads_B3R8", []),
+    ("bind_artifact_word_guard_dropped", CLI, [("    S.refuse_test_path(rel, root)\n    folder = Path(root) / rel\n",
+                                                "    folder = Path(root) / rel\n")],
+     "binding", "case_score_blind_reads", "bind_artifact_path_resolved_under_the_root_B3R9", [WORD + "_path"]),
 ]
-# The refusal codes the binding's code raises (schema.TmanRefused, and strict_json's code=), and B-1's guard's: each
-# has a killed mutation (a static case ties this list to the files)
-CODES = (INV,)
-GUARD_CODES = (WORD + "_path",)                     # raised by B-1's guard from artifact_rel
+# The refusal codes of the binding's code (schema.TmanRefused, and strict_json's code=) -- binding.py's, the full
+# check's eight (B3R5) and bind's own (B3R8) -- and B-1's guard's: each has a killed mutation (a static case ties
+# this list to the files)
+CODES = (INV, "binding_manifest_mismatch", "binding_incomplete", "binding_identity_mismatch", "binding_context_split",
+         "binding_stem_mismatch", "binding_inputs_mismatch", "binding_session_mismatch",
+         "binding_artifact_invalid", "output_exists", "record_uncommitted")
+GUARD_CODES = (WORD + "_path",)                     # raised by B-1's guard from artifact_rel and bind's read
 
 
 # ================================================================================================ the worker
@@ -270,9 +426,11 @@ ONLY: set = set()        # --only id,id: a development run of those mutations an
 
 def case_mutations():
     import scripts.smoke_tman_schema as FX
+    from src.tman import binding as B
     check = FX.check
-    check("codes_listed_are_the_files_codes", set(CODES) == raised_codes(REPO / BIN), str(sorted(raised_codes(
-        REPO / BIN))))
+    files_codes = raised_codes(REPO / BIN) | set(B.FULL_CHECKS) | raised_codes(
+        REPO / CLI, functions={"cmd_bind", "read_artifact"})
+    check("codes_listed_are_the_files_codes", set(CODES) == files_codes, str(sorted(files_codes)))
     before = files_sha256()
     clean = scratch_root({}, FX)
     mutations = [m for m in M if not ONLY or m[0] in ONLY]
@@ -312,7 +470,7 @@ def case_mutations():
             killed_codes |= set(m[6])
     if not ONLY:
         need = set(CODES) | set(GUARD_CODES)
-        check("every_refusal_code_has_a_killed_mutation", need <= killed_codes and len(need) == 2,
+        check("every_refusal_code_has_a_killed_mutation", need <= killed_codes and len(need) == 12,   # B3R8: 2 -> 12
               str(sorted(need - killed_codes)))
         check("every_mutation_has_its_own_id", len({m[0] for m in M}) == len(M))
     check("the_repository_files_are_unchanged", files_sha256() == before)

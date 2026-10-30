@@ -2344,21 +2344,19 @@ def case_inventory():
             ("entries_item_slot_an_object_B104", lambda d: d["entries"][0].update(slot={"x": 1}), "slot")):
         inv_refused(name, "inventory_invalid", variant(fn), detail=detail)
     inv_refused("read_inventory_absent_export_B106", "inventory_invalid", out / "absent_inv.json", detail="unreadable")
-    art = {"slot": "E1:s42:80k", "precision": "fp32", "scope": "clean", "cell": None, "protocol": "canvas",
-           "repo_relative_path": "reports/heldout/E1_s42_80k/clean", "files_sha256": {"summary.json": "a" * 64},
-           "checkpoint_sha256": w.entries["E1:s42:80k"]["checkpoint"]["sha256"], "repo_commit": w.E,
-           "split_manifest_sha256": "b" * 64}
-    bdata = S.json_file_bytes({"format": S.BINDING_FORMAT, "references": {"mde_entry": {"sha256": "c" * 64}},
-                               "artifacts": [art]})
+    import scripts.smoke_tman_binding as BD
+    bdoc = BD.fixture_binding(inv)          # B3R7: a binding the read checks too, passing the export check
+    bdata = S.json_file_bytes(bdoc)
     (out / "tday_binding.json").write_bytes(bdata)
     bound = {"state": "bound", "path": "tday_binding.json", "sha256": S.sha256_bytes(bdata)}
     got = V.read_inventory(variant(lambda d: d.update(binding=dict(bound))))
-    check("bound_binding_returns_its_artifacts_IF11_4", got["binding"].get("artifacts") == [art])
+    check("bound_binding_returns_its_artifacts_IF11_4", got["binding"].get("artifacts") == bdoc["artifacts"]
+          and len(bdoc["artifacts"]) == 234)
     inv_refused("bound_binding_other_sha256", "binding_invalid",
                 variant(lambda d: d.update(binding=dict(bound, sha256="0" * 64))), detail="not binding.sha256")
     inv_refused("bound_binding_file_absent", "binding_invalid",
                 variant(lambda d: d.update(binding=dict(bound, path="tday_binding_absent.json"))))
-    bad = S.json_file_bytes({"format": S.BINDING_FORMAT, "references": {}, "artifacts": [dict(art, scope="dedup")]})
+    bad = S.json_file_bytes(dict(bdoc, artifacts=[dict(bdoc["artifacts"][0], scope="dedup")] + bdoc["artifacts"][1:]))
     (out / "tday_binding_dedup.json").write_bytes(bad)
     inv_refused("binding_artifact_scope_dedup_IF11_4", "binding_invalid", variant(lambda d: d.update(binding={
         "state": "bound", "path": "tday_binding_dedup.json", "sha256": S.sha256_bytes(bad)})), detail="scope")

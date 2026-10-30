@@ -60,7 +60,8 @@ def fixture_export() -> dict:
     for n, (slot, prec) in enumerate(FAMILY.values()):
         int8 = prec in ("int8_ptq", "int8_qat")
         rows.append({"slot": slot, "precision": prec, "cells": list(PINS.IF6_CELLS),
-                     "source": {"kind": "provenance" if int8 else "checkpoint", "path": f"r{n}/x", "sha256": h(100 + n)},
+                     "source": {"kind": "provenance" if int8 else "checkpoint", "path": f"r{n}/x",
+                                "sha256": h(100 + n)},
                      "converted_artifact_sha256": h(200 + n) if int8 else None})
         if prec == "int8_qat":
             rows.append({"slot": slot, "precision": "qat_fakequant_off", "cells": [],
@@ -68,8 +69,8 @@ def fixture_export() -> dict:
                          "converted_artifact_sha256": None})
     rows.append({"slot": "E1:s43:80k", "precision": "fp32", "cells": [],
                  "source": {"kind": "checkpoint", "path": "r9/x", "sha256": h(109)}, "converted_artifact_sha256": None})
-    return {"evaluator_commit": COMMIT, "manifest_sha256": h(1), "execution_context": copy.deepcopy(EC),
-            "models": rows}
+    return {"evaluator_commit": COMMIT, "manifest_sha256": h(1), "manifest_file_sha256": h(2),
+            "execution_context": copy.deepcopy(EC), "models": rows}
 
 
 def identity(row: dict) -> str:
@@ -101,7 +102,8 @@ def fixture_binding(export: dict) -> dict:
         inputs.append({"stage": stage, "condition": list(cond),
                        "key": [slot, prec, "clean" if cond == B.CLEAN else "corrupted", B.cell_of(cond)]})
     return {"format": S.BINDING_FORMAT,
-            "references": {"manifest": {"path": S.MANIFEST_REL, "sha256": h(2), "body_sha256": export["manifest_sha256"],
+            "references": {"manifest": {"path": S.MANIFEST_REL, "sha256": h(2),
+                                        "body_sha256": export["manifest_sha256"],
                                         "freeze_dl": "DL-150"},
                            "evaluator": {"commit": export["evaluator_commit"]},
                            "execution_context": copy.deepcopy(export["execution_context"]),
@@ -507,7 +509,8 @@ def case_stats_loader():
     stats_binding(fx, lambda doc: doc.update(format="tday_binding/2"))
     got = conditions(fx, views, repo)
     check("binding_the_file_check_refuses_listed_with_its_reason_B3R6a",
-          "binding_invalid" in got.get(A.BINDING_CONDITION, "") and "binding.format" in got.get(A.BINDING_CONDITION, ""),
+          "binding_invalid" in got.get(A.BINDING_CONDITION, "")
+          and "binding.format" in got.get(A.BINDING_CONDITION, ""),
           str(got.get(A.BINDING_CONDITION)))
     from src.tman import binding as B
     (repo / B.BINDING_REL).write_bytes(b'{"format": 1, "format": 2}')
@@ -544,7 +547,8 @@ def case_inputs_reason():
         return out
     check("input_fields_are_b3r6d_s_four_B3R6d", B.INPUT_FIELDS == RULED_FIELDS, str(B.INPUT_FIELDS))
     check("inputs_equal_on_the_fields_and_the_files_give_no_reason_B3R6d",
-          reason_of(B.inputs_reason, doc, given(True)) is None and reason_of(B.inputs_reason, doc, given(False)) is None)
+          reason_of(B.inputs_reason, doc, given(True)) is None
+          and reason_of(B.inputs_reason, doc, given(False)) is None)
     got = given(True)
     got.pop(next(iter(got)))
     check("inputs_of_other_identities_reason_B3R6d",
@@ -675,11 +679,477 @@ def case_stats_verifier():
     stats_binding(fx)
 
 
+# ========================================================================================== the full check
+SEV45 = [c for c in PINS.IF6_CELLS if c not in INFERENTIAL]                         # the corrupted_sev45 scope's 9
+RULED_CHECKS = ("binding_invalid", "binding_manifest_mismatch", "binding_incomplete", "binding_identity_mismatch",
+                "binding_context_split", "binding_stem_mismatch", "binding_inputs_mismatch",
+                "binding_session_mismatch")                                       # B3R5's order, held here
+E1_CLEAN, E1_UP = ("E1:s42:80k", "fp32", "clean", None), ("E1:s42:80k", "fp32", "upstream", None)
+
+
+def fixture_plan(export: dict, doc: dict) -> dict:
+    """What bind passes the full check for the fixture binding: the export, the frozen manifest's values, each slot's
+    required scopes, the cells by scope, a read per record (its files and values, the TB1 fields at EC's, bare stems),
+    the slots of record, the session's dedup list, and TMAN's 37 identities and precisions."""
+    from src.tman import records as R
+    from src.tman import schema as S
+    ids, prec = tman_data()
+    family = ["clean", "corrupted", "corrupted_sev45", "dedup", "efficiency", "upstream"]
+    scopes = {m["slot"]: (family + (["fq_off"] if m["slot"] in ("E5:s42:sel", "E6:s42:sel") else []))
+              if m["cells"] or m["precision"] == "qat_fakequant_off" else ["clean", "dedup", "upstream"]
+              for m in export["models"]}
+    reads = {(r["slot"], r["precision"], r["scope"], r["cell"]): {
+        "files_sha256": dict(r["files_sha256"]), "checkpoint_sha256": r["checkpoint_sha256"],
+        "repo_commit": r["repo_commit"], "split_manifest_sha256": r["split_manifest_sha256"],
+        "runtime": {k: EC[k] for k in R.EVAL_RUNTIME}, "ids": [("i0001", "i0001"), ("i0002", "i0002")]}
+        for r in doc["artifacts"]}
+    return {"export": export, "manifest": {"path": S.MANIFEST_REL, "sha256": h(2), "body_sha256": h(1),
+                                           "freeze_dl": "DL-150", "evaluator_commit": COMMIT,
+                                           "execution_context": copy.deepcopy(EC),
+                                           "mde_entry": dict(doc["references"]["mde_entry"])},
+            "scopes": scopes, "cells": {"corrupted": list(INFERENTIAL), "corrupted_sev45": SEV45}, "reads": reads,
+            "runtime_keys": tuple(R.EVAL_RUNTIME), "slots_of_record": {st: FAMILY[st][0] for st in FAMILY},
+            "dedup_list_sha256": h(3), "identities": ids, "precision": prec}
+
+
+def full_outcome(edit=None) -> tuple:
+    """(code, passed, detail) of binding.full_check on the fixture binding and plan, `edit(doc, plan)` applied first;
+    (None, the codes passed, "") when it passes; a crash gives its type name."""
+    from src.tman import binding as B
+    from src.tman import schema as S
+    export = fixture_export()
+    doc = fixture_binding(export)
+    plan = fixture_plan(export, doc)
+    if edit is not None:
+        edit(doc, plan)
+    try:
+        return None, B.full_check(doc, plan), ""
+    except S.TmanRefused as e:
+        return e.code, getattr(e, "passed", None), e.detail
+    except Exception as e:  # noqa: BLE001 -- a crash fails its check by name
+        return type(e).__name__, None, str(e)
+
+
+def drop_record(doc: dict, key: tuple) -> None:
+    doc["artifacts"][:] = [r for r in doc["artifacts"] if (r["slot"], r["precision"], r["scope"], r["cell"]) != key]
+
+
+def both_checkpoints(doc: dict, plan: dict) -> None:
+    """The E1 upstream artifact and its record agree on a checkpoint that is not the row's identity (TB17)."""
+    record(doc, "E1:s42:80k", "upstream").update(checkpoint_sha256=h(8))
+    plan["reads"][E1_UP]["checkpoint_sha256"] = h(8)
+
+
+def case_full_check():
+    """B3R5's full check on plain dicts: the fixture passes every item in its order; each item refused alone, reached
+    with every earlier item passing (.passed), with its own code."""
+    from src.tman import binding as B
+    check("full_check_order_is_b3r5_s_B3R5", B.FULL_CHECKS == RULED_CHECKS, str(B.FULL_CHECKS))
+    got = full_outcome()
+    check("fixture_passes_the_full_check_B3R5", got == (None, list(RULED_CHECKS), ""), str(got)[:300])
+    for name, code, edit, detail in (
+            ("full_check_carries_the_export_check_B3R5", "binding_invalid", lambda d, p: d["inputs"].pop(),
+             "identities"),
+            ("export_of_another_manifest_body_B3R8", "binding_manifest_mismatch",
+             lambda d, p: p["manifest"].update(body_sha256=h(8)), "manifest_sha256"),
+            ("export_of_another_manifest_file_B3R8", "binding_manifest_mismatch",
+             lambda d, p: p["export"].update(manifest_file_sha256=h(8)), "manifest_file_sha256"),
+            ("references_freeze_row_not_the_manifest_s_B3R3", "binding_manifest_mismatch",
+             lambda d, p: d["references"]["manifest"].update(freeze_dl="DL-151"), "references.manifest"),
+            ("references_mde_entry_not_the_manifest_s_TB11", "binding_manifest_mismatch",
+             lambda d, p: d["references"]["mde_entry"].update(sha256=h(8)), "references.mde_entry"),
+            ("a_required_record_missing_B3R5", "binding_incomplete", lambda d, p: drop_record(d, E1_UP),
+             "missing 1"),
+            ("an_extra_record_fq_off_of_an_int8_row_T_FQ7", "binding_incomplete", lambda d, p: d["artifacts"].append(
+                dict(record(d, "E5:s42:sel", "clean", precision="int8_qat"), scope="fq_off",
+                     repo_relative_path="reports/tday/E5_s42_sel/int8_qat/fq_off")), "extra 1"),
+            ("record_checkpoint_not_its_artifact_s_TB17", "binding_identity_mismatch",
+             lambda d, p: record(d, "E1:s42:80k", "upstream").update(checkpoint_sha256=h(8)), "TB17"),
+            ("artifact_and_record_not_the_row_s_identity_TB17", "binding_identity_mismatch", both_checkpoints, "TB17"),
+            ("record_whose_artifact_was_not_read_B3R8", "binding_identity_mismatch",
+             lambda d, p: p["reads"].pop(E1_UP), "TB17"),
+            ("record_files_not_its_artifact_s_B3R8", "binding_identity_mismatch",
+             lambda d, p: record(d, "E1:s42:80k", "upstream")["files_sha256"].update({"summary.json": h(8)}), "TB17"),
+            ("record_path_not_the_layout_s_B3R9", "binding_identity_mismatch", lambda d, p: record(
+                d, "E1:s42:80k", "upstream").update(repo_relative_path="reports/tday/E1_s42_80k/fp32/up"), "TB17"),
+            ("artifact_tuple_key_other_TB1", "binding_context_split",
+             lambda d, p: p["reads"][E1_CLEAN]["runtime"].update(torch_num_threads=8), "TB1"),
+            ("artifact_tuple_key_missing_TB1", "binding_context_split",
+             lambda d, p: p["reads"][E1_CLEAN]["runtime"].pop("image_digest"), "TB1"),
+            ("artifact_commit_not_the_context_s_evaluator_TB1", "binding_context_split",
+             lambda d, p: p["manifest"]["execution_context"].update(evaluator_commit="e2" * 20), "TB1"),
+            ("clean_artifact_stem_differs_DL74", "binding_stem_mismatch",
+             lambda d, p: p["reads"][E1_CLEAN].update(ids=[("i0001", "i0001"), ("i0002", "i0002_shift")]), "DL-74"),
+            ("fq_off_artifact_stem_differs_DL74", "binding_stem_mismatch",
+             lambda d, p: p["reads"][("E5:s42:sel", "qat_fakequant_off", "fq_off", None)].update(
+                 ids=[("i0001", "i0002")]), "DL-74"),
+            ("input_naming_another_slot_than_the_slot_of_record_R065", "binding_inputs_mismatch",
+             lambda d, p: p["slots_of_record"].update(E2="E2:s42:lambda1:80k"), "['E2']"),
+            ("session_dedup_list_not_the_session_s_TB11", "binding_session_mismatch",
+             lambda d, p: p.update(dedup_list_sha256=h(8)), "dedup_list_sha256")):
+        got, passed, det = full_outcome(edit)
+        check(name, got == code and passed == list(RULED_CHECKS[:RULED_CHECKS.index(code)]) and detail in det,
+              f"{got}: {det[:200]}; passed {passed}")
+    got = full_outcome(lambda d, p: p["reads"][E1_UP].update(ids=[("i0001", "i0002")]))
+    check("upstream_artifact_stems_exempt_DL74", got == (None, list(RULED_CHECKS), ""), str(got)[:200])
+
+
+# ================================================================================================== bind
+BIND_NOW = "2026-11-05T06:30:00Z"
+BIND_NAMES = ("tday_binding.json", "tday_stats_inputs.json")
+
+
+def cli(argv) -> tuple:
+    import contextlib
+    import io
+    import scripts.tday_manifest as CLI
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = CLI.main([str(a) for a in argv])
+    return rc, buf.getvalue()
+
+
+class BindWorld:
+    """smoke_tman_unlock's world in session with the hasher's three values (hasher_session), its unbound export
+    (`inventory --dedup`, the hasher's folder as --out: the runbook's order) and, under the session checkout S = E,
+    a synthetic scored artifact at artifact_rel's path for each record the export's rows require: summary.json with
+    the row's identity, the evaluator commit, a split digest (one for canvas, one for upstream) and the frozen
+    context's TB1 fields, score fields beside them; per_image.jsonl rows with bare stems and scores; a stand-in
+    sufficient_stats.npz; MANIFEST.sha256 over the three."""
+
+    def __init__(self):
+        import json
+        import scripts.smoke_tman_unlock as UL
+        from src.tman import binding as B
+        from src.tman import schema as S
+        self.S, self.B = S, B
+        self.u = u = UL.Unlock()
+        self.data, self.dedup = UL.hasher_session(u)
+        self.folder, self.head = u.export()
+        self.cells = FX.scratch_dir("tmanbindc") / "cells.json"
+        self.cells.write_text(json.dumps(PINS.IF6_CELLS), encoding="utf-8")
+        self.inventory = self.dedup.parent / "tday_inventory.json"
+        rc, txt = cli(self.inventory_argv(self.dedup.parent))
+        if rc != 0:
+            raise RuntimeError(f"the world's inventory: {txt[-300:]}")
+        self.export = json.loads(self.inventory.read_bytes())
+        body = u.doc["body"]
+        self.ec = body["execution_context"]
+        scopes = {e["slot"]: e["scope"] for e in body["entries"]}
+        self.keys = sorted(B.required_keys(self.export, scopes, {"corrupted": INFERENTIAL, "corrupted_sev45": SEV45}),
+                           key=repr)
+        rows = {(m["slot"], m["precision"]): m for m in self.export["models"]}
+        for key in self.keys:
+            self.write(key, self.files(key, identity(rows[key[:2]])))
+
+    def inventory_argv(self, out, binding=None, dedup=None) -> list:
+        return (["--root", self.u.w.repo, "inventory", "--manifest", self.folder / self.S.MANIFEST_REL, "--out", out,
+                 "--runs", self.u.w.runs, "--registered-cells", self.cells, "--freeze-record", self.u.freeze["path"],
+                 "--dedup", dedup or self.dedup] + (["--binding", binding] if binding is not None else []))
+
+    def path(self, key) -> Path:
+        slot, precision, scope, cell = key
+        return self.u.wt / self.B.artifact_rel(self.S.file_id_of(slot), precision, scope, cell)
+
+    def files(self, key, checkpoint: str) -> dict:
+        import json
+        from src.tman import records as R
+        runtime = dict({k: self.ec[k] for k in R.EVAL_RUNTIME}, checkpoint_best_val_miou_all_class=0.41)
+        summary = {"run": {"checkpoint_sha256": checkpoint, "repo_commit": self.ec["evaluator_commit"],
+                           "eval_runtime": runtime, "stage": key[0].split(":")[0]},
+                   "dataset": {"split_manifest_sha256": h(16) if key[2] == "upstream" else h(15)},
+                   "dataset_level": {"all_class_miou": 0.4, "disease_only_miou": 0.3},
+                   "per_class": {"1": {"iou": 0.2}}}
+        rows = [{"image_id": f"i{n:04d}", "clean_image_id": f"i{n:04d}", "all_class_miou": 0.3 + n / 100,
+                 "disease_only_miou": 0.2} for n in range(3)]
+        files = {"summary.json": (json.dumps(summary, indent=2) + "\n").encode(),
+                 "per_image.jsonl": b"".join(json.dumps(r).encode() + b"\n" for r in rows),
+                 "sufficient_stats.npz": f"stand-in {list(key)}".encode()}
+        files["MANIFEST.sha256"] = "".join(f"{self.S.sha256_bytes(files[n])}  {n}\n" for n in sorted(files)).encode()
+        return files
+
+    def write(self, key, files: dict) -> None:
+        d = self.path(key)
+        d.mkdir(parents=True, exist_ok=True)
+        for name, data in files.items():
+            (d / name).write_bytes(data)
+
+    def bind(self, out=None, **over) -> tuple:
+        """rc, output and --out of `bind` over the world (`over` replaces an option's value; None drops it), the
+        fixture readers in place as smoke_tman_unlock's command-line case puts them."""
+        from src.tman import records as R
+        out = out if out is not None else FX.scratch_dir("tmanbindo")
+        opts = {"--manifest": self.folder / self.S.MANIFEST_REL, "--records": self.folder,
+                "--records-commit": self.head, "--dedup": self.dedup, "--inventory": self.inventory,
+                "--runs": self.u.w.runs, "--freeze-record": self.u.freeze["path"],
+                "--unlock-entry": self.u.unlock["path"], "--registered-cells": self.cells, "--out": out,
+                "--now": BIND_NOW}
+        opts.update(over)
+        saved = R.ptq_record_reader, R.TRIGGER_READER
+        R.ptq_record_reader, R.TRIGGER_READER = (lambda: self.u.w.reader()), self.u.w.trigger_reader()
+        try:
+            rc, txt = cli(["--root", self.u.wt, "bind"] + [x for k, v in opts.items() if v is not None
+                                                           for x in (k, v)])
+        finally:
+            R.ptq_record_reader, R.TRIGGER_READER = saved
+        return rc, txt, out
+
+
+WORLDS: dict = {}
+
+
+def bind_world() -> BindWorld:
+    """One world per process (its artifacts edited and restored by each case)."""
+    if "w" not in WORLDS:
+        WORLDS["w"] = BindWorld()
+    return WORLDS["w"]
+
+
+class edited:
+    """One file of one artifact of the world replaced for the block (`fn(bytes) -> bytes`; None removes it), then
+    restored."""
+
+    def __init__(self, w: BindWorld, key, name: str, fn):
+        self.f, self.fn = w.path(key) / name, fn
+
+    def __enter__(self):
+        self.saved = self.f.read_bytes()
+        if self.fn is None:
+            self.f.rename(self.f.with_name(self.f.name + ".away"))
+        else:
+            self.f.write_bytes(self.fn(self.saved))
+
+    def __exit__(self, *exc):
+        if self.fn is None:
+            self.f.with_name(self.f.name + ".away").rename(self.f)
+        self.f.write_bytes(self.saved)
+
+
+def summary_edit(fn):
+    import json
+
+    def go(data: bytes) -> bytes:
+        doc = json.loads(data)
+        fn(doc)
+        return (json.dumps(doc, indent=2) + "\n").encode()
+    return go
+
+
+def case_bind():
+    """B3R8: bind over the session world writes the binding (canonical JSON, the file and export checks passing, one
+    record per required artifact, the 37 naming the slots of record) and the statistics input list the driver reads
+    (imported as a program); `inventory --binding` then binds the export (B3R7). Each of bind's own refusals and each
+    full-check item through the command line, reached with the session validated."""
+    from src.eval.artifacts import canonical_json_bytes
+    from src.stats import driver as D
+    from src.tman import binding as B
+    from src.tman import schema as S
+    from src.tman import validate as V
+    w = bind_world()
+    rc, txt, out = w.bind()
+    b, si = out / BIND_NAMES[0], out / BIND_NAMES[1]
+    check("bind_writes_the_binding_and_the_stats_inputs_B3R8", rc == 0 and b.is_file() and si.is_file()
+          and txt.count("WROTE ") == 2 and f"READ {w.inventory} sha256 {S.sha256_bytes(w.inventory.read_bytes())}"
+          in txt, txt[-400:])
+    if rc != 0:
+        return
+    doc = B.read(b.read_bytes())
+    check("binding_is_canonical_json_B3R3", b.read_bytes() == canonical_json_bytes(doc))
+    check("written_binding_passes_the_export_check_B3R5", B.export_errors(doc, w.export, *tman_data()) == [],
+          str(B.export_errors(doc, w.export, *tman_data())[:2]))
+    check("one_record_per_required_artifact_B3R5", sorted((B.key_of(r) for r in doc["artifacts"]), key=repr)
+          == w.keys and len(w.keys) == 228, str(len(doc["artifacts"])))
+    check("inputs_name_the_seed_42_slots_of_record_R065", [it["key"][0] for it in doc["inputs"][:7]]
+          == [FAMILY[st][0] for st in B.STATS_STAGES] and len(doc["inputs"]) == 37)
+    refs = doc["references"]
+    check("references_of_the_session_the_freeze_row_and_the_clock_B3R3",
+          refs["session"]["dedup"]["sha256"] == S.sha256_bytes(w.dedup.read_bytes())
+          and refs["manifest"]["freeze_dl"] == w.u.freeze["dl"] and refs["written_utc"] == BIND_NOW
+          and refs["evaluator"]["commit"] == w.u.w.E and refs["execution_context"] == w.ec
+          and refs["manifest"]["sha256"] == S.sha256_bytes((w.folder / S.MANIFEST_REL).read_bytes()), str(refs)[:300])
+    try:
+        entries = D.load_input_list(si)
+    except Exception as e:  # noqa: BLE001 -- a refusal fails the check by name
+        entries = [f"{type(e).__name__}: {e}"]
+    paths = {B.key_of(r): r["repo_relative_path"] for r in doc["artifacts"]}
+    check("stats_inputs_load_through_the_driver_B3R8", list(entries) == [
+        (it["stage"], tuple(it["condition"]), paths[tuple(it["key"])]) for it in doc["inputs"]], str(entries[:2]))
+    (out / "tday_dedup.json").write_bytes(w.dedup.read_bytes())
+    rc, txt = cli(w.inventory_argv(out, binding=out / BIND_NAMES[0], dedup=out / "tday_dedup.json"))
+    inv = V.read_inventory(out / "tday_inventory.json") if rc == 0 else {}
+    check("inventory_binding_bound_to_the_file_bind_wrote_B3R7", rc == 0 and inv["binding"]["state"] == "bound"
+          and inv["binding"]["path"] == BIND_NAMES[0] and inv["binding"]["sha256"] == S.sha256_bytes(b.read_bytes())
+          and inv["binding"]["artifacts"] == doc["artifacts"], txt[-300:])
+
+    def refused(name, code, detail="", out=None, **over):
+        rc, txt, o = w.bind(out=out, **over)
+        check(name, rc == 2 and f"REFUSED [{code}]" in txt and detail in txt
+              and not (o / BIND_NAMES[0]).exists(), txt.strip()[-300:])
+    pre = FX.scratch_dir("tmanbindp")
+    (pre / BIND_NAMES[1]).write_bytes(b"{}\n")
+    refused("bind_refuses_when_either_output_exists_both_or_neither_B3R8", "output_exists", BIND_NAMES[1], out=pre)
+    refused("bind_records_commit_not_40_hex", "record_uncommitted", "is not 40 hex",
+            **{"--records-commit": "e1" * 19})
+    pretty = FX.scratch_dir("tmanbindd") / "tday_dedup.json"
+    pretty.write_bytes(b" " + w.dedup.read_bytes())
+    refused("bind_validates_the_session_its_dedup_read_strictly_B3R8", "dedup_invalid", **{"--dedup": pretty})
+    key = w.keys[0]
+    with edited(w, key, "sufficient_stats.npz", None):
+        refused("bind_artifact_file_absent_B3R8", "binding_artifact_invalid", "sufficient_stats.npz")
+    with edited(w, key, "summary.json", summary_edit(lambda d: d["run"].pop("eval_runtime"))):
+        refused("bind_artifact_without_its_runtime_record_B3R8", "binding_artifact_invalid", "summary.json")
+    with edited(w, key, "summary.json", lambda data: b'{"run": {}, "run": {}}'):
+        refused("bind_artifact_summary_not_strict_json_B3R8", "binding_artifact_invalid", "duplicate key")
+    with edited(w, key, "per_image.jsonl", lambda data: data + b'{"image_id": "i0009", "image_id": "i0009"}\n'):
+        refused("bind_artifact_row_not_strict_json_B3R8", "binding_artifact_invalid", "duplicate key")
+    with edited(w, key, "per_image.jsonl", lambda data: data + b'{"image_id": "i0009"}\n'):
+        refused("bind_artifact_row_without_its_clean_id_B3R8", "binding_artifact_invalid", "per_image.jsonl")
+    clean = next(k for k in w.keys if k[2] == "clean")
+    up = next(k for k in w.keys if k[2] == "upstream")                       # a record no input names
+    d = w.path(up)
+    d.rename(d.with_name(d.name + "_away"))
+    try:
+        refused("bind_required_artifact_absent_B3R5", "binding_incomplete", "missing 1")
+    finally:
+        d.with_name(d.name + "_away").rename(d)
+    with edited(w, key, "summary.json", summary_edit(lambda d: d["run"].update(checkpoint_sha256=h(8)))):
+        refused("bind_artifact_of_another_checkpoint_TB17", "binding_identity_mismatch")
+    with edited(w, key, "summary.json", summary_edit(lambda d: d["run"]["eval_runtime"].update(torch_num_threads=8))):
+        refused("bind_artifact_of_another_execution_context_TB1", "binding_context_split")
+    shift = (lambda data: data.replace(b'"clean_image_id": "i0001"', b'"clean_image_id": "i0001x"', 1))
+    with edited(w, clean, "per_image.jsonl", shift):
+        refused("bind_clean_artifact_with_a_stem_not_bare_DL74", "binding_stem_mismatch")
+    with edited(w, up, "per_image.jsonl", shift):
+        rc, txt, _ = w.bind()
+        check("bind_upstream_artifact_stems_exempt_DL74", rc == 0, txt.strip()[-300:])
+
+
+def case_score_blind_reads():
+    """B3R8, decision (vi): bind's reads build every object from allowlisted keys only, so a score key -- the schema
+    smoke's score-key rule, scripts/smoke_tman_schema.SCORE_KEY_RE -- never enters an object, though the artifacts
+    hold them; no allowlisted key is one."""
+    import json
+    import scripts.tday_manifest as CLI
+    from src.tman import records as R
+    w = bind_world()
+    key = next(k for k in w.keys if k[2] == "clean")
+    raw = json.loads((w.path(key) / "summary.json").read_bytes())
+    held = [k for k in ("dataset_level", "per_class") if k in raw] + [
+        k for k in raw["run"]["eval_runtime"] if FX.SCORE_KEY_RE.search(k)]
+    seen = []
+
+    class Recorder(dict):
+        def __init__(self, items=()):
+            items = list(items)
+            seen.extend(k for k, _ in items)
+            super().__init__(items)
+    saved = R.JSON_OBJECT
+    R.JSON_OBJECT = Recorder
+    try:
+        got = CLI.read_artifact(w.u.wt, key)
+    finally:
+        R.JSON_OBJECT = saved
+    check("artifacts_hold_score_keys_the_fixture_s", len(held) >= 3, str(held))
+    check("no_score_key_enters_an_object_bind_reads_B3R8", bool(seen) and not [
+        k for k in seen if FX.SCORE_KEY_RE.search(k)] and got is not None and len(got["ids"]) == 3,
+          str([k for k in seen if FX.SCORE_KEY_RE.search(k)][:5]))
+    check("bind_allowlists_hold_no_score_key_B3R8", not [k for k in CLI.SUMMARY_KEEP | CLI.ROW_KEEP
+                                                         if FX.SCORE_KEY_RE.search(k)])
+    import scripts.smoke_tman_paths as PT
+    rel = w.path(key).relative_to(w.u.wt)
+    check("bind_artifact_path_resolved_under_the_root_B3R9", PT.refused_where_read(
+        w.u.wt / rel, CLI.read_artifact, w.u.wt, key) == "test_path")
+
+
+def case_bound_export():
+    """B3R4, B3R7: `inventory --binding` binds the export only to a file inside --out that passes the export check,
+    a refusal writing nothing (DL-24 #61: the export's read-back would refuse after the write); read_inventory
+    refuses a binding.path not in P2R5's form, resolved against the export's folder, and a binding that fails the
+    export check; each binding_invalid."""
+    import json
+    import os
+    from src.tman import schema as S
+    from src.tman import validate as V
+    w = bind_world()
+    rc, txt, out = w.bind()
+    if rc != 0:
+        check("bound_export_world_binds", False, txt[-300:])
+        return
+    (out / "tday_dedup.json").write_bytes(w.dedup.read_bytes())
+
+    def inventory(binding, folder=out) -> tuple:
+        o = FX.scratch_dir("tmanbindi") if folder is None else folder
+        if folder is None:
+            (o / "tday_dedup.json").write_bytes(w.dedup.read_bytes())
+        rc, txt = cli(w.inventory_argv(o, binding=binding, dedup=o / "tday_dedup.json"))
+        return rc, txt, (o / "tday_inventory.json").exists()
+    rc, txt, wrote = inventory(out / BIND_NAMES[0], folder=None)
+    check("inventory_binding_outside_out_refused_B3R4", rc == 2 and "REFUSED [binding_invalid]" in txt
+          and "not inside the export's folder" in txt and not wrote, txt.strip()[-300:])
+    sub = out / "sub"
+    sub.mkdir()
+    (sub / "tday_dedup.json").write_bytes(w.dedup.read_bytes())
+    doc = json.loads((out / BIND_NAMES[0]).read_bytes())
+    doc["artifacts"][0]["cell"] = "fog_s9" if doc["artifacts"][0]["cell"] else None
+    doc["artifacts"][0]["repo_commit"] = "e2" * 20
+    (sub / "tday_binding.json").write_bytes(S.canonical_json_bytes(doc))
+    rc, txt = cli(w.inventory_argv(sub, binding=sub / "tday_binding.json", dedup=sub / "tday_dedup.json"))
+    check("inventory_binding_failing_the_export_check_refused_B3R7", rc == 2 and "REFUSED [binding_invalid]" in txt
+          and "(B3R7)" in txt and not (sub / "tday_inventory.json").exists(), txt.strip()[-300:])
+    odd = out / os.fsdecode(b"tday_binding_\xff.json")
+    odd.write_bytes((out / BIND_NAMES[0]).read_bytes())
+    rc, txt, wrote = inventory(odd)
+    check("inventory_binding_name_not_utf8_refused_B3R4", rc == 2 and "REFUSED [binding_invalid]" in txt
+          and "not UTF-8" in txt and not wrote, txt.strip()[-300:])
+    loop = out / "tday_binding_loop.json"
+    os.symlink(loop.name, loop)
+    rc, txt, wrote = inventory(loop)
+    check("inventory_binding_link_loop_refused_B3R4", rc == 2 and "REFUSED [binding_invalid]" in txt
+          and "unresolvable" in txt and not wrote, txt.strip()[-300:])
+    spaced = out / " tday_binding.json"
+    spaced.write_bytes((out / BIND_NAMES[0]).read_bytes())
+    rc, txt, wrote = inventory(spaced)
+    check("inventory_binding_name_with_surrounding_space_refused_B3R4", rc == 2
+          and "REFUSED [binding_invalid]" in txt and "surrounding space" in txt and not wrote, txt.strip()[-300:])
+    rc, txt, wrote = inventory(out / BIND_NAMES[0])
+    inv_path = out / "tday_inventory.json"
+    check("bound_export_written_B3R7", rc == 0 and wrote, txt.strip()[-300:])
+    if rc != 0:
+        return
+    inv = json.loads(inv_path.read_bytes())
+
+    def variant(fn, n=[0]) -> Path:
+        d = copy.deepcopy(inv)
+        fn(d)
+        n[0] += 1
+        p = out / f"inv_v{n[0]}.json"
+        p.write_bytes(S.json_file_bytes(d))
+        return p
+    for name, path in (("dotdot", "../tday_binding.json"), ("backslash", "sub\\tday_binding.json"),
+                       ("absolute", str(out / BIND_NAMES[0])), ("colon", "c:tday_binding.json"),
+                       ("dot_component", "./tday_binding.json"), ("word", f"{WORD}_binding.json")):
+        expect_refused(f"read_inventory_binding_path_{name}_refused_B3R4", "binding_invalid", V.read_inventory,
+                       variant(lambda d, path=path: d["binding"].update(path=path)))
+    sub_inv = variant(lambda d: d["binding"].update(path="sub/tday_binding.json",
+                                                     sha256=S.sha256_bytes((sub / "tday_binding.json").read_bytes())))
+    expect_refused("read_inventory_binding_failing_the_export_check_B3R7", "binding_invalid", V.read_inventory,
+                   sub_inv)
+    good = (out / BIND_NAMES[0]).read_bytes()                  # canonical: its first key is "artifacts"
+    loose = b'{"format": "' + S.BINDING_FORMAT.encode() + b'", ' + good[1:]   # one key twice; else the binding
+    (sub / "loose.json").write_bytes(loose)
+    expect_refused("read_inventory_binding_not_strict_json_B3R3", "binding_invalid", V.read_inventory, variant(
+        lambda d: d["binding"].update(path="sub/loose.json", sha256=S.sha256_bytes(loose))))
+    got = V.read_inventory(inv_path)
+    check("read_inventory_bound_returns_the_artifacts_IF11_6", got["binding"]["artifacts"] == json.loads(
+        (out / BIND_NAMES[0]).read_bytes())["artifacts"])
+
+
 def main() -> int:
     return FX.run_cases("TMAN BINDING SMOKE (lane TMAN, B-3b)",
                         (case_one_definition, case_import_closure, case_stats_restated, case_file_check,
                          case_export_check, case_inputs_reason, case_stats_loader, case_stats_doors,
-                         case_stats_verifier))
+                         case_stats_verifier, case_full_check, case_bind, case_score_blind_reads,
+                         case_bound_export))
 
 
 if __name__ == "__main__":

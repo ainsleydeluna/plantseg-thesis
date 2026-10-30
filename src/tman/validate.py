@@ -25,6 +25,7 @@ from pathlib import Path
 
 from src.training import sweep_select as ss
 
+from . import binding as B
 from . import completion as C
 from . import dedup as DD
 from . import entries as E
@@ -1811,8 +1812,6 @@ INVENTORY_TOP = ("binding", "dedup", "entries", "evaluator_commit", "execution_c
 BINDING_STATE = ("obj", {"state": ("enum", ("unbound", "bound")), "path": "?str", "sha256": "?sha256"})
 DEDUP_SPEC = ("obj", {"path": "str", "sha256": "sha256", "removed_by_reason": ("map", "int")})
 FREEZE_SPEC = ("obj", {"dl_row": "dl", "manifest_sha256": "sha256"})
-BINDING_FILE_SPEC = {"format": ("enum", (S.BINDING_FORMAT,)), "references": ("map", "any"),
-                     "artifacts": ("list", ("obj", S.BINDING_ARTIFACT_FIELDS))}
 
 
 def inventory_errors(doc, cat=None) -> list[str]:
@@ -1905,8 +1904,9 @@ def read_export_dedup(p: Path, d: dict) -> None:
 
 def read_inventory(path, *, expect_sha256: str | None = None) -> dict:
     """IF§11.6: read, check and return the inventory export; refuse inventory_sha256_mismatch, inventory_invalid,
-    dedup_invalid or binding_invalid. A dedup block is checked against its file (read_export_dedup). A bound binding is
-    verified against binding.sha256 (its path relative to the export's folder) and its artifacts records are returned
+    dedup_invalid or binding_invalid. A dedup block is checked against its file (read_export_dedup). A bound binding's
+    path is in P2R5's form, resolved against the export's folder (B3R4); its file is verified against binding.sha256,
+    read strictly and passes binding.py's export check against this export (B3R7); its artifacts records are returned
     under binding.artifacts."""
     S.refuse_test_path(path)
     p = Path(path)
@@ -1923,6 +1923,9 @@ def read_inventory(path, *, expect_sha256: str | None = None) -> dict:
     if doc["dedup"] is not None:
         read_export_dedup(p, doc["dedup"])
     if doc["binding"]["state"] == "bound":
+        err = S.relative_path_error(doc["binding"]["path"])
+        if err:
+            raise S.TmanRefused("binding_invalid", f"{p}: binding.path {doc['binding']['path']!r}: {err} (B3R4)")
         bp = p.parent / doc["binding"]["path"]
         S.refuse_test_path(bp)
         try:
@@ -1931,10 +1934,10 @@ def read_inventory(path, *, expect_sha256: str | None = None) -> dict:
             raise S.TmanRefused("binding_invalid", f"{bp}: {e}") from None
         if S.sha256_bytes(bdata) != doc["binding"]["sha256"]:
             raise S.TmanRefused("binding_invalid", f"{bp}: its sha256 is not binding.sha256")
-        bdoc = S.strict_json(bdata, str(bp), code="binding_invalid")
-        berrs = S.field_errors(bdoc, BINDING_FILE_SPEC, str(bp))
+        bdoc = B.read(bdata, str(bp))
+        berrs = B.export_errors(bdoc, doc, B.stats_identities(M.cells_for({"corrupted"})), B.STATS_PRECISION)
         if berrs:
-            raise S.TmanRefused("binding_invalid", "; ".join(berrs[:4]))
+            raise S.TmanRefused("binding_invalid", f"{bp}: " + "; ".join(berrs[:4]) + " (B3R7)")
         doc["binding"]["artifacts"] = bdoc["artifacts"]
     return doc
 

@@ -180,20 +180,25 @@ def case_cli_test_named_arguments():
             "append": ["append", "--manifest", f"{plain}/m.json", "--slot", "E4:s42:list43", "--hashed",
                        f"{plain}/h.json", "--out", f"{plain}/out"],
             "isolation-record": ["isolation-record", "--data-root", f"{plain}/data", "--out", f"{plain}/out"],
-            "inventory": ["inventory", "--manifest", f"{plain}/m.json", "--out", f"{plain}/out"]}
+            "inventory": ["inventory", "--manifest", f"{plain}/m.json", "--out", f"{plain}/out"],
+            "bind": ["bind", "--manifest", f"{plain}/m.json", "--records", f"{plain}/records", "--records-commit",
+                     "e1" * 20, "--dedup", f"{plain}/d.json", "--inventory", f"{plain}/i.json", "--runs",
+                     f"{plain}/runs", "--freeze-record", f"{plain}/f.json", "--unlock-entry", f"{plain}/u.json",
+                     "--out", f"{plain}/out"]}                                      # B3R8
 
     def with_arg(argv: list, flag: str, value: str) -> list:
         i = argv.index(flag) if flag in argv else None
         return argv + [flag, value] if i is None else argv[:i + 1] + [value] + argv[i + 2:]
     runs = [(f"cli_{c.replace('-', '_')}_root_holding_test_B7", ["--root", bad] + argv) for c, argv in cmds.items()]
     runs += [(f"cli_{c}_runs_holding_test_B10", ["--root", plain] + with_arg(cmds[c], "--runs", bad))
-             for c in ("build", "validate", "entry", "arithmetic", "append", "inventory")]
+             for c in ("build", "validate", "entry", "arithmetic", "append", "inventory", "bind")]
     runs += [(f"cli_{c}_{flag[2:].replace('-', '_')}_holding_test", ["--root", plain] + with_arg(cmds[c], flag, bad))
              for c, flag in (("build", "--sources"), ("build", "--registered-cells"), ("validate", "--freeze-record"),
                              ("validate", "--unlock-entry"), ("validate", "--records"), ("validate", "--dedup"),
                              ("inventory", "--dedup"), ("entry", "--fields"),
                              ("arithmetic", "--reference-telemetry"), ("arithmetic", "--reference-smoke"),
-                             ("append", "--hashed"), ("append", "--ptq-record"))]
+                             ("append", "--hashed"), ("append", "--ptq-record"), ("inventory", "--binding"),
+                             ("bind", "--inventory"))]                                 # B3R7, B3R8
     for name, argv in runs:
         with Tracer(MARKER) as t:
             rc, txt = _cli(argv)
@@ -208,9 +213,10 @@ def case_cli_test_named_arguments():
 
 def case_paths_resolved_where_read():
     """A relative part is resolved under the folder it is read from -- the records' root or folder, the runs root,
-    a run directory, the export's folder for its dedup file -- not in the working folder (DL-24 #84, #113; B-3a
-    part 2's R3-F4): os.path.realpath sends that one joined path to a "test" location, and each reader refuses it
-    before any call on it."""
+    a run directory, the export's folder for its dedup file and its binding file -- not in the working folder (DL-24
+    #84, #113; B-3a part 2's R3-F4; B3R7): os.path.realpath sends that one joined path to a "test" location, and
+    each reader refuses it before any call on it."""
+    import json
     import scripts.smoke_tman_pins as PINS
     import scripts.smoke_tman_validate as VW
     import scripts.tday_manifest as CLI
@@ -263,6 +269,15 @@ def case_paths_resolved_where_read():
             **inv) == "test_path")
         check("export_dedup_path_resolved_where_read_R3F4",
               refused_where_read(dd / "tday_dedup.json", V.read_inventory, dd / "inv.json") == "test_path")
+        (dd / "tday_binding.json").write_bytes(b"{}\n")      # the binding's two guards (B3R7): each refuses first
+        check("inventory_binding_given_resolved_where_read_B3R7", refused_where_read(
+            dd / "tday_binding.json", M.build_inventory, w.doc, w.data, w.records, w.cat, runs_root=w.runs,
+            binding=(dd / "tday_binding.json", dd), **inv) == "test_path")
+        bound = dict(json.loads((dd / "inv.json").read_bytes()),
+                     binding={"state": "bound", "path": "tday_binding.json", "sha256": "0" * 64})
+        (dd / "inv_bound.json").write_bytes(w.S.json_file_bytes(bound))
+        check("export_binding_path_resolved_where_read_B3R7",
+              refused_where_read(dd / "tday_binding.json", V.read_inventory, dd / "inv_bound.json") == "test_path")
     finally:
         if VW.REAL_TEACHER is not None:
             w.M.TEACHER_OF_RECORD.clear()
@@ -328,6 +343,22 @@ def case_static_file_access():
           writes == cleanup == [(hasher, "unlink")]
           and opens == [(hasher, "rb"), (hasher, "rb"), (hasher, "xb"), ("scripts/tday_manifest.py", "xb"),
                         ("src/tman/entries.py", "xb")], f"{writes} {cleanup} {opens}")
+    # B3R12: bind's reads and its two exclusive writes (write_new, once per name of BIND_NAMES), and the binding's
+    # reads by the bound export's builder (B3R7) and by the statistics loader (B3R6), each a named file
+    import scripts.tday_manifest as CLI
+    cli, read_at = "scripts/tday_manifest.py", ("read_bytes", "read_text", "open", "write_new", "lexists", "exists",
+                                                "is_dir", "is_file", "isfile", "resolve", "stat")
+    bind = sorted((rel, fn.name, name) for rel, t in mods.items() for fn in ast.walk(t)
+                  if isinstance(fn, ast.FunctionDef) and fn.name in ("cmd_bind", "read_artifact", "export_binding",
+                                                                     "bound_reason")
+                  for name, _ in calls(fn) if name in read_at)
+    check("bind_reads_named_files_and_creates_its_two_outputs_B3R12", bind == [
+        (cli, "cmd_bind", "lexists"), (cli, "cmd_bind", "read_bytes"), (cli, "cmd_bind", "read_bytes"),
+        (cli, "cmd_bind", "read_bytes"), (cli, "cmd_bind", "write_new"), (cli, "read_artifact", "is_dir"),
+        (cli, "read_artifact", "read_bytes"), ("src/tman/binding.py", "bound_reason", "isfile"),
+        ("src/tman/binding.py", "bound_reason", "read_bytes"), ("src/tman/manifest.py", "export_binding", "read_bytes"),
+        ("src/tman/manifest.py", "export_binding", "resolve"), ("src/tman/manifest.py", "export_binding", "resolve")]
+          and CLI.BIND_NAMES == ("tday_binding.json", "tday_stats_inputs.json"), str(bind))
     docs = sorted({n.value for t in mods.values() for n in ast.walk(t) if isinstance(n, ast.Constant)
                    and isinstance(n.value, str) and n.value.startswith("docs") and id(n) not in docstrings(t)})
     check("docs_literals_are_two_record_paths_no_search_root", docs == sorted([S.DECISION_LOG_REL,

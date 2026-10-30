@@ -42,7 +42,8 @@ PRE = "scripts/preflight_arms.py"                     # reused, not the lane's: 
 A22, DAT = "src/tman/am22.py", "src/tman/schedule.py"                                  # B-2
 DED = "src/tman/dedup.py"                                                 # B-3a: in LANE_CODE_FILES since P2R4
 SMOKES = {k: f"scripts.smoke_tman_{k}" for k in ("schema", "paths", "complete", "cuts", "parent", "derived", "pins",
-                                                  "validate", "unlock", "noscore", "determinism", "am22")}
+                                                  "validate", "unlock", "noscore", "determinism", "am22",
+                                                  "binding")}                                  # B3R7: the bound export
 RESULT_TAG = "MUTATION-RESULT "
 AM22_D_RAISE = '            raise S.TmanRefused("schedule_invalid", f"--am22-d'          # am22.providers' bounds on D
 AM22_D_BOUNDS = '        if not (S.TYPES["day"](d_date) and AM22_IN_FORCE <= d_date <= LAST_D):\n' + AM22_D_RAISE
@@ -2152,6 +2153,51 @@ M = [
     ("export_dedup_word_guard_dropped", VAL, [('    dp = p.parent / d["path"]\n    S.refuse_test_path(dp)\n',
                                                '    dp = p.parent / d["path"]\n')],
      "paths", "case_paths_resolved_where_read", "export_dedup_path_resolved_where_read_R3F4", ["test_path"], None),
+    # B-3b (B3R4, B3R7): the bound export -- inventory --binding (export_binding) and read_inventory's bound branch
+    ("export_binding_outside_named_by_its_name", MAN, [
+        ("    brel = bf.relative_to(broot).as_posix() if bf.is_relative_to(broot) else None",
+         "    brel = bf.relative_to(broot).as_posix() if bf.is_relative_to(broot) else bf.name")],
+     "binding", "case_bound_export", "inventory_binding_outside_out_refused_B3R4", ["binding_invalid"], None),
+    ("export_binding_form_unchecked", MAN, [
+        ("    berr = \"not inside the export's folder\" if brel is None else S.relative_path_error(brel)",
+         "    berr = \"not inside the export's folder\" if brel is None else None")],
+     "binding", "case_bound_export", "inventory_binding_name_with_surrounding_space_refused_B3R4", ["binding_invalid"],
+     None),
+    ("export_binding_utf8_unchecked", MAN, [('            brel.encode("utf-8")\n',
+                                             '            brel.encode("utf-8", "surrogateescape")\n')],
+     "binding", "case_bound_export", "inventory_binding_name_not_utf8_refused_B3R4", ["binding_invalid"], None),
+    ("export_binding_loop_uncaught", MAN, [("    except (RuntimeError, OSError) as e:", "    except OSError as e:")],
+     "binding", "case_bound_export", "inventory_binding_link_loop_refused_B3R4", ["binding_invalid"], None),
+    ("export_binding_export_check_dropped", MAN, [
+        ('    errs = B.export_errors(B.read(data, str(path)), export, B.stats_identities(cells_for({"corrupted"}, '
+         'registered)),\n                           B.STATS_PRECISION)\n', "    errs = []\n")],
+     "binding", "case_bound_export", "inventory_binding_failing_the_export_check_refused_B3R7", ["binding_invalid"],
+     None),
+    ("export_binding_sha256_other", MAN, [
+        ('    return {"state": "bound", "path": brel, "sha256": S.sha256_bytes(data)}',
+         '    return {"state": "bound", "path": brel, "sha256": S.sha256_bytes(data + b"\\n")}')],
+     "binding", "case_bind", "inventory_binding_bound_to_the_file_bind_wrote_B3R7", ["binding_invalid"], None),
+    ("cli_binding_flag_ignored", CLI, [
+        (" " * 28 + "binding=None if args.binding is None else (args.binding, folder),\n", "")],
+     "binding", "case_bind", "inventory_binding_bound_to_the_file_bind_wrote_B3R7", ["binding_invalid"], None),
+    ("read_binding_path_form_unchecked", VAL, [('        err = S.relative_path_error(doc["binding"]["path"])\n',
+                                                "        err = None\n")],
+     "binding", "case_bound_export", "read_inventory_binding_path_absolute_refused_B3R4", ["binding_invalid"], None),
+    ("read_binding_export_check_dropped", VAL, [
+        ('        berrs = B.export_errors(bdoc, doc, B.stats_identities(M.cells_for({"corrupted"})), '
+         'B.STATS_PRECISION)\n', "        berrs = []\n")],
+     "binding", "case_bound_export", "read_inventory_binding_failing_the_export_check_B3R7", ["binding_invalid"], None),
+    ("read_binding_not_strict", VAL, [("        bdoc = B.read(bdata, str(bp))\n",
+                                       '        bdoc = __import__("json").loads(bdata)\n')],
+     "binding", "case_bound_export", "read_inventory_binding_not_strict_json_B3R3", ["binding_invalid"], None),
+    ("inventory_binding_word_guard_dropped", MAN, [("    from . import binding as B\n    S.refuse_test_path(path)\n",
+                                                    "    from . import binding as B\n")],
+     "paths", "case_paths_resolved_where_read", "inventory_binding_given_resolved_where_read_B3R7", ["test_path"],
+     None),
+    ("export_binding_word_guard_dropped", VAL, [('        bp = p.parent / doc["binding"]["path"]\n'
+                                                 "        S.refuse_test_path(bp)\n",
+                                                 '        bp = p.parent / doc["binding"]["path"]\n')],
+     "paths", "case_paths_resolved_where_read", "export_binding_path_resolved_where_read_B3R7", ["test_path"], None),
 ]
 REFUSAL_EXTRA = ("inventory_invalid", "inventory_sha256_mismatch", "binding_invalid",       # read_inventory's codes
                  "output_location", "output_exists",                                       # the CLI's outputs

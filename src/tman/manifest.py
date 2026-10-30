@@ -1011,13 +1011,45 @@ def export_dedup(path, folder, pin) -> dict:
     return {"path": rel, "sha256": S.sha256_bytes(data), "removed_by_reason": dict(ddoc["removed_by_reason"])}
 
 
+def export_binding(path, folder, export: dict, registered=None) -> dict:
+    """IF§11.5's binding block, bound (B3R7): the binding file at `path`, named relative to `folder`, the export's
+    folder, in P2R5's form (B3R4: a file outside the folder, a link loop and a name that is not UTF-8 included), read
+    strictly and passing binding.py's export check against this export; the sha256 of its bytes. Every failure is
+    binding_invalid."""
+    from . import binding as B
+    S.refuse_test_path(path)
+    try:
+        bf, broot = Path(path).resolve(), Path(folder).resolve()
+    except (RuntimeError, OSError) as e:          # RuntimeError: Python 3.11's resolve() on a link loop
+        raise S.TmanRefused("binding_invalid", f"{path}: unresolvable ({type(e).__name__})") from None
+    brel = bf.relative_to(broot).as_posix() if bf.is_relative_to(broot) else None
+    berr = "not inside the export's folder" if brel is None else S.relative_path_error(brel)
+    if berr is None:
+        try:
+            brel.encode("utf-8")
+        except UnicodeEncodeError:                # named by ascii(): the refusal's line is printed
+            raise S.TmanRefused("binding_invalid", f"{ascii(str(path))}: a name that is not UTF-8") from None
+    if berr:
+        raise S.TmanRefused("binding_invalid", f"{path} relative to the export's folder {broot}: {berr} (B3R4)")
+    try:
+        data = bf.read_bytes()
+    except OSError as e:
+        raise S.TmanRefused("binding_invalid", f"{path}: unreadable ({type(e).__name__})") from None
+    errs = B.export_errors(B.read(data, str(path)), export, B.stats_identities(cells_for({"corrupted"}, registered)),
+                           B.STATS_PRECISION)
+    if errs:
+        raise S.TmanRefused("binding_invalid", f"{path}: " + "; ".join(errs[:4]) + " (B3R7)")
+    return {"state": "bound", "path": brel, "sha256": S.sha256_bytes(data)}
+
+
 def build_inventory(doc: dict, manifest_bytes: bytes, records: R.Records, cat, *, runs_root=None, registered=None,
-                    freeze_record: str | None = None, dedup: tuple | None = None) -> dict:
+                    freeze_record: str | None = None, dedup: tuple | None = None, binding: tuple | None = None) -> dict:
     """tday-inventory/1 (IF§8; IF§11 v2): manifest_sha256 is the body's canonical sha256 (the freeze record's
-    body_sha256), manifest_file_sha256 the manifest file's; binding unbound until B-3b. `freeze` names the decision-log
-    row of `freeze_record`, the committed freeze entry file of this body (DL-24 #33, #82); null before the freeze.
-    `dedup` is (tday_dedup.json's path, the folder the export is written into): the export's dedup block
-    (export_dedup; P2R4); without it, dedup is null."""
+    body_sha256), manifest_file_sha256 the manifest file's. `freeze` names the decision-log row of `freeze_record`,
+    the committed freeze entry file of this body (DL-24 #33, #82); null before the freeze. `dedup` is (tday_dedup.json's
+    path, the folder the export is written into): the export's dedup block (export_dedup; P2R4); without it, dedup is
+    null. `binding` is (the binding file's path, that folder): the binding bound (export_binding; B3R7); without it,
+    the binding is unbound."""
     from . import entries as E
     body = doc["body"]
     msha = S.canonical_sha256(body)
@@ -1032,8 +1064,11 @@ def build_inventory(doc: dict, manifest_bytes: bytes, records: R.Records, cat, *
     entries = inventory_entries(body, cat, records, runs_root, doc["appends"])
     hp = body["generator_pins"].get("image_hasher") if isinstance(body["generator_pins"], dict) else None
     pin = hp.get("pin") if isinstance(hp, dict) else None
-    return {"schema": S.INVENTORY_FORMAT, "evaluator_commit": body["evaluator"]["commit"],
-            "execution_context": body["execution_context"], "manifest_sha256": msha,
-            "manifest_file_sha256": S.sha256_bytes(manifest_bytes), "models": models, "entries": entries,
-            "dedup": None if dedup is None else export_dedup(*dedup, pin), "freeze": freeze,
-            "binding": {"state": "unbound", "path": None, "sha256": None}}
+    inv = {"schema": S.INVENTORY_FORMAT, "evaluator_commit": body["evaluator"]["commit"],
+           "execution_context": body["execution_context"], "manifest_sha256": msha,
+           "manifest_file_sha256": S.sha256_bytes(manifest_bytes), "models": models, "entries": entries,
+           "dedup": None if dedup is None else export_dedup(*dedup, pin), "freeze": freeze,
+           "binding": {"state": "unbound", "path": None, "sha256": None}}
+    if binding is not None:
+        inv["binding"] = export_binding(*binding, inv, registered)
+    return inv

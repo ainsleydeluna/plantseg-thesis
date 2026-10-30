@@ -12,7 +12,11 @@ Commands:
   append            a derived artifact's hashed form appended to the manifest, written into --out
   isolation-record  src/data/isolation.assert_trainval_only_root on --data-root, written as tday_isolation/1
   inventory         the inventory export tday-inventory/1 (IF§8; IF§11 v2), written into --out and read back; with
-                    --dedup, its dedup block names the hasher's tday_dedup.json relative to --out (P2R4, P2R5)
+                    --dedup, its dedup block names the hasher's tday_dedup.json relative to --out (P2R4, P2R5); with
+                    --binding, its binding is bound to the file bind wrote, inside --out (B3R4, B3R7)
+  bind              after the single TEST session (B-3b; B3R8): the binding tday_binding/1 and the statistics input
+                    list tday_stats_inputs.json, from the manifest validated in session mode, the unbound export and
+                    each scored TEST artifact at its layout path under --root (S = E), read score-blind
   check-freeze      AM-22 item 1(a)'s check at the end of --date (src/tman/am22.py; B-2): each condition MET with its
                     records or MISSING; it writes nothing
   freeze-body       the body to freeze for AM-22 item 1(b)'s D: the draft committed by the end of D and the
@@ -37,6 +41,7 @@ if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
 from src.tman import am22 as A  # noqa: E402
+from src.tman import binding as B  # noqa: E402
 from src.tman import completion as C  # noqa: E402
 from src.tman import entries as E  # noqa: E402
 from src.tman import manifest as M  # noqa: E402
@@ -572,7 +577,8 @@ def cmd_isolation(args) -> int:
 # --------------------------------------------------------------------------------------------- inventory
 def cmd_inventory(args) -> int:
     """The export, written into --out and read back; --dedup names the hasher's tday_dedup.json, which the export's
-    dedup block names relative to --out (P2R4, P2R5)."""
+    dedup block names relative to --out (P2R4, P2R5); --binding names the binding bind wrote, which the export's
+    binding names relative to --out, bound, after binding.py's export check (B3R7)."""
     data = read_bytes(args.manifest, "manifest_unreadable")
     doc = S.strict_json(data, args.manifest, code="manifest_unreadable")
     records = records_at(args)
@@ -580,6 +586,7 @@ def cmd_inventory(args) -> int:
     folder = out_folder(args.out, args.root)
     inv = M.build_inventory(doc, data, records, cat, runs_root=args.runs, registered=registered(args),
                             freeze_record=args.freeze_record,
+                            binding=None if args.binding is None else (args.binding, folder),
                             dedup=None if args.dedup is None else (args.dedup, folder))
     errs = V.inventory_errors(S.strict_json(S.json_file_bytes(inv), "the inventory", code="inventory_invalid"), cat)
     if errs:                                                      # a refusal writes nothing (DL-24 #61)
@@ -588,6 +595,125 @@ def cmd_inventory(args) -> int:
     V.read_inventory(out)
     print(f"WROTE {out} sha256 {S.sha256_bytes(out.read_bytes())} ({len(inv['models'])} model rows, "
           f"{len(inv['entries'])} entries)")
+    return S.EXIT_PASS
+
+
+# -------------------------------------------------------------------------------------------------- bind
+BIND_NAMES = ("tday_binding.json", "tday_stats_inputs.json")
+# What bind reads (B3R8; decision (vi)): of summary.json run.checkpoint_sha256, run.repo_commit,
+# dataset.split_manifest_sha256 and the TB1 tuple's fields an artifact records (run.eval_runtime's,
+# records.EVAL_RUNTIME); of per_image.jsonl each row's two ids. No other key enters an object.
+SUMMARY_KEEP = frozenset(("run", "dataset", "checkpoint_sha256", "repo_commit", "split_manifest_sha256",
+                          "eval_runtime", *R.EVAL_RUNTIME))
+ROW_KEEP = frozenset(("image_id", "clean_image_id"))
+
+
+def blind(keep):
+    """The JSON object hook of bind's reads: every object is built (records.JSON_OBJECT, the smokes' sentinel) from
+    the pairs of the allowlisted keys `keep` alone, so no score key enters an object (B3R8): none of them is a score
+    key under the schema smoke's score-key rule (smoke_tman_binding)."""
+    return lambda pairs: R.JSON_OBJECT([(k, v) for k, v in pairs if k in keep])
+
+
+def read_artifact(root, key) -> dict | None:
+    """bind's reads of one required artifact, at its layout path under the session checkout `root` (B3R8, B3R9):
+    None when its folder is absent (the full check names it); else its four files' sha256 and, through `blind`,
+    summary.json's three values and recorded TB1 fields and per_image.jsonl's two ids per row. A file absent or
+    unreadable, not strict JSON, or without a value bind reads is binding_artifact_invalid."""
+    slot, precision, scope, cell = key
+    rel = B.artifact_rel(S.file_id_of(slot), precision, scope, cell)
+    S.refuse_test_path(rel, root)
+    folder = Path(root) / rel
+    if not folder.is_dir():
+        return None
+    data = {}
+    for name in B.file_names():
+        try:
+            data[name] = (folder / name).read_bytes()
+        except OSError as e:
+            raise S.TmanRefused("binding_artifact_invalid", f"{rel}/{name}: unreadable ({type(e).__name__})") from None
+    s = S.strict_json(data["summary.json"], f"{rel}/summary.json", code="binding_artifact_invalid",
+                      object_type=blind(SUMMARY_KEEP))
+    run = s.get("run") if hasattr(s, "keys") else None
+    ds = s.get("dataset") if hasattr(s, "keys") else None
+    rt = run.get("eval_runtime") if hasattr(run, "keys") else None
+    if not (hasattr(rt, "keys") and hasattr(ds, "keys") and S.TYPES["sha256"](run.get("checkpoint_sha256"))
+            and S.TYPES["commit"](run.get("repo_commit")) and S.TYPES["sha256"](ds.get("split_manifest_sha256"))):
+        raise S.TmanRefused("binding_artifact_invalid", f"{rel}/summary.json: not the run.checkpoint_sha256, "
+                                                        "run.repo_commit, run.eval_runtime and "
+                                                        "dataset.split_manifest_sha256 bind reads")
+    ids = []
+    for n, line in enumerate(data["per_image.jsonl"].splitlines(), 1):
+        row = S.strict_json(line, f"{rel}/per_image.jsonl:{n}", code="binding_artifact_invalid",
+                            object_type=blind(ROW_KEEP))
+        if not (hasattr(row, "keys") and isinstance(row.get("image_id"), str)
+                and isinstance(row.get("clean_image_id"), str)):
+            raise S.TmanRefused("binding_artifact_invalid", f"{rel}/per_image.jsonl:{n}: no image_id and "
+                                                            "clean_image_id")
+        ids.append((row["image_id"], row["clean_image_id"]))
+    return {"files_sha256": {n: S.sha256_bytes(d) for n, d in data.items()},
+            "checkpoint_sha256": run["checkpoint_sha256"], "repo_commit": run["repo_commit"],
+            "split_manifest_sha256": ds["split_manifest_sha256"], "runtime": R.project(rt, R.EVAL_RUNTIME),
+            "ids": ids}
+
+
+def cmd_bind(args) -> int:
+    """B3R8: after the single TEST session, the binding tday_binding/1 and the statistics input list. The manifest is
+    validated in session mode (the records from --records at --records-commit, S = E at --root, --dedup, --runs; TB9's
+    pilot-winner check among its gates); the unbound export is read (its sha256 printed, for the runbook to compare);
+    each artifact its rows require is read at its layout path under --root (read_artifact); the full check runs on
+    the binding built (binding.full_check); tday_binding.json (canonical JSON) and tday_stats_inputs.json (the 37 in
+    load_input_list's format) are then created, both or neither, in --out, a folder outside the repository. Nothing
+    is written inside the repository, and the manifest is never edited."""
+    folder = out_folder(args.out, args.root)
+    for name in BIND_NAMES:                                      # both outputs or neither, before any read
+        if os.path.lexists(folder / name):
+            raise S.TmanRefused("output_exists", f"{folder / name} exists: outputs are created once")
+    S.refuse_test_path(args.records)
+    if not S.COMMIT_RE.fullmatch(args.records_commit):
+        raise S.TmanRefused("record_uncommitted", f"--records-commit {args.records_commit!r} is not 40 hex")
+    data = read_bytes(args.manifest, "manifest_unreadable")
+    records = R.Records.at_records_commit(args.records, args.records_commit, root=args.root)
+    records.full_history()                                       # as records_at (DL-24 R2-F1)
+    x = V.Ctx(mode="session", manifest_bytes=data, manifest_path=records.src.rel(args.manifest) or str(args.manifest),
+              records=records, dedup=args.dedup, runs_root=args.runs, freeze_record=args.freeze_record,
+              unlock_entry=args.unlock_entry, registered_cells=registered(args), now=clock(args))
+    V.validate(x)
+    export = V.read_inventory(args.inventory)
+    print(f"READ {args.inventory} sha256 {S.sha256_bytes(read_bytes(args.inventory, 'inventory_invalid'))}")
+    body, reg = x.body, registered(args)
+    cells = {scope: M.cells_for({scope}, reg) for scope in B.CELL_SCOPES}
+    identities = B.stats_identities(cells["corrupted"])
+    scopes = {m["slot"]: sorted(V.scope_rule_of(x, m["slot"])[0]) for m in export["models"]}
+    family = {s["evaluator_stage"]: k for k, s in x.cat.slots.items() if "family" in s["roles"] and s["seed"] == 42}
+    reads = {}
+    for key in sorted(B.required_keys(export, scopes, cells), key=repr):
+        got = read_artifact(args.root, key)
+        if got is not None:
+            reads[key] = got
+    _, fsha = E.read_entry_file(records, args.freeze_record, "freeze")
+    manifest = {"path": S.MANIFEST_REL, "sha256": S.sha256_bytes(data), "body_sha256": S.canonical_sha256(body),
+                "freeze_dl": records.decision_log().recorded_rows_with(fsha)[0],
+                "evaluator_commit": body["evaluator"]["commit"], "execution_context": body["execution_context"],
+                "mde_entry": {k: body["references"]["mde_entry"][k] for k in ("path", "sha256")}}
+    doc = {"format": S.BINDING_FORMAT,
+           "references": {"manifest": {k: manifest[k] for k in B.MANIFEST_REFERENCE},
+                          "evaluator": {"commit": manifest["evaluator_commit"]},
+                          "execution_context": manifest["execution_context"],
+                          "session": {"dedup": {"sha256": S.sha256_bytes(read_bytes(args.dedup, "dedup_invalid"))}},
+                          "mde_entry": manifest["mde_entry"], "written_utc": C.utc_text(int(clock(args)))},
+           "artifacts": [B.record_of(k, reads[k]) for k in sorted(reads, key=repr)],
+           "inputs": [{"stage": st, "condition": list(cond), "key": [family.get(st), B.STATS_PRECISION[st]] + (
+               ["clean", None] if cond == B.CLEAN else ["corrupted", B.cell_of(cond)])} for st, cond in identities]}
+    values = x.doc["session"]["values"].get(V.HASHER_VALUES_KEY) or {}
+    B.full_check(doc, {"export": export, "manifest": manifest, "scopes": scopes, "cells": cells, "reads": reads,
+                       "runtime_keys": tuple(R.EVAL_RUNTIME), "slots_of_record": family,
+                       "dedup_list_sha256": values.get("dedup_list_sha256"), "identities": identities,
+                       "precision": B.STATS_PRECISION})
+    for name, blob in ((BIND_NAMES[0], S.canonical_json_bytes(doc)),
+                       (BIND_NAMES[1], S.json_file_bytes(B.stats_inputs(doc)))):
+        out = write_new(folder, name, blob)
+        print(f"WROTE {out} sha256 {S.sha256_bytes(blob)}")
     return S.EXIT_PASS
 
 
@@ -694,6 +820,19 @@ def parser() -> argparse.ArgumentParser:
     n.add_argument("--registered-cells")
     n.add_argument("--freeze-record", help="the freeze record: its committed entry file (DL-24 #33)")
     n.add_argument("--dedup", help="the hasher's tday_dedup.json, inside --out: the export's dedup block (P2R4)")
+    n.add_argument("--binding", help="the binding bind wrote, inside --out: the export's binding, bound (B3R7)")
+    bd = sub.add_parser("bind")
+    bd.add_argument("--manifest", required=True, help="the frozen manifest with its session part")
+    bd.add_argument("--records", required=True, help="the records folder written from --records-commit")
+    bd.add_argument("--records-commit", required=True)
+    bd.add_argument("--dedup", required=True, help="the in-session hasher's tday_dedup.json")
+    bd.add_argument("--inventory", required=True, help="the unbound export (inventory)")
+    bd.add_argument("--runs", required=True, help="the input root: the run directories")
+    bd.add_argument("--freeze-record", required=True)
+    bd.add_argument("--unlock-entry", required=True)
+    bd.add_argument("--registered-cells")
+    bd.add_argument("--out", required=True, help="a new folder outside the repository")
+    bd.add_argument("--now", help="the smokes only: the instant that stands in for the clock (YYYY-MM-DDTHH:MM:SSZ)")
     k = sub.add_parser("check-freeze")
     k.add_argument("--date", required=True, help="X: the check reads the records committed by the end of X")
     k.add_argument("--runs", required=True)
@@ -711,14 +850,14 @@ def parser() -> argparse.ArgumentParser:
 
 COMMANDS = {"build": cmd_build, "validate": cmd_validate, "entry": cmd_entry, "arithmetic": cmd_arithmetic,
             "append": cmd_append, "isolation-record": cmd_isolation, "inventory": cmd_inventory,
-            "check-freeze": cmd_check_freeze, "freeze-body": cmd_freeze_body}
+            "check-freeze": cmd_check_freeze, "freeze-body": cmd_freeze_body, "bind": cmd_bind}
 
 
 # Every path-valued argument (a run id under --runs, a file, a folder): refused for "test" before any call on any of
 # them (DL-24 #7, #10); a part read under --runs or --root is checked there again where it is joined.
 PATH_ARGS = ("root", "sources", "out", "runs", "registered_cells", "manifest", "freeze_record", "unlock_entry",
              "records", "fields", "reference_telemetry", "reference_smoke", "hashed", "ptq_record", "data_root",
-             "push_evidence", "cut", "dedup")
+             "push_evidence", "cut", "dedup", "binding", "inventory")
 
 
 def main(argv=None) -> int:

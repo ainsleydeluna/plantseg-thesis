@@ -9,14 +9,15 @@
 2. The sentinel: the readers' JSON objects raise on a score key (scripts/smoke_tman_schema.SentinelDict) while the
    world is built and every mode runs -- draft, freeze, unlock and session -- with the builder, the inventory
    export, the cut-entry check and the arithmetic printer; a sweep decision record with scores beside its grid
-   values is read too.
+   values is read too; and bind, over a session world's scored artifacts (B3R8).
 3. The mutation test: every score field of the fixtures -- the KD, E1 and QAT telemetry rows, the E1 and teacher
    logs' scores, the selection files, the ptq_record's parent score -- set to random finite values, to "nan" (as
    the trainers write a non-finite value) or deleted: every verdict (draft and freeze, and an unlock world's unlock
    and session, its records made over the changed files), the arithmetic, the manifest and inventory bytes, and the
    command line's printed freeze record and post-freeze append stay identical, up to the sha256 of the files the
    mutation changed, of the QAT selection records that cite a changed telemetry and the commit a printer names.
-   Removing a record changes the verdict.
+   bind's two outputs stay byte-identical when every score field of the session's artifacts is mutated, up to the
+   sha256 of the artifact files changed (B3R8). Removing a record changes the verdict.
 
 Synthetic inputs only, under the system temp dir (removed at the end); TEST is never read.
 
@@ -211,6 +212,41 @@ def cli_outputs(w, doc: dict, data: bytes) -> tuple:
     return printed, (out / "append" / "tday_manifest.json").read_bytes() if rc == 0 else None
 
 
+def bind_outputs(w) -> tuple:
+    """bind over the session world `w` (smoke_tman_binding.BindWorld; B3R8): its two outputs' bytes, None where it
+    refuses."""
+    import scripts.smoke_tman_binding as BD
+    rc, _, out = w.bind()
+    return tuple((out / n).read_bytes() if rc == 0 else None for n in BD.BIND_NAMES)
+
+
+def mutate_artifacts(w, mode: str, seed: int) -> tuple:
+    """Every score field of the bind world's scored artifacts mutated (mutate_obj): summary.json's and each
+    per_image.jsonl row's; the stand-in sufficient_stats.npz's bytes changed too, and MANIFEST.sha256 written again
+    over the three, as the evaluator writes it. Returns ({path: its old bytes}, {new sha256: old sha256} of every
+    file changed, the number of files changed)."""
+    S, rng, saved, shas, changed = w.S, random.Random(seed), {}, {}, 0
+    for key in w.keys:
+        d, files = w.path(key), {}
+        for name in ("summary.json", "per_image.jsonl", "sufficient_stats.npz"):
+            saved[d / name] = old = (d / name).read_bytes()
+            if name == "summary.json":
+                files[name] = (json.dumps(mutate_obj(json.loads(old), mode, rng), indent=2) + "\n").encode()
+            elif name == "per_image.jsonl":
+                files[name] = b"".join(json.dumps(mutate_obj(json.loads(x), mode, rng)).encode() + b"\n"
+                                       for x in old.splitlines() if x.strip())
+            else:
+                files[name] = old + f" {mode} {rng.random()}".encode()
+        saved[d / "MANIFEST.sha256"] = (d / "MANIFEST.sha256").read_bytes()
+        files["MANIFEST.sha256"] = "".join(f"{S.sha256_bytes(files[n])}  {n}\n" for n in sorted(files)).encode()
+        for name, new in files.items():
+            if new != saved[d / name]:
+                (d / name).write_bytes(new)
+                shas[S.sha256_bytes(new)] = S.sha256_bytes(saved[d / name])
+                changed += 1
+    return saved, shas, changed
+
+
 def unlock_verdicts(edit=None) -> tuple:
     """An unlock world's unlock and session verdicts (smoke_tman_unlock.Unlock; `edit` changes its world before its
     freeze record and unlock entry are made)."""
@@ -340,6 +376,10 @@ def case_sentinel():
         "decision_date": "2026-10-22", "values": [{"value": v, "status": "finished"} for v in (25.0, 50.0, 100.0)]})
     check("sentinel_builder_export_and_arithmetic_complete", all(res["outputs"][k] for k in (
         "manifest", "inventory", "arithmetic")) and res["outputs"]["freeze"] == (None, VW.gate_codes("freeze")))
+    import scripts.smoke_tman_binding as BD
+    rc, txt, out = FX.with_sentinel(BD.bind_world().bind)    # the command line prints a raise as exit 4
+    check("sentinel_quiet_through_bind_B3R8", rc == 0 and all((out / n).is_file() for n in BD.BIND_NAMES),
+          txt.strip()[-300:])
 
 
 def case_mutation_invariance():
@@ -373,6 +413,24 @@ def case_mutation_invariance():
             check("the_cli_printed_the_freeze_record_and_wrote_the_append_B59", all(
                 base[k] is not None and base[k].startswith(b"{") for k in ("printed_freeze", "append")),
                   str([base[k] is None for k in ("printed_freeze", "append")]))
+    import scripts.smoke_tman_binding as BD                  # B3R8: bind's two outputs
+    bw = BD.bind_world()
+    base_bind = bind_outputs(bw)
+    check("bind_world_binds_B3R8", None not in base_bind)
+    for n, mode in enumerate(("finite", "nan", "deleted")):
+        saved, shas, changed = mutate_artifacts(bw, mode, seed=3009 + n)
+        try:
+            after = bind_outputs(bw)
+        finally:
+            for p, data in saved.items():
+                p.write_bytes(data)
+        check(f"mutation_{mode}_changes_every_artifact_s_four_files_B3R8", changed == 4 * len(bw.keys) == 912,
+              str(changed))
+        check(f"mutation_{mode}_bind_outputs_identical_but_hashes_B3R8", None not in after
+              and None not in base_bind and normalised(after[0], shas) == base_bind[0] and after[1] == base_bind[1],
+              str([x is None for x in after]))
+        if n == 0:
+            check("the_binding_cites_the_changed_files_B3R8", None not in after and after[0] != base_bind[0])
 
 
 def case_removal_changes_the_verdict():
