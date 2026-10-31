@@ -55,7 +55,7 @@ def parse(argv):
     ap.add_argument("--run-id", help="the artifact directory name, ^[a-z0-9][a-z0-9._-]{0,63}$")
     ap.add_argument("--confirm-official-test-analysis", action="store_true")
     ap.add_argument("--synthetic-inputs", action="store_true",
-                    help="declare the inputs synthetic (official mode, until the binding is bound)")
+                    help="declare the inputs synthetic (official or report mode; bound or unbound)")
     ap.add_argument("--repo-root", type=Path, help="resolve input paths here (synthetic or smoke)")
     ap.add_argument("--B", type=int, help="bootstrap replicates (default and official: 10000)")
     ap.add_argument("--jobs", type=int, help="worker processes, whole tasks each (default 1)")

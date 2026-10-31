@@ -13,7 +13,8 @@ Commands:
   isolation-record  src/data/isolation.assert_trainval_only_root on --data-root, written as tday_isolation/1
   inventory         the inventory export tday-inventory/1 (IF§8; IF§11 v2), written into --out and read back; with
                     --dedup, its dedup block names the hasher's tday_dedup.json relative to --out (P2R4, P2R5); with
-                    --binding, its binding is bound to the file bind wrote, inside --out (B3R4, B3R7)
+                    --binding, its binding is bound to the file bind wrote, inside --out (B3R4, B3R7); --runs, the
+                    input root, once the manifest has a qat_fakequant_off row (its fqoff_source, T-FQ3)
   bind              after the single TEST session (B-3b; B3R8): the binding tday_binding/1 and the statistics input
                     list tday_stats_inputs.json, from the manifest validated in session mode, the unbound export and
                     each scored TEST artifact at its layout path under --root (S = E), read score-blind
@@ -579,7 +580,8 @@ def cmd_inventory(args) -> int:
     """The export, written into --out and read back; --dedup names the hasher's tday_dedup.json, which the export's
     dedup block names relative to --out (P2R4, P2R5), required, and the file the values recorded, once the session
     part holds the hasher's values (B3R11); --binding names the binding bind wrote, which the export's binding names
-    relative to --out, bound, after binding.py's export check (B3R7)."""
+    relative to --out, bound, after binding.py's export check (B3R7); --runs, the input root, is required once the
+    manifest has a qat_fakequant_off row, whose fqoff_source reads its selection record there (T-FQ3)."""
     data = read_bytes(args.manifest, "manifest_unreadable")
     doc = S.strict_json(data, args.manifest, code="manifest_unreadable")
     records = records_at(args)
@@ -832,7 +834,8 @@ def parser() -> argparse.ArgumentParser:
     n = sub.add_parser("inventory")
     n.add_argument("--manifest", required=True)
     n.add_argument("--out", required=True)
-    n.add_argument("--runs")
+    n.add_argument("--runs", help="the input root: the run directories; required once the manifest has a "
+                                  "qat_fakequant_off row, whose fqoff_source reads its selection record (T-FQ3)")
     n.add_argument("--registered-cells")
     n.add_argument("--freeze-record", help="the freeze record: its committed entry file (DL-24 #33)")
     n.add_argument("--dedup", help="the hasher's tday_dedup.json, inside --out: the export's dedup block (P2R4); "

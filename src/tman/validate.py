@@ -1804,7 +1804,7 @@ ROW_SPEC = {"file_id": "str", "slot": "slot", "stage": "str", "model_role": ("en
             "role": ("list", ("enum", S.ROLES)), "training_run_id": "str"}
 # T-FQ3 (B3R10): a qat_fakequant_off row's binding key, exactly these fields (manifest.fqoff_source)
 FQOFF_SOURCE = ("obj", {"run_dir": "str", "selection": S.REF, "telemetry_sha256": "sha256", "winner_epoch": "int"})
-NULL_ENTRY ={"slot": "slot", "class": ("enum", S.SLOT_CLASSES), "stage": "str", "seed": "?int",
+NULL_ENTRY = {"slot": "slot", "class": ("enum", S.SLOT_CLASSES), "stage": "str", "seed": "?int",
               "catalogue": ("obj", {"never_cut": "bool", "cut_place": "?int", "parent": "?slot"}),
               "role": ("list", ("enum", S.ROLES))}                 # and "kind": null (IF§11.2)
 TELEMETRY_ITEM = ("obj", {"run_id": "str", "path": "str", "sha256": "sha256"})

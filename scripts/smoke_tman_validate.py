@@ -275,7 +275,9 @@ class World:
     def qat_files(self, rid: str, stage: str, clip: float, made: str = "2026-11-02T10:00:00Z", epoch: int = 12):
         """A QAT run's conversion and selection under --runs (src/quant/qat_select.py:479-494): the selected epoch's
         checkpoint (its stored flags; its epoch_end row carries its sha256), the winner's provenance and the
-        qat_selection/1 record. Keeps the run's telemetry sha256 and hashed block in self.qat[rid]."""
+        qat_selection/1 record, with the writer's score fields beside the decision (qat_select.py:531-542: winner.value,
+        values, tied_epochs, the fake-quant VAL fields, rule_trace), which no reader touches (decision (vi); DL-24
+        R3-7). Keeps the run's telemetry sha256 and hashed block in self.qat[rid]."""
         import torch
         S, d, ck = self.S, self.runs / rid, f"epoch_ckpts/e{epoch:02d}.pt"
         (d / "epoch_ckpts").mkdir(exist_ok=True)
@@ -300,10 +302,13 @@ class World:
         rec = S.json_file_bytes({
             "format": "qat_selection/1", "rules_sha256": QAT_RULES_SHA256, "stage": stage, "run_id": rid, "seed": 42,
             "clip_norm": clip, "telemetry_sha256": tsha,
-            "winner": {"epoch": epoch, "checkpoint": ck, "checkpoint_sha256": ck_sha, "run_id": rid,
+            "winner": {"epoch": epoch, "value": 0.4125, "checkpoint": ck, "checkpoint_sha256": ck_sha, "run_id": rid,
                        "artifact_of_record": {"path": f"e{epoch:02d}/model.pt", "sha256": art["ts"]},
                        "provenance": {"path": f"e{epoch:02d}_provenance.json", "sha256": S.sha256_bytes(prov)},
-                       "summary": {"path": f"e{epoch:02d}_summary.json", "sha256": "5" * 64}}})
+                       "summary": {"path": f"e{epoch:02d}_summary.json", "sha256": "5" * 64}},
+            "tied_epochs": [], "values": {f"e{epoch - 1:02d}": 0.4071, f"e{epoch:02d}": 0.4125},
+            "fake_quant_val_argmax_epoch": epoch - 1, "fake_quant_val_used": False,
+            "rule_trace": [f"winner e{epoch:02d}; fake-quant VAL argmax e{epoch - 1:02d} recorded, not used"]})
         (d / "eval" / "qat_selection.json").write_bytes(rec)
         self.qat_records.append(f"{rid}/eval/qat_selection.json")
         self.qat[rid] = {"telemetry_sha256": tsha, "hashed": {
@@ -2588,10 +2593,13 @@ def case_inventory_dedup_reader():
 def case_inventory_fq_off():
     """B3R10 at the builder and the reader. T-FQ3: each qat_fakequant_off row carries fqoff_source -- its run
     directory, the hashed selection record, inputs.telemetry_sha256 and the record's winner.epoch, read under --runs
-    at the cited sha256 -- and no other row does; read_inventory holds the key to its exact fields, per precision;
-    each builder refusal with the export otherwise built. T-FQ2: the row's source is the winner epoch's checkpoint,
-    with no converted artifact and no cells. T-FQ5: E6-R1, E6-R2 and E6-KD, entered by no model, have no row, and
-    the fq_off scope their selections require is never refused. A refusal or crash fails its check by name."""
+    at the cited sha256 -- and no other row does, the same from a selection hashed by an append; read_inventory holds
+    the key to its exact fields and types, per precision, and reports a row that is not an object by name; each
+    builder refusal with the export otherwise built (DL-24 R1-1..R1-3, R3-1, R3-2, R3-4). T-FQ2: the row's source is
+    the winner epoch's checkpoint, with no converted artifact and no cells. T-FQ5: E6-R1, E6-R2 and E6-KD, entered
+    by no model, have no row, and the fq_off scope their selections require is never refused (E6-R1 and E6-R2 are
+    not_run in the world, the same MODEL_KINDS path as cut; DL-24 R1-6). A refusal or crash fails its check by
+    name."""
     from src.tman import manifest as M
     from src.tman import validate as V
     w = WORLD
@@ -2665,9 +2673,16 @@ def case_inventory_fq_off():
             ("int8_qat_row_holding_the_key_T_FQ3", lambda d: d["models"][qi].update(
                 fqoff_source=copy.deepcopy(d["models"][fi]["fqoff_source"])), "unexpected ['fqoff_source']"),
             ("fq_off_row_with_cells_T_FQ2", lambda d: d["models"][fi].update(cells=[PINS.IF6_CELLS[0]]),
-             "has no cells")):
+             "has no cells"),
+            ("fq_off_row_key_telemetry_not_a_sha256_T_FQ3",
+             lambda d: d["models"][fi]["fqoff_source"].update(telemetry_sha256="0" * 63), "telemetry_sha256"),
+            ("fq_off_row_key_selection_path_empty_T_FQ3",
+             lambda d: d["models"][fi]["fqoff_source"]["selection"].update(path=""), "selection.path"),
+            ("models_row_not_an_object_reported_by_name_T_FQ3", lambda d: d["models"].append("x"),
+             "not a JSON object")):
         inv_refused(name, "inventory_invalid", variant(fn), detail=detail)
     text = runs_variant(w, qh["record"], "variant_epoch_text.json", {"winner.epoch": str(epoch)})
+    boolean = runs_variant(w, qh["record"], "variant_epoch_bool.json", {"winner.epoch": True})
     for name, doc, runs, want, detail in (
             ("inventory_fq_off_key_without_runs_refused_T_FQ3", None, None, "inventory_invalid", "under --runs"),
             ("inventory_fq_off_selection_record_not_the_cited_sha256_T_FQ3", mutated(w, lambda d: w.entry(
@@ -2678,9 +2693,23 @@ def case_inventory_fq_off():
              "derived_hash_mismatch", "unreadable"),
             ("inventory_fq_off_winner_epoch_not_an_integer_T_FQ3", mutated(w, lambda d: w.entry(
                 d, "E6:s42:sel")["hashed"].update(record=dict(text))), w.runs, "derived_hash_mismatch",
-             "integer winner.epoch")):
+             f"winner.epoch {str(epoch)!r}, not an integer"),
+            ("inventory_fq_off_winner_epoch_true_T_FQ3", mutated(w, lambda d: w.entry(
+                d, "E6:s42:sel")["hashed"].update(record=dict(boolean))), w.runs, "derived_hash_mismatch",
+             "winner.epoch True, not an integer")):
         got = built(doc, runs)
         check(name, got[0] == want and detail in got[1], str(got)[:240])
+
+    def appended(d):                          # listed by inputs at the freeze, its hashed form appended (A2)
+        e = w.entry(d, "E5:s42:sel")
+        d["appends"].append({"slot": "E5:s42:sel", "hashed": dict(e["hashed"], appended="append"), "ptq_record": None})
+        e["hashed"] = None
+    got, ainv = built(mutated(w, appended))
+    key = ("E5:s42:sel", "qat_fakequant_off")
+    want = next((r for r in rows if (r["slot"], r["precision"]) == key), None)
+    arow = next((r for r in ainv["models"] if (r["slot"], r["precision"]) == key), None) if got == "ok" else None
+    check("fq_off_row_key_from_an_appended_selection_T_FQ3", want is not None and "fqoff_source" in want
+          and arow == want, f"{got}: {str(arow if got == 'ok' else ainv)[:200]}")
 
 
 def case_shallow_records():

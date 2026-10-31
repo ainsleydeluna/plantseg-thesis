@@ -1573,7 +1573,7 @@ def _check_observed_sources(ctx: _Ctx) -> None:
 def _check_officiality(ctx: _Ctx) -> None:
     """Check 11 (officiality_policy_verified): sections 10, 10.1, 12.4.2, 12.4.3, 12.4.5 -- run_id
     pattern and run_id == directory basename, created_at_utc format; artifact_status vocabulary and
-    status <=> warnings; the TEST-manifest binding (an official artifact is refused unless bound to its 37 inputs,
+    status <=> warnings; the TEST-manifest binding (official only if bound to its 37 inputs,
     P2); warnings vocabulary, no duplicates, canonical order; the software block self-consistent and
     pinned == PINNED_ENVIRONMENT; one policy across the nine, official or nonofficial_smoke (P3); the
     re-derived warnings: analysis_id, software, input statuses, per-task replicate counts and

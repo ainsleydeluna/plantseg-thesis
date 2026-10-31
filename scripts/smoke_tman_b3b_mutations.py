@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
 """Smoke for B-3b's mutation tests (lane TMAN, B-3b; B3R12): every refusal and rule of src/tman/binding.py and of
-scripts/tday_manifest.py's bind, and src/stats/artifact.py's writer gate (B3B-F3), has a mutation killed by a named
-case of smoke_tman_binding.
+scripts/tday_manifest.py's bind, and the official-request rule of src/stats/artifact.py's writer gate (B3B-F3), has
+a mutation killed by a named case of smoke_tman_binding.
 
 smoke_tman_b3_mutations.py's form: a mutation replaces exact texts (each must occur once) in a scratch copy of the
 three files, under the system temp dir; a fresh interpreter imports the copy as src.tman.binding and
 scripts.tday_manifest, and, for a writer-gate mutation and its case, runs the artifact copy's text as
 src.stats.artifact under the checkout's file name, so the paths it derives are the checkout's (the lane's other
-modules, and the rest of src.stats, stay the checkout's; src.stats.artifact's import of BINDING_REL then reaches the
-copy) and runs one case of smoke_tman_binding up to its named check. The mutation is
-killed when that named check fails; a crash, or another check failing, is no kill. Each killing case first passes
-alone on the unmutated copy, its named checks among those it records. The repository's files are read, never
-written; the scratch copies are removed.
+modules, and the rest of src.stats, stay the checkout's -- src.stats' re-exported names too, so a writer-gate case
+reaches the module as `from src.stats import artifact`; src.stats.artifact's import of BINDING_REL then reaches the
+copy) and runs one case of smoke_tman_binding up to its named check. The mutation is killed when that named check
+fails; a crash the case does not catch, or another check failing, is no kill (a crash the case catches fails its
+check by name, the lane's rule, DL-24 #104). Each killing case first passes alone on the unmutated copy, its named
+checks among those it records. The repository's files are read, never written; the scratch copies are removed.
 
 Run with TMPDIR set to a new folder:
   TMPDIR=<new folder> python -B scripts/smoke_tman_b3b_mutations.py
@@ -428,8 +429,9 @@ GUARD_CODES = (WORD + "_path",)                     # raised by B-1's guard from
 # ================================================================================================ the worker
 def worker(spec: dict) -> dict:
     """Run in a fresh interpreter: import the scratch copy at spec["root"] as src.tman.binding and
-    scripts.tday_manifest (the lane's other modules stay the checkout's), run spec["case"] of spec["smoke"] up to
-    spec["check"] (None: the whole case) and return the checks it recorded and any exception."""
+    scripts.tday_manifest and, when spec["art"], run the artifact copy's text as src.stats.artifact (the lane's
+    other modules stay the checkout's), run spec["case"] of spec["smoke"] up to spec["check"] (None: the whole case)
+    and return the checks it recorded and any exception."""
     import importlib
     import importlib.util
     import src.tman

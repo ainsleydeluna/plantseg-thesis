@@ -11,8 +11,9 @@
    export, the cut-entry check and the arithmetic printer; a sweep decision record with scores beside its grid
    values is read too; and bind, over a session world's scored artifacts (B3R8).
 3. The mutation test: every score field of the fixtures -- the KD, E1 and QAT telemetry rows, the E1 and teacher
-   logs' scores, the selection files, the ptq_record's parent score -- set to random finite values, to "nan" (as
-   the trainers write a non-finite value) or deleted: every verdict (draft and freeze, and an unlock world's unlock
+   logs' scores, the selection files, the QAT selection records' (DL-24 R3-7), the ptq_record's parent score -- set
+   to random finite values, to "nan" (as the trainers write a non-finite value) or deleted: every verdict (draft
+   and freeze, and an unlock world's unlock
    and session, its records made over the changed files), the arithmetic, the manifest and inventory bytes, and the
    command line's printed freeze record and post-freeze append stay identical, up to the sha256 of the files the
    mutation changed, of the QAT selection records that cite a changed telemetry and the commit a printer names.
@@ -108,9 +109,10 @@ def replace_all(o, mapping: dict):
 
 
 def mutate_world(w, mode: str, seed: int) -> dict:
-    """Mutate every score field of the world's run files, selection files and ptq_records; the QAT selection records
-    under --runs then cite the changed telemetry's sha256 (as a selection made on it would), and the sources cite
-    every changed file's sha256. Returns {new sha256: old sha256} of every file changed."""
+    """Mutate every score field of the world's run files, selection files, QAT selection records (their writer's
+    score fields, DL-24 R3-7) and ptq_records; the QAT selection records under --runs then cite the changed
+    telemetry's sha256 (as a selection made on it would), and the sources cite every changed file's sha256. Returns
+    {new sha256: old sha256} of every file changed."""
     S, rng, shas = w.S, random.Random(seed), {}
     for rel in run_files(w):
         p = w.runs / rel
@@ -126,7 +128,7 @@ def mutate_world(w, mode: str, seed: int) -> dict:
     for rel in w.qat_records:                      # each before the records citing it (the clip selection last)
         p = w.runs / rel
         old = p.read_bytes()
-        new = S.json_file_bytes(replace_all(json.loads(old), {o: n for n, o in shas.items()}))
+        new = S.json_file_bytes(replace_all(mutate_obj(json.loads(old), mode, rng), {o: n for n, o in shas.items()}))
         if new != old:
             p.write_bytes(new)
             shas[S.sha256_bytes(new)] = S.sha256_bytes(old)

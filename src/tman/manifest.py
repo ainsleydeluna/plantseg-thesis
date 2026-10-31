@@ -895,19 +895,22 @@ def telemetry_name(slot: dict) -> str | None:
 def fqoff_source(entry: dict, h: dict, run_id, runs_root) -> dict:
     """T-FQ3 (B3R10): a qat_fakequant_off row's binding key, from the derived entry the row comes from: the run
     directory (relative to the runs root), the hashed selection record {path, sha256}, inputs.telemetry_sha256 and
-    the record's winner.epoch, the record read under --runs at its cited sha256 (derived_hash_mismatch otherwise, the
-    validator's code for it; inventory_invalid without --runs). bind runs TB9's pilot-winner check under --runs, so
-    E5 seed 42's key names the U4 winner's run (NOTE-FQ-U4-1)."""
+    the record's integer winner.epoch, the record read under --runs at its cited sha256 (derived_hash_mismatch
+    otherwise, the validator's code for it; inventory_invalid without --runs). bind runs TB9's pilot-winner check
+    under --runs, so E5 seed 42's key names the U4 winner's run (NOTE-FQ-U4-1)."""
     ref = h["record"]
     if runs_root is None:
         raise S.TmanRefused("inventory_invalid", f"{entry['slot']}: its qat_fakequant_off row's fqoff_source reads "
                                                  "its selection record's winner.epoch under --runs (T-FQ3)")
     rec, sha = R.read_json_file(Path(runs_root) / ref["path"], R.QAT_SELECTION, code="derived_hash_mismatch")
-    epoch = _dotted(rec, "winner.epoch")
-    if sha != ref["sha256"] or not S.TYPES["int"](epoch):
+    if sha != ref["sha256"]:
         raise S.TmanRefused("derived_hash_mismatch", f"{entry['slot']}: its selection record {ref['path']} under the "
-                                                     "run directories is not the cited sha256 with an integer "
-                                                     "winner.epoch (T-FQ3)")
+                                                     f"run directories is not the cited sha256 (its bytes: {sha[:12]}) "
+                                                     "(T-FQ3)")
+    epoch = _dotted(rec, "winner.epoch")
+    if not S.TYPES["int"](epoch):
+        raise S.TmanRefused("derived_hash_mismatch", f"{entry['slot']}: its selection record {ref['path']} holds "
+                                                     f"winner.epoch {epoch!r}, not an integer (T-FQ3)")
     return {"run_dir": run_id, "selection": {"path": ref["path"], "sha256": ref["sha256"]},
             "telemetry_sha256": entry["inputs"]["telemetry_sha256"], "winner_epoch": epoch}
 
