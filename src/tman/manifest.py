@@ -892,10 +892,31 @@ def telemetry_name(slot: dict) -> str | None:
     return {"e1_val_result": C.E1_TELEMETRY, "qat_epoch15": C.QAT_TELEMETRY}.get(k)
 
 
-def inventory_rows(body: dict, appends: list, cat, registered=None) -> list:
+def fqoff_source(entry: dict, h: dict, run_id, runs_root) -> dict:
+    """T-FQ3 (B3R10): a qat_fakequant_off row's binding key, from the derived entry the row comes from: the run
+    directory (relative to the runs root), the hashed selection record {path, sha256}, inputs.telemetry_sha256 and
+    the record's winner.epoch, the record read under --runs at its cited sha256 (derived_hash_mismatch otherwise, the
+    validator's code for it; inventory_invalid without --runs). bind runs TB9's pilot-winner check under --runs, so
+    E5 seed 42's key names the U4 winner's run (NOTE-FQ-U4-1)."""
+    ref = h["record"]
+    if runs_root is None:
+        raise S.TmanRefused("inventory_invalid", f"{entry['slot']}: its qat_fakequant_off row's fqoff_source reads "
+                                                 "its selection record's winner.epoch under --runs (T-FQ3)")
+    rec, sha = R.read_json_file(Path(runs_root) / ref["path"], R.QAT_SELECTION, code="derived_hash_mismatch")
+    epoch = _dotted(rec, "winner.epoch")
+    if sha != ref["sha256"] or not S.TYPES["int"](epoch):
+        raise S.TmanRefused("derived_hash_mismatch", f"{entry['slot']}: its selection record {ref['path']} under the "
+                                                     "run directories is not the cited sha256 with an integer "
+                                                     "winner.epoch (T-FQ3)")
+    return {"run_dir": run_id, "selection": {"path": ref["path"], "sha256": ref["sha256"]},
+            "telemetry_sha256": entry["inputs"]["telemetry_sha256"], "winner_epoch": epoch}
+
+
+def inventory_rows(body: dict, appends: list, cat, registered=None, runs_root=None) -> list:
     """IF§8's model rows with IF§11.1's four fields: one per scored model and precision (a selected QAT model also
-    has its qat_fakequant_off row, TB5), unique by (slot, precision); source.sha256, and for INT8 the converted
-    artifact's (TB17); the cells its corrupted scopes ask for; a derived model listed by inputs only has no row."""
+    has its qat_fakequant_off row, TB5, with its binding key fqoff_source, T-FQ3), unique by (slot, precision);
+    source.sha256, and for INT8 the converted artifact's (TB17); the cells its corrupted scopes ask for; a derived
+    model listed by inputs only has no row."""
     by_slot = {e["slot"]: e for e in body["entries"]}
     hashed_by = {a["slot"]: a["hashed"] for a in appends}
     rows = []
@@ -923,7 +944,8 @@ def inventory_rows(body: dict, appends: list, cat, registered=None) -> list:
         if "fq_off" in e["scope"]:
             rows.append({**base, "precision": "qat_fakequant_off",
                          "source": {"kind": "checkpoint", **h["selected_checkpoint"]},
-                         "converted_artifact_sha256": None, "cells": [], "training_run_id": run_id})
+                         "converted_artifact_sha256": None, "cells": [], "training_run_id": run_id,
+                         "fqoff_source": fqoff_source(e, h, run_id, runs_root)})
     return rows
 
 
@@ -1062,7 +1084,8 @@ def build_inventory(doc: dict, manifest_bytes: bytes, records: R.Records, cat, *
     path, the folder the export is written into): the export's dedup block (export_dedup; P2R4); without it, dedup is
     null, refused when the manifest's session part holds the hasher's values (B3R11: hasher_values_mismatch), which
     the file must then match. `binding` is (the binding file's path, that folder): the binding bound (export_binding;
-    B3R7); without it, the binding is unbound."""
+    B3R7); without it, the binding is unbound. A qat_fakequant_off row's fqoff_source is read under runs_root
+    (T-FQ3)."""
     from . import entries as E
     body = doc["body"]
     msha = S.canonical_sha256(body)
@@ -1073,7 +1096,7 @@ def build_inventory(doc: dict, manifest_bytes: bytes, records: R.Records, cat, *
             raise S.TmanRefused("inventory_invalid", f"{freeze_record}: its body_sha256 {fdoc['body_sha256'][:12]} is "
                                                      f"not this manifest's {msha[:12]}")
         freeze = {"dl_row": records.decision_log().recorded_rows_with(fsha)[0], "manifest_sha256": msha}
-    models = inventory_rows(body, doc["appends"], cat, registered)
+    models = inventory_rows(body, doc["appends"], cat, registered, runs_root)
     entries = inventory_entries(body, cat, records, runs_root, doc["appends"])
     hp = body["generator_pins"].get("image_hasher") if isinstance(body["generator_pins"], dict) else None
     pin = hp.get("pin") if isinstance(hp, dict) else None

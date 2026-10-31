@@ -382,6 +382,29 @@ M = [
     ("bind_artifact_word_guard_dropped", CLI, [("    S.refuse_test_path(rel, root)\n    folder = Path(root) / rel\n",
                                                 "    folder = Path(root) / rel\n")],
      "binding", "case_score_blind_reads", "bind_artifact_path_resolved_under_the_root_B3R9", [WORD + "_path"]),
+    # --------------------------------------------- the fake-quant-off records (B3R10: T-FQ7, NOTE-FQ-U4-1) through bind
+    ("identity_fq_off_exempt", BIN, [('    bad = [list(key_of(r)) for r in doc["artifacts"] if key_of(r) not in '
+                                      'plan["reads"]\n',
+                                      '    bad = [list(key_of(r)) for r in doc["artifacts"] if r["scope"] != "fq_off" '
+                                      'if key_of(r) not in plan["reads"]\n')],
+     "binding", "case_fq_off", "bind_fq_off_artifact_of_another_checkpoint_T_FQ7", ["binding_identity_mismatch"]),
+    ("context_fq_off_exempt", BIN, [('    bad = [list(key_of(r)) for r in doc["artifacts"]\n           if any(',
+                                     '    bad = [list(key_of(r)) for r in doc["artifacts"] if r["scope"] != "fq_off"\n'
+                                     '           if any(')],
+     "binding", "case_fq_off", "bind_fq_off_artifact_of_another_execution_context_T_FQ7", ["binding_context_split"]),
+    ("identity_fq_off_of_the_converted_artifact", BIN, [
+        ('    return row["converted_artifact_sha256"] if row["precision"] in INT8 else row["source"]["sha256"]',
+         '    return row["converted_artifact_sha256"] if row["precision"] in INT8 + ("qat_fakequant_off",) '
+         'else row["source"]["sha256"]')],
+     "binding", "case_fq_off", "bind_writes_fq_off_records_no_cell_canvas_the_source_checkpoint_T_FQ7",
+     ["binding_identity_mismatch"]),
+    ("record_fq_off_protocol_upstream", BIN, [('"protocol": UPSTREAM if scope == UPSTREAM else "canvas",',
+                                               '"protocol": UPSTREAM if scope in (UPSTREAM, "fq_off") else "canvas",')],
+     "binding", "case_fq_off", "bind_writes_fq_off_records_no_cell_canvas_the_source_checkpoint_T_FQ7", [INV]),
+    ("bind_validates_without_runs", CLI, [("dedup=args.dedup, runs_root=args.runs,",
+                                           "dedup=args.dedup, runs_root=None,")],
+     "binding", "case_fq_off", "bind_refuses_a_selection_naming_the_u4_loser_s_run_NOTE_FQ_U4_1",
+     ["derived_hash_mismatch"]),
     # ------------------------------------------------- src/stats/artifact.py: the writer gate (B3B-F3; DL-24 R2-1)
     ("writer_gate_raises_unconditionally", ART, [(
         "        unmet = official_conditions(fam, views, contract_bytes, hooks=hooks)\n        if unmet:\n"

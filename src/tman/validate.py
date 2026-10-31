@@ -1802,7 +1802,9 @@ ROW_SPEC = {"file_id": "str", "slot": "slot", "stage": "str", "model_role": ("en
             "converted_artifact_sha256": "?sha256", "cells": ("list", "str"),
             "entry_kind": ("enum", ("scored_run", "default_candidate", "arm_teacher", "derived")),
             "role": ("list", ("enum", S.ROLES)), "training_run_id": "str"}
-NULL_ENTRY = {"slot": "slot", "class": ("enum", S.SLOT_CLASSES), "stage": "str", "seed": "?int",
+# T-FQ3 (B3R10): a qat_fakequant_off row's binding key, exactly these fields (manifest.fqoff_source)
+FQOFF_SOURCE = ("obj", {"run_dir": "str", "selection": S.REF, "telemetry_sha256": "sha256", "winner_epoch": "int"})
+NULL_ENTRY ={"slot": "slot", "class": ("enum", S.SLOT_CLASSES), "stage": "str", "seed": "?int",
               "catalogue": ("obj", {"never_cut": "bool", "cut_place": "?int", "parent": "?slot"}),
               "role": ("list", ("enum", S.ROLES))}                 # and "kind": null (IF§11.2)
 TELEMETRY_ITEM = ("obj", {"run_id": "str", "path": "str", "sha256": "sha256"})
@@ -1811,6 +1813,12 @@ INVENTORY_TOP = ("binding", "dedup", "entries", "evaluator_commit", "execution_c
 BINDING_STATE = ("obj", {"state": ("enum", ("unbound", "bound")), "path": "?str", "sha256": "?sha256"})
 DEDUP_SPEC = ("obj", {"path": "str", "sha256": "sha256", "removed_by_reason": ("map", "int")})
 FREEZE_SPEC = ("obj", {"dl_row": "dl", "manifest_sha256": "sha256"})
+
+
+def row_spec(precision) -> dict:
+    """ROW_SPEC per precision (B3R10): a qat_fakequant_off row holds fqoff_source exactly (T-FQ3); every other row
+    refuses it."""
+    return {**ROW_SPEC, "fqoff_source": FQOFF_SOURCE} if precision == "qat_fakequant_off" else ROW_SPEC
 
 
 def inventory_errors(doc, cat=None) -> list[str]:
@@ -1835,7 +1843,7 @@ def inventory_errors(doc, cat=None) -> list[str]:
              and isinstance(it.get("slot"), str)}
     seen = set()
     for i, row in enumerate(doc["models"]):
-        bad = S.field_errors(row, ROW_SPEC, f"models[{i}]")
+        bad = S.field_errors(row, row_spec(row.get("precision") if isinstance(row, dict) else None), f"models[{i}]")
         errs += bad
         if isinstance(row, dict) and not bad:
             for key, what in (((row["slot"], row["precision"]), "slot and precision"),

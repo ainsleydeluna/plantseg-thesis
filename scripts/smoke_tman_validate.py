@@ -2585,6 +2585,104 @@ def case_inventory_dedup_reader():
                 variant({"removed_by_reason": {"equal_train": "3"}}), detail="dedup")
 
 
+def case_inventory_fq_off():
+    """B3R10 at the builder and the reader. T-FQ3: each qat_fakequant_off row carries fqoff_source -- its run
+    directory, the hashed selection record, inputs.telemetry_sha256 and the record's winner.epoch, read under --runs
+    at the cited sha256 -- and no other row does; read_inventory holds the key to its exact fields, per precision;
+    each builder refusal with the export otherwise built. T-FQ2: the row's source is the winner epoch's checkpoint,
+    with no converted artifact and no cells. T-FQ5: E6-R1, E6-R2 and E6-KD, entered by no model, have no row, and
+    the fq_off scope their selections require is never refused. A refusal or crash fails its check by name."""
+    from src.tman import manifest as M
+    from src.tman import validate as V
+    w = WORLD
+    S = w.S
+    out = FX.scratch_dir("tmanfqinv")
+
+    def built(doc=None, runs=w.runs):
+        doc = w.doc if doc is None else doc
+        try:
+            return "ok", M.build_inventory(doc, S.json_file_bytes(doc), w.records, w.cat, runs_root=runs,
+                                           registered=PINS.IF6_CELLS)
+        except S.TmanRefused as e:
+            return e.code, e.detail
+        except Exception as e:  # noqa: BLE001 -- a crash fails the check by name
+            return type(e).__name__, str(e)
+    got, inv = built()
+    rows = inv["models"] if got == "ok" else []
+    q6 = w.entry(w.doc, "E6:s42:sel")
+    qh = q6["hashed"]
+    rec = json.loads((w.runs / qh["record"]["path"]).read_bytes())
+    epoch = rec["winner"]["epoch"]
+    fq = next((r for r in rows if (r["slot"], r["precision"]) == ("E6:s42:sel", "qat_fakequant_off")), {})
+    check("fq_off_row_key_from_its_derived_entry_T_FQ3", fq.get("fqoff_source") == {
+        "run_dir": "e6_s42_15ep", "selection": qh["record"], "telemetry_sha256": q6["inputs"]["telemetry_sha256"],
+        "winner_epoch": epoch} and type(epoch) is int, f"{got}: {str(fq.get('fqoff_source') or inv)[:200]}")
+    check("only_qat_fakequant_off_rows_hold_the_key_T_FQ3", sum("fqoff_source" in r for r in rows) >= 2 and all(
+        ("fqoff_source" in r) == (r["precision"] == "qat_fakequant_off") for r in rows), str(len(rows)))
+    check("fq_off_row_source_the_winner_epoch_s_checkpoint_T_FQ2", fq.get("source") == {
+        "kind": "checkpoint", "path": f"e6_s42_15ep/epoch_ckpts/e{epoch:02d}.pt",
+        "sha256": rec["winner"]["checkpoint_sha256"]} and fq.get("converted_artifact_sha256", "") is None
+          and fq.get("cells") == [], str(fq.get("source")))
+    kinds = {it["slot"]: it["kind"] for it in (inv["entries"] if got == "ok" else [])}
+    e6x = sorted(k for k in kinds if k.split(":")[0] in ("E6-R1", "E6-R2", "E6-KD"))
+    code, _, e = w.run("freeze")
+    check("e6x_and_e6kd_without_a_model_have_no_row_their_fq_off_never_refused_T_FQ5", len(e6x) >= 6
+          and all(kinds[k] not in M.SCORED_KINDS for k in e6x) and not [r for r in rows if r["slot"] in e6x]
+          and all("fq_off" in S.scope_rule(w.cat.slots[k], True)[0] for k in e6x if k.endswith(":sel"))
+          and code is None, f"{[(k, kinds[k]) for k in e6x]} {code} {e.detail[:120] if e else ''}")
+    if got != "ok":
+        return
+    n = [0]
+
+    def variant(fn) -> Path:
+        d = copy.deepcopy(inv)
+        fn(d)
+        n[0] += 1
+        p = out / f"inv_fq_{n[0]}.json"
+        p.write_bytes(S.json_file_bytes(d))
+        return p
+    (out / "inv.json").write_bytes(S.json_file_bytes(inv))
+    try:
+        back = V.read_inventory(out / "inv.json") == inv
+    except Exception as e:  # noqa: BLE001 -- a refusal or a crash fails the check by name
+        back = f"{type(e).__name__}: {e}"
+    check("export_with_its_fq_off_keys_read_back_T_FQ3", back is True, str(back)[:200])
+    fi = next(i for i, r in enumerate(inv["models"]) if r["precision"] == "qat_fakequant_off")
+    qi = next(i for i, r in enumerate(inv["models"]) if r["precision"] == "int8_qat")
+    for name, fn, detail in (
+            ("fq_off_row_without_its_key_T_FQ3", lambda d: d["models"][fi].pop("fqoff_source"),
+             "missing ['fqoff_source']"),
+            ("fq_off_row_key_with_a_fifth_field_T_FQ3", lambda d: d["models"][fi]["fqoff_source"].update(epoch=1),
+             "unexpected ['epoch']"),
+            ("fq_off_row_key_winner_epoch_true_T_FQ3",
+             lambda d: d["models"][fi]["fqoff_source"].update(winner_epoch=True), "winner_epoch"),
+            ("fq_off_row_key_winner_epoch_a_float_T_FQ3",
+             lambda d: d["models"][fi]["fqoff_source"].update(winner_epoch=float(epoch)), "winner_epoch"),
+            ("fq_off_row_key_selection_without_its_sha256_T_FQ3",
+             lambda d: d["models"][fi]["fqoff_source"]["selection"].pop("sha256"), "selection"),
+            ("fq_off_row_key_run_dir_empty_T_FQ3", lambda d: d["models"][fi]["fqoff_source"].update(run_dir=""),
+             "run_dir"),
+            ("int8_qat_row_holding_the_key_T_FQ3", lambda d: d["models"][qi].update(
+                fqoff_source=copy.deepcopy(d["models"][fi]["fqoff_source"])), "unexpected ['fqoff_source']"),
+            ("fq_off_row_with_cells_T_FQ2", lambda d: d["models"][fi].update(cells=[PINS.IF6_CELLS[0]]),
+             "has no cells")):
+        inv_refused(name, "inventory_invalid", variant(fn), detail=detail)
+    text = runs_variant(w, qh["record"], "variant_epoch_text.json", {"winner.epoch": str(epoch)})
+    for name, doc, runs, want, detail in (
+            ("inventory_fq_off_key_without_runs_refused_T_FQ3", None, None, "inventory_invalid", "under --runs"),
+            ("inventory_fq_off_selection_record_not_the_cited_sha256_T_FQ3", mutated(w, lambda d: w.entry(
+                d, "E6:s42:sel")["hashed"]["record"].update(sha256="0" * 64)), w.runs, "derived_hash_mismatch",
+             "not the cited sha256"),
+            ("inventory_fq_off_selection_record_absent_T_FQ3", mutated(w, lambda d: w.entry(
+                d, "E6:s42:sel")["hashed"]["record"].update(path="e6_s42_15ep/absent_selection.json")), w.runs,
+             "derived_hash_mismatch", "unreadable"),
+            ("inventory_fq_off_winner_epoch_not_an_integer_T_FQ3", mutated(w, lambda d: w.entry(
+                d, "E6:s42:sel")["hashed"].update(record=dict(text))), w.runs, "derived_hash_mismatch",
+             "integer winner.epoch")):
+        got = built(doc, runs)
+        check(name, got[0] == want and detail in got[1], str(got)[:240])
+
+
 def case_shallow_records():
     """P2R6(e): "written once" is read over the records' history, so in a depth-1 clone records.py's history readers
     refuse (repository_shallow), once per Records: in the validator inside entry_file_rewritten, every earlier gate
@@ -2716,7 +2814,8 @@ def main() -> int:
                              case_derived_sources, case_appends_history, case_checkpoint_sources, case_arm_teacher,
                              case_run_identity, case_measurement, case_aborted, case_non_finite_gate, case_scope_gates,
                              case_moved_freeze, case_printers, case_draft_and_cli, case_inventory,
-                             case_inventory_dedup, case_inventory_dedup_reader, case_shallow_records,
+                             case_inventory_dedup, case_inventory_dedup_reader, case_inventory_fq_off,
+                             case_shallow_records,
                              case_malformed_inputs_refused, case_coverage))
     finally:
         if REAL_TEACHER is not None:

@@ -1372,12 +1372,61 @@ def case_bound_export():
         (out / BIND_NAMES[0]).read_bytes())["artifacts"])
 
 
+def case_fq_off():
+    """B3R10 through bind. T-FQ7: bind writes each qat_fakequant_off row's record with scope fq_off, no cell, the
+    canvas protocol and checkpoint_sha256 its row's source.sha256, held by the full check's identity and
+    execution-context items. NOTE-FQ-U4-1: E5 seed 42's fqoff_source (T-FQ3) names the U4 winner's run -- the run the
+    pilot's clip selection names -- and bind, running TB9's pilot-winner check under --runs, refuses a manifest whose
+    selection names the loser's run, writing nothing."""
+    import json
+    from src.tman import binding as B
+    w = bind_world()
+    rows = {(m["slot"], m["precision"]): m for m in w.export["models"]}
+    fq = sorted(k for k in rows if k[1] == "qat_fakequant_off")
+    rc, txt, out = w.bind()
+    recs = [r for r in (B.read((out / BIND_NAMES[0]).read_bytes())["artifacts"] if rc == 0 else [])
+            if r["precision"] == "qat_fakequant_off"]
+    check("bind_writes_fq_off_records_no_cell_canvas_the_source_checkpoint_T_FQ7", rc == 0 and len(fq) >= 2
+          and sorted((r["slot"], r["precision"]) for r in recs) == fq and all(
+              r["scope"] == "fq_off" and r["cell"] is None and r["protocol"] == "canvas"
+              and r["checkpoint_sha256"] == rows[(r["slot"], r["precision"])]["source"]["sha256"] for r in recs),
+          txt.strip()[-300:])
+    key = next(k for k in w.keys if k[2] == "fq_off")
+    for name, code, edit in (("bind_fq_off_artifact_of_another_checkpoint_T_FQ7", "binding_identity_mismatch",
+                              lambda d: d["run"].update(checkpoint_sha256=h(8))),
+                             ("bind_fq_off_artifact_of_another_execution_context_T_FQ7", "binding_context_split",
+                              lambda d: d["run"]["eval_runtime"].update(torch_num_threads=8))):
+        with edited(w, key, "summary.json", summary_edit(edit)):
+            rc, txt, o = w.bind()
+        check(name, rc == 2 and f"REFUSED [{code}]" in txt and not (o / BIND_NAMES[0]).exists(), txt.strip()[-300:])
+    man = json.loads((w.folder / w.S.MANIFEST_REL).read_bytes())
+    e5 = next(e for e in man["body"]["entries"] if e["slot"] == "E5:s42:sel")
+    clip = json.loads((w.u.w.runs / e5["inputs"]["clip_selection"]["path"]).read_bytes())
+    key5 = rows.get(("E5:s42:sel", "qat_fakequant_off"), {}).get("fqoff_source") or {}
+    check("e5_seed_42_key_names_the_u4_winner_s_run_NOTE_FQ_U4_1", key5.get("run_dir") == clip["winner"]["run_id"]
+          == rows.get(("E5:s42:sel", "qat_fakequant_off"), {}).get("training_run_id") != clip["loser"]["run_id"]
+          and key5.get("selection") == e5["hashed"]["record"]
+          and key5.get("telemetry_sha256") == clip["winner"]["telemetry_sha256"], str(key5)[:300])
+    loser = w.u.w.qat[clip["loser"]["run_id"]]                 # the validate world's U4 loser, clip 1.0
+    bad = copy.deepcopy(man)
+    e = next(x for x in bad["body"]["entries"] if x["slot"] == "E5:s42:sel")
+    e["parent"] = "E5:s42:clip1:15ep"
+    e["inputs"].update(run_slot="E5:s42:clip1:15ep", telemetry_sha256=loser["telemetry_sha256"])
+    e["hashed"] = copy.deepcopy(loser["hashed"])
+    w.u.commit_manifest(bad)                   # committed as the session's manifest (the case is the world's last)
+    folder, head = w.u.export()
+    rc, txt, o = w.bind(**{"--manifest": folder / w.S.MANIFEST_REL, "--records": folder, "--records-commit": head})
+    check("bind_refuses_a_selection_naming_the_u4_loser_s_run_NOTE_FQ_U4_1", rc == 2
+          and "REFUSED [derived_hash_mismatch]" in txt and "the pilot's winner" in txt
+          and not (o / BIND_NAMES[0]).exists(), txt.strip()[-300:])
+
+
 def main() -> int:
     return FX.run_cases("TMAN BINDING SMOKE (lane TMAN, B-3b)",
                         (case_one_definition, case_import_closure, case_stats_restated, case_file_check,
                          case_export_check, case_inputs_reason, case_stats_loader, case_stats_doors,
                          case_stats_verifier, case_stats_writer_gate, case_full_check, case_bind,
-                         case_score_blind_reads, case_bound_export))
+                         case_score_blind_reads, case_bound_export, case_fq_off))
 
 
 if __name__ == "__main__":

@@ -248,6 +248,10 @@ def case_paths_resolved_where_read():
         check("inventory_telemetry_resolved_under_the_runs_root_B84", refused_where_read(
             w.runs / e1["attempts"][0]["run_id"] / name, M.build_inventory, w.doc, w.data, w.records, w.cat,
             runs_root=w.runs, registered=PINS.IF6_CELLS) == "test_path")
+        q6 = next(x for x in w.doc["body"]["entries"] if x["slot"] == "E6:s42:sel")
+        check("inventory_fq_off_selection_record_resolved_under_the_runs_root_T_FQ3", refused_where_read(
+            w.runs / q6["hashed"]["record"]["path"], M.build_inventory, w.doc, w.data, w.records, w.cat,
+            runs_root=w.runs, registered=PINS.IF6_CELLS) == "test_path")
         first = sorted(q.name for q in w.runs.iterdir())[0]
         check("run_index_name_resolved_under_the_runs_root_B84",
               refused_where_read(w.runs / first, C.RunIndex, w.cat, None, w.runs) == "test_path")
@@ -425,6 +429,33 @@ def case_evaluator_closure_never_reads_a_test_named_module():
         ["scripts/evaluate_model.py", "scripts/evaluate_corruptions.py", "scripts/profile_efficiency.py",   # (x)
          "scripts/build_corruption_cache.py", "scripts/verify_corruption_cache.py",                       # IF§10
          "scripts/run_corruption_grid.py", "scripts/report_robustness.py"]), str(M.EVALUATOR_ROOTS))
+
+
+# T-FQ8: the src/quant modules the fake-quant-off path loads, named by L-FQOFF's report (fqoff.md :1297-1301)
+FQOFF_QUANT = ("calibration", "checkpoint", "prepare", "qat", "qat_artifacts", "qat_select", "qconfig", "stages",
+               "x86_latency")
+
+
+def case_evaluator_files_at_head():
+    """T-FQ8 (B3R10): the evaluator file set at this checkout's HEAD -- manifest.evaluator_files, which follows
+    function-level imports -- holds the nine src/quant modules the fake-quant-off path imports and their package; a
+    module whose path holds "test" is recorded by its blob id, never shown (read)."""
+    from src.tman import manifest as M
+    from src.training import sweep_select as ss
+
+    class Guarded(ss.HeadSource):
+        def show(self, commit, rel):
+            if "test" in rel.lower():
+                raise AssertionError(f"the closure read {rel}")
+            return super().show(commit, rel)
+    src = Guarded(REPO)
+    try:
+        files, err = M.evaluator_files(src, src.head()), ""
+    except AssertionError as e:
+        files, err = {}, str(e)
+    want = ["src/quant/__init__.py"] + [f"src/quant/{m}.py" for m in FQOFF_QUANT]
+    check("evaluator_files_at_head_hold_the_fq_off_path_s_nine_src_quant_modules_T_FQ8", not err
+          and len(FQOFF_QUANT) == 9 and all(f in files for f in want), err or str(sorted(set(want) - set(files))))
 
 
 def post_freeze_ptq_append(w, out: Path, base: list) -> None:
@@ -725,4 +756,4 @@ if __name__ == "__main__":
                                   (case_created_names, case_test_paths_refused_before_any_call,
                                    case_cli_test_named_arguments, case_paths_resolved_where_read,
                                    case_static_file_access, case_evaluator_closure_never_reads_a_test_named_module,
-                                   case_cli_outputs)))
+                                   case_evaluator_files_at_head, case_cli_outputs)))
