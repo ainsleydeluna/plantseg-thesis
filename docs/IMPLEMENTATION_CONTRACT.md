@@ -735,11 +735,19 @@ These are **operational** parameters. None of them touches a `[ch3]`-traced meth
 **Efficiency (descriptive only)**
 - params · model size (deterministic **parameter-byte footprint**: INT8=1B/weight, FP32=4B/weight,
   bias+per-channel scale/zero-point=4B each) **+** serialized on-disk size, measured per the
-  **which-artifact rule** below.
+  **which-artifact rule** below. **[UPDATED 2026-10-30 — LEFF; DL-186]** FP32 serialized size: the
+  checkpoint file of record, with its model-only serialization as a labelled companion.
 - **FLOPs = 2 × MACs** via fvcore @ 512×512, profiled from the **FP32** architecture (QAT does not cut FLOPs).
 - **CPU-proxy latency** via `torch.utils.benchmark` (CPU, batch 1, **20 warm-up + 100 measured**,
-  median / IQR / p95, `eval()` + `inference_mode()`, AMP off, fixed thread count).
-- **Peak memory** via `resource.getrusage` / psutil RSS delta.
+  median / IQR / p95, `eval()` + `inference_mode()`, AMP off, ~~fixed thread count~~
+  **[UPDATED 2026-10-30 — LEFF; DL-183, DL-186]** fixed thread count: 1 intra-op and 1 inter-op thread
+  (DL-183), enforced by scripts/profile_efficiency.py --of-record and recorded in every efficiency record;
+  Timer.timeit(1), each observation after two untimed executions, recorded).
+- ~~**Peak memory** via `resource.getrusage` / psutil RSS delta.~~ **[UPDATED 2026-10-30 — LEFF; DL-184]**
+  **Peak memory**: the RSS high-water mark over the 120 forwards minus the RSS after the model load, the
+  high-water mark reset at that point (/proc/self/clear_refs), in a fresh process per stage, with a
+  recorded slack of max(1 MiB, 64 pages × (threads + 1)) between VmHWM and VmRSS after the reset;
+  ru_maxrss (resource.getrusage) recorded alongside; INT8 on the x86 copy (DL-184).
 - ~~No ARM / on-device latency claimed. All runtime/memory results are **CPU PROXY**.~~
   **[UPDATED 2026-09-24 — B65 CP-006]** No on-device latency is claimed (Chapter 3 p. 141 stands). The
   official runtime/memory results are **CPU PROXY** (x86). Supplementary, descriptive (AM-16 item 7): the
