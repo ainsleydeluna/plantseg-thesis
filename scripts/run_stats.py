@@ -2,7 +2,7 @@
 """Statistics driver command line (lane L-STATS-OFFICIAL).
 
   --mode official  --inputs LIST.json --out-dir DIR --run-id ID --confirm-official-test-analysis
-                   --synthetic-inputs [--repo-root DIR] [--B 10000] [--jobs N]
+                   [--synthetic-inputs [--repo-root DIR]] [--B 10000] [--jobs N]
       The 37 inputs of STATISTICAL_ANALYSIS_CONTRACT section 12.4.6, named in an input-list file
       (plantseg-stats-inputs/1.0.0), under the OFFICIAL policy and the official namespace, written as
       a section 12 artifact at DIR/ID. Door order (P13): the confirmation flag; the binding rule

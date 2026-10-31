@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """Smoke for B-3b's mutation tests (lane TMAN, B-3b; B3R12): every refusal and rule of src/tman/binding.py and of
-scripts/tday_manifest.py's bind has a mutation killed by a named case of smoke_tman_binding.
+scripts/tday_manifest.py's bind, and src/stats/artifact.py's writer gate (B3B-F3), has a mutation killed by a named
+case of smoke_tman_binding.
 
 smoke_tman_b3_mutations.py's form: a mutation replaces exact texts (each must occur once) in a scratch copy of the
-two files, under the system temp dir; a fresh interpreter imports the copy as src.tman.binding and
-scripts.tday_manifest (the lane's other modules, and src.stats, stay the checkout's; src.stats.artifact's import of
-BINDING_REL then reaches the copy) and runs one case of smoke_tman_binding up to its named check. The mutation is
+three files, under the system temp dir; a fresh interpreter imports the copy as src.tman.binding and
+scripts.tday_manifest, and, for a writer-gate mutation and its case, runs the artifact copy's text as
+src.stats.artifact under the checkout's file name, so the paths it derives are the checkout's (the lane's other
+modules, and the rest of src.stats, stay the checkout's; src.stats.artifact's import of BINDING_REL then reaches the
+copy) and runs one case of smoke_tman_binding up to its named check. The mutation is
 killed when that named check fails; a crash, or another check failing, is no kill. Each killing case first passes
 alone on the unmutated copy, its named checks among those it records. The repository's files are read, never
 written; the scratch copies are removed.
@@ -35,6 +38,7 @@ if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
 BIN, CLI = "src/tman/binding.py", "scripts/tday_manifest.py"
+ART = "src/stats/artifact.py"                         # B3B-F3: the writer gate's mutations only (spec "art")
 SMOKES = {"binding": "scripts.smoke_tman_binding"}
 RESULT_TAG = "MUTATION-RESULT "
 WORD = "te" + "st"                                   # project rule 4's word, never written whole here
@@ -378,6 +382,16 @@ M = [
     ("bind_artifact_word_guard_dropped", CLI, [("    S.refuse_test_path(rel, root)\n    folder = Path(root) / rel\n",
                                                 "    folder = Path(root) / rel\n")],
      "binding", "case_score_blind_reads", "bind_artifact_path_resolved_under_the_root_B3R9", [WORD + "_path"]),
+    # ------------------------------------------------- src/stats/artifact.py: the writer gate (B3B-F3; DL-24 R2-1)
+    ("writer_gate_raises_unconditionally", ART, [(
+        "        unmet = official_conditions(fam, views, contract_bytes, hooks=hooks)\n        if unmet:\n"
+        '            raise WriterGateRefused(tuple(f"{n}: {d}" for n, d in unmet))\n',
+        '        raise WriterGateRefused(tuple(f"{n}: {d}" for n, d in official_conditions(\n'
+        "            fam, views, contract_bytes, hooks=hooks)))\n")],          # MB4's two lines, restored
+     "binding", "case_stats_writer_gate", "writer_gate_passes_an_official_request_with_every_condition_met_R2_1", []),
+    ("writer_gate_never_refuses", ART, [("        if unmet:\n            raise WriterGateRefused(",
+                                         "        if False:\n            raise WriterGateRefused(")],
+     "binding", "case_stats_writer_gate", "writer_gate_refuses_an_unmet_condition_by_name_R2_1", []),
 ]
 # The refusal codes of the binding's code (schema.TmanRefused, and strict_json's code=) -- binding.py's, the full
 # check's eight (B3R5) and bind's own (B3R8) -- and B-1's guard's: each has a killed mutation (a static case ties
@@ -406,6 +420,13 @@ def worker(spec: dict) -> dict:
         return mod
     src.tman.binding = load("src.tman.binding", root / BIN)
     load("scripts.tday_manifest", root / CLI).REPO = REPO
+    if spec.get("art"):        # B3B-F3: the copy's text runs as src.stats.artifact with the checkout's __file__, so
+        import types           # CODE_REPO and every path and default it derives are the checkout's
+        import src.stats
+        art = types.ModuleType("src.stats.artifact")
+        art.__file__, art.__package__ = str(REPO / ART), "src.stats"
+        sys.modules["src.stats.artifact"] = src.stats.artifact = art
+        exec(compile((root / ART).read_text(encoding="utf-8"), str(root / ART), "exec"), art.__dict__)
     import scripts.smoke_tman_schema as FX
     first, target = FX.check, spec["check"]
 
@@ -434,10 +455,10 @@ def worker(spec: dict) -> dict:
 
 # ================================================================================================ the parent
 def scratch_root(edits_by_file: dict, FX) -> Path:
-    """A scratch copy of the two files with the edits applied; each old text must occur exactly once (ValueError
+    """A scratch copy of the three files with the edits applied; each old text must occur exactly once (ValueError
     otherwise)."""
     root = FX.scratch_dir("tmanbbmut")
-    for rel in (BIN, CLI):
+    for rel in (BIN, CLI, ART):
         text = (REPO / rel).read_bytes().decode("utf-8")
         for old, new in edits_by_file.get(rel, ()):
             if text.count(old) != 1:
@@ -462,7 +483,7 @@ def run_worker(spec: dict) -> dict:
 
 
 def files_sha256() -> dict:
-    return {rel: hashlib.sha256((REPO / rel).read_bytes()).hexdigest() for rel in (BIN, CLI)}
+    return {rel: hashlib.sha256((REPO / rel).read_bytes()).hexdigest() for rel in (BIN, CLI, ART)}
 
 
 def raised_codes(path: Path, functions=None) -> set:
@@ -496,15 +517,17 @@ def case_mutations():
     clean = scratch_root({}, FX)
     mutations = [m for m in M if not ONLY or m[0] in ONLY]
     cases = sorted({(m[3], m[4]) for m in mutations})
-    jobs = [("baseline", (smoke, case), {"root": str(clean), "smoke": smoke, "case": case, "check": None})
-            for smoke, case in cases]
+    art = {(m[3], m[4]) for m in mutations if m[1] == ART}            # a case of ART's runs on its copy, baseline too
+    jobs = [("baseline", (smoke, case), {"root": str(clean), "smoke": smoke, "case": case, "check": None,
+                                         "art": (smoke, case) in art}) for smoke, case in cases]
     for mid, rel, edits, smoke, case, target, codes in mutations:
         try:
             root = scratch_root({rel: edits}, FX)
         except ValueError as e:
             check(f"mut_{mid}_text_occurs_once", False, str(e))
             continue
-        jobs.append(("mutation", mid, {"root": str(root), "smoke": smoke, "case": case, "check": target}))
+        jobs.append(("mutation", mid, {"root": str(root), "smoke": smoke, "case": case, "check": target,
+                                       "art": rel == ART}))
     with ThreadPoolExecutor(max_workers=max(1, min(4, os.cpu_count() or 1))) as pool:
         outs = list(pool.map(lambda job: run_worker(job[2]), jobs))
     targets = {}

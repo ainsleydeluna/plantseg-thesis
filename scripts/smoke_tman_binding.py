@@ -778,6 +778,31 @@ def case_stats_verifier():
     stats_binding(fx)
 
 
+def case_stats_writer_gate():
+    """B3B-F3 (DL-24 R2-1): the writer gate refuses an official request only when official_conditions lists an unmet
+    condition, which B3R6 made possible (a bound request whose inputs are the binding's lists none): with none
+    listed the gate passes and returns the 37 views; with one it refuses, naming it. official_conditions is replaced
+    for the block, so the gate's own rule is what is checked, every earlier step of the gate passing on the fixture."""
+    fx = stats_fixture()
+    A = fx["A"]
+    fam = dict(A.build_family(fx["inp"]), artifact_status=A.STATUS_OFFICIAL)
+    saved, got = A.official_conditions, {}
+    for name, unmet in (("met", ()), ("unmet", (("policy_not_official", "policies ['nonofficial_smoke']"),))):
+        A.official_conditions = lambda *a, unmet=unmet, **kw: unmet
+        try:
+            got[name] = ("passed", len(A.check_writer_gate(fx["inp"], fam, fx["craw"]).by_path()))
+        except A.WriterGateRefused as e:
+            got[name] = ("refused", e.unmet)
+        except Exception as e:  # noqa: BLE001 -- a crash fails its check
+            got[name] = (type(e).__name__, str(e)[:200])
+        finally:
+            A.official_conditions = saved
+    check("writer_gate_passes_an_official_request_with_every_condition_met_R2_1", got["met"] == ("passed", 37),
+          str(got["met"]))
+    check("writer_gate_refuses_an_unmet_condition_by_name_R2_1", got["unmet"] == (
+        "refused", ("policy_not_official: policies ['nonofficial_smoke']",)), str(got["unmet"]))
+
+
 # ========================================================================================== the full check
 SEV45 = [c for c in PINS.IF6_CELLS if c not in INFERENTIAL]                         # the corrupted_sev45 scope's 9
 RULED_CHECKS = ("binding_invalid", "binding_manifest_mismatch", "binding_incomplete", "binding_identity_mismatch",
@@ -1351,8 +1376,8 @@ def main() -> int:
     return FX.run_cases("TMAN BINDING SMOKE (lane TMAN, B-3b)",
                         (case_one_definition, case_import_closure, case_stats_restated, case_file_check,
                          case_export_check, case_inputs_reason, case_stats_loader, case_stats_doors,
-                         case_stats_verifier, case_full_check, case_bind, case_score_blind_reads,
-                         case_bound_export))
+                         case_stats_verifier, case_stats_writer_gate, case_full_check, case_bind,
+                         case_score_blind_reads, case_bound_export))
 
 
 if __name__ == "__main__":
