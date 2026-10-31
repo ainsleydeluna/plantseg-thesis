@@ -528,21 +528,20 @@ def _now_utc() -> str:
 
 def official_doors(*, confirm: bool, synthetic: bool, repo_root=None) -> None:
     """P13 doors 1 and 2, before any file is read: the confirmation flag, then the binding and
-    synthetic rules -- --repo-root only with --synthetic-inputs (Q2, P16), and, while the TEST-manifest
-    binding is unbound, official mode only on inputs declared synthetic (P2, P14)."""
-    from .artifact import TEST_MANIFEST_BINDING
+    synthetic rules -- --repo-root only with --synthetic-inputs (Q2, P16), and official mode on
+    inputs not declared synthetic only with a file at TEST_MANIFEST_BINDING (P2, P14; no open)."""
+    import os
+    from .artifact import CODE_REPO, TEST_MANIFEST_BINDING
     if not confirm:
         raise DriverRefusal("official mode reads the 37 TEST inputs of section 12.4.6 and requires "
                             "--confirm-official-test-analysis")
     if repo_root is not None and not synthetic:
         raise DriverRefusal("--repo-root is accepted in official mode only with --synthetic-inputs "
                             "(Q2, P16): official inputs resolve inside this code's repository")
-    if TEST_MANIFEST_BINDING != "unbound":                # fail closed: there is no bound branch
-        raise DriverRefusal(f"unknown TEST_MANIFEST_BINDING {TEST_MANIFEST_BINDING!r}")
-    if not synthetic:
-        raise DriverRefusal("the TEST-manifest binding is unbound: official mode runs only on inputs "
-                            "declared synthetic (--synthetic-inputs), and no official statistics "
-                            "artifact can be written (P2)")
+    if not synthetic and not os.path.isfile(CODE_REPO / TEST_MANIFEST_BINDING):
+        raise DriverRefusal(f"the TEST-manifest binding is unbound: no {TEST_MANIFEST_BINDING} in "
+                            f"{CODE_REPO}; official mode runs only on inputs declared synthetic "
+                            "(--synthetic-inputs) until it is bound (P2)")
 
 
 def out_dir_door(out_dir, run_id) -> Path:
@@ -637,7 +636,7 @@ def run_official(*, inputs_list, out_dir, run_id, confirm: bool, synthetic: bool
         f"{obs.results[0].n_paired}")
     tasks = run_tasks(obs, ANALYSIS_ID_OFFICIAL, B, jobs=jobs)
     inp = artifact_inputs(obs, inputs, tasks, analysis_id=ANALYSIS_ID_OFFICIAL, run_id=run_id,
-                          created_at_utc=created, contract_sha256=contract_hex, synthetic=True,
+                          created_at_utc=created, contract_sha256=contract_hex, synthetic=synthetic,
                           input_root=input_root)
     unmet = A.unmet_official_conditions(inp)
     path = A.write_statistics_artifact(target, inp)

@@ -1,0 +1,759 @@
+#!/usr/bin/env python3
+"""Smoke for the TMAN lane's path rules (lane TMAN, B-1; C1: names and "test" refusals; C5: the code's file access
+and the command line's outputs).
+
+- Every path the lane creates or names for creation is free of "test" in any case, of ":", and of <>"/\\|?* inside
+  a component (TB7; IF§2): the catalogue's file_ids, every entry-file name, the record paths, the out-dir names of
+  IF§2 and the lane's own files (a static case: nothing is created).
+- A path containing "test" is refused as given before any filesystem call: a tracer counts os.stat, os.lstat,
+  os.scandir, os.listdir, open and io.open on never-created strings and must record zero (LANGUAGE=C, as DL-90).
+  The resolved form is shown with os.path.realpath patched for one call and restored in a finally block; no file
+  or folder whose name contains "test" is created.
+- C5, static: the lane's code walks no directory (its listings: a teacher work dir's log folders, the runs folder and,
+  in the hasher, the image folder), searches neither the repository root nor docs/ (its docs/ literals are two record
+  paths), and writes only through three exclusive opens ("xb"), the hasher's cleanup of its own outputs aside: no
+  write path reaches docs/DECISION_LOG.md (P2R11 adds B-3a's two code files).
+- C5, the command line: every command writes only new files in --out, a folder outside the repository at --root
+  and this checkout; a second write is refused; the scratch repository is unchanged and its decision log is never
+  written (the entry command prints the row); a "test" path given to a command or a reader is refused before any
+  filesystem call.
+
+Run:  python -B scripts/smoke_tman_paths.py
+"""
+from __future__ import annotations
+
+import sys
+
+sys.dont_write_bytecode = True
+
+import builtins  # noqa: E402
+import io  # noqa: E402
+import os  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
+os.environ["LANGUAGE"] = "C"
+REPO = Path(__file__).resolve().parents[1]
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
+
+import scripts.smoke_tman_schema as FX  # noqa: E402  (the TMAN fixture library)
+
+check, expect_refused = FX.check, FX.expect_refused
+
+# The IF§6 cell set (24 cells; R-055), injected until master has src.corruption_roles (TB6)
+IF6_CELLS = ([f"{c}_s{s}" for c in ("motion_blur", "gaussian_noise", "jpeg_compression", "brightness", "fog")
+              for s in (1, 2, 3)] + ["gaussian_noise_s4"]
+             + [f"{c}_s{s}" for c in ("motion_blur", "jpeg_compression", "brightness", "fog") for s in (4, 5)])
+LANE_FILES = ("src/tman/__init__.py", "src/tman/schema.py", "src/tman/records.py", "src/tman/completion.py",
+              "src/tman/schedule.py", "src/tman/entries.py", "src/tman/manifest.py", "src/tman/validate.py",
+              "src/tman/am22.py", "src/tman/dedup.py", "src/tman/binding.py", "configs/tday_catalogue.json",
+              "scripts/tday_manifest.py", "scripts/tday_hash_images.py", "docs/lane_reports/tman.md",
+              "docs/lane_reports/tman_b3.md") + tuple(
+    f"scripts/smoke_tman_{n}.py" for n in ("schema", "cuts", "parent", "derived", "complete", "pins", "validate",
+                                           "unlock", "noscore", "determinism", "paths", "mutations", "am22", "dedup",
+                                           "hasher", "b3_mutations", "binding", "b3b_mutations"))
+MARKER = "nonexistent_tman_fx"          # a top-level folder that is never created
+
+
+class Tracer:
+    """Counts filesystem calls whose path argument holds `marker`, then calls through."""
+
+    NAMES = (("os", "stat"), ("os", "lstat"), ("os", "scandir"), ("os", "listdir"), ("builtins", "open"),
+             ("io", "open"))
+
+    def __init__(self, marker: str):
+        self.marker, self.calls, self.saved = marker, [], {}
+
+    def __enter__(self):
+        mods = {"os": os, "builtins": builtins, "io": io}
+        for mod, name in self.NAMES:
+            orig = getattr(mods[mod], name)
+            self.saved[(mod, name)] = orig
+
+            def wrapper(*a, _orig=orig, _name=f"{mod}.{name}", **kw):
+                if a and self.marker in str(a[0]):
+                    self.calls.append((_name, str(a[0])))
+                return _orig(*a, **kw)
+            setattr(mods[mod], name, wrapper)
+        return self
+
+    def __exit__(self, *exc):
+        mods = {"os": os, "builtins": builtins, "io": io}
+        for (mod, name), orig in self.saved.items():
+            setattr(mods[mod], name, orig)
+        return False
+
+
+class Resolving:
+    """os.path.realpath sends `target` alone to a location whose name holds "test" in no "test" component (so
+    sweep_select's own component rule passes it); restored on exit."""
+
+    HIT = f"/{MARKER}/resolved/la" + "test/target"
+
+    def __init__(self, target):
+        self.target, self.saved = os.fspath(target), None
+
+    def __enter__(self):
+        self.saved = saved = os.path.realpath
+        os.path.realpath = lambda q, *a, **kw: self.HIT if os.fspath(q) == self.target else saved(q, *a, **kw)
+        return self
+
+    def __exit__(self, *exc):
+        os.path.realpath = self.saved
+        return False
+
+
+def refused_where_read(target, fn, *a, **kw):
+    """The code `fn` raises while `target` resolves into a "test" location (a crash: its type name)."""
+    with Resolving(target):
+        try:
+            return FX.refused_code(fn, *a, **kw)
+        except Exception as e:  # noqa: BLE001 -- a crash fails the check by name
+            return type(e).__name__
+
+
+def case_created_names():
+    from src.tman import schema as S
+    cat = S.load_catalogue((REPO / S.CATALOGUE_REL).read_bytes())
+    names = [S.MANIFEST_REL, S.LANES_REL, S.ENTRIES_DIR_REL, S.CATALOGUE_REL, *LANE_FILES]
+    file_ids = list(cat.by_file_id) + [S.SESSION_FILE_ID]
+    for fid in file_ids:
+        for kind in S.ENTRY_FILE_KINDS:
+            for nn in (1, 99):
+                names.append(S.entry_file_rel(S.entry_file_name(kind, fid, "2026-11-03", nn)))
+        names += [f"tday_clean_{fid}", f"tday_upstream_{fid}", f"tday_fqoff_{fid}"]
+        names += [f"tday_corr_{fid}_{c}" for c in IF6_CELLS]
+    bad = [n for n in names if S.created_name_error(n)]
+    want = 4 + len(LANE_FILES) + len(file_ids) * (2 * len(S.ENTRY_FILE_KINDS) + 3 + len(IF6_CELLS))
+    check("created_names_free_of_test_colon_and_reserved_TB7", not bad and len(file_ids) == 70
+          and len(IF6_CELLS) == 24 and len(names) == want == 3328, f"{len(names)} names (want {want}); bad {bad[:5]}")
+    check("lane_files_free_of_test_TB7", all(S.created_name_error(p) is None for p in LANE_FILES)
+          and len(LANE_FILES) == 34)    # B-2 adds am22.py and its smoke; P2R11 B-3a's six (code, report, smokes);
+    #                                     B3R12 B-3b's three (binding.py and its two smokes)
+
+
+def case_test_paths_refused_before_any_call():
+    from src.tman import records as R
+    from src.tman import schema as S
+    probes = [f"/{MARKER}/images/test/a.jpg", f"/{MARKER}/TEST/run", f"/{MARKER}/annotation_test.json",
+              f"/{MARKER}/x/Test_dir/e1_telemetry.jsonl"]
+    for i, p in enumerate(probes):
+        with Tracer(MARKER) as t:
+            code = FX.refused_code(S.refuse_test_path, p)
+        check(f"test_path_refused_as_given_{i}", code == "test_path" and not t.calls, f"{code} {t.calls}")
+    for name, fn, a, kw in (("read_jsonl", R.read_jsonl, (Path(probes[3]), R.KD_ROWS),
+                             {"code": "completion_record_invalid"}),
+                            ("read_json_file", R.read_json_file, (Path(probes[2]), R.SELECTION),
+                             {"code": "reference_mismatch"}),
+                            ("read_ptq_record", R.read_ptq_record, (probes[1], "0" * 64), {"reader": print})):
+        with Tracer(MARKER) as t:
+            code = FX.refused_code(fn, *a, **kw)
+        check(f"reader_{name}_refuses_test_path_before_any_call", code == "test_path" and not t.calls,
+              f"{code} {t.calls}")
+    saved = os.path.realpath
+    try:
+        os.path.realpath = lambda p, *a, **kw: f"/{MARKER}/resolved/te" + "st/target"
+        code = FX.refused_code(S.refuse_test_path, f"/{MARKER}/plain/link")
+    finally:
+        os.path.realpath = saved
+    check("test_path_refused_as_resolved", code == "test_path", str(code))
+    check("plain_path_accepted", S.test_path_error(f"/{MARKER}/plain/run") is None)
+    check("marker_never_created", not os.path.lexists(f"/{MARKER}"))
+
+
+# ======================================================================================================== C5
+LISTING_CALLS = ("walk", "glob", "rglob", "listdir", "scandir", "iterdir")
+WRITE_CALLS = ("write_bytes", "write_text", "mkdir", "makedirs", "unlink", "rmdir", "rename", "remove", "rmtree",
+               "touch", "symlink_to", "copyfile", "copytree", "move", "chmod")
+
+
+def case_cli_test_named_arguments():
+    """Every path argument holding "test" is refused before any call on any path given (DL-24 #7, #10): --root for
+    each command, --runs for each command that takes it, and each other path argument once."""
+    plain, bad = f"/{MARKER}/plain", f"/{MARKER}/te" + "st_x"
+    cmds = {"build": ["build", "--sources", f"{plain}/s.json", "--out", f"{plain}/out"],
+            "validate": ["validate", "--manifest", f"{plain}/m.json", "--mode", "draft"],
+            "entry": ["entry", "not_made", "--slot", "E7-E2:s42:list42", "--date", "2026-11-03", "--fields",
+                      f"{plain}/f.json", "--amendment", "AM-23", "--summary", "s", "--out", f"{plain}/out"],
+            "arithmetic": ["arithmetic", "--slot", "E2:s43:lambda0.5:80k"],
+            "append": ["append", "--manifest", f"{plain}/m.json", "--slot", "E4:s42:list43", "--hashed",
+                       f"{plain}/h.json", "--out", f"{plain}/out"],
+            "isolation-record": ["isolation-record", "--data-root", f"{plain}/data", "--out", f"{plain}/out"],
+            "inventory": ["inventory", "--manifest", f"{plain}/m.json", "--out", f"{plain}/out"],
+            "bind": ["bind", "--manifest", f"{plain}/m.json", "--records", f"{plain}/records", "--records-commit",
+                     "e1" * 20, "--dedup", f"{plain}/d.json", "--inventory", f"{plain}/i.json", "--runs",
+                     f"{plain}/runs", "--freeze-record", f"{plain}/f.json", "--unlock-entry", f"{plain}/u.json",
+                     "--out", f"{plain}/out"]}                                      # B3R8
+
+    def with_arg(argv: list, flag: str, value: str) -> list:
+        i = argv.index(flag) if flag in argv else None
+        return argv + [flag, value] if i is None else argv[:i + 1] + [value] + argv[i + 2:]
+    runs = [(f"cli_{c.replace('-', '_')}_root_holding_test_B7", ["--root", bad] + argv) for c, argv in cmds.items()]
+    runs += [(f"cli_{c}_runs_holding_test_B10", ["--root", plain] + with_arg(cmds[c], "--runs", bad))
+             for c in ("build", "validate", "entry", "arithmetic", "append", "inventory", "bind")]
+    runs += [(f"cli_{c}_{flag[2:].replace('-', '_')}_holding_test", ["--root", plain] + with_arg(cmds[c], flag, bad))
+             for c, flag in (("build", "--sources"), ("build", "--registered-cells"), ("validate", "--freeze-record"),
+                             ("validate", "--unlock-entry"), ("validate", "--records"), ("validate", "--dedup"),
+                             ("inventory", "--dedup"), ("entry", "--fields"),
+                             ("arithmetic", "--reference-telemetry"), ("arithmetic", "--reference-smoke"),
+                             ("append", "--hashed"), ("append", "--ptq-record"), ("inventory", "--binding"),
+                             ("bind", "--inventory"))]                                 # B3R7, B3R8
+    for name, argv in runs:
+        with Tracer(MARKER) as t:
+            rc, txt = _cli(argv)
+        check(name, rc == 2 and "REFUSED [test_path]" in txt and not t.calls,
+              f"{rc} {txt.strip()[-120:]} {t.calls[:2]}")
+    with Resolving(plain), Tracer(MARKER) as t:
+        rc, txt = _cli(["--root", plain] + cmds["validate"])
+    check("cli_root_resolving_to_a_test_location_B7", rc == 2 and "REFUSED [test_path]" in txt and not t.calls,
+          f"{rc} {txt.strip()[-120:]} {t.calls[:2]}")
+    check("marker_never_created_by_the_command_line", not os.path.lexists(f"/{MARKER}"))
+
+
+def case_paths_resolved_where_read():
+    """A relative part is resolved under the folder it is read from -- the records' root or folder, the runs root,
+    a run directory, the export's folder for its dedup file and its binding file -- not in the working folder (DL-24
+    #84, #113; B-3a part 2's R3-F4; B3R7): os.path.realpath sends that one joined path to a "test" location, and
+    each reader refuses it before any call on it."""
+    import json
+    import scripts.smoke_tman_pins as PINS
+    import scripts.smoke_tman_validate as VW
+    import scripts.tday_manifest as CLI
+    from src.tman import completion as C
+    from src.tman import manifest as M
+    from src.tman import records as R
+    from src.tman import schedule as D
+    from src.tman import validate as V
+    w = VW.World()
+    try:
+        rel = w.cut_refs["ARM:latency"]["path"]
+        check("record_read_resolved_under_its_root_B113",
+              refused_where_read(w.records.src.root / rel, w.records.read, rel) == "test_path")
+        rs = R.Records.at_records_commit(FX.scratch_dir("tmanrecf"), FX.git(w.repo, "rev-parse", "HEAD"), root=w.repo)
+        check("record_read_resolved_under_the_records_folder_B84",
+              refused_where_read(rs.src.folder / rel, rs.read, rel) == "test_path")
+        ctx = w.ctx("freeze")
+        V.validate(ctx)
+        e = next(x for x in ctx.entries if x.get("checkpoint") and x.get("run_id"))
+        check("run_dir_resolved_under_the_runs_root_B84",
+              refused_where_read(ctx.runs_root / e["run_id"], ctx.run_dir, e["run_id"]) == "test_path")
+        check("checkpoint_name_resolved_under_its_run_directory_B84", refused_where_read(
+            ctx.runs_root / e["run_id"] / e["checkpoint"]["name"], V.g_checkpoint_missing, ctx) == "test_path")
+        g = w.sources["entries"]["E1:s42:80k"]
+        check("builder_run_id_resolved_under_the_runs_root_B84", refused_where_read(
+            w.runs / g["run_id"], M.build_entries, w.cat, w.sources["entries"], runs_root=w.runs) == "test_path")
+        e1 = next(x for x in w.doc["body"]["entries"] if x["slot"] == "E1:s42:80k")
+        name = M.telemetry_name(w.cat.slots["E1:s42:80k"])
+        check("inventory_telemetry_resolved_under_the_runs_root_B84", refused_where_read(
+            w.runs / e1["attempts"][0]["run_id"] / name, M.build_inventory, w.doc, w.data, w.records, w.cat,
+            runs_root=w.runs, registered=PINS.IF6_CELLS) == "test_path")
+        q6 = next(x for x in w.doc["body"]["entries"] if x["slot"] == "E6:s42:sel")
+        check("inventory_fq_off_selection_record_resolved_under_the_runs_root_T_FQ3", refused_where_read(
+            w.runs / q6["hashed"]["record"]["path"], M.build_inventory, w.doc, w.data, w.records, w.cat,
+            runs_root=w.runs, registered=PINS.IF6_CELLS) == "test_path")
+        first = sorted(q.name for q in w.runs.iterdir())[0]
+        check("run_index_name_resolved_under_the_runs_root_B84",
+              refused_where_read(w.runs / first, C.RunIndex, w.cat, None, w.runs) == "test_path")
+        idx = C.RunIndex(w.cat, None, w.runs)
+        rid = e1["attempts"][0]["run_id"]
+        check("run_index_state_resolved_under_the_runs_root_B84",
+              refused_where_read(w.runs / rid, idx.state, rid) == "test_path")
+        freeze = D.freeze_instant(D.schedule_block(w.records.src))
+        check("printer_run_ids_resolved_under_the_runs_root_B10", refused_where_read(
+            w.runs / "g_s42_80k_a9", CLI.printer_cut_context, w.records, w.cat, freeze, {"run_ids": ["g_s42_80k_a9"]},
+            w.runs) == "test_path")
+        dd = FX.scratch_dir("tmanpathdd")          # the dedup file's two guards, builder and reader (DL-24 R3-F4)
+        (dd / "tday_dedup.json").write_bytes(VW.dedup_fixture(w.doc["body"]["generator_pins"]["image_hasher"]["pin"]))
+        inv = dict(registered=PINS.IF6_CELLS, dedup=(dd / "tday_dedup.json", dd))
+        (dd / "inv.json").write_bytes(w.S.json_file_bytes(M.build_inventory(w.doc, w.data, w.records, w.cat,
+                                                                              runs_root=w.runs, **inv)))
+        check("inventory_dedup_given_resolved_where_read_R3F4", refused_where_read(
+            dd / "tday_dedup.json", M.build_inventory, w.doc, w.data, w.records, w.cat, runs_root=w.runs,
+            **inv) == "test_path")
+        check("export_dedup_path_resolved_where_read_R3F4",
+              refused_where_read(dd / "tday_dedup.json", V.read_inventory, dd / "inv.json") == "test_path")
+        (dd / "tday_binding.json").write_bytes(b"{}\n")      # the binding's two guards (B3R7): each refuses first
+        check("inventory_binding_given_resolved_where_read_B3R7", refused_where_read(
+            dd / "tday_binding.json", M.build_inventory, w.doc, w.data, w.records, w.cat, runs_root=w.runs,
+            binding=(dd / "tday_binding.json", dd), **inv) == "test_path")
+        bound = dict(json.loads((dd / "inv.json").read_bytes()),
+                     binding={"state": "bound", "path": "tday_binding.json", "sha256": "0" * 64})
+        (dd / "inv_bound.json").write_bytes(w.S.json_file_bytes(bound))
+        check("export_binding_path_resolved_where_read_B3R7",
+              refused_where_read(dd / "tday_binding.json", V.read_inventory, dd / "inv_bound.json") == "test_path")
+    finally:
+        if VW.REAL_TEACHER is not None:
+            w.M.TEACHER_OF_RECORD.clear()
+            w.M.TEACHER_OF_RECORD.update(VW.REAL_TEACHER)
+
+
+def lane_python() -> dict:
+    import ast
+    from src.tman import manifest as M
+    return {rel: ast.parse((M.CODE_ROOT / rel).read_text(encoding="utf-8")) for rel in M.LANE_CODE_FILES
+            if rel.endswith(".py")}
+
+
+def calls(tree):
+    """(name, node) of each call; the ast module's own walk is not a file access."""
+    import ast
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Call):
+            f = n.func
+            if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id == "ast":
+                continue
+            yield (f.attr if isinstance(f, ast.Attribute) else f.id if isinstance(f, ast.Name) else None), n
+
+
+def docstrings(tree) -> set:
+    import ast
+    return {id(n.body[0].value) for n in ast.walk(tree)
+            if isinstance(n, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) and n.body
+            and isinstance(n.body[0], ast.Expr) and isinstance(n.body[0].value, ast.Constant)}
+
+
+def listing_sites(mods: dict) -> list:
+    """(file, enclosing function, call) of each directory listing in the lane's code."""
+    import ast
+    return sorted((rel, fn.name, name) for rel, t in mods.items() for fn in ast.walk(t)
+                  if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef))
+                  for name, _ in calls(fn) if name in LISTING_CALLS)
+
+
+def case_static_file_access():
+    import ast
+    from src.tman import schema as S
+    mods = lane_python()
+    listing = listing_sites(mods)
+    hasher = "scripts/tday_hash_images.py"
+    # B2-F2: teacher_last_row lists the teacher's work dir as teacher_state does (AM-22 item 2(b); DL-24 R1-N2);
+    # P2R11: the hasher's one os.scandir of the image folder
+    check("listings_are_the_teacher_log_the_runs_folder_and_the_image_folder_only", len(mods) == 13   # P2R11, B3R2
+          and listing == [(hasher, "list_images", "scandir"),
+                          ("src/tman/completion.py", "__init__", "iterdir"),
+                          ("src/tman/completion.py", "teacher_last_row", "iterdir"),
+                          ("src/tman/completion.py", "teacher_state", "iterdir")], str(listing))
+    writes = sorted((rel, name) for rel, t in mods.items() for name, n in calls(t)
+                    if name in WRITE_CALLS or (name == "replace" and isinstance(n.func, ast.Attribute)
+                                               and isinstance(n.func.value, ast.Name) and n.func.value.id == "os"))
+    # the hasher's write_outputs and bind remove the files they created when a create or write fails (B3A-F1; DL-24
+    # R3-F3: both or neither)
+    cleanup = sorted((rel, name) for rel, t in mods.items() for fn in ast.walk(t) if isinstance(fn, ast.FunctionDef)
+                     and (rel, fn.name) in ((hasher, "write_outputs"), ("scripts/tday_manifest.py", "cmd_bind"))
+                     for name, _ in calls(fn) if name in WRITE_CALLS)
+    opens = sorted((rel, n.args[1].value if len(n.args) > 1 and isinstance(n.args[1], ast.Constant) else None)
+                   for rel, t in mods.items() for name, n in calls(t) if name == "open")
+    check("writes_only_through_three_exclusive_opens_and_two_cleanups_P2R11_R3F3",
+          writes == cleanup == [(hasher, "unlink"), ("scripts/tday_manifest.py", "unlink")]
+          and opens == [(hasher, "rb"), (hasher, "rb"), (hasher, "xb"), ("scripts/tday_manifest.py", "xb"),
+                        ("src/tman/entries.py", "xb")], f"{writes} {cleanup} {opens}")
+    # B3R12: bind's reads and its two exclusive writes (write_new, once per name of BIND_NAMES), and the binding's
+    # reads by the bound export's builder (B3R7) and by the statistics loader (B3R6), each a named file
+    import scripts.tday_manifest as CLI
+    cli, read_at = "scripts/tday_manifest.py", ("read_bytes", "read_text", "open", "write_new", "lexists", "exists",
+                                                "is_dir", "is_file", "isfile", "resolve", "stat")
+    bind = sorted((rel, fn.name, name) for rel, t in mods.items() for fn in ast.walk(t)
+                  if isinstance(fn, ast.FunctionDef) and fn.name in ("cmd_bind", "read_artifact", "export_binding",
+                                                                     "bound_reason")
+                  for name, _ in calls(fn) if name in read_at)
+    check("bind_reads_named_files_and_creates_its_two_outputs_B3R12", bind == [
+        (cli, "cmd_bind", "lexists"), (cli, "cmd_bind", "read_bytes"), (cli, "cmd_bind", "read_bytes"),
+        (cli, "cmd_bind", "read_bytes"), (cli, "cmd_bind", "write_new"), (cli, "read_artifact", "is_dir"),
+        (cli, "read_artifact", "read_bytes"), ("src/tman/binding.py", "bound_reason", "isfile"),
+        ("src/tman/binding.py", "bound_reason", "read_bytes"), ("src/tman/manifest.py", "export_binding", "read_bytes"),
+        ("src/tman/manifest.py", "export_binding", "resolve"), ("src/tman/manifest.py", "export_binding", "resolve")]
+          and CLI.BIND_NAMES == ("tday_binding.json", "tday_stats_inputs.json"), str(bind))
+    docs = sorted({n.value for t in mods.values() for n in ast.walk(t) if isinstance(n, ast.Constant)
+                   and isinstance(n.value, str) and n.value.startswith("docs") and id(n) not in docstrings(t)})
+    check("docs_literals_are_two_record_paths_no_search_root", docs == sorted([S.DECISION_LOG_REL,
+                                                                              S.AMENDMENTS_REL]), str(docs))
+
+
+class ClosureSource:
+    """An in-memory stand-in for sweep_select's source at one commit: {path: bytes}; `show` of a path holding
+    "test" raises (the closure must record it by blob id without reading it). Nothing touches the filesystem."""
+
+    def __init__(self, files: dict):
+        self.files, self.shown = files, []
+
+    def blob_at(self, commit, rel):
+        return f"{abs(hash(rel)) % 10 ** 12:040d}" if rel in self.files else None
+
+    def show(self, commit, rel):
+        if "test" in rel.lower():
+            raise AssertionError(f"the closure read {rel}")
+        self.shown.append(rel)
+        return self.files[rel]
+
+
+def case_evaluator_closure_never_reads_a_test_named_module():
+    """src/stats/tests.py is in the real evaluator's closure (src/stats/__init__.py imports .tests): the closure
+    records such a module by the blob id git's tree gives, never reads or parses it, and follows no import of
+    it; the rest of the closure is unchanged."""
+    from src.tman import manifest as M
+    hidden = "src/stats/te" + "sts.py"
+    src = ClosureSource({"scripts/evaluate_model.py": b"from src.stats import artifact\n",
+                         "src/__init__.py": b"", "src/stats/__init__.py": b"from .te" + b"sts import holm\n",
+                         "src/stats/artifact.py": b"import json\n", hidden: b"",
+                         "src/stats/only_from_hidden.py": b""})
+    try:
+        files = M.evaluator_files(src, "0" * 40)
+        err = ""
+    except AssertionError as e:
+        files, err = {}, str(e)
+    check("closure_records_a_test_named_module_by_blob_id_unread", not err and hidden in files
+          and files[hidden] == src.blob_at("0" * 40, hidden) and hidden not in src.shown
+          and "src/stats/only_from_hidden.py" not in files
+          and sorted(files) == sorted(["scripts/evaluate_model.py", "src/__init__.py", "src/stats/__init__.py",
+                                       "src/stats/artifact.py", hidden]), err or str(sorted(files)))
+    check("hash_only_is_a_name_test", M.hash_only(hidden) and M.hash_only("x/TEST_y.py")
+          and not M.hash_only("src/stats/artifact.py"))
+    teacher, r1, r2 = ("configs/teacher/segnext_mscan-b_1xb16-adamw-40k_plantseg116-512x512.py",
+                       "configs/teacher/arms/r1_bema.py", "configs/teacher/arms/r2_bema_rare.py")
+    src = ClosureSource({teacher: b"custom_imports = dict(imports=['src.training.teacher_components'])\n",
+                         r1: b"_base_ = ['../base_only.py']\n",
+                         "configs/teacher/base_only.py": b"_base_ = ['mmseg::x/y.py', '../../../outside.py']\n",
+                         "../outside.py": b"", r2: b"_base_ = ['./r1_bema.py']\ncustom_imports = "
+                                                  b"dict(imports=['src.training.arm_components'])\n",
+                         "src/__init__.py": b"", "src/training/__init__.py": b"",
+                         "src/training/teacher_components.py": b"", "src/training/arm_components.py": b""})
+    files = M.evaluator_files(src, "0" * 40)
+    check("closure_holds_the_arm_teacher_configs_B81", r1 in files and r2 in files, str(sorted(files)))
+    check("closure_follows_a_config_s_custom_imports_B81", "src/training/teacher_components.py" in files
+          and "src/training/arm_components.py" in files, str(sorted(files)))
+    check("closure_follows_a_config_s_bases_in_the_three_roots_B81", sorted(files) == sorted(
+        [teacher, r1, r2, "configs/teacher/base_only.py", "src/__init__.py", "src/training/__init__.py",
+         "src/training/teacher_components.py", "src/training/arm_components.py"]), str(sorted(files)))
+    check("evaluator_roots_are_decision_x_s_scripts_and_IF10_s_B79", sorted(M.EVALUATOR_ROOTS) == sorted(
+        ["scripts/evaluate_model.py", "scripts/evaluate_corruptions.py", "scripts/profile_efficiency.py",   # (x)
+         "scripts/build_corruption_cache.py", "scripts/verify_corruption_cache.py",                       # IF§10
+         "scripts/run_corruption_grid.py", "scripts/report_robustness.py"]), str(M.EVALUATOR_ROOTS))
+
+
+# T-FQ8: the src/quant modules the fake-quant-off path loads, named by L-FQOFF's report (fqoff.md :1297-1301)
+FQOFF_QUANT = ("calibration", "checkpoint", "prepare", "qat", "qat_artifacts", "qat_select", "qconfig", "stages",
+               "x86_latency")
+
+
+def case_evaluator_files_at_head():
+    """T-FQ8 (B3R10): the evaluator file set at this checkout's HEAD -- manifest.evaluator_files, which follows
+    function-level imports -- holds the nine src/quant modules the fake-quant-off path imports and their package; a
+    module whose path holds "test" is recorded by its blob id, never shown (read)."""
+    from src.tman import manifest as M
+    from src.training import sweep_select as ss
+
+    class Guarded(ss.HeadSource):
+        def show(self, commit, rel):
+            if "test" in rel.lower():
+                raise AssertionError(f"the closure read {rel}")
+            return super().show(commit, rel)
+    src = Guarded(REPO)
+    try:
+        files, err = M.evaluator_files(src, src.head()), ""
+    except AssertionError as e:
+        files, err = {}, str(e)
+    want = ["src/quant/__init__.py"] + [f"src/quant/{m}.py" for m in FQOFF_QUANT]
+    check("evaluator_files_at_head_hold_the_fq_off_path_s_nine_src_quant_modules_T_FQ8", not err
+          and len(FQOFF_QUANT) == 9 and all(f in files for f in want), err or str(sorted(set(want) - set(files))))
+
+
+def post_freeze_ptq_append(w, out: Path, base: list) -> None:
+    """The append command for a PTQ model of record made after the freeze (TB19 Q9; A2): with --ptq-record, its
+    intact ptq_record stands in for the isolation record; without, refused. Lane LQP's reader is the world's
+    stand-in for the calls (records.ptq_record_reader patched and restored)."""
+    import json
+    import scripts.smoke_tman_validate as VW
+    from src.tman import records as R
+    S = w.S
+    rel = "E4_s43_list42/E4_s43_list42_ptq_record.json"
+    data = S.json_file_bytes(w.ptq_docs[rel])
+    (w.runs / rel).write_bytes(data)
+    d = json.loads(w.data)
+    e = next(x for x in d["body"]["entries"] if x["slot"] == "E4:s43:list42")
+    prov = VW.runs_variant(w, e["hashed"]["provenance"], f"variant_made_{VW.stamp(VW.LATE)}.json",
+                           {"created_utc": VW.LATE})
+    (out / "hashed_post.json").write_bytes(S.json_file_bytes(dict(e["hashed"], appended="append", made_utc=VW.LATE,
+                                                                  provenance=prov)))
+    e.update(hashed=None, ptq_record=None)
+    (out / "m_inputs_post.json").write_bytes(S.json_file_bytes(d))
+    argv = base + ["append", "--manifest", str(out / "m_inputs_post.json"), "--slot", "E4:s43:list42", "--hashed",
+                   str(out / "hashed_post.json"), "--runs", str(w.runs)]
+    got = []
+    saved = R.ptq_record_reader
+    try:
+        R.ptq_record_reader = lambda: w.reader()
+        for n, extra in ((1, ["--ptq-record", rel]), (2, [])):
+            folder = out / f"post{n}"
+            folder.mkdir()
+            got.append((_cli(argv + ["--out", str(folder)] + extra), folder))
+    finally:
+        R.ptq_record_reader = saved
+    (rc, txt), folder = got[0]
+    made = json.loads((folder / "tday_manifest.json").read_bytes())["appends"] if rc == 0 else []
+    check("cli_post_freeze_ptq_append_with_its_record_TB19_Q9", rc == 0 and [a["ptq_record"] for a in made] == [
+        {"path": rel, "sha256": S.sha256_bytes(data)}], txt.strip()[-200:])
+    (rc, txt), folder = got[1]
+    check("cli_post_freeze_ptq_append_without_its_record_refused_A2", rc == 2 and "ptq_record_invalid" in txt
+          and not (folder / "tday_manifest.json").exists(), txt.strip()[-200:])
+    import contextlib
+    saved = R.ptq_record_reader
+    try:
+        R.ptq_record_reader = lambda: w.reader()
+        for n, extra in ((3, ["--ptq-record", "E4_s43_list42/absent_ptq_record.json"]), (4, ["--ptq-record", rel])):
+            folder = out / f"post{n}"
+            folder.mkdir()
+            with Resolving(os.path.join(str(w.runs), rel)) if n == 4 else contextlib.nullcontext():
+                got.append((_cli(argv + ["--out", str(folder)] + extra), folder))
+    finally:
+        R.ptq_record_reader = saved
+    (rc, txt), folder = got[2]
+    check("cli_append_ptq_record_absent_refused_B10", rc == 2 and "REFUSED [ptq_record_invalid]" in txt
+          and not any(folder.iterdir()), txt.strip()[-200:])
+    (rc, txt), folder = got[3]
+    check("cli_append_ptq_record_resolved_under_runs_B10", rc == 2 and "REFUSED [test_path]" in txt
+          and not any(folder.iterdir()), txt.strip()[-200:])
+
+
+def cli_append_times(w, out: Path, base: list, iso: dict) -> None:
+    """The append command (DL-24 #25, #26): a QAT selection made after the freeze passes with its isolation record;
+    an artifact made by the original freeze instant is refused append_invalid; a made_utc other than the provenance's
+    created_utc is refused derived_hash_mismatch."""
+    import json
+    import scripts.smoke_tman_validate as VW
+    S = w.S
+    d = json.loads(w.data)
+    q = next(x for x in d["body"]["entries"] if x["slot"] == "E5:s42:sel")
+    qprov = VW.runs_variant(w, q["hashed"]["provenance"], "variant_made_late_provenance.json",
+                            {"created_utc": VW.LATE})
+    qrec = VW.runs_variant(w, q["hashed"]["record"], "variant_made_late_record.json",
+                           {"winner.provenance.sha256": qprov["sha256"]})
+    qclip = VW.runs_variant(w, q["inputs"]["clip_selection"], "variant_made_late_clip.json",
+                            {"winner.qat_selection.sha256": qrec["sha256"]})
+    (out / "hashed_qat.json").write_bytes(S.json_file_bytes(dict(q["hashed"], appended="append", made_utc=VW.LATE,
+                                                                 isolation=iso, provenance=qprov, record=qrec)))
+    q.update(hashed=None, inputs=dict(q["inputs"], clip_selection=qclip))
+    (out / "m_inputs_qat.json").write_bytes(S.json_file_bytes(d))
+    p = next(x for x in json.loads(w.data)["body"]["entries"] if x["slot"] == "E4:s42:list43")["hashed"]
+    (out / "hashed_early.json").write_bytes(S.json_file_bytes(dict(p, appended="append", isolation=iso)))
+    (out / "hashed_unproven.json").write_bytes(S.json_file_bytes(dict(p, appended="append", made_utc=VW.LATE,
+                                                                      isolation=iso)))
+    for name, manifest, slot, hashed, want in (
+            ("cli_append_of_a_qat_selection_made_after_the_freeze_B26", "m_inputs_qat.json", "E5:s42:sel",
+             "hashed_qat.json", None),
+            ("cli_append_made_by_the_freeze_refused_B25", "m_inputs.json", "E4:s42:list43", "hashed_early.json",
+             "REFUSED [append_invalid]"),
+            ("cli_append_made_utc_not_its_provenance_s_B25", "m_inputs.json", "E4:s42:list43", "hashed_unproven.json",
+             "REFUSED [derived_hash_mismatch]")):
+        folder = out / name
+        folder.mkdir()
+        rc, txt = _cli(base + ["append", "--manifest", str(out / manifest), "--slot", slot, "--hashed",
+                               str(out / hashed), "--out", str(folder), "--runs", str(w.runs)])
+        made = sorted(f.name for f in folder.iterdir())
+        check(name, rc == 0 and made == ["tday_manifest.json"] if want is None else rc == 2 and want in txt
+              and not made, txt.strip()[-200:])
+
+
+def cli_append_history(w, out: Path, base: list, appended: Path) -> None:
+    """DL-24 #54: the append command extends the newest committed appends only (the manifest the CLI wrote, with
+    one append, committed; the manifest without it is then behind)."""
+    w.commit({w.S.MANIFEST_REL: appended.read_bytes()}, "a manifest with an append committed")
+    folder = out / "behind"
+    folder.mkdir()
+    rc, txt = _cli(base + ["append", "--manifest", str(out / "m_inputs.json"), "--slot", "E4:s42:list43", "--hashed",
+                           str(out / "hashed.json"), "--out", str(folder), "--runs", str(w.runs)])
+    check("cli_append_to_a_manifest_behind_the_committed_appends_B54", rc == 2 and "REFUSED [append_invalid]" in txt
+          and "the validated manifest" in txt and not any(folder.iterdir()), txt.strip()[-200:])
+
+
+def _cli(argv) -> tuple[int, str]:
+    import contextlib
+    import scripts.tday_manifest as CLI
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = CLI.main(argv)
+    return rc, buf.getvalue()
+
+
+def case_cli_outputs():
+    import json
+    import scripts.smoke_tman_pins as PINS
+    import scripts.smoke_tman_validate as VW
+    from src.tman import validate as V
+    w = VW.World()
+    S = w.S
+    try:
+        data = S.json_file_bytes({"format": S.ISOLATION_FORMAT, "root": "/workspace/plantseg_trainval",
+                                  "image_digest": S.KD_IMAGE, "utc": "2026-11-04T09:00:00Z",
+                                  "result": {"method": "fixture"}})
+        iso = {"path": "reports/derived/tday_isolation_cli.json", "sha256": S.sha256_bytes(data)}
+        w.commit({iso["path"]: data}, "an isolation record (decision (xi))")
+        status0 = FX.git(w.repo, "status", "--porcelain", "--untracked-files=all")
+        dl0 = (w.repo / S.DECISION_LOG_REL).read_bytes()
+        out = FX.scratch_dir("tmanpout")
+        (out / "sources.json").write_bytes(S.json_file_bytes(w.sources))
+        (out / "cells.json").write_text(json.dumps(PINS.IF6_CELLS), encoding="utf-8")
+        (out / "m.json").write_bytes(w.data)
+        (out / "fields.json").write_bytes(S.json_file_bytes({"reason": "code not merged", "lane": "L-AM23"}))
+        d = json.loads(w.data)
+        e = next(x for x in d["body"]["entries"] if x["slot"] == "E4:s42:list43")
+        prov = VW.runs_variant(w, e["hashed"]["provenance"], f"variant_made_{VW.stamp(VW.LATE)}.json",
+                               {"created_utc": VW.LATE})
+        (out / "hashed.json").write_bytes(S.json_file_bytes(dict(e["hashed"], appended="append", made_utc=VW.LATE,
+                                                                 isolation=iso, provenance=prov)))
+        e["hashed"] = None
+        (out / "m_inputs.json").write_bytes(S.json_file_bytes(d))
+        root = FX.scratch_dir("tmanroot")
+        for split in ("train", "val"):
+            for sub, ext in (("images", ".jpg"), ("annotations", ".png")):
+                (root / sub / split).mkdir(parents=True)
+                (root / sub / split / f"a{ext}").write_bytes(b"x")
+        base = ["--root", str(w.repo)]
+        dirs = {k: out / k for k in ("build", "entry", "inventory", "append", "isolation", "arith")}
+        for p in dirs.values():
+            p.mkdir()
+        entry = base + ["entry", "not_made", "--slot", "E7-E2:s42:list42", "--date", "2026-11-03", "--fields",
+                        str(out / "fields.json"), "--amendment", "AM-23", "--summary", "not made: code not merged.",
+                        "--out", str(dirs["entry"]), "--nn", "7"]
+        runs = [("build", base + ["build", "--sources", str(out / "sources.json"), "--out", str(dirs["build"]),
+                                  "--runs", str(w.runs), "--registered-cells", str(out / "cells.json")]),
+                ("validate", base + ["validate", "--manifest", str(out / "m.json"), "--mode", "draft",
+                                     "--registered-cells", str(out / "cells.json")]),
+                ("entry", entry),
+                ("inventory", base + ["inventory", "--manifest", str(out / "m.json"), "--out", str(dirs["inventory"]),
+                                      "--runs", str(w.runs), "--registered-cells", str(out / "cells.json")]),
+                ("append", base + ["append", "--manifest", str(out / "m_inputs.json"), "--slot", "E4:s42:list43",
+                                   "--hashed", str(out / "hashed.json"), "--out", str(dirs["append"]), "--runs",
+                                   str(w.runs)]),
+                ("isolation-record", base + ["isolation-record", "--data-root", str(root), "--out",
+                                             str(dirs["isolation"])]),
+                ("arithmetic", base + ["arithmetic", "--slot", "E2:s43:lambda0.5:80k", "--iterations", "80000",
+                                       "--reference-telemetry", "e2_s42_lambda0.5_80k_a1",
+                                       "--runs", str(w.runs), "--now", "2026-10-21T00:00:00Z", "--out",
+                                       str(dirs["arith"])])]
+        import src.data.isolation as ISO
+        from src.tman import records as R
+        saved, saved_trigger = ISO.DEFAULT_EXPECTED_COUNTS, R.TRIGGER_READER
+        try:
+            ISO.DEFAULT_EXPECTED_COUNTS = {"train": 1, "val": 1}      # the fixture root's counts
+            R.TRIGGER_READER = w.trigger_reader()                     # L-AM3's reader's stand-in (plan O-8)
+            got = {name: _cli(argv) for name, argv in runs}
+        finally:
+            ISO.DEFAULT_EXPECTED_COUNTS = saved
+            R.TRIGGER_READER = saved_trigger                          # L-AM3's reader (B2R13)
+        check("every_command_passes_once", all(rc == 0 for rc, _ in got.values()),
+              str({k: (rc, txt.strip().splitlines()[-1:]) for k, (rc, txt) in got.items() if rc}))
+        made = {k: sorted(p.name for p in v.iterdir()) for k, v in dirs.items()}
+        check("outputs_are_new_files_in_out_only", made["build"] == ["tday_manifest.json"]
+              and made["inventory"] == ["tday_inventory.json"] and made["append"] == ["tday_manifest.json"]
+              and len(made["entry"]) == 1 and len(made["isolation"]) == 1 and made["arith"] == [], str(made))
+        first = (dirs["entry"] / made["entry"][0]).read_bytes() if made["entry"] else b""
+        rc, txt = _cli(entry)
+        check("a_second_write_is_refused_and_the_first_kept", rc == 2 and "REFUSED [output_exists]" in txt
+              and (dirs["entry"] / made["entry"][0]).read_bytes() == first if made["entry"] else False)
+        bogus = json.loads((out / "sources.json").read_bytes())
+        k0 = next(iter(bogus["entries"]))
+        bogus["entries"][k0] = dict(bogus["entries"][k0], kind="bogus_kind")
+        (out / "sources_bogus.json").write_bytes(S.json_file_bytes(bogus))
+        refused = out / "build_refused"
+        refused.mkdir()
+        rc, txt = _cli(base + ["build", "--sources", str(out / "sources_bogus.json"), "--out", str(refused), "--runs",
+                               str(w.runs), "--registered-cells", str(out / "cells.json")])
+        check("cli_build_refused_writes_nothing_B61", rc == 2 and "REFUSED [entry_kind_unknown]" in txt
+              and not any(refused.iterdir()), txt.strip()[-160:])
+        built = (dirs["build"] / "tday_manifest.json").read_bytes()
+        rc, txt = _cli(runs[0][1])
+        check("a_second_build_is_refused_and_the_first_kept_B110", rc == 2 and "REFUSED [output_exists]" in txt
+              and (dirs["build"] / "tday_manifest.json").read_bytes() == built, txt.strip()[-160:])
+        check("the_entry_command_prints_its_row_and_never_writes_the_log", "DECISION-LOG ROW" in got["entry"][1]
+              and (w.repo / S.DECISION_LOG_REL).read_bytes() == dl0)
+        appended = json.loads((dirs["append"] / "tday_manifest.json").read_bytes())
+        check("cli_append_writes_the_append_with_its_ptq_record_key", [a["slot"] for a in appended["appends"]]
+              == ["E4:s42:list43"] and appended["appends"][0]["ptq_record"] is None)
+        again = out / "append_again"
+        again.mkdir()
+        (out / "not_a_manifest.json").write_text("[1, 2]\n", encoding="utf-8")
+        for name, manifest, want in (("cli_append_refuses_a_second_append_of_its_slot_B63",
+                                      dirs["append"] / "tday_manifest.json", "REFUSED [append_invalid]"),
+                                     ("cli_append_refuses_a_file_that_is_no_manifest_B63",
+                                      out / "not_a_manifest.json", "REFUSED [manifest_format]")):
+            rc, txt = _cli(base + ["append", "--manifest", str(manifest), "--slot", "E4:s42:list43", "--hashed",
+                                   str(out / "hashed.json"), "--out", str(again), "--runs", str(w.runs)])
+            check(name, rc == 2 and want in txt and not any(again.iterdir()), txt.strip()[-160:])
+        post_freeze_ptq_append(w, out, base)
+        cli_append_times(w, out, base, iso)
+        inside = [("out_in_the_repository_at_root", w.repo / "reports"),
+                  ("out_in_this_checkout", REPO / "nonexistent_tman_out")]
+        for name, p in inside:
+            rc, txt = _cli(base + ["build", "--sources", str(out / "sources.json"), "--out", str(p)])
+            check(f"{name}_refused", rc == 2 and "REFUSED [output_location]" in txt and "inside the repository" in txt,
+                  txt.strip()[-160:])
+        check("nothing_created_in_the_checkout", not os.path.lexists(REPO / "nonexistent_tman_out"))
+        bad = f"/{MARKER}/te" + "st_out"
+        for name, argv in (("out", base + ["build", "--sources", str(out / "sources.json"), "--out", bad]),
+                           ("manifest", base + ["validate", "--manifest", f"/{MARKER}/te" + "st_m.json", "--mode",
+                                                "draft"]),
+                           ("data_root", base + ["isolation-record", "--data-root", bad, "--out", str(out)])):
+            with Tracer(MARKER) as t:
+                rc, txt = _cli(argv)
+            check(f"cli_{name}_test_path_refused_before_any_call", rc == 2 and "test_path" in txt and not t.calls,
+                  f"{rc} {t.calls}")
+        with Tracer(MARKER) as t:
+            code = FX.refused_code(V.read_inventory, f"/{MARKER}/te" + "st_inventory.json")
+        check("read_inventory_test_path_refused_before_any_call", code == "test_path" and not t.calls)
+        with Tracer(MARKER) as t:
+            code = FX.refused_code(V.validate, w.ctx("freeze", runs_root=f"/{MARKER}/te" + "st_runs"))
+        check("validator_runs_root_test_path_refused_before_any_call", code == "test_path" and not t.calls)
+        with Tracer(MARKER) as t:
+            code = FX.refused_code(V.validate, w.ctx("session", dedup=f"/{MARKER}/te" + "st_dedup.json"))
+        check("validator_dedup_holding_test_refused_before_any_call_P2R6a", code == "test_path" and not t.calls,
+              f"{code} {t.calls[:2]}")
+        from src.tman import records as R
+        for name, ctx in (("validator_root_holding_test_refused_before_any_call_B7",
+                           w.ctx("draft", repo_root=f"/{MARKER}/te" + "st_root")),
+                          ("validator_records_folder_holding_test_refused_before_any_call_B84",
+                           w.ctx("draft", records=R.Records.at_records_commit(
+                               f"/{MARKER}/te" + "st_records", FX.git(w.repo, "rev-parse", "HEAD"), root=w.repo)))):
+            with Tracer(MARKER) as t:
+                code = FX.refused_code(V.validate, ctx)
+            check(name, code == "test_path" and not t.calls, f"{code} {t.calls[:2]}")
+        no_ec = json.loads(w.data)
+        no_ec["body"]["execution_context"] = None
+        (out / "m_no_context.json").write_bytes(S.json_file_bytes(no_ec))
+        other = w.entry_file("freeze", [], {"body_sha256": "0" * 64, "freeze_date": VW.FREEZE_DAY,
+                                            "source": "AM-22 item 1(f)", "d_date": None, "conditions": None},
+                             nn=30)                                     # B2R5: kind freeze's AM-22 fields
+        w.commit({other["path"]: w.files[other["path"]]}, "a freeze record of another body")   # after the log check
+        for name, manifest, extra in (("cli_inventory_refused_writes_nothing_B61", "m_no_context.json", []),
+                                      ("cli_inventory_freeze_record_of_another_body_B33", "m.json",
+                                       ["--freeze-record", other["path"]])):
+            folder = out / f"inv_{name[4:20]}"
+            folder.mkdir()
+            rc, txt = _cli(base + ["inventory", "--manifest", str(out / manifest), "--out", str(folder), "--runs",
+                                   str(w.runs), "--registered-cells", str(out / "cells.json")] + extra)
+            check(name, rc == 2 and "REFUSED [inventory_invalid]" in txt and not any(folder.iterdir()),
+                  txt.strip()[-160:])
+        for name, argv, want in (
+                ("cli_validate_manifest_absent_B90", ["validate", "--manifest", str(out / "absent_m.json"), "--mode",
+                                                      "draft"], "manifest_unreadable"),
+                ("cli_inventory_manifest_absent_B90", ["inventory", "--manifest", str(out / "absent_m.json"), "--out",
+                                                       str(out)], "manifest_unreadable"),
+                ("cli_build_sources_absent_B90", ["build", "--sources", str(out / "absent_s.json"), "--out", str(out)],
+                 "manifest_format")):
+            rc, txt = _cli(base + argv)
+            check(name, rc == 2 and f"REFUSED [{want}]" in txt, txt.strip()[-160:])
+        cli_append_history(w, out, base, dirs["append"] / "tday_manifest.json")       # last: it commits an append
+        check("the_scratch_repository_is_unchanged", FX.git(w.repo, "status", "--porcelain",
+                                                             "--untracked-files=all") == status0 == "")
+    finally:
+        if VW.REAL_TEACHER is not None:
+            w.M.TEACHER_OF_RECORD.clear()
+            w.M.TEACHER_OF_RECORD.update(VW.REAL_TEACHER)
+
+
+if __name__ == "__main__":
+    raise SystemExit(FX.run_cases("TMAN PATHS SMOKE (lane TMAN, B-1) -- names, 'test' refusals, file access, outputs",
+                                  (case_created_names, case_test_paths_refused_before_any_call,
+                                   case_cli_test_named_arguments, case_paths_resolved_where_read,
+                                   case_static_file_access, case_evaluator_closure_never_reads_a_test_named_module,
+                                   case_evaluator_files_at_head, case_cli_outputs)))

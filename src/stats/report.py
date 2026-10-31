@@ -3,8 +3,8 @@
 Report mode renders a section 12 statistics artifact into report.md and report.json. It always runs
 the full verifier with the 37 inputs and the contract bytes (all thirteen checks, the canvas guard of
 EVALUATION_CONTRACT section 11(a) on every input); the profile comes from the verified status, never
-from a flag, and while the TEST-manifest binding is unbound the verifier refuses every `official`
-artifact, so every report is nonofficial and every table carries a status banner (P26, P29).
+from a flag, and the verifier refuses an `official` artifact unless the TEST-manifest binding binds
+its 37 inputs (P2, P14), so only then is a report official; every table has a status banner (P26, P29).
 
 Sections (P26): the family table with the t-test column and each contrast's AM-17 item 2 label; the
 bootstrap intervals with z0 and an explicit containment column (an interval is never assumed to
@@ -341,7 +341,7 @@ def build_report(artifact_dir, *, input_root, mde_entry=None, synthetic_declared
     if mde_entry is not None:
         doc, status, problems = load_mde_entry(mde_entry)
         mde = dict(status, **mde_fields(doc), problems=list(problems))
-    if profile == A.STATUS_OFFICIAL:                         # unreachable while the binding is unbound
+    if profile == A.STATUS_OFFICIAL:                         # reached only with a bound binding (P2)
         require_official_mde(doc, status, problems, tracked_mde_entries())
     caveat, mde_w = committed_caveat(mde)
     robust = dataset_miou_c_contrast(views)
