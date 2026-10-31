@@ -522,7 +522,8 @@ def part_d(work: Path, fs, art: Path) -> None:
         res = in_process("--mode", "report", "--artifact", art, "--report-out", work / "r_d3",
                          "--repo-root", fs.input_root, "--synthetic-inputs")
     refused("D3 an artifact the verifier reads as official (relabelled in memory; nothing official "
-            "on disk, P2): refused while the binding is unbound", res, "unbound", work / "r_d3")
+            "on disk, P2): refused, official being reached only with a bound binding", res, "unbound",
+            work / "r_d3")
     tam = work / "stats_tam" / "rep-0001"
     shutil.copytree(art, tam)
     with open(tam / A.FAMILY_JSON, "a", encoding="utf-8") as fh:

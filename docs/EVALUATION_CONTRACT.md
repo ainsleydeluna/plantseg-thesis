@@ -370,8 +370,13 @@ artifact field name changes.
 | descriptive-only corruption (AM-16 item 6) **[UPDATED 2026-09-24 — B65 CP-006]** | `"corruption"` | `motion_blur`, `jpeg_compression`, `brightness` or `fog` | **5** (never for `gaussian_noise`) |
 
 **[UPDATED 2026-09-24 — B65 CP-006]** Severity 5 of the four non-noise corruptions is descriptive (AM-16
-item 6) and never enters the inferential grid; `configs/corruption_protocol.json` and the evaluator still
-refuse severity 5 until lane L-AM16-SEV lands.
+item 6) and never enters the inferential grid; ~~`configs/corruption_protocol.json` and the evaluator still
+refuse severity 5 until lane L-AM16-SEV lands.~~ **[UPDATED 2026-10-26 — L-CORR]** the protocol file
+(`plantseg-corruptions/2.0.0`), the vendor and the generator score it descriptively (L-AM16-SEV 3e054d2,
+merged f1effa5), and so do both corruption runners, `scripts/evaluate_corruptions.py` and
+`scripts/run_corruption_grid.py` (L-CORR B-3, 9b452c0 and 188b5e4); (`gaussian_noise`, 5) stays refused
+everywhere; an official cache holds severity-5 items only since f3df0fc (`SEVERITY5_REFERENCE_VALIDATED`,
+local block L1 in the student image).
 
 Five exact IDs, frozen in `configs/corruption_protocol.json`:
 `motion_blur` · `gaussian_noise` · `jpeg_compression` · **`brightness`** · `fog`.
@@ -400,7 +405,7 @@ official statistics.
     "artifact_status":   "official | provisional | smoke",
     "stage":             "teacher | E1 | E2 | E3 | A | F | G | E4 | E5 | E6 | E7",   // A, F, G [UPDATED 2026-10-02 — L-CKPT-GUARD]: §7.4
     "model_role":        "teacher | student",
-    "precision":         "fp32 | int8_ptq | int8_qat",
+    "precision":         "fp32 | int8_ptq | int8_qat | qat_fakequant_off",
     "quant_backend":     "string | null",      // e.g. qnnpack, fbgemm/x86
     "checkpoint_path":   "string | null",      // null only when random_init is true
     "checkpoint_sha256": "string | null",
@@ -452,6 +457,10 @@ official statistics.
 
 **[UPDATED 2026-09-28 — L-AM13]** An artifact scored under the upstream protocol also carries
 `protocol`, and its `dataset.preprocess_protocol` is `upstream/1.0.0` (§11).
+
+**[UPDATED 2026-10-30 — L-FQOFF; DL-174]** `run.precision` also takes `qat_fakequant_off`: the selected
+epoch's pre-convert QAT state, every fake-quant and observer disabled (AM-4's supplementary score);
+descriptive; never an inferential comparator (§7.5).
 
 ### 5.4 `per_image.jsonl` — required fields (one object per line)
 
@@ -532,9 +541,19 @@ an evaluation-only need. The wrapper is strictly less invasive and requires no c
 `actual_rows == expected_rows` · IDs unique · ID set == split-manifest set · rows ordered by ascending
 `manifest_index` · zero invalid prediction labels · undefined-score count == 0 on val/test.
 
-**Corrupted conditions** reuse this contract unchanged: `image_id` becomes
+~~**Corrupted conditions** reuse this contract unchanged: `image_id` becomes
 `<stem>__<corruption>_s<severity>`, `clean_image_id` retains the bare stem, and `condition` carries the
-type/name/severity. Clean↔corrupted joins and mIoU-C aggregation therefore need no second schema.
+type/name/severity. Clean↔corrupted joins and mIoU-C aggregation therefore need no second schema.~~
+**[UPDATED 2026-10-26 — L-CORR; DL-74]** **Corrupted conditions** reuse this contract unchanged, with bare
+stems. In every corrupted row `image_id == clean_image_id ==` the file stem, `manifest_index` is the clean
+split's, and the condition is carried only by `condition` (type `corruption`, the corruption id, the
+severity) in every row and in `summary.json`. A corrupted artifact therefore has the same
+`split_manifest_sha256` as the clean artifact of its split (§5.3; the digest is over
+`<manifest_index>\t<image_id>\t<clean_image_id>` lines). The 37 inputs of STATISTICAL_ANALYSIS_CONTRACT
+§12.4.6 share one digest, and src/stats/artifact.py check 1 refuses a row with `image_id != clean_image_id`.
+One artifact holds one (stage, corruption, severity); joins key on `clean_image_id`. The suffixed form is
+never written. The cache the artifact scored is named by its sibling record
+`<artifact_dir>.corruption.json`.
 
 ---
 
@@ -549,6 +568,8 @@ type/name/severity. Clean↔corrupted joins and mIoU-C aggregation therefore nee
 | Row count | `official` requires `actual_rows == expected_rows` (1,561 on test). |
 | Overwrite | Refuse to overwrite an existing artifact directory. |
 | Namespacing | `smoke` artifacts must not be written to the official results location. |
+| Identity (IF-T1) | `test` with `official` requires `--expected-checkpoint-sha256` (the handed file: `--checkpoint`, or `--provenance` for an INT8 stage; compared before its first parse and after validation) and, for an INT8 stage, `--expected-converted-sha256` (compared after the official gate and before the load). Optional elsewhere; refused with `--random-init`, and the second on a non-INT8 run. [UPDATED 2026-10-30 — DL-188] |
+| Threads (TL-1) | `test` with `official` requires `--threads T`: torch.set_num_threads(T) before anything is loaded or built, read back, and run.eval_runtime.torch_num_threads must equal T before the artifact is written. [UPDATED 2026-10-30 — DL-188] |
 
 Development smoke runs use **validation or synthetic data only**.
 
@@ -694,6 +715,17 @@ Code: lanes L-AM4 and L-AM3.
 
 **Teacher checkpoint identity.** The teacher stage requires `--teacher-ckpt-sha256`, the checkpoint's SHA-256 as 64 lowercase hex characters (`[teacher_ckpt_sha256_required]`, `[teacher_ckpt_sha256_format]`); any other stage refuses the flag (`[teacher_ckpt_sha256_not_teacher]`). The file is hashed and compared before it is parsed (`teacher_hash_mismatch`), hashed again before the model is built, and its state must match the built teacher exactly at load (IMPLEMENTATION_CONTRACT B1, the L-CKPT-GUARD note). R3 (`scripts/teacher_readiness_r3.py`) passes the checkpoint's SHA-256 after verifying that it equals the `checkpoint_sha256` of `teacher_selection.json`. The rule is the same under both protocols (`canvas` and `upstream`, §11). The file evaluated is the M12-selected `iter_<N>.pth` (the teacher of record is `iter_24000.pth`); `best_mIoU_full_iter_<N>.pth` is another file with another hash and is refused. Every evaluator refusal exits 1.
 
+### 7.5 The fake-quant-off score (AM-4; lane L-FQOFF) [added 2026-10-30, lane L-FQOFF; DL-174, DL-175]
+
+Precision `qat_fakequant_off` scores a selected QAT model (E5, E6, E6-E2, E6-KD) on its selected epoch's
+pre-convert state, `<run>/epoch_ckpts/eNN.pt`, with every fake-quant and observer disabled. The source is
+bound through the selection of record, `<eval>/qat_selection.json`, whose sha256 is pinned to its
+decision-log row, with the run's telemetry sha256; a `qat_finalize.json` beside the selection is checked
+when it exists and is never required (E6-KD has none). Every binding refusal comes before any dataset or
+model exists. It runs on the CPU only, under the canvas protocol on the clean condition, and records
+run.quant_backend null. It is descriptive: it never selects an epoch or a model, and it is never an
+inferential comparator (outside Holm).
+
 ---
 
 ## 8. Implementation record — E1 validation correction (CLOSED, A1b 2026-07-26)
@@ -780,6 +812,10 @@ not applicable. The record has exactly these 26 keys (`src/eval/eval_runtime.py`
 | `checkpoint_iteration`, `checkpoint_best_val_miou_all_class` | the student checkpoint's stored `iter` and best VAL mIoU (null for random-init, teacher and INT8, and when the stored value is missing or non-finite) |
 | `image_digest` | `PLANTSEG_IMAGE_DIGEST`, stripped; null if unset or blank |
 | `eval_warnings`, `eval_warnings_truncated`, `nondeterministic_alert_count` | unique warnings captured around the evaluation core (first line, at most 50 entries), and the number of emitted "does not have a deterministic implementation" alerts; each unique warning is also echoed to stderr as `[eval-warning xN] …` |
+
+`torch_num_threads` is `--threads` when the flag is given: scripts/evaluate_model.py sets it before
+anything is loaded and writes no artifact whose recorded value differs (`[threads_drifted]`); without the
+flag it records the inherited count. [UPDATED 2026-10-30 — DL-188, lane LEFF B-1b]
 
 **(b) Policy.** For `model_role=student`, `precision=fp32` on a CUDA device only, the evaluator applies
 IMPLEMENTATION_CONTRACT B6's four settings exactly as `src/seeds.py` applies them for E1

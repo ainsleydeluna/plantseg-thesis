@@ -16,9 +16,9 @@ tasks, section 12.3.7 as amended by AM-5), `synthetic_input_data` is the caller'
 equal what the inputs' dataset names say, and `artifact_status` is derived. Before anything is created
 the gate (`check_writer_gate`) re-reads every input directory the records name and refuses, by name, a
 policy other than `official` or `nonofficial_smoke`, a section 10.1 pin the contract does not state,
-a driver snapshot (P5) that does not name every input's four files, and an official request: while
-`TEST_MANIFEST_BINDING` is "unbound" every official request is refused, listing every unmet
-condition. The thirteen checks are then established on the files in the temporary
+a driver snapshot (P5) that does not name every input's four files, and an official request that
+does not meet every condition, listing each unmet one, the TEST-manifest binding among them (P2,
+P14). The thirteen checks are then established on the files in the temporary
 directory by `verify_statistics_artifact`, with the input directories and the contract bytes; only then
 is the directory renamed. Any failure removes the temporary directory.
 
@@ -28,7 +28,7 @@ through the statistics driver and recomputes the eight comparisons, the Holm fam
 block, the pooled point values and the 35 observed values, requiring exact equality (orchestrator
 ruling O4; no bootstrap draws, and no check compares acceleration or bounds across machines). Without
 the inputs and the contract bytes it re-establishes the artifact-only checks and reports the others as
-not re-established. An `official` artifact is refused while the binding is unbound.
+not re-established. An `official` artifact is refused unless the binding binds its inputs.
 
 Import-time behaviour is side-effect free; the driver (O4) and the evaluator's dataset name (P6) are
 imported lazily.
@@ -67,6 +67,7 @@ from .ingest import EXPECTED_ROWS_TEST, Policy
 from .noninferiority import (E6KD_DECISION_RULE, E6KD_TRIGGER_THRESHOLD, PRIMARY_MARGIN,
                              SENSITIVITY_MARGINS)
 from .tests import CANONICAL_COMPARISON_IDS, StatsError, holm_family
+from ..tman.binding import BINDING_REL
 
 FAMILY_JSON = "family.json"
 BOOTSTRAP_NPZ = "bootstrap.npz"
@@ -124,13 +125,14 @@ CONTRACT_REL = "docs/STATISTICAL_ANALYSIS_CONTRACT.md"
 METRICS_REL = "src/eval/metrics.py"
 #: Orchestrator ruling O3: clean at HEAD of the code repository for an official request.
 OFFICIAL_CODE_PATHS = ("src/stats", "src/stats/driver.py", "scripts/run_stats.py",
-                       "configs/corruption_protocol.json", CONTRACT_REL)
+                       "configs/corruption_protocol.json", CONTRACT_REL, "src/corruption_roles.py",
+                       "src/tman")
 
-#: The TEST-manifest binding (P2). "unbound" is the only value in this lane: no flag, environment
-#: variable, argument or context field sets it, and no code path reads another value. While it is
-#: unbound the writer gate refuses every official request and the verifier refuses every artifact
-#: whose status is `official`. The TEST-manifest lane replaces this constant with the binding.
-TEST_MANIFEST_BINDING: Final[str] = "unbound"
+#: The TEST-manifest binding (P2): its repository-relative path, defined once in src/tman/binding.py.
+#: "Bound" means the file exists at the repository root's TEST_MANIFEST_BINDING and binding.py's file
+#: check accepts it; no flag, environment variable, argument or context field changes that. Unbound,
+#: or not binding the 37 inputs, it is an unmet condition and an `official` artifact is refused.
+TEST_MANIFEST_BINDING: Final[str] = BINDING_REL
 
 #: Policies a statistics artifact may be computed under (P3). REHEARSAL never writes one.
 ARTIFACT_POLICIES = (Policy.OFFICIAL.value, Policy.NONOFFICIAL_SMOKE.value)
@@ -776,13 +778,26 @@ _WARNING_TEXT = {
 BINDING_CONDITION = "test_manifest_binding_unbound"
 
 
+def binding_reason(records=None, views: InputViews | None = None, repo_root=None) -> str | None:
+    """The loader (B3R6): None when the binding at `repo_root` (default CODE_REPO) is bound and its
+    37 inputs are these -- the records (default: the views' own), on binding.INPUT_FIELDS and, for an
+    input `views` loaded, its four files' sha256 (P14) -- else why not. Plain dicts to binding.py."""
+    from ..tman import binding as B
+    from . import driver as D
+    loaded, got = ({} if views is None else views.by_path()), {}
+    for r in [D.provenance_record(li) for li in loaded.values()] if records is None else records:
+        fields = got[(r["stage"], D.condition_tuple(r["condition"]))] = {k: r[k] for k in B.INPUT_FIELDS}
+        if r["repo_relative_path"] in loaded:
+            fields["files_sha256"] = dict(loaded[r["repo_relative_path"]].file_sha256)
+    return B.bound_reason(Path(repo_root) if repo_root is not None else CODE_REPO,
+                          D.official_inventory(), D.STAGE_PRECISION, got)
+
+
 def official_conditions(fam: dict, views: InputViews, contract_bytes: bytes | None, *,
                         hooks: bool = False, code_status_repo=None) -> tuple[tuple[str, str], ...]:
     """Every condition an official artifact needs that this family and its inputs do not meet, as
-    (name, detail) pairs (P2-P4, O3, OK-3). Never empty while the binding is unbound: the binding is
-    always the last entry."""
-    if TEST_MANIFEST_BINDING != "unbound":                  # fail closed: there is no bound branch
-        raise ArtifactError(f"unknown TEST_MANIFEST_BINDING {TEST_MANIFEST_BINDING!r}")
+    (name, detail) pairs (P2-P4, O3, OK-3). The binding is the last entry, with the loader's reason,
+    when it is not bound or its 37 inputs are not these."""
     unmet: list[tuple[str, str]] = [(w, _WARNING_TEXT.get(w, "warning outside the vocabulary"))
                                     for w in fam["warnings"]]
     comps = fam["a3a_family"]["comparisons"]
@@ -850,8 +865,9 @@ def official_conditions(fam: dict, views: InputViews, contract_bytes: bytes | No
     if hooks:
         unmet.append(("test_hooks_on_official_request",
                       "_inject_failure/_tamper are refused on an official request (P11)"))
-    unmet.append((BINDING_CONDITION, "TEST_MANIFEST_BINDING is 'unbound': no TEST-manifest binding "
-                                     "is implemented, so every official request is refused (P2)"))
+    reason = binding_reason(views=views, repo_root=code_status_repo)
+    if reason:
+        unmet.append((BINDING_CONDITION, reason))
     return tuple(unmet)
 
 
@@ -918,8 +934,9 @@ def check_writer_gate(inp: ArtifactInputs, fam: dict, contract_bytes: bytes, *,
         raise WriterGateRefused((f"synthetic_declaration: declared synthetic={inp.synthetic} but the "
                                  f"inputs' dataset names {list(names)} make it {derived} (P6)",))
     if fam["artifact_status"] == STATUS_OFFICIAL:
-        raise WriterGateRefused(tuple(f"{n}: {d}" for n, d in official_conditions(
-            fam, views, contract_bytes, hooks=hooks)))
+        unmet = official_conditions(fam, views, contract_bytes, hooks=hooks)
+        if unmet:
+            raise WriterGateRefused(tuple(f"{n}: {d}" for n, d in unmet))
     return views
 
 
@@ -1556,7 +1573,7 @@ def _check_observed_sources(ctx: _Ctx) -> None:
 def _check_officiality(ctx: _Ctx) -> None:
     """Check 11 (officiality_policy_verified): sections 10, 10.1, 12.4.2, 12.4.3, 12.4.5 -- run_id
     pattern and run_id == directory basename, created_at_utc format; artifact_status vocabulary and
-    status <=> warnings; the TEST-manifest binding (an official artifact is refused while unbound,
+    status <=> warnings; the TEST-manifest binding (official only if bound to its 37 inputs,
     P2); warnings vocabulary, no duplicates, canonical order; the software block self-consistent and
     pinned == PINNED_ENVIRONMENT; one policy across the nine, official or nonofficial_smoke (P3); the
     re-derived warnings: analysis_id, software, input statuses, per-task replicate counts and
@@ -1578,8 +1595,9 @@ def _check_officiality(ctx: _Ctx) -> None:
     if derive_artifact_status(tuple(ws)) != fam["artifact_status"]:
         _fail(C_POLICY, "artifact_status is not derivable from warnings")
     if fam["artifact_status"] == STATUS_OFFICIAL:
-        _fail(C_POLICY, "an official statistics artifact is refused while the TEST-manifest binding "
-                        f"is {TEST_MANIFEST_BINDING!r} (P2)")
+        reason = binding_reason(fam["input_artifacts"], ctx.views)
+        if reason:
+            _fail(C_POLICY, f"an official statistics artifact is refused: {reason} (P2, P14)")
     sw = fam["software_environment"]
     matches = sw["observed"] == sw["pinned"]
     if sw["pinned"] != PINNED_ENVIRONMENT or sw["matches_pinned"] is not matches:

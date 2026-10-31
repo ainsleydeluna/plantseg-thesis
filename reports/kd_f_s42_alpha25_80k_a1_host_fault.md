@@ -101,3 +101,49 @@ Ice De Luna pasted, or his screenshot of the RunPod console), REPOSITORY-PROVEN 
 | about 07:06 | the container starts again (sleep infinity) | MEASURED, PID 1 |
 | 10:31 | found idle in the RunPod console | MEASURED, screenshot |
 | 10:33, 10:38 | the read-only checks of §1 and §2 | MEASURED |
+
+## 7. Supplement of 2026-10-26: the VAL rows of AM-19 item 3(a), and the repeat's arithmetic
+
+Added on 2026-10-26 by the orchestrator (ruling M-2). Sections 1 to 6 are unchanged: they are byte-identical to this
+report as committed at 3faf2d7 (sha256 96566ab826c169a30a49718f5589554fc5a216474b736e95a5568ce651b99d34), the version
+that the evidence folder's SHA256SUMS lists. MEASURED in this section: read by the orchestrator on 2026-10-26 through
+the laptop bridge, read-only. AM-19 item 3(a) asks this report to state "the VAL rows written by then by the run and
+by the other runs of its sweep, or by its comparator"; sections 1 to 6 state none. F's comparator is E1 seed 42
+(AM-17b item 1(e)).
+
+- **Attempt 1 (MEASURED):** kd/f_s42_alpha25_80k_a1/f_telemetry.jsonl (sha256
+  140a31a86c6a051c6ba3ee090604e0ae0fb2537edcd37826ca20c149121b9b3a) inside keep_f_s42_alpha25_80k_a1.tar (§4;
+  103,802,880 B, sha256 f9ea81a5078f09cbc22eab787498900a2fb7068e5c83b2c69166841eaf89c05c). The file holds 18,884
+  train rows and 4 VAL rows, and its last row is the train row of iteration 18884 (§1).
+- **E1 seed 42 (MEASURED):** C:\Users\admin\plantseg_runs\e1_seed42\e1_telemetry.jsonl (20,341,737 B, sha256
+  3ca9fd7998e7734efa414615e906236f04babc890861e852bade066bb97ff19d, the file that
+  reports/b52_e1_seed42_completion.md §8.1 names): its VAL rows at the same iterations.
+
+| Iteration | Run | All-class VAL mIoU | Disease-only VAL mIoU (provisional) | Written (+08:00) |
+|---|---|---|---|---|
+| 4000 | F attempt 1 | 0.02149941958487034 | 0.016377858817577362 | 2026-10-18 01:48:06 |
+| 4000 | E1 seed 42 | 0.15337054431438446 | 0.14944161474704742 | 2026-09-11 22:01:00 |
+| 8000 | F attempt 1 | 0.03527206927537918 | 0.030164344236254692 | 2026-10-18 03:11:51 |
+| 8000 | E1 seed 42 | 0.22097904980182648 | 0.21622465550899506 | 2026-09-11 23:11:15 |
+| 12000 | F attempt 1 | 0.08199439942836761 | 0.076967753469944 | 2026-10-18 04:35:40 |
+| 12000 | E1 seed 42 | 0.2880854904651642 | 0.2835090756416321 | 2026-09-12 00:21:23 |
+| 16000 | F attempt 1 | 0.11591119319200516 | 0.1110939309000969 | 2026-10-18 05:59:31 |
+| 16000 | E1 seed 42 | 0.2743246853351593 | 0.26967480778694153 | 2026-09-12 01:32:10 |
+
+The values are the rows' all_class_miou and disease_only_miou_PROVISIONAL fields as written, and the times are
+their wall_clock fields. Attempt 1's rows are evidence only and never a result (AM-8a; §5).
+
+- **AM-19 item 3(b)'s arithmetic for the repeat.** Attempt 2 repeats a run launched before its cutoff date, so it is
+  "subject to AM-19 item 3(b)'s arithmetic" (AM-22 item 2(b); the orchestrator's erratum ERR-AUD2-2).
+  - MEASURED: the wave-4 gate did not compute it. gate_f_s42_alpha25_80k_a2.json (sha256
+    2a55b1cda013d75ac460a125f7dac1e17b71dc44532329985f1a1c7d670ea3fb) and gate_f_s42_alpha25_80k_a2.log (sha256
+    2c2e65a91cb4f852ecf9bca21cee0d4f1c801b2d80a80012886c398039c1e853), in keep_f_s42_alpha25_80k_a2.tar, hold no
+    such line, and both give the verdict GO.
+  - INFERRED (ERR-AUD2-2, from attempt 1's pace): 80,000 × 1.242 s ≈ 27.6 h, against about 395 h from attempt 2's
+    launch (2026-10-18 12:53:36) to the end of the original freeze date (2026-11-03T16:00:00Z). It fits, so the
+    repeat is not cut. Item 3(b)'s own reference is the median seconds per iteration of the most recently finished
+    run of the stage, or the first KD pod's smoke if there is none. No stage-F run had finished at attempt 2's
+    launch, and the smoke's stage-F value is not stated here.
+  - MEASURED afterwards: attempt 2's run_end (keep_f_s42_alpha25_80k_a2.tar, sha256
+    84d440760d838cc57569fe46990930eaff2055102dd23af7e6bb6b07550cb5f6) records 80,000 iterations, checks_passed true,
+    wall_seconds 100446.21078515053 (27.9 h) and wall_clock_end 1792399654.6242542 (2026-10-19 16:47:34).

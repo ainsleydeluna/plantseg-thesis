@@ -647,7 +647,9 @@ def part_f(env: Env, plant: Env, off: Env, work: Path, outs: Path) -> None:
     kind, e = outcome(lambda: A.build_family(env.inp("f-25c\n", True)))
     check("F25c ... build_family refuses that run_id itself (not only the out-dir pre-check)",
           kind == "ArtifactError" and "run_id" in str(e), f"{kind}: {e}")
-    check("F26 the TEST-manifest binding constant is 'unbound'", A.TEST_MANIFEST_BINDING == "unbound")
+    from src.tman.binding import BINDING_REL
+    check("F26 TEST_MANIFEST_BINDING is binding.BINDING_REL, and with no binding file the state is unbound",
+          A.TEST_MANIFEST_BINDING == BINDING_REL and "unbound" in (A.binding_reason([], repo_root=work) or ""))
 
 
 def o3_fixture(root: Path) -> Path:

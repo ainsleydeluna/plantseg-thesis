@@ -1,0 +1,2044 @@
+{
+  "cut_order": [
+    {
+      "arm_cut_place": null,
+      "group": "E6-R2",
+      "source": "AM-23 item 3(d)"
+    },
+    {
+      "arm_cut_place": null,
+      "group": "E6-R1",
+      "source": "AM-23 item 3(d)"
+    },
+    {
+      "arm_cut_place": null,
+      "group": "E6-E2",
+      "source": "AM-23 items 1, 3(d)"
+    },
+    {
+      "arm_cut_place": 1,
+      "group": "R2",
+      "source": "AM-18 item 7(b) 1"
+    },
+    {
+      "arm_cut_place": 2,
+      "group": "W",
+      "source": "AM-18 item 7(b) 2"
+    },
+    {
+      "arm_cut_place": 3,
+      "group": "K8",
+      "source": "AM-18 item 7(b) 3; ruled out, DL-96"
+    },
+    {
+      "arm_cut_place": 4,
+      "group": "R1",
+      "source": "AM-18 item 7(b) 4"
+    },
+    {
+      "arm_cut_place": 5,
+      "group": "avg",
+      "source": "AM-18 item 7(b) 5; not executable, DL-66"
+    },
+    {
+      "arm_cut_place": null,
+      "group": "L",
+      "source": "AM-17b item 3; AM-17 item 11"
+    },
+    {
+      "arm_cut_place": null,
+      "group": "G",
+      "source": "AM-17b item 3"
+    },
+    {
+      "arm_cut_place": null,
+      "group": "F",
+      "source": "AM-17b item 3"
+    },
+    {
+      "arm_cut_place": null,
+      "group": "A",
+      "source": "AM-17b item 3; AM-17 item 7"
+    },
+    {
+      "arm_cut_place": null,
+      "group": "E3-160k",
+      "source": "AM-16 order"
+    },
+    {
+      "arm_cut_place": null,
+      "group": "ARM",
+      "source": "AM-16 order"
+    },
+    {
+      "arm_cut_place": null,
+      "group": "E1-160k",
+      "source": "AM-16 order"
+    },
+    {
+      "arm_cut_place": null,
+      "group": "E2-160k",
+      "source": "AM-16 order"
+    },
+    {
+      "arm_cut_place": null,
+      "group": "alpha-sweep",
+      "source": "AM-16 order; settled at its decision date (AM-19 item 2(g))"
+    },
+    {
+      "arm_cut_place": null,
+      "group": "E2-s4344",
+      "source": "AM-16 order"
+    },
+    {
+      "arm_cut_place": null,
+      "group": "E5E6-s4344",
+      "source": "AM-17 item 9"
+    },
+    {
+      "arm_cut_place": null,
+      "group": "E3-s4344",
+      "source": "AM-17 item 9"
+    },
+    {
+      "arm_cut_place": null,
+      "group": "E1-rerun-s4344",
+      "source": "AM-19 item 7(b); only if AM-7's full consequence fires"
+    }
+  ],
+  "format": "tday_catalogue/1",
+  "slots": [
+    {
+      "class": "run",
+      "cut_group": null,
+      "evaluator_stage": "teacher",
+      "file_id": "teacher_s42_40k",
+      "gates": [],
+      "model_role": "teacher",
+      "never_cut": true,
+      "params": {},
+      "parent": null,
+      "pilot": null,
+      "precision": "fp32",
+      "record_kind": "teacher_m12",
+      "registered_by": "AM-13",
+      "roles": [
+        "teacher_reference"
+      ],
+      "scope_class": "teacher_of_record",
+      "seed": 42,
+      "slot": "teacher:s42:40k",
+      "stage": "teacher",
+      "sweep": null
+    },
+    {
+      "class": "run",
+      "cut_group": null,
+      "evaluator_stage": "E1",
+      "file_id": "E1_s42_80k",
+      "gates": [],
+      "model_role": "student",
+      "never_cut": true,
+      "params": {},
+      "parent": null,
+      "pilot": null,
+      "precision": "fp32",
+      "record_kind": "e1_val_result",
+      "registered_by": "AM-1",
+      "roles": [
+        "family"
+      ],
+      "scope_class": "family_s42",
+      "seed": 42,
+      "slot": "E1:s42:80k",
+      "stage": "E1",
+      "sweep": null
+    },
+    {
+      "class": "run",
+      "cut_group": null,
+      "evaluator_stage": "E1",
+      "file_id": "E1_s43_80k",
+      "gates": [],
+      "model_role": "student",
+      "never_cut": false,
+      "params": {},
+      "parent": null,
+      "pilot": null,
+      "precision": "fp32",
+      "record_kind": "e1_val_result",
+      "registered_by": "AM-1",
+      "roles": [
+        "per_seed"
+      ],
+      "scope_class": "pair_s4344",
+      "seed": 43,
+      "slot": "E1:s43:80k",
+      "stage": "E1",
+      "sweep": null
+    },
+    {
+      "class": "run",
+      "cut_group": null,
+      "evaluator_stage": "E1",
+      "file_id": "E1_s44_80k",
+      "gates": [],
+      "model_role": "student",
+      "never_cut": false,
+      "params": {},
+      "parent": null,
+      "pilot": null,
+      "precision": "fp32",
+      "record_kind": "e1_val_result",
+      "registered_by": "AM-1",
+      "roles": [
+        "per_seed"
+      ],
+      "scope_class": "pair_s4344",
+      "seed": 44,
+      "slot": "E1:s44:80k",
+      "stage": "E1",
+      "sweep": null
+    },
+    {
+      "class": "run",
+      "cut_group": null,
+      "evaluator_stage": null,
+      "file_id": "E2_s42_lambda0.25_80k",
+      "gates": [],
+      "model_role": "student",
+      "never_cut": false,
+      "params": {
+        "lambda": 0.25
+      },
+      "parent": null,
+      "pilot": null,
+      "precision": "fp32",
+      "record_kind": "kd_run_end",
+      "registered_by": "AM-2",
+      "roles": [
+        "listed"
+      ],
+      "scope_class": "none",
+      "seed": 42,
+      "slot": "E2:s42:lambda0.25:80k",
+      "stage": "E2",
+      "sweep": {
+        "default_candidate": false,
+        "key": "lambda_logit",
+        "of_record": false,
+        "value": 0.25
+      }
+    },
+    {
+      "class": "run",
+      "cut_group": null,
+      "evaluator_stage": "E2",
+      "file_id": "E2_s42_lambda0.5_80k",
+      "gates": [],
+      "model_role": "student",
+      "never_cut": true,
+      "params": {
+        "lambda": 0.5
+      },
+      "parent": null,
+      "pilot": null,
+      "precision": "fp32",
+      "record_kind": "kd_run_end",
+      "registered_by": "AM-2",
+      "roles": [
+        "family"
+      ],
+      "scope_class": "family_s42",
+      "seed": 42,
+      "slot": "E2:s42:lambda0.5:80k",
+      "stage": "E2",
+      "sweep": {
+        "default_candidate": false,
+        "key": "lambda_logit",
+        "of_record": true,
+        "value": 0.5
+      }
+    },
+    {
+      "class": "run",
+      "cut_group": null,
+      "evaluator_stage": "E2",
+      "file_id": "E2_s42_lambda1_80k",
+      "gates": [],
+      "model_role": "student",
+      "never_cut": true,
+      "params": {
+        "lambda": 1
+      },
+      "parent": null,
+      "pilot": null,
+      "precision": "fp32",
+      "record_kind": "kd_run_end",
+      "registered_by": "AM-2",
+      "roles": [
+        "default_candidate"
+      ],
+      "scope_class": "default_or_control",
+      "seed": 42,
+      "slot": "E2:s42:lambda1:80k",
+      "stage": "E2",
+      "sweep": {
+        "default_candidate": true,
+        "key": "lambda_logit",
+        "of_record": false,
+        "value": 1
+      }
+    },
+    {
+      "class": "run",
+      "cut_group": null,
+      "evaluator_stage": null,
+      "file_id": "E2_s42_lambda2_80k",
+      "gates": [],
+      "model_role": "student",
+      "never_cut": false,
+      "params": {
+        "lambda": 2
+      },
+      "parent": null,
+      "pilot": null,
+      "precision": "fp32",
+      "record_kind": "kd_run_end",
+      "registered_by": "AM-2",
+      "roles": [
+        "listed"
+      ],
+      "scope_class": "none",
+      "seed": 42,
+      "slot": "E2:s42:lambda2:80k",
+      "stage": "E2",
+      "sweep": {
+        "default_candidate": false,
+        "key": "lambda_logit",
+        "of_record": false,
+        "value": 2
+      }
+    },
+    {
+      "class": "run",
+      "cut_group": null,
+      "evaluator_stage": null,
+      "file_id": "E2_s42_lambda4_80k",
+      "gates": [],
+      "model_role": "student",
+      "never_cut": false,
+      "params": {
+        "lambda": 4
+      },
+      "parent": null,
+      "pilot": null,
+      "precision": "fp32",
+      "record_kind": "kd_run_end",
+      "registered_by": "AM-2",
+      "roles": [
+        "listed"
+      ],
+      "scope_class": "none",
+      "seed": 42,
+      "slot": "E2:s42:lambda4:80k",
+      "stage": "E2",
+      "sweep": {
+        "default_candidate": false,
+        "key": "lambda_logit",
+        "of_record": false,
+        "value": 4
+      }
+    },
+    {
+      "class": "run",
+      "cut_group": null,
+      "evaluator_stage": "E3",
+      "file_id": "E3_s42_lambda0.5_alpha25_80k",
+      "gates": [
+        {
+          "moves_cutoff": false,
+          "record": "lambda_selection"
+        }
+      ],
+      "model_role": "student",
+      "never_cut": true,
+      "params": {
+        "alpha": 25,
+        "lambda": 0.5
+      },
+      "parent": null,
+      "pilot": null,
+      "precision": "fp32",
+      "record_kind": "kd_run_end",
+      "registered_by": "AM-16 item 2",
+      "roles": [
+        "family"
+      ],
+      "scope_class": "family_s42",
+      "seed": 42,
+      "slot": "E3:s42:lambda0.5:alpha25:80k",
+      "stage": "E3",
+      "sweep": {
+        "default_candidate": false,
+        "key": "alpha_cwd",
+        "of_record": true,
+        "value": 25
+      }
+    },
+    {
+      "class": "run",
+      "cut_group": null,
+      "evaluator_stage": "E3",
+      "file_id": "E3_s42_lambda0.5_alpha50_80k",
+      "gates": [
+        {
+          "moves_cutoff": false,
+          "record": "lambda_selection"
+        }
+      ],
+      "model_role": "student",
+      "never_cut": true,
+      "params": {
+        "alpha": 50,
+        "lambda": 0.5
+      },
+      "parent": null,
+      "pilot": null,
+      "precision": "fp32",
+      "record_kind": "kd_run_end",
+      "registered_by": "AM-16 item 2",
+      "roles": [
+        "default_candidate"
+      ],
+      "scope_class": "default_or_control",
+      "seed": 42,
+      "slot": "E3:s42:lambda0.5:alpha50:80k",
+      "stage": "E3",
+      "sweep": {
+        "default_candidate": true,
+        "key": "alpha_cwd",
+        "of_record": false,
+        "value": 50
+      }
+    },
+    {
+      "class": "run",
+      "cut_group": "alpha-sweep",
+      "evaluator_stage": null,
+      "file_id": "E3_s42_lambda0.5_alpha100_80k",
+      "gates": [
+        {
+          "moves_cutoff": false,
+          "record": "lambda_selection"
+        }
+      ],
+      "model_role": "student",
+      "never_cut": false,
+      "params": {
+        "alpha": 100,
+        "lambda": 0.5
+      },
+      "parent": null,
+      "pilot": null,
+      "precision": "fp32",
+      "record_kind": "kd_run_end",
+      "registered_by": "AM-16 item 2",
+      "roles": [
+        "listed"
+      ],
+      "scope_class": "none",
+      "seed": 42,
+      "slot": "E3:s42:lambda0.5:alpha100:80k",
+      "stage": "E3",
+      "sweep": {
+        "default_candidate": false,
+        "key": "alpha_cwd",
+        "of_record": false,
+        "value": 100
+      }
+    },
+    {
+      "class": "run",
+      "cut_group": "E2-s4344",
+      "evaluator_stage": "E2",
+      "file_id": "E2_s43_lambda0.5_80k",
+      "gates": [
+        {
+          "moves_cutoff": false,
+          "record": "lambda_selection"
+        }
+      ],
+      "model_role": "student",
+      "never_cut": false,
+      "params": {
+        "lambda": 0.5
+      },
+      "parent": null,
+      "pilot": null,
+      "precision": "fp32",
+      "record_kind": "kd_run_end",
+      "registered_by": "AM-16 item 1",
+      "roles": [
+        "per_seed"
+      ],
+      "scope_class": "other_s4344",
+      "seed": 43,
+      "slot": "E2:s43:lambda0.5:80k",
+      "stage": "E2",
+      "sweep": null
+    },
+    {
+      "class": "run",
+      "cut_group": "E2-s4344",
+      "evaluator_stage": "E2",
+      "file_id": "E2_s44_lambda0.5_80k",
+      "gates": [
+        {
+          "moves_cutoff": false,
+          "record": "lambda_selection"
+        }
+      ],
+      "model_role": "student",
+      "never_cut": false,
+      "params": {
+        "lambda": 0.5
+      },
+      "parent": null,
+      "pilot": null,
+      "precision": "fp32",
+      "record_kind": "kd_run_end",
+      "registered_by": "AM-16 item 1",
+      "roles": [
+        "per_seed"
+      ],
+      "scope_class": "other_s4344",
+      "seed": 44,
+      "slot": "E2:s44:lambda0.5:80k",
+      "stage": "E2",
+      "sweep": null
+    },
+    {
+      "class": "run",
+      "cut_group": "E3-s4344",
+      "evaluator_stage": "E3",
+      "file_id": "E3_s43_lambda0.5_alpha25_80k",
+      "gates": [
+        {
+          "moves_cutoff": true,
+          "record": "alpha_selection"
+        }
+      ],
+      "model_role": "student",
+      "never_cut": false,
+      "params": {
+        "alpha": 25,
+        "lambda": 0.5
+      },
+      "parent": null,
+      "pilot": null,
+      "precision": "fp32",
+      "record_kind": "kd_run_end",
+      "registered_by": "AM-1",
+      "roles": [
+        "per_seed"
+      ],
+      "scope_class": "other_s4344",
+      "seed": 43,
+      "slot": "E3:s43:lambda0.5:alpha25:80k",
+      "stage": "E3",
+      "sweep": null
+    },
+    {
+      "class": "run",
+      "cut_group": "E3-s4344",
+      "evaluator_stage": "E3",
+      "file_id": "E3_s44_lambda0.5_alpha25_80k",
+      "gates": [
+        {
+          "moves_cutoff": true,
+          "record": "alpha_selection"
+        }
+      ],
+      "model_role": "student",
+      "never_cut": false,
+      "params": {
+        "alpha": 25,
+        "lambda": 0.5
+      },
+      "parent": null,
+      "pilot": null,
+      "precision": "fp32",
+      "record_kind": "kd_run_end",
+      "registered_by": "AM-1",
+      "roles": [
+        "per_seed"
+      ],
+      "scope_class": "other_s4344",
+      "seed": 44,
+      "slot": "E3:s44:lambda0.5:alpha25:80k",
+      "stage": "E3",
+      "sweep": null
+    },
+    {
+      "class": "run",
+      "cut_group": "E1-160k",
+      "evaluator_stage": "E1",
+      "file_id": "E1_s42_160k",
+      "gates": [],
+      "model_role": "student",
+      "never_cut": false,
+      "params": {},
+      "parent": null,
+      "pilot": null,
+      "precision": "fp32",
+      "record_kind": "e1_val_result",
+      "registered_by": "AM-16 item 3",
+      "roles": [
+        "control"
+      ],
+      "scope_class": "default_or_control",
+      "seed": 42,
+      "slot": "E1:s42:160k",
+      "stage": "E1",
+      "sweep": null
+    },
+    {
+      "class": "run",
+      "cut_group": "E2-160k",
+      "evaluator_stage": "E2",
+      "file_id": "E2_s42_lambda0.5_160k",
+      "gates": [
+        {
+          "moves_cutoff": false,
+          "record": "lambda_selection"
+        }
+      ],
+      "model_role": "student",
+      "never_cut": false,
+      "params": {
+        "lambda": 0.5
+      },
+      "parent": null,
+      "pilot": null,
+      "precision": "fp32",
+      "record_kind": "kd_run_end",
+      "registered_by": "AM-16 item 3",
+      "roles": [
+        "control"
+      ],
+      "scope_class": "default_or_control",
+      "seed": 42,
+      "slot": "E2:s42:lambda0.5:160k",
+      "stage": "E2",
+      "sweep": null
+    },
+    {
+      "class": "run",
+      "cut_group": "E3-160k",
+      "evaluator_stage": "E3",
+      "file_id": "E3_s42_lambda0.5_alpha25_160k",
+      "gates": [
+        {
+          "moves_cutoff": true,
+          "record": "alpha_selection"
+        }
+      ],
+      "model_role": "student",
+      "never_cut": false,
+      "params": {
+        "alpha": 25,
+        "lambda": 0.5
+      },
+      "parent": null,
+      "pilot": null,
+      "precision": "fp32",
+      "record_kind": "kd_run_end",
+      "registered_by": "AM-16 item 3",
+      "roles": [
+        "control"
+      ],
+      "scope_class": "default_or_control",
+      "seed": 42,
+      "slot": "E3:s42:lambda0.5:alpha25:160k",
+      "stage": "E3",
+      "sweep": null
+    },
+    {
+      "class": "run",
+      "cut_group": "A",
+      "evaluator_stage": "A",
+      "file_id": "A_s42_alpha25_80k",
+      "gates": [
+        {
+          "moves_cutoff": true,
+          "record": "alpha_selection"
+        }
+      ],
+      "model_role": "student",
+      "never_cut": false,
+      "params": {
+        "alpha": 25
+      },
+      "parent": null,
+      "pilot": null,
+      "precision": "fp32",
+      "record_kind": "kd_run_end",
+      "registered_by": "AM-17 item 7",
+      "roles": [
+        "arm"
+      ],
+      "scope_class": "arm_student",
+      "seed": 42,
+      "slot": "A:s42:alpha25:80k",
+      "stage": "A",
+      "sweep": null
+    },
+    {
+      "class": "run",
+      "cut_group": "F",
+      "evaluator_stage": "F",
+      "file_id": "F_s42_alpha25_80k",
+      "gates": [
+        {
+          "moves_cutoff": true,
+          "record": "alpha_selection"
+        }
+      ],
+      "model_role": "student",
+      "never_cut": false,
+      "params": {
+        "alpha": 25
+      },
+      "parent": null,
+      "pilot": null,
+      "precision": "fp32",
+      "record_kind": "kd_run_end",
+      "registered_by": "AM-17b item 1",
+      "roles": [
+        "arm"
+      ],
+      "scope_class": "arm_student",
+      "seed": 42,
+      "slot": "F:s42:alpha25:80k",
+      "stage": "F",
+      "sweep": null
+    },
+    {
+      "class": "run",
+      "cut_group": "G",
+      "evaluator_stage": "G",
+      "file_id": "G_s42_80k",
+      "gates": [],
+      "model_role": "student",
+      "never_cut": false,
+      "params": {},
+      "parent": null,
+      "pilot": null,
+      "precision": "fp32",
+      "record_kind": "kd_run_end",
+      "registered_by": "AM-17b item 1",
+      "roles": [
+        "arm"
+      ],
+      "scope_class": "arm_student",
+      "seed": 42,
+      "slot": "G:s42:80k",
+      "stage": "G",
+      "sweep": null
+    },
+    {
+      "class": "run",
+      "cut_group": "R2",
+      "evaluator_stage": "teacher",
+      "file_id": "teacher-R2_s42_40k",
+      "gates": [
+        {
+          "moves_cutoff": true,
+          "record": "r1_end"
+        }
+      ],
+      "model_role": "teacher",
+      "never_cut": false,
+      "params": {},
+      "parent": null,
+      "pilot": null,
+      "precision": "fp32",
+      "record_kind": "teacher_m12",
+      "registered_by": "AM-18 item 2",
+      "roles": [
+        "arm_teacher"
+      ],
+      "scope_class": "arm_teacher",
+      "seed": 42,
+      "slot": "teacher-R2:s42:40k",
+      "stage": "teacher-R2",
+      "sweep": null
+    },
+    {
+      "class": "run",
+      "cut_group": "R2",
+      "evaluator_stage": "E3",
+      "file_id": "E3-R2_s42_lambda0.5_alpha25_80k",
+      "gates": [
+        {
+          "moves_cutoff": true,
+          "record": "arm_teacher_selection"
+        },
+        {
+          "moves_cutoff": true,
+          "record": "alpha_selection"
+        },
+        {
+          "moves_cutoff": false,
+          "record": "go_rule"
+        }
+      ],
+      "model_role": "student",
+      "never_cut": false,
+      "params": {
+        "alpha": 25,
+        "lambda": 0.5
+      },
+      "parent": "teacher-R2:s42:40k",
+      "pilot": null,
+      "precision": "fp32",
+      "record_kind": "kd_run_end",
+      "registered_by": "AM-18 item 3(a)",
+      "roles": [
+        "arm"
+      ],
+      "scope_class": "arm_student",
+      "seed": 42,
+      "slot": "E3-R2:s42:lambda0.5:alpha25:80k",
+      "stage": "E3-R2",
+      "sweep": null
+    },
+    {
+      "class": "derived",
+      "cut_group": "R2",
+      "evaluator_stage": "E7",
+      "file_id": "E7-R2_s42_list42",
+      "gates": [],
+      "model_role": "student",
+      "never_cut": false,
+      "params": {
+        "list": 42
+      },
+      "parent": "E3-R2:s42:lambda0.5:alpha25:80k",
+      "pilot": null,
+      "precision": "int8_ptq",
+      "record_kind": "ptq",
+      "registered_by": "AM-18 item 3(a)",
+      "roles": [
+        "arm"
+      ],
+      "scope_class": "arm_student",
+      "seed": 42,
+      "slot": "E7-R2:s42:list42",
+      "stage": "E7-R2",
+      "sweep": null
+    },
+    {
+      "class": "run",
+      "cut_group": "R1",
+      "evaluator_stage": "teacher",
+      "file_id": "teacher-R1_s42_40k",
+      "gates": [],
+      "model_role": "teacher",
+      "never_cut": false,
+      "params": {},
+      "parent": null,
+      "pilot": null,
+      "precision": "fp32",
+      "record_kind": "teacher_m12",
+      "registered_by": "AM-18 item 2",
+      "roles": [
+        "arm_teacher"
+      ],
+      "scope_class": "arm_teacher",
+      "seed": 42,
+      "slot": "teacher-R1:s42:40k",
+      "stage": "teacher-R1",
+      "sweep": null
+    },
+    {
+      "class": "run",
+      "cut_group": "R1",
+      "evaluator_stage": "E3",
+      "file_id": "E3-R1_s42_lambda0.5_alpha25_80k",
+      "gates": [
+        {
+          "moves_cutoff": true,
+          "record": "arm_teacher_selection"
+        },
+        {
+          "moves_cutoff": true,
+          "record": "alpha_selection"
+        },
+        {
+          "moves_cutoff": false,
+          "record": "go_rule"
+        }
+      ],
+      "model_role": "student",
+      "never_cut": false,
+      "params": {
+        "alpha": 25,
+        "lambda": 0.5
+      },
+      "parent": "teacher-R1:s42:40k",
+      "pilot": null,
+      "precision": "fp32",
+      "record_kind": "kd_run_end",
+      "registered_by": "AM-18 item 3(a)",
+      "roles": [
+        "arm"
+      ],
+      "scope_class": "arm_student",
+      "seed": 42,
+      "slot": "E3-R1:s42:lambda0.5:alpha25:80k",
+      "stage": "E3-R1",
+      "sweep": null
+    },
+    {
+      "class": "derived",
+      "cut_group": "R1",
+      "evaluator_stage": "E7",
+      "file_id": "E7-R1_s42_list42",
+      "gates": [],
+      "model_role": "student",
+      "never_cut": false,
+      "params": {
+        "list": 42
+      },
+      "parent": "E3-R1:s42:lambda0.5:alpha25:80k",
+      "pilot": null,
+      "precision": "int8_ptq",
+      "record_kind": "ptq",
+      "registered_by": "AM-18 item 3(a)",
+      "roles": [
+        "arm"
+      ],
+      "scope_class": "arm_student",
+      "seed": 42,
+      "slot": "E7-R1:s42:list42",
+      "stage": "E7-R1",
+      "sweep": null
+    },
+    {
+      "class": "run",
+      "cut_group": "W",
+      "evaluator_stage": "E3",
+      "file_id": "E3-flip_s42_lambda0.5_alpha25_80k",
+      "gates": [
+        {
+          "moves_cutoff": true,
+          "record": "alpha_selection"
+        }
+      ],
+      "model_role": "student",
+      "never_cut": false,
+      "params": {
+        "alpha": 25,
+        "lambda": 0.5
+      },
+      "parent": null,
+      "pilot": null,
+      "precision": "fp32",
+      "record_kind": "kd_run_end",
+      "registered_by": "AM-18 item 3(b)",
+      "roles": [
+        "arm"
+      ],
+      "scope_class": "arm_student",
+      "seed": 42,
+      "slot": "E3-flip:s42:lambda0.5:alpha25:80k",
+      "stage": "E3-flip",
+      "sweep": null
+    },
+    {
+      "class": "derived",
+      "cut_group": "W",
+      "evaluator_stage": "E7",
+      "file_id": "E7-flip_s42_list42",
+      "gates": [],
+      "model_role": "student",
+      "never_cut": false,
+      "params": {
+        "list": 42
+      },
+      "parent": "E3-flip:s42:lambda0.5:alpha25:80k",
+      "pilot": null,
+      "precision": "int8_ptq",
+      "record_kind": "ptq",
+      "registered_by": "AM-18 item 3(b)",
+      "roles": [
+        "arm"
+      ],
+      "scope_class": "arm_student",
+      "seed": 42,
+      "slot": "E7-flip:s42:list42",
+      "stage": "E7-flip",
+      "sweep": null
+    },
+    {
+      "class": "run",
+      "cut_group": "L",
+      "evaluator_stage": null,
+      "file_id": "teacher-L_s42_40k",
+      "gates": [
+        {
+          "moves_cutoff": false,
+          "record": "code_merged"
+        }
+      ],
+      "model_role": "teacher",
+      "never_cut": false,
+      "params": {},
+      "parent": null,
+      "pilot": null,
+      "precision": "fp32",
+      "record_kind": "teacher_m12",
+      "registered_by": "AM-17 item 11",
+      "roles": [
+        "arm_teacher"
+      ],
+      "scope_class": "not_built",
+      "seed": 42,
+      "slot": "teacher-L:s42:40k",
+      "stage": "teacher-L",
+      "sweep": null
+    },
+    {
+      "class": "run",
+      "cut_group": "L",
+      "evaluator_stage": null,
+      "file_id": "E2-L_s42_lambda0.5_80k",
+      "gates": [
+        {
+          "moves_cutoff": true,
+          "record": "arm_teacher_selection"
+        },
+        {
+          "moves_cutoff": false,
+          "record": "go_rule"
+        }
+      ],
+      "model_role": "student",
+      "never_cut": false,
+      "params": {
+        "lambda": 0.5
+      },
+      "parent": "teacher-L:s42:40k",
+      "pilot": null,
+      "precision": "fp32",
+      "record_kind": "kd_run_end",
+      "registered_by": "AM-17 item 11",
+      "roles": [
+        "arm"
+      ],
+      "scope_class": "not_built",
+      "seed": 42,
+      "slot": "E2-L:s42:lambda0.5:80k",
+      "stage": "E2-L",
+      "sweep": null
+    },
+    {
+      "class": "run",
+      "cut_group": "L",
+      "evaluator_stage": null,
+      "file_id": "E3-L_s42_lambda0.5_alpha25_80k",
+      "gates": [
+        {
+          "moves_cutoff": true,
+          "record": "arm_teacher_selection"
+        },
+        {
+          "moves_cutoff": true,
+          "record": "alpha_selection"
+        },
+        {
+          "moves_cutoff": false,
+          "record": "go_rule"
+        }
+      ],
+      "model_role": "student",
+      "never_cut": false,
+      "params": {
+        "alpha": 25,
+        "lambda": 0.5
+      },
+      "parent": "teacher-L:s42:40k",
+      "pilot": null,
+      "precision": "fp32",
+      "record_kind": "kd_run_end",
+      "registered_by": "AM-17 item 11",
+      "roles": [
+        "arm"
+      ],
+      "scope_class": "not_built",
+      "seed": 42,
+      "slot": "E3-L:s42:lambda0.5:alpha25:80k",
+      "stage": "E3-L",
+      "sweep": null
+    },
+    {
+      "class": "derived",
+      "cut_group": "L",
+      "evaluator_stage": null,
+      "file_id": "E7-L_s42_list42",
+      "gates": [],
+      "model_role": "student",
+      "never_cut": false,
+      "params": {
+        "list": 42
+      },
+      "parent": "E3-L:s42:lambda0.5:alpha25:80k",
+      "pilot": null,
+      "precision": "int8_ptq",
+      "record_kind": "ptq",
+      "registered_by": "AM-17 item 11",
+      "roles": [
+        "arm"
+      ],
+      "scope_class": "not_built",
+      "seed": 42,
+      "slot": "E7-L:s42:list42",
+      "stage": "E7-L",
+      "sweep": null
+    },
+    {
+      "class": "run",
+      "cut_group": null,
+      "evaluator_stage": null,
+      "file_id": "E5_s42_clip1_15ep",
+      "gates": [],
+      "model_role": null,
+      "never_cut": true,
+      "params": {
+        "clip": 1.0
+      },
+      "parent": "E1:s42:80k",
+      "pilot": {
+        "of": "E5:s42:sel"
+      },
+      "precision": null,
+      "record_kind": "qat_epoch15",
+      "registered_by": "AM-4a item 3",
+      "roles": [
+        "listed"
+      ],
+      "scope_class": "none",
+      "seed": 42,
+      "slot": "E5:s42:clip1:15ep",
+      "stage": "E5",
+      "sweep": null
+    },
+    {
+      "class": "run",
+      "cut_group": null,
+      "evaluator_stage": null,
+      "file_id": "E5_s42_clip5_15ep",
+      "gates": [],
+      "model_role": null,
+      "never_cut": true,
+      "params": {
+        "clip": 5.0
+      },
+      "parent": "E1:s42:80k",
+      "pilot": {
+        "of": "E5:s42:sel"
+      },
+      "precision": null,
+      "record_kind": "qat_epoch15",
+      "registered_by": "AM-4a item 3",
+      "roles": [
+        "listed"
+      ],
+      "scope_class": "none",
+      "seed": 42,
+      "slot": "E5:s42:clip5:15ep",
+      "stage": "E5",
+      "sweep": null
+    },
+    {
+      "class": "derived",
+      "cut_group": null,
+      "evaluator_stage": "E5",
+      "file_id": "E5_s42_sel",
+      "gates": [],
+      "model_role": "student",
+      "never_cut": true,
+      "params": {},
+      "parent": null,
+      "pilot": {
+        "runs": [
+          "E5:s42:clip1:15ep",
+          "E5:s42:clip5:15ep"
+        ]
+      },
+      "precision": "int8_qat",
+      "record_kind": "qat_selection",
+      "registered_by": "AM-4a items 2-3",
+      "roles": [
+        "family"
+      ],
+      "scope_class": "family_s42",
+      "seed": 42,
+      "slot": "E5:s42:sel",
+      "stage": "E5",
+      "sweep": null
+    },
+    {
+      "class": "run",
+      "cut_group": null,
+      "evaluator_stage": null,
+      "file_id": "E6_s42_15ep",
+      "gates": [
+        {
+          "moves_cutoff": true,
+          "record": "pilot_winner"
+        }
+      ],
+      "model_role": null,
+      "never_cut": true,
+      "params": {},
+      "parent": "E3:s42:lambda0.5:alpha25:80k",
+      "pilot": null,
+      "precision": null,
+      "record_kind": "qat_epoch15",
+      "registered_by": "AM-1",
+      "roles": [
+        "listed"
+      ],
+      "scope_class": "none",
+      "seed": 42,
+      "slot": "E6:s42:15ep",
+      "stage": "E6",
+      "sweep": null
+    },
+    {
+      "class": "derived",
+      "cut_group": null,
+      "evaluator_stage": "E6",
+      "file_id": "E6_s42_sel",
+      "gates": [],
+      "model_role": "student",
+      "never_cut": true,
+      "params": {},
+      "parent": "E6:s42:15ep",
+      "pilot": null,
+      "precision": "int8_qat",
+      "record_kind": "qat_selection",
+      "registered_by": "AM-4a item 2",
+      "roles": [
+        "family"
+      ],
+      "scope_class": "family_s42",
+      "seed": 42,
+      "slot": "E6:s42:sel",
+      "stage": "E6",
+      "sweep": null
+    },
+    {
+      "class": "run",
+      "cut_group": "E5E6-s4344",
+      "evaluator_stage": null,
+      "file_id": "E5_s43_15ep",
+      "gates": [
+        {
+          "moves_cutoff": true,
+          "record": "pilot_winner"
+        }
+      ],
+      "model_role": null,
+      "never_cut": false,
+      "params": {},
+      "parent": "E1:s43:80k",
+      "pilot": null,
+      "precision": null,
+      "record_kind": "qat_epoch15",
+      "registered_by": "AM-1",
+      "roles": [
+        "listed"
+      ],
+      "scope_class": "none",
+      "seed": 43,
+      "slot": "E5:s43:15ep",
+      "stage": "E5",
+      "sweep": null
+    },
+    {
+      "class": "derived",
+      "cut_group": "E5E6-s4344",
+      "evaluator_stage": "E5",
+      "file_id": "E5_s43_sel",
+      "gates": [],
+      "model_role": "student",
+      "never_cut": false,
+      "params": {},
+      "parent": "E5:s43:15ep",
+      "pilot": null,
+      "precision": "int8_qat",
+      "record_kind": "qat_selection",
+      "registered_by": "AM-4a item 2",
+      "roles": [
+        "per_seed"
+      ],
+      "scope_class": "other_s4344",
+      "seed": 43,
+      "slot": "E5:s43:sel",
+      "stage": "E5",
+      "sweep": null
+    },
+    {
+      "class": "run",
+      "cut_group": "E5E6-s4344",
+      "evaluator_stage": null,
+      "file_id": "E5_s44_15ep",
+      "gates": [
+        {
+          "moves_cutoff": true,
+          "record": "pilot_winner"
+        }
+      ],
+      "model_role": null,
+      "never_cut": false,
+      "params": {},
+      "parent": "E1:s44:80k",
+      "pilot": null,
+      "precision": null,
+      "record_kind": "qat_epoch15",
+      "registered_by": "AM-1",
+      "roles": [
+        "listed"
+      ],
+      "scope_class": "none",
+      "seed": 44,
+      "slot": "E5:s44:15ep",
+      "stage": "E5",
+      "sweep": null
+    },
+    {
+      "class": "derived",
+      "cut_group": "E5E6-s4344",
+      "evaluator_stage": "E5",
+      "file_id": "E5_s44_sel",
+      "gates": [],
+      "model_role": "student",
+      "never_cut": false,
+      "params": {},
+      "parent": "E5:s44:15ep",
+      "pilot": null,
+      "precision": "int8_qat",
+      "record_kind": "qat_selection",
+      "registered_by": "AM-4a item 2",
+      "roles": [
+        "per_seed"
+      ],
+      "scope_class": "other_s4344",
+      "seed": 44,
+      "slot": "E5:s44:sel",
+      "stage": "E5",
+      "sweep": null
+    },
+    {
+      "class": "run",
+      "cut_group": "E5E6-s4344",
+      "evaluator_stage": null,
+      "file_id": "E6_s43_15ep",
+      "gates": [
+        {
+          "moves_cutoff": true,
+          "record": "parent_end"
+        },
+        {
+          "moves_cutoff": true,
+          "record": "pilot_winner"
+        }
+      ],
+      "model_role": null,
+      "never_cut": false,
+      "params": {},
+      "parent": "E3:s43:lambda0.5:alpha25:80k",
+      "pilot": null,
+      "precision": null,
+      "record_kind": "qat_epoch15",
+      "registered_by": "AM-1",
+      "roles": [
+        "listed"
+      ],
+      "scope_class": "none",
+      "seed": 43,
+      "slot": "E6:s43:15ep",
+      "stage": "E6",
+      "sweep": null
+    },
+    {
+      "class": "derived",
+      "cut_group": "E5E6-s4344",
+      "evaluator_stage": "E6",
+      "file_id": "E6_s43_sel",
+      "gates": [],
+      "model_role": "student",
+      "never_cut": false,
+      "params": {},
+      "parent": "E6:s43:15ep",
+      "pilot": null,
+      "precision": "int8_qat",
+      "record_kind": "qat_selection",
+      "registered_by": "AM-4a item 2",
+      "roles": [
+        "per_seed"
+      ],
+      "scope_class": "pair_s4344",
+      "seed": 43,
+      "slot": "E6:s43:sel",
+      "stage": "E6",
+      "sweep": null
+    },
+    {
+      "class": "run",
+      "cut_group": "E5E6-s4344",
+      "evaluator_stage": null,
+      "file_id": "E6_s44_15ep",
+      "gates": [
+        {
+          "moves_cutoff": true,
+          "record": "parent_end"
+        },
+        {
+          "moves_cutoff": true,
+          "record": "pilot_winner"
+        }
+      ],
+      "model_role": null,
+      "never_cut": false,
+      "params": {},
+      "parent": "E3:s44:lambda0.5:alpha25:80k",
+      "pilot": null,
+      "precision": null,
+      "record_kind": "qat_epoch15",
+      "registered_by": "AM-1",
+      "roles": [
+        "listed"
+      ],
+      "scope_class": "none",
+      "seed": 44,
+      "slot": "E6:s44:15ep",
+      "stage": "E6",
+      "sweep": null
+    },
+    {
+      "class": "derived",
+      "cut_group": "E5E6-s4344",
+      "evaluator_stage": "E6",
+      "file_id": "E6_s44_sel",
+      "gates": [],
+      "model_role": "student",
+      "never_cut": false,
+      "params": {},
+      "parent": "E6:s44:15ep",
+      "pilot": null,
+      "precision": "int8_qat",
+      "record_kind": "qat_selection",
+      "registered_by": "AM-4a item 2",
+      "roles": [
+        "per_seed"
+      ],
+      "scope_class": "pair_s4344",
+      "seed": 44,
+      "slot": "E6:s44:sel",
+      "stage": "E6",
+      "sweep": null
+    },
+    {
+      "class": "run",
+      "cut_group": null,
+      "evaluator_stage": null,
+      "file_id": "E6-KD_s42_15ep",
+      "gates": [
+        {
+          "moves_cutoff": false,
+          "record": "trigger"
+        },
+        {
+          "moves_cutoff": false,
+          "record": "code_merged"
+        }
+      ],
+      "model_role": null,
+      "never_cut": true,
+      "params": {},
+      "parent": "E3:s42:lambda0.5:alpha25:80k",
+      "pilot": null,
+      "precision": null,
+      "record_kind": "qat_epoch15",
+      "registered_by": "AM-3",
+      "roles": [
+        "listed"
+      ],
+      "scope_class": "none",
+      "seed": 42,
+      "slot": "E6-KD:s42:15ep",
+      "stage": "E6-KD",
+      "sweep": null
+    },
+    {
+      "class": "derived",
+      "cut_group": null,
+      "evaluator_stage": "E6-KD",
+      "file_id": "E6-KD_s42_sel",
+      "gates": [],
+      "model_role": "student",
+      "never_cut": true,
+      "params": {},
+      "parent": "E6-KD:s42:15ep",
+      "pilot": null,
+      "precision": "int8_qat",
+      "record_kind": "qat_selection",
+      "registered_by": "AM-3",
+      "roles": [
+        "e6kd"
+      ],
+      "scope_class": "e6kd",
+      "seed": 42,
+      "slot": "E6-KD:s42:sel",
+      "stage": "E6-KD",
+      "sweep": null
+    },
+    {
+      "class": "run",
+      "cut_group": "E6-E2",
+      "evaluator_stage": null,
+      "file_id": "E6-E2_s42_15ep",
+      "gates": [
+        {
+          "moves_cutoff": true,
+          "record": "pilot_winner"
+        },
+        {
+          "moves_cutoff": false,
+          "record": "code_merged"
+        }
+      ],
+      "model_role": null,
+      "never_cut": false,
+      "params": {},
+      "parent": "E2:s42:lambda0.5:80k",
+      "pilot": null,
+      "precision": null,
+      "record_kind": "qat_epoch15",
+      "registered_by": "AM-23 item 1",
+      "roles": [
+        "listed"
+      ],
+      "scope_class": "none",
+      "seed": 42,
+      "slot": "E6-E2:s42:15ep",
+      "stage": "E6-E2",
+      "sweep": null
+    },
+    {
+      "class": "derived",
+      "cut_group": "E6-E2",
+      "evaluator_stage": "E6-E2",
+      "file_id": "E6-E2_s42_sel",
+      "gates": [],
+      "model_role": "student",
+      "never_cut": false,
+      "params": {},
+      "parent": "E6-E2:s42:15ep",
+      "pilot": null,
+      "precision": "int8_qat",
+      "record_kind": "qat_selection",
+      "registered_by": "AM-23 item 1",
+      "roles": [
+        "quant_descriptive"
+      ],
+      "scope_class": "quant_descriptive",
+      "seed": 42,
+      "slot": "E6-E2:s42:sel",
+      "stage": "E6-E2",
+      "sweep": null
+    },
+    {
+      "class": "derived",
+      "cut_group": null,
+      "evaluator_stage": "E7-E2",
+      "file_id": "E7-E2_s42_list42",
+      "gates": [
+        {
+          "moves_cutoff": false,
+          "record": "code_merged"
+        }
+      ],
+      "model_role": "student",
+      "never_cut": false,
+      "params": {
+        "list": 42
+      },
+      "parent": "E2:s42:lambda0.5:80k",
+      "pilot": null,
+      "precision": "int8_ptq",
+      "record_kind": "ptq",
+      "registered_by": "AM-23 item 2",
+      "roles": [
+        "quant_descriptive"
+      ],
+      "scope_class": "quant_descriptive",
+      "seed": 42,
+      "slot": "E7-E2:s42:list42",
+      "stage": "E7-E2",
+      "sweep": null
+    },
+    {
+      "class": "run",
+      "cut_group": "E6-R1",
+      "evaluator_stage": null,
+      "file_id": "E6-R1_s42_15ep",
+      "gates": [
+        {
+          "moves_cutoff": true,
+          "record": "parent_end"
+        },
+        {
+          "moves_cutoff": true,
+          "record": "pilot_winner"
+        },
+        {
+          "moves_cutoff": false,
+          "record": "condition_entry"
+        },
+        {
+          "moves_cutoff": false,
+          "record": "code_merged"
+        }
+      ],
+      "model_role": null,
+      "never_cut": false,
+      "params": {},
+      "parent": "E3-R1:s42:lambda0.5:alpha25:80k",
+      "pilot": null,
+      "precision": null,
+      "record_kind": "qat_epoch15",
+      "registered_by": "AM-23 item 3",
+      "roles": [
+        "listed"
+      ],
+      "scope_class": "none",
+      "seed": 42,
+      "slot": "E6-R1:s42:15ep",
+      "stage": "E6-R1",
+      "sweep": null
+    },
+    {
+      "class": "derived",
+      "cut_group": "E6-R1",
+      "evaluator_stage": "E6-R1",
+      "file_id": "E6-R1_s42_sel",
+      "gates": [],
+      "model_role": "student",
+      "never_cut": false,
+      "params": {},
+      "parent": "E6-R1:s42:15ep",
+      "pilot": null,
+      "precision": "int8_qat",
+      "record_kind": "qat_selection",
+      "registered_by": "AM-23 item 3",
+      "roles": [
+        "quant_descriptive"
+      ],
+      "scope_class": "quant_descriptive",
+      "seed": 42,
+      "slot": "E6-R1:s42:sel",
+      "stage": "E6-R1",
+      "sweep": null
+    },
+    {
+      "class": "run",
+      "cut_group": "E6-R2",
+      "evaluator_stage": null,
+      "file_id": "E6-R2_s42_15ep",
+      "gates": [
+        {
+          "moves_cutoff": true,
+          "record": "parent_end"
+        },
+        {
+          "moves_cutoff": true,
+          "record": "pilot_winner"
+        },
+        {
+          "moves_cutoff": false,
+          "record": "condition_entry"
+        },
+        {
+          "moves_cutoff": false,
+          "record": "code_merged"
+        }
+      ],
+      "model_role": null,
+      "never_cut": false,
+      "params": {},
+      "parent": "E3-R2:s42:lambda0.5:alpha25:80k",
+      "pilot": null,
+      "precision": null,
+      "record_kind": "qat_epoch15",
+      "registered_by": "AM-23 item 3",
+      "roles": [
+        "listed"
+      ],
+      "scope_class": "none",
+      "seed": 42,
+      "slot": "E6-R2:s42:15ep",
+      "stage": "E6-R2",
+      "sweep": null
+    },
+    {
+      "class": "derived",
+      "cut_group": "E6-R2",
+      "evaluator_stage": "E6-R2",
+      "file_id": "E6-R2_s42_sel",
+      "gates": [],
+      "model_role": "student",
+      "never_cut": false,
+      "params": {},
+      "parent": "E6-R2:s42:15ep",
+      "pilot": null,
+      "precision": "int8_qat",
+      "record_kind": "qat_selection",
+      "registered_by": "AM-23 item 3",
+      "roles": [
+        "quant_descriptive"
+      ],
+      "scope_class": "quant_descriptive",
+      "seed": 42,
+      "slot": "E6-R2:s42:sel",
+      "stage": "E6-R2",
+      "sweep": null
+    },
+    {
+      "class": "derived",
+      "cut_group": null,
+      "evaluator_stage": "E4",
+      "file_id": "E4_s42_list42",
+      "gates": [],
+      "model_role": "student",
+      "never_cut": true,
+      "params": {
+        "list": 42
+      },
+      "parent": "E1:s42:80k",
+      "pilot": null,
+      "precision": "int8_ptq",
+      "record_kind": "ptq",
+      "registered_by": "AM-10; AM-19 item 4(b)",
+      "roles": [
+        "family"
+      ],
+      "scope_class": "family_s42",
+      "seed": 42,
+      "slot": "E4:s42:list42",
+      "stage": "E4",
+      "sweep": null
+    },
+    {
+      "class": "derived",
+      "cut_group": null,
+      "evaluator_stage": "E4",
+      "file_id": "E4_s43_list42",
+      "gates": [],
+      "model_role": "student",
+      "never_cut": true,
+      "params": {
+        "list": 42
+      },
+      "parent": "E1:s43:80k",
+      "pilot": null,
+      "precision": "int8_ptq",
+      "record_kind": "ptq",
+      "registered_by": "AM-10; AM-19 item 4(b)",
+      "roles": [
+        "per_seed"
+      ],
+      "scope_class": "other_s4344",
+      "seed": 43,
+      "slot": "E4:s43:list42",
+      "stage": "E4",
+      "sweep": null
+    },
+    {
+      "class": "derived",
+      "cut_group": null,
+      "evaluator_stage": "E4",
+      "file_id": "E4_s44_list42",
+      "gates": [],
+      "model_role": "student",
+      "never_cut": true,
+      "params": {
+        "list": 42
+      },
+      "parent": "E1:s44:80k",
+      "pilot": null,
+      "precision": "int8_ptq",
+      "record_kind": "ptq",
+      "registered_by": "AM-10; AM-19 item 4(b)",
+      "roles": [
+        "per_seed"
+      ],
+      "scope_class": "other_s4344",
+      "seed": 44,
+      "slot": "E4:s44:list42",
+      "stage": "E4",
+      "sweep": null
+    },
+    {
+      "class": "derived",
+      "cut_group": null,
+      "evaluator_stage": "E7",
+      "file_id": "E7_s42_list42",
+      "gates": [],
+      "model_role": "student",
+      "never_cut": true,
+      "params": {
+        "list": 42
+      },
+      "parent": "E3:s42:lambda0.5:alpha25:80k",
+      "pilot": null,
+      "precision": "int8_ptq",
+      "record_kind": "ptq",
+      "registered_by": "AM-10; AM-19 item 4(b)",
+      "roles": [
+        "family"
+      ],
+      "scope_class": "family_s42",
+      "seed": 42,
+      "slot": "E7:s42:list42",
+      "stage": "E7",
+      "sweep": null
+    },
+    {
+      "class": "derived",
+      "cut_group": null,
+      "evaluator_stage": "E7",
+      "file_id": "E7_s43_list42",
+      "gates": [],
+      "model_role": "student",
+      "never_cut": true,
+      "params": {
+        "list": 42
+      },
+      "parent": "E3:s43:lambda0.5:alpha25:80k",
+      "pilot": null,
+      "precision": "int8_ptq",
+      "record_kind": "ptq",
+      "registered_by": "AM-10; AM-19 item 4(b)",
+      "roles": [
+        "per_seed"
+      ],
+      "scope_class": "other_s4344",
+      "seed": 43,
+      "slot": "E7:s43:list42",
+      "stage": "E7",
+      "sweep": null
+    },
+    {
+      "class": "derived",
+      "cut_group": null,
+      "evaluator_stage": "E7",
+      "file_id": "E7_s44_list42",
+      "gates": [],
+      "model_role": "student",
+      "never_cut": true,
+      "params": {
+        "list": 42
+      },
+      "parent": "E3:s44:lambda0.5:alpha25:80k",
+      "pilot": null,
+      "precision": "int8_ptq",
+      "record_kind": "ptq",
+      "registered_by": "AM-10; AM-19 item 4(b)",
+      "roles": [
+        "per_seed"
+      ],
+      "scope_class": "other_s4344",
+      "seed": 44,
+      "slot": "E7:s44:list42",
+      "stage": "E7",
+      "sweep": null
+    },
+    {
+      "class": "derived",
+      "cut_group": null,
+      "evaluator_stage": "E4",
+      "file_id": "E4_s42_list43",
+      "gates": [],
+      "model_role": "student",
+      "never_cut": true,
+      "params": {
+        "list": 43
+      },
+      "parent": "E1:s42:80k",
+      "pilot": null,
+      "precision": "int8_ptq",
+      "record_kind": "ptq",
+      "registered_by": "AM-16 item 5",
+      "roles": [
+        "calibration_sensitivity"
+      ],
+      "scope_class": "calibration_sensitivity",
+      "seed": 42,
+      "slot": "E4:s42:list43",
+      "stage": "E4",
+      "sweep": null
+    },
+    {
+      "class": "derived",
+      "cut_group": null,
+      "evaluator_stage": "E4",
+      "file_id": "E4_s42_list44",
+      "gates": [],
+      "model_role": "student",
+      "never_cut": true,
+      "params": {
+        "list": 44
+      },
+      "parent": "E1:s42:80k",
+      "pilot": null,
+      "precision": "int8_ptq",
+      "record_kind": "ptq",
+      "registered_by": "AM-16 item 5",
+      "roles": [
+        "calibration_sensitivity"
+      ],
+      "scope_class": "calibration_sensitivity",
+      "seed": 42,
+      "slot": "E4:s42:list44",
+      "stage": "E4",
+      "sweep": null
+    },
+    {
+      "class": "derived",
+      "cut_group": null,
+      "evaluator_stage": "E4",
+      "file_id": "E4_s42_list45",
+      "gates": [],
+      "model_role": "student",
+      "never_cut": true,
+      "params": {
+        "list": 45
+      },
+      "parent": "E1:s42:80k",
+      "pilot": null,
+      "precision": "int8_ptq",
+      "record_kind": "ptq",
+      "registered_by": "AM-16 item 5",
+      "roles": [
+        "calibration_sensitivity"
+      ],
+      "scope_class": "calibration_sensitivity",
+      "seed": 42,
+      "slot": "E4:s42:list45",
+      "stage": "E4",
+      "sweep": null
+    },
+    {
+      "class": "derived",
+      "cut_group": null,
+      "evaluator_stage": "E7",
+      "file_id": "E7_s42_list43",
+      "gates": [],
+      "model_role": "student",
+      "never_cut": true,
+      "params": {
+        "list": 43
+      },
+      "parent": "E3:s42:lambda0.5:alpha25:80k",
+      "pilot": null,
+      "precision": "int8_ptq",
+      "record_kind": "ptq",
+      "registered_by": "AM-16 item 5",
+      "roles": [
+        "calibration_sensitivity"
+      ],
+      "scope_class": "calibration_sensitivity",
+      "seed": 42,
+      "slot": "E7:s42:list43",
+      "stage": "E7",
+      "sweep": null
+    },
+    {
+      "class": "derived",
+      "cut_group": null,
+      "evaluator_stage": "E7",
+      "file_id": "E7_s42_list44",
+      "gates": [],
+      "model_role": "student",
+      "never_cut": true,
+      "params": {
+        "list": 44
+      },
+      "parent": "E3:s42:lambda0.5:alpha25:80k",
+      "pilot": null,
+      "precision": "int8_ptq",
+      "record_kind": "ptq",
+      "registered_by": "AM-16 item 5",
+      "roles": [
+        "calibration_sensitivity"
+      ],
+      "scope_class": "calibration_sensitivity",
+      "seed": 42,
+      "slot": "E7:s42:list44",
+      "stage": "E7",
+      "sweep": null
+    },
+    {
+      "class": "derived",
+      "cut_group": null,
+      "evaluator_stage": "E7",
+      "file_id": "E7_s42_list45",
+      "gates": [],
+      "model_role": "student",
+      "never_cut": true,
+      "params": {
+        "list": 45
+      },
+      "parent": "E3:s42:lambda0.5:alpha25:80k",
+      "pilot": null,
+      "precision": "int8_ptq",
+      "record_kind": "ptq",
+      "registered_by": "AM-16 item 5",
+      "roles": [
+        "calibration_sensitivity"
+      ],
+      "scope_class": "calibration_sensitivity",
+      "seed": 42,
+      "slot": "E7:s42:list45",
+      "stage": "E7",
+      "sweep": null
+    },
+    {
+      "class": "measurement",
+      "cut_group": "ARM",
+      "evaluator_stage": null,
+      "file_id": "ARM_latency",
+      "gates": [],
+      "model_role": null,
+      "never_cut": false,
+      "params": {},
+      "parent": null,
+      "pilot": null,
+      "precision": null,
+      "record_kind": "arm_output",
+      "registered_by": "AM-16 item 7",
+      "roles": [],
+      "scope_class": "none",
+      "seed": null,
+      "slot": "ARM:latency",
+      "stage": "ARM",
+      "sweep": null
+    }
+  ]
+}

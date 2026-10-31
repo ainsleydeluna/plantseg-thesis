@@ -477,16 +477,21 @@ selects, frozen machine-readably in **`configs/corruption_protocol.json`**
   artifact exists yet, so no migration compatibility is owed.
 - Severity roles frozen alongside: **1–3 inferential**, **4 descriptive-only**, ~~**5 excluded**~~.
   **[UPDATED 2026-09-24 — B65 CP-006]** AM-16 item 6 also scores the four non-noise corruptions at
-  severities 4 and 5, descriptively; the protocol file's severity roles change in lane L-AM16-SEV.
+  severities 4 and 5, descriptively; ~~the protocol file's severity roles change in lane L-AM16-SEV.~~
+  **[UPDATED 2026-10-26 — L-CORR]** the roles changed in `plantseg-corruptions/2.0.0` (L-AM16-SEV
+  3e054d2, merged f1effa5): per corruption, severity 5 is descriptive-only for the four non-noise
+  corruptions and excluded for `gaussian_noise`.
 - **Official mIoU-C is no longer blocked by vocabulary ambiguity.** Official analysis must load the
   protocol file; `NONOFFICIAL_SMOKE` may inject a synthetic grid that can never enter official
   statistics.
 
-**Still open (deliberately not closed here):** the corruption **implementation** provenance — the
+~~**Still open (deliberately not closed here):** the corruption **implementation** provenance — the
 vendored bytes, its parameters, the `np.float_`→`np.float64` patch, the seed policy and the cache
 protocol — remains a future corruption-scaffold task. That task must also **verify** the vendored
 implementation actually exposes these five function names: `imagecorruptions` is currently neither
-installed nor pinned in `requirements.lock`, so A3b-0 could not check it against real bytes.
+installed nor pinned in `requirements.lock`, so A3b-0 could not check it against real bytes.~~
+**[UPDATED 2026-10-26 — L-CORR]** **Closed:** the vendored runtime hash, the seed policy, the generator
+pin and the cache manifest (L-CORR B-2, merged f1effa5).
 
 ---
 

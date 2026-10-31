@@ -30,8 +30,15 @@ fbgemm/x86 copy with `reduce_range=True` is the x86 CPU-proxy latency artifact (
 """
 from __future__ import annotations
 
+import gc
+import hashlib
+import io
+import json
+import os
 import platform
+import re
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -44,7 +51,7 @@ if str(REPO) not in sys.path:
 from src.eval.model_loading import sha256_file  # noqa: E402  (reuse; no second loader here)
 from src.eval.stage_artifacts import OFFICIAL_ROWS  # noqa: E402  (governed clean-test row count)
 
-EFFICIENCY_SCHEMA = "plantseg-efficiency/1.0.0"
+EFFICIENCY_SCHEMA = "plantseg-efficiency/2.0.0"
 
 # ---- frozen protocol -------------------------------------------------------------------------
 INPUT_SHAPE = (1, 3, 512, 512)
@@ -53,6 +60,11 @@ WARMUP_FORWARDS = 20
 MEASURED_FORWARDS = 100
 PERCENTILE_METHOD = "linear"          # numpy method='linear'; stated so the reducer is unambiguous
 FVCORE_PINNED = "0.1.5.post20221221"  # IMPLEMENTATION_CONTRACT pinned-stack table
+# The thread count of record: LEFF-AUDIT-RULE-1 Q1; its DL row is proposed in docs/lane_reports/leff.md. Fixed from
+# hardware facts, never from a timing (the LEFF Phase A plan §1): one intra-op and one inter-op thread on every host.
+THREADS_OF_RECORD = 1
+INTEROP_THREADS_OF_RECORD = 1
+TIMER = "torch.utils.benchmark.Timer.timeit(1)"
 
 # ---- byte accounting (contract line 406-407) -------------------------------------------------
 INT8_WEIGHT_BYTES = 1
@@ -72,8 +84,19 @@ CPU_PROXY = True
 ON_DEVICE = False
 MEASUREMENT_ROLE = "descriptive"
 
-STAGES = ("teacher", "E1", "E2", "E3", "E4", "E5", "E6", "E7")
+STAGES = ("teacher", "E1", "E2", "E3", "A", "F", "G", "E4", "E5", "E6", "E7")
 INT8_STAGES = ("E4", "E5", "E6", "E7")
+# The stages Chapter 4 reports an efficiency quantity for (LEFF-AUDIT-RULE-1 A1; TL §9). The exploratory arms A, F
+# and G are in STAGES so the resolver's checks (DL-52) apply to them (E-35); the run of record refuses them. E6-KD
+# and AM-23's descriptive quantizations (E6-E2, E7-E2, E6-R1, E6-R2) are in neither (A1; AM-23 items 1 and 3(f)).
+EFFICIENCY_ANALYSIS_STAGES = ("teacher", "E1", "E2", "E3", "E4", "E5", "E6", "E7")
+
+# Which count a record's footprint reports (LEFF-AUDIT-RULE-1 A13): an INT8 artifact's own packed params, or its
+# state_dict companion when a packed-params object cannot be unpacked (named in the record, never silent); an FP32
+# stage's loaded model.
+FOOTPRINT_SOURCE_ARTIFACT = "artifact"
+FOOTPRINT_SOURCE_COMPANION = "state_dict_companion"
+FOOTPRINT_SOURCE_MODEL = "model"
 
 
 class EfficiencyError(RuntimeError):
@@ -97,8 +120,17 @@ def count_parameters(model) -> dict:
 
 
 def is_quantized(model) -> bool:
-    """True when any submodule holds packed INT8 parameters."""
+    """True when any submodule holds packed INT8 parameters or is a converted quantized module.
+
+    FloatFunctional is torch.ao.nn.quantized's FLOAT placeholder, which convert() turns into QFunctional. The FP32
+    student holds such modules (src/models/student.py :20, :89-90), so they are skipped here: otherwise every FP32
+    student counted as quantized and its parameter and FLOP counts were refused.
+    """
+    from torch.ao.nn.quantized import FloatFunctional
+
     for mod in model.modules():
+        if isinstance(mod, FloatFunctional):
+            continue
         if hasattr(mod, "_packed_params") or ".quantized" in type(mod).__module__:
             return True
     return False
@@ -204,6 +236,78 @@ def weight_footprint(model) -> dict:
     return footprint_from_counts(int(int8_elements), int(fp32_elements), int(metadata_elements))
 
 
+def _packed_params_type(packed) -> str:
+    try:
+        return packed._type().qualified_name()
+    except Exception:                              # noqa: BLE001 - a name for the record only
+        return type(packed).__name__
+
+
+def _unpack_packed_params(packed):
+    """(weight, bias) of one packed-params object: conv2d_unpack (src/quant/ptq.py :484-496), then linear_unpack."""
+    errors = []
+    for op in (torch.ops.quantized.conv2d_unpack, torch.ops.quantized.linear_unpack):
+        try:
+            return op(packed)
+        except Exception as e:                     # noqa: BLE001 - every attempt is recorded by the caller
+            errors.append(f"{type(e).__name__}: {str(e).splitlines()[0][:120] if str(e) else ''}")
+    raise ValueError("; ".join(errors))
+
+
+def packed_params_footprint(module) -> dict:
+    """Weight footprint of an INT8 TorchScript artifact, read from the artifact's own packed params (A13; F4).
+
+    A traced submodule keeps its `_packed_params` but no `weight()`/`bias()` method, so `weight_footprint` counts no
+    INT8 weight on it (F4). Here every packed-params object is unpacked through the quantized ops, as
+    src/quant/ptq.py's weight_scheme_report reads the weights inside an artifact file, and counted with
+    weight_footprint's rules (INT8 elements; scale and zero-point per channel or per tensor; bias). FP32 parameters of
+    the other submodules are counted as weight_footprint counts them. A packed-params object that neither op unpacks
+    is listed under `packed_params_unreadable`, never skipped silently: the caller then reports the state_dict
+    companion's count and names it (LF26).
+    """
+    if not isinstance(module, torch.jit.ScriptModule):
+        raise TypeError(f"packed_params_footprint reads a TorchScript module, got {type(module).__name__}")
+    int8_elements = fp32_elements = metadata_elements = 0
+    unpacked, unreadable, seen = 0, [], set()
+    for name, mod in module.named_modules():
+        c = mod._c
+        packed = c.getattr("_packed_params") if c.hasattr("_packed_params") else None
+        if isinstance(packed, torch._C.ScriptModule):
+            continue                               # a quantized Linear's packed-params submodule: counted on its own
+        if packed is not None:
+            try:
+                weight, bias = _unpack_packed_params(packed)
+            except ValueError as e:
+                unreadable.append({"module": name or "<root>", "type": _packed_params_type(packed), "error": str(e)})
+                continue
+            unpacked += 1
+            int8_elements += weight.numel()
+            channels = weight.shape[0] if weight.dim() > 0 else 1
+            per_channel = weight.qscheme() in (torch.per_channel_affine, torch.per_channel_symmetric)
+            metadata_elements += 2 * (channels if per_channel else 1)
+            if torch.is_tensor(bias):
+                metadata_elements += bias.numel()
+            continue
+        for pname, param in mod.named_parameters(recurse=False):
+            key = (param.data_ptr(), tuple(param.shape), str(param.dtype))
+            if key in seen:
+                continue
+            seen.add(key)
+            if pname == "bias":
+                metadata_elements += param.numel()
+            else:
+                fp32_elements += param.numel()
+    counts = footprint_from_counts(int(int8_elements), int(fp32_elements), int(metadata_elements))
+    counts.update({"counted_from": "artifact_packed_params", "packed_params_unpacked": unpacked,
+                   "packed_params_unreadable": unreadable})
+    return counts
+
+
+def footprint_counts_equal(a: dict, b: dict) -> bool:
+    """Two footprints count the same INT8, FP32 and metadata elements (the artifact vs its state_dict companion)."""
+    return all(a[k] == b[k] for k in ("int8_weight_elements", "fp32_weight_elements", "metadata_elements"))
+
+
 def serialized_artifact(path) -> dict:
     """Physical on-disk bytes of the deployable artifact actually being measured."""
     p = Path(path)
@@ -216,6 +320,51 @@ def serialized_artifact(path) -> dict:
         "serialized_artifact_mib": size / (1024 ** 2),   # MiB = 1024^2, stated explicitly
         "size_convention": "bytes canonical; MiB = bytes / 1024^2",
         "sha256": sha256_file(p),
+    }
+
+
+def model_only_serialization(path, *, expected_sha256: str, teacher: bool = False) -> dict:
+    """The model-only serialization of an FP32 checkpoint file: a LABELLED COMPANION to its serialized size.
+
+    The serialized size of an FP32 stage is its checkpoint file (the which-artifact rule), which also holds the
+    optimizer state (F5; for the teacher's file INFERRED until LB-1 reads its keys, which this records). This is the
+    like-for-like number beside it (LEFF-AUDIT-RULE-1 Q7): the model state alone - a student checkpoint's
+    `model_state_dict`, a teacher checkpoint's `state_dict` read as src.distill.segnext_teacher reads it - written by
+    torch.save to memory and counted (deterministic for one torch build). The bytes are hashed and compared with the
+    validated sha256 before they are parsed, so the companion measures exactly the file of record.
+    """
+    p = Path(path)
+    if not p.is_file():
+        _fail("artifact_missing", f"serialized artifact not found: {p}")
+    raw = p.read_bytes()
+    digest = hashlib.sha256(raw).hexdigest()
+    if digest != expected_sha256:
+        _fail("checkpoint_changed_after_validation",
+              f"checkpoint bytes changed between validation ({expected_sha256}) and the size companion's read "
+              f"({digest}); the file was not parsed")
+    payload = torch.load(io.BytesIO(raw), map_location="cpu", weights_only=False)
+    if teacher:
+        key = "state_dict" if "state_dict" in payload else None
+        state = payload[key] if key else payload
+    else:
+        key = "model_state_dict"
+        state = payload[key]
+    buf = io.BytesIO()
+    torch.save(state, buf)
+    size = len(buf.getbuffer())
+    container = sorted(str(k) for k in payload) if key else None
+    return {
+        "model_only_serialized_bytes": int(size),
+        "model_only_serialized_mib": size / (1024 ** 2),
+        "state_key": key,
+        "checkpoint_top_level_keys": container,
+        "checkpoint_holds_optimizer_state": (any("optimizer" in k for k in container) if container is not None
+                                             else False),
+        "source_sha256": digest,
+        "source_bytes": len(raw),
+        "role": ("labelled companion: the model state alone, torch.save to memory; the serialized size of record is "
+                 "the checkpoint file (serialized_artifact_bytes)"),
+        "deterministic_for": "one torch build",
     }
 
 
@@ -302,20 +451,47 @@ def latency_statistics(samples_seconds, *, expected: int | None = MEASURED_FORWA
     }
 
 
-def _benchmark_sampler(model, inputs, measured: int):
-    """Default sampler: `torch.utils.benchmark`, one observation per measured forward."""
+def _thread_probe(store: list) -> None:
+    """The Timer's `setup`: the intra-op thread count in effect, recorded outside every timed region (A15)."""
+    store.append(torch.get_num_threads())
+
+
+def timer_untimed_executions(num_threads: int) -> int:
+    """How many untimed executions Timer.timeit(1) runs before its timed one, counted on this torch build (A23):
+    a counting statement, never the model's, so no timed region is touched."""
+    import torch.utils.benchmark as benchmark
+
+    count = [0]
+    benchmark.Timer(stmt="count[0] += 1", globals={"count": count}, num_threads=num_threads).timeit(1)
+    return count[0] - 1
+
+
+def _benchmark_sampler(model, inputs, measured: int, *, num_threads: int, probe: list):
+    """Default sampler: `torch.utils.benchmark`, one observation per measured forward.
+
+    The Timer runs at `num_threads` (its default is 1 whatever the process uses, F2); the probe runs in its `setup`,
+    outside the timed region, once per timing pass (Timer.timeit(1) makes two: its warm-up pass and the timed one),
+    so every observation records the count it ran at (A15).
+    """
     import torch.utils.benchmark as benchmark
 
     timer = benchmark.Timer(
         stmt="with torch.inference_mode():\n    model(x)",
-        globals={"model": model, "x": inputs, "torch": torch})
+        setup="thread_probe(probe)",
+        globals={"model": model, "x": inputs, "torch": torch, "thread_probe": _thread_probe, "probe": probe},
+        num_threads=num_threads)
     return [timer.timeit(1).median for _ in range(measured)]
 
 
 def measure_latency(model, *, input_shape=INPUT_SHAPE, warmup: int = WARMUP_FORWARDS,
                     measured: int = MEASURED_FORWARDS, sampler=None,
                     thread_count: int | None = None) -> dict:
-    """CPU-proxy latency under the registered protocol. Never a device/ARM claim."""
+    """CPU-proxy latency under the registered protocol. Never a device/ARM claim.
+
+    The Timer runs at `thread_count` when it is given, else at torch.get_num_threads() at the call, never at the
+    Timer's default of 1 (F2). `intra_op_observed` is what the probe saw; the run of record refuses any value other
+    than the thread count of record (scripts/profile_efficiency.py, [timed_threads_mismatch]).
+    """
     if warmup != WARMUP_FORWARDS or measured != MEASURED_FORWARDS:
         _fail("latency_protocol_violation",
               f"the registered protocol is {WARMUP_FORWARDS} warm-up + {MEASURED_FORWARDS} "
@@ -325,6 +501,7 @@ def measure_latency(model, *, input_shape=INPUT_SHAPE, warmup: int = WARMUP_FORW
 
     if thread_count is not None:
         torch.set_num_threads(int(thread_count))
+    num_threads = torch.get_num_threads()
 
     model.eval()                       # required by the protocol; AMP is never enabled here
     inputs = torch.zeros(*input_shape)
@@ -333,18 +510,29 @@ def measure_latency(model, *, input_shape=INPUT_SHAPE, warmup: int = WARMUP_FORW
         for _ in range(warmup):
             model(inputs)
 
-    samples = (sampler or _benchmark_sampler)(model, inputs, measured)
+    probe: list = []
+    if sampler is None:
+        untimed = timer_untimed_executions(num_threads)
+        samples = _benchmark_sampler(model, inputs, measured, num_threads=num_threads, probe=probe)
+    else:
+        untimed, samples = None, sampler(model, inputs, measured)
     stats = latency_statistics(samples, expected=measured)
+    seen = sorted(set(probe))
     stats.update({
         "warmup_forwards": warmup,
         "batch_size": input_shape[0],
         "input_shape": list(input_shape),
-        "thread_count": torch.get_num_threads(),
+        "thread_count": num_threads,
         "interop_thread_count": torch.get_num_interop_threads(),
         "timer": "torch.utils.benchmark" if sampler is None else "injected",
         "amp": False,
         "inference_mode": True,
         "eval_mode": not model.training,
+        "intra_op_observed": (seen[0] if len(seen) == 1 else seen) if seen else None,
+        "thread_probe": {"values": seen, "probes": len(probe), "where": "Timer setup, untimed"},
+        "protocol": {"warmup": warmup, "measured": measured, "untimed_executions_per_observation": untimed,
+                     "forwards_executed": (warmup + measured * (1 + untimed)) if untimed is not None else None,
+                     "timer": TIMER if sampler is None else "injected", "num_threads": num_threads},
     })
     return stats
 
@@ -417,6 +605,339 @@ def memory_delta(baseline_bytes: int, peak_bytes: int) -> dict:
     }
 
 
+# ------------------------------------------------------------------ peak memory (the LEFF Phase A plan §3; DL-b)
+# Two adjacent ru_maxrss reads measure nothing (FACT 4): ru_maxrss is a process-lifetime high-water mark that cannot
+# be reset. VmHWM in /proc/self/status is the same mm counter, per process and resettable through
+# /proc/self/clear_refs, so the inference phase gets its own high-water mark. Linux only.
+PROC_STATUS = "/proc/self/status"
+PROC_CLEAR_REFS = "/proc/self/clear_refs"
+CLEAR_REFS_RESET_HWM = "5"            # proc_pid_clear_refs(5): VmHWM reset to the current VmRSS (Linux >= 4.0)
+MEMORY_FORWARDS = WARMUP_FORWARDS + MEASURED_FORWARDS   # the protocol's 120 forwards, untimed here
+# VmRSS and VmHWM are approximate (proc_pid_status(5); per-thread counters are synced lazily), so the reset is judged
+# against a recorded slack, never one page (LEFF-AUDIT-RULE-1 A6).
+HWM_SLACK_FLOOR_BYTES = 1024 * 1024
+HWM_SLACK_PAGES_PER_THREAD = 64
+PARENT_CONTAMINATION_BYTES = 64 * 1024 * 1024
+MEMORY_SOURCE = "/proc/self/status VmHWM - VmRSS (high-water mark reset via /proc/self/clear_refs)"
+
+
+def read_proc_status(path=PROC_STATUS) -> dict:
+    """VmRSS and VmHWM of this process in bytes (the kB values x 1024)."""
+    try:
+        with open(path, encoding="ascii") as fh:
+            text = fh.read()
+    except OSError as e:
+        _fail("memory_sampler_unavailable",
+              f"NEEDS LINUX: {path} cannot be read ({type(e).__name__}: {e}); peak memory is the resident-set "
+              "high-water mark of the inference phase")
+    values = {}
+    for line in text.splitlines():
+        key, _, rest = line.partition(":")
+        if key in ("VmRSS", "VmHWM") and rest.split():
+            values[key] = int(rest.split()[0]) * 1024
+    if set(values) != {"VmRSS", "VmHWM"}:
+        _fail("memory_sampler_unavailable", f"{path} holds no VmRSS and VmHWM lines")
+    return {"vm_rss_bytes": values["VmRSS"], "vm_hwm_bytes": values["VmHWM"]}
+
+
+def ru_maxrss_bytes() -> int:
+    """resource.getrusage(RUSAGE_SELF).ru_maxrss in bytes (KiB on Linux): the contract's counter, recorded beside
+    VmHWM. It cannot be reset."""
+    import resource
+    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return int(peak * 1024) if sys.platform.startswith("linux") else int(peak)
+
+
+def hwm_slack_bytes(threads: int, page_size: int) -> int:
+    """The slack VmHWM may exceed VmRSS by after a reset: max(1 MiB, 64 pages x (threads + 1)) (A6)."""
+    return max(HWM_SLACK_FLOOR_BYTES, HWM_SLACK_PAGES_PER_THREAD * int(page_size) * (int(threads) + 1))
+
+
+def reset_rss_high_water(*, slack_bytes: int, clear_refs=PROC_CLEAR_REFS, status=PROC_STATUS) -> dict:
+    """Reset this process's resident-set high-water mark to its current resident set and prove the reset took.
+
+    `[memory_hwm_reset_unavailable]`, naming the cause, when clear_refs is absent or not writable, or when VmHWM still
+    exceeds VmRSS by more than `slack_bytes` after the write. The file is opened without O_CREAT: a wrong path is
+    never created.
+    """
+    try:
+        fd = os.open(str(clear_refs), os.O_WRONLY)
+    except FileNotFoundError:
+        _fail("memory_hwm_reset_unavailable",
+              f"{clear_refs} is absent (Linux >= 4.0 provides it); the high-water mark cannot be reset")
+    except OSError as e:
+        _fail("memory_hwm_reset_unavailable",
+              f"{clear_refs} is not writable ({type(e).__name__}: {e}); the high-water mark cannot be reset")
+    try:
+        os.write(fd, CLEAR_REFS_RESET_HWM.encode("ascii"))
+    except OSError as e:
+        _fail("memory_hwm_reset_unavailable",
+              f"{clear_refs} is not writable ({type(e).__name__}: {e}); the high-water mark cannot be reset")
+    finally:
+        os.close(fd)
+    after = read_proc_status(status)
+    if after["vm_hwm_bytes"] > after["vm_rss_bytes"] + slack_bytes:
+        _fail("memory_hwm_reset_unavailable",
+              f"the reset did not take: VmHWM {after['vm_hwm_bytes']} B exceeds VmRSS {after['vm_rss_bytes']} B by "
+              f"more than the slack {slack_bytes} B")
+    return {"vm_rss_after_reset_bytes": after["vm_rss_bytes"], "vm_hwm_after_reset_bytes": after["vm_hwm_bytes"],
+            "slack_bytes": int(slack_bytes)}
+
+
+def parent_contamination(ru_maxrss_start_bytes: int, vm_hwm_start_bytes: int) -> dict:
+    """§3: a process started from a large parent can start with the parent's ru_maxrss (Linux reports the larger of
+    the inherited signal maxrss and the mm high-water mark; INFERRED, kernel getrusage). Contaminated when ru_maxrss at
+    process start exceeds VmHWM at process start by more than 64 MiB; the run of record refuses it (B-2)."""
+    excess = int(ru_maxrss_start_bytes) - int(vm_hwm_start_bytes)
+    return {"ru_maxrss_start_bytes": int(ru_maxrss_start_bytes), "vm_hwm_start_bytes": int(vm_hwm_start_bytes),
+            "excess_bytes": excess, "threshold_bytes": PARENT_CONTAMINATION_BYTES,
+            "contaminated": excess > PARENT_CONTAMINATION_BYTES}
+
+
+def measure_peak_memory(model, *, input_shape=INPUT_SHAPE, forwards: int = MEMORY_FORWARDS,
+                        clear_refs=PROC_CLEAR_REFS, status=PROC_STATUS) -> dict:
+    """Peak inference memory (§3): VmHWM over the protocol's 120 untimed forwards minus VmRSS at the start of that
+    phase, in bytes, in a fresh process per stage of record.
+
+    The phase starts after the model is loaded and gc.collect() has run: the high-water mark is then reset to the
+    current resident set (reset_rss_high_water), so neither the load spike nor a parent's high-water mark enters the
+    delta. The input exists before the phase. ru_maxrss is recorded at the phase start and end; `ru_maxrss_consistent`
+    is informational, never a refusal (A6). A negative delta is reported, never clamped (memory_delta).
+    """
+    model.eval()
+    inputs = torch.zeros(*input_shape)
+    gc.collect()
+    threads = torch.get_num_threads()
+    page = os.sysconf("SC_PAGE_SIZE")
+    slack = hwm_slack_bytes(threads, page)
+    ru_phase_start = ru_maxrss_bytes()
+    reset = reset_rss_high_water(slack_bytes=slack, clear_refs=clear_refs, status=status)
+    start = read_proc_status(status)
+    with torch.inference_mode():
+        for _ in range(forwards):
+            model(inputs)
+    end = read_proc_status(status)
+    ru_end = ru_maxrss_bytes()
+    out = memory_delta(start["vm_rss_bytes"], end["vm_hwm_bytes"])
+    out.update({
+        "source": MEMORY_SOURCE,
+        "definition": ("VmHWM over the inference phase minus VmRSS at its start; the high-water mark reset after "
+                       "the load and gc.collect()"),
+        "forwards": forwards,
+        "input_shape": list(input_shape),
+        "inference_mode": True,
+        "threads": threads,
+        "page_size_bytes": page,
+        "slack_bytes": slack,
+        "vm_rss_start_bytes": start["vm_rss_bytes"],
+        "vm_hwm_start_bytes": start["vm_hwm_bytes"],
+        "vm_rss_end_bytes": end["vm_rss_bytes"],
+        "vm_hwm_end_bytes": end["vm_hwm_bytes"],
+        "ru_maxrss_phase_start_bytes": ru_phase_start,
+        "ru_maxrss_end_bytes": ru_end,
+        "ru_maxrss_consistent": ru_end >= end["vm_hwm_bytes"] - slack,
+        "reset": reset,
+    })
+    return out
+
+
+# ------------------------------------------------------------------ the host and the threads (§1; LF30, LF31)
+X86_MACHINES = ("x86_64", "amd64")
+X86_VENDORS = ("GenuineIntel", "AuthenticAMD")
+HOST_ISA_FLAGS = ("sse4_2", "avx", "avx2", "fma", "f16c", "avx_vnni")
+HOST_ISA_PREFIXES = ("avx512", "amx")
+THREAD_ENV_PREFIXES = ("OMP_", "MKL_", "OPENBLAS_", "KMP_", "GOMP_")
+THREAD_COUNT_ENV = ("OMP_NUM_THREADS", "MKL_NUM_THREADS")
+# The host TYPE (LF31): two pods of one type, in two sittings, share it (A2). Hostname, kernel, MemTotal and the
+# physical topology are recorded, never fingerprinted.
+HOST_TYPE_KEYS = ("machine", "vendor", "model_name", "isa_flags", "threads_per_core", "usable_cpus")
+
+
+def _read_text(path) -> str | None:
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            return fh.read()
+    except OSError:
+        return None
+
+
+def _cpu_list(text: str | None) -> list:
+    """The sysfs list format: "0-3,6" is [0, 1, 2, 3, 6]."""
+    cpus = []
+    for part in (text or "").strip().split(","):
+        if part:
+            low, _, high = part.partition("-")
+            cpus.extend(range(int(low), int(high or low) + 1))
+    return cpus
+
+
+def _cgroup_dirs(sys_root: str, proc: str) -> list:
+    """The cgroup directories that can set this process's CPU quota, innermost first: its own cgroup path from
+    /proc/self/cgroup (v2 "0::<path>" under <sys>/fs/cgroup; v1 the cpu controller's path under its mount) and each
+    ancestor up to the mount root, then the mount roots themselves. A path leaving its namespace ("..") is not
+    followed."""
+    v2_root, v1_roots = f"{sys_root}/fs/cgroup", [f"{sys_root}/fs/cgroup/cpu", f"{sys_root}/fs/cgroup/cpu,cpuacct"]
+    dirs = []
+    for line in (_read_text(f"{proc}/self/cgroup") or "").splitlines():
+        hierarchy, _, rest = line.partition(":")
+        controllers, _, path = rest.partition(":")
+        if hierarchy == "0" and not controllers:
+            mounts = [v2_root]
+        elif "cpu" in controllers.split(","):
+            mounts = [f"{sys_root}/fs/cgroup/{controllers}", *v1_roots]
+        else:
+            continue
+        parts = [p for p in path.split("/") if p]
+        if ".." in parts:
+            parts = []
+        for mount in mounts:
+            dirs.extend("/".join([mount, *parts[:k]]) for k in range(len(parts), -1, -1))
+    dirs.extend([v2_root, *v1_roots])
+    return list(dict.fromkeys(dirs))
+
+
+def _quota_at(cgroup_dir: str) -> float | None:
+    """The CPU quota one cgroup directory sets, in CPUs (v2 cpu.max, else v1 cpu.cfs_quota_us / cpu.cfs_period_us);
+    None when it sets none or cannot be read."""
+    try:
+        v2 = _read_text(f"{cgroup_dir}/cpu.max")
+        if v2 is not None:
+            parts = v2.split()
+            return None if parts[0] == "max" else int(parts[0]) / int(parts[1] if len(parts) > 1 else 100000)
+        q, p = _read_text(f"{cgroup_dir}/cpu.cfs_quota_us"), _read_text(f"{cgroup_dir}/cpu.cfs_period_us")
+        if q is None or p is None or int(q) <= 0:
+            return None
+        return int(q) / int(p)
+    except (ValueError, IndexError, ZeroDivisionError):
+        return None
+
+
+def cgroup_quota_and_source(sys_root="/sys", proc="/proc") -> tuple:
+    """(the CPU quota that binds this process in CPUs, the directory it was read from): the smallest quota set on the
+    process's cgroup path and its ancestors (_cgroup_dirs); (None, None) when none is set or readable."""
+    best = (None, None)
+    for d in _cgroup_dirs(sys_root, proc):
+        q = _quota_at(d)
+        if q is not None and (best[0] is None or q < best[0]):
+            best = (q, d)
+    return best
+
+
+def cgroup_cpu_quota(sys_root="/sys", proc="/proc") -> float | None:
+    """The cgroup CPU quota in CPUs that binds this process (cgroup_quota_and_source); None when unlimited or
+    unreadable."""
+    return cgroup_quota_and_source(sys_root, proc)[0]
+
+
+def host_facts(*, proc="/proc", sys_root="/sys", etc="/etc", root="/") -> dict:
+    """The host of the measurement (LF31), read from /proc and sysfs in the measuring process (no lscpu): machine,
+    vendor, model name, the ISA flags subset, the hypervisor flag, logical CPUs, physical cores (distinct package and
+    core pairs), threads per core, the affinity count, the cgroup quota (the smallest on the process's cgroup path,
+    and the directory it was read from), usable CPUs (the affinity count, or the quota in whole CPUs when it is set
+    and smaller), MemTotal, kernel, os-release, /.dockerenv, the scaling governor,
+    the OMP/MKL/OPENBLAS/KMP/GOMP variables and torch's parallel_info(); then host_type_fingerprint."""
+    first = {}
+    for line in (_read_text(f"{proc}/cpuinfo") or "").split("\n\n")[0].splitlines():
+        key, _, value = line.partition(":")
+        first.setdefault(key.strip(), value.strip())
+    flags = set(first.get("flags", "").split())
+    online = _cpu_list(_read_text(f"{sys_root}/devices/system/cpu/online"))
+    pairs = set()
+    for cpu in online:
+        topo = f"{sys_root}/devices/system/cpu/cpu{cpu}/topology"
+        package, core = _read_text(f"{topo}/physical_package_id"), _read_text(f"{topo}/core_id")
+        if package is not None and core is not None:
+            pairs.add((package.strip(), core.strip()))
+    logical = len(online) or os.cpu_count()
+    physical = len(pairs) or None
+    affinity = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else logical
+    quota, quota_source = cgroup_quota_and_source(sys_root, proc)
+    mem = re.search(r"^MemTotal:\s+(\d+) kB", _read_text(f"{proc}/meminfo") or "", re.M)
+    release = re.search(r'^PRETTY_NAME="?([^"\n]*)"?', _read_text(f"{etc}/os-release") or "", re.M)
+    governor = _read_text(f"{sys_root}/devices/system/cpu/cpu0/cpufreq/scaling_governor")
+    facts = {
+        "machine": platform.machine(),
+        "vendor": first.get("vendor_id"),
+        "model_name": first.get("model name"),
+        "isa_flags": sorted(f for f in flags if f in HOST_ISA_FLAGS or f.startswith(HOST_ISA_PREFIXES)),
+        "hypervisor": "hypervisor" in flags,
+        "logical_cpus": logical,
+        "physical_cores": physical,
+        "threads_per_core": (logical // physical) if physical else None,
+        "affinity_cpus": affinity,
+        "cgroup_cpu_quota": quota,
+        "cgroup_cpu_quota_source": quota_source,
+        "usable_cpus": affinity if quota is None or quota >= affinity else int(quota),
+        "mem_total_bytes": int(mem.group(1)) * 1024 if mem else None,
+        "kernel": platform.release(),
+        "os_release": release.group(1) if release else None,
+        "dockerenv": os.path.exists(os.path.join(root, ".dockerenv")),
+        "scaling_governor": governor.strip() if governor else None,
+        "thread_env": {k: v for k, v in sorted(os.environ.items()) if k.startswith(THREAD_ENV_PREFIXES)},
+        "parallel_info": torch.__config__.parallel_info(),
+        "hostname": platform.node(),
+    }
+    facts["host_type_fingerprint"] = host_type_fingerprint(facts)
+    return facts
+
+
+def host_type_fingerprint(facts: dict) -> str:
+    """sha256 of the canonical JSON (sorted keys, compact) of the host TYPE: HOST_TYPE_KEYS, the ISA subset sorted."""
+    doc = {k: facts.get(k) for k in HOST_TYPE_KEYS}
+    doc["isa_flags"] = sorted(doc["isa_flags"] or [])
+    raw = json.dumps(doc, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def host_thread_error(facts: dict, threads: int, env=None) -> tuple[str, str] | None:
+    """The run of record's host and thread gates (§1), in this order; None when every one passes. Pure over `facts`
+    and `env`, so the guards that cannot fire at T = 1 are proven by injection (A14)."""
+    env = os.environ if env is None else env
+    for name in THREAD_COUNT_ENV:
+        value = env.get(name)
+        if value not in (None, "") and value.strip() != str(threads):
+            return ("thread_env_conflict", f"{name}={value!r} while the thread count of record is {threads}; unset "
+                                           f"it or set it to {threads}")
+    if facts["affinity_cpus"] < threads:
+        return ("affinity_below_threads", f"this process may run on {facts['affinity_cpus']} CPUs "
+                                          f"(sched_getaffinity), fewer than its {threads} threads")
+    if facts["cgroup_cpu_quota"] is not None and facts["cgroup_cpu_quota"] < threads:
+        return ("cpu_quota_below_threads", f"the cgroup CPU quota is {facts['cgroup_cpu_quota']} CPUs, fewer than "
+                                           f"{threads} threads")
+    if facts["physical_cores"] is not None and facts["physical_cores"] < threads:
+        return ("host_below_threads", f"the host has {facts['physical_cores']} physical cores (sysfs topology), "
+                                      f"fewer than {threads} threads")
+    if str(facts["machine"]).lower() not in X86_MACHINES or facts["vendor"] not in X86_VENDORS:
+        return ("host_not_x86", f"machine {facts['machine']!r}, vendor {facts['vendor']!r}: the latency of record "
+                                f"is an x86 CPU proxy ({list(X86_VENDORS)})")
+    return None
+
+
+_INTEROP_CALLS: list = []      # this process's one torch.set_num_interop_threads call, as it went
+
+
+def set_interop_threads(n: int = INTEROP_THREADS_OF_RECORD) -> dict:
+    """torch.set_num_interop_threads(n), once per process, first in main() (LF30).
+
+    torch takes the call once. On torch 2.1.0 a second call, or a first call once inter-op work has started, does not
+    raise: its c10::Error ends the process with SIGABRT (MEASURED; scripts/smoke_latency_threads.py
+    torch_second_interop_call_aborts and torch_interop_call_after_work_aborts), where the plan inferred a RuntimeError.
+    So torch is called at most once here, and main() calls this before any model is built: a later call in the
+    same process never reaches torch and is recorded "already called in this process", and a RuntimeError (a build
+    that raises) is recorded "locked" with torch's text. The run of record refuses any status but "set"
+    ([interop_threads_locked])."""
+    if _INTEROP_CALLS:
+        return {"requested": int(n), "status": "already called in this process", "error": None,
+                "first_call": dict(_INTEROP_CALLS[0])}
+    try:
+        torch.set_num_interop_threads(int(n))
+        status, error = "set", None
+    except RuntimeError as e:
+        status, error = "locked", str(e).splitlines()[0][:200]
+    _INTEROP_CALLS.append({"requested": int(n), "status": status, "error": error})
+    return dict(_INTEROP_CALLS[0])
+
+
 # ------------------------------------------------------------------ INT8 artifact roles
 def require_quantized_backend(name: str) -> str:
     """Select a quantization engine or refuse. Never silently substitutes another backend."""
@@ -480,14 +1001,23 @@ def environment() -> dict:
         "processor": platform.processor() or "unknown",
         "machine": platform.machine(),
         "quant_backends_available": list(torch.backends.quantized.supported_engines),
+        "active_engine": torch.backends.quantized.engine,
         "thread_count": torch.get_num_threads(),
         "interop_thread_count": torch.get_num_interop_threads(),
+        "parallel_info": torch.__config__.parallel_info(),
     }
 
 
 def provenance(*, stage: str, model_role: str, precision: str, artifact_role: str,
-               backend: str | None, source_path=None, source_sha256: str | None = None) -> dict:
-    """Identify EXACTLY which artifact produced a measurement. Never pool two unidentified ones."""
+               backend: str | None, source_path=None, source_sha256: str | None = None,
+               expected_sha256: str | None = None) -> dict:
+    """Identify EXACTLY which artifact produced a measurement. Never pool two unidentified ones.
+
+    `source_artifact_sha256` is the resolver's own hash of the file; `expected_sha256` the teacher's
+    --teacher-ckpt-sha256 (DL-59), None for every other source and when none was named. A run's
+    --expected-checkpoint-sha256, --expected-converted-sha256 and --expected-x86-sha256 (H, H2, H86) are recorded
+    under the profiler's provenance.expected.
+    """
     if stage not in STAGES:
         _fail("unknown_stage", f"stage must be one of {STAGES}, got {stage!r}")
     return {
@@ -498,6 +1028,7 @@ def provenance(*, stage: str, model_role: str, precision: str, artifact_role: st
         "backend": backend,
         "source_artifact_path": str(source_path) if source_path else None,
         "source_artifact_sha256": source_sha256,
+        "expected_sha256": expected_sha256,
         "input_shape": list(INPUT_SHAPE),
         "batch_size": BATCH_SIZE,
         "environment": environment(),
@@ -664,24 +1195,41 @@ def finalize_parity_record(*, stage: str, engine: str, qnnpack_artifact: dict, x
 def efficiency_record(*, provenance_block: dict, parameters: dict | None = None,
                       footprint: dict | None = None, artifact: dict | None = None,
                       compute: dict | None = None, latency: dict | None = None,
-                      memory: dict | None = None, deferred: dict | None = None) -> dict:
+                      memory: dict | None = None, deferred: dict | None = None,
+                      of_record: bool = False, metric_group: str | None = None,
+                      wall_clock: tuple | None = None, thread_policy: dict | None = None,
+                      host: dict | None = None, code: dict | None = None, image: dict | None = None) -> dict:
     """One structured efficiency result for one stage/artifact.
 
     Written to its OWN schema: the frozen evaluation/statistics artifact schemas are not widened to
-    carry efficiency fields.
+    carry efficiency fields. 2.0.0 (the LEFF Phase A plan §2): `of_record`, `efficiency_analysis_member`,
+    `metric_group`, `footprint_source`, `created_utc` and the wall clock of the measurement; the run of record's
+    blocks (thread policy, host, code, image, and the provenance's binding) under the same version (LF28).
     """
+    start, end = wall_clock if wall_clock else (None, None)
     return {
         "schema": EFFICIENCY_SCHEMA,
         "measurement_role": MEASUREMENT_ROLE,
         "cpu_proxy": CPU_PROXY,
         "on_device": ON_DEVICE,
         "no_arm_claim": True,
+        "of_record": bool(of_record),
+        "efficiency_analysis_member": provenance_block.get("stage") in EFFICIENCY_ANALYSIS_STAGES,
+        "metric_group": metric_group,
+        "thread_policy": thread_policy,
+        "host": host,
+        "code": code,
+        "image": image,
         "provenance": provenance_block,
         "parameters": parameters,
         "footprint": footprint,
+        "footprint_source": (footprint or {}).get("footprint_source"),
         "artifact": artifact,
         "compute": compute,
         "latency": latency,
         "memory": memory,
         "deferred": deferred or {},
+        "created_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+        "wall_clock_start": start,
+        "wall_clock_end": end,
     }
