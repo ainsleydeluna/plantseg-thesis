@@ -25,7 +25,9 @@ are TMAN's catalogue's and a divergence is in TMAN's shape (both units present, 
      R17b, R18b); B-5 (e): a null freeze under Policy.OFFICIAL (R2k; R1-12); B-5's DL-24: a seed-42
      model row that says teacher, which check_rows alone reads (R18c); B-4: who reads under
      Policy.OFFICIAL (R2a, R2l-R2n; LB4-1), TMAN's reader as the default (R2o) and TMAN's refusals through
-     open_inventory, on TMAN's own exports built by its fixture library by import (R2o-R2t; LB4-2)
+     open_inventory, on TMAN's own exports built by its fixture library by import (R2o-R2t; LB4-2); model
+     rows in TMAN's ROW_SPEC (R2u-R2w; LB4-6); TMAN's row convention, one case per class, and identity
+     (R14c-R14h; LB4-7)
   D  determinism
   X  hygiene: no test or p-value object imported, repr floats, pp only in markdown, no 'test' path
 
@@ -1006,6 +1008,115 @@ def r_tman_word():
     return tman_refused("inventory_invalid", CTX.world.root / f"{word}_inventory.json", f"tman:{word}_path: ")
 
 
+# B-4, LB4-6: model rows in TMAN's ROW_SPEC; LB4-7: TMAN's row convention and identity
+LREP_MODULES = [f"src/stats/{m}.py" for m in ("heldout_inputs", "seed_stability", "strata_tables",
+                                               "default_candidates", "am6_tables", "report_extensions",
+                                               "lrep_descriptive", "arm_tables", "dedup_subset", "quant_rows")]
+
+
+def r_row_converted_absent():
+    """LB4-6: converted_artifact_sha256 is always present: an fp32 row without the key is inventory_invalid;
+    the world's same row carries it null and is read."""
+    slot = "E2:s43:lambda0.5:80k"
+
+    def edit(export, binding):
+        row(export, slot, "fp32").pop("converted_artifact_sha256")
+    ok, detail = refused("inventory_invalid", lambda: H.model_row(inventory(variant("row_no_converted", edit)),
+                                                                  slot, "fp32"))
+    r = H.model_row(inventory(CTX.world.inventory_path), slot, "fp32")
+    return (ok and "converted_artifact_sha256" in detail and "converted_artifact_sha256" in r
+            and r["converted_artifact_sha256"] is None), detail
+
+
+def code_constants(path) -> set:
+    """The string constants of a module's code, its docstrings left out."""
+    tree = ast.parse((REPO / path).read_text(encoding="utf-8"))
+    docs = {id(n.body[0].value) for n in ast.walk(tree)
+            if isinstance(n, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and n.body
+            and isinstance(n.body[0], ast.Expr) and isinstance(n.body[0].value, ast.Constant)}
+    return {n.value for n in ast.walk(tree) if isinstance(n, ast.Constant) and isinstance(n.value, str)
+            and id(n) not in docs}
+
+
+def r_row_fqoff_source():
+    """LB4-6: an fqoff_source on a qat_fakequant_off row (TMAN's T-FQ3) is accepted, of any value, and never
+    read: no LREP module's code holds the key (its docstrings aside)."""
+    def edit(export, binding):
+        row(export, "E6:s43:sel", H.PRECISION_FQOFF)["fqoff_source"] = {"never": "read"}
+    got = H.model_row(inventory(variant("row_fqoff_source", edit)), "E6:s43:sel", H.PRECISION_FQOFF)
+    named = [m for m in LREP_MODULES if "fqoff_source" in code_constants(m)]
+    return got.get("fqoff_source") == {"never": "read"} and not named, str(named)
+
+
+def r_row_tman_built():
+    """LB4-6: every row TMAN's builder writes (its own export, read by its reader, the default) passes
+    model_row, the qat_fakequant_off rows with their fqoff_source."""
+    inv = H.open_inventory(tman_exports()["plain"][0], policy=Policy.NONOFFICIAL_SMOKE)
+    rows = inv.doc["models"]
+    got = [H.model_row(inv, r["slot"], r["precision"]) for r in rows]
+    fq = [r for r in rows if r["precision"] == H.PRECISION_FQOFF]
+    return (len(got) == len(rows) >= 20 and len(fq) >= 2 and all("fqoff_source" in r for r in fq)
+            and all("converted_artifact_sha256" in r for r in rows) and inv.reader == H.TMAN_READER), \
+        f"{len(rows)} rows, {len(fq)} fq_off, reader {inv.reader}"
+
+
+def row_convention(slots: dict, plain: bool = False):
+    """LB4-7: check_row_at_entry accepts each slot's model row of the given precision as the world writes it,
+    TMAN's way (its evaluator stage; seed null for a teacher), and refuses the same row at the entry's own
+    stage and seed (the old equality), or, for a `plain` stage, where both coincide, at another seed."""
+    inv = inventory(CTX.world.inventory_path)
+    ok, notes = True, []
+    for slot, prec in slots.items():
+        e, r = inv.entry(slot), H.model_row(inv, slot, prec)
+        try:
+            H.check_row_at_entry(inv, types.SimpleNamespace(slot=slot, precision=prec, row=r))
+        except H.LrepRefusal as ex:
+            ok = False
+            notes.append(f"{slot} refused: {ex.detail[:120]}")
+        other = {**r, "seed": 43} if plain else {**r, "stage": e["stage"], "seed": e["seed"]}
+        bad, _ = refused("seed_inconsistent", lambda o=other: H.check_row_at_entry(
+            inv, types.SimpleNamespace(slot=slot, precision=prec, row=o)))
+        ok = ok and bad and (plain or other != r)
+        notes.append(f"{slot}: row ({r['stage']}, {r['seed']}), entry ({e['stage']}, {e['seed']})")
+    return ok, "; ".join(notes)[:400]
+
+
+def r_row_teacher():
+    """LB4-7: the teacher of record's row is (teacher, seed null), its entry (teacher, 42)."""
+    return row_convention({"teacher:s42:40k": "fp32"})
+
+
+def r_row_arm_teachers():
+    """LB4-7: teacher-R1's and teacher-R2's rows are (teacher, seed null), their entries their own stages."""
+    return row_convention({"teacher-R1:s42:40k": "fp32", "teacher-R2:s42:40k": "fp32"})
+
+
+def r_row_e3x():
+    """LB4-7: E3-R1's, E3-R2's and E3-flip's rows are at stage E3 (seed 42), their entries their own stages."""
+    return row_convention({f"E3-{x}:s42:lambda0.5:alpha25:80k": "fp32" for x in ("R1", "R2", "flip")})
+
+
+def r_row_e7x():
+    """LB4-7: E7-R1's, E7-R2's and E7-flip's rows (int8_ptq) are at stage E7 (seed 42)."""
+    return row_convention({f"E7-{x}:s42:list42": "int8_ptq" for x in ("R1", "R2", "flip")})
+
+
+def r_row_plain():
+    """LB4-7: a plain stage (A, its own evaluator stage) keeps its stage and seed; a row at seed 43 is refused."""
+    return row_convention({"A:s42:alpha25:80k": "fp32"}, plain=True)
+
+
+def r_row_identity():
+    """LB4-7: row_identity is TMAN's binding.identity (TB17) on every row of the world's export and of TMAN's
+    own: the converted artifact for an INT8 row, else source.sha256."""
+    from src.tman import binding as B
+    rows = (list(inventory(CTX.world.inventory_path).doc["models"])
+            + list(H.open_inventory(tman_exports()["plain"][0], policy=Policy.NONOFFICIAL_SMOKE).doc["models"]))
+    bad = [r["slot"] for r in rows if H.row_identity(r) != B.identity(r) or H.row_identity(r) != (
+        r["converted_artifact_sha256"] if r["precision"] in H.INT8_PRECISIONS else r["source"]["sha256"])]
+    return not bad and len(rows) > 40, f"{len(rows)} rows; {bad[:3]}"
+
+
 def r_slot_missing():
     def edit(export, binding):
         entry(export, "E2:s43:lambda0.5:80k")["role"] = []
@@ -1580,6 +1691,10 @@ def cases():
         ("R2r", "LB4-2: TMAN's dedup_invalid keeps its code", r_tman_dedup),
         ("R2s", "LB4-2: TMAN's binding_invalid keeps its code", r_tman_binding),
         ("R2t", "LB4-2: TMAN's refusal of a path holding rule 4's word (by string only)", r_tman_word),
+        ("R2u", "LB4-6: converted_artifact_sha256 always present (absent: inventory_invalid; null read)",
+         r_row_converted_absent),
+        ("R2v", "LB4-6: a qat_fakequant_off row's fqoff_source accepted and never read", r_row_fqoff_source),
+        ("R2w", "LB4-6: every row of TMAN's own export passes model_row", r_row_tman_built),
         ("R3a", "R-3 planned_slot_missing", r_slot_missing),
         ("R3b", "R-3 planned_slot_duplicate", r_slot_duplicate),
         ("R3c", "R-3 unplanned_slot (a per_seed slot at seed 45)", r_unplanned),
@@ -1612,6 +1727,12 @@ def cases():
         ("R14", "R-14 seed_inconsistent", r_seed_inconsistent),
         ("R14b", "R-14 seed_inconsistent (a PTQ model with kind null whose parent is at seed 44)",
          r_ptq_parent_seed),
+        ("R14c", "LB4-7: the teacher of record's row (teacher, seed null); the old equality refused", r_row_teacher),
+        ("R14d", "LB4-7: teacher-R1's and teacher-R2's rows (teacher, seed null)", r_row_arm_teachers),
+        ("R14e", "LB4-7: E3-R1's, E3-R2's and E3-flip's rows at stage E3", r_row_e3x),
+        ("R14f", "LB4-7: E7-R1's, E7-R2's and E7-flip's rows at stage E7", r_row_e7x),
+        ("R14g", "LB4-7: a plain stage (A) keeps its stage and seed; another seed refused", r_row_plain),
+        ("R14h", "LB4-7: row_identity is TMAN's binding.identity on every row", r_row_identity),
         ("R15", "R-15 an assertion: no mean or SD over two seeds", r_assert_two_seeds),
         ("R16", "telemetry_sha256_mismatch (LRB2)", r_telemetry_sha),
         ("R17", "telemetry_invalid: no attempt of the run of record (LRB2)", r_telemetry_invalid),

@@ -652,15 +652,17 @@ def diverged_fields(*, rule: str, run_id: str, iteration=None, epoch=None,
 
 def _row(slot, stage, seed, precision, *, source_kind, source_sha, converted=None, cells=(),
          entry_kind, roles, run_id, model_role="student"):
-    row = {"file_id": file_id(slot), "stage": stage, "model_role": model_role,
-           "precision": precision, "seed": seed,
-           "source": {"kind": source_kind, "path": f"models/{file_id(slot)}.bin",
-                      "sha256": source_sha},
-           "cells": list(cells), "slot": slot, "entry_kind": entry_kind, "role": list(roles),
-           "training_run_id": run_id}
-    if precision in H.INT8_PRECISIONS:
-        row["converted_artifact_sha256"] = converted
-    return row
+    """A model row as TMAN's builder writes it (src/tman/manifest.py:930-946; B-4, LB4-6 and LB4-7): its stage
+    is B5-S1's evaluator stage of the slot's TMAN stage `stage`, its seed null for a teacher (the catalogue
+    seed `seed` otherwise), and converted_artifact_sha256 always present, null but for an INT8 row."""
+    row_stage, row_seed = H.row_stage_seed(stage, seed)
+    return {"file_id": file_id(slot), "stage": row_stage, "model_role": model_role,
+            "precision": precision, "seed": row_seed,
+            "source": {"kind": source_kind, "path": f"models/{file_id(slot)}.bin",
+                       "sha256": source_sha},
+            "converted_artifact_sha256": converted if precision in H.INT8_PRECISIONS else None,
+            "cells": list(cells), "slot": slot, "entry_kind": entry_kind, "role": list(roles),
+            "training_run_id": run_id}
 
 
 def _record(world: World, w: Written) -> dict:

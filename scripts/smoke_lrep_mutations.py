@@ -690,7 +690,8 @@ MUTATIONS = [
     ("S96", "(d): the planned slots' records read again as coverage rows",
      [(AM6, "coverage_items", [(' and r.get("slot") not in rec_slots', "")])], "am6:V1"),
     ("S97", "(d): a coverage row's model row checked at its stage only, not its seed (R-14)",
-     [(H, "check_row_at_entry", [(' or ba.row["seed"] != e.get("seed")', "")])], "am6:R8"),
+     [(H, "check_row_at_entry", [('if (ba.row["stage"], ba.row["seed"]) != want:',
+                                  'if ba.row["stage"] != want[0]:')])], "am6:R8"),
     ("S98", "(d): the seed-42 faithfulness check applied to the coverage rows at the family's stages",
      [(AM6, "build_am6_tables", [('if r.get("role") != "family":',
                                   'if r.get("role") == "per_seed" or r["stage"] not in ref:')])], "am6:V1"),
@@ -974,6 +975,20 @@ MUTATIONS = [
      "dedup:I1"),
     ("S200", "LB4-5: TMAN's code dropped from read_dedup's detail",
      [(H, "read_dedup", [('f"tman:{e.code}: {e.detail} (', 'f"{e.detail} (')])], "dedup:I14"),
+    # B-4, commit B4-3 (LB4-6: model rows in TMAN's ROW_SPEC; LB4-7: TMAN's row convention and identity)
+    ("S201", "LB4-7: check_row_at_entry restores the old equality (the entry's own stage and seed)",
+     [(H, "check_row_at_entry", [('want = row_stage_seed(e.get("stage"), e.get("seed"))',
+                                   'want = (e.get("stage"), e.get("seed"))')])], "seed:R14c"),
+    ("S202", "LB4-7: a teacher's row seed no longer null",
+     [(H, "row_stage_seed", [('return ev_stage, (None if role == "teacher" else seed)', "return ev_stage, seed")])],
+     "seed:R14c"),
+    ("S203", "LB4-7: a row's stage the TMAN stage, not its evaluator stage",
+     [(H, "row_stage_seed", [("return ev_stage, (None", "return stage, (None")])], "seed:R14e"),
+    ("S204", "LB4-7: row_identity a local copy reading source.sha256 for every row",
+     [(H, "row_identity", [("from src.tman.binding import identity",
+                             'identity = lambda r: r["source"]["sha256"]')])], "seed:R14h"),
+    ("S205", "LB4-6: converted_artifact_sha256 no longer required to be present",
+     [(H, "model_row", [('"converted_artifact_sha256" in row and (', "(")])], "seed:R2u"),
 ]
 
 

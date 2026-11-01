@@ -870,7 +870,9 @@ def check_parentage(inv: Inventory, slots, status) -> None:
 
 def model_row(inv: Inventory, slot: str, precision: str) -> dict:
     """The one model row of (slot, precision), with the IF§8/IF§11.1 fields LREP reads checked: its
-    entry_kind is a scored kind and its slot's entry kind, and its role is its slot's role set."""
+    entry_kind is a scored kind and its slot's entry kind, and its role is its slot's role set. LB4-6: TMAN's
+    ROW_SPEC rows (src/tman/validate.py:1799-1804): converted_artifact_sha256 always present, null but for an
+    INT8 row; a key LREP does not read (a qat_fakequant_off row's fqoff_source, T-FQ3) is accepted, never read."""
     items = inv.rows.get((slot, precision), ())
     if not items:
         raise refusal("artifact_missing", f"slot {slot!r} has no model row of precision {precision}")
@@ -889,8 +891,9 @@ def model_row(inv: Inventory, slot: str, precision: str) -> dict:
         (row.get("seed") is None or _is_int(row.get("seed")), "seed"),
         (isinstance(src, dict) and src.get("kind") in ("checkpoint", "provenance")
          and isinstance(src.get("sha256"), str) and bool(_HEX64.fullmatch(src["sha256"])), "source"),
-        ((isinstance(conv, str) and bool(_HEX64.fullmatch(conv))) if precision in INT8_PRECISIONS
-         else conv is None, "converted_artifact_sha256 (INT8 rows only)"),
+        ("converted_artifact_sha256" in row and ((isinstance(conv, str) and bool(_HEX64.fullmatch(conv)))
+                                                  if precision in INT8_PRECISIONS else conv is None),
+         "converted_artifact_sha256 (always present; null but for INT8 rows, LB4-6)"),
         (isinstance(row.get("cells"), list), "cells"),
         (row.get("entry_kind") in SCORED_ENTRY_KINDS and row.get("entry_kind") == e.get("kind"),
          "entry_kind (IF§11.1: a scored kind, the slot's entry kind)"),
@@ -903,21 +906,28 @@ def model_row(inv: Inventory, slot: str, precision: str) -> dict:
 
 
 def row_identity(row: dict) -> str:
-    """IF§8 (TL-6): an INT8 artifact's run.checkpoint_sha256 is its converted artifact; every other
-    row's is source.sha256."""
-    if row["precision"] in INT8_PRECISIONS:
-        return row["converted_artifact_sha256"]
-    return row["source"]["sha256"]
+    """IF§8 (TL-6) as LB4-7 rules it: TMAN's TB17 identity, src.tman.binding.identity (B3R16), imported when
+    called, with no local copy: an INT8 row's converted artifact, every other row's source.sha256."""
+    from src.tman.binding import identity
+    return identity(row)
+
+
+def row_stage_seed(stage, seed) -> tuple:
+    """LB4-7: the (stage, seed) a model row carries for a slot at TMAN stage `stage` and catalogue seed `seed`,
+    as TMAN's builder writes it (src/tman/manifest.py:930-931): B5-S1's evaluator stage, and seed null when
+    that stage's model_role is teacher."""
+    ev_stage, role, _ = stage_spec(stage)
+    return ev_stage, (None if role == "teacher" else seed)
 
 
 def check_rows(inv: Inventory, slots, status) -> None:
-    """R-14: each model of record's row of its stage precision carries the slot's stage and seed; and
-    it is a student's row (LRB7)."""
+    """R-14: each model of record's row of its stage precision carries the slot's (stage, seed) in TMAN's
+    convention (row_stage_seed; LB4-7); and it is a student's row (LRB7)."""
     for (stage, seed), slot in sorted(slots.items()):
         if not status[(stage, seed)].has_model:
             continue
         row = model_row(inv, slot, D.STAGE_PRECISION[stage])
-        if row["stage"] != stage or row["seed"] != seed:
+        if (row["stage"], row["seed"]) != row_stage_seed(stage, seed):
             raise refusal("seed_inconsistent", f"slot {slot!r} ({stage}, seed {seed}): its model row "
                                                f"is ({row['stage']}, seed {row['seed']})")
         if row["model_role"] != "student":
@@ -1097,13 +1107,15 @@ def load_clean_of_record(inv: Inventory, cells: PlannedCells, stage: str, seed: 
 
 def check_row_at_entry(inv: Inventory, ba: BoundArtifact) -> None:
     """R-14 for a slot outside the 21 planned cells (am6's coverage rows, the arms' and AM-23's candidates,
-    the fq_off table's E6-KD and AM-23 rows): the model row read is at its entry's stage and seed
-    (check_rows applies the same rule to the planned cells)."""
+    the fq_off table's E6-KD and AM-23 rows): the model row read is at its entry's stage and seed in TMAN's
+    convention (row_stage_seed: the evaluator stage, seed null for a teacher; LB4-7), as check_rows applies
+    it to the planned cells."""
     e = inv.entry(ba.slot)
-    if ba.row["stage"] != e.get("stage") or ba.row["seed"] != e.get("seed"):
+    want = row_stage_seed(e.get("stage"), e.get("seed"))
+    if (ba.row["stage"], ba.row["seed"]) != want:
         raise refusal("seed_inconsistent", f"{ba.slot!r}: its {ba.precision} model row is "
                                            f"({ba.row['stage']}, seed {ba.row['seed']}), its entry "
-                                           f"({e.get('stage')}, seed {e.get('seed')}) (R-14)")
+                                           f"({e.get('stage')}, seed {e.get('seed')}) gives {want} (R-14; LB4-7)")
 
 
 # --------------------------------------------------------------------------------------------------
@@ -1653,7 +1665,7 @@ __all__ = [
     "TMAN_READER", "STANDIN_MARK", "tman_reader", "reader_name", "Inventory", "open_inventory",
     "SlotStatus", "record_slots", "parent_slot", "resolve_status",
     "entry_label", "PlannedCells", "check_parentage", "model_row",
-    "row_identity", "check_rows", "check_missing_runs", "check_seed42", "planned_cells",
+    "row_identity", "row_stage_seed", "check_rows", "check_missing_runs", "check_seed42", "planned_cells",
     "binding_record", "cell_condition", "BoundArtifact", "load_bound", "load_clean_of_record",
     "check_row_at_entry", "metrics_sha256", "cross_check", "check_e1_record", "StatsArtifact",
     "load_stats_artifact",
