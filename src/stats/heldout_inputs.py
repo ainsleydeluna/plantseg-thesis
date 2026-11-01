@@ -40,9 +40,9 @@ writes them, never parses the TEST-day manifest and never builds its path (IF§1
 
 Every refusal is an `LrepRefusal` with a code from CODES, raised at a site that reads
 `raise refusal("<code>", ...)` (scripts/smoke_lrep_mutations.py mutates those sites), except the three
-raises of `strict_json_text`, which carry their caller's code (inventory_unreadable, binding_invalid,
-dedup_invalid or arm_record_invalid), and open_inventory's of a TMAN refusal, which carries TMAN's code
-when CODES holds it (LB4-2).
+raises of `strict_json_text`, which carry their caller's code (inventory_unreadable, binding_invalid or
+arm_record_invalid), and open_inventory's of a TMAN refusal, which carries TMAN's code when CODES holds it
+(LB4-2).
 Nothing here writes a file. Import-time behaviour is side-effect free.
 """
 from __future__ import annotations
@@ -169,10 +169,10 @@ B5_QAT_STAGES = tuple(s for s in B5_PARENT_STAGE if STAGE_MAP[s][2] == "int8_qat
 B5_RUN_MODEL_KINDS = ("scored_run", "arm_teacher")
 #: The family slots B-5's tables compare with, at seed 42 (IF§11.1 :25).
 B5_FAMILY_STAGES = ("E2", "E3", "E6", "E7")
-#: B5-S2: the fields of the export's `dedup` (IF§11.5) and of the file it names (T4's wording, plan :62;
-#: lane/tman holds no committed schema for it at STEP 1).
+#: B5-S2 as LB4-5 rules it: the fields of the export's `dedup` (IF§11.5; validate.DEDUP_SPEC's keys) and those
+#: LREP reads of the file it names, TMAN's tday_dedup/1 (dedup.DOC_KEYS holds them; TMAN's reader parses it).
 DEDUP_EXPORT_FIELDS = ("path", "sha256", "removed_by_reason")
-DEDUP_FILE_FIELDS = ("kept_ids", "removed_by_reason")
+DEDUP_FILE_FIELDS = ("image_ids_sha256", "kept_ids", "kept_ids_sha256", "reasons_partition", "removed_by_reason")
 
 #: DL-99: the E1 checkpoints of record (best VAL checkpoint sha256) at seeds 42, 43 and 44 -- an
 #: independent guard against a seed swap (plan §1.1(3)).
@@ -1426,12 +1426,16 @@ def b5_status(inv: Inventory, slot: str) -> SlotStatus:
 
 @dataclass(frozen=True)
 class DedupRecord:
-    """B5-S2: TMAN's duplicate-free TEST list (IF§11.5; T4), its sha256 checked before it was parsed."""
+    """B5-S2 as LB4-5 rules it: TMAN's duplicate-free TEST list tday_dedup/1 (IF§11.5; ruling H5), its sha256
+    checked before TMAN's reader parsed it."""
     path: str                                       # the export's dedup.path
-    file: Path                                      # resolved against the export's directory (H:10's rule)
+    file: Path                                      # resolved against the export's folder (LB4-3)
     sha256: str
     kept_ids: tuple[str, ...]                       # sorted and unique
     removed_by_reason: tuple[tuple[str, int], ...]  # (reason, count), sorted by reason
+    reasons_partition: bool                         # TMAN's reader refuses the file unless it is true
+    image_ids_sha256: str                           # the sha256 of every image id (dedup.ids_sha256)
+    kept_ids_sha256: str                            # the same of the kept ids
     other_fields: tuple[str, ...]                   # the file's keys LREP does not read
 
     @property
@@ -1447,13 +1451,16 @@ def _reason_counts(value):
 
 
 def read_dedup(inv: Inventory) -> DedupRecord:
-    """B5-S2 (ruling LREP-B5-RULE-2 item 2): the export's `dedup` {path, sha256, removed_by_reason}
-    (IF§11.5 :85) and the file at `path`, resolved like binding.path (against the export's directory; B-4
-    checks), its sha256 compared before it is parsed as strict JSON. Without TMAN's committed schema the
-    file is T4's (plan :62): `kept_ids`, the kept (duplicate-free) image ids, sorted, unique and not
-    empty, and `removed_by_reason`, the per-reason removed counts, equal to the export's. Any failure, or
-    `dedup` null, is dedup_invalid. The id-set invariants against the scored artifacts are checked where
-    those are read (src/stats/dedup_subset.py)."""
+    """B5-S2 (ruling LREP-B5-RULE-2 item 2) as LB4-5 rules it (ruling H5; LREP-B5-RULE-5 item 3): the export's
+    `dedup` {path, sha256, removed_by_reason} (IF§11.5 :85) and the file at `path`, resolved against the
+    export's folder as TMAN's reader resolves it (LB4-3), its sha256 compared before it is parsed. TMAN's
+    src.tman.dedup.read_dedup(data, expect_sha256=...) then parses it: the one definition of tday_dedup/1 (its
+    exact keys, canonical JSON, reasons_partition true, the partition sum and both id digests); its
+    removed_by_reason must be the export's. Any failure, or `dedup` null, is dedup_invalid, TMAN's refusals with
+    TMAN's code in the detail (LB4-2's form). The id-set invariants against the scored artifacts are
+    dedup_subset.check_ids'."""
+    from src.tman import dedup as TD
+    from src.tman.schema import TmanRefused
     d = inv.doc.get("dedup")
     where = f"{inv.path}: dedup"
     if d is None:
@@ -1477,20 +1484,15 @@ def read_dedup(inv: Inventory) -> DedupRecord:
         raise refusal("dedup_invalid", f"{where}: {f} has sha256 {digest}, the export says {d['sha256']} "
                                        "(B5-S2)")
     try:
-        text = raw.decode("utf-8")
-    except UnicodeDecodeError as e:
-        raise refusal("dedup_invalid", f"{where}: {f} is not UTF-8") from e
-    doc = strict_json_text(text, str(f), "dedup_invalid")
-    if not isinstance(doc, dict) or any(k not in doc for k in DEDUP_FILE_FIELDS):
-        raise refusal("dedup_invalid", f"{where}: {f} is not an object with {list(DEDUP_FILE_FIELDS)} (T4)")
-    ids = doc["kept_ids"]
-    if not (isinstance(ids, list) and ids and all(_is_text(i) for i in ids) and ids == sorted(set(ids))):
-        raise refusal("dedup_invalid", f"{where}: kept_ids are not a non-empty sorted list of unique image "
-                                       "ids (T4)")
+        doc = TD.read_dedup(raw, expect_sha256=d["sha256"])
+    except TmanRefused as e:
+        raise refusal("dedup_invalid", f"tman:{e.code}: {e.detail} ({where}: {f}; LB4-5)") from e
     if _reason_counts(doc["removed_by_reason"]) != counts:
         raise refusal("dedup_invalid", f"{where}: the file's removed_by_reason {doc['removed_by_reason']!r} "
                                        f"is not the export's {d['removed_by_reason']!r}")
-    return DedupRecord(path=d["path"], file=f, sha256=digest, kept_ids=tuple(ids), removed_by_reason=counts,
+    return DedupRecord(path=d["path"], file=f, sha256=digest, kept_ids=tuple(doc["kept_ids"]),
+                       removed_by_reason=counts, reasons_partition=doc["reasons_partition"],
+                       image_ids_sha256=doc["image_ids_sha256"], kept_ids_sha256=doc["kept_ids_sha256"],
                        other_fields=tuple(sorted(set(doc) - set(DEDUP_FILE_FIELDS))))
 
 

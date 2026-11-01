@@ -15,9 +15,10 @@ each reason are reported next to the issue's counts."
   * The subset is B5-S2's kept ids (heldout_inputs.read_dedup), checked against every scored artifact
     read here (the 37 with their cells and the rows (i) reports; no other slot is read, LRB4): one image
     id set (am6_tables.ids_sha256 of each artifact's manifest_ids; a corrupted cell whose ids were
-    suffixed, src/eval/adapters.py:13-14, is refused here, never mapped), the kept ids inside it, and
-    |all| - |kept| <= the sum of removed_by_reason (TMAN's committed schema states no partition of the
-    reasons, so the overlap is reported); dedup_invalid otherwise.
+    suffixed, src/eval/adapters.py:13-14, is refused here, never mapped), the kept ids inside it,
+    |all| - |kept| == the sum of removed_by_reason (TMAN's tday_dedup/1: the reasons partition the removed
+    images), and the file's image_ids_sha256 and kept_ids_sha256 equal to this set's and the kept ids'
+    (B-4, LB4-5); dedup_invalid otherwise.
   * (i) Every row of the GT-present table (am6_tables with coverage, B-5 (d)) whose roles include
     family, per_seed, arm, arm_teacher, quant_descriptive or teacher_reference, and E6-KD's: its four
     numbers on the subset, eligibility recomputed by eligibility.class_totals on the kept rows, and the
@@ -95,8 +96,11 @@ FOOTNOTE = ("Descriptive sensitivity analysis (AM-18 item 8(c)): unadjusted, no 
 
 
 def check_ids(rec: H.DedupRecord, fingerprints: dict, all_ids) -> dict:
-    """B5-S2's invariants: every scored artifact read has one image id set (its fingerprint), the kept
-    ids are inside it, and |all| - |kept| <= the sum of removed_by_reason (the overlap is reported)."""
+    """B5-S2's invariants as LB4-5 rules them: every scored artifact read has one image id set (its
+    fingerprint), the kept ids are inside it, |all| - |kept| == the sum of removed_by_reason (the reasons
+    partition the removed images; TMAN's reader refuses a file whose reasons_partition is not true), and the
+    file's image_ids_sha256 and kept_ids_sha256 equal am6_tables.ids_sha256 over the artifacts' id set and
+    over the kept ids. Each failure is dedup_invalid, naming its field."""
     ref = AM6.ids_sha256(all_ids)
     differ = sorted(label for label, fp in fingerprints.items() if fp != ref)
     if differ:
@@ -108,12 +112,18 @@ def check_ids(rec: H.DedupRecord, fingerprints: dict, all_ids) -> dict:
         raise H.refusal("dedup_invalid", f"{len(outside)} kept id(s) are not image ids of the scored "
                                          f"artifacts, e.g. {outside[:3]} (B5-S2)")
     removed, total = len(every) - len(kept), rec.removed_total
-    if removed > total:
+    if removed != total:
         raise H.refusal("dedup_invalid", f"{removed} images are not kept but removed_by_reason counts "
-                                         f"{total} (B5-S2: |all| - |kept| <= the sum)")
+                                         f"{total} (LB4-5: |all| - |kept| == the sum, the reasons a partition)")
+    kept_ref = AM6.ids_sha256(kept)
+    if rec.image_ids_sha256 != ref:
+        raise H.refusal("dedup_invalid", f"image_ids_sha256 {rec.image_ids_sha256!r} is not {ref}, the scored "
+                                         "artifacts' id set's (LB4-5)")
+    if rec.kept_ids_sha256 != kept_ref:
+        raise H.refusal("dedup_invalid", f"kept_ids_sha256 {rec.kept_ids_sha256!r} is not {kept_ref}, the kept "
+                                         "ids' (LB4-5)")
     return {"n_all": len(every), "n_kept": len(kept), "n_removed": removed, "sum_removed_by_reason": total,
-            "overlap": total - removed, "partition_stated": False, "image_ids_sha256": ref,
-            "kept_ids_sha256": AM6.ids_sha256(kept)}
+            "partition_stated": True, "image_ids_sha256": ref, "kept_ids_sha256": kept_ref}
 
 
 def am5_on_kept(baseline_run, candidate_run, kept):
@@ -387,7 +397,7 @@ def render_markdown(doc: dict, banner: str = "") -> list[str]:
     d, issue = doc["dedup"], doc["issue"]
     out = [f"## {doc['title']}", "", banner, f"> {doc['banner']}", "",
            f"Kept {d['n_kept']} of {d['n_all']} images ({d['n_removed']} removed; removed_by_reason sums "
-           f"to {d['sum_removed_by_reason']}, overlap {d['overlap']}); `{d['path']}` sha256 `{d['sha256']}`.",
+           f"to {d['sum_removed_by_reason']}, its reasons a partition); `{d['path']}` sha256 `{d['sha256']}`.",
            "", "| removed for | count |", "|---|---|"]
     out += [f"| {x['reason']} | {x['count']} |" for x in doc["removed_by_reason"]]
     out += ["", f"The issue's counts ({issue['source']}; {issue['duplicate_groups']} groups, "

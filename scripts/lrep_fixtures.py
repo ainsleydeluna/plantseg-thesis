@@ -21,9 +21,9 @@ The world also writes what TMAN will supply (IF§11 v2):
     names E5:s42:clip1:15ep, the pilot it takes as the winner. LREP's R-12 reads catalogue.parent only,
     so the catalogue's null is refused parent_rule (DL-24 R2-01; smoke_lrep_official_profile's N1 and P9
     name it for B-4);
-  * B5-S2's duplicate-free TEST list tman/tday_dedup.json in T4's wording (kept_ids, removed_by_reason;
-    four of the thirty images removed, the per-reason counts overlapping by one), named by the export's
-    `dedup` {path, sha256, removed_by_reason};
+  * B5-S2's duplicate-free TEST list tman/tday_dedup.json in TMAN's tday_dedup/1 (B-4, LB4-5), built by
+    TMAN's dedup.build_doc in its canonical bytes, never by hand (four of the thirty images removed, the
+    reasons partitioning them), named by the export's `dedup` {path, sha256, removed_by_reason};
   * a bound binding `tday_binding/1` with one record per (row, scope, cell), including records no
     B-1 to B-3 table reads (upstream, seed 42's corrupted cells of E2-E5 and E7, the corrupted_sev45
     cells; IF§9), which name directories that do not exist;
@@ -273,10 +273,11 @@ UNSCORED_SLOTS = (
     ("E7-L:s42:list42", "not_run", {"reason": "parent cut"}),
     ("ARM:latency", "measurement", {}),
 )
-#: B5-S2's fixture: the images TMAN's hash list would remove (AM-18 item 8(c)), and per-reason counts that
-#: overlap by one (an image equal to both a TRAIN and a VAL image), which the reader reports.
+#: B5-S2's fixture in TMAN's tday_dedup/1 (B-4, LB4-5), built by TMAN's dedup.build_doc over synthetic image
+#: hashes (dedup_doc): img_00003 and img_00011 equal a TRAIN image, img_00017 a VAL image, and img_00024 repeats
+#: img_00023 (a group keeps its first sorted id), so the reasons partition the four removed images.
 DEDUP_REMOVED = ("img_00003", "img_00011", "img_00017", "img_00024")
-DEDUP_REASONS = {"equals_train_image": 2, "equals_val_image": 2, "repeats_an_earlier_image": 1}
+DEDUP_REASONS = {"equal_train": 2, "equal_val": 1, "duplicate_in_split": 1}
 
 
 def make_root(prefix: str) -> tuple[Path | None, str | None]:
@@ -709,15 +710,28 @@ def b5_export_parts(world: World) -> tuple[list, list, list]:
     return entries, models, ghosts
 
 
-def dedup_doc(world: World) -> dict:
-    """B5-S2's file in T4's wording (plan :62): the kept (duplicate-free) image ids, sorted and unique,
-    with the per-reason removed counts."""
-    return {"kept_ids": sorted(i for i in world.truth.ids if i not in DEDUP_REMOVED),
-            "removed_by_reason": dict(DEDUP_REASONS)}
+def dedup_doc(world: World, *, ids=None, remove: bool = True) -> dict:
+    """B5-S2's file in TMAN's tday_dedup/1 (B-4, LB4-5), built by TMAN's src.tman.dedup.build_doc, never by hand,
+    from synthetic image hashes of `ids` (default the world's): with `remove`, DEDUP_REMOVED's images are removed
+    as above (those of them among `ids`), without it every image is kept. Its hash list, TRAIN/VAL list and
+    script are named by synthetic sha256s."""
+    from src.tman import dedup as TD
+    images = {i: syn_sha("image", i) for i in sorted(world.truth.ids if ids is None else ids)}
+    train, val = set(), set()
+    if remove:
+        if "img_00023" in images and "img_00024" in images:
+            images["img_00024"] = images["img_00023"]
+        train = {images[i] for i in ("img_00003", "img_00011") if i in images}
+        val = {images[i] for i in ("img_00017",) if i in images}
+    return TD.build_doc(images, {"train": frozenset(train), "val": frozenset(val)},
+                        hash_list_sha256=syn_sha("hash list"), train_val_list_sha256=syn_sha("train val list"),
+                        script={"path": TD.SCRIPT_REL, "sha256": syn_sha("hasher script")})
 
 
 def dedup_bytes(doc: dict) -> bytes:
-    return (json.dumps(doc, indent=2, allow_nan=False) + "\n").encode("utf-8")
+    """A tday_dedup/1 document's bytes: TMAN's canonical JSON (src.tman.dedup.doc_bytes, its one definition)."""
+    from src.tman import dedup as TD
+    return TD.doc_bytes(doc)
 
 
 def sev45_cells() -> list[str]:

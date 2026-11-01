@@ -2,15 +2,19 @@
 """Duplicate-free TEST (lane LREP, B-5 (b)): src/stats/dedup_subset.py and B5-S2's reader against AM-18
 item 8(c) (PA :1215-1231), TL-13, LRB17, rulings B5-D3, B5-D4 and B5-S2 and LREP-B5-RULE-2 item 4.
 
-SYNTHETIC ONLY (DL-41): scripts/lrep_fixtures.py's world with its dedup file (four of thirty images
-removed, the per-reason counts overlapping by one), variants of the export and the dedup file under new
+SYNTHETIC ONLY (DL-41): scripts/lrep_fixtures.py's world with its dedup file in TMAN's tday_dedup/1, built by
+TMAN's dedup.build_doc (four of thirty images removed, the reasons a partition; B-4, LB4-5); a variant file
+is rebuilt the same way or re-canonicalized (TMAN's dedup.doc_bytes), or its case expects TMAN's refusal
+code; variants of the export and the dedup file under new
 directories in TMPDIR, and one pair of artifacts with three AM-5 images for the Am5Pair (all left in
 place); none contains "test" or ":". Every expected value is recomputed here from the artifacts with the
 frozen functions (never read from the module under test), except that T4 applies dedup_subset's label_of
 and compare to the part's rows, rules that T2 and T3 pin on typed hand rows.
 
-  I  B5-S2: the reader (path, sha256 first, strict JSON, T4's fields) and dedup_invalid on each failure;
-     the invariants against the scored artifacts (one id set, kept inside it, |all| - |kept| <= the sum)
+  I  B5-S2 as LB4-5 rules it: the reader (path, sha256 first, then TMAN's dedup.read_dedup: strict JSON,
+     canonical bytes, its exact keys, reasons_partition true) and dedup_invalid on each failure, TMAN's with
+     TMAN's code; the invariants against the scored artifacts (one id set, kept inside it, |all| - |kept| ==
+     the sum, both id digests)
   V  (i): the rows read (every model of record and every arm, E6-KD), their four numbers on the subset
      with eligibility recomputed, the eligibility changes, the counts; no other slot is read (LRB4)
   C  (ii): the eight contrasts on the subset: the restricted vectors and run_comparison, robustness
@@ -191,15 +195,19 @@ def contrast(doc, cid):
 # I: B5-S2's reader and the invariants
 # --------------------------------------------------------------------------------------------------
 def i_read():
-    """The world's record: path, the file's sha256 (checked before parsing), the 26 kept ids, the
-    per-reason counts, their sum 5 and no other field."""
+    """The world's record (LB4-5): path, the file's sha256 (checked before parsing), the 26 kept ids, the
+    per-reason counts (a partition: their sum 4), reasons_partition, both id digests (recomputed here) and
+    TMAN's fields LREP does not read."""
     rec = H.read_dedup(inventory())
     raw = (CTX.world.inventory_path.parent / LF.DEDUP_NAME).read_bytes()
+    every = hashlib.sha256("\n".join(sorted(CTX.world.truth.ids)).encode()).hexdigest()
     return (rec.path == "tday_dedup.json" and rec.sha256 == hashlib.sha256(raw).hexdigest()
             and list(rec.kept_ids) == kept() and len(rec.kept_ids) == 26
-            and rec.removed_by_reason == (("equals_train_image", 2), ("equals_val_image", 2),
-                                          ("repeats_an_earlier_image", 1))
-            and rec.removed_total == 5 and rec.other_fields == ()), str(rec)[:300]
+            and rec.removed_by_reason == (("duplicate_in_split", 1), ("equal_train", 2), ("equal_val", 1))
+            and rec.removed_total == 4 and rec.reasons_partition is True and rec.image_ids_sha256 == every
+            and rec.kept_ids_sha256 == hashlib.sha256("\n".join(kept()).encode()).hexdigest()
+            and rec.other_fields == ("also_counted", "format", "hash_list_sha256", "n_images",
+                                     "removed_ids_by_reason", "script", "train_val_list_sha256")), str(rec)[:300]
 
 
 def i_null():
@@ -235,69 +243,105 @@ def i_sha():
     return refused("dedup_invalid", lambda: H.read_dedup(inventory(variant("dedup_sha", edit))))
 
 
+def tman_refused(name, **kw):
+    """The variant `name` is refused dedup_invalid by TMAN's reader, TMAN's code in the detail (LB4-5)."""
+    ok, detail = refused("dedup_invalid", lambda: H.read_dedup(inventory(variant(name, **kw))))
+    return ok and "tman:dedup_invalid: " in detail, detail
+
+
+def edited(**fields):
+    """The world's tday_dedup/1 document with `fields` replaced (write_inventory writes TMAN's canonical bytes,
+    so the edit itself is what TMAN's reader refuses)."""
+    return {**copy.deepcopy(CTX.world.dedup), **fields}
+
+
 def i_utf8():
     raw = b'{"kept_ids": ["img\xff"]}'
-    return refused("dedup_invalid", lambda: H.read_dedup(inventory(variant("dedup_latin1", dedup_raw=raw))))
+    return tman_refused("dedup_latin1", dedup_raw=raw)
 
 
 def i_strict():
-    """A repeated key, and a NaN, are refused by the strict parse."""
+    """A repeated key, and a NaN, are refused by TMAN's strict parse."""
     raw1 = b'{"kept_ids": ["img_00000"], "kept_ids": ["img_00001"], "removed_by_reason": {}}'
     raw2 = b'{"kept_ids": ["img_00000"], "removed_by_reason": {"x": NaN}}'
-    a = refused("dedup_invalid", lambda: H.read_dedup(inventory(variant("dedup_dupkey", dedup_raw=raw1))))
-    b = refused("dedup_invalid", lambda: H.read_dedup(inventory(variant("dedup_nan", dedup_raw=raw2))))
+    a = tman_refused("dedup_dupkey", dedup_raw=raw1)
+    b = tman_refused("dedup_nan", dedup_raw=raw2)
     return a[0] and b[0], f"{a[1]} | {b[1]}"
 
 
 def i_ids():
-    """kept_ids unsorted, repeated or empty are refused (T4: sorted and unique)."""
-    reasons = dict(LF.DEDUP_REASONS)
-    out = []
-    for name, ids in (("dedup_unsorted", ["img_00001", "img_00000"]), ("dedup_repeat", ["img_00000"] * 2),
-                      ("dedup_empty", [])):
-        out.append(refused("dedup_invalid", lambda n=name, i=ids: H.read_dedup(inventory(
-            variant(n, dedup={"kept_ids": i, "removed_by_reason": reasons})))))
+    """kept_ids unsorted, repeated or empty, each in TMAN's canonical bytes, are refused by TMAN's reader
+    (tday_dedup/1: sorted, unique, not empty)."""
+    out = [tman_refused(n, dedup=edited(kept_ids=i)) for n, i in (
+        ("dedup_unsorted", ["img_00001", "img_00000"]), ("dedup_repeat", ["img_00000"] * 2), ("dedup_empty", []))]
     return all(ok for ok, _ in out), str([d for _, d in out])
 
 
 def i_reasons():
-    """The file's removed_by_reason must be the export's."""
-    doc = {"kept_ids": kept(), "removed_by_reason": {"equals_train_image": 3}}
-    return refused("dedup_invalid", lambda: H.read_dedup(inventory(variant("dedup_reasons", dedup=doc))))
+    """The file's removed_by_reason must be the export's (a file TMAN's reader accepts)."""
+    def edit(export, binding):
+        export["dedup"]["removed_by_reason"] = {"equal_train": 3, "equal_val": 0, "duplicate_in_split": 1}
+    return refused("dedup_invalid", lambda: H.read_dedup(inventory(variant("dedup_reasons", edit))))
 
 
 def i_extra():
-    """A field LREP does not read is reported, never refused."""
-    doc = {**CTX.world.dedup, "groups": [["img_00003", "img_00011"]]}
-    rec = H.read_dedup(inventory(variant("dedup_extra", dedup=doc)))
-    return rec.other_fields == ("groups",) and list(rec.kept_ids) == kept(), str(rec.other_fields)
+    """TMAN's fields that LREP does not read are reported, never refused; a key outside tday_dedup/1 is refused
+    by TMAN's reader (its exact keys)."""
+    rec = H.read_dedup(inventory())
+    ok, detail = tman_refused("dedup_extra", dedup=edited(groups=[["img_00003", "img_00011"]]))
+    return (ok and rec.other_fields == ("also_counted", "format", "hash_list_sha256", "n_images",
+                                        "removed_ids_by_reason", "script", "train_val_list_sha256")), detail
 
 
 def i_invariants():
-    """check_ids: a fingerprint that is not the 37's, a kept id outside them, and fewer counted than
-    removed are each dedup_invalid; the world's counts and overlap are reported."""
+    """check_ids (LB4-5): a fingerprint that is not the 37's, a kept id outside them, fewer or more counted than
+    removed (|all| - |kept| == the sum), and an image_ids_sha256 or a kept_ids_sha256 that is not the ids' own
+    are each dedup_invalid, the digests named; the world's counts and the partition are reported."""
     rec = H.read_dedup(inventory())
     ids = CTX.world.truth.ids
     good = {"E1 clean": DS.AM6.ids_sha256(ids)}
     counts = DS.check_ids(rec, good, ids)
     a = refused("dedup_invalid", lambda: DS.check_ids(rec, {**good, "X": DS.AM6.ids_sha256(ids[:-1])}, ids))
-    b = refused("dedup_invalid", lambda: DS.check_ids(dataclasses.replace(rec, kept_ids=(*rec.kept_ids,
-                                                                                         "img_00099")),
-                                                      good, ids))
+    outside = (*rec.kept_ids[:-1], "img_00099")             # the count and the kept digest stay consistent
+    b = refused("dedup_invalid", lambda: DS.check_ids(dataclasses.replace(
+        rec, kept_ids=outside, kept_ids_sha256=DS.AM6.ids_sha256(outside)), good, ids))
     c = refused("dedup_invalid", lambda: DS.check_ids(dataclasses.replace(rec, removed_by_reason=(("x", 3),)),
                                                       good, ids))
+    d = refused("dedup_invalid", lambda: DS.check_ids(dataclasses.replace(rec, removed_by_reason=(("x", 5),)),
+                                                      good, ids))
+    e = refused("dedup_invalid", lambda: DS.check_ids(dataclasses.replace(rec, image_ids_sha256="0" * 64),
+                                                      good, ids))
+    f = refused("dedup_invalid", lambda: DS.check_ids(dataclasses.replace(rec, kept_ids_sha256="0" * 64),
+                                                      good, ids))
     ok = (counts["n_all"], counts["n_kept"], counts["n_removed"], counts["sum_removed_by_reason"],
-          counts["overlap"], counts["partition_stated"]) == (30, 26, 4, 5, 1, False)
-    return ok and a[0] and b[0] and c[0], f"{counts} | {a[1]} | {b[1]} | {c[1]}"
+          counts["partition_stated"]) == (30, 26, 4, 4, True) and "overlap" not in counts
+    named = "image_ids_sha256" in e[1] and "kept_ids_sha256" in f[1]
+    return (ok and named and all(x[0] for x in (a, b, c, d, e, f)),
+            f"{counts} | {a[1]} | {b[1]} | {c[1]} | {d[1]} | {e[1]} | {f[1]}")
 
 
 def i_short_count():
-    """Through the part: a dedup file whose reasons count fewer images than it removes."""
-    doc = {"kept_ids": kept(), "removed_by_reason": {"equals_train_image": 3}}
+    """Through the part: a tday_dedup/1 file TMAN's reader accepts, built over the world's ids less img_00017
+    (three removed, the same 26 kept), so that it counts fewer images than the scored artifacts remove."""
+    ids = [i for i in CTX.world.truth.ids if i != "img_00017"]
+    doc = LF.dedup_doc(CTX.world, ids=ids)
 
     def edit(export, binding):
-        export["dedup"]["removed_by_reason"] = {"equals_train_image": 3}
+        export["dedup"]["removed_by_reason"] = dict(doc["removed_by_reason"])
     return refused("dedup_invalid", lambda: doc_of(variant("dedup_short", edit, dedup=doc)))
+
+
+def i_partition_false():
+    """LB4-5: a file whose reasons_partition is false (in TMAN's canonical bytes) is refused inside TMAN's
+    parser, dedup_invalid with TMAN's code: check_ids keeps no branch for it."""
+    return tman_refused("dedup_partition_false", dedup=edited(reasons_partition=False))
+
+
+def i_canonical():
+    """LB4-5: the world's file in bytes that are not TMAN's canonical JSON (indented) is refused by TMAN's
+    reader, its canonical-JSON rule."""
+    raw = (json.dumps(CTX.world.dedup, indent=2) + "\n").encode("utf-8")
+    return tman_refused("dedup_indented", dedup_raw=raw)
 
 
 # --------------------------------------------------------------------------------------------------
@@ -360,8 +404,8 @@ def v_changes():
 def v_counts():
     d = the_doc()["dedup"]
     every = hashlib.sha256("\n".join(sorted(CTX.world.truth.ids)).encode()).hexdigest()
-    return ((d["n_all"], d["n_kept"], d["n_removed"], d["sum_removed_by_reason"], d["overlap"])
-            == (30, 26, 4, 5, 1) and d["image_ids_sha256"] == every
+    return ((d["n_all"], d["n_kept"], d["n_removed"], d["sum_removed_by_reason"], d["partition_stated"])
+            == (30, 26, 4, 4, True) and "overlap" not in d and d["image_ids_sha256"] == every
             and d["kept_ids_sha256"] == hashlib.sha256("\n".join(kept()).encode()).hexdigest()), str(d)[:300]
 
 
@@ -491,15 +535,16 @@ def c_am5():
 # G: the two guard cases
 # --------------------------------------------------------------------------------------------------
 def g_nothing_removed():
-    """Guard 1: with every id kept (removed_by_reason empty), (i)'s subset values equal the full ones and
-    (ii)'s run_comparison results equal the family's stored comparisons bitwise; the clean dataset-level
-    differences equal the stored pooled observed values, robustness's equals report's mC contrast, and
-    the NI's stage mIoUs and observed delta equal the official ones."""
-    every = sorted(CTX.world.truth.ids)
+    """Guard 1: with every id kept (a tday_dedup/1 file of TMAN's builder removing nothing, every count 0),
+    (i)'s subset values equal the full ones and (ii)'s run_comparison results equal the family's stored
+    comparisons bitwise; the clean dataset-level differences equal the stored pooled observed values,
+    robustness's equals report's mC contrast, and the NI's stage mIoUs and observed delta equal the official
+    ones."""
+    none = LF.dedup_doc(CTX.world, remove=False)
 
     def edit(export, binding):
-        export["dedup"]["removed_by_reason"] = {}
-    doc = doc_of(variant("dedup_none", edit, dedup={"kept_ids": every, "removed_by_reason": {}}))
+        export["dedup"]["removed_by_reason"] = dict(none["removed_by_reason"])
+    doc = doc_of(variant("dedup_none", edit, dedup=none))
     fam = stats_artifact().family
     stored = {c["comparison_id"]: c for c in fam["a3a_family"]["comparisons"]}
     tasks = {t["task_id"]: t for t in fam["bootstrap_tasks"]}
@@ -666,9 +711,9 @@ def r_issue():
     return (doc["issue"]["rows"] == [{"row": r, "count": n} for r, n in ISSUE]
             and (doc["issue"]["duplicate_groups"], doc["issue"]["redundant_files"], doc["issue"]["files"])
             == (265, 277, 7774)
-            and doc["removed_by_reason"] == [{"reason": "equals_train_image", "count": 2},
-                                             {"reason": "equals_val_image", "count": 2},
-                                             {"reason": "repeats_an_earlier_image", "count": 1}]
+            and doc["removed_by_reason"] == [{"reason": "duplicate_in_split", "count": 1},
+                                             {"reason": "equal_train", "count": 2},
+                                             {"reason": "equal_val", "count": 1}]
             and not any("↔" in str(k) or str(k) in dict(ISSUE) for k in keys)
             and all(f"| {r} | {n} |" in md for r, n in ISSUE)), \
         str(sorted(k for k in keys if "↔" in str(k)))
@@ -777,24 +822,27 @@ def setup(root: Path, world=None) -> None:
 
 
 def cases():
-    return [("I1", "B5-S2: the record read (sha256 first, T4's fields)", i_read),
+    return [("I1", "B5-S2/LB4-5: the record read (sha256 first, then TMAN's reader; its fields)", i_read),
             ("I2", "dedup_invalid: dedup null", i_null),
             ("I3", "dedup_invalid: dedup without removed_by_reason", i_fields),
             ("I4", "dedup_invalid: a path that is not plain relative POSIX", i_path),
             ("I5", "dedup_invalid: the file is missing", i_missing),
             ("I6", "dedup_invalid: the file is not at the export's sha256", i_sha),
-            ("I7", "dedup_invalid: the file is not UTF-8", i_utf8),
-            ("I8", "dedup_invalid: a repeated key or NaN (strict JSON)", i_strict),
-            ("I9", "dedup_invalid: kept_ids unsorted, repeated or empty", i_ids),
+            ("I7", "dedup_invalid (TMAN's code): the file is not UTF-8", i_utf8),
+            ("I8", "dedup_invalid (TMAN's code): a repeated key or NaN (strict JSON)", i_strict),
+            ("I9", "dedup_invalid (TMAN's code): kept_ids unsorted, repeated or empty", i_ids),
             ("I10", "dedup_invalid: the file's removed_by_reason is not the export's", i_reasons),
-            ("I11", "a field LREP does not read is reported, not refused", i_extra),
-            ("I12", "the invariants: one id set, kept inside it, |all| - |kept| <= the sum", i_invariants),
+            ("I11", "TMAN's fields LREP does not read are reported; a key outside tday_dedup/1 refused", i_extra),
+            ("I12", "LB4-5: one id set, kept inside it, |all| - |kept| == the sum, both digests", i_invariants),
             ("I13", "dedup_invalid through the part: fewer counted than removed", i_short_count),
+            ("I14", "LB4-5: reasons_partition false is refused inside TMAN's parser (TMAN's code)",
+             i_partition_false),
+            ("I15", "LB4-5: non-canonical bytes are refused by TMAN's reader (TMAN's code)", i_canonical),
             ("V1", "(i): the 38 rows read (models of record, arms with A, F, G, quant_descriptive, E6-KD)",
              v_rows),
             ("V2", "(i): twelve numbers on the subset recomputed here; full values the artifact's", v_values),
             ("V3", "(i): the eligibility changes (:159's form); 26 kept, 4 removed", v_changes),
-            ("V4", "(i): the counts, the overlap and the fingerprints", v_counts),
+            ("V4", "(i): the counts, the partition and the fingerprints", v_counts),
             ("V5", "(i): a defect in a slot (b) does not report leaves the part unrefused (LRB4)",
              v_unreported_slot),
             ("C1", "(ii): the eight contrasts in order", c_order),

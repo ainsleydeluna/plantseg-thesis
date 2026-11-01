@@ -169,13 +169,19 @@ def m_stage_unmapped():
 
 
 def m_dedup_invalid():
-    """B5-S2: an export whose dedup.sha256 is not its file's is refused before the file is parsed."""
+    """B5-S2: an export whose dedup.sha256 is not its file's is refused by LREP's own comparison, before the
+    file is parsed (TMAN's reader, given the same sha256 by LB4-5, would refuse it too: its own code)."""
     w = CTX.world
     export, binding = copy.deepcopy(w.export), copy.deepcopy(w.binding)
     export["dedup"]["sha256"] = LF.syn_sha("not the dedup file")
     path = LF.write_inventory(w.fresh("mut_dedup_sha"), export, binding, w.dedup)
     inv = H.open_inventory(path, policy=Policy.NONOFFICIAL_SMOKE, reader=H.read_inventory_stub)
-    return refused("dedup_invalid", lambda: H.read_dedup(inv))
+    try:
+        H.read_dedup(inv)
+    except H.LrepRefusal as e:
+        return (e.code == "dedup_invalid" and "the export says" in e.detail and not e.detail.startswith("tman:"),
+                f"{e.code}: {e.detail[:240]}")
+    return False, "no refusal (expected dedup_invalid by LREP's own comparison)"
 
 
 def m_stage_map():
@@ -354,10 +360,10 @@ MUTATIONS = [
      [(H, "read_dedup", [off("dedup_invalid", ' f"{where} is not an object')])], "dedup:I3"),
     ("R14", "dedup_invalid not raised (a dedup file that cannot be read)",
      [(H, "read_dedup", [off("dedup_invalid", ' f"{where}: {f} cannot be read')])], "dedup:I5"),
-    ("R15", "dedup_invalid not raised (a dedup file that is not UTF-8)",
-     [(H, "read_dedup", [off("dedup_invalid", ' f"{where}: {f} is not UTF-8')])], "dedup:I7"),
-    ("R16", "dedup_invalid not raised (kept_ids unsorted, repeated or empty)",
-     [(H, "read_dedup", [off("dedup_invalid", ' f"{where}: kept_ids are not')])], "dedup:I9"),
+    ("R15", "dedup_invalid not raised (TMAN's reader refuses a dedup file that is not UTF-8; LB4-5)",
+     [(H, "read_dedup", [off("dedup_invalid", ' f"tman:{e.code}')])], "dedup:I7"),
+    ("R16", "dedup_invalid not raised (TMAN's reader refuses kept_ids unsorted, repeated or empty; LB4-5)",
+     [(H, "read_dedup", [off("dedup_invalid", ' f"tman:{e.code}')])], "dedup:I9"),
     ("R17", "dedup_invalid not raised (the file's removed_by_reason is not the export's)",
      [(H, "read_dedup", [off("dedup_invalid", " f\"{where}: the file's removed_by_reason")])],
      "dedup:I10"),
@@ -647,8 +653,9 @@ MUTATIONS = [
      "mut:stage_map"),
     ("S83", "B5-S1: E7-X mapped at E3's precision, not E7's",
      [(H, "_stage_map", [("D.STAGE_PRECISION[parent])", 'D.STAGE_PRECISION["E3"])')])], "mut:stage_map"),
-    ("S84", "B5-S2: unsorted kept ids accepted (T4: sorted and unique)",
-     [(H, "read_dedup", [("ids == sorted(set(ids))", "len(ids) == len(set(ids))")])], "dedup:I9"),
+    ("S84", "LB4-5: the dedup file parsed by json.loads, not TMAN's dedup.read_dedup (unsorted ids accepted)",
+     [(H, "read_dedup", [('doc = TD.read_dedup(raw, expect_sha256=d["sha256"])', "doc = json.loads(raw)")])],
+     "dedup:I9"),
     ("S85", "B5-S2: dedup.path resolved against the directory above the export's (H:10)",
      [(H, "read_dedup", [('f = inv.path.parent / d["path"]', 'f = inv.path.parent.parent / d["path"]')])],
      "dedup:I1"),
@@ -953,6 +960,20 @@ MUTATIONS = [
      [(H, "open_inventory", [('f"tman:{e.code}: {e.detail}"', 'f"{e.detail}"')])], "seed:R2q"),
     ("S196", "LB4-2: TMAN's refusal not caught explicitly (the generic catch takes it)",
      [(H, "open_inventory", [("except TmanRefused as e:", "except AssertionError as e:")])], "seed:R2s"),
+    # B-4, commit B4-2 (LB4-5: the duplicate-free file in TMAN's tday_dedup/1)
+    ("S197", "LB4-5: |all| - |kept| <= the sum restored (the overlap branch)",
+     [(DS, "check_ids", [("if removed != total:", "if removed > total:")])], "dedup:I12"),
+    ("R45", "dedup_invalid not raised (image_ids_sha256 not the artifacts' id set's; LB4-5)",
+     [(DS, "check_ids", [off_h("dedup_invalid", ' f"image_ids_sha256 {rec')])], "dedup:I12"),
+    ("R46", "dedup_invalid not raised (kept_ids_sha256 not the kept ids'; LB4-5)",
+     [(DS, "check_ids", [off_h("dedup_invalid", ' f"kept_ids_sha256 {rec')])], "dedup:I12"),
+    ("S198", "LB4-5: partition_stated reported False",
+     [(DS, "check_ids", [('"partition_stated": True', '"partition_stated": False')])], "dedup:V4"),
+    ("S199", "LB4-5: the record's kept_ids_sha256 taken from the file's image_ids_sha256",
+     [(H, "read_dedup", [('kept_ids_sha256=doc["kept_ids_sha256"]', 'kept_ids_sha256=doc["image_ids_sha256"]')])],
+     "dedup:I1"),
+    ("S200", "LB4-5: TMAN's code dropped from read_dedup's detail",
+     [(H, "read_dedup", [('f"tman:{e.code}: {e.detail} (', 'f"{e.detail} (')])], "dedup:I14"),
 ]
 
 
