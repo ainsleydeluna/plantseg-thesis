@@ -637,12 +637,13 @@ def e2e_stats():
 
 
 def rx_run(name, inventory=None):
-    """The CLI's body under Policy.OFFICIAL with the stand-in reader, into a new out-dir <root>/<name>."""
+    """The CLI's body under Policy.OFFICIAL with the stand-in reader, into a new out-dir <root>/<name>, the
+    world's runs root given as the TEST-day command's --runs-root (B-4, LB4-10)."""
     w = CTX.world
     from report_extensions import default_mde_entry                     # the CLI's own default
     return RX.run(stats_artifact=e2e_stats(), inventory=inventory or w.inventory_path, out_dir=w.root / name,
                   repo_root=w.input_root, synthetic=True, strata=w.strata_path, mde_entry=default_mde_entry(),
-                  parts=None, reader=tman_reader, B=SMOKE_B)
+                  parts=None, reader=tman_reader, B=SMOKE_B, runs_root=w.runs_root)
 
 
 def p_driver():

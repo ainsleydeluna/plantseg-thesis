@@ -328,6 +328,9 @@ MUTATIONS = [
      [(H, "read_descriptive_test", [off("descriptive_input_invalid", ' f"{where}: (b)')])], "official:B1"),
     ("C48", "descriptive_input_in_official not raised (a DT run given to dedup's (ii)-(iii))",
      [(H, "require_official_inputs", [off("descriptive_input_in_official")])], "dedup:O1"),
+    # C: B-4's code (LB4-10)
+    ("C49", "runs_root_missing not raised (the telemetry read without a runs root)",
+     [(H, "read_telemetry", [off("runs_root_missing")])], "seed:R22"),
     # R: further raise sites (DL-24)
     ("R01", "binding_invalid not raised (a bound export without binding.artifacts)",
      [(H, "open_inventory", [off("binding_invalid", ' f"{path}: a bound export')])], "seed:R2h"),
@@ -1030,6 +1033,28 @@ MUTATIONS = [
     ("S222", "LB4-9: seed_stability's seed-42 cross-checks take their inputs unguarded",
      [(SS, "load_seed_inputs", [("H.require_official_inputs(stats, {", "(lambda *a: None)(stats, {")])],
      "seed:R21"),
+    # B-4, commit B4-5 (LB4-10: the telemetry base; LB4-11: the code paths; LB4-12: quant_rows' text)
+    ("R47", "usage_invalid not raised (a --runs-root relative, inside the repository or naming 'test'; LB4-10)",
+     [(RX, "run", [off_h("usage_invalid", ' f"--runs-root')])], "report:H12"),
+    ("S223", "LB4-10: the seed part's telemetry resolved against the input root",
+     [(SS, "build_seed_stability", [("cut_curves(inv, inputs, runs_root=runs_root)",
+                                      "cut_curves(inv, inputs, runs_root=input_root)")])], "seed:W4"),
+    ("S224", "LB4-10: build_report gives the seed part no runs root",
+     [(RX, "build_report", [("runs_root=runs_root)", "runs_root=None)")])], "report:H10"),
+    ("S225", "LB4-10: run() passes its runs root to no part",
+     [(RX, "run", [("reader=reader, runs_root=runs_root,", "reader=reader,")])], "report:H10"),
+    ("S226", "LB4-10 (D-14): the out-dir no longer kept out of the runs root",
+     [(RX, "run", [("input_root, runs_root, Path(inventory).parent,", "input_root, Path(inventory).parent,")])],
+     "report:H12"),
+    ("S227", "LB4-11: src/tman dropped from the report's code paths (recorded and checked)",
+     [(RX, "build_report", [('"report_code_paths": list(REPORT_CODE_PATHS)',
+                             '"report_code_paths": [p for p in REPORT_CODE_PATHS if p != "src/tman"]'),
+                            ("code_provenance_unmet(paths=REPORT_CODE_PATHS)",
+                             'code_provenance_unmet(paths=tuple(p for p in REPORT_CODE_PATHS if p != "src/tman"))')])],
+     "report:H9"),
+    ("S228", "LB4-12: the quant part's converted VAL scores read the old 'not on record' wording",
+     [(QR, "build_quant_rows", [('"converted_val_scores": CONVERTED_VAL',
+                                 '"converted_val_scores": "not on record: DL-146 is a draft"')])], "quant:Q6"),
 ]
 
 

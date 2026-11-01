@@ -29,8 +29,8 @@ the same way.
     before. The note "no quant_descriptive slot in the export" (NO_SLOT, B-5) is retired: it served that
     case only.
   * TEST side only: item 6's VAL side goes to the LRB10 block with AM-18 item 3(d)'s, and item 5's
-    converted VAL scores read "not on record" (no committed record at M; DL-146 is a draft until the
-    records catch-up lands).
+    converted VAL scores are cited, never typed here (LB4-12): E6-E2's is DL-146's and E6 seed 42's
+    DL-131's, both RECORDED; E7-E2's and E7's come after the PTQ block.
 
 Descriptive. Import-time behaviour is side-effect free.
 """
@@ -46,8 +46,8 @@ ROWS = (("E6-E2", "E6"), ("E7-E2", "E7"))
 REFERENCE = ("E2", "E3")
 E6_X_STAGES = ("E6-R1", "E6-R2")
 QUANT_SEED = 42
-CONVERTED_VAL =("not on record: no committed record of the converted VAL scores at M (DL-146 is a draft "
-                 "until the records catch-up lands)")
+CONVERTED_VAL = ("E6-E2's is DL-146's and E6 seed 42's DL-131's, both RECORDED (cited, never typed here; LB4-12); "
+                 "E7-E2's and E7's come after the PTQ block")
 TITLE = "AM-23's descriptive quantizations on TEST (items 5-6; descriptive)"
 FOOTNOTE = ("Descriptive (AM-23 item 6): no interval, no test and no claim beyond the differences. "
             "Orientation: the E2 parent minus the E3 parent; E2 − E3 = m(E2) − m(E3), the negative of the "

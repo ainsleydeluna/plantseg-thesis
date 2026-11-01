@@ -27,7 +27,9 @@ reader set to the stub (STUB_CLI), since the CLI itself reads with TMAN's reader
   N  no regression: report.build_report keeps its three extension points unpopulated, and no LREP
      file imports rehearsal.py or writes report.py's names (K1)
   H  code provenance, exit codes 0 / 2 / 4, --parts, no temporary directory left after a failure,
-     determinism, no 'test' path, the frozen code's provenance in the profile (O3)
+     determinism, no 'test' path, the frozen code's provenance in the profile (O3); B-4: the code paths
+     artifact.OFFICIAL_CODE_PATHS by import, one definition (H8, H9; LB4-11, LB4-A2), and TMAN's runs root
+     through run() and the CLI's --runs-root (H10-H12; LB4-10)
   R  refusals: parts_invalid, mde_entry_invalid, usage_invalid
   S  B5-S4: PARTS and --parts, the new parts under the split banner and "descriptive; outside protocol
      1.0.0", each equal to its module's own build, the MDE part's caveat in the dedup labels, B =
@@ -119,7 +121,7 @@ def base_args(out, inventory=None, **extra):
     w = CTX.world
     args = ["--stats-artifact", w.stats_path, "--inventory", inventory or w.inventory_path,
             "--out-dir", out, "--strata", w.strata_path, "--mde-entry", MDE, "--synthetic-inputs",
-            "--repo-root", w.input_root]
+            "--repo-root", w.input_root, "--runs-root", w.runs_root]
     for k, v in extra.items():
         args += [f"--{k.replace('_', '-')}", v]
     return args
@@ -144,7 +146,8 @@ def part(doc, name):
 def build(**kw):
     w = CTX.world
     args = dict(stats_artifact=w.stats_path, inventory=w.inventory_path, input_root=w.input_root,
-                strata=w.strata_path, mde_entry=MDE, B=SMOKE_B, reader=H.read_inventory_stub)
+                strata=w.strata_path, mde_entry=MDE, B=SMOKE_B, reader=H.read_inventory_stub,
+                runs_root=w.runs_root)
     args.update(kw)
     return RX.build_report(**args)
 
@@ -498,18 +501,86 @@ def h_code():
 
 
 def h_report_code():
-    """The frozen code that computes the numbers (artifact.OFFICIAL_CODE_PATHS) and the CLI are recorded,
-    and a path of them not clean at HEAD keeps the report nonofficial (O3; R3-01)."""
-    want = ["src/stats", "src/stats/driver.py", "scripts/run_stats.py", "configs/corruption_protocol.json",
-            "docs/STATISTICAL_ANALYSIS_CONTRACT.md", "scripts/report_extensions.py"]
+    """The frozen code that computes the numbers and the CLI are recorded -- the expected list taken from
+    artifact.OFFICIAL_CODE_PATHS by import plus LREP's own entry, src/corruption_roles.py and src/tman among
+    them by name (LB4-11; LB4-A2) -- and a path of them not clean at HEAD keeps the report nonofficial (O3;
+    R3-01)."""
+    want = [*A.OFFICIAL_CODE_PATHS, "scripts/report_extensions.py"]
     code = the_doc()["code"]
     st = H.load_stats_artifact(CTX.world.stats_path, CTX.world.input_root)
     fake = types.SimpleNamespace(**{**st.__dict__, "profile": "official"})
     inv = types.SimpleNamespace(bound=True, reader=H.TMAN_READER, doc={"binding": {"state": "bound"}})
     dirty = ["code_not_clean_at_head", "src/stats/driver.py:  M src/stats/driver.py"]
     unmet = RX.official_unmet(fake, inv, {}, {"code_clean_at_commit": True, "report_code_unmet": [dirty]})
-    return (code["report_code_paths"] == want == [*A.OFFICIAL_CODE_PATHS, want[-1]]
+    return (code["report_code_paths"] == want
+            and {"src/corruption_roles.py", "src/tman"} <= set(code["report_code_paths"])
             and isinstance(code["report_code_unmet"], list) and unmet == [tuple(dirty)]), str(unmet)
+
+
+def h_official_paths():
+    """LB4-11: REPORT_CODE_PATHS is artifact.OFFICIAL_CODE_PATHS by import plus the CLI, one definition: every
+    OFFICIAL_CODE_PATHS entry is in REPORT_CODE_PATHS and in the list a report built here records (LB4-A2:
+    src/corruption_roles.py and src/tman by name)."""
+    recorded = build(parts="mde")["code"]["report_code_paths"]
+    missing = [p for p in A.OFFICIAL_CODE_PATHS if p not in RX.REPORT_CODE_PATHS or p not in recorded]
+    named = {"src/corruption_roles.py", "src/tman"}
+    return (not missing and named <= set(recorded) and named <= set(A.OFFICIAL_CODE_PATHS)
+            and list(RX.REPORT_CODE_PATHS) == recorded), f"missing {missing}; recorded {recorded}"
+
+
+def v_cut_e2(export, binding):
+    """LB4-10: E2 at seed 43 cut, its model rows and records dropped; its run entry keeps the world's telemetry
+    item, which resolves under the runs root (the seed part reads it)."""
+    slot = "E2:s43:lambda0.5:80k"
+    next(e for e in export["entries"] if e["slot"] == slot).update(
+        kind="cut", cut_date="2026-11-02", rule="AM-19 item 3(b): original freeze", comparator=None)
+    export["models"] = [r for r in export["models"] if r["slot"] != slot]
+    binding["artifacts"] = [r for r in binding["artifacts"] if r["slot"] != slot]
+
+
+def h_runs_root():
+    """LB4-10: run()'s runs_root reaches the seed part's telemetry: the cut E2 at seed 43 is written (--parts
+    seed) with its VAL curve, every attempt's file under the runs root and none under the input root."""
+    w = CTX.world
+    _, doc = RX.run(stats_artifact=w.stats_path, inventory=variant("cut_e2", v_cut_e2),
+                    out_dir=new_out("rx_runs_root"), repo_root=w.input_root, runs_root=w.runs_root,
+                    synthetic=True, strata=w.strata_path, mde_entry=MDE, parts="seed",
+                    reader=H.read_inventory_stub)
+    cut = part(doc, "seed")["cut_runs"]
+    files = [a["telemetry"] for c in cut for a in c["attempts"]]
+    return (len(cut) == 1 and cut[0]["stage"] == "E2" and bool(files)
+            and all(a["points"] for a in cut[0]["attempts"])
+            and all((w.runs_root / f).is_file() and not (w.input_root / f).exists() for f in files)), str(files)
+
+
+def h_runs_root_cli():
+    """LB4-10: the CLI's --runs-root: with it the cut E2 at seed 43 is written; without it runs_root_missing
+    (exit 2, nothing written)."""
+    inv = variant("cut_e2", v_cut_e2)
+    out1, out2 = new_out("rx_runs_cli"), new_out("rx_runs_missing")
+    c1, _, se1 = cli(*base_args(out1, inventory=inv, parts="seed"))
+    args = [str(a) for a in base_args(out2, inventory=inv, parts="seed")]
+    i = args.index("--runs-root")
+    c2, so2, _ = cli(*(args[:i] + args[i + 2:]))
+    return (c1 == 0 and (out1 / "report_extensions.json").is_file() and c2 == 2
+            and "REFUSED (runs_root_missing)" in so2 and not out2.exists()), f"{se1[-200:]} | {so2[-200:]}"
+
+
+def h_runs_root_checks():
+    """LB4-10: in run(), a runs root that is relative, inside the repository or names 'test' is usage_invalid,
+    and an out-dir inside the runs root out_dir_invalid (D-14), before anything is read."""
+    w = CTX.world
+    inv = variant("cut_e2", v_cut_e2)
+
+    def rx(runs_root, out=None):
+        return RX.run(stats_artifact=w.stats_path, inventory=inv, out_dir=out or new_out("rx_runs_bad"),
+                      repo_root=w.input_root, runs_root=runs_root, synthetic=True, parts="mde",
+                      reader=H.read_inventory_stub)
+    bad = [refused("usage_invalid", lambda r=r: rx(r))
+           for r in ("runs/relative", REPO / "reports", w.root / "Test_runs")]
+    inside = refused("out_dir_invalid", lambda: rx(w.runs_root, w.runs_root / "lrep_never_written"))
+    return (all(ok and "--runs-root" in d for ok, d in bad) and inside[0]
+            and not (w.runs_root / "lrep_never_written").exists()), f"{[d for _, d in bad]} | {inside[1]}"
 
 
 def h_exit_2():
@@ -782,7 +853,16 @@ def cases():
             ("H4", "--parts selects parts", h_parts),
             ("H5", "no temporary directory left after a failure", h_no_tmp_left),
             ("H6", "byte-identical JSON from two runs", h_deterministic),
-            ("H8", "the frozen code and the CLI are recorded and gate the profile (O3)", h_report_code),
+            ("H8", "the frozen code (artifact.OFFICIAL_CODE_PATHS by import) and the CLI are recorded and gate "
+                    "the profile (O3; LB4-A2)", h_report_code),
+            ("H9", "LB4-11: every artifact.OFFICIAL_CODE_PATHS entry is in REPORT_CODE_PATHS and recorded",
+             h_official_paths),
+            ("H10", "LB4-10: run()'s runs_root reaches the seed part's telemetry (a cut E2 at seed 43)",
+             h_runs_root),
+            ("H11", "LB4-10: the CLI with --runs-root writes; without it runs_root_missing (exit 2)",
+             h_runs_root_cli),
+            ("H12", "LB4-10: a runs root relative, in the repository or naming 'test' (usage_invalid); an "
+                    "out-dir inside it (out_dir_invalid)", h_runs_root_checks),
             ("R1", "parts_invalid", r_parts),
             ("R2", "mde_entry_invalid (an MDE path that does not exist)", r_mde),
             ("R3", "usage_invalid (--repo-root without --synthetic-inputs)", r_usage),

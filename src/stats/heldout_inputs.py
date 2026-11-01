@@ -24,7 +24,8 @@ writes them, never parses the TEST-day manifest and never builds its path (IF§1
     (R-7; LRB3). The stage map (B5-S1, STAGE_MAP) gives each TMAN stage its evaluator stage, model_role
     and precision; (model_role, precision) must be (student, qat_fakequant_off) for fq_off rows (LRB7)
     and the map's for the others.
-  * Telemetry files are hashed before they are parsed; only their VAL rows are read (LRB2).
+  * Telemetry files are TMAN's <run_id>/<name> under the runs root (--runs-root; LB4-10), never the input
+    root; each is hashed before it is parsed, and only its VAL rows are read (LRB2).
   * B-5 (rulings LREP-B5-RULE-1 to LREP-B5-RULE-3): the readers of the slots of role arm, arm_teacher
     and quant_descriptive with the family slots they compare with (IF§11.1 :25), and the
     duplicate-free TEST list (B5-S2), in section 8.
@@ -198,7 +199,7 @@ _HEX40 = re.compile(r"^[0-9a-f]{40}$")
 _FILE_ID = re.compile(r"^[A-Za-z0-9._-]+$")
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
-#: Every LREP refusal code of B-1 to B-3, B-5 and B-5b, with the plan rule or ruling it implements. The CLI
+#: Every LREP refusal code of B-1 to B-5b, with the plan rule or ruling it implements. The CLI
 #: exits 2 on any of them and writes nothing.
 CODES = {
     # the statistics artifact (R-1)
@@ -243,6 +244,8 @@ CODES = {
     # telemetry (LRB2) and robustness at seeds 43/44 (LRB11)
     "telemetry_sha256_mismatch": "LRB2: a telemetry file's sha256 differs from the export's",
     "telemetry_invalid": "LRB2: a telemetry item or file whose VAL rows cannot be read",
+    "runs_root_missing": "LB4-10: telemetry is read and no runs root was given (--runs-root): TMAN's items are "
+                         "<run_id>/<name> under it, never under the repository",
     "robustness_cells_missing": "LRB11: an E1/E6 pair with both models lacks one of its 15 cells",
     # strata tables (AM-17 item 8; plan §2.1)
     "strata_invalid": "§2.1: the strata file is unreadable or not one stratum per disease class",
@@ -259,7 +262,7 @@ CODES = {
     "out_dir_invalid": "D-14: the out-dir exists, or lies inside the repository or an input",
     "parts_invalid": "§3.3: --parts names an unknown or repeated part",
     "mde_entry_invalid": "LRB18: the MDE entry cannot be read",
-    "usage_invalid": "a bad command line (--repo-root without --synthetic-inputs, a missing input)",
+    "usage_invalid": "a bad command line (--repo-root without --synthetic-inputs, a missing input, a bad --runs-root)",
     # B-5's input layer (B5-S3: rulings B5-S1 and B5-S2)
     "stage_unmapped": "B5-S1: a TMAN stage outside LREP's stage map (TMAN stage -> evaluator stage, "
                       "model_role, precision)",
@@ -1305,13 +1308,17 @@ def _val_point(o: dict, unit: str, where: str):
     return u, (None if v is None else float(v)), tag
 
 
-def read_telemetry(inv: Inventory, slot: str, input_root: Path, *, unit: str) -> tuple:
+def read_telemetry(inv: Inventory, slot: str, runs_root: Path | None, *, unit: str) -> tuple:
     """The VAL rows of every telemetry attempt the export lists for `slot`, each file's sha256 checked
-    before it is parsed (LRB2). `unit` is "iter" for the KD and E1 trainers and "epoch" for QAT
-    (src/training/train_e1.py:492-500, src/training/train_distill.py:1262-1270,
+    before it is parsed (LRB2), at TMAN's <run_id>/<name> under the runs root, which nothing else reads
+    (src/tman/manifest.py:992-1003; called without one, runs_root_missing: LB4-10). `unit` is "iter" for the
+    KD and E1 trainers and "epoch" for QAT (src/training/train_e1.py:492-500, src/training/train_distill.py:1262-1270,
     src/quant/qat.py:1060-1069). No entry, or an empty list, gives no attempt."""
     if unit not in TELEMETRY_UNITS:
         raise ValueError(f"unit must be one of {sorted(TELEMETRY_UNITS)}")
+    if runs_root is None:
+        raise refusal("runs_root_missing", f"slot {slot!r}: its telemetry is read under TMAN's runs root and "
+                                           "none was given (--runs-root; LB4-10)")
     items = inv.entry(slot).get("telemetry")
     if items is None:
         return ()
@@ -1324,7 +1331,7 @@ def read_telemetry(inv: Inventory, slot: str, input_root: Path, *, unit: str) ->
                 or not isinstance(it.get("sha256"), str) or not _HEX64.fullmatch(it["sha256"])):
             raise refusal("telemetry_invalid", f"{where}: needs run_id, path and a 64-hex sha256")
         rel = safe_relative_path(it.get("path"), where)
-        p = Path(input_root) / rel
+        p = Path(runs_root) / rel
         try:
             raw = p.read_bytes()             # read once: the rows parsed are the bytes hashed (LRB2)
         except OSError as e:

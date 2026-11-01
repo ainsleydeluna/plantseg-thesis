@@ -8,7 +8,8 @@ contains "test" or ":". Expected values are recomputed here from the artifacts.
 
   Q  the rows: E6-E2 − E6 and E7-E2 − E7 (all-class from m, GT-present and disease-only), E2 − E3 beside
      them as the negative of the official accuracy_e2_e3 delta, B5-S1's evaluator stages, the E6-X rows
-     named in the arms part, the converted VAL scores "not on record"
+     named in the arms part, the converted VAL scores cited from DL-146 and DL-131 (RECORDED), with no value
+     typed, and the old "not on record" wording gone (B-4, LB4-12)
   L  labels: a cut QAT run, "not made: code not merged"; a slot without a model whose clean artifact is
      still bound (artifact_for_missing_run). L3 (a stage the export has no slot for, read as a note) is
      retired at B5b-3: ruling LREP-B5-RULE-4 R4-2 refuses it (R7)
@@ -161,8 +162,26 @@ def q_e6x():
 
 
 def q_converted_val():
+    """LB4-12: the converted VAL scores cite DL-146 (E6-E2) and DL-131 (E6 seed 42), both RECORDED, with no
+    value typed; E7-E2's and E7's come after the PTQ block."""
+    text = the_doc()["converted_val_scores"]
+    return (all(s in text for s in ("E6-E2's is DL-146's", "E6 seed 42's DL-131's", "RECORDED",
+                                    "E7-E2's and E7's come after the PTQ block"))
+            and "0." not in text), text
+
+
+#: LB4-12: CONVERTED_VAL's B-5 wording, which DL-131 and DL-146 (RECORDED) retire.
+OLD_CONVERTED_VAL = ("not on record", "is a draft", "records catch-up")
+
+
+def q_old_wording_gone():
+    """LB4-12: the old wording ("not on record ... DL-146 is a draft until the records catch-up lands") is gone
+    from the part's JSON, its markdown and quant_rows.py itself, its docstring included."""
     doc = the_doc()
-    return doc["converted_val_scores"].startswith("not on record"), doc["converted_val_scores"]
+    texts = {"json": A.canonical_json(doc), "markdown": "\n".join(QR.render_markdown(doc, "")),
+             "quant_rows.py": (REPO / "src" / "stats" / "quant_rows.py").read_text(encoding="utf-8")}
+    bad = sorted((name, s) for name, t in texts.items() for s in OLD_CONVERTED_VAL if s in t)
+    return not bad, str(bad)
 
 
 def l_cut():
@@ -243,7 +262,7 @@ def d_markdown():
     text = "\n".join(md)
     return (md[2] == "BANNER" and sum(1 for line in md if line.startswith("| E")) == 3
             and "| E2 − E3 |" in text and "`arm__r1__e6`" in text and "`arm__r2__e6`" in text
-            and "not on record" in text), str(md[:6])
+            and "DL-146" in text), str(md[:6])
 
 
 def r_identity():
@@ -317,7 +336,10 @@ def cases():
             ("Q2", "E2 − E3 = m(E2) − m(E3), the negative of the official accuracy_e2_e3 delta", q_reference),
             ("Q3", "B5-S1: E6-E2 and E7-E2 read at their own evaluator stages", q_stage_map),
             ("Q4", "E6-X − E6 named as the arms part's rows", q_e6x),
-            ("Q5", "the converted VAL scores read 'not on record'", q_converted_val),
+            ("Q5", "LB4-12: the converted VAL scores cite DL-146 and DL-131 (RECORDED), no value typed",
+             q_converted_val),
+            ("Q6", "LB4-12: the old 'not on record ... a draft' wording is gone (JSON, markdown, module)",
+             q_old_wording_gone),
             ("L1", "E6-E2's QAT run cut: the cut label, no value", l_cut),
             ("L2", "E7-E2 'not made: code not merged' (AM-23 item 4)", l_not_made),
             ("L4","artifact_for_missing_run: not made, its clean artifact still bound",

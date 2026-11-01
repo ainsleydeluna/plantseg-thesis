@@ -392,8 +392,8 @@ def _run_of_record(inv: H.Inventory, cells: H.PlannedCells, stage: str, seed: in
     return slot, "iter", row
 
 
-def _of_record_attempt(inv, slot, unit, row, input_root):
-    attempts = H.read_telemetry(inv, slot, input_root, unit=unit)
+def _of_record_attempt(inv, slot, unit, row, runs_root):
+    attempts = H.read_telemetry(inv, slot, runs_root, unit=unit)
     want = row["training_run_id"] if row is not None else None
     hits = [a for a in attempts if a.run_id == want]
     if len(hits) != 1:
@@ -403,7 +403,7 @@ def _of_record_attempt(inv, slot, unit, row, input_root):
     return hits[0]
 
 
-def cut_curves(inv: H.Inventory, inputs: SeedInputs, *, input_root: Path) -> list[dict]:
+def cut_curves(inv: H.Inventory, inputs: SeedInputs, *, runs_root: Path | None) -> list[dict]:
     """One block per cut planned run at seed 43 or 44 (seed-42 runs are never cut, R-13)."""
     cells = inputs.cells
     out = []
@@ -420,7 +420,7 @@ def cut_curves(inv: H.Inventory, inputs: SeedInputs, *, input_root: Path) -> lis
                 block["note"] = "derived artifact: no VAL curve (LRB6)"
                 continue
             unit = "epoch" if stage in H.QAT_STAGES else "iter"
-            attempts = H.read_telemetry(inv, st.source_slot, input_root, unit=unit)
+            attempts = H.read_telemetry(inv, st.source_slot, runs_root, unit=unit)
             if not attempts:
                 block["note"] = "the cut run wrote no VAL rows"
                 continue
@@ -439,7 +439,7 @@ def cut_curves(inv: H.Inventory, inputs: SeedInputs, *, input_root: Path) -> lis
                           for o, cid in _pairs_of(stage)]
             for o, kk, why in comps:
                 block["comparators"].append(_comparator(inv, cells, o, kk, why, unit, points,
-                                                        input_root))
+                                                        runs_root))
             entry_comp = st.record.get("comparator")
             if entry_comp is None:
                 continue
@@ -451,13 +451,13 @@ def cut_curves(inv: H.Inventory, inputs: SeedInputs, *, input_root: Path) -> lis
                     raise H.refusal("status_invalid", f"cut {st.source_slot!r}: its comparator "
                                                       f"{entry_comp!r} is not a planned run (IF§11.3)")
                 hit = [_comparator(inv, cells, key[0], key[1], "the cut entry's comparator "
-                                   "(IF§11.2)", unit, points, input_root)]
+                                   "(IF§11.2)", unit, points, runs_root)]
                 block["comparators"].append(hit[0])
             hit[0]["cut_entry_comparator"] = True
     return out
 
 
-def _comparator(inv, cells, stage, seed, why, unit, points, input_root) -> dict:
+def _comparator(inv, cells, stage, seed, why, unit, points, runs_root) -> dict:
     slot, cunit, row = _run_of_record(inv, cells, stage, seed)
     out = {"stage": stage, "seed": seed, "slot": cells.slots[(stage, seed)], "run_slot": slot,
            "why": why, "cut_entry_comparator": False, "unit": None, "run_id": None, "values": [],
@@ -474,7 +474,7 @@ def _comparator(inv, cells, stage, seed, why, unit, points, input_root) -> dict:
             out["note"] += (f"; counted in {H.TELEMETRY_UNITS[cunit]}s: no point at the same "
                             f"{H.TELEMETRY_UNITS[unit]}s (never interpolated)")
             return out
-        for a in H.read_telemetry(inv, slot, input_root, unit=cunit):
+        for a in H.read_telemetry(inv, slot, runs_root, unit=cunit):
             have, tags = a.values(), a.tags()
             out["attempts"].append({"run_id": a.run_id, "telemetry": a.path, "sha256": a.sha256,
                                     "values": [{unit: u, "all_class_miou": have.get(u),
@@ -485,7 +485,7 @@ def _comparator(inv, cells, stage, seed, why, unit, points, input_root) -> dict:
     if slot is None:
         out["note"] = "derived artifact: no VAL curve (LRB6)"
         return out
-    a = _of_record_attempt(inv, slot, cunit, row, input_root)
+    a = _of_record_attempt(inv, slot, cunit, row, runs_root)
     out.update(unit=cunit, run_id=a.run_id, telemetry=a.path, sha256=a.sha256)
     if not a.points:                       # B-5 (e), R2-04: the attempt of record wrote no VAL row
         out["note"] = WROTE_NO_VAL_ROWS
@@ -508,13 +508,13 @@ def _comparator(inv, cells, stage, seed, why, unit, points, input_root) -> dict:
 # --------------------------------------------------------------------------------------------------
 # 5. the part
 # --------------------------------------------------------------------------------------------------
-def build_seed_stability(stats: H.StatsArtifact, inv: H.Inventory, *, input_root: Path) -> dict:
+def build_seed_stability(stats: H.StatsArtifact, inv: H.Inventory, *, input_root: Path, runs_root=None) -> dict:
     """The "Seed stability (AM-8; AM-19 item 6)" part of the extension report (plan §1.6)."""
     inputs = load_seed_inputs(stats, inv, input_root=input_root)
     tables = build_tables(stats, inputs)
     return {"part": "seed", "title": "Seed stability (AM-8; AM-19 item 6)",
             "seeds": list(SEEDS), "robustness_seeds": list(ROBUSTNESS_SEEDS),
-            **tables, "cut_runs": cut_curves(inv, inputs, input_root=input_root),
+            **tables, "cut_runs": cut_curves(inv, inputs, runs_root=runs_root),
             "footnote": FOOTNOTE}
 
 

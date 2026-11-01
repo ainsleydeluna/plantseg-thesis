@@ -6,8 +6,8 @@ tables, the duplicate-free TEST, AM-23's rows), as a separate document beside re
 src/stats/report_extensions.py). B-5's intervals use bootstrap.PRODUCTION_B replicates.
 
     python -B scripts/report_extensions.py --stats-artifact DIR --inventory FILE --out-dir DIR
-        [--inventory-sha256 HEX] [--strata FILE] [--mde-entry FILE] [--parts seed,strata,...]
-        [--synthetic-inputs [--repo-root DIR]]
+        [--inventory-sha256 HEX] [--runs-root DIR] [--strata FILE] [--mde-entry FILE]
+        [--parts seed,strata,...] [--synthetic-inputs [--repo-root DIR]]
 
   --stats-artifact  a statistics artifact (family.json, bootstrap.npz, MANIFEST.sha256), verified with
                     its 37 inputs and the contract (all thirteen checks)
@@ -16,6 +16,9 @@ src/stats/report_extensions.py). B-5's intervals use bootstrap.PRODUCTION_B repl
                     src.tman.validate.read_inventory (LB4-1)
   --repo-root       resolves the inputs' repository-relative paths; accepted only with
                     --synthetic-inputs (P16). Otherwise this code's repository
+  --runs-root       TMAN's runs root, where the export's telemetry items <run_id>/<name> resolve (B-4,
+                    LB4-10): absolute, outside the repository and free of 'test'. The seed part reads it,
+                    and only there; a cut run's curve without it is refused (runs_root_missing)
   --strata          the strata file (default: the committed reports/strata/train_strata_v1.json)
   --mde-entry       the MDE entry (default: the one committed reports/derived/mde_entry_*.json, if
                     exactly one is tracked)
@@ -51,6 +54,7 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--parts", default=None)
     p.add_argument("--synthetic-inputs", action="store_true")
     p.add_argument("--repo-root", type=Path, default=None)
+    p.add_argument("--runs-root", type=Path, default=None)
     return p
 
 
@@ -77,7 +81,8 @@ def main(argv=None) -> int:
         path, doc = RX.run(stats_artifact=args.stats_artifact, inventory=args.inventory,
                            out_dir=args.out_dir, repo_root=args.repo_root,
                            synthetic=args.synthetic_inputs, strata=args.strata, mde_entry=mde,
-                           parts=args.parts, expect_inventory_sha256=args.inventory_sha256)
+                           parts=args.parts, expect_inventory_sha256=args.inventory_sha256,
+                           runs_root=args.runs_root)
     except H.LrepRefusal as e:
         print(f"REFUSED {e.code}: {e.detail}", file=sys.stderr)
         print(f"RESULT: REFUSED ({e.code}); nothing written")

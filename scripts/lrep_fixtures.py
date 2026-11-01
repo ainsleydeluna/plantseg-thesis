@@ -27,7 +27,8 @@ The world also writes what TMAN will supply (IF§11 v2):
     B-1 to B-3 table reads (upstream, seed 42's corrupted cells of E2-E5 and E7, the corrupted_sev45
     cells; IF§9), which name directories that do not exist;
   * telemetry JSONL files for the run entries, in the trainers' VAL-row formats (iterations for the KD
-    and E1 trainers, epochs for QAT).
+    and E1 trainers, epochs for QAT), at TMAN's <run_id>/<name> under the world's runs root, a directory
+    beside the input root: the export's telemetry items resolve there, never in the repository (B-4, LB4-10).
 Checkpoint identities: E1 carries DL-99's three checkpoints, E2 and E3 at seed 42 the selections of
 DL-109 and DL-121, and the default candidates their defaults; every other identity is a synthetic
 sha256. LRB7's exception: fq_off artifacts are written through the writer as int8_qat, then their
@@ -37,7 +38,7 @@ A teacher's artifact (stage "teacher") gets `run.model_role` teacher the same wa
 stats_fixtures.write_fixture writes every artifact as a student's (scripts/stats_fixtures.py:218).
 
 Names (LRB20; IF§2): runs/heldout/<stage>_s<seed>_<tail> (B-5's: runs/heldout/<file_id>_<tail>),
-telemetry/<file_id>.jsonl, tman/, stats/, strata/. stats_fixtures.rel_name is never used (it names
+runs_root/<run_id>/<name>.jsonl, tman/, stats/, strata/. stats_fixtures.rel_name is never used (it names
 folders by split), the JSON split value is "val", and no created path contains "test" or ":" (a slot
 key's ":" stays a JSON string value; R4-6(i)). `make_root` follows scripts/smoke_mde.py: TMPDIR must be
 set and free of "test" and ":", and the root's name ends in hex digits, which cannot spell it.
@@ -388,6 +389,7 @@ class World:
     seq: int = 0
     split: str = "val"                                 # the official world's: its smoke's value (R4-6(ii))
     official: bool = False                             # every artifact official but DT_SLOTS' (R4-1 item 8)
+    runs_root: Path | None = None                      # TMAN's runs root: the telemetry (LB4-10)
 
     def status_of(self, slot: str) -> str:
         """The artifact_status the world writes for `slot`: provisional, or in the official world official
@@ -560,16 +562,25 @@ def edited_copy(world: World, src: Written, name: str, fn) -> Written:
 # --------------------------------------------------------------------------------------------------
 # telemetry
 # --------------------------------------------------------------------------------------------------
+def telemetry_file(world: World, name: str, run_id: str) -> tuple[str, Path]:
+    """(rel, path) of a new telemetry file at TMAN's <run_id>/<name> under the world's runs root
+    (src/tman/manifest.py:992-1003; B-4, LB4-10), its run directory created; the file is not written."""
+    rel = f"{run_id}/{name}.jsonl"
+    if "test" in rel.lower() or ":" in rel:
+        raise ValueError(rel)
+    if not (world.runs_root / run_id).exists():
+        new_dir(world.runs_root, run_id)
+    if (world.runs_root / rel).exists():
+        raise FileExistsError(world.runs_root / rel)
+    return rel, world.runs_root / rel
+
+
 def write_telemetry(world: World, name: str, *, run_id: str, unit: str, points) -> dict:
     """A telemetry JSONL in the trainers' formats (src/training/train_e1.py:492-500,
     src/training/train_distill.py:1262-1270, src/quant/qat.py:1060-1069), with non-VAL rows between
-    the VAL rows. Returns the export's telemetry item {run_id, path, sha256}."""
-    rel = f"telemetry/{name}.jsonl"
-    if "test" in rel.lower() or ":" in rel:
-        raise ValueError(rel)
-    tdir = world.input_root / "telemetry"
-    if not tdir.exists():
-        new_dir(world.input_root, "telemetry")
+    the VAL rows, under the runs root (telemetry_file). Returns the export's telemetry item {run_id, path,
+    sha256}."""
+    rel, p = telemetry_file(world, name, run_id)
     rows = [{"event": "run_meta", "mode": "real", "run_id": run_id}]
     for u, v in points:
         if unit == "iter":
@@ -580,9 +591,6 @@ def write_telemetry(world: World, name: str, *, run_id: str, unit: str, points) 
             rows.append({"event": "val", "wall_clock": 1.79e9 + u, "epoch": u, "step": 1000 * u,
                          "kind": "fake_quant", "all_class_miou": v, "selects": False})
             rows.append({"event": "epoch_end", "epoch": u, "step": 1000 * u})
-    p = world.input_root / rel
-    if p.exists():
-        raise FileExistsError(p)
     p.write_text("".join(json.dumps(r, allow_nan=False) + "\n" for r in rows), encoding="utf-8",
                  newline="\n")
     return {"run_id": run_id, "path": rel, "sha256": H.sha256_file(p)}
@@ -956,7 +964,8 @@ def build_world(root: Path, *, n: int = N_IMAGES, B: int = STATS_B, stats: bool 
                             capture_output=True, text=True).stdout.strip()
     truth = F.make_truth(n, OFFICIAL_K if official else 0, F.int_seed(WORLD_SEED, "truth"))
     world = World(root=root, input_root=input_root, commit=commit, truth=truth, n=n,
-                  split=official_split if official else "val", official=official)
+                  split=official_split if official else "val", official=official,
+                  runs_root=new_dir(root, "runs_root"))
     write_artifacts(world)
     write_b5_artifacts(world)
     write_all_telemetry(world)
@@ -973,7 +982,7 @@ def build_world(root: Path, *, n: int = N_IMAGES, B: int = STATS_B, stats: bool 
 __all__ = ["WORLD_SEED", "N_IMAGES", "STATS_B", "QUALITY", "SEED_SHIFT", "E2_SELECTED", "E3_SELECTED",
            "E2_DEFAULT", "E3_DEFAULT", "make_root", "new_dir", "syn_sha", "run_slot", "record_slot",
            "file_id", "training_run_id", "fp32_checkpoint", "identities", "Written", "World",
-           "edited_copy", "write_telemetry", "kd_curve", "qat_curve", "write_stats_artifact",
+           "edited_copy", "telemetry_file", "write_telemetry", "kd_curve", "qat_curve", "write_stats_artifact",
            "sev45_cells", "build_export", "write_inventory", "write_strata", "build_world", "DEDUP_NAME",
            "B5_SLOTS", "DEDUP_REMOVED", "DEDUP_REASONS", "b5_identity", "b5_run_id", "write_b5_artifacts",
            "b5_export_parts", "dedup_doc", "dedup_bytes", "CATALOGUE_SOURCE", "CATALOGUE", "SLOT_KEY_RE",

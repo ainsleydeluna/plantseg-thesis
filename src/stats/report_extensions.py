@@ -41,7 +41,7 @@ refuses every official artifact, so every extension report is nonofficial and ev
 banner, which also names the inputs' split when it is not TEST.
 
 Output (D-14): a new directory, whose parent exists, outside the repository and outside every input
-directory (the statistics artifact, the input root, the export's, the strata file's and the MDE
+directory (the statistics artifact, the input and runs roots, the export's, the strata file's and the MDE
 entry's), holding exactly report_extensions.json, report_extensions.md and SHA256SUMS, written in a
 temporary sibling and renamed; the temporary sibling is removed on any failure, as
 report.write_report does, and nothing is created above the out-dir.
@@ -55,6 +55,7 @@ import uuid
 from pathlib import Path
 
 from . import heldout_inputs as H
+from .artifact import OFFICIAL_CODE_PATHS
 from .bootstrap import PRODUCTION_B
 
 SCHEMA = "plantseg-lrep-report-extensions/1.0.0"
@@ -66,10 +67,8 @@ LREP_CODE_PATHS = ("src/stats/heldout_inputs.py", "src/stats/seed_stability.py",
                    "src/stats/lrep_descriptive.py", "src/stats/arm_tables.py", "src/stats/dedup_subset.py",
                    "src/stats/quant_rows.py", "scripts/report_extensions.py")
 #: The code that computes the report's numbers, clean at HEAD for an official report (O3's paths, which
-#: hold all of src/stats, and this CLI).
-REPORT_CODE_PATHS = ("src/stats", "src/stats/driver.py", "scripts/run_stats.py",
-                     "configs/corruption_protocol.json", "docs/STATISTICAL_ANALYSIS_CONTRACT.md",
-                     "scripts/report_extensions.py")
+#: hold all of src/stats: artifact.OFFICIAL_CODE_PATHS by import, one definition, LB4-11) and this CLI.
+REPORT_CODE_PATHS = (*OFFICIAL_CODE_PATHS, "scripts/report_extensions.py")
 FQOFF_NONE = "not available: no fq_off artifact"
 #: AM-23's QAT stages, whose fq_off rows the fq_off table reads (B-5 (c)); each slot is required (R4-2).
 FQOFF_QUANT_STAGES = tuple(st for st in H.QUANT_STAGES if H.STAGE_MAP[st][2] == "int8_qat")
@@ -265,7 +264,7 @@ def official_unmet(stats: H.StatsArtifact, inv: H.Inventory, parts_docs: dict, c
 
 def build_report(*, stats_artifact, inventory, input_root, strata=None, mde_entry=None, parts=None,
                  reader=None, expect_inventory_sha256=None, B: int = PRODUCTION_B,
-                 synthetic: bool = False) -> dict:
+                 synthetic: bool = False, runs_root=None) -> dict:
     """Verify every input, build the selected parts and the profile. Refuses by code. `B` is the
     replicate count of B-5's intervals (PRODUCTION_B unless a smoke passes another); `synthetic`
     (--synthetic-inputs) is open_inventory's (LB4-1)."""
@@ -282,7 +281,8 @@ def build_report(*, stats_artifact, inventory, input_root, strata=None, mde_entr
     docs = {}
     for part in parts:
         if part == "seed":
-            docs[part] = seed_stability.build_seed_stability(stats, inv, input_root=Path(input_root))
+            docs[part] = seed_stability.build_seed_stability(stats, inv, input_root=Path(input_root),
+                                                             runs_root=runs_root)
         elif part == "strata":
             if strata is None:
                 raise H.refusal("usage_invalid", "the strata part needs --strata")
@@ -407,23 +407,30 @@ def write_report(out_dir, doc: dict) -> Path:
 
 
 def run(*, stats_artifact, inventory, out_dir, repo_root=None, synthetic: bool = False, strata=None,
-        mde_entry=None, parts=None, reader=None, expect_inventory_sha256=None, B: int = PRODUCTION_B):
+        mde_entry=None, parts=None, reader=None, expect_inventory_sha256=None, B: int = PRODUCTION_B,
+        runs_root=None):
     """The CLI's body (scripts/report_extensions.py): --repo-root only with --synthetic-inputs (P16's
     rule, as report.run_report); the out-dir is checked before anything is read. The CLI passes no
     reader (TMAN's, LB4-1) and B-5's B = PRODUCTION_B; scripts/smoke_lrep_official_profile.py passes a
     marked stand-in for TMAN's reader with --synthetic-inputs and a smaller B (B-5b, R4-1 item 8), and
-    the lane smokes pass LREP's stub."""
+    the lane smokes pass LREP's stub. --runs-root (TMAN's runs root, read by the seed part's telemetry only)
+    is absolute, outside the repository and free of 'test' (LB4-10)."""
     from .artifact import CODE_REPO, W_SYNTHETIC
     if repo_root is not None and not synthetic:
         raise H.refusal("usage_invalid", "--repo-root is accepted only with --synthetic-inputs (P16)")
     if stats_artifact is None or inventory is None or out_dir is None:
         raise H.refusal("usage_invalid", "--stats-artifact, --inventory and --out-dir are required")
+    if runs_root is not None and (not Path(runs_root).is_absolute() or "test" in str(runs_root).lower()
+                                  or "test" in str(Path(runs_root).resolve()).lower()
+                                  or Path(runs_root).resolve().is_relative_to(CODE_REPO.resolve())):
+        raise H.refusal("usage_invalid", f"--runs-root {runs_root}: absolute, outside the repository and free "
+                                         "of 'test' (LB4-10)")
     input_root = Path(repo_root) if repo_root is not None else CODE_REPO
-    check_out_dir(out_dir, [stats_artifact, input_root, Path(inventory).parent,
+    check_out_dir(out_dir, [stats_artifact, input_root, runs_root, Path(inventory).parent,
                             Path(strata).parent if strata is not None else None,
                             Path(mde_entry).parent if mde_entry is not None else None])
     doc = build_report(stats_artifact=stats_artifact, inventory=inventory, input_root=input_root,
-                       strata=strata, mde_entry=mde_entry, parts=parts, reader=reader,
+                       strata=strata, mde_entry=mde_entry, parts=parts, reader=reader, runs_root=runs_root,
                        expect_inventory_sha256=expect_inventory_sha256, B=B, synthetic=synthetic)
     if synthetic and W_SYNTHETIC not in doc["statistics_artifact"]["warnings"]:
         raise H.refusal("usage_invalid", "--synthetic-inputs was declared but the statistics artifact "

@@ -28,7 +28,8 @@ are TMAN's catalogue's and a divergence is in TMAN's shape (both units present, 
      open_inventory, on TMAN's own exports built by its fixture library by import (R2o-R2t; LB4-2); model
      rows in TMAN's ROW_SPEC (R2u-R2w; LB4-6); TMAN's row convention, one case per class, and identity
      (R14c-R14h; LB4-7); E5:s42:sel's parent at each R-12 call site (R12f-R12p; LB4-8, pilot.runs declared
-     for a case where no catalogue slot reaches the site); the seed-42 guard (R21; LB4-9)
+     for a case where no catalogue slot reaches the site); the seed-42 guard (R21; LB4-9); the telemetry under
+     TMAN's runs root, never the input root (R22, R22b; X7: nothing else reads it; LB4-10)
   D  determinism
   X  hygiene: no test or p-value object imported, repr floats, pp only in markdown, no 'test' path
 
@@ -94,7 +95,7 @@ def inventory(path, *, policy=None, reader=None, expect=None, synthetic=False) -
 
 def seed_doc(path=None, **kw) -> dict:
     return SS.build_seed_stability(stats_artifact(), inventory(path or CTX.world.inventory_path, **kw),
-                                   input_root=CTX.world.input_root)
+                                   input_root=CTX.world.input_root, runs_root=CTX.world.runs_root)
 
 
 def entry(export, slot):
@@ -1541,6 +1542,26 @@ def r_telemetry_path():
     return refused("telemetry_invalid", lambda: seed_doc(variant("tel_no_path", edit)))
 
 
+def r_runs_root_missing():
+    """LB4-10: runs_root_missing whenever the telemetry is read without a runs root: a cut E2 at seed 43, every
+    earlier gate passing, and read_telemetry called for a slot whose entry lists no telemetry (E4 at 42)."""
+    inv = inventory(variant("cut_e2", v_cut_e2))
+    ptq = LF.record_slot("E4", 42)
+    ok1, d1 = refused("runs_root_missing", lambda: SS.build_seed_stability(
+        stats_artifact(), inv, input_root=CTX.world.input_root, runs_root=None))
+    ok2, d2 = refused("runs_root_missing", lambda: H.read_telemetry(inv, ptq, None, unit="iter"))
+    return ok1 and ok2 and entry(CTX.world.export, ptq).get("telemetry") is None, f"{d1} | {d2}"
+
+
+def r_runs_root_not_input_root():
+    """LB4-10: TMAN's telemetry items (<run_id>/<name>) resolve under the runs root, never the input root: the
+    cut E2 at seed 43 read with the input root as its runs root is telemetry_invalid (the file is not there)."""
+    inv = inventory(variant("cut_e2", v_cut_e2))
+    ok, detail = refused("telemetry_invalid", lambda: SS.build_seed_stability(
+        stats_artifact(), inv, input_root=CTX.world.input_root, runs_root=CTX.world.input_root))
+    return ok and "cannot be read" in detail, detail
+
+
 def r_row_role():
     def edit(export, binding):
         row(export, "E2:s43:lambda0.5:80k", "fp32")["model_role"] = "teacher"
@@ -1657,6 +1678,35 @@ def x_path_rule():
     return all(probs[:4]) and probs[4] is None and "test" in probs[0], str(probs)
 
 
+#: LB4-10: the LREP functions that name runs_root (read_telemetry, the seed part's path to it, and the report's
+#: build_report and run, which passes and checks the CLI's value).
+RUNS_ROOT_FUNCS = {("heldout_inputs", "read_telemetry"), ("seed_stability", "_of_record_attempt"),
+                   ("seed_stability", "cut_curves"), ("seed_stability", "_comparator"),
+                   ("seed_stability", "build_seed_stability"), ("report_extensions", "build_report"),
+                   ("report_extensions", "run")}
+
+
+def x_runs_root_reader():
+    """LB4-10: nothing but read_telemetry reads under the runs root: in LREP's src/stats modules the name
+    runs_root occurs only in RUNS_ROOT_FUNCS, and only read_telemetry joins a path with it (AST)."""
+    from src.stats.report_extensions import LREP_CODE_PATHS
+    names, joins = set(), set()
+    for rel in [p for p in LREP_CODE_PATHS if p.startswith("src/stats/")]:
+        mod = Path(rel).stem
+        for fn in ast.walk(ast.parse((REPO / rel).read_text(encoding="utf-8"))):
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for node in ast.walk(fn):
+                if ((isinstance(node, ast.Name) and node.id == "runs_root")
+                        or (isinstance(node, ast.arg) and node.arg == "runs_root")):
+                    names.add((mod, fn.name))
+                if (isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div)
+                        and "runs_root" in ast.unparse(node.left)):
+                    joins.add((mod, fn.name))
+    return (names == RUNS_ROOT_FUNCS and joins == {("heldout_inputs", "read_telemetry")}), \
+        f"{sorted(names)} joins {sorted(joins)}"
+
+
 def x_no_slot_in_markdown():
     """IF§2: slot keys with ':' stay inside the JSON; the markdown names runs by stage and seed."""
     slots = {e["slot"] for e in CTX.world.export["entries"] if ":" in e["slot"]}
@@ -1671,16 +1721,14 @@ def x_no_slot_in_markdown():
 # --------------------------------------------------------------------------------------------------
 def write_nan_telemetry(w, name: str, *, run_id: str, nan_at: int) -> dict:
     """A KD telemetry file in the trainers' format whose VAL score at `nan_at` is NaN (E1's writer may
-    emit NaN, train_e1.py:205-209; LF.write_telemetry refuses it). Returns the export's item."""
-    rel = f"telemetry/{name}.jsonl"
+    emit NaN, train_e1.py:205-209; LF.write_telemetry refuses it). Returns the export's item; the file is at
+    TMAN's <run_id>/<name> under the runs root (LF.telemetry_file; LB4-10)."""
+    rel, p = LF.telemetry_file(w, name, run_id)
     rows = [{"event": "run_meta", "mode": "real", "run_id": run_id}]
     for u, v in LF.kd_curve(0.361):
         rows.append({"event": "train", "iter": u, "loss": 0.5})
         rows.append({"event": "val", "iter": u, "all_class_miou": float("nan") if u == nan_at else v,
                      "disease_only_miou_PROVISIONAL": v, "wall_clock": 1.79e9 + u})
-    p = w.input_root / rel
-    if p.exists() or "test" in rel.lower():
-        raise ValueError(rel)
     p.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8", newline="\n")
     return {"run_id": run_id, "path": rel, "sha256": H.sha256_file(p)}
 
@@ -1688,8 +1736,8 @@ def write_nan_telemetry(w, name: str, *, run_id: str, nan_at: int) -> dict:
 def write_tagged_telemetry(w, name: str, *, run_id: str, points, tagged_at: int) -> dict:
     """A KD telemetry file whose VAL row at `tagged_at` is in the KD trainer's non-finite form,
     all_class_miou null with its tag in `nonfinite` (src/training/train_distill.py:808-814; LF.write_telemetry
-    writes finite rows only). Returns the export's item."""
-    rel = f"telemetry/{name}.jsonl"
+    writes finite rows only). Returns the export's item, under the runs root (LF.telemetry_file; LB4-10)."""
+    rel, p = LF.telemetry_file(w, name, run_id)
     rows = [{"event": "run_meta", "mode": "real", "run_id": run_id}]
     for u, v in points:
         rows.append({"event": "train", "iter": u, "loss": 0.5})
@@ -1698,9 +1746,6 @@ def write_tagged_telemetry(w, name: str, *, run_id: str, points, tagged_at: int)
         if u == tagged_at:
             val.update(all_class_miou=None, nonfinite={"all_class_miou": "nan"})
         rows.append(val)
-    p = w.input_root / rel
-    if p.exists() or "test" in rel.lower():
-        raise ValueError(rel)
     p.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8", newline="\n")
     return {"run_id": run_id, "path": rel, "sha256": H.sha256_file(p)}
 
@@ -1903,6 +1948,10 @@ def cases():
         ("R16", "telemetry_sha256_mismatch (LRB2)", r_telemetry_sha),
         ("R17", "telemetry_invalid: no attempt of the run of record (LRB2)", r_telemetry_invalid),
         ("R17b", "telemetry_invalid: a telemetry item without its path (LRB2)", r_telemetry_path),
+        ("R22", "LB4-10: runs_root_missing: the telemetry read without a runs root (a cut run; any slot)",
+         r_runs_root_missing),
+        ("R22b", "LB4-10: the telemetry resolves under the runs root: read under the input root it is not there",
+         r_runs_root_not_input_root),
         ("R18", "precision_mismatch (LRB7)", r_precision),
         ("R18b", "precision_mismatch: a model row whose model_role is teacher (LRB7)", r_row_role),
         ("R18c", "precision_mismatch: the seed-42 E2 model row says teacher (check_rows alone)",
@@ -1918,6 +1967,8 @@ def cases():
         ("X4", "no created path contains 'test' or ':' (LRB20; R4-6)", x_no_test_path),
         ("X5", "path_problem: 'test' in any case, absolute, '..' and backslash", x_path_rule),
         ("X6", "no slot key with ':' in the markdown; the JSON keeps them (IF§2)", x_no_slot_in_markdown),
+        ("X7", "LB4-10: only read_telemetry reads under the runs root; the functions that name it (AST)",
+         x_runs_root_reader),
     ]
 
 
