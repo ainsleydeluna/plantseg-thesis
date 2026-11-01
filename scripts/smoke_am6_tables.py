@@ -98,7 +98,7 @@ def stats_artifact():
 
 def doc_of(inventory=None, *, coverage=False, subset=None):
     st = stats_artifact()
-    inv = H.open_inventory(inventory or CTX.world.inventory_path, policy=st.policy)
+    inv = H.open_inventory(inventory or CTX.world.inventory_path, policy=st.policy, reader=H.read_inventory_stub)
     return AM6.build_am6_tables(st, inv, H.planned_cells(inv), input_root=CTX.world.input_root,
                                 coverage=coverage, subset=subset)
 
@@ -568,7 +568,7 @@ def r_dt_in_official():
     input is refused before am6's seed-42 rows, which must equal report.gt_present_rows, take it
     (descriptive_input_in_official, ahead of R-11's identity check)."""
     st = stats_artifact()
-    inv = H.open_inventory(CTX.world.inventory_path, policy=st.policy)
+    inv = H.open_inventory(CTX.world.inventory_path, policy=st.policy, reader=H.read_inventory_stub)
     ba = H.load_slot(st, inv, slot="E7-R1:s42:list42", stage="E7-R1", precision="int8_ptq",
                      input_root=CTX.world.input_root)
     CTX.copies["injected_e7"] = ba.loaded

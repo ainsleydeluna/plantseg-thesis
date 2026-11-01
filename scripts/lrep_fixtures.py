@@ -55,6 +55,7 @@ Not a smoke itself: imported by lane LREP's scripts/smoke_*.py.
 """
 from __future__ import annotations
 
+import contextlib
 import copy
 import hashlib
 import json
@@ -836,6 +837,60 @@ def write_inventory(out_dir: Path, export: dict, binding: dict | None, dedup: di
 
 
 # --------------------------------------------------------------------------------------------------
+# TMAN's own fixtures (B-4: LB4-2, LB4-13), by import from TMAN's fixture library, never hand-copied
+# --------------------------------------------------------------------------------------------------
+@contextlib.contextmanager
+def tman_world():
+    """TMAN's fixture world (scripts/smoke_tman_validate.World: a scratch records repository and run directories
+    under TMPDIR, by TMAN's fixture library). Building it patches src.tman.manifest.TEACHER_OF_RECORD, which
+    TMAN's validator reads; the patch holds inside the block and is restored on exit, as TMAN's smoke restores
+    it in its main."""
+    import scripts.smoke_tman_validate as TV
+    from src.tman import manifest as M
+    saved = copy.deepcopy(M.TEACHER_OF_RECORD)
+    try:
+        yield TV.World()
+    finally:
+        M.TEACHER_OF_RECORD.clear()
+        M.TEACHER_OF_RECORD.update(saved)
+
+
+def tman_exports(world, folder: Path) -> dict:
+    """TMAN's exports of `world` that src.tman.validate.read_inventory accepts, built by TMAN's builder
+    (src.tman.manifest.build_inventory, with its freeze record), each written as TMAN writes it
+    (schema.json_file_bytes) into its own sub-folder of `folder` with the files it names: "plain" (dedup null,
+    binding unbound) and "bound" (tday_dedup.json from TMAN's dedup_fixture, in dedup.doc_bytes' canonical
+    bytes, and a bound tday_binding.json from scripts/smoke_tman_binding.fixture_binding, whose
+    references.session.dedup.sha256 is set to the export's dedup.sha256). Returns {name: (path, doc)}."""
+    import scripts.smoke_tman_binding as TB
+    import scripts.smoke_tman_pins as TP
+    import scripts.smoke_tman_validate as TV
+    from src.tman import manifest as M
+    from src.tman import schema as S
+    fr = world.freeze_record()
+    out = {}
+    for name in ("plain", "bound"):
+        d = new_dir(folder, name)
+        kw = {}
+        if name == "bound":
+            pin = world.doc["body"]["generator_pins"]["image_hasher"]["pin"]
+            (d / DEDUP_NAME).write_bytes(TV.dedup_fixture(pin))
+            kw["dedup"] = (d / DEDUP_NAME, d)
+        doc = M.build_inventory(world.doc, world.data, world.records, world.cat, runs_root=world.runs,
+                                registered=TP.IF6_CELLS, freeze_record=fr["path"], **kw)
+        if name == "bound":
+            bdoc = TB.fixture_binding(doc)
+            bdoc["references"]["session"]["dedup"]["sha256"] = doc["dedup"]["sha256"]
+            bdata = S.json_file_bytes(bdoc)
+            (d / BINDING_NAME).write_bytes(bdata)
+            doc["binding"] = {"state": "bound", "path": BINDING_NAME, "sha256": S.sha256_bytes(bdata)}
+        p = d / EXPORT_NAME
+        p.write_bytes(S.json_file_bytes(doc))
+        out[name] = (p, doc)
+    return out
+
+
+# --------------------------------------------------------------------------------------------------
 # the strata file (AM-17 item 8's schema, synthetic values)
 # --------------------------------------------------------------------------------------------------
 def write_strata(world: World) -> Path:
@@ -904,4 +959,5 @@ __all__ = ["WORLD_SEED", "N_IMAGES", "STATS_B", "QUALITY", "SEED_SHIFT", "E2_SEL
            "B5_SLOTS", "DEDUP_REMOVED", "DEDUP_REASONS", "b5_identity", "b5_run_id", "write_b5_artifacts",
            "b5_export_parts", "dedup_doc", "dedup_bytes", "CATALOGUE_SOURCE", "CATALOGUE", "SLOT_KEY_RE",
            "E5_PILOT_OF_RECORD", "E5_PILOT_LOST", "UNSCORED_SLOTS", "DEFAULT_SLOTS", "RUN_TAILS",
-           "diverged_fields", "OFFICIAL_EXTRA_SLOTS", "DT_SLOTS", "OFFICIAL_N", "OFFICIAL_K"]
+           "diverged_fields", "OFFICIAL_EXTRA_SLOTS", "DT_SLOTS", "OFFICIAL_N", "OFFICIAL_K", "tman_world",
+           "tman_exports"]

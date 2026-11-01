@@ -51,7 +51,7 @@ def stats_artifact():
 
 def doc_of(inventory=None, record=DC.SELECTION_RECORD):
     st = stats_artifact()
-    inv = H.open_inventory(inventory or CTX.world.inventory_path, policy=st.policy)
+    inv = H.open_inventory(inventory or CTX.world.inventory_path, policy=st.policy, reader=H.read_inventory_stub)
     return DC.build_default_candidates(st, inv, H.planned_cells(inv), input_root=CTX.world.input_root,
                                        record=record)
 

@@ -88,7 +88,7 @@ def stats_artifact():
 
 def doc_of(inventory=None, **kw):
     st = stats_artifact()
-    inv = H.open_inventory(inventory or CTX.world.inventory_path, policy=st.policy)
+    inv = H.open_inventory(inventory or CTX.world.inventory_path, policy=st.policy, reader=H.read_inventory_stub)
     return AT.build_arm_tables(st, inv, H.planned_cells(inv), input_root=CTX.world.input_root,
                                B=kw.pop("B", SMOKE_B), **kw)
 
@@ -399,7 +399,7 @@ def p_teacher_stages():
     stage name; their artifacts are scored at the evaluator's teacher stage with model_role teacher."""
     doc = the_doc()
     t = {x["x"]: x for x in doc["teachers"]}
-    inv = H.open_inventory(CTX.world.inventory_path, policy=stats_artifact().policy)
+    inv = H.open_inventory(CTX.world.inventory_path, policy=stats_artifact().policy, reader=H.read_inventory_stub)
     seeds = [inv.entry(t[x]["slot"])["seed"] for x in ("R1", "R2")]
     runs = [load("teacher", t[x]["slot"], "fp32").summary["run"]["model_role"] for x in ("R1", "R2")]
     return ((t["R1"]["slot"], t["R2"]["slot"]) == ("teacher-R1:s42:40k", "teacher-R2:s42:40k")
@@ -468,7 +468,7 @@ def v_stage_map():
     """B5-S1: E3-X is read at evaluator stage E3 (fp32), E7-X at E7 (int8_ptq), E6-X at itself (int8_qat)."""
     w = CTX.world
     st = stats_artifact()
-    inv = H.open_inventory(w.inventory_path, policy=st.policy)
+    inv = H.open_inventory(w.inventory_path, policy=st.policy, reader=H.read_inventory_stub)
     got = {}
     for slot, stage in (("E3-R1:s42:lambda0.5:alpha25:80k", "E3-R1"), ("E7-R2:s42:list42", "E7-R2"),
                         ("E6-R1:s42:sel", "E6-R1")):

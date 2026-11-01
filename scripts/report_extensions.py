@@ -12,8 +12,8 @@ src/stats/report_extensions.py). B-5's intervals use bootstrap.PRODUCTION_B repl
   --stats-artifact  a statistics artifact (family.json, bootstrap.npz, MANIFEST.sha256), verified with
                     its 37 inputs and the contract (all thirteen checks)
   --inventory       TMAN's inventory export tday-inventory/1 (IF§8, IF§11 v2); the path arrives here,
-                    LREP never builds it (IF§11.6). Until TMAN merges it is read by LREP's stub, which
-                    is refused under Policy.OFFICIAL
+                    LREP never builds it (IF§11.6). It is read by TMAN's reader,
+                    src.tman.validate.read_inventory (LB4-1)
   --repo-root       resolves the inputs' repository-relative paths; accepted only with
                     --synthetic-inputs (P16). Otherwise this code's repository
   --strata          the strata file (default: the committed reports/strata/train_strata_v1.json)

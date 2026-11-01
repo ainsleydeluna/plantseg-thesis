@@ -90,7 +90,8 @@ def stats_artifact():
 
 
 def inventory(path=None):
-    return H.open_inventory(path or CTX.world.inventory_path, policy=stats_artifact().policy)
+    return H.open_inventory(path or CTX.world.inventory_path, policy=stats_artifact().policy,
+                            reader=H.read_inventory_stub)
 
 
 def doc_of(path=None, B=SMOKE_B, **kw):

@@ -4,7 +4,8 @@ input layer src/stats/heldout_inputs.py, against the plan of record's §1 and ru
 
 SYNTHETIC ONLY (DL-41): scripts/lrep_fixtures.py writes the world (the 37 seed-42 inputs and their
 statistics artifact, seeds 43/44, an inventory export and a bound binding in the IF§11 v2 layout,
-telemetry) under a new directory in TMPDIR, which is left in place. No PlantSeg data, checkpoint,
+telemetry) under a new directory in TMPDIR, which is left in place; its export is read with LREP's stub,
+passed explicitly (B-4, LB4-1). No PlantSeg data, checkpoint,
 model or GPU; no created path contains "test" or ":". B-5b (ruling LREP-B5-RULE-4 R4-5): the slot keys
 are TMAN's catalogue's and a divergence is in TMAN's shape (both units present, one null).
 
@@ -22,7 +23,9 @@ are TMAN's catalogue's and a divergence is in TMAN's shape (both units present, 
   R  refusals: one case per code, each reached with every earlier gate passing (R-15 is an assertion),
      and one per further raise site the DL-24 review added (R2h-R2j, R4c-R4d, R12b-R12e, R13b, R14b,
      R17b, R18b); B-5 (e): a null freeze under Policy.OFFICIAL (R2k; R1-12); B-5's DL-24: a seed-42
-     model row that says teacher, which check_rows alone reads (R18c)
+     model row that says teacher, which check_rows alone reads (R18c); B-4: who reads under
+     Policy.OFFICIAL (R2a, R2l-R2n; LB4-1), TMAN's reader as the default (R2o) and TMAN's refusals through
+     open_inventory, on TMAN's own exports built by its fixture library by import (R2o-R2t; LB4-2)
   D  determinism
   X  hygiene: no test or p-value object imported, repr floats, pp only in markdown, no 'test' path
 
@@ -77,9 +80,12 @@ def stats_artifact() -> H.StatsArtifact:
     return CTX.stats
 
 
-def inventory(path, *, policy=None, reader=None, expect=None) -> H.Inventory:
-    return H.open_inventory(path, policy=policy or stats_artifact().policy, reader=reader,
-                            expect_sha256=expect)
+def inventory(path, *, policy=None, reader=None, expect=None, synthetic=False) -> H.Inventory:
+    """The export read by `reader`: LREP's stub, passed explicitly (B-4, LB4-1) and looked up when called (the
+    mutation harness replaces it), unless a case passes another."""
+    return H.open_inventory(path, policy=policy or stats_artifact().policy,
+                            reader=H.read_inventory_stub if reader is None else reader,
+                            expect_sha256=expect, synthetic=synthetic)
 
 
 def seed_doc(path=None, **kw) -> dict:
@@ -158,8 +164,17 @@ def totals(tp, gt, pred):
 
 
 def standin_reader(path, *, expect_sha256=None):
-    """A reader that is not the stub (TMAN's stands here only to reach the OFFICIAL gates)."""
-    return H.read_inventory(path, expect_sha256=expect_sha256)
+    """A marked stand-in (H.STANDIN_MARK) for TMAN's reader, only to reach the OFFICIAL gates on LREP's
+    synthetic export: accepted under Policy.OFFICIAL with --synthetic-inputs only (B-4, LB4-1)."""
+    return H.read_inventory_stub(path, expect_sha256=expect_sha256)
+
+
+setattr(standin_reader, H.STANDIN_MARK, True)
+
+
+def foreign_reader(path, *, expect_sha256=None):
+    """An unmarked callable that is neither TMAN's reader nor LREP's stub (LB4-1)."""
+    return H.read_inventory_stub(path, expect_sha256=expect_sha256)
 
 
 # --------------------------------------------------------------------------------------------------
@@ -826,8 +841,9 @@ def r_stats_unverified():
 
 
 def r_stub_official():
-    return refused("stub_reader_official",
-                   lambda: H.open_inventory(CTX.world.inventory_path, policy=Policy.OFFICIAL))
+    """LB4-1: under Policy.OFFICIAL without --synthetic-inputs LREP's stub, passed explicitly, is refused."""
+    return refused("stub_reader_official", lambda: H.open_inventory(
+        CTX.world.inventory_path, policy=Policy.OFFICIAL, reader=H.read_inventory_stub))
 
 
 def r_inventory_unreadable():
@@ -856,7 +872,8 @@ def r_binding_unbound():
     def edit(export, binding):
         export["binding"] = {"state": "unbound", "path": None, "sha256": None}
     p = variant("unbound", edit, with_binding=False)
-    return refused("binding_unbound", lambda: inventory(p, policy=Policy.OFFICIAL, reader=standin_reader))
+    return refused("binding_unbound", lambda: inventory(p, policy=Policy.OFFICIAL, reader=standin_reader,
+                                                        synthetic=True))
 
 
 def r_freeze():
@@ -872,8 +889,121 @@ def r_freeze_null_official():
         export["freeze"] = None
     p = variant("freeze_null", edit)
     ok, detail = refused("freeze_mismatch",
-                         lambda: inventory(p, policy=Policy.OFFICIAL, reader=standin_reader))
+                         lambda: inventory(p, policy=Policy.OFFICIAL, reader=standin_reader, synthetic=True))
     return ok and inventory(p).doc["freeze"] is None, detail
+
+
+# B-4, LB4-1: who reads under Policy.OFFICIAL; LB4-2: TMAN's refusals keep their code where LREP has it
+def r_official_foreign():
+    """LB4-1: under Policy.OFFICIAL an unmarked foreign callable is refused, with or without
+    --synthetic-inputs."""
+    res = [refused("stub_reader_official", lambda s=s: inventory(
+        CTX.world.inventory_path, policy=Policy.OFFICIAL, reader=foreign_reader, synthetic=s)) for s in (False, True)]
+    return all(ok for ok, _ in res), str([d for _, d in res])
+
+
+def r_official_standin():
+    """LB4-1: under Policy.OFFICIAL the marked stand-in is refused without --synthetic-inputs and read with
+    it, under its recorded name."""
+    ok, detail = refused("stub_reader_official", lambda: inventory(
+        CTX.world.inventory_path, policy=Policy.OFFICIAL, reader=standin_reader))
+    inv = inventory(CTX.world.inventory_path, policy=Policy.OFFICIAL, reader=standin_reader, synthetic=True)
+    return ok and inv.reader.endswith(".standin_reader") and inv.policy is Policy.OFFICIAL, f"{detail}; {inv.reader}"
+
+
+def r_official_stub_synthetic():
+    """LB4-1: under Policy.OFFICIAL with --synthetic-inputs LREP's stub is read, its recorded name
+    src.stats.heldout_inputs.read_inventory_stub."""
+    inv = inventory(CTX.world.inventory_path, policy=Policy.OFFICIAL, reader=H.read_inventory_stub, synthetic=True)
+    return inv.reader == "src.stats.heldout_inputs.read_inventory_stub", inv.reader
+
+
+def tman_refused(code, path, head, **kw):
+    """open_inventory with TMAN's reader, its default, refuses `path` by LREP's `code`, the detail beginning
+    `head` (tman:<TMAN's code>: ; LB4-2)."""
+    try:
+        H.open_inventory(path, policy=Policy.NONOFFICIAL_SMOKE, **kw)
+    except H.LrepRefusal as e:
+        return e.code == code and e.detail.startswith(head), f"{e.code}: {e.detail[:240]}"
+    except Exception as e:                                              # noqa: BLE001
+        return False, f"unexpected {type(e).__name__}: {e}"
+    return False, f"no refusal (expected {code})"
+
+
+def tman_exports():
+    """TMAN's own exports (lrep_fixtures.tman_exports: TMAN's world and builders, by import), built once."""
+    if "tman" not in CTX.copies:
+        with LF.tman_world() as w:
+            CTX.copies["tman"] = LF.tman_exports(w, CTX.world.fresh("tman_exports"))
+    return CTX.copies["tman"]
+
+
+def tman_variant(name, edit):
+    """TMAN's bound export edited by `edit(doc)`, written beside the files it names (TMAN's json_file_bytes)."""
+    from src.tman import schema as S
+    path, doc = tman_exports()["bound"]
+    d = copy.deepcopy(doc)
+    edit(d)
+    p = path.parent / f"{name}.json"
+    p.write_bytes(S.json_file_bytes(d))
+    return p
+
+
+def r_default_tman():
+    """LB4-1, LB4-2: open_inventory's default reader is TMAN's (src.tman.validate.read_inventory), never
+    stub_reader_official: it refuses LREP's synthetic export, which is not written in TMAN's form, as
+    inventory_invalid with TMAN's code in the detail, under the smoke policy and under Policy.OFFICIAL."""
+    res = [tman_refused("inventory_invalid", CTX.world.inventory_path, "tman:inventory_invalid: ")]
+    try:
+        H.open_inventory(CTX.world.inventory_path, policy=Policy.OFFICIAL)
+        res.append((False, "no refusal under Policy.OFFICIAL"))
+    except H.LrepRefusal as e:
+        res.append((e.code == "inventory_invalid" and e.detail.startswith("tman:inventory_invalid: "),
+                    f"{e.code}: {e.detail[:200]}"))
+    return all(ok for ok, _ in res), str([d for _, d in res])
+
+
+def r_tman_sha():
+    """LB4-2: TMAN's inventory_sha256_mismatch keeps its code (TMAN's own export, another sha256)."""
+    return tman_refused("inventory_sha256_mismatch", tman_exports()["plain"][0],
+                        "tman:inventory_sha256_mismatch: ", expect_sha256="0" * 64)
+
+
+def r_tman_catalogue():
+    """LB4-2: TMAN's catalogue_invalid is inventory_invalid with TMAN's code in the detail: for the case,
+    src.tman.manifest.CODE_ROOT names a folder whose configs/tday_catalogue.json is not a catalogue (restored
+    after)."""
+    from src.tman import manifest as M
+    path = tman_exports()["plain"][0]
+    root = CTX.world.fresh("tman_code_root")
+    LF.new_dir(root, "configs")
+    (root / "configs" / "tday_catalogue.json").write_text("{}\n", encoding="utf-8")
+    saved = M.CODE_ROOT
+    M.CODE_ROOT = root
+    try:
+        return tman_refused("inventory_invalid", path, "tman:catalogue_invalid: ")
+    finally:
+        M.CODE_ROOT = saved
+
+
+def r_tman_dedup():
+    """LB4-2: TMAN's dedup_invalid keeps its code (its bound export's dedup.sha256 is not its file's)."""
+    return tman_refused("dedup_invalid", tman_variant("tman_dedup_sha", lambda d: d["dedup"].update(sha256="0" * 64)),
+                        "tman:dedup_invalid: ")
+
+
+def r_tman_binding():
+    """LB4-2: TMAN's binding_invalid keeps its code (its bound export's binding.sha256 is not its file's)."""
+    return tman_refused("binding_invalid", tman_variant("tman_binding_sha",
+                                                        lambda d: d["binding"].update(sha256="0" * 64)),
+                        "tman:binding_invalid: ")
+
+
+def r_tman_word():
+    """LB4-2: TMAN's refusal of a path that holds project rule 4's word, by string only (TMAN refuses before any
+    filesystem call; nothing is created or read): inventory_invalid with TMAN's code in the detail."""
+    word = "te" + "st"
+    return tman_refused("inventory_invalid", CTX.world.root / f"{word}_inventory.json", f"tman:{word}_path: ")
 
 
 def r_slot_missing():
@@ -1048,7 +1178,7 @@ def r_robustness_cells():
 def r_binding_no_artifacts():
     """A reader (not the stub) that returns a bound export without binding.artifacts (IF§11.6)."""
     def reader(path, *, expect_sha256=None):
-        doc = H.read_inventory(path, expect_sha256=expect_sha256)
+        doc = H.read_inventory_stub(path, expect_sha256=expect_sha256)
         doc["binding"] = {k: v for k, v in doc["binding"].items() if k != "artifacts"}
         return doc
     return refused("binding_invalid", lambda: inventory(CTX.world.inventory_path, reader=reader))
@@ -1438,6 +1568,18 @@ def cases():
         ("R2i", "R-2 inventory_invalid (a model row's entry_kind is not its slot's; IF§11.1)",
          r_row_entry_kind),
         ("R2j", "R-2 inventory_unreadable (a repeated JSON key; the strict parse)", r_duplicate_key),
+        ("R2l", "LB4-1: an unmarked foreign reader under Policy.OFFICIAL, with or without --synthetic-inputs",
+         r_official_foreign),
+        ("R2m", "LB4-1: the marked stand-in under Policy.OFFICIAL: refused without --synthetic-inputs, read with",
+         r_official_standin),
+        ("R2n", "LB4-1: LREP's stub under Policy.OFFICIAL with --synthetic-inputs is read", r_official_stub_synthetic),
+        ("R2o", "LB4-1/LB4-2: the default reader is TMAN's (tman:inventory_invalid on LREP's export)",
+         r_default_tman),
+        ("R2p", "LB4-2: TMAN's inventory_sha256_mismatch keeps its code", r_tman_sha),
+        ("R2q", "LB4-2: TMAN's catalogue_invalid is inventory_invalid, TMAN's code in the detail", r_tman_catalogue),
+        ("R2r", "LB4-2: TMAN's dedup_invalid keeps its code", r_tman_dedup),
+        ("R2s", "LB4-2: TMAN's binding_invalid keeps its code", r_tman_binding),
+        ("R2t", "LB4-2: TMAN's refusal of a path holding rule 4's word (by string only)", r_tman_word),
         ("R3a", "R-3 planned_slot_missing", r_slot_missing),
         ("R3b", "R-3 planned_slot_duplicate", r_slot_duplicate),
         ("R3c", "R-3 unplanned_slot (a per_seed slot at seed 45)", r_unplanned),

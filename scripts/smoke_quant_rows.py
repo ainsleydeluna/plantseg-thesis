@@ -58,7 +58,7 @@ def stats_artifact():
 
 def doc_of(inventory=None):
     st = stats_artifact()
-    inv = H.open_inventory(inventory or CTX.world.inventory_path, policy=st.policy)
+    inv = H.open_inventory(inventory or CTX.world.inventory_path, policy=st.policy, reader=H.read_inventory_stub)
     return QR.build_quant_rows(st, inv, H.planned_cells(inv), input_root=CTX.world.input_root)
 
 
@@ -145,7 +145,7 @@ def q_stage_map():
     """B5-S1: E6-E2 read at evaluator stage E6-E2 (int8_qat), E7-E2 at E7-E2 (int8_ptq)."""
     w = CTX.world
     st = stats_artifact()
-    inv = H.open_inventory(w.inventory_path, policy=st.policy)
+    inv = H.open_inventory(w.inventory_path, policy=st.policy, reader=H.read_inventory_stub)
     got = {}
     for slot, stage in (("E6-E2:s42:sel", "E6-E2"), ("E7-E2:s42:list42", "E7-E2")):
         ba = H.load_bound(inv, slot=slot, stage=stage, precision=H.stage_spec(stage)[2], scope="clean",

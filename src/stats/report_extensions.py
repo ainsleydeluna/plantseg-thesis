@@ -244,7 +244,7 @@ def official_unmet(stats: H.StatsArtifact, inv: H.Inventory, parts_docs: dict, c
     if stats.profile != "official":
         unmet.append(("statistics_artifact_nonofficial", f"status {stats.profile!r}, warnings "
                                                          f"{stats.family['warnings']}"))
-    if not inv.bound or inv.reader == "lrep_stub":
+    if not inv.bound or inv.reader != H.TMAN_READER:                # LB4-1: TMAN's reader by its name
         unmet.append(("binding_not_read_by_tman", f"binding {inv.doc['binding']['state']!r}, reader "
                                                   f"{inv.reader}"))
     strata = parts_docs.get("strata")
@@ -264,9 +264,11 @@ def official_unmet(stats: H.StatsArtifact, inv: H.Inventory, parts_docs: dict, c
 
 
 def build_report(*, stats_artifact, inventory, input_root, strata=None, mde_entry=None, parts=None,
-                 reader=None, expect_inventory_sha256=None, B: int = PRODUCTION_B) -> dict:
+                 reader=None, expect_inventory_sha256=None, B: int = PRODUCTION_B,
+                 synthetic: bool = False) -> dict:
     """Verify every input, build the selected parts and the profile. Refuses by code. `B` is the
-    replicate count of B-5's intervals (PRODUCTION_B unless a smoke passes another)."""
+    replicate count of B-5's intervals (PRODUCTION_B unless a smoke passes another); `synthetic`
+    (--synthetic-inputs) is open_inventory's (LB4-1)."""
     from . import seed_stability, strata_tables, default_candidates, am6_tables
     from . import arm_tables, dedup_subset, quant_rows
     from .artifact import code_provenance_unmet
@@ -274,7 +276,7 @@ def build_report(*, stats_artifact, inventory, input_root, strata=None, mde_entr
     parts = parse_parts(parts)
     stats = H.load_stats_artifact(stats_artifact, input_root)
     inv = H.open_inventory(inventory, policy=stats.policy, reader=reader,
-                           expect_sha256=expect_inventory_sha256)
+                           expect_sha256=expect_inventory_sha256, synthetic=synthetic)
     cells = H.planned_cells(inv)
     official = stats.profile == "official"
     docs = {}
@@ -408,8 +410,9 @@ def run(*, stats_artifact, inventory, out_dir, repo_root=None, synthetic: bool =
         mde_entry=None, parts=None, reader=None, expect_inventory_sha256=None, B: int = PRODUCTION_B):
     """The CLI's body (scripts/report_extensions.py): --repo-root only with --synthetic-inputs (P16's
     rule, as report.run_report); the out-dir is checked before anything is read. The CLI passes no
-    reader (LREP's stub until B-4) and B-5's B = PRODUCTION_B; scripts/smoke_lrep_official_profile.py
-    passes a stand-in for TMAN's reader and a smaller B (B-5b, R4-1 item 8)."""
+    reader (TMAN's, LB4-1) and B-5's B = PRODUCTION_B; scripts/smoke_lrep_official_profile.py passes a
+    marked stand-in for TMAN's reader with --synthetic-inputs and a smaller B (B-5b, R4-1 item 8), and
+    the lane smokes pass LREP's stub."""
     from .artifact import CODE_REPO, W_SYNTHETIC
     if repo_root is not None and not synthetic:
         raise H.refusal("usage_invalid", "--repo-root is accepted only with --synthetic-inputs (P16)")
@@ -421,7 +424,7 @@ def run(*, stats_artifact, inventory, out_dir, repo_root=None, synthetic: bool =
                             Path(mde_entry).parent if mde_entry is not None else None])
     doc = build_report(stats_artifact=stats_artifact, inventory=inventory, input_root=input_root,
                        strata=strata, mde_entry=mde_entry, parts=parts, reader=reader,
-                       expect_inventory_sha256=expect_inventory_sha256, B=B)
+                       expect_inventory_sha256=expect_inventory_sha256, B=B, synthetic=synthetic)
     if synthetic and W_SYNTHETIC not in doc["statistics_artifact"]["warnings"]:
         raise H.refusal("usage_invalid", "--synthetic-inputs was declared but the statistics artifact "
                                          "does not carry synthetic_input_data")

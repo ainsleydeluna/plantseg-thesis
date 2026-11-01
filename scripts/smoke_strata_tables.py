@@ -121,7 +121,7 @@ def stats_artifact():
 
 def world_doc(inventory=None, *, strata=None, official=False):
     st = stats_artifact()
-    inv = H.open_inventory(inventory or CTX.world.inventory_path, policy=st.policy)
+    inv = H.open_inventory(inventory or CTX.world.inventory_path, policy=st.policy, reader=H.read_inventory_stub)
     return ST.build_strata_tables(st, inv, H.planned_cells(inv), strata_path=strata or CTX.world.strata_path,
                                   official=official)
 

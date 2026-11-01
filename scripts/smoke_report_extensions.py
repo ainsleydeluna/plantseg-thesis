@@ -5,7 +5,9 @@ scripts/report_extensions.py against the plan of record's §1.6, §2.4, §3.3, D
 
 SYNTHETIC ONLY (DL-41): scripts/lrep_fixtures.py's world; the committed MDE entry
 (reports/derived/mde_entry_20261009T034825Z.json) is read as the MDE input. Created paths live under a
-new directory in TMPDIR (left in place); none contains "test" or ":".
+new directory in TMPDIR (left in place); none contains "test" or ":". LREP's stub reader is passed
+explicitly (B-4, LB4-1): in process as `reader=`, and to the CLI by running its own main() with RX.run's
+reader set to the stub (STUB_CLI), since the CLI itself reads with TMAN's reader.
 
   W  writing through the CLI: exit 0, exactly three files, SHA256SUMS verifies, the markdown is the
      rendering of the JSON
@@ -13,7 +15,8 @@ new directory in TMPDIR (left in place); none contains "test" or ":".
      (the strata file's and the MDE entry's included), one whose parent does not exist
   F  the profile: nonofficial with a banner on every table and the unmet conditions named; an export
      read by LREP's stub keeps it nonofficial even beside an official statistics artifact (D-13; an
-     unbound binding under Policy.OFFICIAL is seed R2f's); the inputs' split in the banner
+     unbound binding under Policy.OFFICIAL is seed R2f's); the inputs' split in the banner; LB4-1:
+     binding_not_read_by_tman unless the recorded reader is TMAN's (F5)
   C  each of the nine parts present and populated (the am6 part with (d)'s rows)
   Q  the fq_off table (LRB7): its values, driver.load_input on a qat_fakequant_off artifact, a slot
      without one, E6-KD's row; a row without its record, a row of another seed, the 37's identities;
@@ -98,10 +101,17 @@ def refused(code, fn):
     return False, f"no refusal (expected {code})"
 
 
+#: LB4-1: the CLI's own main() in a fresh interpreter with LREP's stub passed explicitly as RX.run's reader (the
+#: CLI passes none, so it reads with TMAN's reader, which LREP's synthetic fixtures are not written for).
+STUB_CLI = ("import runpy, sys; from src.stats import heldout_inputs as H, report_extensions as RX; "
+            "run = RX.run; RX.run = lambda **kw: run(**kw, reader=H.read_inventory_stub); "
+            "sys.argv = sys.argv[1:]; runpy.run_path(sys.argv[0], run_name='__main__')")
+
+
 def cli(*args):
     env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
-    p = subprocess.run([sys.executable, "-B", str(CLI), *map(str, args)], capture_output=True, text=True,
-                       env=env, cwd=str(REPO), timeout=1800)
+    p = subprocess.run([sys.executable, "-B", "-c", STUB_CLI, str(CLI), *map(str, args)], capture_output=True,
+                       text=True, env=env, cwd=str(REPO), timeout=1800)
     return p.returncode, p.stdout, p.stderr
 
 
@@ -134,7 +144,7 @@ def part(doc, name):
 def build(**kw):
     w = CTX.world
     args = dict(stats_artifact=w.stats_path, inventory=w.inventory_path, input_root=w.input_root,
-                strata=w.strata_path, mde_entry=MDE, B=SMOKE_B)
+                strata=w.strata_path, mde_entry=MDE, B=SMOKE_B, reader=H.read_inventory_stub)
     args.update(kw)
     return RX.build_report(**args)
 
@@ -196,7 +206,7 @@ def p_in_strata_or_mde_dir():
         out = inside / f"rx_never_written_{uuid.uuid4().hex[:12]}"       # a mutant writes its report here
         ok, det = refused("out_dir_invalid", lambda: RX.run(
             stats_artifact=w.stats_path, inventory=w.inventory_path, out_dir=out, repo_root=w.input_root,
-            synthetic=True, strata=w.strata_path, mde_entry=mde_copy, parts="mde"))
+            synthetic=True, strata=w.strata_path, mde_entry=mde_copy, parts="mde", reader=H.read_inventory_stub))
         res.append((ok and not out.exists(), det))
     return all(ok for ok, _ in res), str([d for _, d in res])
 
@@ -261,9 +271,29 @@ def f_stub_read():
     """D-13: an official statistics artifact beside a stub-read export stays nonofficial."""
     st = H.load_stats_artifact(CTX.world.stats_path, CTX.world.input_root)
     fake = types.SimpleNamespace(**{**st.__dict__, "profile": "official"})
-    inv = H.open_inventory(CTX.world.inventory_path, policy=st.policy)
+    inv = H.open_inventory(CTX.world.inventory_path, policy=st.policy, reader=H.read_inventory_stub)
     unmet = RX.official_unmet(fake, inv, {}, {"code_clean_at_commit": True})
     return [n for n, _ in unmet] == ["binding_not_read_by_tman"], str(unmet)
+
+
+def f_reader_name():
+    """LB4-1: the recorded reader is f"{module}.{qualname}"; binding_not_read_by_tman is unmet unless it is
+    TMAN's, src.tman.validate.read_inventory: LREP's stub and a stand-in are not."""
+    st = H.load_stats_artifact(CTX.world.stats_path, CTX.world.input_root)
+    fake = types.SimpleNamespace(**{**st.__dict__, "profile": "official"})
+    code = {"code_clean_at_commit": True, "report_code_unmet": []}
+
+    def standin(path, *, expect_sha256=None):
+        return H.read_inventory_stub(path, expect_sha256=expect_sha256)
+    names = {"tman": H.reader_name(H.tman_reader()), "stub": H.reader_name(H.read_inventory_stub),
+             "standin": H.reader_name(standin)}
+    got = {k: [n for n, _ in RX.official_unmet(fake, types.SimpleNamespace(
+        bound=True, reader=v, doc={"binding": {"state": "bound"}}), {}, code)] for k, v in names.items()}
+    return (names["tman"] == H.TMAN_READER == "src.tman.validate.read_inventory"
+            and names["stub"] == "src.stats.heldout_inputs.read_inventory_stub"
+            and names["standin"].endswith("f_reader_name.<locals>.standin")
+            and got == {"tman": [], "stub": ["binding_not_read_by_tman"],
+                        "standin": ["binding_not_read_by_tman"]}), f"{names}; {got}"
 
 
 def c_part(name, check):
@@ -475,7 +505,7 @@ def h_report_code():
     code = the_doc()["code"]
     st = H.load_stats_artifact(CTX.world.stats_path, CTX.world.input_root)
     fake = types.SimpleNamespace(**{**st.__dict__, "profile": "official"})
-    inv = types.SimpleNamespace(bound=True, reader="tman.read_inventory", doc={"binding": {"state": "bound"}})
+    inv = types.SimpleNamespace(bound=True, reader=H.TMAN_READER, doc={"binding": {"state": "bound"}})
     dirty = ["code_not_clean_at_head", "src/stats/driver.py:  M src/stats/driver.py"]
     unmet = RX.official_unmet(fake, inv, {}, {"code_clean_at_commit": True, "report_code_unmet": [dirty]})
     return (code["report_code_paths"] == want == [*A.OFFICIAL_CODE_PATHS, want[-1]]
@@ -566,7 +596,7 @@ def r_usage():
 # --------------------------------------------------------------------------------------------------
 def inputs():
     st = H.load_stats_artifact(CTX.world.stats_path, CTX.world.input_root)
-    inv = H.open_inventory(CTX.world.inventory_path, policy=st.policy)
+    inv = H.open_inventory(CTX.world.inventory_path, policy=st.policy, reader=H.read_inventory_stub)
     return st, inv, H.planned_cells(inv)
 
 
@@ -636,7 +666,7 @@ def s_unmet_b():
     part is named (bootstrap_replicates_nonproduction); B = PRODUCTION_B is not."""
     st = H.load_stats_artifact(CTX.world.stats_path, CTX.world.input_root)
     fake = types.SimpleNamespace(**{**st.__dict__, "profile": "official"})
-    inv = types.SimpleNamespace(bound=True, reader="tman.read_inventory", doc={"binding": {"state": "bound"}})
+    inv = types.SimpleNamespace(bound=True, reader=H.TMAN_READER, doc={"binding": {"state": "bound"}})
     code = {"code_clean_at_commit": True, "report_code_unmet": []}
     low = RX.official_unmet(fake, inv, {"arms": {"B": 60}, "dedup": {"B": 10_000}}, code)
     prod = RX.official_unmet(fake, inv, {"arms": {"B": 10_000}, "dedup": {"B": 10_000}}, code)
@@ -670,7 +700,7 @@ def s_run_b():
     out = new_out("rx_run_b")
     path, doc = RX.run(stats_artifact=w.stats_path, inventory=w.inventory_path, out_dir=out,
                        repo_root=w.input_root, synthetic=True, strata=w.strata_path, mde_entry=MDE,
-                       parts="arms", B=SMOKE_B)
+                       parts="arms", B=SMOKE_B, reader=H.read_inventory_stub)
     arms = part(doc, "arms")
     bs = {arms["B"], *(r["per_image"]["B"] for r in arms["rows"] if r["per_image"])}
     unmet = {u[0] for u in doc["unmet_official_conditions"]}
@@ -708,6 +738,7 @@ def cases():
             ("F3", "an official statistics artifact beside a stub-read export stays nonofficial (D-13)",
              f_stub_read),
             ("F4", "the inputs' split is recorded and named in the banner", f_split),
+            ("F5", "LB4-1: binding_not_read_by_tman unless the recorded reader is TMAN's", f_reader_name),
             ("C1", "seed: ten rows, a verdict sentence", c_part("seed", lambda p: len(p["rows"]) == 10
                                                                   and p["verdict_sentence"])),
             ("C2", "strata: eight pairs", c_part("strata", lambda p: len(p["pairs"]) == 8)),

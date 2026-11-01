@@ -15,8 +15,8 @@ mutant killed by an error of its own shows: DL-24 V2-01). Three kinds:
   S  semantic mutations of the formulas, states, labels and rules (the plan's §7.1 list as LRB2-LRB13
      amend it, the DL-24 fixes, B-5's rulings: B5-D1 to B5-D4, B5-S1, B5-S2, B5-S4, the subset, (c), (d)
      and (e), and B-5b's ruling LREP-B5-RULE-4: R4-1's DT read, its pair, load_slot, the read column, the
-     label and the guard; R4-2; R4-5's stages, roles, skips and diverged shape), each killed by its named
-     case
+     label and the guard; R4-2; R4-5's stages, roles, skips and diverged shape; B-4's rulings LB4-1 to
+     LB4-12), each killed by its named case
 
 The cases run on one synthetic world (scripts/lrep_fixtures.py) under a new directory in TMPDIR (left
 in place). The mutations that scripts/smoke_lrep_official_profile.py's cases kill run in that smoke's own
@@ -137,7 +137,8 @@ def m_usage():
     out = CTX.world.fresh("mut_usage") / "rx"
     return refused("usage_invalid", lambda: RX.run(stats_artifact=w.stats_path, inventory=w.inventory_path,
                                                    out_dir=out, repo_root=w.input_root, synthetic=False,
-                                                   strata=w.strata_path, parts="mde"))
+                                                   strata=w.strata_path, parts="mde",
+                                                   reader=H.read_inventory_stub))
 
 
 def m_seed42_tamper():
@@ -148,7 +149,7 @@ def m_seed42_tamper():
     t = next(t for t in fam["bootstrap_tasks"] if t["task_id"] == "accuracy_e1_e2__dataset_miou_delta")
     t["observed"] = math.nextafter(t["observed"], 1.0)
     fake = types.SimpleNamespace(**{**st.__dict__, "family": fam})
-    inv = H.open_inventory(CTX.world.inventory_path, policy=st.policy)
+    inv = H.open_inventory(CTX.world.inventory_path, policy=st.policy, reader=H.read_inventory_stub)
     inputs = SS.load_seed_inputs(st, inv, input_root=CTX.world.input_root)
     names = H.corruption_names()
     m = {key: SS.m_of(li.run.stats) for key, li in inputs.clean.items()}
@@ -161,7 +162,7 @@ def m_stage_unmapped():
     """B5-S1: a bound arm row read at a stage outside the map (E3-K8; K8 is out, DL-96) is refused once
     its row, record, path, protocol, files and manifest have passed."""
     w = CTX.world
-    inv = H.open_inventory(w.inventory_path, policy=Policy.NONOFFICIAL_SMOKE)
+    inv = H.open_inventory(w.inventory_path, policy=Policy.NONOFFICIAL_SMOKE, reader=H.read_inventory_stub)
     return refused("stage_unmapped", lambda: H.load_bound(
         inv, slot="E3-R1:s42:lambda0.5:alpha25:80k", stage="E3-K8", precision="fp32", scope="clean",
         input_root=w.input_root, policy=Policy.NONOFFICIAL_SMOKE))
@@ -173,7 +174,7 @@ def m_dedup_invalid():
     export, binding = copy.deepcopy(w.export), copy.deepcopy(w.binding)
     export["dedup"]["sha256"] = LF.syn_sha("not the dedup file")
     path = LF.write_inventory(w.fresh("mut_dedup_sha"), export, binding, w.dedup)
-    inv = H.open_inventory(path, policy=Policy.NONOFFICIAL_SMOKE)
+    inv = H.open_inventory(path, policy=Policy.NONOFFICIAL_SMOKE, reader=H.read_inventory_stub)
     return refused("dedup_invalid", lambda: H.read_dedup(inv))
 
 
@@ -235,13 +236,13 @@ MUTATIONS = [
     ("C02", "stub_reader_official not raised", [(H, "open_inventory", [off("stub_reader_official")])],
      "seed:R2a"),
     ("C03", "inventory_unreadable not raised (unreadable file)",
-     [(H, "read_inventory", [off("inventory_unreadable", ' f"{p}: {type(e)')])], "seed:R2b"),
+     [(H, "read_inventory_stub", [off("inventory_unreadable", ' f"{p}: {type(e)')])], "seed:R2b"),
     ("C04", "inventory_sha256_mismatch not raised",
-     [(H, "read_inventory", [off("inventory_sha256_mismatch")])], "seed:R2c"),
+     [(H, "read_inventory_stub", [off("inventory_sha256_mismatch")])], "seed:R2c"),
     ("C05", "inventory_invalid not raised (reader and open_inventory)",
-     [(H, "read_inventory", [off("inventory_invalid")]),
+     [(H, "read_inventory_stub", [off("inventory_invalid")]),
       (H, "open_inventory", [off("inventory_invalid", ' f"{path}: {problem}')])], "seed:R2d"),
-    ("C06", "binding_invalid not raised (binding file)", [(H, "read_inventory", [off("binding_invalid")])],
+    ("C06", "binding_invalid not raised (binding file)", [(H, "read_inventory_stub", [off("binding_invalid")])],
      "seed:R2e"),
     ("C07", "binding_unbound not raised", [(H, "open_inventory", [off("binding_unbound")])], "seed:R2f"),
     ("C08", "freeze_mismatch not raised", [(H, "open_inventory", [off("freeze_mismatch")])], "seed:R2g"),
@@ -484,7 +485,7 @@ MUTATIONS = [
     ("S23", "the non-finite label replaced (D-6)",
      [(H, "_label", [("return LABEL_NON_FINITE", "return LABEL_PARENT_CUT")])], "seed:L6"),
     ("S24", "the binding's sha256 comparison skipped",
-     [(H, "read_inventory", [('if hashlib.sha256(braw).hexdigest() != b["sha256"]:', "if False:")])],
+     [(H, "read_inventory_stub", [('if hashlib.sha256(braw).hexdigest() != b["sha256"]:', "if False:")])],
      "seed:R2e"),
     ("S25", "strata delta direction swapped",
      [(ST, "pair_table", [('"delta": (ic - ib) if evaluable else None',
@@ -907,8 +908,8 @@ MUTATIONS = [
      [(AT, "render_markdown", [('if doc["skipped"]:', "if False:")])], "arms:P12"),
     # S: B-5b, R4-1 item 8 (B5b-4) and the cases of items 3(e), 4 and the official coverage
     ("S180", "R4-1 item 8: report_extensions.run drops its B (the parts at PRODUCTION_B)",
-     [(RX, "run", [("expect_inventory_sha256=expect_inventory_sha256, B=B)",
-                    "expect_inventory_sha256=expect_inventory_sha256)")])], "report:S11"),
+     [(RX, "run", [("expect_inventory_sha256=expect_inventory_sha256, B=B, synthetic=synthetic)",
+                    "expect_inventory_sha256=expect_inventory_sha256, synthetic=synthetic)")])], "report:S11"),
     ("S181", "R4-1 item 4: every slot under Policy.OFFICIAL read through the DT read (a downgrade path)",
      [(H, "load_slot", [("if dt_read(stats.policy, read):", "if stats.policy is Policy.OFFICIAL:")])],
      "official:K1"),
@@ -933,6 +934,25 @@ MUTATIONS = [
     ("S188", "R4-5(b): a skipped measurement labelled by its kind",
      [(H, "entry_label", [('(*SCORED_ENTRY_KINDS, "listed_run", "measurement")',
                            '(*SCORED_ENTRY_KINDS, "listed_run")')])], "arms:P15"),
+    # S: B-4, commit B4-1 (LB4-1: who reads under Policy.OFFICIAL; LB4-2: TMAN's refusals)
+    ("S189", "LB4-1: under Policy.OFFICIAL a marked reader read without --synthetic-inputs",
+     [(H, "open_inventory", [("if not (synthetic and marked):", "if not marked:")])], "seed:R2a"),
+    ("S190", "LB4-1: under Policy.OFFICIAL an unmarked callable read with --synthetic-inputs",
+     [(H, "open_inventory", [("if not (synthetic and marked):", "if not synthetic:")])], "seed:R2l"),
+    ("S191", "LB4-1: the default reader is LREP's stub, not TMAN's",
+     [(H, "open_inventory", [("reader = tman if reader is None else reader",
+                              "reader = read_inventory_stub if reader is None else reader")])], "seed:R2o"),
+    ("S192", "LB4-1: the recorded reader name loses its module",
+     [(H, "reader_name", [("f\"{getattr(reader, '__module__', '?')}.\"", "f\"\"")])], "seed:R2n"),
+    ("S193", "LB4-1: binding_not_read_by_tman for the old stub name only",
+     [(RX, "official_unmet", [("inv.reader != H.TMAN_READER", 'inv.reader == "lrep_stub"')])], "report:F5"),
+    ("S194", "LB4-2: every TMAN refusal becomes inventory_invalid",
+     [(H, "open_inventory", [('e.code if e.code in CODES else "inventory_invalid"', '"inventory_invalid"')])],
+     "seed:R2r"),
+    ("S195", "LB4-2: TMAN's code dropped from the detail",
+     [(H, "open_inventory", [('f"tman:{e.code}: {e.detail}"', 'f"{e.detail}"')])], "seed:R2q"),
+    ("S196", "LB4-2: TMAN's refusal not caught explicitly (the generic catch takes it)",
+     [(H, "open_inventory", [("except TmanRefused as e:", "except AssertionError as e:")])], "seed:R2s"),
 ]
 
 

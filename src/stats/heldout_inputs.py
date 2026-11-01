@@ -4,10 +4,12 @@ Interface of record: IF§11 v2 (tl_interface_lrep_20261016.md) over IF§8's inve
 `tday-inventory/1` and TMAN's binding `tday_binding/1`. TMAN builds every field; LREP reads them, never
 writes them, never parses the TEST-day manifest and never builds its path (IF§11.6).
 
-  * The reader. `read_inventory(path, *, expect_sha256=None)` is a STUB with the signature of
-    `src.tman.validate.read_inventory` (IF§11.6). It serves LREP's synthetic fixtures until TMAN
-    merges; `open_inventory` refuses it under Policy.OFFICIAL, and B-4 swaps in TMAN's reader. The
-    stub resolves `binding.path` against the export file's directory (an assumption B-4 settles).
+  * The reader (B-4, LB4-1 to LB4-4). `open_inventory`'s default is TMAN's
+    `src.tman.validate.read_inventory` (IF§11.6), imported when called. Under Policy.OFFICIAL it is the
+    only reader accepted, except that LREP's stub `read_inventory_stub` (synthetic fixtures only) and a
+    marked synthetic stand-in (STANDIN_MARK) are accepted with --synthetic-inputs. TMAN's refusals keep
+    their code where LREP has it (LB4-2). binding.path and dedup.path resolve against the export file's
+    folder on both sides (src/tman/validate.py:1905, :1944; LB4-3).
   * Slots are opaque keys (IF§11.1). The model of record of a planned cell is the slot whose role
     includes `family` (seed 42) or `per_seed` (seeds 43/44). A slot or row a table does not read is
     ignored by that table and never refused (LRB4), so the export is validated lazily: only what is
@@ -39,7 +41,8 @@ writes them, never parses the TEST-day manifest and never builds its path (IF§1
 Every refusal is an `LrepRefusal` with a code from CODES, raised at a site that reads
 `raise refusal("<code>", ...)` (scripts/smoke_lrep_mutations.py mutates those sites), except the three
 raises of `strict_json_text`, which carry their caller's code (inventory_unreadable, binding_invalid,
-dedup_invalid or arm_record_invalid).
+dedup_invalid or arm_record_invalid), and open_inventory's of a TMAN refusal, which carries TMAN's code
+when CODES holds it (LB4-2).
 Nothing here writes a file. Import-time behaviour is side-effect free.
 """
 from __future__ import annotations
@@ -64,6 +67,11 @@ from .ingest import (EXPECTED_ROWS_TEST, IngestError, Policy, am5_pair, apply_am
 
 INVENTORY_SCHEMA = "tday-inventory/1"
 BINDING_SCHEMA = "tday_binding/1"
+#: LB4-1: the recorded name of TMAN's reader; binding_not_read_by_tman is unmet unless the reader has it.
+TMAN_READER = "src.tman.validate.read_inventory"
+#: LB4-1: the attribute that marks a synthetic stand-in reader (scripts/smoke_lrep_official_profile.py's);
+#: under Policy.OFFICIAL it is accepted with --synthetic-inputs only, as LREP's stub (marked lrep_stub) is.
+STANDIN_MARK = "lrep_synthetic_standin"
 #: TMAN's kinds and roles, verbatim (IF§11.1-11.2; TL-14); role e6kd is E6-KD's (src/tman/schema.py:81-82 at
 #: lane/tman ee5593e; ruling LREP-B5-RULE-4 R4-5(c)).
 KINDS = ("scored_run", "default_candidate", "arm_teacher", "listed_run", "derived", "not_run",
@@ -196,7 +204,8 @@ CODES = {
     # the statistics artifact (R-1)
     "stats_artifact_unverified": "R-1: the statistics artifact does not verify with its 37 inputs",
     # the export and the binding (R-2; IF§11.5-11.6)
-    "stub_reader_official": "IF§11.6: the stub reader is refused under Policy.OFFICIAL",
+    "stub_reader_official": "IF§11.6; LB4-1: under Policy.OFFICIAL a reader that is not TMAN's (LREP's stub "
+                            "or a marked stand-in without --synthetic-inputs, any other callable always)",
     "inventory_unreadable": "R-2: the export cannot be read as strict JSON",
     "inventory_sha256_mismatch": "R-2: the export's sha256 is not the expected one",
     "inventory_invalid": "R-2: the export lacks, repeats or mistypes a field LREP reads",
@@ -422,12 +431,14 @@ def _top_level_problem(doc) -> str | None:
     return None
 
 
-def read_inventory(path, *, expect_sha256=None) -> dict:
-    """STUB of `src.tman.validate.read_inventory` (IF§11.6), for LREP's synthetic fixtures only.
+def read_inventory_stub(path, *, expect_sha256=None) -> dict:
+    """LREP's STUB of `src.tman.validate.read_inventory` (IF§11.6), for LREP's synthetic fixtures only
+    (LB4-1: renamed; the smokes pass it explicitly).
 
     Reads and checks the export; once `binding.state` is "bound", verifies the binding file (resolved
     against the export's directory) against `binding.sha256` and returns its records under
-    `binding.artifacts`. Refuses by code; never used under Policy.OFFICIAL (`open_inventory`)."""
+    `binding.artifacts`. Refuses by code; under Policy.OFFICIAL accepted only with --synthetic-inputs
+    (`open_inventory`)."""
     p = Path(path)
     try:
         raw = p.read_bytes()
@@ -465,7 +476,7 @@ def read_inventory(path, *, expect_sha256=None) -> dict:
     return doc
 
 
-read_inventory.lrep_stub = True
+read_inventory_stub.lrep_stub = True
 
 
 @dataclass(frozen=True)
@@ -511,21 +522,45 @@ def _index(items, key) -> dict:
     return {k: tuple(v) for k, v in out.items()}
 
 
-def open_inventory(path, *, policy: Policy, expect_sha256=None, reader=None) -> Inventory:
-    """Read the export with `reader` (default: the stub) and apply IF§11.5's binding and freeze rules.
+def tman_reader():
+    """LB4-1: TMAN's reader, src.tman.validate.read_inventory, imported when called (heldout_inputs' own
+    import pulls neither torch nor src.tman)."""
+    from src.tman.validate import read_inventory
+    return read_inventory
 
-    Under Policy.OFFICIAL the stub is refused before anything is read, the binding must be bound and
-    a freeze must be recorded."""
-    reader = read_inventory if reader is None else reader
-    stub = bool(getattr(reader, "lrep_stub", False))
-    if stub and policy is Policy.OFFICIAL:
-        raise refusal("stub_reader_official", "the LREP stub reader serves synthetic fixtures only; "
-                                              "Policy.OFFICIAL needs TMAN's reader (IF§11.6, B-4)")
+
+def reader_name(reader) -> str:
+    """LB4-1: the recorded name of a reader, f"{reader.__module__}.{reader.__qualname__}"."""
+    return (f"{getattr(reader, '__module__', '?')}."
+            f"{getattr(reader, '__qualname__', type(reader).__qualname__)}")
+
+
+def open_inventory(path, *, policy: Policy, expect_sha256=None, reader=None, synthetic: bool = False
+                   ) -> Inventory:
+    """Read the export with `reader` (default: TMAN's, LB4-1) and apply IF§11.5's binding and freeze rules.
+
+    Under Policy.OFFICIAL, before anything is read, the reader must be TMAN's function itself; LREP's stub
+    and a marked stand-in (STANDIN_MARK) are accepted only with `synthetic` (--synthetic-inputs, whose
+    artifact is never official, P6); any other callable is stub_reader_official. A TMAN refusal
+    (schema.TmanRefused) keeps its code when CODES holds it, else inventory_invalid, its detail
+    `tman:<code>: <TMAN's detail>` (LB4-2). The binding must be bound and a freeze recorded."""
+    from src.tman.schema import TmanRefused
+    tman = tman_reader()
+    reader = tman if reader is None else reader
+    if policy is Policy.OFFICIAL and reader is not tman:
+        marked = getattr(reader, "lrep_stub", False) is True or getattr(reader, STANDIN_MARK, False) is True
+        if not (synthetic and marked):
+            raise refusal("stub_reader_official", f"reader {reader_name(reader)}: Policy.OFFICIAL reads with "
+                                                  "TMAN's reader only; LREP's stub or a marked stand-in only "
+                                                  "with --synthetic-inputs (IF§11.6; LB4-1)")
     try:
         doc = reader(path, expect_sha256=expect_sha256)
     except LrepRefusal:
         raise
-    except Exception as e:                                          # noqa: BLE001 -- TMAN's refusal
+    except TmanRefused as e:                                        # LB4-2: TMAN's code kept where LREP has it
+        raise LrepRefusal(e.code if e.code in CODES else "inventory_invalid",
+                          f"tman:{e.code}: {e.detail}") from e
+    except Exception as e:                                          # noqa: BLE001 -- any other failure
         raise refusal("inventory_invalid", f"the reader refused {path}: {type(e).__name__}: "
                                            f"{e}") from e
     problem = _top_level_problem(doc)
@@ -550,10 +585,8 @@ def open_inventory(path, *, policy: Policy, expect_sha256=None, reader=None) -> 
                 or r.get("scope") not in SCOPES or not (r.get("cell") is None or _is_text(r["cell"]))):
             raise refusal("binding_invalid", f"{path}: binding.artifacts[{i}] lacks a slot, precision, "
                                              "scope or cell of the vocabulary")
-    name = ("lrep_stub" if stub else
-            f"{getattr(reader, '__module__', '?')}.{getattr(reader, '__qualname__', repr(reader))}")
     return Inventory(
-        path=Path(path), doc=doc, policy=policy, reader=name,
+        path=Path(path), doc=doc, policy=policy, reader=reader_name(reader),
         entries=_index(doc["entries"], lambda e: e["slot"]),
         rows=_index(doc["models"], lambda r: (r["slot"], r["precision"])),
         records=_index(records, lambda r: (r["slot"], r["precision"], r["scope"], r.get("cell"))))
@@ -1614,8 +1647,9 @@ __all__ = [
     "B5_FAMILY_STAGES", "DEDUP_EXPORT_FIELDS", "DEDUP_FILE_FIELDS", "E1_CHECKPOINT_RECORD",
     "LABEL_NON_FINITE", "LABEL_PARENT_CUT", "LABEL_PARENT_DIVERGED", "TELEMETRY_UNITS", "CODES",
     "LrepRefusal", "refusal", "sha256_file", "strict_json_text", "path_problem", "safe_relative_path",
-    "cell_id", "corruption_names", "inferential_cells", "stage_spec", "read_inventory",
-    "Inventory", "open_inventory", "SlotStatus", "record_slots", "parent_slot", "resolve_status",
+    "cell_id", "corruption_names", "inferential_cells", "stage_spec", "read_inventory_stub",
+    "TMAN_READER", "STANDIN_MARK", "tman_reader", "reader_name", "Inventory", "open_inventory",
+    "SlotStatus", "record_slots", "parent_slot", "resolve_status",
     "entry_label", "PlannedCells", "check_parentage", "model_row",
     "row_identity", "check_rows", "check_missing_runs", "check_seed42", "planned_cells",
     "binding_record", "cell_condition", "BoundArtifact", "load_bound", "load_clean_of_record",

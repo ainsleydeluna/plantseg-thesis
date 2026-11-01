@@ -10,9 +10,10 @@ one DT artifact, of E3-R1's and of E7's for the refusals. This is the only smoke
 dataset.split "test", as a JSON value (R4-6(ii)), and the only process that writes them: the mutation
 harness runs this smoke's cases mutated in this smoke's own process (--mutations; DL-24 R3-01). No
 created path or file name contains "test" or ":", and no id, key or name contains "test". The export is
-read under Policy.OFFICIAL through a stand-in for TMAN's reader (the stub's checks without its stub mark;
-B-4 swaps in TMAN's), and a DT slot's reference is the family slot of its evaluator stage at seed 42, read
-as the 37's input is (driver.load_input under Policy.OFFICIAL).
+read under Policy.OFFICIAL with --synthetic-inputs through the marked stand-in for TMAN's reader (the
+stub's checks, marked H.STANDIN_MARK; B-4, LB4-1: TMAN's reader is the default and refuses this synthetic
+export, which is not written in its form), and a DT slot's reference is the family slot of its evaluator
+stage at seed 42, read as the 37's input is (driver.load_input under Policy.OFFICIAL).
 
   G  R4-1 item 2: slot_read over the catalogue's 49 scored slots gives exactly the nine; the DT read is
      reached only through load_slot, which only the arm tables and am6's coverage call; dt_pair only by
@@ -43,9 +44,10 @@ as the 37's input is (driver.load_input under Policy.OFFICIAL).
         smoke_stats_official_fullsize runs it, at B = SMOKE_B) writes the statistics artifact of the
         world's 37, read back under Policy.OFFICIAL, its status nonofficial (the TEST-manifest binding
         is unbound: driver.py:540-545)
-     P2 LREP's CLI (scripts/report_extensions.py) on it stops at the first refusal, stub_reader_official
-        (named with file:line; B-4's reader swap), and writes nothing
-     P3 the CLI's body (report_extensions.run) with a stand-in for TMAN's reader writes the report with
+     P2 B-4, LB4-1: under Policy.OFFICIAL without --synthetic-inputs LREP's stub and an unmarked foreign
+        callable are each refused (stub_reader_official, named with file:line); with --synthetic-inputs the
+        stub and the marked stand-in read the export
+     P3 the CLI's body (report_extensions.run) with the marked stand-in for TMAN's reader writes the report with
         every part, Part 1's and B-5's, under Policy.OFFICIAL (B = SMOKE_B); its profile nonofficial
      P4 the DT rows of that report: read, label, the arms' non-official pairs, the markdown
      P5 the official computations of that report (dedup (ii)-(iii)) under Policy.OFFICIAL with the 37:
@@ -113,15 +115,19 @@ DT_LABEL = "descriptive TEST; provisional artifact (the evaluator scores this st
 
 
 def tman_reader(path, *, expect_sha256=None):
-    """A stand-in for TMAN's reader (src.tman.validate.read_inventory, which B-4 swaps in): the stub's
-    checks without its stub mark, so that open_inventory reads the export under Policy.OFFICIAL."""
-    return H.read_inventory(path, expect_sha256=expect_sha256)
+    """The marked stand-in for TMAN's reader (H.STANDIN_MARK; B-4, LB4-1): the stub's checks on the official
+    world's synthetic export, which open_inventory accepts under Policy.OFFICIAL with --synthetic-inputs only."""
+    return H.read_inventory_stub(path, expect_sha256=expect_sha256)
+
+
+setattr(tman_reader, H.STANDIN_MARK, True)
 
 
 def inventory(path=None) -> H.Inventory:
     if path is None and CTX.inv is not None:
         return CTX.inv
-    inv = H.open_inventory(path or CTX.world.inventory_path, policy=Policy.OFFICIAL, reader=tman_reader)
+    inv = H.open_inventory(path or CTX.world.inventory_path, policy=Policy.OFFICIAL, reader=tman_reader,
+                           synthetic=True)
     if path is None:
         CTX.inv = inv
     return inv
@@ -647,20 +653,24 @@ def p_driver():
         f"{secs:.0f} s; warnings {st.family['warnings']}; unmet {lines.get('UNMET_OFFICIAL')}"
 
 
-def p_cli_first_refusal():
-    """P2: LREP's CLI on the official artifact (--synthetic-inputs --repo-root) reads the export with LREP's
-    stub, which Policy.OFFICIAL refuses: exit 2, stub_reader_official, nothing written. The first refusal
-    of the official profile, named for B-4 (the reader swap) with its file:line."""
+def p_reader_official():
+    """P2 (B-4, LB4-1): under Policy.OFFICIAL without --synthetic-inputs, LREP's stub and an unmarked foreign
+    callable are each refused before anything is read (stub_reader_official, its raise site named with
+    file:line); with --synthetic-inputs the stub and the marked stand-in read the official world's export (P3
+    writes the report with the stand-in)."""
     w = CTX.world
-    out = w.root / "rx_cli"
-    code, so, se = cli("report_extensions.py", "--stats-artifact", e2e_stats(), "--inventory",
-                       w.inventory_path, "--out-dir", out, "--repo-root", w.input_root, "--synthetic-inputs",
-                       "--strata", w.strata_path)
+
+    def foreign(path, *, expect_sha256=None):
+        return H.read_inventory_stub(path, expect_sha256=expect_sha256)
+    res = []
+    for r in (H.read_inventory_stub, foreign):
+        res.append(refused("stub_reader_official",
+                           lambda r=r: H.open_inventory(w.inventory_path, policy=Policy.OFFICIAL, reader=r)))
+    read = [H.open_inventory(w.inventory_path, policy=Policy.OFFICIAL, reader=r, synthetic=True).reader
+            for r in (H.read_inventory_stub, tman_reader)]
     site = raise_site(H.open_inventory, "stub_reader_official")
-    CTX.e2e["first_refusal"] = site
-    return (code == 2 and "RESULT: REFUSED (stub_reader_official); nothing written" in so
-            and "REFUSED stub_reader_official" in se and not out.exists()), \
-        f"exit {code}; first refusal at {site}"
+    return (all(ok for ok, _ in res) and read[0] == "src.stats.heldout_inputs.read_inventory_stub"
+            and read[1].endswith(".tman_reader")), f"{[d for _, d in res]}; read {read}; at {site}"
 
 
 def p_report():
@@ -797,8 +807,8 @@ def p_paths():
 def profile_cases():
     return [("P1", "the official driver writes the 37's statistics artifact (Policy.OFFICIAL, nonofficial)",
              p_driver),
-            ("P2", "LREP's CLI stops at its first refusal: stub_reader_official (B-4), nothing written",
-             p_cli_first_refusal),
+            ("P2", "LB4-1: under Policy.OFFICIAL the stub and an unmarked callable are refused without "
+                   "--synthetic-inputs; with it the stub and the marked stand-in read", p_reader_official),
             ("P3", "the CLI's body with a stand-in reader writes every part under Policy.OFFICIAL", p_report),
             ("P4", "the report's DT rows: read, label, non-official pairs, the markdown", p_dt_rows),
             ("P5", "dedup's eight contrasts and NI ran on the 37 under Policy.OFFICIAL",
