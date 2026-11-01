@@ -10,7 +10,8 @@ paths live under a new directory in TMPDIR (left in place); none contains "test"
      record equal to the statistics artifact's, the coincidence rule, the GT-present and disease-only
      fields equal to the AM-6 table's
   R  refusals: another candidate, a default that is not complete, a missing default, a selection
-     record that differs, a record that is not canvas
+     record that differs, a record that is not canvas; B-4 (LB4-9): another run given as a run-of-record
+     row's seed-42 input (descriptive_input_in_official)
   D  no p-value or interval key, determinism, the record sentence, no 'test' path
 
 Run:  TMPDIR=<a scratch directory without 'test'> python -B scripts/smoke_default_candidates.py
@@ -18,6 +19,7 @@ Run:  TMPDIR=<a scratch directory without 'test'> python -B scripts/smoke_defaul
 from __future__ import annotations
 
 import copy
+import dataclasses
 import json
 import os
 import sys
@@ -76,6 +78,29 @@ def refused(code, fn):
 
 def m(stats):
     return pooled_miou_from_totals(stats.dataset_tp, stats.dataset_gt, stats.dataset_pred)
+
+
+class _Injected(H.StatsArtifact):
+    """The statistics artifact (its family, views and the 37 unchanged), except that one stage's clean input
+    is another run: the injection LB4-9 guards against."""
+    def clean(self, stage):
+        return getattr(CTX, "injected", {}).get(stage) or H.StatsArtifact.clean(self, stage)
+
+
+def r_guard_record_row():
+    """LB4-9: record_row recomputes a run-of-record row from the 37's inputs only: another run as E2's seed-42
+    input (E2's default candidate's artifact) is descriptive_input_in_official, before anything is computed."""
+    st = stats_artifact()
+    inv = H.open_inventory(CTX.world.inventory_path, policy=st.policy, reader=H.read_inventory_stub)
+    ba = H.load_bound(inv, slot=LF.DEFAULT_SLOTS["E2"], stage="E2", precision="fp32", scope="clean",
+                      input_root=CTX.world.input_root, policy=st.policy)
+    CTX.injected = {"E2": ba.loaded}
+    try:
+        fake = _Injected(**{f.name: getattr(st, f.name) for f in dataclasses.fields(st)})
+        ok, detail = refused("descriptive_input_in_official", lambda: DC.record_row(fake, "accuracy_e1_e2"))
+    finally:
+        CTX.injected = {}
+    return ok and "['E2 seed 42']" in detail, detail
 
 
 def default_run(stage):
@@ -307,6 +332,8 @@ def cases():
             ("R3", "a missing default is refused", r_missing),
             ("R4", "a selected checkpoint that is not DL-109's is refused", r_selection),
             ("R5", "a default whose record is not canvas is refused", r_not_canvas),
+            ("R6", "LB4-9: another run as a run-of-record row's seed-42 input: descriptive_input_in_official",
+             r_guard_record_row),
             ("D1", "no p-value, interval or Holm key", d_no_inference_keys),
             ("D2", "byte-identical JSON on repeated runs", d_deterministic),
             ("D3", "identical markdown on repeated runs", d_deterministic_md),

@@ -154,9 +154,13 @@ def pair_values(base_run, cand_run, policy) -> dict:
 
 
 def record_row(stats: H.StatsArtifact, cid: str) -> dict:
-    """A run-of-record row recomputed from the 37 inputs, checked bitwise against family.json."""
+    """A run-of-record row recomputed from the 37 inputs, checked bitwise against family.json. LB4-9: it takes
+    the 37's own inputs only (heldout_inputs.require_official_inputs; descriptive_input_in_official)."""
     b, c, _ = D.COMPARISON_TABLE[cid]
-    mine = pair_values(stats.clean(b).run, stats.clean(c).run, stats.policy)
+    b_run, c_run = stats.clean(b).run, stats.clean(c).run
+    H.require_official_inputs(stats, {f"{b} seed 42": b_run, f"{c} seed 42": c_run},
+                              f"default_candidates.record_row ({cid}), recomputed from the 37 inputs (LB4-9)")
+    mine = pair_values(b_run, c_run, stats.policy)
     fam = stats.family
     comp = next(x for x in fam["a3a_family"]["comparisons"] if x["comparison_id"] == cid)
     task = next(t for t in fam["bootstrap_tasks"] if t["task_id"] == f"{cid}__{DATASET_MIOU_DELTA}")

@@ -27,7 +27,8 @@ are TMAN's catalogue's and a divergence is in TMAN's shape (both units present, 
      Policy.OFFICIAL (R2a, R2l-R2n; LB4-1), TMAN's reader as the default (R2o) and TMAN's refusals through
      open_inventory, on TMAN's own exports built by its fixture library by import (R2o-R2t; LB4-2); model
      rows in TMAN's ROW_SPEC (R2u-R2w; LB4-6); TMAN's row convention, one case per class, and identity
-     (R14c-R14h; LB4-7)
+     (R14c-R14h; LB4-7); E5:s42:sel's parent at each R-12 call site (R12f-R12p; LB4-8, pilot.runs declared
+     for a case where no catalogue slot reaches the site); the seed-42 guard (R21; LB4-9)
   D  determinism
   X  hygiene: no test or p-value object imported, repr floats, pp only in markdown, no 'test' path
 
@@ -39,6 +40,7 @@ from __future__ import annotations
 
 import ast
 import copy
+import dataclasses
 import json
 import math
 import os
@@ -1117,6 +1119,156 @@ def r_row_identity():
     return not bad and len(rows) > 40, f"{len(rows)} rows; {bad[:3]}"
 
 
+# B-4, LB4-8: E5:s42:sel's parent, option (A), at every R-12 call site; LB4-9: the guard's reach
+E5SEL, E5PILOTS = "E5:s42:sel", ("E5:s42:clip1:15ep", "E5:s42:clip5:15ep")
+PILOT_RULE = "a pilot selection"                       # the LB4-8 refusal's own words (heldout_inputs._parent_of)
+
+
+def entry_set(slot, **fields):
+    """An edit: `slot`'s entry fields replaced (a value None removes the field)."""
+    def edit(export, binding):
+        e = entry(export, slot)
+        for k, v in fields.items():
+            if v is None:
+                e.pop(k, None)
+            else:
+                e[k] = v
+    return edit
+
+
+def piloted(name, edit=None, pilots=None) -> H.Inventory:
+    """The world's export (edited) read by the stub, its pilot runs the checkout catalogue's plus `pilots`, a
+    pilot.runs declared for the case (LB4-8)."""
+    inv = inventory(variant(name, edit) if edit else CTX.world.inventory_path)
+    return dataclasses.replace(inv, pilot_runs={**inv.pilot_runs, **(pilots or {})}) if pilots else inv
+
+
+def pilot_refused(fn):
+    """parent_rule by LB4-8's rule (its own words), not by the catalogue reading."""
+    ok, detail = refused("parent_rule", fn)
+    return ok and PILOT_RULE in detail, detail
+
+
+def r_pilot_check_parentage():
+    """LB4-8 (check_parentage, heldout_inputs.py's first R-12 read): the world keeps TMAN's null catalogue.parent
+    for E5:s42:sel and names the pilot of record as its derived entry's own parent and inputs.run_slot; the
+    checkout catalogue's pilot.runs are clip1 and clip5; planned_cells passes and E5 seed 42 has a model."""
+    inv = inventory(CTX.world.inventory_path)
+    e = inv.entry(E5SEL)
+    cells = H.planned_cells(inv)
+    return (e["catalogue"]["parent"] is None and e["parent"] == e["inputs"]["run_slot"] == LF.E5_PILOT_OF_RECORD
+            and inv.pilot_runs.get(E5SEL) == E5PILOTS and cells.has_model("E5", 42)), str(inv.pilot_runs)
+
+
+def r_pilot_parent_slot():
+    """LB4-8 (parent_slot): E5:s42:sel's parent is the pilot of record."""
+    got = H.parent_slot(inventory(CTX.world.inventory_path), E5SEL)
+    return got == LF.E5_PILOT_OF_RECORD, got
+
+
+def r_pilot_run_of_record():
+    """LB4-8 (seed_stability._run_of_record, seed_stability.py's parent_slot call): E5 seed 42's QAT run, the
+    seed-42 comparator of a cut E5 run at 43/44, is the pilot of record, counted in epochs."""
+    inv = inventory(CTX.world.inventory_path)
+    run, unit, _ = SS._run_of_record(inv, H.planned_cells(inv), "E5", 42)
+    return (run, unit) == (LF.E5_PILOT_OF_RECORD, "epoch"), f"{run}, {unit}"
+
+
+def r_pilot_kind_null():
+    """LB4-8 (resolve_status, a selection without a model): a kind-null pilot selection has no own parent and is
+    parent_rule, fail closed."""
+    return pilot_refused(lambda: H.planned_cells(piloted("e5_kind_null", entry_set(
+        E5SEL, kind=None, parent=None, inputs=None))))
+
+
+def r_pilot_invalid():
+    """LB4-8's three conditions, each the only one broken: an own parent outside pilot.runs (inputs.run_slot
+    agreeing), one that is not inputs.run_slot (both pilot runs), and a pilot selection that is not derived
+    (not_run, its own parent and inputs.run_slot the pilot of record): parent_rule each."""
+    p = LF.E5_PILOT_OF_RECORD
+    out = [pilot_refused(lambda n=n, ed=ed: H.planned_cells(piloted(n, ed))) for n, ed in (
+        ("e5_outside", entry_set(E5SEL, parent="E1:s42:80k", inputs={"run_slot": "E1:s42:80k"})),
+        ("e5_run_slot", entry_set(E5SEL, inputs={"run_slot": LF.E5_PILOT_LOST})),
+        ("e5_not_derived", entry_set(E5SEL, kind="not_run", reason="parent cut", parent=p, inputs={"run_slot": p})))]
+    return all(ok for ok, _ in out), str([d for _, d in out])
+
+
+def r_pilot_not_run_status():
+    """LB4-8 (_not_run_status): a not-run PTQ model with a null catalogue.parent and a pilot.runs declared for the
+    case is not derived: parent_rule by the pilot rule."""
+    s = "E4:s43:list42"
+    return pilot_refused(lambda: H.planned_cells(piloted("e4_not_run_pilot", entry_set(
+        s, kind="not_run", reason="parent cut", catalogue={"never_cut": True, "cut_place": None, "parent": None}),
+        {s: ("E1:s43:80k",)})))
+
+
+def r_pilot_ptq_null():
+    """LB4-8 (resolve_status, a PTQ model with kind null): its null catalogue.parent with a pilot.runs declared
+    for the case: no own parent, parent_rule by the pilot rule."""
+    s = "E4:s43:list42"
+    return pilot_refused(lambda: H.planned_cells(piloted("e4_null_pilot", entry_set(
+        s, kind=None, catalogue={"never_cut": True, "cut_place": None, "parent": None}), {s: ("E1:s43:80k",)})))
+
+
+def r_pilot_qat_run():
+    """LB4-8 (check_parentage, its second R-12 read, the QAT run's own parent): E5 seed 43's QAT run with a null
+    catalogue.parent and a pilot.runs declared for the case is a listed run, not derived: parent_rule."""
+    s = "E5:s43:15ep"
+    return pilot_refused(lambda: H.planned_cells(piloted("e5_s43_run_pilot", entry_set(
+        s, catalogue={"never_cut": False, "cut_place": None, "parent": None}), {s: ("E1:s43:80k",)})))
+
+
+def r_pilot_b5_ptq():
+    """LB4-8 (_b5_parent): a B-5 PTQ model (E7-R1) with a null catalogue.parent and a pilot.runs declared for the
+    case reads its derived entry's own parent: b5_status gives it a model."""
+    s, parent = "E7-R1:s42:list42", "E3-R1:s42:lambda0.5:alpha25:80k"
+    st = H.b5_status(piloted("e7r1_pilot", entry_set(
+        s, catalogue={"never_cut": False, "cut_place": None, "parent": None}, parent=parent,
+        inputs={"run_slot": parent}), {s: (parent,)}), s)
+    return st.has_model, str(st)
+
+
+def r_pilot_b5_qat():
+    """LB4-8 (b5_status, a QAT selection's run): E6-KD:s42:sel with a null catalogue.parent and a pilot.runs
+    declared for the case reads its derived entry's own parent, its QAT run: b5_status gives it a model."""
+    s, run = "E6-KD:s42:sel", "E6-KD:s42:15ep"
+    st = H.b5_status(piloted("e6kd_pilot", entry_set(
+        s, catalogue={"never_cut": False, "cut_place": None, "parent": None}, parent=run, inputs={"run_slot": run}),
+        {s: (run,)}), s)
+    return st.has_model, str(st)
+
+
+def r_pilot_catalogue_reading():
+    """LB4-8 only for a null catalogue.parent with pilot.runs present: without pilot.runs, E5:s42:sel's null is
+    parent_rule by the catalogue reading (_catalogue_parent); a non-null catalogue.parent is read even where a
+    pilot.runs is declared for the case (E6:s43:sel)."""
+    inv = inventory(CTX.world.inventory_path)
+    ok, detail = refused("parent_rule", lambda: H.planned_cells(dataclasses.replace(inv, pilot_runs={})))
+    kept = H.planned_cells(piloted("e6_s43_declared", pilots={"E6:s43:sel": ("E6:s42:15ep",)}))
+    return (ok and "catalogue.parent None is not a slot" in detail and kept.has_model("E6", 43)), detail
+
+
+class _Injected(H.StatsArtifact):
+    """The statistics artifact (its family, views and the 37 unchanged), except that E7's clean input is
+    another run: the injection LB4-9 guards against."""
+    def clean(self, stage):
+        return CTX.copies.get("injected_e7") if stage == "E7" else H.StatsArtifact.clean(self, stage)
+
+
+def r_guard_seed42():
+    """LB4-9: seed_stability's seed-42 cross-checks take the 37's inputs only: another run as E7's seed-42 input
+    (E7-R1's artifact) is descriptive_input_in_official, before R-11."""
+    st = stats_artifact()
+    inv = inventory(CTX.world.inventory_path)
+    ba = H.load_slot(st, inv, slot="E7-R1:s42:list42", stage="E7-R1", precision="int8_ptq",
+                     input_root=CTX.world.input_root)
+    CTX.copies["injected_e7"] = ba.loaded
+    fake = _Injected(**{f.name: getattr(st, f.name) for f in dataclasses.fields(st)})
+    ok, detail = refused("descriptive_input_in_official", lambda: SS.load_seed_inputs(
+        fake, inv, input_root=CTX.world.input_root))
+    return ok and "['E7 seed 42']" in detail, detail
+
+
 def r_slot_missing():
     def edit(export, binding):
         entry(export, "E2:s43:lambda0.5:80k")["role"] = []
@@ -1721,6 +1873,20 @@ def cases():
          r_parent_not_run),
         ("R12e", "R-12 parent_rule (a PTQ model with kind null whose parent is E2's run)",
          r_ptq_parent_stage),
+        ("R12f", "LB4-8: E5:s42:sel's null catalogue.parent, its own parent the pilot (check_parentage)",
+         r_pilot_check_parentage),
+        ("R12g", "LB4-8: parent_slot gives E5:s42:sel's pilot of record", r_pilot_parent_slot),
+        ("R12h", "LB4-8: seed_stability._run_of_record gives E5 seed 42's pilot run", r_pilot_run_of_record),
+        ("R12i", "LB4-8: a kind-null pilot selection is parent_rule, fail closed (resolve_status)", r_pilot_kind_null),
+        ("R12j", "LB4-8: outside pilot.runs, not inputs.run_slot, not derived: parent_rule each", r_pilot_invalid),
+        ("R12k", "LB4-8 at _not_run_status: a not-run pilot selection is parent_rule", r_pilot_not_run_status),
+        ("R12l", "LB4-8 at resolve_status's PTQ null branch: parent_rule", r_pilot_ptq_null),
+        ("R12m", "LB4-8 at check_parentage's QAT run read: parent_rule", r_pilot_qat_run),
+        ("R12n", "LB4-8 at _b5_parent: a B-5 PTQ model reads its own parent", r_pilot_b5_ptq),
+        ("R12o", "LB4-8 at b5_status: a B-5 QAT selection reads its own parent", r_pilot_b5_qat),
+        ("R12p", "LB4-8 only for a null catalogue.parent with pilot.runs present", r_pilot_catalogue_reading),
+        ("R21", "LB4-9: another run as E7's seed-42 input: descriptive_input_in_official (before R-11)",
+         r_guard_seed42),
         ("R13", "R-13 seed42_not_complete", r_seed42_complete),
         ("R13b", "R-13 seed42_not_complete before R-12 (E3 cut at seed 42, E6/E7 with models)",
          r_seed42_before_parentage),

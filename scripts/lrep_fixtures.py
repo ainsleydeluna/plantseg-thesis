@@ -17,10 +17,9 @@ The world also writes what TMAN will supply (IF§11 v2):
     pilot and the QAT run slots, the not-built L slots and ARM's measurement), whose records name
     directories that do not exist. Every slot key, stage, seed, role and parent is TMAN's committed
     catalogue's (CATALOGUE, typed from configs/tday_catalogue.json at lane/tman ee5593e; ruling
-    LREP-B5-RULE-4 R4-5); the catalogue leaves E5:s42:sel's parent to its pilot (null), and the world
-    names E5:s42:clip1:15ep, the pilot it takes as the winner. LREP's R-12 reads catalogue.parent only,
-    so the catalogue's null is refused parent_rule (DL-24 R2-01; smoke_lrep_official_profile's N1 and P9
-    name it for B-4);
+    LREP-B5-RULE-4 R4-5); the catalogue leaves E5:s42:sel's parent to its pilot (null), and, as TMAN's
+    builder does, the world keeps that null and names E5:s42:clip1:15ep, the pilot it takes as the winner,
+    in the derived entry's own `parent` and `inputs.run_slot` (B-4, LB4-8's null-parent world);
   * B5-S2's duplicate-free TEST list tman/tday_dedup.json in TMAN's tday_dedup/1 (B-4, LB4-5), built by
     TMAN's dedup.build_doc in its canonical bytes, never by hand (four of the thirty images removed, the
     reasons partitioning them), named by the export's `dedup` {path, sha256, removed_by_reason};
@@ -207,8 +206,9 @@ CATALOGUE = {
 #: src/tman/schema.py:182 at ee5593e, typed out (R4-5(e)): every fixture slot key matches it.
 SLOT_KEY_RE = re.compile(r"^[A-Za-z][A-Za-z0-9-]*(?::[A-Za-z0-9.]+)+$")
 #: The catalogue leaves E5:s42:sel's QAT run to the pilot decision (parent null, pilot runs clip1 and clip5);
-#: the world takes clip1 as the winner, its run of record, and enters clip5 as the losing pilot. It writes
-#: clip1 as E5:s42:sel's catalogue.parent, which R-12 reads (the catalogue's null: DL-24 R2-01, for B-4).
+#: the world takes clip1 as the winner, its run of record, and enters clip5 as the losing pilot. E5:s42:sel's
+#: catalogue.parent stays null; its derived entry names clip1 as its own parent and inputs.run_slot, which
+#: R-12 reads for a pilot selection (B-4, LB4-8).
 E5_PILOT_OF_RECORD, E5_PILOT_LOST = "E5:s42:clip1:15ep", "E5:s42:clip5:15ep"
 
 
@@ -775,8 +775,11 @@ def build_export(world: World) -> tuple[dict, dict]:
                 entries.append(_entry(qrun, "listed_run", stage, seed, ["listed"], never_cut=False,
                                       parent=run_slot(H.PARENT_STAGE[stage], seed),
                                       telemetry=world.telemetry[qrun]))
-                entries.append(_entry(rslot, "derived", stage, seed, [role], parent=qrun,
-                                      cls="derived"))
+                pilot = (stage, seed) == ("E5", 42)
+                sel = _entry(rslot, "derived", stage, seed, [role], parent=None if pilot else qrun, cls="derived")
+                if pilot:                    # LB4-8: the catalogue's null; the pilot in the entry's own parent
+                    sel.update(parent=qrun, inputs={"run_slot": qrun})
+                entries.append(sel)
                 kind, run_id = "derived", training_run_id(stage, seed)
             models.append(_row(rslot, stage, seed, prec,
                                source_kind=ids["source_kind"], source_sha=ids["source"],

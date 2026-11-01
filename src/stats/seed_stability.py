@@ -224,10 +224,15 @@ class SeedInputs:
 def load_seed_inputs(stats: H.StatsArtifact, inv: H.Inventory, *, input_root: Path) -> SeedInputs:
     """Seed 42 from the 37 (with their identity against the family slots, R-11); seeds 43 and 44
     from the binding (R-6 to R-9); the E1/E6 cells at 43/44 when both runs have a model (LRB11);
-    then R-10 over every artifact read, and DL-99's E1 record."""
+    then R-10 over every artifact read, and DL-99's E1 record. LB4-9: seed 42's cross-checks take the 37's own
+    inputs only, checked before R-11 (heldout_inputs.require_official_inputs; descriptive_input_in_official)."""
     cells = H.planned_cells(inv)
-    H.check_seed42_identity(inv, cells, stats)
     grid = H.inferential_cells()
+    H.require_official_inputs(stats, {**{f"{st} seed 42": stats.clean(st) for st in D.STAGES},
+                                      **{f"{st} seed 42 {cid}": stats.cell(st, n, s)
+                                         for st in D.CORRUPTION_STAGES for cid, n, s in grid}},
+                              "seed_stability's seed-42 cross-checks, which take the 37 inputs (LB4-9)")
+    H.check_seed42_identity(inv, cells, stats)
     clean, corrupted, labels = {}, {}, {}
     for stage in D.STAGES:
         clean[(stage, 42)] = stats.clean(stage)

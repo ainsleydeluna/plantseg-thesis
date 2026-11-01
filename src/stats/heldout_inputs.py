@@ -17,7 +17,7 @@ writes them, never parses the TEST-day manifest and never builds its path (IF§1
   * Status: TMAN's kinds verbatim, mapped to the AM-19 item 6(e) cell labels by IF§11.2's table. A QAT
     selection that is not `derived` reads its QAT run's kind; a PTQ model with kind null takes its
     parent's cut or divergence; `superseded` is refused (R-5); parentage runs through the QAT run
-    (R-12; LRB5).
+    (R-12; LRB5), a pilot selection's through its derived entry's own parent (LB4-8).
   * Every scored artifact outside the 37 is read through `driver.load_input` (four-file hash
     snapshots, MANIFEST agreement, canvas guard, declared identity, the policy's row rules) after its
     files are compared with its binding `artifacts` record, and every field of that record is checked
@@ -489,6 +489,7 @@ class Inventory:
     entries: Mapping[str, tuple]                  # slot -> entries (more than one: refused on read)
     rows: Mapping[tuple, tuple]                   # (slot, precision) -> model rows
     records: Mapping[tuple, tuple]                # (slot, precision, scope, cell) -> binding records
+    pilot_runs: Mapping[str, tuple] = dataclasses.field(default_factory=dict)  # LB4-8: catalogue.pilot.runs
 
     @property
     def evaluator_commit(self) -> str:
@@ -529,6 +530,17 @@ def tman_reader():
     return read_inventory
 
 
+def catalogue_pilot_runs() -> dict:
+    """LB4-8: {slot: catalogue.pilot.runs} of the checkout's catalogue, read through TMAN's own expression,
+    schema.load_catalogue of manifest.CODE_ROOT / schema.CATALOGUE_REL (the file TMAN's reader checks the export
+    against; the export carries no `pilot`)."""
+    from src.tman import manifest as M
+    from src.tman import schema as S
+    cat = S.load_catalogue((M.CODE_ROOT / S.CATALOGUE_REL).read_bytes(), S.CATALOGUE_REL)
+    return {slot: tuple(s["pilot"]["runs"]) for slot, s in cat.slots.items()
+            if isinstance(s.get("pilot"), dict) and isinstance(s["pilot"].get("runs"), list)}
+
+
 def reader_name(reader) -> str:
     """LB4-1: the recorded name of a reader, f"{reader.__module__}.{reader.__qualname__}"."""
     return (f"{getattr(reader, '__module__', '?')}."
@@ -555,6 +567,7 @@ def open_inventory(path, *, policy: Policy, expect_sha256=None, reader=None, syn
                                                   "with --synthetic-inputs (IF§11.6; LB4-1)")
     try:
         doc = reader(path, expect_sha256=expect_sha256)
+        pilots = catalogue_pilot_runs()                             # LB4-8, through TMAN's expression
     except LrepRefusal:
         raise
     except TmanRefused as e:                                        # LB4-2: TMAN's code kept where LREP has it
@@ -589,7 +602,8 @@ def open_inventory(path, *, policy: Policy, expect_sha256=None, reader=None, syn
         path=Path(path), doc=doc, policy=policy, reader=reader_name(reader),
         entries=_index(doc["entries"], lambda e: e["slot"]),
         rows=_index(doc["models"], lambda r: (r["slot"], r["precision"])),
-        records=_index(records, lambda r: (r["slot"], r["precision"], r["scope"], r.get("cell"))))
+        records=_index(records, lambda r: (r["slot"], r["precision"], r["scope"], r.get("cell"))),
+        pilot_runs=pilots)
 
 
 # --------------------------------------------------------------------------------------------------
@@ -729,17 +743,34 @@ def _checked_kind(inv: Inventory, slot: str) -> tuple[dict, str | None]:
     return e, kind
 
 
-def _parent_of(inv: Inventory, e: dict, slot: str) -> str:
-    """R-12: a slot's catalogue.parent, which must be a slot of the export. TMAN's catalogue gives
-    E5:s42:sel parent null (its pilot decides) and a derived entry its own parent (src/tman/schema.py:392
-    and :461-464 at ee5593e); this reads catalogue.parent only, so that entry is refused here (DL-24 R2-01:
-    a difference reported for B-4, not coded)."""
+def _catalogue_parent(inv: Inventory, e: dict, slot: str) -> str:
+    """R-12: a slot's catalogue.parent, which must be a slot of the export."""
     cat = e.get("catalogue")
     parent = cat.get("parent") if isinstance(cat, dict) else None
     if not inv.has_entry(parent):
         raise refusal("parent_rule", f"slot {slot!r}: catalogue.parent {parent!r} is not a slot of the "
                                      "export")
     return parent
+
+
+def _parent_of(inv: Inventory, e: dict, slot: str) -> str:
+    """R-12: a slot's parent, which must be a slot of the export: its catalogue.parent, except (LB4-8;
+    LREP-B5-RULE-5 item 1, option (A)) for a pilot selection -- catalogue.parent null and the checkout
+    catalogue's pilot.runs present (Inventory.pilot_runs) -- whose parent is its derived entry's own `parent`
+    (src/tman/schema.py:409), which must be one of pilot.runs and equal inputs.run_slot; otherwise
+    parent_rule. A pilot selection that is not derived (kind null among them) has no own parent and is
+    parent_rule, fail closed (E5 seed 42's selection exists, DL-172, so its TEST entry is derived)."""
+    cat, runs = e.get("catalogue"), inv.pilot_runs.get(slot)
+    if not (isinstance(cat, dict) and "parent" in cat and cat["parent"] is None and runs is not None):
+        return _catalogue_parent(inv, e, slot)
+    own, inputs = e.get("parent"), e.get("inputs")
+    run_slot = inputs.get("run_slot") if isinstance(inputs, dict) else None
+    if e.get("kind") != "derived" or own not in runs or own != run_slot or not inv.has_entry(own):
+        raise refusal("parent_rule", f"slot {slot!r}: a pilot selection (catalogue.parent null, pilot.runs "
+                                     f"{list(runs)}) takes its derived entry's own parent, one of pilot.runs and "
+                                     f"inputs.run_slot: kind {e.get('kind')!r}, parent {own!r}, inputs.run_slot "
+                                     f"{run_slot!r} (LB4-8)")
+    return own
 
 
 def parent_slot(inv: Inventory, slot: str) -> str:
@@ -1662,7 +1693,8 @@ __all__ = [
     "LABEL_NON_FINITE", "LABEL_PARENT_CUT", "LABEL_PARENT_DIVERGED", "TELEMETRY_UNITS", "CODES",
     "LrepRefusal", "refusal", "sha256_file", "strict_json_text", "path_problem", "safe_relative_path",
     "cell_id", "corruption_names", "inferential_cells", "stage_spec", "read_inventory_stub",
-    "TMAN_READER", "STANDIN_MARK", "tman_reader", "reader_name", "Inventory", "open_inventory",
+    "TMAN_READER", "STANDIN_MARK", "tman_reader", "catalogue_pilot_runs", "reader_name", "Inventory",
+    "open_inventory",
     "SlotStatus", "record_slots", "parent_slot", "resolve_status",
     "entry_label", "PlannedCells", "check_parentage", "model_row",
     "row_identity", "row_stage_seed", "check_rows", "check_missing_runs", "check_seed42", "planned_cells",
