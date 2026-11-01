@@ -329,15 +329,18 @@ def _callers(name: str) -> set:
 def g_plumbing():
     """R4-1 items 3-5: the DT read is reached through load_slot only, which only the arm tables' rows and
     am6's coverage call; dt_pair only by the arm rows; the official-input guard where dedup's (ii) and (iii)
-    and am6's seed-42 rows take their inputs (load_bound itself is not the DT read: its other callers read
-    official slots)."""
+    and am6's seed-42 rows take their inputs, and (LB4-9) where default_candidates.record_row and
+    seed_stability's seed-42 cross-checks (load_seed_inputs) take theirs (load_bound itself is not the DT
+    read: its other callers read official slots)."""
     got = {n: _callers(n)
            for n in ("read_descriptive_test", "load_slot", "dt_pair", "require_official_inputs")}
     want = {"read_descriptive_test": {("heldout_inputs.py", "load_slot")},
             "load_slot": {("arm_tables.py", "arm_row"), ("am6_tables.py", "coverage_items")},
             "dt_pair": {("arm_tables.py", "arm_row")},
             "require_official_inputs": {("dedup_subset.py", "build_dedup"),
-                                        ("am6_tables.py", "build_am6_tables")}}
+                                        ("am6_tables.py", "build_am6_tables"),
+                                        ("default_candidates.py", "record_row"),
+                                        ("seed_stability.py", "load_seed_inputs")}}
     return got == want, str(got)
 
 
