@@ -46,6 +46,7 @@ LATE = "2026-11-04T10:00:00Z"                       # a derived model made after
 FREEZE_1F = {"source": "AM-22 item 1(f)", "d_date": None, "conditions": None}   # B2R5: a freeze of item 1(f)
 AFTER_1102 = "2026-11-03T02:00:00Z"     # --now of a 1(f) freeze printer: the end of 2026-11-02 has passed (PA :2353)
 REAL_FILES = ("configs/tday_catalogue.json", "configs/kd_schedule.json", "configs/qat_selection_rules.json",
+              "configs/qat_selection_rules_am23.json", "configs/e6kd_selection_rules.json",   # B-4: each slot's file
               *[f"configs/calibration/ptq_calibration_seed{s}.json" for s in (42, 43, 44, 45)],
               "reports/derived/mde_entry_20261009T034825Z.json", "reports/strata/train_strata_v1.json",
               *[f"configs/kd_arms/{a}.json" for a in ("e3_flip", "e3_r1", "e3_r2")])      # the arm registry at S
@@ -2825,6 +2826,162 @@ def case_draft_and_cli():
     # P2R6: +2, hasher_pin_data_mismatch (freeze mode on, after the pins' gates) and hasher_values_mismatch (session)
 
 
+# ============================================================ TMAN B-4: each QAT selection slot's own rules file
+AM23_RULES_SHA256 = "e299941524968f143359d154566930819cd064152691395fb3647f4de0d98f3d"     # DL-146
+E6KD_RULES_SHA256 = "5acad295ffd71ea7630bf10184d0ae0f959a395ed7a27306b23f7dc86c847304"     # DL-171
+OWN_RULES = {   # selection slot -> (its run slot, its run id, its rules file: the registered text's, restated here)
+    "E6-E2:s42:sel": ("E6-E2:s42:15ep", "e6-e2_s42_15ep", "configs/qat_selection_rules_am23.json"),
+    "E6-KD:s42:sel": ("E6-KD:s42:15ep", "e6-kd_s42_15ep", "configs/e6kd_selection_rules.json")}
+
+
+def own_rules_sha256(sel: str) -> str:
+    """The sha256 of a slot's rules fixture: the committed file's bytes (OWN_RULES, not the code's mapping)."""
+    from src.tman import schema as S
+    return S.sha256_bytes((REPO / OWN_RULES[sel][2]).read_bytes())
+
+
+class RulesWorld(World):
+    """B-4's world: the World with E6-E2 and E6-KD at seed 42 complete (E6-E2 not cut; AM-3 triggered) and their
+    selections hashed at the freeze, each record under its own rules file (all three are REAL_FILES) and each citing
+    the pilot's clip selection, which the pilot's rules made."""
+
+    def complete_runs(self):
+        super().complete_runs()
+        for run, rid, _ in OWN_RULES.values():
+            FX.qat_run(self.runs, rid, stage=self.cat.slots[run]["stage"], source_sha256=self.parent_sha256(run))
+            self.run_entry(run, "listed_run", rid, None, self.row(f"{run} completes"))
+
+    def derived_models(self):
+        super().derived_models()
+        for sel, (run, rid, _) in OWN_RULES.items():
+            q = self.qat_files(rid, self.cat.slots[run]["stage"], 5.0)
+            q["hashed"]["record"] = runs_variant(self, q["hashed"]["record"], "qat_selection.json",
+                                                 {"rules_sha256": own_rules_sha256(sel)})
+            self.qat_selection(sel, run)
+            self.entries[sel]["inputs"]["rules_sha256"] = own_rules_sha256(sel)
+
+    def terminal_entries(self):
+        global CUT_GROUPS
+        saved, CUT_GROUPS = CUT_GROUPS, {g: v for g, v in CUT_GROUPS.items() if g != "E6-E2"}
+        try:
+            super().terminal_entries()
+        finally:
+            CUT_GROUPS = saved
+
+    def make_sources(self):
+        trigger = self.S.json_file_bytes({"format": "am3_trigger/1", "triggered": True})
+        FX.commit_files(self.repo, {"reports/derived/am3_trigger.json": trigger}, "AM-3 triggered", date=RECORDS_DATE)
+        self.records = self.R.Records.at_head(self.repo)
+        src = super().make_sources()
+        src["trigger"]["triggered"] = True
+        return src
+
+
+def case_rules_per_slot():
+    """TB13 per slot (manifest.QAT_RULES_BY_SLOT, the registered text's files): E6-E2's and E6-KD's selections, each
+    made under its own rules file and citing the pilot's clip selection, build and pass freeze and draft mode; the
+    defect's shape (E6-E2 entered under the base file) is refused by the builder and the validator; a record or entry
+    under another file, a clip selection under the slot's own file, an uncommitted rules file and a slot the mapping
+    lacks are refused in both modes, each detail naming rules_sha256 or clip_selection only. E6:s42:sel and the pilot
+    pass as before (case_world_passes); TB9's refusals stand (case_derived_sources:
+    pilot_winner_naming_another_record_TB9, pilot_selection_of_the_retained_loser_TB9_B34)."""
+    from src.tman import manifest as M
+    e6e2, e6kd, base = "E6-E2:s42:sel", "E6-KD:s42:sel", "configs/qat_selection_rules.json"
+    am23, kd = OWN_RULES[e6e2][2], OWN_RULES[e6kd][2]
+    sel = sorted(k for k, s in WORLD.cat.slots.items() if s["record_kind"] == "qat_selection")
+    check("rules_mapping_keys_are_the_catalogue_s_qat_selection_slots_B4", sorted(M.QAT_RULES_BY_SLOT) == sel,
+          str(sorted(set(M.QAT_RULES_BY_SLOT) ^ set(sel))))
+    want = {**{f"{st}:s{seed}:sel": base for st in ("E5", "E6") for seed in (42, 43, 44)},   # AM-4a items 2-3
+            e6e2: am23, "E6-R1:s42:sel": am23, "E6-R2:s42:sel": am23, e6kd: kd}   # DL-146; AM-23 3(a); DL-171
+    check("rules_mapping_is_the_registered_text_s_B4", M.QAT_RULES_BY_SLOT == want, str(M.QAT_RULES_BY_SLOT))
+    shas = [WORLD.S.sha256_bytes((REPO / base).read_bytes()), own_rules_sha256(e6e2), own_rules_sha256(e6kd)]
+    check("rules_fixtures_are_the_three_committed_files_B4",
+          shas == [QAT_RULES_SHA256, AM23_RULES_SHA256, E6KD_RULES_SHA256], str(shas))
+    check("pilot_slot_is_e5_s42_sel_B4", M.pilot_slot(WORLD.cat) == "E5:s42:sel")
+    try:
+        w, err = RulesWorld(), ""
+    except WORLD.S.TmanRefused as e:           # a refused build fails its check; a crash raises (no kill)
+        w, err = None, f"{e.code}: {e.detail}"
+    check("own_rules_selections_build_B4", w is not None, err[:300])
+    if w is None:
+        return
+    rules = [w.entry(w.doc, k)["inputs"]["rules_sha256"] for k in (e6e2, e6kd, "E6:s42:sel", "E5:s42:sel")]
+    for mode in ("freeze", "draft"):
+        code, passed, e = w.run(mode)
+        check(f"own_rules_selections_pass_{mode}_B4", code is None and passed == gate_codes(mode) and rules == [
+            AM23_RULES_SHA256, E6KD_RULES_SHA256, QAT_RULES_SHA256, QAT_RULES_SHA256],
+              f"{code}: {e.detail[:300] if e else rules}")
+    src = copy.deepcopy(w.sources)
+    for k in (e6e2, e6kd):
+        del src["entries"][k]["inputs"]["rules_sha256"]
+    got = [w.entry(w.M.build_manifest(w.records, w.cat, src, runs_root=w.runs), k)["inputs"]["rules_sha256"]
+           for k in (e6e2, e6kd)]
+    check("builder_reads_each_slot_s_own_rules_B4", got == [AM23_RULES_SHA256, E6KD_RULES_SHA256], str(got))
+
+    def build_refusal(entries):
+        try:
+            w.M.build_manifest(w.records, w.cat, dict(w.sources, entries=entries), runs_root=w.runs)
+        except w.S.TmanRefused as e:
+            return e.code, e.detail
+        return None, ""
+    entries = copy.deepcopy(w.sources["entries"])
+    entries[e6e2]["inputs"]["rules_sha256"] = QAT_RULES_SHA256
+    got = build_refusal(entries)
+    check("builder_refuses_e6e2_entered_under_the_base_rules_B4", got == (
+        "derived_inputs_incomplete", f"{e6e2}: inputs.rules_sha256 is not the committed {am23}'s {AM23_RULES_SHA256} "
+                                     "(TB13)"), str(got))
+    entries = copy.deepcopy(w.sources["entries"])
+    entries["E4:s42:list43"]["method"] = "qat_selection"         # a method its slot does not take: M7's reading kept
+    try:
+        odd, err = w.M.build_manifest(w.records, w.cat, dict(w.sources, entries=entries), runs_root=w.runs), ""
+    except w.S.TmanRefused as e:
+        odd, err = None, f"{e.code}: {e.detail}"
+    check("builder_keeps_m7_s_reading_for_a_method_its_slot_does_not_take_B4", odd is not None and w.entry(
+        odd, "E4:s42:list43")["inputs"]["rules_sha256"] == QAT_RULES_SHA256, err[:300])
+    if odd is not None:
+        expect_gate(w, "a_method_its_slot_does_not_take_refused_as_at_m7_B4", "derived_counted_as_run", doc=odd,
+                    detail="method 'qat_selection' is not the slot's record kind 'ptq'")
+    recs = {(k, tag): runs_variant(w, w.entry(w.doc, k)["hashed"]["record"], f"variant_b4_{tag}.json",
+                                   {"rules_sha256": sha})
+            for k, tag, sha in ((e6e2, "base", QAT_RULES_SHA256), (e6e2, "e6kd", E6KD_RULES_SHA256),
+                                (e6kd, "base", QAT_RULES_SHA256), (e6kd, "am23", AM23_RULES_SHA256))}
+    clips = {k: runs_variant(w, w.entry(w.doc, k)["inputs"]["clip_selection"], f"variant_b4_{tag}.json",
+                             {"rules_sha256": own_rules_sha256(k)}) for k, tag in ((e6e2, "am23"), (e6kd, "e6kd"))}
+    for mode in ("freeze", "draft"):
+        sfx = "" if mode == "freeze" else "_in_a_draft"
+        for name, k, sha, rel in (("e6e2_entered_under_the_base_rules", e6e2, QAT_RULES_SHA256, am23),
+                                  ("e6kd_entered_under_e6e2_s_rules", e6kd, AM23_RULES_SHA256, kd)):
+            expect_gate(w, f"{name}_refused_B4{sfx}", "derived_inputs_incomplete", mode, mutated(
+                w, lambda d, k=k, sha=sha: w.entry(d, k)["inputs"].update(rules_sha256=sha)),
+                detail=f"{k}: inputs.rules_sha256 is not the committed {rel}'s {own_rules_sha256(k)[:12]} (TB13)")
+        for (k, tag), ref in recs.items():
+            expect_gate(w, f"{k}_record_under_{tag}_rules_refused_B4{sfx}", "derived_hash_mismatch", mode, mutated(
+                w, lambda d, k=k, ref=ref: w.entry(d, k)["hashed"].update(record=ref)),
+                detail=f"{k}: its records disagree with the entry and its run at ['rules_sha256']")
+        for k, ref in clips.items():
+            expect_gate(w, f"{k}_clip_selection_under_its_own_rules_refused_B4{sfx}", "derived_hash_mismatch", mode,
+                        mutated(w, lambda d, k=k, ref=ref: w.entry(d, k)["inputs"].update(clip_selection=ref)),
+                        detail=f"{k}: its records disagree with the entry and its run at ['clip_selection (its "
+                               "sha256, format and rules)']")
+    saved = dict(M.QAT_RULES_BY_SLOT)
+    try:
+        del M.QAT_RULES_BY_SLOT[e6e2]
+        got = build_refusal(w.sources["entries"])
+        check("builder_refuses_a_slot_the_mapping_lacks_B4", got[0] == "derived_inputs_incomplete"
+              and got[1].startswith(f"{e6e2}: no QAT selection rules file is registered"), str(got))
+        for mode, sfx in (("freeze", ""), ("draft", "_in_a_draft")):
+            expect_gate(w, f"a_slot_the_mapping_lacks_refused_B4{sfx}", "derived_inputs_incomplete", mode,
+                        detail=f"{e6e2}: no QAT selection rules file is registered")
+    finally:
+        M.QAT_RULES_BY_SLOT.clear()
+        M.QAT_RULES_BY_SLOT.update(saved)
+    FX.git(w.repo, "rm", "-q", "--", kd)
+    FX.git(w.repo, "commit", "-q", "-m", "the E6-KD rules file removed", date=MANIFEST_DATE)
+    w.records = w.R.Records.at_head(w.repo)
+    for mode, sfx in (("freeze", ""), ("draft", "_in_a_draft")):
+        expect_gate(w, f"e6kd_rules_file_uncommitted_refused_B4{sfx}", "record_uncommitted", mode, detail=kd)
+
+
 WORLD: World | None = None
 
 
@@ -2845,7 +3002,7 @@ def main() -> int:
                              case_moved_freeze, case_printers, case_draft_and_cli, case_inventory,
                              case_inventory_dedup, case_inventory_dedup_reader, case_inventory_fq_off,
                              case_shallow_records,
-                             case_malformed_inputs_refused, case_coverage))
+                             case_malformed_inputs_refused, case_rules_per_slot, case_coverage))
     finally:
         if REAL_TEACHER is not None:
             WORLD.M.TEACHER_OF_RECORD.clear()

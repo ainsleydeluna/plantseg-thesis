@@ -13,8 +13,8 @@ TB19 Q9; A2: its reader re-hashes what it lists, and LQP's run checks the TEST s
 Inputs: PTQ, AM-19 item 4(c)'s five (the parent checkpoint's sha256, src/quant/ptq.py:840; the calibration list's
 file sha256; the PTQ script's path and commit, :724-733; the image digest, :736-745; the qconfig fingerprint,
 :929-933 with src/quant/runner.py:208-213). QAT: the run's telemetry sha256 as recorded on the pod (it binds every
-epoch checkpoint's sha256), the conversion and selection scripts' commit, the image digest,
-configs/qat_selection_rules.json's sha256 (read at build and by the validator, TB13) and the pilot's clip-selection
+epoch checkpoint's sha256), the conversion and selection scripts' commit, the image digest, the sha256 of the slot's
+own rules file (QAT_RULES_BY_SLOT; read at build and by the validator, TB13 per slot) and the pilot's clip-selection
 record (its path under the run directories and its sha256, so the validator reads it: TB9).
 
 Generator pins (AM-19 item 1(c)): the corrupted-TEST cache pin is L-CORR's JSON, embedded verbatim (IF§3): the
@@ -54,15 +54,47 @@ HASHED_QAT = {**HASHED, "evaluations": ("list", ("obj", {"dir": "str", "fault_re
               "selected_checkpoint": S.REF}
 APPEND = {"slot": "slot", "hashed": ("map", "any"), "ptq_record": S.nullable(S.REF)}    # A2: the made entry's
 QAT_RULES_REL = "configs/qat_selection_rules.json"
+# TB13 per slot (TMAN B-4): each QAT selection slot's rules file is the one its registered text names, read as bytes
+# and hashed, never parsed; a qat_selection slot not listed is refused (qat_rules_rel), never given QAT_RULES_REL. E5
+# and E6 at seeds 42-44, the pilot E5:s42:sel among them: AM-4a items 2-3, DL-09, DL-139, DL-143 to DL-145. E6-E2:
+# "AM-23's rules file" (DL-146). E6-R1 and E6-R2: E6-E2's recipe (AM-23 item 3(a)), that file's stages and
+# src/quant/qat_select.py:41-44 (ORCH-5's ruling TMANB4-STOP-1; both cut, DL-137 and DL-138). E6-KD: DL-171 (AM-3;
+# L-AM3 B-2's file, DL-140).
+QAT_RULES_AM23_REL, QAT_RULES_E6KD_REL = "configs/qat_selection_rules_am23.json", "configs/e6kd_selection_rules.json"
+QAT_RULES_BY_SLOT = {"E5:s42:sel": QAT_RULES_REL, "E6:s42:sel": QAT_RULES_REL, "E5:s43:sel": QAT_RULES_REL,
+                     "E5:s44:sel": QAT_RULES_REL, "E6:s43:sel": QAT_RULES_REL, "E6:s44:sel": QAT_RULES_REL,
+                     "E6-KD:s42:sel": QAT_RULES_E6KD_REL, "E6-E2:s42:sel": QAT_RULES_AM23_REL,
+                     "E6-R1:s42:sel": QAT_RULES_AM23_REL, "E6-R2:s42:sel": QAT_RULES_AM23_REL}
 COMPLETE_KINDS = ("scored_run", "default_candidate", "arm_teacher", "listed_run")     # a complete run: a model
 # DL-10's lists (§1.6): AM-10's list of record (seed 42) and AM-16 item 5's sensitivity lists (seeds 43-45)
 CALIBRATION_ROLES = {42: "am10_list_of_record", 43: "am16_calibration_sensitivity",
                      44: "am16_calibration_sensitivity", 45: "am16_calibration_sensitivity"}
 
 
-def qat_rules_sha256(records: R.Records) -> str:
-    """TB13: the sha256 of the committed QAT selection rules file, read at build and by the validator."""
-    return S.sha256_bytes(records.read(QAT_RULES_REL))
+def qat_rules_rel(slot: str) -> str:
+    """TB13 per slot: a QAT selection slot's rules file (QAT_RULES_BY_SLOT); a slot it does not list is refused
+    derived_inputs_incomplete, never given the base file."""
+    if slot not in QAT_RULES_BY_SLOT:
+        raise S.TmanRefused("derived_inputs_incomplete", f"{slot}: no QAT selection rules file is registered for the "
+                                                         "slot (QAT_RULES_BY_SLOT; TB13)")
+    return QAT_RULES_BY_SLOT[slot]
+
+
+def qat_rules_sha256(records: R.Records, slot: str) -> str:
+    """TB13 per slot: the sha256 of the slot's committed rules file (the validator's and the pilot's reading)."""
+    return S.sha256_bytes(records.read(qat_rules_rel(slot)))
+
+
+def pilot_slot(cat) -> str:
+    """The U4 pilot's selection slot: the catalogue's one qat_selection slot whose pilot block has runs (E5:s42:sel)."""
+    (slot,) = [k for k, s in cat.slots.items() if s["record_kind"] == "qat_selection" and s["pilot"]
+               and "runs" in s["pilot"]]
+    return slot
+
+
+def pilot_rules_sha256(records: R.Records, cat) -> str:
+    """The sha256 of the pilot's rules file: the clip selection every QAT slot cites was made under it (TMAN B-4)."""
+    return qat_rules_sha256(records, pilot_slot(cat))
 MODEL_OF_RECORD_ROLES = ("family", "per_seed")                                       # A2: these carry ptq_record
 
 
@@ -158,17 +190,19 @@ def _same_second(a, b) -> bool:
         return False
 
 
-def derived_hash_errors(entry: dict, parent: dict, cat, ci: dict | None, runs_root) -> list[str]:
+def derived_hash_errors(entry: dict, parent: dict, cat, ci: dict | None, runs_root, *,
+                        pilot_rules_sha256: str) -> list[str]:
     """derived_hash_mismatch: a hashed derived model is what its records say, read under the run directories
     (decision (xviii); DL-24 #25, #27, #34, #49, #50). Its cited files -- the provenance, the record and a QAT
     selection's selected checkpoint -- have the cited sha256, and the provenance's created_utc is its made instant. A
     PTQ model's provenance names the listed inputs (the parent checkpoint, the calibration list with the index's
     checksum and role, its seed, the qconfig, the script's commit) and the hashed artifacts and image digest. A QAT
-    selection's record (qat_selection/1) names the rules file, the run with its telemetry and clip norm, and as its
-    winner the selected checkpoint (its epoch_end row) with the hashed artifact and provenance, which is the run's
-    and the selected epoch's conversion of the hashed artifacts. The clip selection the inputs cite
-    (qat_clip_selection/1, the same rules) names the pilot's selection as its winner, with its run, telemetry and
-    record (TB9), and its winner's clip norm is every run's (src/quant/qat.py clip_binding)."""
+    selection's record (qat_selection/1) names its slot's rules file (inputs.rules_sha256), the run with its telemetry
+    and clip norm, and as its winner the selected checkpoint (its epoch_end row) with the hashed artifact and
+    provenance, which is the run's and the selected epoch's conversion of the hashed artifacts. The clip selection the
+    inputs cite (qat_clip_selection/1, made under the pilot's rules file: pilot_rules_sha256, TMAN B-4) names the
+    pilot's selection as its winner, with its run, telemetry and record (TB9), and its winner's clip norm is every
+    run's (src/quant/qat.py clip_binding)."""
     from . import completion as C
     h, inp, slot, root = entry["hashed"], entry["inputs"], entry["slot"], Path(runs_root)
     code, qat = "derived_hash_mismatch", entry["method"] == "qat_selection"
@@ -223,6 +257,7 @@ def derived_hash_errors(entry: dict, parent: dict, cat, ci: dict | None, runs_ro
     clip, csha = R.read_json_file(root / inp["clip_selection"]["path"], R.CLIP_SELECTION, code=code)
     won = (_dotted(clip, "winner.run_id"), _dotted(clip, "winner.telemetry_sha256"),
            _dotted(clip, "winner.qat_selection.sha256"))
+    inp = dict(inp, rules_sha256=pilot_rules_sha256)    # TMAN B-4: the clip selection's rules are the pilot's file
     if csha != inp["clip_selection"]["sha256"] or _dotted(clip, "format") != R.CLIP_SELECTION_FORMAT \
             or _dotted(clip, "rules_sha256") != inp["rules_sha256"]:
         bad.append("clip_selection (its sha256, format and rules)")
@@ -864,12 +899,15 @@ def build_manifest(records: R.Records, cat, sources: dict, *, runs_root=None, pr
     entries = build_entries(cat, sources["entries"], runs_root)
     qat = [x for x in entries if x.get("kind") == "derived" and x.get("method") == "qat_selection"
            and isinstance(x.get("inputs"), dict)]
-    rules = qat_rules_sha256(records) if qat else None
-    for x in qat:                                   # TB13: the rules file's sha256 is read at build
+    for x in qat:                                   # TB13 per slot: its rules file's sha256 is read at build
         x["inputs"] = dict(x["inputs"])
+        # a catalogue qat_selection slot's own file; the method on another slot keeps M7's reading (the base file),
+        # which the validator refuses derived_counted_as_run, as at M7
+        rel = qat_rules_rel(x["slot"]) if cat.slots[x["slot"]]["record_kind"] == "qat_selection" else QAT_RULES_REL
+        rules = S.sha256_bytes(records.read(rel))
         if x["inputs"].setdefault("rules_sha256", rules) != rules:
             raise S.TmanRefused("derived_inputs_incomplete", f"{x['slot']}: inputs.rules_sha256 is not the committed "
-                                                             f"{QAT_RULES_REL}'s {rules} (TB13)")
+                                                             f"{rel}'s {rules} (TB13)")
     body = {"calibration_index": calibration_index(records),
             "entries": entries,
             "evaluator": {"commit": e, "files": evaluator_files(src, e) if e else {}},

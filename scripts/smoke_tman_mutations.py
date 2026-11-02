@@ -494,6 +494,40 @@ M = [
     ("builder_reads_the_rules", MAN, [('x["inputs"].setdefault("rules_sha256", rules)',
                                        'x["inputs"].setdefault("rules_sha256", None)')],
      "validate", "case_record_gates", "builder_reads_the_rules_sha256_TB13", [], None),
+    # ------------------- TMAN B-4: each QAT selection slot's own rules file (TB13 per slot, QAT_RULES_BY_SLOT)
+    ("rules_of_e6e2_and_e6kd_swapped", MAN, [
+        ('"E6-KD:s42:sel": QAT_RULES_E6KD_REL, "E6-E2:s42:sel": QAT_RULES_AM23_REL,',
+         '"E6-KD:s42:sel": QAT_RULES_AM23_REL, "E6-E2:s42:sel": QAT_RULES_E6KD_REL,')],
+     "validate", "case_rules_per_slot", "own_rules_selections_build_B4", ["derived_inputs_incomplete"], None),
+    ("rules_of_every_slot_the_base_file", MAN, [
+        ('QAT_RULES_AM23_REL, QAT_RULES_E6KD_REL = "configs/qat_selection_rules_am23.json", '
+         '"configs/e6kd_selection_rules.json"', "QAT_RULES_AM23_REL = QAT_RULES_E6KD_REL = QAT_RULES_REL")],
+     "validate", "case_rules_per_slot", "own_rules_selections_build_B4", ["derived_inputs_incomplete"], None),
+    ("rules_of_e6e2_deleted", MAN, [(' "E6-E2:s42:sel": QAT_RULES_AM23_REL,', "")],
+     "validate", "case_rules_per_slot", "own_rules_selections_build_B4", ["derived_inputs_incomplete"], None),
+    ("builder_reads_the_base_rules_for_every_slot", MAN, [
+        ('        rel = qat_rules_rel(x["slot"]) if cat.slots[x["slot"]]["record_kind"] == "qat_selection" else '
+         'QAT_RULES_REL', "        rel = QAT_RULES_REL")],
+     "validate", "case_rules_per_slot", "own_rules_selections_build_B4", ["derived_inputs_incomplete"], None),
+    ("builder_maps_a_method_its_slot_does_not_take", MAN, [
+        ('        rel = qat_rules_rel(x["slot"]) if cat.slots[x["slot"]]["record_kind"] == "qat_selection" else '
+         'QAT_RULES_REL', '        rel = qat_rules_rel(x["slot"])')],
+     "validate", "case_rules_per_slot", "builder_keeps_m7_s_reading_for_a_method_its_slot_does_not_take_B4",
+     ["derived_counted_as_run"], None),
+    ("inputs_gate_compares_every_slot_with_the_base_rules", VAL, [
+        ('            rules = M.qat_rules_sha256(x.records, qat[0]["slot"])',
+         '            rules = M.qat_rules_sha256(x.records, "E5:s42:sel")')],
+     "validate", "case_rules_per_slot", "own_rules_selections_pass_freeze_B4", ["derived_inputs_incomplete"], None),
+    ("committed_read_of_the_base_rules_only", VAL, [
+        ("        rels += sorted({M.QAT_RULES_BY_SLOT[k] for k in qat + [M.pilot_slot(x.cat)] "
+         "if k in M.QAT_RULES_BY_SLOT})", "        rels.append(M.QAT_RULES_REL)")],
+     "validate", "case_rules_per_slot", "e6kd_rules_file_uncommitted_refused_B4", ["record_uncommitted"], None),
+    ("record_compared_with_the_pilot_s_rules", MAN, [('"rules_sha256": inp["rules_sha256"], "run_id": rid,',
+                                                      '"rules_sha256": pilot_rules_sha256, "run_id": rid,')],
+     "validate", "case_rules_per_slot", "own_rules_selections_pass_freeze_B4", ["derived_hash_mismatch"], None),
+    ("clip_selection_compared_with_the_slot_s_rules", MAN, [("    inp = dict(inp, rules_sha256=pilot_rules_sha256)",
+                                                             "    inp = dict(inp)")],
+     "validate", "case_rules_per_slot", "own_rules_selections_pass_freeze_B4", ["derived_hash_mismatch"], None),
     ("calibration_lists_in_dl10", MAN, [('        if item["file_sha256"] not in (dl10_text or ""):',
                                          "        if False:")],
      "validate", "case_record_gates", "calibration_list_not_dl10_s_B30", ["calibration_index_mismatch"], None),
