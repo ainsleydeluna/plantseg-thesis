@@ -528,6 +528,11 @@ M = [
     ("clip_selection_compared_with_the_slot_s_rules", MAN, [("    inp = dict(inp, rules_sha256=pilot_rules_sha256)",
                                                              "    inp = dict(inp)")],
      "validate", "case_rules_per_slot", "own_rules_selections_pass_freeze_B4", ["derived_hash_mismatch"], None),
+    # TMANB4-ADD-1: g_record_uncommitted reads a named-rule cut's rule_record only (a cutoff cut's is chk_date's)
+    ("rule_records_of_every_cut", VAL, [('        return self._cut_refs("rule_record", rule="named_rule")',
+                                         '        return self._cut_refs("rule_record")')],
+     "validate", "case_rule_records_named_only", "cutoff_cut_s_run_record_is_not_read_as_a_committed_record_ADD1",
+     ["record_uncommitted"], None),
     ("calibration_lists_in_dl10", MAN, [('        if item["file_sha256"] not in (dl10_text or ""):',
                                          "        if False:")],
      "validate", "case_record_gates", "calibration_list_not_dl10_s_B30", ["calibration_index_mismatch"], None),

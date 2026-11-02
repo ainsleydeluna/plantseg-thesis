@@ -2982,6 +2982,31 @@ def case_rules_per_slot():
         expect_gate(w, f"e6kd_rules_file_uncommitted_refused_B4{sfx}", "record_uncommitted", mode, detail=kd)
 
 
+def case_rule_records_named_only():
+    """TMANB4-ADD-1: g_record_uncommitted reads the rule_record of a named-rule cut only (Ctx.rule_records). A cutoff
+    cut's rule_record here is an end-of-run record under --runs ("<run_id>/<file>", entries.py run_end), not a
+    committed file; chk_date checks it against the records. A named rule's record that is not committed is still
+    refused."""
+    w = World()
+    rid = KD_RUNS[E3S42][1]
+    tel = f"{rid}/{w.M.telemetry_name(w.cat.slots[E3S42])}"
+    records = {"cutoff": {"path": tel, "sha256": w.S.sha256_bytes((w.runs / tel).read_bytes()), "date": "2026-10-22"},
+               "named_rule": {"path": "reports/arms/arm_go_rule_uncommitted.json", "sha256": "0" * 64,
+                              "date": FREEZE_DAY}}
+    docs = {}
+    for nn, (rule, rr) in enumerate(records.items(), 40):
+        ref = w.entry_file("cut", [A], dict(w.cut_fields("A", [A], "no card", False), rule=rule, rule_record=rr),
+                           nn=nn)
+        w.commit({ref["path"]: w.files[ref["path"]]}, f"a {rule} cut of A whose rule_record is not committed")
+        docs[rule] = mutated(w, lambda d, ref=ref: cite_cut(w, d, ref, [A]))
+    code, passed, e = w.run("freeze", docs["cutoff"])
+    check("cutoff_cut_s_run_record_is_not_read_as_a_committed_record_ADD1", "record_uncommitted" in (passed or [])
+          and not (code == "record_uncommitted" and tel in e.detail),
+          f"{code} after {len(passed or [])}: {(e.detail if e else '')[:200]}")
+    expect_gate(w, "named_rule_record_uncommitted_still_refused_ADD1", "record_uncommitted", doc=docs["named_rule"],
+                detail="reports/arms/arm_go_rule_uncommitted.json")
+
+
 WORLD: World | None = None
 
 
@@ -3002,7 +3027,8 @@ def main() -> int:
                              case_moved_freeze, case_printers, case_draft_and_cli, case_inventory,
                              case_inventory_dedup, case_inventory_dedup_reader, case_inventory_fq_off,
                              case_shallow_records,
-                             case_malformed_inputs_refused, case_rules_per_slot, case_coverage))
+                             case_malformed_inputs_refused, case_rules_per_slot, case_rule_records_named_only,
+                             case_coverage))
     finally:
         if REAL_TEACHER is not None:
             WORLD.M.TEACHER_OF_RECORD.clear()

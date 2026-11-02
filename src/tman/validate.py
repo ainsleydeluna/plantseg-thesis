@@ -228,12 +228,14 @@ class Ctx:
         lanes = doc.get("lanes") if isinstance(doc, dict) else None
         return lanes if isinstance(lanes, list) else []
 
-    def _cut_refs(self, field: str) -> list[dict]:
-        """`field`'s references in the cut entry files, well-formed ones only (the entry-file gate checks the
-        fields)."""
+    def _cut_refs(self, field: str, rule: str | None = None) -> list[dict]:
+        """`field`'s references in the cut entry files (those of `rule` only, when given), well-formed ones only (the
+        entry-file gate checks the fields)."""
         out = []
         for c in self.cited_entries():
             doc = self.entry_doc(c["path"]) if c["kind"] == "cut" else None
+            if rule is not None and not (isinstance(doc, dict) and doc.get("rule") == rule):
+                continue
             refs = doc.get(field) if isinstance(doc, dict) else None
             refs = [refs] if isinstance(refs, dict) else refs
             out += [r for r in refs if isinstance(r, dict) and isinstance(r.get("path"), str)
@@ -245,8 +247,10 @@ class Ctx:
         return self._cut_refs("results_known")
 
     def rule_records(self) -> list[dict]:
-        """The records the named-rule cuts cite (AM-19 item 3(b))."""
-        return self._cut_refs("rule_record")
+        """The records the named-rule cuts cite (AM-19 item 3(b)); a cutoff cut's rule_record is chk_date's
+        (TMANB4-ADD-1): the record that set its cutoff (entries.py), a run's record under --runs, the alpha selection
+        or decision record, the pilot's winner record, or a repeat's stop record (date only)."""
+        return self._cut_refs("rule_record", rule="named_rule")
 
     def qat_hashed(self) -> list[dict]:
         """The QAT selections' hashed forms, in the body and appended (their fields are derived_inputs_incomplete's
