@@ -2559,3 +2559,495 @@ its merge.
   not by itself make the extension report non-official. It is labelled, its pair is non-official, and
   it never reaches an official computation (§7).
 - **For B-4** (§10 items 1 and 3): the E5:s42:sel parent ruling, and the conformance smoke's cases.
+
+## Part 4 (B-4)
+
+Session LREP-B4 (cloud, the 5x account) ran B-4 under the orchestrator's GO of 31 Oct 2026
+(lrepb4_go_20261031.md, 26,337 B, sha256 5329b701…250f1, equal to the kick-off line's; MEASURED at S0), with
+the facts file lrep_b4_facts_20261031.md (61,986 B, 3cb11cd8…) as a map, not an authority. Every rule, hard
+limit, SCOPE rule, venv recipe and STEP form of the B-5 GO stands unless the GO changes it. The orchestrator's
+rulings in the session: LB4-S1-1 (with amendment LB4-A2), LB4-S3-1 and LB4-S6-1 (with amendment LB4-A3).
+Labels: MEASURED, DOCUMENTED, REPOSITORY-PROVEN, INFERRED.
+
+Every file:line below was read at 3cff39f, the last code commit. This report's commit changes only this file,
+so the lines hold at the final commit.
+
+### 1. Base, commits and the scoped diff
+
+**Base** MBL = 70fd5453bdac88cfbd6f3d26852880ac121430a9: Ice's merge of master M6
+(31f782d52380359fb85726db6f258bacf50b7ddc, which holds TMAN) into lane/lrep 62ca0f8; tree c96022e3, no
+trailers (ORCH-4 verified it on GitHub). At S0 (MEASURED, 31 Oct): `git ls-remote origin
+refs/heads/lane/lrep` printed MBL, `refs/heads/master` printed M6 exactly, and `git rev-list --parents -n 1
+MBL` printed MBL, 62ca0f8 and M6. The move ran as the GO's three commands (the checkout approved at its
+prompt after Auto mode refused it); then HEAD was MBL on refs/heads/lane/lrep with the scoped status empty.
+
+Commits on lane/lrep since MBL. Each is by explicit path with `git commit --only -F <message> -- <paths>`
+(the new smoke first staged by its path); none has a trailer (each checked: `%(trailers:only)` empty) and
+none is a merge. Each was followed by `git push origin HEAD:refs/heads/lane/lrep` and `git ls-remote --heads
+origin lane/lrep`, which printed its tip.
+
+| | commit | paths | subject |
+|---|---|---|---|
+| B4-1 | a6e239c84e1f7fac7381be23a2a7bd5ba89b20f3 | 14 | B4-1: TMAN's reader by default; under OFFICIAL TMAN's only; TMAN's refusals keep their code (LB4-1 to LB4-4) |
+| B4-2 | 73672e8c033a5b395c95ed6b5da497ad80794097 | 5 | B4-2: the duplicate-free file in TMAN's tday_dedup/1 (LB4-5) |
+| B4-3 | d7cb32a49106662fb600a4d3d8505e63bea55892 | 4 | B4-3: model rows in TMAN's ROW_SPEC; TMAN's row convention and identity (LB4-6, LB4-7) |
+| B4-4 | 10106fe8a99e2fff1c147548801377803b269f5a | 8 | B4-4: E5:s42:sel's parent, option (A), at every R-12 call site; the guard's reach (LB4-8, LB4-9) |
+| B4-4a | 14db5f58c817b76b50546a9693e9a3a311aa3c84 | 1 | B4-4a: G2's caller list gains LB4-9's two guards (ruling LB4-S3-1) |
+| B4-5 | b6bffb375e087e3944be9c2a270919ad2cee6f0b | 11 | B4-5: the telemetry base, the code paths, quant_rows' text (LB4-10 to LB4-12; LB4-A2) |
+| B4-6 | 119a449eb176bec6d2e4b707e2ed54794d22a98d | 1 | B4-6: the conformance smoke (LB4-13; LB4-A1, LB4-3, LB4-4) |
+| B4-F1 | ec12bbe71415a02f6d5f72b427ac71bda1879b73 | 5 | B4-F1: DL-24's src/stats fixes and the catalogue's code-path entry (ruling LB4-S6-1; LB4-A3) |
+| B4-F2 | 3cff39f3689c7dcf25c6b157d062dcd75b7d1ce0 | 7 | B4-F2: DL-24's fixture, smoke and text fixes (ruling LB4-S6-1) |
+
+B4-F2 is the last code commit. This report is the next commit and changes only this file.
+
+`git diff --stat 70fd5453bdac88cfbd6f3d26852880ac121430a9 -- . ':(exclude)docs/reference/reference.pdf'
+':(exclude)docs/reference' ':(exclude,icase)*test*'` at 3cff39f (MEASURED 2 Nov; the report commit adds this
+file):
+
+```
+ scripts/lrep_fixtures.py               | 174 +++++++---
+ scripts/report_extensions.py           |  15 +-
+ scripts/smoke_am6_tables.py            |   4 +-
+ scripts/smoke_arm_tables.py            |   6 +-
+ scripts/smoke_dedup_subset.py          | 166 +++++----
+ scripts/smoke_default_candidates.py    |  31 +-
+ scripts/smoke_lrep_conformance.py      | 483 ++++++++++++++++++++++++++
+ scripts/smoke_lrep_mutations.py        | 187 +++++++++--
+ scripts/smoke_lrep_official_profile.py | 147 ++++----
+ scripts/smoke_quant_rows.py            |  35 +-
+ scripts/smoke_report_extensions.py     | 151 +++++++--
+ scripts/smoke_seed_stability.py        | 596 +++++++++++++++++++++++++++++++--
+ scripts/smoke_strata_tables.py         |   2 +-
+ src/stats/dedup_subset.py              |  30 +-
+ src/stats/default_candidates.py        |   8 +-
+ src/stats/heldout_inputs.py            | 266 ++++++++++-----
+ src/stats/quant_rows.py                |   8 +-
+ src/stats/report_extensions.py         |  44 ++-
+ src/stats/seed_stability.py            |  31 +-
+ 19 files changed, 2001 insertions(+), 383 deletions(-)
+```
+
+The size bound (about 400 changed lines in src/stats, smokes and fixtures excluded): src/stats MBL..3cff39f is
++255 −132 = 387 (MEASURED, `--shortstat`). Every changed file is in SCOPE; arm_tables.py and am6_tables.py are
+unchanged. Unchanged (MEASURED): src/tman/, TMAN's smokes, configs/tday_catalogue.json, src/eval/, the
+contracts, the decision log; src/stats/artifact.py, driver.py, report.py and scripts/run_stats.py are
+byte-identical to MBL (S7: `git diff` empty, sha256 of `git show MBL:<path>` equal to the file's).
+
+### 2. The venv
+
+$SCR/lrepvenv, built at S0.6 by `/usr/bin/python3.11 -m venv` with the B-5 GO's recipe (LREPB-ENV-1), MEASURED:
+- Python **3.11.18** (Part 2's venv: 3.11.17; LB4-S1-1 guard (4) has this difference recorded). No count of
+  S1 or S7 is attributed to it: S1's other 22 smokes equal Part 3's record (INFERRED).
+- requirements.lock blob 8431e533…, sha256 ebbf6782…d753a, 1,317 B; constraints = the lock minus torch,
+  torchvision and pywin32 (73 pins kept). pip 24.0 and setuptools 79.0.1 from the venv; no pip.conf; PIP_CERT
+  set by the environment.
+- Install 1 (`-c` the constraints): numpy 1.26.4, scipy 1.11.4, statsmodels 0.14.6, patsy 1.0.2, pandas 3.0.3,
+  Pillow 12.3.0, scikit-image 0.23.2, exit 0. Install 2: torch 2.1.0+cpu and torchvision 0.16.0+cpu,
+  `--no-deps`, from download.pytorch.org/whl/cpu, exit 0. Install 3 (`--no-deps`): typing_extensions 4.15.0,
+  filelock 3.14.0, sympy 1.14.0, mpmath 1.3.0, Jinja2 3.1.6, MarkupSafe 3.0.3, fsspec 2026.4.0, requests
+  2.28.2, certifi 2026.6.17, charset-normalizer 3.4.7, idna 3.18, urllib3 1.26.20, exit 0.
+- `pip check`: "No broken requirements found."; torch and torchvision import as 2.1.0+cpu and 0.16.0+cpu.
+  `pip freeze`: 30 packages, 26 at the lock's pins (Part 2's 26), torch and torchvision +cpu (the build tag
+  only), pip and setuptools outside the lock.
+- S0.7: `python -B -c "import src.tman.validate, src.tman.dedup, src.tman.binding"` exits 0.
+
+### 3. Baseline (S1, at MBL) and final (S7, at 3cff39f) RESULT lines
+
+Each smoke ran alone through one chain script, TMPDIR a new folder under the session scratchpad, nothing else
+running. S1: 31 Oct 15:57:10Z–16:53:20Z, HEAD MBL. S7: 2 Nov 03:26:12Z–04:38:35Z, HEAD 3cff39f. The scoped
+status was empty at each chain's start, before and after the full-size smoke, and at its end (MEASURED).
+
+| smoke | S1 (MBL) | S7 (3cff39f) | change and its cases |
+|---|---|---|---|
+| smoke_frozen_blobs | FROZEN BLOBS OK (10/10) | FROZEN BLOBS OK (10/10) | — |
+| smoke_stats_driver | 55/55 | 55/55 | — |
+| smoke_stats_bootstrap | 155/155 (A3b SMOKE OK) | 155/155 (A3b SMOKE OK) | — |
+| smoke_stats_paired | 45/45 | 45/45 | — |
+| smoke_eligibility_variants | 34/34 (its inner STOP/ERROR lines, as recorded) | 34/34 (the same) | — |
+| smoke_teacher_d4 | PASS (32/32) | PASS (32/32) | — |
+| smoke_eval_contract | 63/63 | 63/63 | — |
+| smoke_metrics_contract | PASS=21 (0/0/0) | PASS=21 (0/0/0) | — |
+| smoke_mde | 129/129 (35/35) | 129/129 (35/35) | — |
+| smoke_am5_exclusion | 50/50 (its inner D4/D5 FAIL lines, as recorded) | 50/50 (the same) | — |
+| smoke_stats_rehearsal | 41/41 | 41/41 | — |
+| smoke_stats_report | 63/63 | 63/63 | — |
+| smoke_stats_official_fullsize | 37/37 (pinned stack, (a) run) | 37/37 (pinned stack, (a) run) | — |
+| smoke_seed_stability | 116/116 | 152/152 | +36: R2l–R2t (B4-1); R2u–R2w, R14c–R14h (B4-3); R12f–R12p, R21 (B4-4); R22, R22b, X7 (B4-5); R2x, R22c (B4-F1); R2y (B4-F2) |
+| smoke_strata_tables | 37/37 | 37/37 | — |
+| smoke_default_candidates | 24/24 | 25/25 | +1: R6 (B4-4) |
+| smoke_am6_tables | 43/43 | 43/43 | — |
+| smoke_report_extensions | FAILED (59/60): H8 | OK (65/65) | H8 passes (B4-5; LB4-A2); +5: F5 (B4-1), H9–H12 (B4-5) |
+| smoke_lrep_descriptive | 17/17 | 17/17 | — |
+| smoke_arm_tables | 49/49 | 49/49 | — |
+| smoke_dedup_subset | 39/39 | 41/41 | +2: I14, I15 (B4-2) |
+| smoke_quant_rows | 20/20 | 21/21 | +1: Q6 (B4-5) |
+| smoke_lrep_mutations | FAILED (482/484; killed 276/277; codes 48/48) | OK (565/565; killed 324/324; codes 49/49) | K report:H8 and S56 pass again; +47 mutations, +34 killing-case lines (§5) |
+| smoke_lrep_official_profile | 32/32 | 32/32 | N1, P2, P9 recast (B4-1, B4-4); G2's caller list (B4-4a) |
+| smoke_lrep_conformance | — | OK (22/22) | new (B4-6; E8 and D7 in B4-F2) |
+| smoke_tman_parent | (33/33, TMAN's report) | PASS (33/33) | LB4-A1's record |
+
+**The S1 deviation (ruling LB4-S1-1).** Two of S1's counts differed from Part 3's record (60/60; 484/484,
+277/277): smoke_report_extensions failed H8 (h_report_code), and smoke_lrep_mutations failed H8's K line and
+S56 (killed by report:H8). Cause (REPOSITORY-PROVEN): H8 typed Part 3's six code paths and required them to
+equal `[*artifact.OFFICIAL_CODE_PATHS, the CLI]`; at MBL artifact.OFFICIAL_CODE_PATHS (src/stats/artifact.py:127-129)
+also holds src/corruption_roles.py (master 1c862a5, L-CORR-B3 C13) and src/tman (TMAN 2261100, B3B-2, B3R6).
+TMAN's report named neither count, so S1 stopped; the ruling made those two counts S1's baseline, with H8 the one
+allowed failure until B4-5. Fix: B4-5 made REPORT_CODE_PATHS artifact.OFFICIAL_CODE_PATHS by import (LB4-11),
+and H8 takes its expected list from it by import plus LREP's own entries, src/corruption_roles.py and src/tman by
+name (LB4-A2). S7 shows H8 passing and S56 killed, both smokes at Part 3's counts plus B-4's additions.
+
+### 4. LB4-1 to LB4-15 and the amendments: where each is met (file:line at 3cff39f)
+
+H = src/stats/heldout_inputs.py; RX = src/stats/report_extensions.py; SS = src/stats/seed_stability.py;
+LF = scripts/lrep_fixtures.py; cases by smoke and id (seed = smoke_seed_stability, report =
+smoke_report_extensions, official = smoke_lrep_official_profile, conformance = smoke_lrep_conformance).
+
+- **LB4-1, the reader.** The stub is read_inventory_stub (H:438, its marker H:483). open_inventory's default is
+  TMAN's src.tman.validate.read_inventory, imported when called (tman_reader, H:530); under Policy.OFFICIAL a
+  reader that is not TMAN's function itself is stub_reader_official unless `--synthetic-inputs` and marked
+  (H:554-570; STANDIN_MARK H:75). The recorded name is `module.qualname` (reader_name, H:548);
+  binding_not_read_by_tman is unmet unless it is TMAN_READER (H:72; RX:246). LREP's checks run after TMAN's reader
+  returns (H:587-614). The CLI passes no reader (scripts/report_extensions.py:80-85). Cases: seed R2a, R2l–R2n;
+  report F5; official P2 (the stub and an unmarked callable refused without `--synthetic-inputs`), N1 and P9
+  (parent_rule only for LB4-8's invalid cases); conformance E1, E8. The import clause as amended by **LB4-A3**:
+  B-4's own imports add no TMAN reader chain and no src.training to heldout_inputs' import, and no cycle
+  (conformance I1, I2; tman_reader's docstring H:530-532). The torch load is pre-existing (§10, item 3).
+- **LB4-2, TMAN's refusals.** schema.TmanRefused is caught explicitly; TMAN's code is kept when CODES holds it,
+  else inventory_invalid; the detail begins `tman:<code>: ` (H:576-578). One case per code read_inventory can
+  raise at MBL, on TMAN's own exports: seed R2o (the default reader), R2p (inventory_sha256_mismatch), R2q
+  (catalogue_invalid), R2r (dedup_invalid), R2s (binding_invalid), R2t (the test-path refusal, by string only).
+  Mutations S195 (the code dropped from the detail), S196.
+- **LB4-3, paths.** binding.path and dedup.path resolve against the export file's folder on both sides: TMAN's
+  read_export_dedup and binding block (src/tman/validate.py:1905, :1944); LREP's stub (H:464) and read_dedup
+  (H:1534). Asserted in conformance E6 (all four sites). The second assumption, E6-KD scored as stage E6, was
+  retired at B-5 (A14:1637): recorded as retired, not tested.
+- **LB4-4, the binding.** The file's format key is `format` with exactly TMAN's four top keys; LREP reads the
+  records from read_inventory's `doc["binding"]["artifacts"]` (H:601) and never the file's `inputs`; the stub's
+  `schema` check stays on the synthetic path only (H:472). Conformance E7.
+- **LB4-5, the duplicate-free file.** read_dedup checks the file's sha256, then parses it with TMAN's
+  dedup.read_dedup (H:1510-1553; the parse H:1544); DedupRecord gains reasons_partition, image_ids_sha256 and
+  kept_ids_sha256 (H:1485); DEDUP_FILE_FIELDS (H:176). dedup_subset.check_ids (dedup_subset.py:98-126) requires
+  |all| − |kept| == Σ removed_by_reason (:115) and both digests, each refusal naming its field; no "false"
+  branch and no overlap branch. Fixtures build the file with TMAN's build_doc and doc_bytes (LF dedup_doc,
+  dedup_bytes). Cases: smoke_dedup_subset I1–I15 (I14, I15 new); mutations S197–S200, R45, R46.
+- **LB4-6, model rows.** model_row reads TMAN's ROW_SPEC rows: converted_artifact_sha256 always present, null
+  but for an INT8 row, an extra fqoff_source accepted and never read (H:910-944). Cases: seed R2u, R2v, R2w, R2y;
+  conformance E2, D5. Mutations S205, S230, S231.
+- **LB4-7, the row convention and identity.** row_stage_seed (H:954-959) gives the evaluator stage and a null
+  seed for a teacher; check_rows (H:962) and check_row_at_entry (H:1147) use it; row_identity is TMAN's
+  binding.identity, imported when called (H:947-951). The STOP condition did not fire: TB17's identity reads
+  precision, converted_artifact_sha256 and source.sha256 only (src/tman/binding.py:247-250), never stage, seed
+  or slot, so an arm row cannot alias a family row by convention (REPOSITORY-PROVEN; DL-24 R3-08 agrees). Cases
+  R14c–R14h (one per class, their (stage, seed) typed); conformance D6. Mutations S201–S204 (S201 restores the
+  old equality). Fixtures write rows the same way (LF _row). The IF erratum wording is §8's below.
+- **LB4-8, E5:s42:sel's parent, option (A).** _parent_of (H:764) keeps the catalogue reading (_catalogue_parent,
+  H:754) and, for a pilot selection (catalogue.parent null and the checkout catalogue's pilot.runs present),
+  takes its derived entry's own parent, which must be one of pilot.runs and equal inputs.run_slot; otherwise
+  parent_rule; a selection that is not derived is parent_rule, fail closed. pilot.runs come from the checkout's
+  catalogue through TMAN's expression (catalogue_pilot_runs, H:537), read after the reader returns (H:582-586).
+  Every call site goes through it: parent_slot (H:784), _not_run_status (H:789), resolve_status (H:814),
+  check_parentage (H:879), _b5_parent (H:1394), b5_status (H:1423) and SS:391. Cases seed R12f–R12p; official N1,
+  P9; conformance E4 (TMAN's export: own parent E5:s42:clip5:15ep, the 21 planned cells under Policy.OFFICIAL).
+  Mutations S208–S220; R44 retargeted to _catalogue_parent.
+- **LB4-9, the guard's reach.** require_official_inputs (H:1685) also guards default_candidates.record_row
+  (default_candidates.py:161) and seed_stability's seed-42 cross-checks, before R-11 (SS:231). Cases defaults
+  R6, seed R21; official G2 pins the four callers (B4-4a). Mutations S221, S222.
+- **LB4-10, the telemetry base: answer (i)** (read_telemetry parses the VAL rows). read_telemetry reads TMAN's
+  `<run_id>/<name>` under the runs root (H:1316-1341), refuses runs_root_missing whenever it is called without
+  one (H:1325), and since B4-F1 refuses as path_unsafe an item that resolves outside the runs root or into
+  'test' (H:1340-1341). SS threads runs_root to it only (SS:406, :511, :517); RX gives it to the seed part only
+  (RX:265, :284-285); run() checks `--runs-root` absolute, outside the repository and free of 'test'
+  (RX:423-427, usage_invalid) and keeps the out-dir outside it (RX:429); the CLI's `--runs-root`
+  (scripts/report_extensions.py:57, :85). LREP's codes: 48 → 49. Cases seed R22, R22b, R22c, X7 (nothing else
+  reads the runs root); report H10–H12. Mutations C49, R47, R49, S223–S226. Fixtures write telemetry under the
+  world's runs root (LF telemetry_file).
+- **LB4-11, the code paths.** REPORT_CODE_PATHS = (*artifact.OFFICIAL_CODE_PATHS, the CLI, configs/tday_catalogue.json)
+  by import (RX:71; the catalogue added by ruling LB4-S6-1, Q2). The check reads git status and ls-files of those
+  paths, never their content (src/stats/artifact.py:743-767): no STOP. Cases report H8, H9. Mutations S56,
+  S227 (src/tman dropped), S229 (the catalogue dropped).
+- **LB4-12, quant_rows' text.** CONVERTED_VAL cites DL-146 (E6-E2) and DL-131 (E6 seed 42), both RECORDED, with
+  no value typed; E7-E2's and E7's come after the PTQ block (src/stats/quant_rows.py:31-33, :49-50). Cases Q5
+  (the citation, no value), Q6 (the old wording gone from the JSON, the markdown and the module). Mutation S228.
+- **LB4-13, the conformance smoke.** scripts/smoke_lrep_conformance.py, 22 cases (§6).
+- **LB4-14** is recorded verbatim in §7; **LB4-15**'s records are §8.
+- **LB4-A1.** smoke_tman_parent at MBL has no case refusing an arm or a quant_descriptive descendant (S2, MEASURED:
+  its refusals are all on family and per_seed descendants), so conformance A1 and A2 add them through TMAN's
+  validator: parent_rule_violation, every earlier freeze gate (55) passing. smoke_tman_parent: 33/33 at S7.
+- **LB4-A2** (ruling LB4-S1-1): report H8 takes its expected list from artifact.OFFICIAL_CODE_PATHS by import plus
+  LREP's own entries and names src/corruption_roles.py, src/tman and the catalogue (smoke_report_extensions.py H8).
+- **LB4-A3** (ruling LB4-S6-1): LB4-1's import clause reads "B-4's own imports add nothing heavy to
+  heldout_inputs' import (no TMAN reader chain: validate, schema, manifest or dedup; no src.training) and create
+  no cycle". Conformance I1 and I2 assert it.
+- **never_cut and cut_place.** LREP reads neither (MEASURED at S2: no LREP src/stats module names either; DL-24 R4
+  re-checked); nothing tests them.
+
+### 5. Refusal codes and mutations
+
+CODES grew from 48 to 49: runs_root_missing (H:248; raised at H:1325; C49, killer seed:R22). X1 passes: every
+code has a C mutation. Since MBL the harness gained 47 mutations (277 → 324) and changed 11 (MEASURED, an AST
+comparison of the two MUTATIONS lists):
+- added: C49; R45, R46 (check_ids' two digest refusals), R47 (run's `--runs-root`), R48 (open_inventory's
+  checkout catalogue), R49 (read_telemetry's path guard); S189–S196 (B4-1), S197–S200 (B4-2), S201–S205 (B4-3),
+  S208–S222 (B4-4), S223–S228 (B4-5), S229 (B4-F1), S230, S231 (B4-F2). S206 and S207 are unused ids.
+- changed: C03–C06 and S24 (to read_inventory_stub), S180's anchor (B4-1); R15, R16 and S84 (B4-2); S97 (B4-3);
+  R44 (to _catalogue_parent, killer seed:R12p; B4-4); R16 again (DL-24 R2-02: a copy of R15 since B4-2, now
+  read_dedup's malformed-path raise, killer dedup:I4; B4-F2).
+- smoke_lrep_mutations: 484 → 565 result lines (X1, 240 killing-case lines, 324 mutations), all passing.
+
+### 6. The conformance smoke (LB4-13), at S7 (22/22)
+
+On TMAN's own fixture world and builders by import (LF tman_world and tman_exports: smoke_tman_validate.World,
+manifest.build_inventory with its freeze record, smoke_tman_validate.dedup_fixture, smoke_tman_binding.fixture_binding,
+the binding block from manifest.export_binding), never hand-copied; reader level, no report on artifacts:
+- I1, I2: importing heldout_inputs or report_extensions loads none of src.tman.validate, schema, manifest, dedup or
+  src.training; torch, src.eval.artifacts, src.tman and src.tman.binding are loaded, as at MBL.
+- E1: open_inventory with TMAN's reader (the default) reads TMAN's bound export under both policies: 22 rows, 69
+  entries (one per catalogue slot), 234 records, the freeze recording manifest_sha256.
+- E2: all 22 rows pass model_row and check_row_at_entry (2 qat_fakequant_off rows with fqoff_source; the teacher's
+  seed null). E3: read_dedup and check_ids on the file's own id set: 1561 images, 1555 kept, 6 removed, the
+  reasons a partition. E4: E5:s42:sel's own parent E5:s42:clip5:15ep, one of pilot.runs; 21 planned cells under
+  Policy.OFFICIAL. E5: 234 records, 234 keys, each by binding_record. E6: LB4-3 on both sides (TMAN:
+  binding_invalid and dedup_invalid when the file is not beside the export; LREP: read_dedup and the stub).
+  E7: the binding file's keys artifacts, format, inputs, references; the reader returns artifacts, path,
+  sha256, state. E8: TMAN's unbound export, which its reader accepts, is binding_unbound under Policy.OFFICIAL.
+- C1: B5-S1's map agrees with all 49 scored catalogue slots, none unmapped. C2: the DT set is exactly Part 3
+  §5's nine.
+- D1–D5, D7: LREP's ROLES, the fixtures' SLOT_KEY_RE (pattern and flags; 69 keys), the format strings
+  (tday-inventory/1, tday_binding/1, tday_dedup/1), DEDUP_EXPORT_FIELDS (= DEDUP_SPEC's keys) and
+  DEDUP_FILE_FIELDS (⊆ dedup.DOC_KEYS), the keys model_row reads (⊆ ROW_SPEC's), and the fixtures' catalogue
+  copy (sha256 6c05a78e…, 69 slots) equal TMAN's definitions, imported. D6: row_identity is binding.identity
+  on all 22 TMAN-built rows.
+- A1, A2 (LB4-A1): E7-R1 entered derived under its cut E3-R1, and E6-E2:s42:sel entered derived under its cut
+  QAT run, are each parent_rule_violation after the 55 earlier freeze gates pass.
+- X1: no created path contains 'test' or ':' (this smoke's root and TMAN's world's folders).
+
+DL-24 R4 recomputed the map and the DT set from configs/tday_catalogue.json with python3 -I and the standard
+library only: 69 slots, 49 scored, 24 scored stages each with one (evaluator_stage, model_role, precision),
+equal to _stage_map; the DT set the nine (MEASURED by that agent).
+
+### 7. Q2: ruling LB4-14, verbatim
+
+From the GO's §3 (lrepb4_go_20261031.md), unchanged:
+
+> **LB4-14, Q2 and MS-CH4's record 4 (ORCH-4, 8/10; MSCH4-C1-ACCEPT-1 assigns Q2 to this GO; audit F5–F7).** B-4 writes no code for this ruling. It records the ruling verbatim in Part 4, and REC-2b enters it before the freeze.
+> - **(a) The dataset-level readings are produced** as CALC rows of the manuscript data inventory, the single source (DATAPKG-1), by exact decimal arithmetic on recorded values (rule R): VAL now, TEST after TEST, from the artifacts of record. The registered readings are:
+>   - **AM-17 item 7:** A − E1, E3 − A, and (E3 − A) − (E2 − E1). All-class and disease-only, on VAL and TEST clean.
+>   - **AM-17b item 1(e):** F − E1, G − E1, A − E1, A − F − G + E1 and E3 − A. All-class, with disease-only and GT-present alongside. Each is read beside its seed-noise scale: s for a single run, √2·s for a two-run contrast and 2s for the interaction, with s from DL-99 (AM-16 item 2). A reading inside the scale is "not distinguishable from seed noise".
+>   - **AM-17 item 5:** δ1 = E2@80k − E1@160k, δ2 = E3@80k − E1@160k and δ3 = E3@80k − E2@160k, read against the 1.0 pp thresholds. Also each arm's 160k − 80k difference as training-budget sensitivity, with GPU-hours only where on record (DL-196).
+>   - **AM-23 item 6:** E6-E2 − E6 and E7-E2 − E7, beside E2 − E3, on VAL and on clean TEST.
+>   - **AM-18 item 3(d):** the dataset-level E3-X − E3 and E7-X − E7, beside √2·s, with each arm teacher's VAL_X and ECE_X alongside.
+> - **(b) Measurement and citation.**
+>   - Each CALC row names the measurement of each side: the trainer's best VAL, a scored VAL artifact, a converted VAL selection value, or a TEST artifact.
+>   - Each cites its inputs (decision-log row ids or artifact sha256s) and shows its formula.
+>   - A contrast whose two sides were measured differently is marked "mixed measurement", and is never read as a method effect.
+>   - A quantity not on record (for example GT-present on VAL, or an ECE_X) is reported as "not on record".
+>   - A cited CALC row with its formula visible is the producer for these readings. An uncited one is not acceptable.
+> - **(c) Per-image readings.** The per-image mean ΔmIoU with BCa 95% CIs for AM-17b item 1(e)'s A, F and G contrasts and E3 − A is **deferred, not dropped**.
+>   - It is computed after TEST from the artifacts of record, through arm_tables' existing BCa path (arm_row), in LREP's first post-TEST commit. It is descriptive, with no test.
+>   - If no such commit lands before the manuscript's TEST slots close, it becomes a recorded deviation, "not produced" (Ch4 = yes).
+>   - Both branches are decided now, before TEST.
+>   - The arms' existing per-image readings on TEST (arm_tables) are unchanged.
+> - **(d) MS-CH4's record 4** (the VAL readings) is answered by (a) and (b). The values live in the inventory, not in a repository file.
+
+### 8. Records proposed (LB4-15)
+
+The lane writes none of these. Placeholders stay placeholders; REC-2b gives them numeric ids and fills `<sha>`
+with LREP's merge.
+- **Part 1 §9's and Part 2 §10's records**, as listed there.
+- **Part 3 §11's records**, amended:
+  - the IF erratum for REC-2b reads: "§8: the teacher slots' catalogue seed is 42; their model rows carry seed
+    null (TMAN's builder)" (LB4-7); §11.1's role e6kd and the arm teachers' stage names stand;
+  - the TEST-day plan line: every official-capable slot is scored with `--artifact-status official`; only the
+    nine DT slots are scored as provisional; scripts/report_extensions.py runs with `--runs-root <TMAN's runs
+    root>` (LB4-10, kept);
+  - the DL-c entry gains LB4-A1: R4-3's two TMAN-refusal cases are TMAN's validator's, through the conformance
+    smoke's A1 and A2, since smoke_tman_parent has none; this amends LREP-B5-RULE-4's "B-4 adds two
+    TMAN-refusal cases";
+  - Part 3 §11's "For B-4" item is done: the E5:s42:sel parent (LB4-8) and the conformance smoke (LB4-13).
+- **LB4-14** (§7), entered by REC-2b before the freeze.
+- **B-4's own:** the reader swap (TMAN's reader the default; under Policy.OFFICIAL TMAN's only; TMAN's refusals
+  keep their code: LB4-1, LB4-2); the conformance smoke (LB4-13, 22 cases); the code-path definition
+  (REPORT_CODE_PATHS = artifact.OFFICIAL_CODE_PATHS, the CLI and configs/tday_catalogue.json: LB4-11, LB4-S6-1).
+  Status: "DECIDED; IMPLEMENTED <sha> (lane/lrep)".
+- **The session's rulings**, for the decision log as REC-2b sees fit: LB4-S1-1 (S1's baseline, LB4-A2),
+  LB4-S3-1 (B4-4a) and LB4-S6-1 (LB4-A3; the catalogue entry).
+
+### 9. The DL-24 workflow (S5)
+
+One read-only workflow (wf_7c35e73f-f20) over the scoped diff MBL..119a449: four reviewers, R1 (the reader,
+the refusals, the paths, the binding, the code paths), R2 (the dedup file and the model rows, and LB4-12, which
+the GO's list leaves unassigned), R3 (E5's parent, the guards, the row convention with identity, the
+telemetry) and R4 (the conformance smoke, with the stdlib recomputation of §6), each followed by an
+adversarial verifier: eight agents, none failed. After it (MEASURED): HEAD 119a449, the scoped status empty,
+the sha256 of all 19 changed files identical to before.
+
+27 findings: 16 confirmed (R1-08 = R4-F1 and R1-09 = R4-F4, so 14 distinct), 2 plausible, 9 refuted.
+
+| finding | verdict | what | disposition |
+|---|---|---|---|
+| R1-01 | confirmed; questions a ruling | LB4-1's "must not pull torch" unmet at MBL and HEAD, outside SCOPE | STOP at S6; LB4-S6-1 Q1 (A): amendment LB4-A3 (§4); torch recorded (§10) |
+| R1-02 | confirmed | tman_reader's docstring false | B4-F1 (LB4-A3's wording) |
+| R1-03 | refuted | S227's gate half untested | none |
+| R1-04 | refuted, facts true | run()'s default reader reached by no case | open item (LB4-S6-1) |
+| R1-05 | refuted, facts true | no refusal on TMAN's path after its reader returns | conformance E8 (B4-F2) |
+| R1-06 | confirmed | the checkout catalogue's failure blamed on the reader | B4-F1 (H:582-586; seed R2x; R48) |
+| R1-07 | confirmed | CODES texts no longer describe their refusals | B4-F1 (inventory_unreadable, inventory_invalid, binding_invalid, path_unsafe) |
+| R1-08 / R4-F1 | confirmed | tman_exports typed the binding block by hand | B4-F2 (manifest.export_binding; canonical bytes) |
+| R1-09 / R4-F4 | confirmed | E6 asserted three of LB4-3's four sites | B4-F2 (the stub's site) |
+| R1-10 | plausible | the catalogue LB4-8 reads is no code path | LB4-S6-1 Q2 (A): B4-F1 (RX:71; H8, H9; S229) |
+| R2-01 | plausible | model_row's converted-sha refusal branches unreached | B4-F2 (seed R2y; S230, S231) |
+| R2-02 | confirmed | R16 a copy of R15 since B4-2 | B4-F2 (R16 retargeted; I4 asserts its detail) |
+| R2-03 | confirmed | _row's docstring overclaims | B4-F2 |
+| R2-04 | refuted | DEDUP_REASONS typed | none |
+| R3-01 | confirmed | parent_slot's and _b5_parent's docstrings | B4-F1 |
+| R3-02 | confirmed | the official smoke's N header | B4-F2 |
+| R3-03 | confirmed | the official smoke's G summary | B4-F2 |
+| R3-04 | refuted | require_official_inputs' docstring | none |
+| R3-05 | confirmed | _parent_of's docstring reason | B4-F1 |
+| R3-06 | refuted, facts true | the pilot rule's has_entry clause unreached | open item (LB4-S6-1) |
+| R3-07 | refuted, facts true | H12's inputs trip two clauses each | open item (LB4-S6-1) |
+| R3-08 | refuted | R14c–R14g circular; LB4-7's STOP check: no alias | B4-F2 (R14c–R14g typed) |
+| R3-09 | refuted | pilot.runs' source unpinned by a case | none |
+| R4-F2 | confirmed | D2 compared patterns only; "by import" wording | B4-F2 |
+| R4-F3 | confirmed | X1 missed TMAN's world folders | B4-F2 (and seed X4) |
+
+The verifiers' 13 unverified leads: the telemetry item through a link (B4-F1: R22c, R49); the catalogue read in
+the reader's try (= R1-06); the CODES siblings (B4-F1); the binding file's canonical bytes (B4-F2); seed X4 and
+TMAN's folders (B4-F2); the fixtures' catalogue copy unguarded (B4-F2: D7); the "by import" wording (B4-F2);
+R14c–R14g circular (B4-F2); Q5's value check (B4-F2); the int8_qat rows' source kind (B4-F2: _row's docstring);
+torch (= R1-01); LB4-8's trigger reading the export's catalogue block (open item); the duplicate of R1-08 (done).
+
+### 10. The SL-1 log, slips and tooling conflicts
+
+`tail -n 80 ~/.claude/sl1_guard.log` at 2026-11-02 04:45 UTC (MEASURED; the log holds 123 lines: SL1-B2 7, SL1-B6 2, SL1-G1 114; SL-1
+logs and refuses nothing in its present mode; L-PROT's refusals are slip 6 below):
+
+```
+2026-11-01T14:29:13Z	Grep	SL1-G1	/home/user/plantseg-thesis/scripts glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T14:29:25Z	Grep	SL1-G1	/home/user/plantseg-thesis/scripts glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T14:31:07Z	Grep	SL1-G1	/home/user/plantseg-thesis/src glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T14:31:10Z	Grep	SL1-G1	/home/user/plantseg-thesis/src/stats glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T14:31:31Z	Grep	SL1-G1	/home/user/plantseg-thesis/src/stats glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T14:32:15Z	Grep	SL1-G1	/home/user/plantseg-thesis/scripts glob=smoke_{am6_tables,arm_tables,quant_rows,report_extensions,lrep_conformance,lrep_official_profile,default_candidates,strata_tables,lrep_descriptive,dedup_subset,
+2026-11-01T14:32:34Z	Grep	SL1-G1	/home/user/plantseg-thesis/scripts glob=smoke_{am6_tables,arm_tables,quant_rows,report_extensions,lrep_conformance,lrep_official_profile,default_candidates,strata_tables,lrep_descriptive,seed_stabilit
+2026-11-01T14:32:40Z	Grep	SL1-G1	/home/user/plantseg-thesis/src/stats glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T14:32:42Z	Grep	SL1-G1	/home/user/plantseg-thesis/scripts glob={lrep_fixtures,report_extensions,smoke_am6_tables,smoke_arm_tables,smoke_quant_rows,smoke_report_extensions,smoke_lrep_conformance,smoke_lrep_official_profile,s
+2026-11-01T14:32:48Z	Grep	SL1-G1	/home/user/plantseg-thesis/src/stats glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T14:34:19Z	Grep	SL1-G1	/home/user/plantseg-thesis/src/stats glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T14:36:37Z	Grep	SL1-G1	/home/user/plantseg-thesis/src/stats glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T14:36:48Z	Grep	SL1-G1	/home/user/plantseg-thesis/src/stats glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T14:37:15Z	Grep	SL1-G1	/home/user/plantseg-thesis/scripts glob=smoke_{am6_tables,arm_tables,quant_rows,report_extensions,lrep_conformance,lrep_official_profile,default_candidates,strata_tables,lrep_descriptive,seed_stabilit
+2026-11-01T14:37:28Z	Grep	SL1-G1	/home/user/plantseg-thesis/src glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T14:41:08Z	Grep	SL1-G1	/home/user/plantseg-thesis/src glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T14:41:28Z	Grep	SL1-G1	/home/user/plantseg-thesis/scripts glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T14:41:44Z	Grep	SL1-G1	/home/user/plantseg-thesis/src glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T14:42:17Z	Grep	SL1-G1	/home/user/plantseg-thesis/src/eval
+2026-11-01T14:45:36Z	Grep	SL1-G1	/home/user/plantseg-thesis/src/stats glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T14:45:59Z	Grep	SL1-G1	/home/user/plantseg-thesis/src glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T14:47:09Z	Grep	SL1-G1	/home/user/plantseg-thesis/src/stats glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T14:48:38Z	Grep	SL1-G1	/home/user/plantseg-thesis/scripts glob={lrep_fixtures.py,smoke_lrep_*.py}
+2026-11-01T14:48:44Z	Grep	SL1-G1	/home/user/plantseg-thesis/scripts glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T14:48:57Z	Grep	SL1-G1	/home/user/plantseg-thesis/scripts glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T14:49:17Z	Bash	SL1-B2	wc -l scripts/smoke_tman_parent.py && git log --oneline --no-renames -3 -- scripts/smoke_tman_parent.py && git diff --no-renames --stat 70fd5453bdac88cfbd6f3d26852880ac121430a9..119a449eb176bec6d2e4b7
+2026-11-01T14:50:21Z	Grep	SL1-G1	/home/user/plantseg-thesis/src/stats glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T14:50:42Z	Grep	SL1-G1	/home/user/plantseg-thesis/src glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T14:50:43Z	Grep	SL1-G1	/home/user/plantseg-thesis/scripts glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T14:54:12Z	Bash	SL1-B2	git diff --no-renames --stat 70fd5453bdac88cfbd6f3d26852880ac121430a9..119a449eb176bec6d2e4b707e2ed54794d22a98d -- src/tman configs/tday_catalogue.json src/stats/artifact.py src/stats/driver.py src/st
+2026-11-01T14:54:13Z	Grep	SL1-G1	/home/user/plantseg-thesis/scripts glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T14:55:35Z	Grep	SL1-G1	/home/user/plantseg-thesis/src glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T14:57:00Z	Grep	SL1-G1	/home/user/plantseg-thesis/scripts glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T14:57:05Z	Grep	SL1-G1	/home/user/plantseg-thesis/scripts glob=smoke_lrep*|smoke_seed*|smoke_report*|smoke_default*|lrep_fixtures*
+2026-11-01T14:57:08Z	Grep	SL1-G1	/home/user/plantseg-thesis/scripts glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T14:57:19Z	Grep	SL1-G1	/home/user/plantseg-thesis/src glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T14:58:24Z	Grep	SL1-G1	/home/user/plantseg-thesis/scripts glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T15:01:23Z	Grep	SL1-G1	/home/user/plantseg-thesis/scripts glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T15:03:38Z	Grep	SL1-G1	/home/user/plantseg-thesis/scripts glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T15:06:19Z	Grep	SL1-G1	/home/user/plantseg-thesis/scripts glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T15:07:06Z	Grep	SL1-G1	/home/user/plantseg-thesis/scripts glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T15:10:27Z	Grep	SL1-G1	/home/user/plantseg-thesis/scripts glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T15:10:35Z	Grep	SL1-G1	/home/user/plantseg-thesis/scripts glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T15:11:04Z	Grep	SL1-G1	/home/user/plantseg-thesis/src glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T15:13:09Z	Grep	SL1-G1	/home/user/plantseg-thesis/src/stats glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T15:15:25Z	Grep	SL1-G1	/home/user/plantseg-thesis/src glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T15:16:44Z	Grep	SL1-G1	/home/user/plantseg-thesis/scripts glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T15:16:48Z	Grep	SL1-G1	/home/user/plantseg-thesis/src/stats glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T15:17:17Z	Grep	SL1-G1	/home/user/plantseg-thesis/src/stats glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T15:17:20Z	Grep	SL1-G1	/home/user/plantseg-thesis/src/stats glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T15:17:44Z	Grep	SL1-G1	/home/user/plantseg-thesis/src/stats glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T15:18:48Z	Grep	SL1-G1	/home/user/plantseg-thesis/scripts glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T15:19:05Z	Grep	SL1-G1	/home/user/plantseg-thesis/src/stats glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T15:25:00Z	Grep	SL1-G1	/home/user/plantseg-thesis/src/stats glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T15:26:15Z	Grep	SL1-G1	/home/user/plantseg-thesis/scripts glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T15:26:43Z	Grep	SL1-G1	/home/user/plantseg-thesis/scripts glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T15:27:09Z	Grep	SL1-G1	/home/user/plantseg-thesis/scripts glob={smoke_lrep_*,lrep_fixtures.py,smoke_am6_tables.py,smoke_arm_tables.py,smoke_dedup_subset.py,smoke_default_candidates.py,smoke_quant_rows.py,smoke_report_extens
+2026-11-01T15:28:00Z	Grep	SL1-G1	/home/user/plantseg-thesis/src glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T15:29:21Z	Grep	SL1-G1	/home/user/plantseg-thesis/scripts glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T15:29:45Z	Bash	SL1-B2	wc -l /home/user/plantseg-thesis/scripts/smoke_tman_parent.py; git log --no-renames --oneline -3 -- scripts/smoke_tman_parent.py; git diff --no-renames --stat 70fd5453bdac88cfbd6f3d26852880ac121430a9.
+2026-11-01T15:30:50Z	Grep	SL1-G1	/home/user/plantseg-thesis/scripts glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T15:31:13Z	Grep	SL1-G1	/home/user/plantseg-thesis/scripts glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T15:31:24Z	Grep	SL1-G1	/home/user/plantseg-thesis/scripts glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T15:32:21Z	Grep	SL1-G1	/home/user/plantseg-thesis/src glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T15:33:56Z	Grep	SL1-G1	/home/user/plantseg-thesis/scripts glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T15:35:18Z	Grep	SL1-G1	/home/user/plantseg-thesis/src/stats glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T15:37:24Z	Grep	SL1-G1	/home/user/plantseg-thesis/src/tman
+2026-11-01T15:38:00Z	Grep	SL1-G1	/home/user/plantseg-thesis/src/stats glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T15:38:22Z	Grep	SL1-G1	/home/user/plantseg-thesis/src/stats glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T15:38:59Z	Grep	SL1-G1	/home/user/plantseg-thesis/src glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T15:40:59Z	Grep	SL1-G1	/home/user/plantseg-thesis/src/stats glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T15:43:02Z	Grep	SL1-G1	/home/user/plantseg-thesis/scripts glob=!*[Tt][Ee][Ss][Tt]*
+2026-11-01T15:48:55Z	Bash	SL1-B2	git diff --no-renames --numstat 70fd5453bdac88cfbd6f3d26852880ac121430a9..HEAD -- src/stats; git diff --no-renames --shortstat 70fd5453bdac88cfbd6f3d26852880ac121430a9..HEAD -- src/stats
+2026-11-02T02:28:43Z	Grep	SL1-G1	/home/user/plantseg-thesis/scripts glob=smoke_{lrep_mutations,seed_stability,report_extensions,lrep_official_profile,lrep_conformance}.py
+2026-11-02T02:29:03Z	Bash	SL1-B6	SCR=/tmp/claude-0/-home-user-plantseg-thesis/e94ae075-b3d0-5c1f-b037-395b2758d5c6/scratchpad; cd /home/user/plantseg-thesis && python3 -I "$SCR/edits/apply.py" "$SCR/edits/bf1_src.json" && python3 -I 
+2026-11-02T03:01:23Z	Bash	SL1-B6	SCR=/tmp/claude-0/-home-user-plantseg-thesis/e94ae075-b3d0-5c1f-b037-395b2758d5c6/scratchpad; cd /home/user/plantseg-thesis && python3 -I "$SCR/edits/apply.py" "$SCR/edits/bf2.json" && python3 -I "$SC
+2026-11-02T03:25:21Z	Bash	SL1-B2	SCR=/tmp/claude-0/-home-user-plantseg-thesis/e94ae075-b3d0-5c1f-b037-395b2758d5c6/scratchpad; P="scripts/lrep_fixtures.py scripts/smoke_lrep_conformance.py scripts/smoke_seed_stability.py scripts/smok
+2026-11-02T04:39:16Z	Grep	SL1-G1	/home/user/plantseg-thesis glob={src/stats/report_extensions.py,src/stats/default_candidates.py,src/stats/seed_stability.py,src/stats/quant_rows.py,src/stats/dedup_subset.py,scripts/report_extensions.
+2026-11-02T04:42:31Z	Grep	SL1-G1	/home/user/plantseg-thesis glob={src/stats/seed_stability.py,src/stats/report_extensions.py,scripts/report_extensions.py,src/stats/dedup_subset.py,src/stats/default_candidates.py}
+2026-11-02T04:44:50Z	Grep	SL1-G1	/home/user/plantseg-thesis/scripts glob=smoke_{seed_stability,lrep_mutations}.py
+```
+
+Greps whose search path was the repository root itself, in the whole log: 3, at 2026-11-01T05:21:53Z, 2026-11-02T04:39:16Z, 2026-11-02T04:42:31Z.
+
+**Slips.**
+1. **B4-4's post-commit official profile, 31/32 (ruling LB4-S3-1).** G2 pinned require_official_inputs' callers
+   (smoke_lrep_official_profile.py g_plumbing) and lacked LB4-9's two; B4-4's pre-commit runs had not included
+   the official profile. STOP at S3; fixed alone in B4-4a (14db5f5), the official profile 32/32 before its
+   commit and the 11-smoke chain after; from B4-5 on the official profile ran before every commit.
+2. **Fixed before their commits** (development runs): B4-1, the seed smoke's inventory() bound the stub at
+   definition time, so C03–C06 and S24 never reached their cases, and S180's anchor broke; B4-2, C43's case
+   could pass on TMAN's own refusal, and R19's case b kept an inconsistent count; B4-3, R2v counted docstring
+   mentions and S97's anchor broke; B4-6, conformance E1 read binding.artifacts from the export TMAN writes, not
+   from the reader's document (19/20).
+3. **R16 (DL-24 R2-02).** B4-2's retarget made R16 a copy of R15, killed only by its own crash, counted twice
+   from B4-2 to B4-F1; fixed in B4-F2.
+4. **The size count.** The running sum of per-commit src/stats numstat (376 at B4-5) counted twice the lines
+   changed twice; MBL..HEAD is the measure: 366 at B4-6, 387 at the end.
+5. **Grep with the repository root as its search path**, against the hard limit's "never use the repo root
+   ... as a search path", at the SL-1 times listed above under "repository root": each narrowed by a glob of
+   named src/stats and scripts files, so nothing under docs/ and no 'test' path was searched (MEASURED from the
+   globs). Also outside rule 2's two literal forms, each narrower: Greps on src/stats with the test glob, Greps
+   on scripts/ or src/stats with globs of named files, and two S5 agents' Greps on src/eval and src/tman without
+   the glob.
+6. **Commands the hooks refused, none run:** `git cat-file commit <bare id>` (S0); `git status` after `cd`; `ls`
+   of the scratchpad and `mv` of a scratch folder (L-PROT S); a `-- $P` pathspec and `git show MBL:$f` in a loop
+   (L-PROT G). Each was redone in an allowed form. Auto mode refused S0.5's checkout (STOP; approved at its
+   prompt); the kick-off line's MBL was a placeholder (STOP at S0.4).
+
+**Tooling conflicts (each reported once, none complied with).** The harness's designated branch
+claude/new-session-idfeqd and its attribution reminder (Co-Authored-By and Claude-Session trailers); the stop
+hook's "commit and push these changes" while runs were in flight. No commit has a trailer, and only lane/lrep
+was pushed.
+
+### 11. Open items
+
+1. **Coverage not added (ruling LB4-S6-1).** R3-06: the pilot rule's `not inv.has_entry(own)` clause (H:776)
+   is reached by no case; R3-07: H12's relative and 'test' inputs each trip two of run()'s clauses (RX:423-425),
+   so a mutant dropping one survives; R1-04: run()'s default reader (TMAN's) is reached by no case (the CLI's
+   cases run through STUB_CLI).
+2. **LB4-8's trigger (DL-24 R3 lead, INFERRED).** _parent_of reads catalogue.parent from the export's entry block
+   and pilot.runs from the checkout's catalogue; TMAN's reader checks the block's shape only. An export whose
+   block for E5:s42:sel names a parent would take the catalogue reading, not LB4-8's checks.
+3. **torch at heldout_inputs' import (LB4-A3).** Pre-existing at MBL (MEASURED: conformance I1, I2):
+   src/stats/__init__.py:38 imports .ingest, ingest.py:35 imports src.eval.artifacts, src/eval/artifacts.py:36
+   imports .protocols, src/eval/protocols.py:36 is `import torch`; heldout_inputs.py:63 imports
+   src.eval.protocols since B-1. A torch-free import needs those files, outside LREP's SCOPE.
+4. **Part 2 §9's item 5 stands** (R4-18, R4-20, the four §7.3 smokes), as Part 3 §10 item 4 recorded.
