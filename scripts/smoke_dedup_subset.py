@@ -227,7 +227,8 @@ def i_path():
     def edit(export, binding):
         export["dedup"]["path"] = "../tday_dedup.json"
         export["dedup"]["sha256"] = LF.syn_sha("never read")
-    return refused("dedup_invalid", lambda: H.read_dedup(inventory(variant("dedup_dotdot", edit))))
+    ok, detail = refused("dedup_invalid", lambda: H.read_dedup(inventory(variant("dedup_dotdot", edit))))
+    return ok and "not a plain relative POSIX path" in detail, detail
 
 
 def i_missing():

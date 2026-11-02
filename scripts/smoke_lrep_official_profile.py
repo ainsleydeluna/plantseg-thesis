@@ -17,8 +17,8 @@ stage at seed 42, read as the 37's input is (driver.load_input under Policy.OFFI
 
   G  R4-1 item 2: slot_read over the catalogue's 49 scored slots gives exactly the nine; the DT read is
      reached only through load_slot, which only the arm tables and am6's coverage call; dt_pair only by
-     the arm tables; the official-input guard sits where dedup's (ii) and (iii) and am6's seed-42 rows
-     take their inputs
+     the arm tables; the official-input guard sits where dedup's (ii) and (iii), am6's seed-42 rows,
+     default_candidates.record_row and seed_stability's seed-42 cross-checks take their inputs (LB4-9)
   H  the happy paths: each of the world's nine DT slots reads descriptive_test through the DT read (its
      run non-official, its rows the official AM-5 rule's); a DT pair with E7 is non-official, its delta
      the rows' own; every other B-5 slot reads official under Policy.OFFICIAL; the arm rows and am6's
@@ -552,7 +552,7 @@ def k_no_downgrade():
 
 
 # --------------------------------------------------------------------------------------------------
-# N: a difference from TMAN's catalogue, named for B-4 (reported, not coded)
+# N: LB4-8, option (A), as coded: E5:s42:sel's null catalogue.parent and its own parent
 # --------------------------------------------------------------------------------------------------
 #: LB4-8's invalid cases of E5:s42:sel (each breaks one of its conditions): an own parent outside pilot.runs,
 #: one that is not inputs.run_slot, and a selection that is not derived.

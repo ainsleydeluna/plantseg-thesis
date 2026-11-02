@@ -15,16 +15,18 @@ schema.load_catalogue of manifest.CODE_ROOT / schema.CATALOGUE_REL. No created p
      Policy.NONOFFICIAL_SMOKE and Policy.OFFICIAL; every model row through model_row and check_row_at_entry;
      read_dedup and check_ids against the file's own id set; E5:s42:sel's parent under LB4-8, with the 21 planned
      cells (R-3 to R-6, R-12 to R-14); the records indexed by (slot, precision, scope, cell); LB4-3's paths against the
-     export's folder, on both sides; LB4-4's binding file
+     export's folder, on both sides; LB4-4's binding file; LREP's own checks after TMAN's reader returns (LB4-1)
   C  the checkout's catalogue: B5-S1's map against every scored slot's evaluator_stage, model_role and precision
      (49/49, none unmapped); R4-1's DT set is exactly Part 3 §5's nine
-  D  drift guards, by import: ROLES, SLOT_KEY_RE, the format strings, the dedup fields, the keys model_row reads
-     against ROW_SPEC, row_identity against binding.identity on every TMAN-built row
+  D  drift guards against TMAN's definitions, imported: LREP's own copies asserted equal to them (ROLES, the
+     fixtures' SLOT_KEY_RE with its flags, the format strings, the dedup fields, the keys model_row reads against
+     ROW_SPEC, the fixtures' catalogue copy against the checkout's), since heldout_inputs' import loads no TMAN
+     schema (LB4-A3); row_identity is TMAN's binding.identity itself, checked on every TMAN-built row
   A  LB4-A1: scripts/smoke_tman_parent.py at MBL refuses no arm or quant_descriptive descendant (B-4's S2), so these
      two go through TMAN's validator, its freeze gates on TMAN's world: an arm descendant (E7-R1) and a
      quant_descriptive descendant (E6-E2's selection), each entered derived under its cut parent, each
      parent_rule_violation with every earlier gate passing
-  X  no created path contains 'test' or ':'
+  X  no created path contains 'test' or ':', under this smoke's root and TMAN's world's folders
 LREP reads neither catalogue.never_cut nor catalogue.cut_place (LB4-13); nothing here tests them.
 
 Run:  TMPDIR=<a scratch directory without 'test'> python -B scripts/smoke_lrep_conformance.py
@@ -57,7 +59,7 @@ from src.stats import dedup_subset as DS                                 # noqa:
 from src.stats import heldout_inputs as H                                # noqa: E402
 from src.stats.ingest import Policy                                      # noqa: E402
 
-CTX = types.SimpleNamespace(root=None, world=None, path=None, doc=None, inv=None)
+CTX = types.SimpleNamespace(root=None, world=None, path=None, doc=None, inv=None, plain=None)
 #: R4-1's DT set, typed from Part 3 §5's table (docs/lane_reports/lrep.md :2304-2305): the nine slots the evaluator
 #: scores descriptively only (role arm at int8_ptq; role calibration_sensitivity).
 DT_NINE = ("E7-R1:s42:list42", "E7-R2:s42:list42", "E7-flip:s42:list42", "E4:s42:list43", "E4:s42:list44",
@@ -194,7 +196,8 @@ def e_folder():
     """LB4-3: binding.path and dedup.path resolve against the export file's folder, on both sides. The export beside
     its dedup file only is binding_invalid, and beside its binding file only dedup_invalid (TMAN's reader, its code
     kept); LREP's read_dedup of the export moved away is dedup_invalid (its own), and in place reads the file beside
-    it."""
+    it; LREP's stub, the synthetic path's binding.path site (H:463), reads the binding file beside the export in place
+    (refusing only its own schema key, which TMAN's file names format: LB4-4) and finds none when it is moved away."""
     doc, path = CTX.doc, CTX.path
     out = []
     for name, keep, code in (("beside_dedup_only", "dedup", "binding_invalid"),
@@ -206,6 +209,9 @@ def e_folder():
                            head=f"tman:{code}: "))
     moved = dataclasses.replace(CTX.inv, path=CTX.root / "beside_binding_only" / path.name)
     out.append(refused("dedup_invalid", lambda: H.read_dedup(moved), contains="cannot be read"))
+    out.append(refused("binding_invalid", lambda: H.read_inventory_stub(CTX.root / "beside_dedup_only" / path.name),
+                       contains="FileNotFoundError"))
+    out.append(refused("binding_invalid", lambda: H.read_inventory_stub(path), contains="not a tday_binding/1 object"))
     here = H.read_dedup(CTX.inv).file == path.parent / doc["dedup"]["path"]
     return all(ok for ok, _ in out) and here, str([d for _, d in out])
 
@@ -221,6 +227,14 @@ def e_binding_file():
     return (bfile["format"] == S.BINDING_FORMAT == H.BINDING_SCHEMA and sorted(bfile) == sorted(S.BINDING_FILE_SPEC)
             and b["artifacts"] == bfile["artifacts"] and "inputs" not in b and S.sha256_bytes(raw) == b["sha256"]), \
         f"file keys {sorted(bfile)}; returned {sorted(b)}"
+
+
+def e_unbound_official():
+    """LB4-1: LREP's own checks still run after TMAN's reader returns: TMAN's plain export (binding unbound), which
+    its reader accepts, is binding_unbound under Policy.OFFICIAL and reads under the smoke policy."""
+    ok, detail = refused("binding_unbound", lambda: H.open_inventory(CTX.plain, policy=Policy.OFFICIAL))
+    inv = H.open_inventory(CTX.plain, policy=Policy.NONOFFICIAL_SMOKE)
+    return ok and inv.reader == H.TMAN_READER and not inv.bound, detail
 
 
 # --------------------------------------------------------------------------------------------------
@@ -246,7 +260,7 @@ def c_dt_set():
 
 
 # --------------------------------------------------------------------------------------------------
-# D: drift guards, by import
+# D: drift guards: LREP's copies against TMAN's definitions, imported
 # --------------------------------------------------------------------------------------------------
 def d_roles():
     from src.tman import schema as S
@@ -254,12 +268,25 @@ def d_roles():
 
 
 def d_slot_key():
-    """LREP's fixtures' SLOT_KEY_RE is TMAN's (schema.SLOT_KEY_RE), and every key of the checkout's catalogue and of
-    TMAN's export matches it."""
+    """LREP's fixtures' SLOT_KEY_RE is TMAN's (schema.SLOT_KEY_RE: pattern and flags), and every key of the checkout's
+    catalogue and of TMAN's export matches it."""
     from src.tman import schema as S
     keys = list(catalogue().slots) + [e["slot"] for e in CTX.doc["entries"]]
     bad = sorted({k for k in keys if not LF.SLOT_KEY_RE.fullmatch(k)})
-    return LF.SLOT_KEY_RE.pattern == S.SLOT_KEY_RE.pattern and not bad, f"{len(set(keys))} keys; {bad[:3]}"
+    return (LF.SLOT_KEY_RE.pattern == S.SLOT_KEY_RE.pattern and LF.SLOT_KEY_RE.flags == S.SLOT_KEY_RE.flags
+            and not bad), f"{len(set(keys))} keys; {bad[:3]}"
+
+
+def d_catalogue_copy():
+    """The fixtures' typed catalogue (lrep_fixtures.CATALOGUE, from TMAN's ee5593e: CATALOGUE_SOURCE) is the checkout's:
+    the same sha256, and slot by slot the same stage, seed, class, roles, evaluator_stage, model_role, precision and
+    parent."""
+    cat = catalogue()
+    got = {k: (s["stage"], s["seed"], s["class"], tuple(s["roles"]), s["evaluator_stage"], s["model_role"],
+               s["precision"], s["parent"]) for k, s in cat.slots.items()}
+    differ = sorted(k for k in set(got) | set(LF.CATALOGUE) if got.get(k) != LF.CATALOGUE.get(k))
+    return cat.sha256 == LF.CATALOGUE_SOURCE["sha256"] and not differ, \
+        f"sha256 {cat.sha256[:16]}; {len(got)} slots; differ {differ[:4]}"
 
 
 def d_formats():
@@ -378,17 +405,20 @@ def a_quant():
 
 # --------------------------------------------------------------------------------------------------
 def x_no_test_path():
-    """LRB20, with ':' (R4-6): no created path contains 'test' or ':'. Run last."""
-    bad = [os.path.join(d, n) for d, dirs, files in os.walk(CTX.root) for n in dirs + files
+    """LRB20, with ':' (R4-6): no created path contains 'test' or ':', under this smoke's root and TMAN's world's
+    folders (its scratch repository and runs root, which TMAN's fixture library makes in TMPDIR). Run last."""
+    roots = [CTX.root, CTX.world.repo, CTX.world.runs]
+    bad = [os.path.join(d, n) for r in roots for d, dirs, files in os.walk(r) for n in dirs + files
            if "test" in n.lower() or ":" in n]
-    return not bad and "test" not in str(CTX.root).lower(), str(bad[:3])
+    return not bad and not any("test" in str(r).lower() for r in roots), str(bad[:3])
 
 
 def setup(root: Path, world) -> None:
     """TMAN's world, held open by the caller (its validator reads the patched teacher of record), and its exports
     under `root`: the bound one is read with TMAN's reader."""
     CTX.root, CTX.world = root, world
-    path, doc = LF.tman_exports(world, LF.new_dir(root, "exports"))["bound"]
+    ex = LF.tman_exports(world, LF.new_dir(root, "exports"))
+    (path, doc), CTX.plain = ex["bound"], ex["plain"][0]
     CTX.path, CTX.doc = path, doc
     CTX.inv = H.open_inventory(path, policy=Policy.NONOFFICIAL_SMOKE)
 
@@ -405,6 +435,8 @@ def cases():
             ("E6", "LB4-3: binding.path and dedup.path against the export's folder, on both sides", e_folder),
             ("E7", "LB4-4: the binding file's format and TMAN's four top keys; the records read from it",
              e_binding_file),
+            ("E8", "LB4-1: LREP's own checks after TMAN's reader: an unbound export under Policy.OFFICIAL",
+             e_unbound_official),
             ("C1", "B5-S1's map against every scored catalogue slot (49/49, none unmapped)", c_map),
             ("C2", "R4-1's DT set is exactly Part 3 §5's nine", c_dt_set),
             ("D1", "ROLES is schema.ROLES", d_roles),
@@ -413,6 +445,7 @@ def cases():
             ("D4", "DEDUP_EXPORT_FIELDS is DEDUP_SPEC's keys; DEDUP_FILE_FIELDS among DOC_KEYS", d_dedup_fields),
             ("D5", "the keys model_row reads are ROW_SPEC's", d_row_keys),
             ("D6", "row_identity is binding.identity on every TMAN-built row", d_identity),
+            ("D7", "the fixtures' catalogue copy is the checkout's (sha256 and every slot)", d_catalogue_copy),
             ("A1", "LB4-A1: an arm descendant under its cut parent: parent_rule_violation (TMAN's validator)", a_arm),
             ("A2", "LB4-A1: a quant_descriptive descendant under its cut parent: parent_rule_violation", a_quant),
             ("X1", "no created path contains 'test' or ':' (LRB20; R4-6; run last)", x_no_test_path)]

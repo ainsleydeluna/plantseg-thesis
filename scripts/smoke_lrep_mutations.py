@@ -365,8 +365,8 @@ MUTATIONS = [
      [(H, "read_dedup", [off("dedup_invalid", ' f"{where}: {f} cannot be read')])], "dedup:I5"),
     ("R15", "dedup_invalid not raised (TMAN's reader refuses a dedup file that is not UTF-8; LB4-5)",
      [(H, "read_dedup", [off("dedup_invalid", ' f"tman:{e.code}')])], "dedup:I7"),
-    ("R16", "dedup_invalid not raised (TMAN's reader refuses kept_ids unsorted, repeated or empty; LB4-5)",
-     [(H, "read_dedup", [off("dedup_invalid", ' f"tman:{e.code}')])], "dedup:I9"),
+    ("R16", "dedup_invalid not raised (a dedup.path that is not plain relative POSIX; read before refused)",
+     [(H, "read_dedup", [off("dedup_invalid", ' f"{where}: path {d')])], "dedup:I4"),
     ("R17", "dedup_invalid not raised (the file's removed_by_reason is not the export's)",
      [(H, "read_dedup", [off("dedup_invalid", " f\"{where}: the file's removed_by_reason")])],
      "dedup:I10"),
@@ -1066,6 +1066,12 @@ MUTATIONS = [
                             ("code_provenance_unmet(paths=REPORT_CODE_PATHS)",
                              'code_provenance_unmet(paths=tuple(p for p in REPORT_CODE_PATHS if "tday" not in p))')])],
      "report:H9"),
+    # B-4, commit B4-F2 (ruling LB4-S6-1: DL-24's R2-01)
+    ("S230", "LB4-6: converted_artifact_sha256 accepted on a row that is not INT8",
+     [(H, "model_row", [("if precision in INT8_PRECISIONS else conv is None)",
+                         "if precision in INT8_PRECISIONS else True)")])], "seed:R2y"),
+    ("S231", "LB4-6: a null or malformed converted_artifact_sha256 accepted on an INT8 row",
+     [(H, "model_row", [("((isinstance(conv, str) and bool(_HEX64.fullmatch(conv)))", "(True")])], "seed:R2y"),
 ]
 
 

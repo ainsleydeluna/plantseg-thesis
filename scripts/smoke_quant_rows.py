@@ -27,6 +27,7 @@ from __future__ import annotations
 import ast
 import copy
 import os
+import re
 import sys
 import time
 import traceback
@@ -167,7 +168,7 @@ def q_converted_val():
     text = the_doc()["converted_val_scores"]
     return (all(s in text for s in ("E6-E2's is DL-146's", "E6 seed 42's DL-131's", "RECORDED",
                                     "E7-E2's and E7's come after the PTQ block"))
-            and "0." not in text), text
+            and not re.search(r"\d\.\d|\.\d|\d\s*pp|%", text)), text
 
 
 #: LB4-12: CONVERTED_VAL's B-5 wording, which DL-131 and DL-146 (RECORDED) retire.

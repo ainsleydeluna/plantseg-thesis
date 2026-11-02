@@ -937,10 +937,12 @@ def tman_refused(code, path, head, **kw):
 
 
 def tman_exports():
-    """TMAN's own exports (lrep_fixtures.tman_exports: TMAN's world and builders, by import), built once."""
+    """TMAN's own exports (lrep_fixtures.tman_exports: TMAN's world and builders, by import), built once; TMAN's
+    world's folders are kept for X4."""
     if "tman" not in CTX.copies:
         with LF.tman_world() as w:
             CTX.copies["tman"] = LF.tman_exports(w, CTX.world.fresh("tman_exports"))
+            CTX.copies["tman_dirs"] = (w.repo, w.runs)
     return CTX.copies["tman"]
 
 
@@ -1032,6 +1034,23 @@ def r_row_converted_absent():
             and r["converted_artifact_sha256"] is None), detail
 
 
+def r_row_converted_value():
+    """LB4-6 (DL-24 R2-01): converted_artifact_sha256 is null but for an INT8 row: an fp32 row carrying one, and an
+    int8_ptq row carrying null, are each inventory_invalid, naming the field."""
+    fp32_slot, int8_slot = "E2:s43:lambda0.5:80k", LF.record_slot("E4", 43)
+
+    def fp32(export, binding):
+        row(export, fp32_slot, "fp32")["converted_artifact_sha256"] = LF.syn_sha("a converted fp32 model")
+
+    def int8(export, binding):
+        row(export, int8_slot, "int8_ptq")["converted_artifact_sha256"] = None
+    got = [refused("inventory_invalid", lambda: H.model_row(inventory(variant("row_fp32_converted", fp32)),
+                                                            fp32_slot, "fp32")),
+           refused("inventory_invalid", lambda: H.model_row(inventory(variant("row_int8_null", int8)),
+                                                            int8_slot, "int8_ptq"))]
+    return all(ok and "converted_artifact_sha256" in d for ok, d in got), str([d for _, d in got])
+
+
 def code_constants(path) -> set:
     """The string constants of a module's code, its docstrings left out."""
     tree = ast.parse((REPO / path).read_text(encoding="utf-8"))
@@ -1065,13 +1084,15 @@ def r_row_tman_built():
 
 
 def row_convention(slots: dict, plain: bool = False):
-    """LB4-7: check_row_at_entry accepts each slot's model row of the given precision as the world writes it,
-    TMAN's way (its evaluator stage; seed null for a teacher), and refuses the same row at the entry's own
+    """LB4-7: check_row_at_entry accepts each slot's model row of the given precision as the world writes it, at
+    the (stage, seed) stated here, typed in TMAN's way (its evaluator stage; seed null for a teacher; DL-24 R3-08),
+    and refuses the same row at the entry's own
     stage and seed (the old equality), or, for a `plain` stage, where both coincide, at another seed."""
     inv = inventory(CTX.world.inventory_path)
     ok, notes = True, []
-    for slot, prec in slots.items():
+    for slot, (prec, want) in slots.items():
         e, r = inv.entry(slot), H.model_row(inv, slot, prec)
+        ok = ok and (r["stage"], r["seed"]) == want
         try:
             H.check_row_at_entry(inv, types.SimpleNamespace(slot=slot, precision=prec, row=r))
         except H.LrepRefusal as ex:
@@ -1087,27 +1108,28 @@ def row_convention(slots: dict, plain: bool = False):
 
 def r_row_teacher():
     """LB4-7: the teacher of record's row is (teacher, seed null), its entry (teacher, 42)."""
-    return row_convention({"teacher:s42:40k": "fp32"})
+    return row_convention({"teacher:s42:40k": ("fp32", ("teacher", None))})
 
 
 def r_row_arm_teachers():
     """LB4-7: teacher-R1's and teacher-R2's rows are (teacher, seed null), their entries their own stages."""
-    return row_convention({"teacher-R1:s42:40k": "fp32", "teacher-R2:s42:40k": "fp32"})
+    return row_convention({"teacher-R1:s42:40k": ("fp32", ("teacher", None)),
+                           "teacher-R2:s42:40k": ("fp32", ("teacher", None))})
 
 
 def r_row_e3x():
     """LB4-7: E3-R1's, E3-R2's and E3-flip's rows are at stage E3 (seed 42), their entries their own stages."""
-    return row_convention({f"E3-{x}:s42:lambda0.5:alpha25:80k": "fp32" for x in ("R1", "R2", "flip")})
+    return row_convention({f"E3-{x}:s42:lambda0.5:alpha25:80k": ("fp32", ("E3", 42)) for x in ("R1", "R2", "flip")})
 
 
 def r_row_e7x():
     """LB4-7: E7-R1's, E7-R2's and E7-flip's rows (int8_ptq) are at stage E7 (seed 42)."""
-    return row_convention({f"E7-{x}:s42:list42": "int8_ptq" for x in ("R1", "R2", "flip")})
+    return row_convention({f"E7-{x}:s42:list42": ("int8_ptq", ("E7", 42)) for x in ("R1", "R2", "flip")})
 
 
 def r_row_plain():
     """LB4-7: a plain stage (A, its own evaluator stage) keeps its stage and seed; a row at seed 43 is refused."""
-    return row_convention({"A:s42:alpha25:80k": "fp32"}, plain=True)
+    return row_convention({"A:s42:alpha25:80k": ("fp32", ("A", 42))}, plain=True)
 
 
 def r_row_identity():
@@ -1699,11 +1721,12 @@ def x_pp_markdown_only():
 
 
 def x_no_test_path():
-    """LRB20, with ':' (R4-6): no created path contains 'test' or ':'."""
-    root = CTX.world.root
-    bad = [os.path.join(d, n) for d, dirs, files in os.walk(root) for n in dirs + files
+    """LRB20, with ':' (R4-6): no created path contains 'test' or ':', under the world's root and, once built, TMAN's
+    world's folders (its scratch repository and runs root, in TMPDIR)."""
+    roots = [CTX.world.root, *CTX.copies.get("tman_dirs", ())]
+    bad = [os.path.join(d, n) for r in roots for d, dirs, files in os.walk(r) for n in dirs + files
            if "test" in n.lower() or ":" in n]
-    return not bad and "test" not in str(root).lower() and ":" not in str(root), str(bad[:3])
+    return not bad and not any("test" in str(r).lower() or ":" in str(r) for r in roots), str(bad[:3])
 
 
 def x_path_rule():
@@ -1927,6 +1950,8 @@ def cases():
          r_row_converted_absent),
         ("R2v", "LB4-6: a qat_fakequant_off row's fqoff_source accepted and never read", r_row_fqoff_source),
         ("R2w", "LB4-6: every row of TMAN's own export passes model_row", r_row_tman_built),
+        ("R2y", "LB4-6: converted_artifact_sha256 on an fp32 row, or null on an INT8 row: inventory_invalid",
+         r_row_converted_value),
         ("R3a", "R-3 planned_slot_missing", r_slot_missing),
         ("R3b", "R-3 planned_slot_duplicate", r_slot_duplicate),
         ("R3c", "R-3 unplanned_slot (a per_seed slot at seed 45)", r_unplanned),

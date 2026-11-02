@@ -660,9 +660,11 @@ def diverged_fields(*, rule: str, run_id: str, iteration=None, epoch=None,
 
 def _row(slot, stage, seed, precision, *, source_kind, source_sha, converted=None, cells=(),
          entry_kind, roles, run_id, model_role="student"):
-    """A model row as TMAN's builder writes it (src/tman/manifest.py:930-946; B-4, LB4-6 and LB4-7): its stage
-    is B5-S1's evaluator stage of the slot's TMAN stage `stage`, its seed null for a teacher (the catalogue
-    seed `seed` otherwise), and converted_artifact_sha256 always present, null but for an INT8 row."""
+    """A model row in TMAN's row convention (src/tman/manifest.py:930-931; B-4, LB4-6 and LB4-7): its stage is
+    B5-S1's evaluator stage of the slot's TMAN stage `stage`, its seed null for a teacher (the catalogue seed `seed`
+    otherwise), and converted_artifact_sha256 always present, null but for an INT8 row. Unlike TMAN's builder, its
+    qat_fakequant_off rows carry no fqoff_source and its derived rows a checkpoint source: LREP reads neither, and
+    TMAN's own rows are read in scripts/smoke_lrep_conformance.py."""
     row_stage, row_seed = H.row_stage_seed(stage, seed)
     return {"file_id": file_id(slot), "stage": row_stage, "model_role": model_role,
             "precision": precision, "seed": row_seed,
@@ -888,7 +890,8 @@ def tman_exports(world, folder: Path) -> dict:
     (schema.json_file_bytes) into its own sub-folder of `folder` with the files it names: "plain" (dedup null,
     binding unbound) and "bound" (tday_dedup.json from TMAN's dedup_fixture, in dedup.doc_bytes' canonical
     bytes, and a bound tday_binding.json from scripts/smoke_tman_binding.fixture_binding, whose
-    references.session.dedup.sha256 is set to the export's dedup.sha256). Returns {name: (path, doc)}."""
+    references.session.dedup.sha256 is set to the export's dedup.sha256, written in canonical bytes as TMAN's bind
+    writes it, its export block made by TMAN's manifest.export_binding). Returns {name: (path, doc)}."""
     import scripts.smoke_tman_binding as TB
     import scripts.smoke_tman_pins as TP
     import scripts.smoke_tman_validate as TV
@@ -908,9 +911,8 @@ def tman_exports(world, folder: Path) -> dict:
         if name == "bound":
             bdoc = TB.fixture_binding(doc)
             bdoc["references"]["session"]["dedup"]["sha256"] = doc["dedup"]["sha256"]
-            bdata = S.json_file_bytes(bdoc)
-            (d / BINDING_NAME).write_bytes(bdata)
-            doc["binding"] = {"state": "bound", "path": BINDING_NAME, "sha256": S.sha256_bytes(bdata)}
+            (d / BINDING_NAME).write_bytes(S.canonical_json_bytes(bdoc))     # as TMAN's bind writes it (B3R3)
+            doc["binding"] = M.export_binding(d / BINDING_NAME, d, doc)     # TMAN's own block, its checks run
         p = d / EXPORT_NAME
         p.write_bytes(S.json_file_bytes(doc))
         out[name] = (p, doc)
