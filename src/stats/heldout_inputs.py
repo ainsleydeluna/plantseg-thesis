@@ -207,11 +207,12 @@ CODES = {
     # the export and the binding (R-2; IF§11.5-11.6)
     "stub_reader_official": "IF§11.6; LB4-1: under Policy.OFFICIAL a reader that is not TMAN's (LREP's stub "
                             "or a marked stand-in without --synthetic-inputs, any other callable always)",
-    "inventory_unreadable": "R-2: the export cannot be read as strict JSON",
+    "inventory_unreadable": "R-2: LREP's stub cannot read the export as strict JSON (TMAN's reader: inventory_invalid)",
     "inventory_sha256_mismatch": "R-2: the export's sha256 is not the expected one",
-    "inventory_invalid": "R-2: the export lacks, repeats or mistypes a field LREP reads",
+    "inventory_invalid": "R-2: the export lacks, repeats or mistypes a field LREP reads; or TMAN's reader refuses "
+                         "it under a code LREP lacks, or the checkout catalogue cannot be read (LB4-2, LB4-8)",
     "binding_invalid": "R-2: the binding file is missing, differs from binding.sha256 or is malformed, "
-                       "or a bound export carries no binding.artifacts",
+                       "or a bound export carries no binding.artifacts (TMAN's reader's refusals too: LB4-2)",
     "binding_unbound": "IF§11.5: under Policy.OFFICIAL the binding must be bound",
     "freeze_mismatch": "IF§11.5: freeze.manifest_sha256 is not manifest_sha256 (or no freeze, OFFICIAL)",
     # planned cells (R-3; D-3 as LRB4 amends it)
@@ -235,7 +236,7 @@ CODES = {
     "artifact_unreadable": "R-9: an artifact the driver refuses (files, manifest, the row rules)",
     "precision_mismatch": "LRB7; B5-S1: (model_role, precision) of an artifact or a model row is not the "
                           "one its stage maps to ((student, qat_fakequant_off) for an fq_off row)",
-    "path_unsafe": "IF§2: a path that is not plain relative POSIX, or contains 'test'",
+    "path_unsafe": "IF§2: a path that is not plain relative POSIX, or contains 'test', or resolves outside its root",
     # cross-artifact and seed-42 checks (R-10, R-11)
     "cross_artifact_mismatch": "R-10: manifest, class map, metric code, commit, AM-5, GT, run_id or "
                                "checkpoint disagreement",
@@ -528,7 +529,7 @@ def _index(items, key) -> dict:
 
 def tman_reader():
     """LB4-1: TMAN's reader, src.tman.validate.read_inventory, imported when called (heldout_inputs' own
-    import pulls neither torch nor src.tman)."""
+    import gains no TMAN reader chain: LB4-A3)."""
     from src.tman.validate import read_inventory
     return read_inventory
 
@@ -570,7 +571,6 @@ def open_inventory(path, *, policy: Policy, expect_sha256=None, reader=None, syn
                                                   "with --synthetic-inputs (IF§11.6; LB4-1)")
     try:
         doc = reader(path, expect_sha256=expect_sha256)
-        pilots = catalogue_pilot_runs()                             # LB4-8, through TMAN's expression
     except LrepRefusal:
         raise
     except TmanRefused as e:                                        # LB4-2: TMAN's code kept where LREP has it
@@ -579,6 +579,11 @@ def open_inventory(path, *, policy: Policy, expect_sha256=None, reader=None, syn
     except Exception as e:                                          # noqa: BLE001 -- any other failure
         raise refusal("inventory_invalid", f"the reader refused {path}: {type(e).__name__}: "
                                            f"{e}") from e
+    try:
+        pilots = catalogue_pilot_runs()                             # LB4-8, through TMAN's expression
+    except Exception as e:                                          # noqa: BLE001 -- the checkout's, not the export's
+        raise refusal("inventory_invalid", f"the checkout catalogue (LB4-8's pilot.runs) cannot be read: "
+                                           f"{getattr(e, 'code', type(e).__name__)}: {e}") from e
     problem = _top_level_problem(doc)
     if problem is not None:
         raise refusal("inventory_invalid", f"{path}: {problem}")
@@ -761,7 +766,7 @@ def _parent_of(inv: Inventory, e: dict, slot: str) -> str:
     LREP-B5-RULE-5 item 1, option (A)) for a pilot selection -- catalogue.parent null and the checkout
     catalogue's pilot.runs present (Inventory.pilot_runs) -- whose parent is its derived entry's own `parent`
     (src/tman/schema.py:409), which must be one of pilot.runs and equal inputs.run_slot; otherwise
-    parent_rule. A pilot selection that is not derived (kind null among them) has no own parent and is
+    parent_rule. A pilot selection that is not derived (LB4-8 reads a derived entry's own parent only) is
     parent_rule, fail closed (E5 seed 42's selection exists, DL-172, so its TEST entry is derived)."""
     cat, runs = e.get("catalogue"), inv.pilot_runs.get(slot)
     if not (isinstance(cat, dict) and "parent" in cat and cat["parent"] is None and runs is not None):
@@ -777,7 +782,7 @@ def _parent_of(inv: Inventory, e: dict, slot: str) -> str:
 
 
 def parent_slot(inv: Inventory, slot: str) -> str:
-    """A slot's catalogue.parent, which must be a slot of the export (R-12)."""
+    """A slot's parent under R-12 (_parent_of: its catalogue.parent, or a pilot selection's own; LB4-8)."""
     return _parent_of(inv, inv.entry(slot), slot)
 
 
@@ -1332,6 +1337,8 @@ def read_telemetry(inv: Inventory, slot: str, runs_root: Path | None, *, unit: s
             raise refusal("telemetry_invalid", f"{where}: needs run_id, path and a 64-hex sha256")
         rel = safe_relative_path(it.get("path"), where)
         p = Path(runs_root) / rel
+        if "test" in str(p.resolve()).lower() or not p.resolve().is_relative_to(Path(runs_root).resolve()):
+            raise refusal("path_unsafe", f"{where}: {rel} resolves outside the runs root or into 'test' (LB4-10)")
         try:
             raw = p.read_bytes()             # read once: the rows parsed are the bytes hashed (LRB2)
         except OSError as e:
@@ -1385,7 +1392,7 @@ def family_inputs(stats: StatsArtifact, inv: Inventory, cells: PlannedCells,
 
 
 def _b5_parent(inv: Inventory, slot: str, e: dict, stage: str, seed) -> str:
-    """A B-5 slot's catalogue.parent: a slot at B5_PARENT_STAGE[stage] and the same seed, and, when that
+    """A B-5 slot's parent (_parent_of; LB4-8): a slot at B5_PARENT_STAGE[stage] and the same seed, and, when that
     stage is a planned one (E2 for AM-23's E2 parents, E3 for E6-KD), its family slot, the model of record
     (IF§11.1; R-12)."""
     parent = _parent_of(inv, e, slot)

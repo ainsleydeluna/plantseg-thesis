@@ -1055,6 +1055,17 @@ MUTATIONS = [
     ("S228", "LB4-12: the quant part's converted VAL scores read the old 'not on record' wording",
      [(QR, "build_quant_rows", [('"converted_val_scores": CONVERTED_VAL',
                                  '"converted_val_scores": "not on record: DL-146 is a draft"')])], "quant:Q6"),
+    # B-4, commit B4-F1 (ruling LB4-S6-1: DL-24's R1-06, the telemetry path guard, Q2's catalogue entry)
+    ("R48", "inventory_invalid not raised (the checkout catalogue unreadable after the read; R1-06)",
+     [(H, "open_inventory", [off("inventory_invalid", ' f"the checkout catalogue')])], "seed:R2x"),
+    ("R49", "path_unsafe not raised (a telemetry item resolving outside the runs root; LB4-10)",
+     [(H, "read_telemetry", [off("path_unsafe", ' f"{where}: {rel} resolves')])], "seed:R22c"),
+    ("S229", "LB4-S6-1: the catalogue dropped from the report's code paths (recorded and checked)",
+     [(RX, "build_report", [('"report_code_paths": list(REPORT_CODE_PATHS)',
+                             '"report_code_paths": [p for p in REPORT_CODE_PATHS if "tday" not in p]'),
+                            ("code_provenance_unmet(paths=REPORT_CODE_PATHS)",
+                             'code_provenance_unmet(paths=tuple(p for p in REPORT_CODE_PATHS if "tday" not in p))')])],
+     "report:H9"),
 ]
 
 

@@ -36,7 +36,7 @@ follows the verified statistics artifact and is never set by a flag (D-13): "off
 artifact is official, the binding is bound and read by TMAN's reader, every LREP input is official,
 the strata file is the committed DL-63 file, the MDE entry is committed, and the code is clean at
 HEAD: LREP's files, and the frozen code that computes the numbers (artifact.OFFICIAL_CODE_PATHS, which
-holds src/stats, and this CLI). While the TEST-manifest binding is unbound the statistics verifier
+holds src/stats, this CLI and LB4-8's catalogue). While the TEST-manifest binding is unbound the statistics verifier
 refuses every official artifact, so every extension report is nonofficial and every table carries a
 banner, which also names the inputs' split when it is not TEST.
 
@@ -67,8 +67,8 @@ LREP_CODE_PATHS = ("src/stats/heldout_inputs.py", "src/stats/seed_stability.py",
                    "src/stats/lrep_descriptive.py", "src/stats/arm_tables.py", "src/stats/dedup_subset.py",
                    "src/stats/quant_rows.py", "scripts/report_extensions.py")
 #: The code that computes the report's numbers, clean at HEAD for an official report (O3's paths, which
-#: hold all of src/stats: artifact.OFFICIAL_CODE_PATHS by import, one definition, LB4-11) and this CLI.
-REPORT_CODE_PATHS = (*OFFICIAL_CODE_PATHS, "scripts/report_extensions.py")
+#: hold all of src/stats: artifact.OFFICIAL_CODE_PATHS by import, LB4-11), this CLI and LB4-8's catalogue (LB4-S6-1).
+REPORT_CODE_PATHS = (*OFFICIAL_CODE_PATHS, "scripts/report_extensions.py", "configs/tday_catalogue.json")
 FQOFF_NONE = "not available: no fq_off artifact"
 #: AM-23's QAT stages, whose fq_off rows the fq_off table reads (B-5 (c)); each slot is required (R4-2).
 FQOFF_QUANT_STAGES = tuple(st for st in H.QUANT_STAGES if H.STAGE_MAP[st][2] == "int8_qat")

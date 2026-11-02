@@ -29,7 +29,8 @@ are TMAN's catalogue's and a divergence is in TMAN's shape (both units present, 
      rows in TMAN's ROW_SPEC (R2u-R2w; LB4-6); TMAN's row convention, one case per class, and identity
      (R14c-R14h; LB4-7); E5:s42:sel's parent at each R-12 call site (R12f-R12p; LB4-8, pilot.runs declared
      for a case where no catalogue slot reaches the site); the seed-42 guard (R21; LB4-9); the telemetry under
-     TMAN's runs root, never the input root (R22, R22b; X7: nothing else reads it; LB4-10)
+     TMAN's runs root, never the input root (R22, R22b, R22c; X7: nothing else reads it; LB4-10); the checkout
+     catalogue's failure named as its own (R2x; LB4-S6-1)
   D  determinism
   X  hygiene: no test or p-value object imported, repr floats, pp only in markdown, no 'test' path
 
@@ -1562,6 +1563,38 @@ def r_runs_root_not_input_root():
     return ok and "cannot be read" in detail, detail
 
 
+def r_runs_root_link():
+    """LB4-10 (ruling LB4-S6-1): a telemetry item that resolves outside the runs root -- its first part a link in the
+    runs root to a folder beside it, which holds the same bytes -- is path_unsafe, before it is read."""
+    w, tel = CTX.world, CTX.tel["e2_s43_cut"]
+    run_id, name = tel["path"].split("/", 1)
+    if not (w.runs_root / "linked_run").is_symlink():
+        outside = LF.new_dir(LF.new_dir(w.root, "runs_outside"), run_id)
+        (outside / name).write_bytes((w.runs_root / tel["path"]).read_bytes())
+        (w.runs_root / "linked_run").symlink_to(outside, target_is_directory=True)
+
+    def edit(export, binding):
+        v_cut_e2(export, binding)
+        entry(export, "E2:s43:lambda0.5:80k")["telemetry"] = [dict(tel, path=f"linked_run/{name}")]
+    ok, detail = refused("path_unsafe", lambda: seed_doc(variant("tel_link", edit)))
+    return ok and "resolves outside the runs root" in detail, detail
+
+
+def r_checkout_catalogue():
+    """R1-06 (ruling LB4-S6-1): the checkout catalogue unreadable after the reader returned (LREP's stub here) is
+    inventory_invalid naming the catalogue, never the reader: manifest.CODE_ROOT names a folder without one
+    (restored after)."""
+    from src.tman import manifest as M
+    saved = M.CODE_ROOT
+    M.CODE_ROOT = CTX.world.fresh("no_catalogue")
+    try:
+        ok, detail = refused("inventory_invalid", lambda: inventory(CTX.world.inventory_path))
+    finally:
+        M.CODE_ROOT = saved
+    return (ok and detail.startswith("inventory_invalid: the checkout catalogue")
+            and "the reader refused" not in detail), detail
+
+
 def r_row_role():
     def edit(export, binding):
         row(export, "E2:s43:lambda0.5:80k", "fp32")["model_role"] = "teacher"
@@ -1888,6 +1921,8 @@ def cases():
         ("R2r", "LB4-2: TMAN's dedup_invalid keeps its code", r_tman_dedup),
         ("R2s", "LB4-2: TMAN's binding_invalid keeps its code", r_tman_binding),
         ("R2t", "LB4-2: TMAN's refusal of a path holding rule 4's word (by string only)", r_tman_word),
+        ("R2x", "R1-06: the checkout catalogue unreadable after the read: inventory_invalid, not the reader's",
+         r_checkout_catalogue),
         ("R2u", "LB4-6: converted_artifact_sha256 always present (absent: inventory_invalid; null read)",
          r_row_converted_absent),
         ("R2v", "LB4-6: a qat_fakequant_off row's fqoff_source accepted and never read", r_row_fqoff_source),
@@ -1952,6 +1987,8 @@ def cases():
          r_runs_root_missing),
         ("R22b", "LB4-10: the telemetry resolves under the runs root: read under the input root it is not there",
          r_runs_root_not_input_root),
+        ("R22c", "LB4-10: a telemetry item resolving outside the runs root (a link): path_unsafe, unread",
+         r_runs_root_link),
         ("R18", "precision_mismatch (LRB7)", r_precision),
         ("R18b", "precision_mismatch: a model row whose model_role is teacher (LRB7)", r_row_role),
         ("R18c", "precision_mismatch: the seed-42 E2 model row says teacher (check_rows alone)",

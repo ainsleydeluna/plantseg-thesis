@@ -502,10 +502,11 @@ def h_code():
 
 def h_report_code():
     """The frozen code that computes the numbers and the CLI are recorded -- the expected list taken from
-    artifact.OFFICIAL_CODE_PATHS by import plus LREP's own entry, src/corruption_roles.py and src/tman among
-    them by name (LB4-11; LB4-A2) -- and a path of them not clean at HEAD keeps the report nonofficial (O3;
+    artifact.OFFICIAL_CODE_PATHS by import plus LREP's own entries, the CLI and the catalogue (LB4-S6-1), with
+    src/corruption_roles.py and src/tman by name (LB4-11; LB4-A2) -- and a path of them not clean at HEAD keeps
+    the report nonofficial (O3;
     R3-01)."""
-    want = [*A.OFFICIAL_CODE_PATHS, "scripts/report_extensions.py"]
+    want = [*A.OFFICIAL_CODE_PATHS, "scripts/report_extensions.py", "configs/tday_catalogue.json"]
     code = the_doc()["code"]
     st = H.load_stats_artifact(CTX.world.stats_path, CTX.world.input_root)
     fake = types.SimpleNamespace(**{**st.__dict__, "profile": "official"})
@@ -513,16 +514,17 @@ def h_report_code():
     dirty = ["code_not_clean_at_head", "src/stats/driver.py:  M src/stats/driver.py"]
     unmet = RX.official_unmet(fake, inv, {}, {"code_clean_at_commit": True, "report_code_unmet": [dirty]})
     return (code["report_code_paths"] == want
-            and {"src/corruption_roles.py", "src/tman"} <= set(code["report_code_paths"])
+            and {"src/corruption_roles.py", "src/tman", "configs/tday_catalogue.json"} <= set(code["report_code_paths"])
             and isinstance(code["report_code_unmet"], list) and unmet == [tuple(dirty)]), str(unmet)
 
 
 def h_official_paths():
-    """LB4-11: REPORT_CODE_PATHS is artifact.OFFICIAL_CODE_PATHS by import plus the CLI, one definition: every
-    OFFICIAL_CODE_PATHS entry is in REPORT_CODE_PATHS and in the list a report built here records (LB4-A2:
-    src/corruption_roles.py and src/tman by name)."""
+    """LB4-11: REPORT_CODE_PATHS is artifact.OFFICIAL_CODE_PATHS by import plus the CLI and the catalogue LB4-8 reads
+    (LB4-S6-1), one definition: every OFFICIAL_CODE_PATHS entry, and the catalogue, is in REPORT_CODE_PATHS and in
+    the list a report built here records (LB4-A2: src/corruption_roles.py and src/tman by name)."""
     recorded = build(parts="mde")["code"]["report_code_paths"]
-    missing = [p for p in A.OFFICIAL_CODE_PATHS if p not in RX.REPORT_CODE_PATHS or p not in recorded]
+    missing = [p for p in (*A.OFFICIAL_CODE_PATHS, "configs/tday_catalogue.json")
+               if p not in RX.REPORT_CODE_PATHS or p not in recorded]
     named = {"src/corruption_roles.py", "src/tman"}
     return (not missing and named <= set(recorded) and named <= set(A.OFFICIAL_CODE_PATHS)
             and list(RX.REPORT_CODE_PATHS) == recorded), f"missing {missing}; recorded {recorded}"
