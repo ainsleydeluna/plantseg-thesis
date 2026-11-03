@@ -2859,6 +2859,7 @@ class RulesWorld(World):
                                                  {"rules_sha256": own_rules_sha256(sel)})
             self.qat_selection(sel, run)
             self.entries[sel]["inputs"]["rules_sha256"] = own_rules_sha256(sel)
+        self.entries["E6-KD:s42:sel"]["hashed"]["x86_copy_sha256"] = None    # TMANB4-ADD-2: E6-KD has no x86 copy
 
     def terminal_entries(self):
         global CUT_GROUPS
@@ -3007,6 +3008,58 @@ def case_rule_records_named_only():
                 detail="reports/arms/arm_go_rule_uncommitted.json")
 
 
+X86_MADE = "x86_copy_sha256 (null, but the selection record directory holds qat_finalize.json or final/)"
+
+
+def case_x86_absent_slots():
+    """TMANB4-ADD-2: E6-KD:s42:sel has no x86 latency copy (finalize refuses qat_kd: LB31, DL-171), so its hashed
+    x86_copy_sha256 is null. Null passes derived_inputs_incomplete and, under --runs, derived_hash_mismatch; a sha256
+    there is refused; E6:s42:sel and E6-E2:s42:sel still need a sha256. A qat_finalize.json or a final/ folder in its
+    selection record's directory is refused, so a null never hides a made copy. The append path reads the same spec."""
+    from src.tman import schedule as D
+    w, kd, sha = RulesWorld(), "E6-KD:s42:sel", "0" * 64
+    code, passed, e = w.run("freeze")
+    null = w.entry(w.doc, kd)["hashed"]["x86_copy_sha256"] is None
+    why = f"x86 null {null}; {code}: {(e.detail if e else '')[:200]}"
+    check("e6kd_x86_copy_null_passes_derived_inputs_incomplete_ADD2",
+          null and "derived_inputs_incomplete" in (passed or []), why)
+    check("e6kd_x86_copy_null_passes_derived_hash_mismatch_ADD2", null and "derived_hash_mismatch" in (passed or []),
+          why)
+    expect_gate(w, "e6kd_x86_copy_sha256_refused_ADD2", "derived_inputs_incomplete",
+                doc=mutated(w, lambda d: w.entry(d, kd)["hashed"].update(x86_copy_sha256=sha)),
+                detail=f"{kd}.hashed.x86_copy_sha256: '{sha}' is not one of []")
+    for slot in ("E6:s42:sel", "E6-E2:s42:sel"):
+        expect_gate(w, f"{slot}_x86_copy_null_refused_ADD2", "derived_inputs_incomplete",
+                    doc=mutated(w, lambda d, s=slot: w.entry(d, s)["hashed"].update(x86_copy_sha256=None)),
+                    detail=f"{slot}.hashed.x86_copy_sha256: None is not sha256")
+    sel_dir = w.runs / Path(w.entry(w.doc, kd)["hashed"]["record"]["path"]).parent
+    for name, made, undo in (("qat_finalize", lambda p: p.write_bytes(b"{}"), Path.unlink),
+                             ("final", Path.mkdir, Path.rmdir)):
+        p = sel_dir / ("qat_finalize.json" if name == "qat_finalize" else "final")
+        made(p)
+        try:
+            expect_gate(w, f"e6kd_selection_dir_with_{name}_refused_ADD2", "derived_hash_mismatch",
+                        detail=f"{kd}: its records disagree with the entry and its run at {[X86_MADE]}")
+        finally:
+            undo(p)
+    e6_dir = w.runs / Path(w.entry(w.doc, "E6:s42:sel")["hashed"]["record"]["path"]).parent
+    (e6_dir / "qat_finalize.json").write_bytes(b"{}")
+    (e6_dir / "final").mkdir()
+    try:                                # a slot with an x86 copy keeps finalize's files beside its record
+        code, passed, e = w.run("freeze")
+        check("E6:s42:sel_selection_dir_with_qat_finalize_and_final_passes_ADD2",
+              "derived_hash_mismatch" in (passed or []), f"{code}: {(e.detail if e else '')[:200]}")
+    finally:
+        (e6_dir / "qat_finalize.json").unlink()
+        (e6_dir / "final").rmdir()
+    frozen = dict(w.entry(w.doc, kd), hashed=None)
+    h, fz = dict(w.entry(w.doc, kd)["hashed"], appended="append"), D.parse_utc_any("2026-11-01T00:00:00Z")
+    got = [w.M.append_errors({"slot": kd, "hashed": dict(h, x86_copy_sha256=x), "ptq_record": None}, frozen, fz,
+                             structural=True) for x in (None, sha)]
+    check("e6kd_append_reads_the_same_spec_ADD2",
+          got == [[], [f"append {kd}.hashed.x86_copy_sha256: '{sha}' is not one of []"]], str(got))
+
+
 WORLD: World | None = None
 
 
@@ -3028,7 +3081,7 @@ def main() -> int:
                              case_inventory_dedup, case_inventory_dedup_reader, case_inventory_fq_off,
                              case_shallow_records,
                              case_malformed_inputs_refused, case_rules_per_slot, case_rule_records_named_only,
-                             case_coverage))
+                             case_x86_absent_slots, case_coverage))
     finally:
         if REAL_TEACHER is not None:
             WORLD.M.TEACHER_OF_RECORD.clear()

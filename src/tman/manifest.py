@@ -52,6 +52,11 @@ HASHED = {"artifact_sha256": "sha256", "state_dict_sha256": "sha256", "x86_copy_
 # checkpoint is the fq_off row's source (TB5; IF§8)
 HASHED_QAT = {**HASHED, "evaluations": ("list", ("obj", {"dir": "str", "fault_report": S.nullable(S.REF)})),
               "selected_checkpoint": S.REF}
+# TMANB4-ADD-2: a slot that can have no x86 latency copy hashes x86_copy_sha256 as null (the key stays; a sha256 is
+# refused). E6-KD: finalize refuses method qat_kd (src/quant/x86_latency.py:205-210; ruling LB31,
+# docs/lane_reports/am3-e6kd.md), "no finalize" (DL-171), no efficiency quantity for E6-KD (DL-185).
+X86_ABSENT_SLOTS = ("E6-KD:s42:sel",)
+X86_NULL = S.nullable(("enum", ()))                     # null only: the empty enum refuses every value
 APPEND = {"slot": "slot", "hashed": ("map", "any"), "ptq_record": S.nullable(S.REF)}    # A2: the made entry's
 QAT_RULES_REL = "configs/qat_selection_rules.json"
 # TB13 per slot (TMAN B-4): each QAT selection slot's rules file is the one its registered text names, read as bytes
@@ -102,16 +107,20 @@ def inputs_spec(method: str) -> dict:
     return PTQ_INPUTS if method == "ptq" else QAT_INPUTS
 
 
-def hashed_spec(method: str) -> dict:
-    return HASHED if method == "ptq" else HASHED_QAT
+def hashed_spec(method: str, slot: str) -> dict:
+    """A hashed block's fields, by method and slot: x86_copy_sha256 is null for a slot in X86_ABSENT_SLOTS and a
+    sha256 for every other slot (TMANB4-ADD-2; derived_inputs_errors and append_errors alike)."""
+    spec = HASHED if method == "ptq" else HASHED_QAT
+    return dict(spec, x86_copy_sha256=X86_NULL) if slot in X86_ABSENT_SLOTS else spec
 
 
 def derived_inputs_errors(entry: dict) -> list[str]:
     """derived_inputs_incomplete: a derived entry's inputs are all of its method's (AM-19 item 4(c)), and its hashed
-    block, when present, all of its fields."""
+    block, when present, all of its fields (hashed_spec)."""
     errs = S.value_errors(entry["inputs"], ("obj", inputs_spec(entry["method"])), f"{entry['slot']}.inputs")
     if entry["hashed"] is not None:
-        errs += S.value_errors(entry["hashed"], ("obj", hashed_spec(entry["method"])), f"{entry['slot']}.hashed")
+        spec = hashed_spec(entry["method"], entry["slot"])
+        errs += S.value_errors(entry["hashed"], ("obj", spec), f"{entry['slot']}.hashed")
     return errs
 
 
@@ -202,7 +211,8 @@ def derived_hash_errors(entry: dict, parent: dict, cat, ci: dict | None, runs_ro
     provenance, which is the run's and the selected epoch's conversion of the hashed artifacts. The clip selection the
     inputs cite (qat_clip_selection/1, made under the pilot's rules file: pilot_rules_sha256, TMAN B-4) names the
     pilot's selection as its winner, with its run, telemetry and record (TB9), and its winner's clip norm is every
-    run's (src/quant/qat.py clip_binding)."""
+    run's (src/quant/qat.py clip_binding). For a slot in X86_ABSENT_SLOTS, the selection record's directory holds no
+    qat_finalize.json and no final/ folder, so a null x86_copy_sha256 never hides a made copy (TMANB4-ADD-2)."""
     from . import completion as C
     h, inp, slot, root = entry["hashed"], entry["inputs"], entry["slot"], Path(runs_root)
     code, qat = "derived_hash_mismatch", entry["method"] == "qat_selection"
@@ -250,6 +260,9 @@ def derived_hash_errors(entry: dict, parent: dict, cat, ci: dict | None, runs_ro
     bad += [f"provenance.{k}" for k, v in pwant.items() if _dotted(docs["provenance"], k) != v]
     if not _same_second(_dotted(docs["provenance"], "created_utc"), h["made_utc"]):
         bad.append("provenance.created_utc (the made instant)")
+    sel_dir = (root / h["record"]["path"]).parent
+    if slot in X86_ABSENT_SLOTS and ((sel_dir / "qat_finalize.json").exists() or (sel_dir / "final").is_dir()):
+        bad.append("x86_copy_sha256 (null, but the selection record directory holds qat_finalize.json or final/)")
     if row is None or h["selected_checkpoint"] != {"path": f"{rid}/{row.get('checkpoint')}",
                                                    "sha256": row.get("checkpoint_sha256")} \
             or _dotted(rec, "winner.checkpoint") != row.get("checkpoint"):
@@ -435,7 +448,8 @@ def append_errors(append: dict, frozen: dict | None, freeze_utc: int, *, isolati
     artifact (TB19 Q9; `append_ptq_record`). `structural` stops before the isolation record, which the caller reads
     next (DL-24 #26). `isolation` is the projected isolation record; `provenance` the artifact's projected PTQ
     provenance (None when --runs is not given: the root is not compared; freeze, unlock and session modes always read
-    it). The made instant is the provenance's (derived_hash_mismatch)."""
+    it). The made instant is the provenance's (derived_hash_mismatch). The hashed fields are hashed_spec's, by method
+    and slot (TMANB4-ADD-2)."""
     errs = S.field_errors(append, APPEND, "append")
     if errs:
         return errs
@@ -443,7 +457,7 @@ def append_errors(append: dict, frozen: dict | None, freeze_utc: int, *, isolati
     if frozen is None or frozen["kind"] != "derived" or frozen["hashed"] is not None:
         return [f"append {slot}: no derived entry listed by inputs at the freeze"]
     h = append["hashed"]
-    errs = S.value_errors(h, ("obj", hashed_spec(frozen["method"])), f"append {slot}.hashed")
+    errs = S.value_errors(h, ("obj", hashed_spec(frozen["method"], slot)), f"append {slot}.hashed")
     if errs:
         return errs
     if h["appended"] != "append" or h["image_digest"] not in S.IMAGE_DIGESTS_OF_RECORD \
