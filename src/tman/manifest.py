@@ -254,6 +254,9 @@ def derived_hash_errors(entry: dict, parent: dict, cat, ci: dict | None, runs_ro
             "winner.checkpoint_sha256": h["selected_checkpoint"]["sha256"],
             "winner.artifact_of_record.sha256": h["artifact_sha256"],
             "winner.provenance.sha256": h["provenance"]["sha256"]}
+    # TMANB4-ADD-3: the winner is its per-epoch evaluation run, <run_id>_eNN_<12 hex> (src/quant/qat_select.py:453)
+    win = f"{rid}_e{epoch:02d}_{h['selected_checkpoint']['sha256'][:12]}" if isinstance(epoch, int) else None
+    want["winner.run_id"] = win
     bad = sorted(k for k, v in want.items() if _dotted(rec, k) != v)
     pwant = {"converted_artifact_sha256": h["artifact_sha256"], "state_dict_artifact.sha256": h["state_dict_sha256"],
              "training.run_id": rid, "training.epoch": epoch}
