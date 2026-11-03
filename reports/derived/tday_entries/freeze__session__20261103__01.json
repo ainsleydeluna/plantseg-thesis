@@ -1,0 +1,18 @@
+{
+  "amendment": "AM-22 item 1(f)",
+  "body_sha256": "6c00cc4b9a0efe1d2df0359e8a91d1959da0ef5d8f83ccfd3c42a2b5bede14ce",
+  "conditions": null,
+  "corrects": null,
+  "d_date": null,
+  "date": "2026-11-03",
+  "format": "tday_entry/1",
+  "freeze_date": "2026-11-03",
+  "kind": "freeze",
+  "printed_by": {
+    "commit": "7eaf5ec8463af892874a69e241050b434c4cb95f",
+    "script": "scripts/tday_manifest.py"
+  },
+  "push_evidence": null,
+  "slots": [],
+  "source": "AM-22 item 1(f)"
+}
