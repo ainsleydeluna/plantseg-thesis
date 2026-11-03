@@ -1,0 +1,21 @@
+{
+  "amendment": "AM-19 item 4(a)",
+  "corrects": null,
+  "date": "2026-11-03",
+  "format": "tday_entry/1",
+  "kind": "not_run",
+  "parent": "E6-R2:s42:15ep",
+  "parent_record": {
+    "path": "reports/derived/tday_entries/cut__E6-R2_s42_15ep__20261024__01.json",
+    "sha256": "e336938da61ae7beacf765b7e5d48cb05e8ba76dfcae73e858e13bf2d560eb9b"
+  },
+  "printed_by": {
+    "commit": "f55dc9447e42d1a47467926761812d25b87abb1c",
+    "script": "scripts/tday_manifest.py"
+  },
+  "push_evidence": null,
+  "reason": "parent cut",
+  "slots": [
+    "E6-R2:s42:sel"
+  ]
+}

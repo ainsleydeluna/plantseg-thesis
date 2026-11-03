@@ -1,0 +1,3702 @@
+{
+  "appends": [],
+  "body": {
+    "calibration_index": {
+      "dl": "DL-10",
+      "of_record": {
+        "checksum_sha256": "09320cbe7d5e8cee6d6a55c84679a65619fb52e3323fcdbae102c834a902357a",
+        "file_sha256": "3ae68d511deec0b31062db8f7c49a7badad00b52ebc10fc526a7a5b9a44eba01",
+        "path": "configs/calibration/ptq_calibration_seed42.json",
+        "role": "am10_list_of_record"
+      },
+      "sensitivity": {
+        "43": {
+          "checksum_sha256": "1fbfc12a2d35d4e09db33aaed70fe558380ea9db49ae18857c0dc6323e24ffa9",
+          "file_sha256": "301ae5d1f18f3dadd7a7290eac65802081adc4b9ad167e4c576355d60ec4c0b2",
+          "path": "configs/calibration/ptq_calibration_seed43.json",
+          "role": "am16_calibration_sensitivity"
+        },
+        "44": {
+          "checksum_sha256": "e8e04425f0cac2b6f6aa42895c874e5d1176ce4319a44438a229d92bc920082b",
+          "file_sha256": "4c67ab28d01b3536ebd187c03ea633e34bd9ac48d5e9f0647a93b906956c7137",
+          "path": "configs/calibration/ptq_calibration_seed44.json",
+          "role": "am16_calibration_sensitivity"
+        },
+        "45": {
+          "checksum_sha256": "02966ea8d619dd3d3384519ef34a36eb33a672441bead52cc1f0300a6b10af9d",
+          "file_sha256": "85d5a9483422c2d7de929f232d58209fcd97d9a21d32ecb4d87707dcb32f2a10",
+          "path": "configs/calibration/ptq_calibration_seed45.json",
+          "role": "am16_calibration_sensitivity"
+        }
+      },
+      "split_list_sha256": "0a216e8e3d9e646d0fc4328795fec46e42e474a836c39ebd37d1beaf7c60b943"
+    },
+    "entries": [
+      {
+        "attempts": [
+          {
+            "attempt": 1,
+            "run_id": "teacher_official_20260925T122252Z"
+          }
+        ],
+        "catalogue": {
+          "cut_place": null,
+          "never_cut": true,
+          "parent": null
+        },
+        "checkpoint": {
+          "bytes": 335949080,
+          "name": "iter_24000.pth",
+          "sha256": "8c0e649a1457782c99e02a3c81867c3b5aa55d924b697cc859455e6022179c4e",
+          "sources": [
+            {
+              "dl": null,
+              "kind": "run_dir",
+              "path": "teacher_official_20260925T122252Z/iter_24000.pth",
+              "sha256": "8c0e649a1457782c99e02a3c81867c3b5aa55d924b697cc859455e6022179c4e"
+            },
+            {
+              "dl": "DL-88",
+              "kind": "decision_log",
+              "path": null,
+              "sha256": "8c0e649a1457782c99e02a3c81867c3b5aa55d924b697cc859455e6022179c4e"
+            }
+          ]
+        },
+        "class": "run",
+        "completion": {
+          "at_utc": "2026-09-26T05:36:46Z",
+          "line": 4700,
+          "record": "20260925_122257/20260925_122257.log",
+          "sha256": "8493fd470f5c81914e6773f66c2a8735d051f28837ded51102767aa9680a611c"
+        },
+        "dl_rows": [
+          "DL-88",
+          "DL-68"
+        ],
+        "evaluator_stage": "teacher",
+        "kind": "scored_run",
+        "role": [
+          "teacher_reference"
+        ],
+        "run_id": "teacher_official_20260925T122252Z",
+        "scope": [
+          "clean",
+          "upstream",
+          "dedup",
+          "corrupted",
+          "corrupted_sev45",
+          "efficiency"
+        ],
+        "seed": 42,
+        "slot": "teacher:s42:40k",
+        "stage": "teacher",
+        "teacher_ckpt_sha256": "8c0e649a1457782c99e02a3c81867c3b5aa55d924b697cc859455e6022179c4e"
+      },
+      {
+        "attempts": [
+          {
+            "attempt": 1,
+            "run_id": "e1_seed42"
+          }
+        ],
+        "catalogue": {
+          "cut_place": null,
+          "never_cut": true,
+          "parent": null
+        },
+        "checkpoint": {
+          "bytes": 23734564,
+          "name": "e1_student_best_iter80000.pt",
+          "sha256": "cf0879f7007dfacbd0d510085ff28a4b47ee845ddb8fd599611d74109e1d6a03",
+          "sources": [
+            {
+              "dl": null,
+              "kind": "run_dir",
+              "path": "e1_seed42/e1_student_best_iter80000.pt",
+              "sha256": "cf0879f7007dfacbd0d510085ff28a4b47ee845ddb8fd599611d74109e1d6a03"
+            },
+            {
+              "dl": "DL-99",
+              "kind": "decision_log",
+              "path": null,
+              "sha256": "cf0879f7007dfacbd0d510085ff28a4b47ee845ddb8fd599611d74109e1d6a03"
+            }
+          ]
+        },
+        "class": "run",
+        "completion": {
+          "at_utc": "2026-09-12T12:20:24Z",
+          "line": 80021,
+          "record": "e1_telemetry.jsonl",
+          "sha256": "3ca9fd7998e7734efa414615e906236f04babc890861e852bade066bb97ff19d"
+        },
+        "dl_rows": [
+          "DL-17",
+          "DL-99"
+        ],
+        "evaluator_stage": "E1",
+        "kind": "scored_run",
+        "role": [
+          "family"
+        ],
+        "run_id": "e1_seed42",
+        "scope": [
+          "clean",
+          "upstream",
+          "dedup",
+          "corrupted",
+          "corrupted_sev45",
+          "efficiency"
+        ],
+        "seed": 42,
+        "slot": "E1:s42:80k",
+        "stage": "E1",
+        "teacher_ckpt_sha256": null
+      },
+      {
+        "attempts": [
+          {
+            "attempt": 1,
+            "run_id": "e1_seed43"
+          }
+        ],
+        "catalogue": {
+          "cut_place": null,
+          "never_cut": false,
+          "parent": null
+        },
+        "checkpoint": {
+          "bytes": 23734564,
+          "name": "e1_student_best_iter72000.pt",
+          "sha256": "95f21204788f2986aba9311272c7f7e84f8d2049724c4bfdf5b0da66b6a78153",
+          "sources": [
+            {
+              "dl": null,
+              "kind": "run_dir",
+              "path": "e1_seed43/e1_student_best_iter72000.pt",
+              "sha256": "95f21204788f2986aba9311272c7f7e84f8d2049724c4bfdf5b0da66b6a78153"
+            },
+            {
+              "dl": "DL-99",
+              "kind": "decision_log",
+              "path": null,
+              "sha256": "95f21204788f2986aba9311272c7f7e84f8d2049724c4bfdf5b0da66b6a78153"
+            }
+          ]
+        },
+        "class": "run",
+        "completion": {
+          "at_utc": "2026-09-29T09:52:50Z",
+          "line": 80021,
+          "record": "e1_telemetry.jsonl",
+          "sha256": "6b2bf27909618496f9d7f3eaba80692116b1e03294999c82173f2a88cfb68a07"
+        },
+        "dl_rows": [
+          "DL-99",
+          "DL-100"
+        ],
+        "evaluator_stage": "E1",
+        "kind": "scored_run",
+        "role": [
+          "per_seed"
+        ],
+        "run_id": "e1_seed43",
+        "scope": [
+          "clean",
+          "upstream",
+          "dedup",
+          "corrupted"
+        ],
+        "seed": 43,
+        "slot": "E1:s43:80k",
+        "stage": "E1",
+        "teacher_ckpt_sha256": null
+      },
+      {
+        "attempts": [
+          {
+            "attempt": 1,
+            "run_id": "e1_seed44"
+          }
+        ],
+        "catalogue": {
+          "cut_place": null,
+          "never_cut": false,
+          "parent": null
+        },
+        "checkpoint": {
+          "bytes": 23734564,
+          "name": "e1_student_best_iter76000.pt",
+          "sha256": "ef95aefd8f383e3b23674e0c6abf040dfb1ef0da997a53140c59ced294108c8f",
+          "sources": [
+            {
+              "dl": null,
+              "kind": "run_dir",
+              "path": "e1_seed44/e1_student_best_iter76000.pt",
+              "sha256": "ef95aefd8f383e3b23674e0c6abf040dfb1ef0da997a53140c59ced294108c8f"
+            },
+            {
+              "dl": "DL-99",
+              "kind": "decision_log",
+              "path": null,
+              "sha256": "ef95aefd8f383e3b23674e0c6abf040dfb1ef0da997a53140c59ced294108c8f"
+            }
+          ]
+        },
+        "class": "run",
+        "completion": {
+          "at_utc": "2026-09-29T10:36:36Z",
+          "line": 80021,
+          "record": "e1_telemetry.jsonl",
+          "sha256": "56b65b88b86f7a8713beaf90d74e98c8c1aa8695abc4028aa5e68ae71a261a6b"
+        },
+        "dl_rows": [
+          "DL-99",
+          "DL-100"
+        ],
+        "evaluator_stage": "E1",
+        "kind": "scored_run",
+        "role": [
+          "per_seed"
+        ],
+        "run_id": "e1_seed44",
+        "scope": [
+          "clean",
+          "upstream",
+          "dedup",
+          "corrupted"
+        ],
+        "seed": 44,
+        "slot": "E1:s44:80k",
+        "stage": "E1",
+        "teacher_ckpt_sha256": null
+      },
+      {
+        "attempts": [
+          {
+            "attempt": 1,
+            "run_id": "e2_s42_lambda0.25_80k_a1"
+          }
+        ],
+        "catalogue": {
+          "cut_place": null,
+          "never_cut": false,
+          "parent": null
+        },
+        "checkpoint": {
+          "bytes": 23736548,
+          "name": "e2_student_best_iter64000.pt",
+          "sha256": "20a68e3a130aef0a0d83dfd252b537e654fe60cc54c2d631d937730f5997b164",
+          "sources": [
+            {
+              "dl": null,
+              "kind": "run_dir",
+              "path": "e2_s42_lambda0.25_80k_a1/e2_student_best_iter64000.pt",
+              "sha256": "20a68e3a130aef0a0d83dfd252b537e654fe60cc54c2d631d937730f5997b164"
+            },
+            {
+              "dl": "DL-109",
+              "kind": "decision_log",
+              "path": null,
+              "sha256": "20a68e3a130aef0a0d83dfd252b537e654fe60cc54c2d631d937730f5997b164"
+            }
+          ]
+        },
+        "class": "run",
+        "completion": {
+          "at_utc": "2026-10-11T17:31:33Z",
+          "line": 80021,
+          "record": "e2_telemetry.jsonl",
+          "sha256": "b5cf1139de34163b5b632682c966b5c2f59a6414ab662e3023788931fe1bf514"
+        },
+        "dl_rows": [
+          "DL-108",
+          "DL-109"
+        ],
+        "kind": "listed_run",
+        "reason": "a lambda sweep candidate not selected (lambda selection of record, DL-109)",
+        "role": [
+          "listed"
+        ],
+        "run_id": "e2_s42_lambda0.25_80k_a1",
+        "scope": [],
+        "seed": 42,
+        "slot": "E2:s42:lambda0.25:80k",
+        "stage": "E2"
+      },
+      {
+        "attempts": [
+          {
+            "attempt": 1,
+            "run_id": "e2_s42_lambda0.5_80k_a1"
+          }
+        ],
+        "catalogue": {
+          "cut_place": null,
+          "never_cut": true,
+          "parent": null
+        },
+        "checkpoint": {
+          "bytes": 23736548,
+          "name": "e2_student_best_iter64000.pt",
+          "sha256": "73dbc32dfc988124a9b81df24abd97c526f927ac2b094996411d174e89d32f06",
+          "sources": [
+            {
+              "dl": null,
+              "kind": "run_dir",
+              "path": "e2_s42_lambda0.5_80k_a1/e2_student_best_iter64000.pt",
+              "sha256": "73dbc32dfc988124a9b81df24abd97c526f927ac2b094996411d174e89d32f06"
+            },
+            {
+              "dl": "DL-109",
+              "kind": "decision_log",
+              "path": null,
+              "sha256": "73dbc32dfc988124a9b81df24abd97c526f927ac2b094996411d174e89d32f06"
+            }
+          ]
+        },
+        "class": "run",
+        "completion": {
+          "at_utc": "2026-10-11T17:26:44Z",
+          "line": 80021,
+          "record": "e2_telemetry.jsonl",
+          "sha256": "4f8400f2b2ba70c33d01b5c981b1c928a3ec25d5ae18d90f30a741cac701f895"
+        },
+        "dl_rows": [
+          "DL-108",
+          "DL-109"
+        ],
+        "evaluator_stage": "E2",
+        "kind": "scored_run",
+        "role": [
+          "family"
+        ],
+        "run_id": "e2_s42_lambda0.5_80k_a1",
+        "scope": [
+          "clean",
+          "upstream",
+          "dedup",
+          "corrupted",
+          "corrupted_sev45",
+          "efficiency"
+        ],
+        "seed": 42,
+        "slot": "E2:s42:lambda0.5:80k",
+        "stage": "E2",
+        "teacher_ckpt_sha256": "8c0e649a1457782c99e02a3c81867c3b5aa55d924b697cc859455e6022179c4e"
+      },
+      {
+        "attempts": [
+          {
+            "attempt": 1,
+            "run_id": "e2_s42_lambda1_80k_a1"
+          }
+        ],
+        "catalogue": {
+          "cut_place": null,
+          "never_cut": true,
+          "parent": null
+        },
+        "checkpoint": {
+          "bytes": 23736548,
+          "name": "e2_student_best_iter64000.pt",
+          "sha256": "7e082eae3aaba14cf7c098bdfc92c5e0c09393dbbab77fedcc4a071df234c4bf",
+          "sources": [
+            {
+              "dl": null,
+              "kind": "run_dir",
+              "path": "e2_s42_lambda1_80k_a1/e2_student_best_iter64000.pt",
+              "sha256": "7e082eae3aaba14cf7c098bdfc92c5e0c09393dbbab77fedcc4a071df234c4bf"
+            },
+            {
+              "dl": "DL-109",
+              "kind": "decision_log",
+              "path": null,
+              "sha256": "7e082eae3aaba14cf7c098bdfc92c5e0c09393dbbab77fedcc4a071df234c4bf"
+            }
+          ]
+        },
+        "class": "run",
+        "completion": {
+          "at_utc": "2026-10-11T15:27:01Z",
+          "line": 80021,
+          "record": "e2_telemetry.jsonl",
+          "sha256": "40b3517c81462d3c3e6d8d59b3c40d368bb92d5332e60c4f00110fbe50a8e48e"
+        },
+        "dl_rows": [
+          "DL-108",
+          "DL-109"
+        ],
+        "evaluator_stage": "E2",
+        "kind": "default_candidate",
+        "role": [
+          "default_candidate"
+        ],
+        "run_id": "e2_s42_lambda1_80k_a1",
+        "scope": [
+          "clean",
+          "upstream",
+          "dedup"
+        ],
+        "seed": 42,
+        "selection": {
+          "path": "reports/derived/lambda_selection.json",
+          "sha256": "719eaa0ae2379633786a545aff087d385b16a6c503cfa445ba456784f2592145"
+        },
+        "slot": "E2:s42:lambda1:80k",
+        "stage": "E2",
+        "teacher_ckpt_sha256": "8c0e649a1457782c99e02a3c81867c3b5aa55d924b697cc859455e6022179c4e"
+      },
+      {
+        "attempts": [
+          {
+            "attempt": 1,
+            "run_id": "e2_s42_lambda2_80k_a1"
+          }
+        ],
+        "catalogue": {
+          "cut_place": null,
+          "never_cut": false,
+          "parent": null
+        },
+        "checkpoint": {
+          "bytes": 23736548,
+          "name": "e2_student_best_iter48000.pt",
+          "sha256": "438d6ee44c1e30cfe843ff14cf742484301af58cf7507b502d84177415397f7d",
+          "sources": [
+            {
+              "dl": null,
+              "kind": "run_dir",
+              "path": "e2_s42_lambda2_80k_a1/e2_student_best_iter48000.pt",
+              "sha256": "438d6ee44c1e30cfe843ff14cf742484301af58cf7507b502d84177415397f7d"
+            },
+            {
+              "dl": "DL-109",
+              "kind": "decision_log",
+              "path": null,
+              "sha256": "438d6ee44c1e30cfe843ff14cf742484301af58cf7507b502d84177415397f7d"
+            }
+          ]
+        },
+        "class": "run",
+        "completion": {
+          "at_utc": "2026-10-11T17:30:41Z",
+          "line": 80021,
+          "record": "e2_telemetry.jsonl",
+          "sha256": "82caeb84b29feaccb41c14929fe5565e627c02fef70e6f2b5ed07ef867e38b87"
+        },
+        "dl_rows": [
+          "DL-108",
+          "DL-109"
+        ],
+        "kind": "listed_run",
+        "reason": "a lambda sweep candidate not selected (lambda selection of record, DL-109)",
+        "role": [
+          "listed"
+        ],
+        "run_id": "e2_s42_lambda2_80k_a1",
+        "scope": [],
+        "seed": 42,
+        "slot": "E2:s42:lambda2:80k",
+        "stage": "E2"
+      },
+      {
+        "attempts": [
+          {
+            "attempt": 1,
+            "run_id": "e2_s42_lambda4_80k_a1"
+          }
+        ],
+        "catalogue": {
+          "cut_place": null,
+          "never_cut": false,
+          "parent": null
+        },
+        "checkpoint": {
+          "bytes": 23736548,
+          "name": "e2_student_best_iter68000.pt",
+          "sha256": "aadb2aeac5ac104d8925f360171f617b880346bccac317bdc16b5e992dd70ca2",
+          "sources": [
+            {
+              "dl": null,
+              "kind": "run_dir",
+              "path": "e2_s42_lambda4_80k_a1/e2_student_best_iter68000.pt",
+              "sha256": "aadb2aeac5ac104d8925f360171f617b880346bccac317bdc16b5e992dd70ca2"
+            },
+            {
+              "dl": "DL-109",
+              "kind": "decision_log",
+              "path": null,
+              "sha256": "aadb2aeac5ac104d8925f360171f617b880346bccac317bdc16b5e992dd70ca2"
+            }
+          ]
+        },
+        "class": "run",
+        "completion": {
+          "at_utc": "2026-10-11T17:40:44Z",
+          "line": 80021,
+          "record": "e2_telemetry.jsonl",
+          "sha256": "622e1ee74e1954d1e0090bc84ee62e7f4eb872ab5c5a48b9f9c9f5b85fab339e"
+        },
+        "dl_rows": [
+          "DL-108",
+          "DL-109"
+        ],
+        "kind": "listed_run",
+        "reason": "a lambda sweep candidate not selected (lambda selection of record, DL-109)",
+        "role": [
+          "listed"
+        ],
+        "run_id": "e2_s42_lambda4_80k_a1",
+        "scope": [],
+        "seed": 42,
+        "slot": "E2:s42:lambda4:80k",
+        "stage": "E2"
+      },
+      {
+        "attempts": [
+          {
+            "attempt": 1,
+            "run_id": "e3_s42_lambda0.5_alpha25_80k_a1"
+          }
+        ],
+        "catalogue": {
+          "cut_place": null,
+          "never_cut": true,
+          "parent": null
+        },
+        "checkpoint": {
+          "bytes": 23736612,
+          "name": "e3_student_best_iter76000.pt",
+          "sha256": "4baa5bad682995091b66c67fb2d2ce467b3f139e02cc5a5cc62c243fe00f1a0d",
+          "sources": [
+            {
+              "dl": null,
+              "kind": "run_dir",
+              "path": "e3_s42_lambda0.5_alpha25_80k_a1/e3_student_best_iter76000.pt",
+              "sha256": "4baa5bad682995091b66c67fb2d2ce467b3f139e02cc5a5cc62c243fe00f1a0d"
+            },
+            {
+              "dl": "DL-121",
+              "kind": "decision_log",
+              "path": null,
+              "sha256": "4baa5bad682995091b66c67fb2d2ce467b3f139e02cc5a5cc62c243fe00f1a0d"
+            }
+          ]
+        },
+        "class": "run",
+        "completion": {
+          "at_utc": "2026-10-13T13:06:56Z",
+          "line": 80021,
+          "record": "e3_telemetry.jsonl",
+          "sha256": "734417e4b33e64239cebe2485e3eace03a795163b47bf50667517be40c161d2e"
+        },
+        "dl_rows": [
+          "DL-116",
+          "DL-121"
+        ],
+        "evaluator_stage": "E3",
+        "kind": "scored_run",
+        "role": [
+          "family"
+        ],
+        "run_id": "e3_s42_lambda0.5_alpha25_80k_a1",
+        "scope": [
+          "clean",
+          "upstream",
+          "dedup",
+          "corrupted",
+          "corrupted_sev45",
+          "efficiency"
+        ],
+        "seed": 42,
+        "slot": "E3:s42:lambda0.5:alpha25:80k",
+        "stage": "E3",
+        "teacher_ckpt_sha256": "8c0e649a1457782c99e02a3c81867c3b5aa55d924b697cc859455e6022179c4e"
+      },
+      {
+        "attempts": [
+          {
+            "attempt": 1,
+            "run_id": "e3_s42_lambda0.5_alpha50_80k_a1"
+          }
+        ],
+        "catalogue": {
+          "cut_place": null,
+          "never_cut": true,
+          "parent": null
+        },
+        "checkpoint": {
+          "bytes": 23736612,
+          "name": "e3_student_best_iter56000.pt",
+          "sha256": "b891406c5e734a48fece00fce8d3f978bb2bc762833b604214cf3f0df5afaea6",
+          "sources": [
+            {
+              "dl": null,
+              "kind": "run_dir",
+              "path": "e3_s42_lambda0.5_alpha50_80k_a1/e3_student_best_iter56000.pt",
+              "sha256": "b891406c5e734a48fece00fce8d3f978bb2bc762833b604214cf3f0df5afaea6"
+            },
+            {
+              "dl": "DL-121",
+              "kind": "decision_log",
+              "path": null,
+              "sha256": "b891406c5e734a48fece00fce8d3f978bb2bc762833b604214cf3f0df5afaea6"
+            }
+          ]
+        },
+        "class": "run",
+        "completion": {
+          "at_utc": "2026-10-13T12:22:47Z",
+          "line": 80021,
+          "record": "e3_telemetry.jsonl",
+          "sha256": "219756ff8f2245a2b512aa9d861b2984f04d42d2a54cc2380f0d449328bef83d"
+        },
+        "dl_rows": [
+          "DL-116",
+          "DL-121"
+        ],
+        "evaluator_stage": "E3",
+        "kind": "default_candidate",
+        "role": [
+          "default_candidate"
+        ],
+        "run_id": "e3_s42_lambda0.5_alpha50_80k_a1",
+        "scope": [
+          "clean",
+          "upstream",
+          "dedup"
+        ],
+        "seed": 42,
+        "selection": {
+          "path": "reports/derived/alpha_selection.json",
+          "sha256": "1399b897278db17a8876c724b89c8d8e7a7b42ffe1d9c4d67002578a889f2dd8"
+        },
+        "slot": "E3:s42:lambda0.5:alpha50:80k",
+        "stage": "E3",
+        "teacher_ckpt_sha256": "8c0e649a1457782c99e02a3c81867c3b5aa55d924b697cc859455e6022179c4e"
+      },
+      {
+        "attempts": [
+          {
+            "attempt": 1,
+            "run_id": "e3_s42_lambda0.5_alpha100_80k_a1"
+          }
+        ],
+        "catalogue": {
+          "cut_place": 17,
+          "never_cut": false,
+          "parent": null
+        },
+        "checkpoint": {
+          "bytes": 23736612,
+          "name": "e3_student_best_iter80000.pt",
+          "sha256": "f7201e5a5042e27d420545f0a0075d29686d5102c927bb74bb27a13dc48a328f",
+          "sources": [
+            {
+              "dl": null,
+              "kind": "run_dir",
+              "path": "e3_s42_lambda0.5_alpha100_80k_a1/e3_student_best_iter80000.pt",
+              "sha256": "f7201e5a5042e27d420545f0a0075d29686d5102c927bb74bb27a13dc48a328f"
+            },
+            {
+              "dl": "DL-121",
+              "kind": "decision_log",
+              "path": null,
+              "sha256": "f7201e5a5042e27d420545f0a0075d29686d5102c927bb74bb27a13dc48a328f"
+            }
+          ]
+        },
+        "class": "run",
+        "completion": {
+          "at_utc": "2026-10-13T13:11:44Z",
+          "line": 80021,
+          "record": "e3_telemetry.jsonl",
+          "sha256": "4afb743820b92905695213a7f812c57f8550993434a08ed6d7f9a6e23f406968"
+        },
+        "dl_rows": [
+          "DL-116",
+          "DL-121"
+        ],
+        "kind": "listed_run",
+        "reason": "an alpha sweep candidate not selected (alpha selection of record, DL-121)",
+        "role": [
+          "listed"
+        ],
+        "run_id": "e3_s42_lambda0.5_alpha100_80k_a1",
+        "scope": [],
+        "seed": 42,
+        "slot": "E3:s42:lambda0.5:alpha100:80k",
+        "stage": "E3"
+      },
+      {
+        "attempts": [
+          {
+            "attempt": 1,
+            "run_id": "e2_s43_lambda0.5_80k_a1"
+          }
+        ],
+        "catalogue": {
+          "cut_place": 18,
+          "never_cut": false,
+          "parent": null
+        },
+        "checkpoint": {
+          "bytes": 23736548,
+          "name": "e2_student_best_iter72000.pt",
+          "sha256": "e3c4e05ccfffa5c78d88a9309542108c7a974f03897d4564bd0644a032b4d385",
+          "sources": [
+            {
+              "dl": null,
+              "kind": "run_dir",
+              "path": "e2_s43_lambda0.5_80k_a1/e2_student_best_iter72000.pt",
+              "sha256": "e3c4e05ccfffa5c78d88a9309542108c7a974f03897d4564bd0644a032b4d385"
+            },
+            {
+              "dl": "DL-218",
+              "kind": "decision_log",
+              "path": null,
+              "sha256": "e3c4e05ccfffa5c78d88a9309542108c7a974f03897d4564bd0644a032b4d385"
+            }
+          ]
+        },
+        "class": "run",
+        "completion": {
+          "at_utc": "2026-10-13T13:04:49Z",
+          "line": 80021,
+          "record": "e2_telemetry.jsonl",
+          "sha256": "1f002faad15732864f73dd32bd9eb4e1e9d35a83ae5ab5ebb42e3024d41ce361"
+        },
+        "dl_rows": [
+          "DL-116"
+        ],
+        "evaluator_stage": "E2",
+        "kind": "scored_run",
+        "role": [
+          "per_seed"
+        ],
+        "run_id": "e2_s43_lambda0.5_80k_a1",
+        "scope": [
+          "clean",
+          "upstream",
+          "dedup"
+        ],
+        "seed": 43,
+        "slot": "E2:s43:lambda0.5:80k",
+        "stage": "E2",
+        "teacher_ckpt_sha256": "8c0e649a1457782c99e02a3c81867c3b5aa55d924b697cc859455e6022179c4e"
+      },
+      {
+        "attempts": [
+          {
+            "attempt": 1,
+            "run_id": "e2_s44_lambda0.5_80k_a1"
+          }
+        ],
+        "catalogue": {
+          "cut_place": 18,
+          "never_cut": false,
+          "parent": null
+        },
+        "checkpoint": {
+          "bytes": 23736548,
+          "name": "e2_student_best_iter48000.pt",
+          "sha256": "be48da058a55a3efb049ead5f48409ab9061aad549708a89805fd7113ac2fa56",
+          "sources": [
+            {
+              "dl": null,
+              "kind": "run_dir",
+              "path": "e2_s44_lambda0.5_80k_a1/e2_student_best_iter48000.pt",
+              "sha256": "be48da058a55a3efb049ead5f48409ab9061aad549708a89805fd7113ac2fa56"
+            },
+            {
+              "dl": "DL-218",
+              "kind": "decision_log",
+              "path": null,
+              "sha256": "be48da058a55a3efb049ead5f48409ab9061aad549708a89805fd7113ac2fa56"
+            }
+          ]
+        },
+        "class": "run",
+        "completion": {
+          "at_utc": "2026-10-13T13:05:50Z",
+          "line": 80021,
+          "record": "e2_telemetry.jsonl",
+          "sha256": "8fc5e37d9f39dd82c6e95f832c851d2ef83de0a35f769d7ab0d1c37b06010c8d"
+        },
+        "dl_rows": [
+          "DL-116"
+        ],
+        "evaluator_stage": "E2",
+        "kind": "scored_run",
+        "role": [
+          "per_seed"
+        ],
+        "run_id": "e2_s44_lambda0.5_80k_a1",
+        "scope": [
+          "clean",
+          "upstream",
+          "dedup"
+        ],
+        "seed": 44,
+        "slot": "E2:s44:lambda0.5:80k",
+        "stage": "E2",
+        "teacher_ckpt_sha256": "8c0e649a1457782c99e02a3c81867c3b5aa55d924b697cc859455e6022179c4e"
+      },
+      {
+        "attempts": [
+          {
+            "attempt": 1,
+            "run_id": "e3_s43_lambda0.5_alpha25_80k_a1"
+          }
+        ],
+        "catalogue": {
+          "cut_place": 20,
+          "never_cut": false,
+          "parent": null
+        },
+        "checkpoint": {
+          "bytes": 23736612,
+          "name": "e3_student_best_iter72000.pt",
+          "sha256": "f4d6f689d5545fb222fc9cb706c8143e5c04dff2082e86135dfdcabab4fc9a0e",
+          "sources": [
+            {
+              "dl": null,
+              "kind": "run_dir",
+              "path": "e3_s43_lambda0.5_alpha25_80k_a1/e3_student_best_iter72000.pt",
+              "sha256": "f4d6f689d5545fb222fc9cb706c8143e5c04dff2082e86135dfdcabab4fc9a0e"
+            },
+            {
+              "dl": "DL-218",
+              "kind": "decision_log",
+              "path": null,
+              "sha256": "f4d6f689d5545fb222fc9cb706c8143e5c04dff2082e86135dfdcabab4fc9a0e"
+            }
+          ]
+        },
+        "class": "run",
+        "completion": {
+          "at_utc": "2026-10-15T17:09:50Z",
+          "line": 80021,
+          "record": "e3_telemetry.jsonl",
+          "sha256": "8545f1cb1e0419020010da3b9c0fb2cd43d8f8427b3fe3ad1519b1f205aab7bd"
+        },
+        "dl_rows": [
+          "DL-151"
+        ],
+        "evaluator_stage": "E3",
+        "kind": "scored_run",
+        "role": [
+          "per_seed"
+        ],
+        "run_id": "e3_s43_lambda0.5_alpha25_80k_a1",
+        "scope": [
+          "clean",
+          "upstream",
+          "dedup"
+        ],
+        "seed": 43,
+        "slot": "E3:s43:lambda0.5:alpha25:80k",
+        "stage": "E3",
+        "teacher_ckpt_sha256": "8c0e649a1457782c99e02a3c81867c3b5aa55d924b697cc859455e6022179c4e"
+      },
+      {
+        "attempts": [
+          {
+            "attempt": 1,
+            "run_id": "e3_s44_lambda0.5_alpha25_80k_a1"
+          }
+        ],
+        "catalogue": {
+          "cut_place": 20,
+          "never_cut": false,
+          "parent": null
+        },
+        "checkpoint": {
+          "bytes": 23736612,
+          "name": "e3_student_best_iter60000.pt",
+          "sha256": "6585ed09398ec8225a2d49304e1e5d8611b585456ac3e7c111eb1744c313363b",
+          "sources": [
+            {
+              "dl": null,
+              "kind": "run_dir",
+              "path": "e3_s44_lambda0.5_alpha25_80k_a1/e3_student_best_iter60000.pt",
+              "sha256": "6585ed09398ec8225a2d49304e1e5d8611b585456ac3e7c111eb1744c313363b"
+            },
+            {
+              "dl": "DL-218",
+              "kind": "decision_log",
+              "path": null,
+              "sha256": "6585ed09398ec8225a2d49304e1e5d8611b585456ac3e7c111eb1744c313363b"
+            }
+          ]
+        },
+        "class": "run",
+        "completion": {
+          "at_utc": "2026-10-15T17:13:56Z",
+          "line": 80021,
+          "record": "e3_telemetry.jsonl",
+          "sha256": "59b812828a6b8be11923e0402b0e8513c51996ce3eb7c578cf5b7e3d0d8ad004"
+        },
+        "dl_rows": [
+          "DL-134",
+          "DL-151"
+        ],
+        "evaluator_stage": "E3",
+        "kind": "scored_run",
+        "role": [
+          "per_seed"
+        ],
+        "run_id": "e3_s44_lambda0.5_alpha25_80k_a1",
+        "scope": [
+          "clean",
+          "upstream",
+          "dedup"
+        ],
+        "seed": 44,
+        "slot": "E3:s44:lambda0.5:alpha25:80k",
+        "stage": "E3",
+        "teacher_ckpt_sha256": "8c0e649a1457782c99e02a3c81867c3b5aa55d924b697cc859455e6022179c4e"
+      },
+      {
+        "attempts": [
+          {
+            "attempt": 1,
+            "run_id": "e1_s42_160k_a1"
+          }
+        ],
+        "catalogue": {
+          "cut_place": 15,
+          "never_cut": false,
+          "parent": null
+        },
+        "checkpoint": {
+          "bytes": 23735058,
+          "name": "e1_student_best_iter140000.pt",
+          "sha256": "0ebc0f2f1a5e4bf02b682c1ff05de1f7b58f417aa46b36cb999e990fb4236a2f",
+          "sources": [
+            {
+              "dl": null,
+              "kind": "run_dir",
+              "path": "e1_s42_160k_a1/e1_student_best_iter140000.pt",
+              "sha256": "0ebc0f2f1a5e4bf02b682c1ff05de1f7b58f417aa46b36cb999e990fb4236a2f"
+            },
+            {
+              "dl": "DL-218",
+              "kind": "decision_log",
+              "path": null,
+              "sha256": "0ebc0f2f1a5e4bf02b682c1ff05de1f7b58f417aa46b36cb999e990fb4236a2f"
+            }
+          ]
+        },
+        "class": "run",
+        "completion": {
+          "at_utc": "2026-10-18T06:55:41Z",
+          "line": 160041,
+          "record": "e1_telemetry.jsonl",
+          "sha256": "5d1503700aefd8f75b4676fae0008ce10eb9c25b204e3298f3e0adbf0fbc0cf8"
+        },
+        "dl_rows": [
+          "DL-157"
+        ],
+        "evaluator_stage": "E1",
+        "kind": "scored_run",
+        "role": [
+          "control"
+        ],
+        "run_id": "e1_s42_160k_a1",
+        "scope": [
+          "clean",
+          "upstream",
+          "dedup"
+        ],
+        "seed": 42,
+        "slot": "E1:s42:160k",
+        "stage": "E1",
+        "teacher_ckpt_sha256": null
+      },
+      {
+        "attempts": [
+          {
+            "attempt": 1,
+            "run_id": "e2_s42_lambda0.5_160k_a1"
+          }
+        ],
+        "catalogue": {
+          "cut_place": 16,
+          "never_cut": false,
+          "parent": null
+        },
+        "checkpoint": {
+          "bytes": 23737042,
+          "name": "e2_student_best_iter116000.pt",
+          "sha256": "4f8051042becb482f232bb05202ba27200614b305c80fe82cce2d40e43fc06d3",
+          "sources": [
+            {
+              "dl": null,
+              "kind": "run_dir",
+              "path": "e2_s42_lambda0.5_160k_a1/e2_student_best_iter116000.pt",
+              "sha256": "4f8051042becb482f232bb05202ba27200614b305c80fe82cce2d40e43fc06d3"
+            },
+            {
+              "dl": "DL-218",
+              "kind": "decision_log",
+              "path": null,
+              "sha256": "4f8051042becb482f232bb05202ba27200614b305c80fe82cce2d40e43fc06d3"
+            }
+          ]
+        },
+        "class": "run",
+        "completion": {
+          "at_utc": "2026-10-16T21:04:03Z",
+          "line": 160041,
+          "record": "e2_telemetry.jsonl",
+          "sha256": "7179686c7891c381f2aa2639d94533442a0db168aea9ae8d8185daffb4d2ba49"
+        },
+        "dl_rows": [
+          "DL-158"
+        ],
+        "evaluator_stage": "E2",
+        "kind": "scored_run",
+        "role": [
+          "control"
+        ],
+        "run_id": "e2_s42_lambda0.5_160k_a1",
+        "scope": [
+          "clean",
+          "upstream",
+          "dedup"
+        ],
+        "seed": 42,
+        "slot": "E2:s42:lambda0.5:160k",
+        "stage": "E2",
+        "teacher_ckpt_sha256": "8c0e649a1457782c99e02a3c81867c3b5aa55d924b697cc859455e6022179c4e"
+      },
+      {
+        "attempts": [
+          {
+            "attempt": 1,
+            "run_id": "e3_s42_lambda0.5_alpha25_160k_a1"
+          },
+          {
+            "attempt": 2,
+            "run_id": "e3_s42_lambda0.5_alpha25_160k_a2"
+          }
+        ],
+        "catalogue": {
+          "cut_place": 13,
+          "never_cut": false,
+          "parent": null
+        },
+        "checkpoint": {
+          "bytes": 23737106,
+          "name": "e3_student_best_iter104000.pt",
+          "sha256": "af96bb2be14e9e6fb0e5b8c10d20aae6fb17e12b88e31558a580a6fde6be4042",
+          "sources": [
+            {
+              "dl": null,
+              "kind": "run_dir",
+              "path": "e3_s42_lambda0.5_alpha25_160k_a2/e3_student_best_iter104000.pt",
+              "sha256": "af96bb2be14e9e6fb0e5b8c10d20aae6fb17e12b88e31558a580a6fde6be4042"
+            },
+            {
+              "dl": "DL-147",
+              "kind": "decision_log",
+              "path": null,
+              "sha256": "af96bb2be14e9e6fb0e5b8c10d20aae6fb17e12b88e31558a580a6fde6be4042"
+            }
+          ]
+        },
+        "class": "run",
+        "completion": {
+          "at_utc": "2026-10-22T18:04:12Z",
+          "line": 160041,
+          "record": "e3_telemetry.jsonl",
+          "sha256": "c8e218d3c3800b315e57b5db67a3cf428a1aa623dfe63b7a95c84b9802bfca46"
+        },
+        "dl_rows": [
+          "DL-147"
+        ],
+        "evaluator_stage": "E3",
+        "kind": "scored_run",
+        "role": [
+          "control"
+        ],
+        "run_id": "e3_s42_lambda0.5_alpha25_160k_a2",
+        "scope": [
+          "clean",
+          "upstream",
+          "dedup"
+        ],
+        "seed": 42,
+        "slot": "E3:s42:lambda0.5:alpha25:160k",
+        "stage": "E3",
+        "teacher_ckpt_sha256": "8c0e649a1457782c99e02a3c81867c3b5aa55d924b697cc859455e6022179c4e"
+      },
+      {
+        "attempts": [
+          {
+            "attempt": 1,
+            "run_id": "a_s42_alpha25_80k_a1"
+          }
+        ],
+        "catalogue": {
+          "cut_place": 12,
+          "never_cut": false,
+          "parent": null
+        },
+        "checkpoint": {
+          "bytes": 23735926,
+          "name": "a_student_best_iter80000.pt",
+          "sha256": "a6cd9c826fe4659338e8a158ba7d390c85a547e87c2f39091589bda28a185414",
+          "sources": [
+            {
+              "dl": null,
+              "kind": "run_dir",
+              "path": "a_s42_alpha25_80k_a1/a_student_best_iter80000.pt",
+              "sha256": "a6cd9c826fe4659338e8a158ba7d390c85a547e87c2f39091589bda28a185414"
+            },
+            {
+              "dl": "DL-218",
+              "kind": "decision_log",
+              "path": null,
+              "sha256": "a6cd9c826fe4659338e8a158ba7d390c85a547e87c2f39091589bda28a185414"
+            }
+          ]
+        },
+        "class": "run",
+        "completion": {
+          "at_utc": "2026-10-18T20:15:16Z",
+          "line": 80021,
+          "record": "a_telemetry.jsonl",
+          "sha256": "ef810c3818088e6d78d753a830272d46364a7ffeebe63af836066e54ca19465d"
+        },
+        "dl_rows": [
+          "DL-165"
+        ],
+        "evaluator_stage": "A",
+        "kind": "scored_run",
+        "role": [
+          "arm"
+        ],
+        "run_id": "a_s42_alpha25_80k_a1",
+        "scope": [
+          "clean",
+          "upstream",
+          "dedup"
+        ],
+        "seed": 42,
+        "slot": "A:s42:alpha25:80k",
+        "stage": "A",
+        "teacher_ckpt_sha256": "8c0e649a1457782c99e02a3c81867c3b5aa55d924b697cc859455e6022179c4e"
+      },
+      {
+        "attempts": [
+          {
+            "attempt": 1,
+            "run_id": "f_s42_alpha25_80k_a1"
+          },
+          {
+            "attempt": 2,
+            "run_id": "f_s42_alpha25_80k_a2"
+          }
+        ],
+        "catalogue": {
+          "cut_place": 11,
+          "never_cut": false,
+          "parent": null
+        },
+        "checkpoint": {
+          "bytes": 23735926,
+          "name": "f_student_best_iter76000.pt",
+          "sha256": "e3feccd920d9c7f8caeee1bd2c4f47090057df92959f625d295b25fff4b55c79",
+          "sources": [
+            {
+              "dl": null,
+              "kind": "run_dir",
+              "path": "f_s42_alpha25_80k_a2/f_student_best_iter76000.pt",
+              "sha256": "e3feccd920d9c7f8caeee1bd2c4f47090057df92959f625d295b25fff4b55c79"
+            },
+            {
+              "dl": "DL-218",
+              "kind": "decision_log",
+              "path": null,
+              "sha256": "e3feccd920d9c7f8caeee1bd2c4f47090057df92959f625d295b25fff4b55c79"
+            }
+          ]
+        },
+        "class": "run",
+        "completion": {
+          "at_utc": "2026-10-19T08:47:34Z",
+          "line": 80021,
+          "record": "f_telemetry.jsonl",
+          "sha256": "64c25a790cfcaf7d0cfcc5f83f25f980d5cf4f85da39f898b3de3b87784e7ca7"
+        },
+        "dl_rows": [
+          "DL-165"
+        ],
+        "evaluator_stage": "F",
+        "kind": "scored_run",
+        "role": [
+          "arm"
+        ],
+        "run_id": "f_s42_alpha25_80k_a2",
+        "scope": [
+          "clean",
+          "upstream",
+          "dedup"
+        ],
+        "seed": 42,
+        "slot": "F:s42:alpha25:80k",
+        "stage": "F",
+        "teacher_ckpt_sha256": "8c0e649a1457782c99e02a3c81867c3b5aa55d924b697cc859455e6022179c4e"
+      },
+      {
+        "attempts": [
+          {
+            "attempt": 1,
+            "run_id": "g_s42_80k_a1"
+          }
+        ],
+        "catalogue": {
+          "cut_place": 10,
+          "never_cut": false,
+          "parent": null
+        },
+        "checkpoint": {
+          "bytes": 23735926,
+          "name": "g_student_best_iter80000.pt",
+          "sha256": "fdb1f04fe5d03b6e833dec132ed0ce11246fd0e30c2c94e9c76edad73d3941e6",
+          "sources": [
+            {
+              "dl": null,
+              "kind": "run_dir",
+              "path": "g_s42_80k_a1/g_student_best_iter80000.pt",
+              "sha256": "fdb1f04fe5d03b6e833dec132ed0ce11246fd0e30c2c94e9c76edad73d3941e6"
+            },
+            {
+              "dl": "DL-218",
+              "kind": "decision_log",
+              "path": null,
+              "sha256": "fdb1f04fe5d03b6e833dec132ed0ce11246fd0e30c2c94e9c76edad73d3941e6"
+            }
+          ]
+        },
+        "class": "run",
+        "completion": {
+          "at_utc": "2026-10-18T18:35:30Z",
+          "line": 80021,
+          "record": "g_telemetry.jsonl",
+          "sha256": "a24d01ccaf8f9223319cb2470a46abc318a89e8885e7933ed4478b021f4c62d8"
+        },
+        "dl_rows": [
+          "DL-165"
+        ],
+        "evaluator_stage": "G",
+        "kind": "scored_run",
+        "role": [
+          "arm"
+        ],
+        "run_id": "g_s42_80k_a1",
+        "scope": [
+          "clean",
+          "upstream",
+          "dedup"
+        ],
+        "seed": 42,
+        "slot": "G:s42:80k",
+        "stage": "G",
+        "teacher_ckpt_sha256": "8c0e649a1457782c99e02a3c81867c3b5aa55d924b697cc859455e6022179c4e"
+      },
+      {
+        "arm_record": {
+          "path": "reports/arms/arm_teacher_record_R2.json",
+          "sha256": "fc45d7711b96cbdcfb999d203f28c947af1a45e293e70ed970250fba4d6483e5"
+        },
+        "attempts": [
+          {
+            "attempt": 1,
+            "run_id": "teacher-r2_s42_40k_a1"
+          }
+        ],
+        "catalogue": {
+          "cut_place": 4,
+          "never_cut": false,
+          "parent": null
+        },
+        "checkpoint": {
+          "bytes": 446857665,
+          "name": "iter_24000.pth",
+          "sha256": "d5085961e1529d83b1fc13ff04fac83957bcc44c4f70a0635ff0d840083ffab9",
+          "sources": [
+            {
+              "dl": null,
+              "kind": "run_dir",
+              "path": "teacher-r2_s42_40k_a1/iter_24000.pth",
+              "sha256": "d5085961e1529d83b1fc13ff04fac83957bcc44c4f70a0635ff0d840083ffab9"
+            },
+            {
+              "dl": "DL-122",
+              "kind": "decision_log",
+              "path": null,
+              "sha256": "d5085961e1529d83b1fc13ff04fac83957bcc44c4f70a0635ff0d840083ffab9"
+            }
+          ]
+        },
+        "class": "run",
+        "completion": {
+          "at_utc": "2026-10-14T03:34:23Z",
+          "line": 4736,
+          "record": "20261013_101552/20261013_101552.log",
+          "sha256": "279a388c5a62afd22910e715b15c18aded867754e539c1eb6a46a13cb785e47e"
+        },
+        "dl_rows": [
+          "DL-119",
+          "DL-122",
+          "DL-125"
+        ],
+        "evaluator_stage": "teacher",
+        "go_rule": {
+          "path": "reports/arms/arm_go_rule_R2.json",
+          "sha256": "0e3552c622b219c34c4ca9b289b2d960775a8f7922f731e4bc8fce684a6f3288",
+          "verdict": "go"
+        },
+        "kind": "arm_teacher",
+        "launch_provenance": {
+          "path": "reports/arms/teacher_arm_launch_provenance_R2.json",
+          "sha256": "a147d534fa7f4cfafea176d82bcda4df15b934f241b25689a3ab954e24a62457"
+        },
+        "role": [
+          "arm_teacher"
+        ],
+        "run_id": "teacher-r2_s42_40k_a1",
+        "scope": [
+          "clean",
+          "dedup"
+        ],
+        "seed": 42,
+        "slot": "teacher-R2:s42:40k",
+        "stage": "teacher-R2",
+        "teacher_ckpt_sha256": "d5085961e1529d83b1fc13ff04fac83957bcc44c4f70a0635ff0d840083ffab9"
+      },
+      {
+        "attempts": [
+          {
+            "attempt": 1,
+            "run_id": "e3-r2_s42_lambda0.5_alpha25_80k_a1"
+          },
+          {
+            "attempt": 2,
+            "run_id": "e3-r2_s42_lambda0.5_alpha25_80k_a2"
+          }
+        ],
+        "catalogue": {
+          "cut_place": 4,
+          "never_cut": false,
+          "parent": "teacher-R2:s42:40k"
+        },
+        "checkpoint": {
+          "bytes": 23736740,
+          "name": "e3_student_best_iter80000.pt",
+          "sha256": "da70d82fcba6543488d6748691fbe9f56a4bf8c29b1c9d29d92f0d5287291ef4",
+          "sources": [
+            {
+              "dl": null,
+              "kind": "run_dir",
+              "path": "e3-r2_s42_lambda0.5_alpha25_80k_a2/e3_student_best_iter80000.pt",
+              "sha256": "da70d82fcba6543488d6748691fbe9f56a4bf8c29b1c9d29d92f0d5287291ef4"
+            },
+            {
+              "dl": "DL-136",
+              "kind": "decision_log",
+              "path": null,
+              "sha256": "da70d82fcba6543488d6748691fbe9f56a4bf8c29b1c9d29d92f0d5287291ef4"
+            }
+          ]
+        },
+        "class": "run",
+        "completion": {
+          "at_utc": "2026-10-22T10:36:31Z",
+          "line": 80021,
+          "record": "e3_telemetry.jsonl",
+          "sha256": "8c8465b4001cd089a39c21e9f3731644210f814b0fcf7adc39e47411edfe9c24"
+        },
+        "dl_rows": [
+          "DL-136",
+          "DL-149"
+        ],
+        "evaluator_stage": "E3",
+        "kind": "scored_run",
+        "role": [
+          "arm"
+        ],
+        "run_id": "e3-r2_s42_lambda0.5_alpha25_80k_a2",
+        "scope": [
+          "clean",
+          "upstream",
+          "dedup"
+        ],
+        "seed": 42,
+        "slot": "E3-R2:s42:lambda0.5:alpha25:80k",
+        "stage": "E3-R2",
+        "teacher_ckpt_sha256": "d5085961e1529d83b1fc13ff04fac83957bcc44c4f70a0635ff0d840083ffab9"
+      },
+      {
+        "catalogue": {
+          "cut_place": 4,
+          "never_cut": false,
+          "parent": "E3-R2:s42:lambda0.5:alpha25:80k"
+        },
+        "class": "derived",
+        "dl_rows": [
+          "DL-10"
+        ],
+        "evaluator_stage": "E7",
+        "hashed": null,
+        "inputs": {
+          "calibration_list": {
+            "file_sha256": "3ae68d511deec0b31062db8f7c49a7badad00b52ebc10fc526a7a5b9a44eba01",
+            "path": "configs/calibration/ptq_calibration_seed42.json"
+          },
+          "image_digest": "sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf",
+          "parent_checkpoint_sha256": "da70d82fcba6543488d6748691fbe9f56a4bf8c29b1c9d29d92f0d5287291ef4",
+          "qconfig_fingerprint": "f93844bd738abc83",
+          "script": {
+            "commit": "dc40dd2eb5b8be01882f53c37b7f6a3ea9365b71",
+            "path": "scripts/run_ptq_arm.py"
+          }
+        },
+        "kind": "derived",
+        "method": "ptq",
+        "parent": "E3-R2:s42:lambda0.5:alpha25:80k",
+        "ptq_record": null,
+        "role": [
+          "arm"
+        ],
+        "scope": [
+          "clean",
+          "upstream",
+          "dedup"
+        ],
+        "seed": 42,
+        "slot": "E7-R2:s42:list42",
+        "stage": "E7-R2"
+      },
+      {
+        "arm_record": {
+          "path": "reports/arms/arm_teacher_record_R1.json",
+          "sha256": "6933fbe0632fac79962695b1e2c31e9480973b6bb44dee9cd8e522826fe940d5"
+        },
+        "attempts": [
+          {
+            "attempt": 1,
+            "run_id": "teacher-r1_s42_40k_a1"
+          }
+        ],
+        "catalogue": {
+          "cut_place": 7,
+          "never_cut": false,
+          "parent": null
+        },
+        "checkpoint": {
+          "bytes": 446306945,
+          "name": "iter_20000.pth",
+          "sha256": "1535c2895ed68faad70e581783c51ae32d8bbc99c387763b4bac562853bd7ea3",
+          "sources": [
+            {
+              "dl": null,
+              "kind": "run_dir",
+              "path": "teacher-r1_s42_40k_a1/iter_20000.pth",
+              "sha256": "1535c2895ed68faad70e581783c51ae32d8bbc99c387763b4bac562853bd7ea3"
+            },
+            {
+              "dl": "DL-118",
+              "kind": "decision_log",
+              "path": null,
+              "sha256": "1535c2895ed68faad70e581783c51ae32d8bbc99c387763b4bac562853bd7ea3"
+            }
+          ]
+        },
+        "class": "run",
+        "completion": {
+          "at_utc": "2026-10-13T05:26:26Z",
+          "line": 4728,
+          "record": "20261012_120844/20261012_120844.log",
+          "sha256": "ca6c163b382684bdaa39123caa2a734aadfc2c9aeb5a7bcf21f54d75997937cb"
+        },
+        "dl_rows": [
+          "DL-117",
+          "DL-118",
+          "DL-124"
+        ],
+        "evaluator_stage": "teacher",
+        "go_rule": {
+          "path": "reports/arms/arm_go_rule_R1.json",
+          "sha256": "71d024d1ba17e68ebf679dcf178ddb84472e5147815850e8c4ab3748c0a35e9f",
+          "verdict": "go"
+        },
+        "kind": "arm_teacher",
+        "launch_provenance": {
+          "path": "reports/arms/teacher_arm_launch_provenance_R1.json",
+          "sha256": "29b85e9d039578a362a585381964d07edea5b252f94774ffc7ac384762fc2c45"
+        },
+        "role": [
+          "arm_teacher"
+        ],
+        "run_id": "teacher-r1_s42_40k_a1",
+        "scope": [
+          "clean",
+          "dedup"
+        ],
+        "seed": 42,
+        "slot": "teacher-R1:s42:40k",
+        "stage": "teacher-R1",
+        "teacher_ckpt_sha256": "1535c2895ed68faad70e581783c51ae32d8bbc99c387763b4bac562853bd7ea3"
+      },
+      {
+        "attempts": [
+          {
+            "attempt": 1,
+            "run_id": "e3-r1_s42_lambda0.5_alpha25_80k_a1"
+          },
+          {
+            "attempt": 2,
+            "run_id": "e3-r1_s42_lambda0.5_alpha25_80k_a2"
+          }
+        ],
+        "catalogue": {
+          "cut_place": 7,
+          "never_cut": false,
+          "parent": "teacher-R1:s42:40k"
+        },
+        "checkpoint": {
+          "bytes": 23736740,
+          "name": "e3_student_best_iter80000.pt",
+          "sha256": "eeafe1c87eb9daebfa8c55c69e00b781c4dd2b592ebf074381170292f4e8d19f",
+          "sources": [
+            {
+              "dl": null,
+              "kind": "run_dir",
+              "path": "e3-r1_s42_lambda0.5_alpha25_80k_a2/e3_student_best_iter80000.pt",
+              "sha256": "eeafe1c87eb9daebfa8c55c69e00b781c4dd2b592ebf074381170292f4e8d19f"
+            },
+            {
+              "dl": "DL-135",
+              "kind": "decision_log",
+              "path": null,
+              "sha256": "eeafe1c87eb9daebfa8c55c69e00b781c4dd2b592ebf074381170292f4e8d19f"
+            }
+          ]
+        },
+        "class": "run",
+        "completion": {
+          "at_utc": "2026-10-21T16:58:32Z",
+          "line": 80021,
+          "record": "e3_telemetry.jsonl",
+          "sha256": "c310de384d176e46095bb8063f0c4ba72adb7af985df5ab193d839ab48912c40"
+        },
+        "dl_rows": [
+          "DL-135",
+          "DL-149"
+        ],
+        "evaluator_stage": "E3",
+        "kind": "scored_run",
+        "role": [
+          "arm"
+        ],
+        "run_id": "e3-r1_s42_lambda0.5_alpha25_80k_a2",
+        "scope": [
+          "clean",
+          "upstream",
+          "dedup"
+        ],
+        "seed": 42,
+        "slot": "E3-R1:s42:lambda0.5:alpha25:80k",
+        "stage": "E3-R1",
+        "teacher_ckpt_sha256": "1535c2895ed68faad70e581783c51ae32d8bbc99c387763b4bac562853bd7ea3"
+      },
+      {
+        "catalogue": {
+          "cut_place": 7,
+          "never_cut": false,
+          "parent": "E3-R1:s42:lambda0.5:alpha25:80k"
+        },
+        "class": "derived",
+        "dl_rows": [
+          "DL-10"
+        ],
+        "evaluator_stage": "E7",
+        "hashed": null,
+        "inputs": {
+          "calibration_list": {
+            "file_sha256": "3ae68d511deec0b31062db8f7c49a7badad00b52ebc10fc526a7a5b9a44eba01",
+            "path": "configs/calibration/ptq_calibration_seed42.json"
+          },
+          "image_digest": "sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf",
+          "parent_checkpoint_sha256": "eeafe1c87eb9daebfa8c55c69e00b781c4dd2b592ebf074381170292f4e8d19f",
+          "qconfig_fingerprint": "f93844bd738abc83",
+          "script": {
+            "commit": "dc40dd2eb5b8be01882f53c37b7f6a3ea9365b71",
+            "path": "scripts/run_ptq_arm.py"
+          }
+        },
+        "kind": "derived",
+        "method": "ptq",
+        "parent": "E3-R1:s42:lambda0.5:alpha25:80k",
+        "ptq_record": null,
+        "role": [
+          "arm"
+        ],
+        "scope": [
+          "clean",
+          "upstream",
+          "dedup"
+        ],
+        "seed": 42,
+        "slot": "E7-R1:s42:list42",
+        "stage": "E7-R1"
+      },
+      {
+        "attempts": [
+          {
+            "attempt": 1,
+            "run_id": "e3-flip_s42_lambda0.5_alpha25_80k_a1"
+          }
+        ],
+        "catalogue": {
+          "cut_place": 5,
+          "never_cut": false,
+          "parent": null
+        },
+        "checkpoint": {
+          "bytes": 23736740,
+          "name": "e3_student_best_iter72000.pt",
+          "sha256": "59f25cd00f1306116d9618a0139b8b8f94b2ec7517954f0d3c5049c7dbdb4bb2",
+          "sources": [
+            {
+              "dl": null,
+              "kind": "run_dir",
+              "path": "e3-flip_s42_lambda0.5_alpha25_80k_a1/e3_student_best_iter72000.pt",
+              "sha256": "59f25cd00f1306116d9618a0139b8b8f94b2ec7517954f0d3c5049c7dbdb4bb2"
+            },
+            {
+              "dl": "DL-148",
+              "kind": "decision_log",
+              "path": null,
+              "sha256": "59f25cd00f1306116d9618a0139b8b8f94b2ec7517954f0d3c5049c7dbdb4bb2"
+            }
+          ]
+        },
+        "class": "run",
+        "completion": {
+          "at_utc": "2026-10-21T00:08:29Z",
+          "line": 80021,
+          "record": "e3_telemetry.jsonl",
+          "sha256": "9242b3ba1fc3c524aed0c64c1a31dbce06c3fda31fa78eaca884498fbd29f754"
+        },
+        "dl_rows": [
+          "DL-148"
+        ],
+        "evaluator_stage": "E3",
+        "kind": "scored_run",
+        "role": [
+          "arm"
+        ],
+        "run_id": "e3-flip_s42_lambda0.5_alpha25_80k_a1",
+        "scope": [
+          "clean",
+          "upstream",
+          "dedup"
+        ],
+        "seed": 42,
+        "slot": "E3-flip:s42:lambda0.5:alpha25:80k",
+        "stage": "E3-flip",
+        "teacher_ckpt_sha256": "8c0e649a1457782c99e02a3c81867c3b5aa55d924b697cc859455e6022179c4e"
+      },
+      {
+        "catalogue": {
+          "cut_place": 5,
+          "never_cut": false,
+          "parent": "E3-flip:s42:lambda0.5:alpha25:80k"
+        },
+        "class": "derived",
+        "dl_rows": [
+          "DL-10"
+        ],
+        "evaluator_stage": "E7",
+        "hashed": null,
+        "inputs": {
+          "calibration_list": {
+            "file_sha256": "3ae68d511deec0b31062db8f7c49a7badad00b52ebc10fc526a7a5b9a44eba01",
+            "path": "configs/calibration/ptq_calibration_seed42.json"
+          },
+          "image_digest": "sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf",
+          "parent_checkpoint_sha256": "59f25cd00f1306116d9618a0139b8b8f94b2ec7517954f0d3c5049c7dbdb4bb2",
+          "qconfig_fingerprint": "f93844bd738abc83",
+          "script": {
+            "commit": "dc40dd2eb5b8be01882f53c37b7f6a3ea9365b71",
+            "path": "scripts/run_ptq_arm.py"
+          }
+        },
+        "kind": "derived",
+        "method": "ptq",
+        "parent": "E3-flip:s42:lambda0.5:alpha25:80k",
+        "ptq_record": null,
+        "role": [
+          "arm"
+        ],
+        "scope": [
+          "clean",
+          "upstream",
+          "dedup"
+        ],
+        "seed": 42,
+        "slot": "E7-flip:s42:list42",
+        "stage": "E7-flip"
+      },
+      {
+        "catalogue": {
+          "cut_place": 9,
+          "never_cut": false,
+          "parent": null
+        },
+        "class": "run",
+        "comparator": null,
+        "cut_date": "2026-10-20",
+        "dl_rows": [
+          "DL-168",
+          "DL-223"
+        ],
+        "entry": {
+          "path": "reports/derived/tday_entries/cut__teacher-L_s42_40k__20261020__01.json",
+          "sha256": "e4f4d8e64a40c56c013968a6225d7528faaaa4f7b2033bedbc1fc2dc4496b24c"
+        },
+        "kind": "cut",
+        "role": [
+          "arm_teacher"
+        ],
+        "rule": "cutoff",
+        "scope": [],
+        "seed": 42,
+        "slot": "teacher-L:s42:40k",
+        "stage": "teacher-L"
+      },
+      {
+        "catalogue": {
+          "cut_place": 9,
+          "never_cut": false,
+          "parent": "teacher-L:s42:40k"
+        },
+        "class": "run",
+        "comparator": null,
+        "cut_date": "2026-10-20",
+        "dl_rows": [
+          "DL-168",
+          "DL-223"
+        ],
+        "entry": {
+          "path": "reports/derived/tday_entries/cut__teacher-L_s42_40k__20261020__01.json",
+          "sha256": "e4f4d8e64a40c56c013968a6225d7528faaaa4f7b2033bedbc1fc2dc4496b24c"
+        },
+        "kind": "cut",
+        "role": [
+          "arm"
+        ],
+        "rule": "cutoff",
+        "scope": [],
+        "seed": 42,
+        "slot": "E2-L:s42:lambda0.5:80k",
+        "stage": "E2-L"
+      },
+      {
+        "catalogue": {
+          "cut_place": 9,
+          "never_cut": false,
+          "parent": "teacher-L:s42:40k"
+        },
+        "class": "run",
+        "comparator": null,
+        "cut_date": "2026-10-20",
+        "dl_rows": [
+          "DL-168",
+          "DL-223"
+        ],
+        "entry": {
+          "path": "reports/derived/tday_entries/cut__teacher-L_s42_40k__20261020__01.json",
+          "sha256": "e4f4d8e64a40c56c013968a6225d7528faaaa4f7b2033bedbc1fc2dc4496b24c"
+        },
+        "kind": "cut",
+        "role": [
+          "arm"
+        ],
+        "rule": "cutoff",
+        "scope": [],
+        "seed": 42,
+        "slot": "E3-L:s42:lambda0.5:alpha25:80k",
+        "stage": "E3-L"
+      },
+      {
+        "catalogue": {
+          "cut_place": 9,
+          "never_cut": false,
+          "parent": "E3-L:s42:lambda0.5:alpha25:80k"
+        },
+        "class": "derived",
+        "dl_rows": [
+          "DL-225"
+        ],
+        "entry": {
+          "path": "reports/derived/tday_entries/not_run__E7-L_s42_list42__20261103__01.json",
+          "sha256": "89b4085e4635a7390b014a28fc20977a1e14a1fa3b89ed15a8e2c9ca404b5355"
+        },
+        "kind": "not_run",
+        "parent": "E3-L:s42:lambda0.5:alpha25:80k",
+        "parent_record": {
+          "path": "reports/derived/tday_entries/cut__teacher-L_s42_40k__20261020__01.json",
+          "sha256": "e4f4d8e64a40c56c013968a6225d7528faaaa4f7b2033bedbc1fc2dc4496b24c"
+        },
+        "reason": "parent cut",
+        "role": [
+          "arm"
+        ],
+        "scope": [],
+        "seed": 42,
+        "slot": "E7-L:s42:list42",
+        "stage": "E7-L"
+      },
+      {
+        "attempts": [
+          {
+            "attempt": 1,
+            "run_id": "e5_s42_clip1.0"
+          }
+        ],
+        "catalogue": {
+          "cut_place": null,
+          "never_cut": true,
+          "parent": "E1:s42:80k"
+        },
+        "checkpoint": null,
+        "class": "run",
+        "completion": {
+          "at_utc": "2026-10-16T05:09:18Z",
+          "line": 5056,
+          "record": "qat_telemetry.jsonl",
+          "sha256": "eb113dc8af70ab1e5963b469173e29f3383540603aa015fd9f6c07bc33ec6016"
+        },
+        "dl_rows": [
+          "DL-139"
+        ],
+        "kind": "listed_run",
+        "reason": "a QAT run: its model is its selection E5:s42:sel (AM-21; catalogue scope_class none)",
+        "role": [
+          "listed"
+        ],
+        "run_id": "e5_s42_clip1.0",
+        "scope": [],
+        "seed": 42,
+        "slot": "E5:s42:clip1:15ep",
+        "stage": "E5"
+      },
+      {
+        "attempts": [
+          {
+            "attempt": 1,
+            "run_id": "e5_s42_clip5.0"
+          }
+        ],
+        "catalogue": {
+          "cut_place": null,
+          "never_cut": true,
+          "parent": "E1:s42:80k"
+        },
+        "checkpoint": null,
+        "class": "run",
+        "completion": {
+          "at_utc": "2026-10-16T05:01:17Z",
+          "line": 5056,
+          "record": "qat_telemetry.jsonl",
+          "sha256": "c7b2023943224008e7106fdc771fe8c29b2324a90a6b581aa9a0f618408a5898"
+        },
+        "dl_rows": [
+          "DL-139",
+          "DL-172"
+        ],
+        "kind": "listed_run",
+        "reason": "a QAT run: its model is its selection E5:s42:sel (AM-21; catalogue scope_class none)",
+        "role": [
+          "listed"
+        ],
+        "run_id": "e5_s42_clip5.0",
+        "scope": [],
+        "seed": 42,
+        "slot": "E5:s42:clip5:15ep",
+        "stage": "E5"
+      },
+      {
+        "catalogue": {
+          "cut_place": null,
+          "never_cut": true,
+          "parent": null
+        },
+        "class": "derived",
+        "dl_rows": [
+          "DL-172"
+        ],
+        "evaluator_stage": "E5",
+        "hashed": {
+          "appended": "freeze",
+          "artifact_sha256": "220b2b0e1cc63cc2e3b8622174871de6cf5b2725deb8df36fad61b3c3f904c61",
+          "evaluations": [
+            {
+              "dir": "qat_pilot_20261014/evals/a1/e5_s42_clip5.0",
+              "fault_report": null
+            },
+            {
+              "dir": "qat_pilot_20261014/evals/a2/e5_s42_clip5.0",
+              "fault_report": {
+                "path": "reports/pilot_blockb_fault_20261017.md",
+                "sha256": "033b606fb7fe44065da8e713c995372e5b5ad5d0be85009cf4fe69461307c14b"
+              }
+            }
+          ],
+          "image_digest": "sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf",
+          "isolation": null,
+          "made_utc": "2026-10-17T11:34:10Z",
+          "provenance": {
+            "path": "qat_pilot_20261014/evals/a2/e5_s42_clip5.0/converted/e10_run_meta.json",
+            "sha256": "4679e561a07899e99bcdf11fa2e6cd30fc90bb49655429f75adc6f48d51efd9b"
+          },
+          "record": {
+            "path": "qat_pilot_20261014/evals/a2/e5_s42_clip5.0/qat_selection.json",
+            "sha256": "6c1eba30d070dc1a59aa4e0fbe8733e8e2fc01326aefcf78cb756a8d762a8ffd"
+          },
+          "selected_checkpoint": {
+            "path": "e5_s42_clip5.0/epoch_ckpts/e10.pt",
+            "sha256": "429c766ac9045c8cde7cbdd24e9966d7440800795d4dd8eaaedc45d1e334cf50"
+          },
+          "state_dict_sha256": "ebc4834558c9dac32adb0ebad0ce0f915ba7f20975323d9e32dfe52d7c9a49e5",
+          "x86_copy_sha256": "fd5f4b31139dd817f3d4c26d7c9a62ca44f5fbcb7da6b21d9d7823aaf6a71a8c"
+        },
+        "inputs": {
+          "clip_selection": {
+            "path": "qat_pilot_20261014/evals/a2/clip_selection/clip_selection.json",
+            "sha256": "c433145a6cfe0e133ebee8fcb70a76f05b60fc6462670abee34c5304704fe698"
+          },
+          "image_digest": "sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf",
+          "rules_sha256": "76addc57d0367dda9a1163f749ec32c9c240b20736104dc12aa77488344f9568",
+          "run_slot": "E5:s42:clip5:15ep",
+          "scripts_commit": "2b3b55651e8092fd7fff6e786b73d971096deb17",
+          "telemetry_sha256": "c7b2023943224008e7106fdc771fe8c29b2324a90a6b581aa9a0f618408a5898"
+        },
+        "kind": "derived",
+        "method": "qat_selection",
+        "parent": "E5:s42:clip5:15ep",
+        "ptq_record": null,
+        "role": [
+          "family"
+        ],
+        "scope": [
+          "clean",
+          "upstream",
+          "dedup",
+          "corrupted",
+          "corrupted_sev45",
+          "efficiency",
+          "fq_off"
+        ],
+        "seed": 42,
+        "slot": "E5:s42:sel",
+        "stage": "E5"
+      },
+      {
+        "attempts": [
+          {
+            "attempt": 1,
+            "run_id": "e6_s42_clip5.0_a1"
+          }
+        ],
+        "catalogue": {
+          "cut_place": null,
+          "never_cut": true,
+          "parent": "E3:s42:lambda0.5:alpha25:80k"
+        },
+        "checkpoint": null,
+        "class": "run",
+        "completion": {
+          "at_utc": "2026-10-18T11:28:42Z",
+          "line": 5056,
+          "record": "qat_telemetry.jsonl",
+          "sha256": "e03ea26e913a052966125e96335dedf80ace5b753cb22afb8486c7f68f23238c"
+        },
+        "dl_rows": [
+          "DL-131"
+        ],
+        "kind": "listed_run",
+        "reason": "a QAT run: its model is its selection E6:sel (AM-21; catalogue scope_class none)",
+        "role": [
+          "listed"
+        ],
+        "run_id": "e6_s42_clip5.0_a1",
+        "scope": [],
+        "seed": 42,
+        "slot": "E6:s42:15ep",
+        "stage": "E6"
+      },
+      {
+        "catalogue": {
+          "cut_place": null,
+          "never_cut": true,
+          "parent": "E6:s42:15ep"
+        },
+        "class": "derived",
+        "dl_rows": [
+          "DL-131",
+          "DL-132",
+          "DL-173"
+        ],
+        "evaluator_stage": "E6",
+        "hashed": {
+          "appended": "freeze",
+          "artifact_sha256": "cf14ae0362d07f6a576405320780622f504f1bccd032335c2968c02e37dbb0bb",
+          "evaluations": [
+            {
+              "dir": "qat_record_20261017/evals/a1/e6_s42_clip5.0_a1",
+              "fault_report": null
+            }
+          ],
+          "image_digest": "sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf",
+          "isolation": null,
+          "made_utc": "2026-10-18T23:27:47Z",
+          "provenance": {
+            "path": "qat_record_20261017/evals/a1/e6_s42_clip5.0_a1/converted/e15_run_meta.json",
+            "sha256": "1d50ea8a36c5bef40c887068b95a12dfe99ffba1d0fd492e2c591f4e10e85a13"
+          },
+          "record": {
+            "path": "qat_record_20261017/evals/a1/e6_s42_clip5.0_a1/qat_selection.json",
+            "sha256": "ce435dea034073a45ae7353846f2c0a84c277e6126a838eb4d36d18de19358eb"
+          },
+          "selected_checkpoint": {
+            "path": "e6_s42_clip5.0_a1/epoch_ckpts/e15.pt",
+            "sha256": "74fd438a9e953ce84117a61454b879940b0a6a8f357e7705c22a86ab0ed847a5"
+          },
+          "state_dict_sha256": "34b0e9077debedf1826a760ee18ad940f7a5f4a8c41817019a93aaa7f280eaa2",
+          "x86_copy_sha256": "f81c2f73a2ccce407228f15c7069511d92352a23d59db1360005bcf185381d79"
+        },
+        "inputs": {
+          "clip_selection": {
+            "path": "qat_pilot_20261014/evals/a2/clip_selection/clip_selection.json",
+            "sha256": "c433145a6cfe0e133ebee8fcb70a76f05b60fc6462670abee34c5304704fe698"
+          },
+          "image_digest": "sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf",
+          "rules_sha256": "76addc57d0367dda9a1163f749ec32c9c240b20736104dc12aa77488344f9568",
+          "run_slot": "E6:s42:15ep",
+          "scripts_commit": "2b3b55651e8092fd7fff6e786b73d971096deb17",
+          "telemetry_sha256": "e03ea26e913a052966125e96335dedf80ace5b753cb22afb8486c7f68f23238c"
+        },
+        "kind": "derived",
+        "method": "qat_selection",
+        "parent": "E6:s42:15ep",
+        "ptq_record": null,
+        "role": [
+          "family"
+        ],
+        "scope": [
+          "clean",
+          "upstream",
+          "dedup",
+          "corrupted",
+          "corrupted_sev45",
+          "efficiency",
+          "fq_off"
+        ],
+        "seed": 42,
+        "slot": "E6:s42:sel",
+        "stage": "E6"
+      },
+      {
+        "attempts": [
+          {
+            "attempt": 1,
+            "run_id": "e5_s43_clip5.0_a1"
+          }
+        ],
+        "catalogue": {
+          "cut_place": 19,
+          "never_cut": false,
+          "parent": "E1:s43:80k"
+        },
+        "checkpoint": null,
+        "class": "run",
+        "completion": {
+          "at_utc": "2026-10-18T11:33:19Z",
+          "line": 5056,
+          "record": "qat_telemetry.jsonl",
+          "sha256": "dd8a0e74ede0a8d8581e4808f8a710da9aa77f204ae9a30d6e733629e0a862fb"
+        },
+        "dl_rows": [
+          "DL-142"
+        ],
+        "kind": "listed_run",
+        "reason": "a QAT run: its model is its selection E5:sel (AM-21; catalogue scope_class none)",
+        "role": [
+          "listed"
+        ],
+        "run_id": "e5_s43_clip5.0_a1",
+        "scope": [],
+        "seed": 43,
+        "slot": "E5:s43:15ep",
+        "stage": "E5"
+      },
+      {
+        "catalogue": {
+          "cut_place": 19,
+          "never_cut": false,
+          "parent": "E5:s43:15ep"
+        },
+        "class": "derived",
+        "dl_rows": [
+          "DL-142"
+        ],
+        "evaluator_stage": "E5",
+        "hashed": {
+          "appended": "freeze",
+          "artifact_sha256": "5f0b3ab8d777ee7e304c5ccd3763d52e5e9ad7ce6bfbc5b5ad42d3e02ebb7a43",
+          "evaluations": [
+            {
+              "dir": "qat_record_20261017/evals/a1/e5_s43_clip5.0_a1",
+              "fault_report": null
+            }
+          ],
+          "image_digest": "sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf",
+          "isolation": null,
+          "made_utc": "2026-10-19T01:30:48Z",
+          "provenance": {
+            "path": "qat_record_20261017/evals/a1/e5_s43_clip5.0_a1/converted/e11_run_meta.json",
+            "sha256": "68b1139d2849427bc2743b1fa13c5b1cef1fdd553bc0866db79fe20ad440ccb8"
+          },
+          "record": {
+            "path": "qat_record_20261017/evals/a1/e5_s43_clip5.0_a1/qat_selection.json",
+            "sha256": "eb4b92038a62d1b6c00a8dde8904c5eb53534e061ff8a482cea1cd0441935719"
+          },
+          "selected_checkpoint": {
+            "path": "e5_s43_clip5.0_a1/epoch_ckpts/e11.pt",
+            "sha256": "e3df5dd4cf175b67a2c0135da6de68da9fbf3f41056a67d433cc404c889bcad1"
+          },
+          "state_dict_sha256": "9df1f177861b5169fe25ef2eb149dc13b0bae717072c9d9cac886c74f855bb58",
+          "x86_copy_sha256": "8aa1be086caac65518a92c524ea981968302eb0b8b3700876d25821481a8ec3c"
+        },
+        "inputs": {
+          "clip_selection": {
+            "path": "qat_pilot_20261014/evals/a2/clip_selection/clip_selection.json",
+            "sha256": "c433145a6cfe0e133ebee8fcb70a76f05b60fc6462670abee34c5304704fe698"
+          },
+          "image_digest": "sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf",
+          "rules_sha256": "76addc57d0367dda9a1163f749ec32c9c240b20736104dc12aa77488344f9568",
+          "run_slot": "E5:s43:15ep",
+          "scripts_commit": "2b3b55651e8092fd7fff6e786b73d971096deb17",
+          "telemetry_sha256": "dd8a0e74ede0a8d8581e4808f8a710da9aa77f204ae9a30d6e733629e0a862fb"
+        },
+        "kind": "derived",
+        "method": "qat_selection",
+        "parent": "E5:s43:15ep",
+        "ptq_record": null,
+        "role": [
+          "per_seed"
+        ],
+        "scope": [
+          "clean",
+          "upstream",
+          "dedup",
+          "fq_off"
+        ],
+        "seed": 43,
+        "slot": "E5:s43:sel",
+        "stage": "E5"
+      },
+      {
+        "attempts": [
+          {
+            "attempt": 1,
+            "run_id": "e5_s44_clip5.0_a1"
+          }
+        ],
+        "catalogue": {
+          "cut_place": 19,
+          "never_cut": false,
+          "parent": "E1:s44:80k"
+        },
+        "checkpoint": null,
+        "class": "run",
+        "completion": {
+          "at_utc": "2026-10-19T07:59:11Z",
+          "line": 5056,
+          "record": "qat_telemetry.jsonl",
+          "sha256": "93b072cdfd31f8e5723684b6eb32506987c025411c132c0ecb803ae980a6460f"
+        },
+        "dl_rows": [
+          "DL-144"
+        ],
+        "kind": "listed_run",
+        "reason": "a QAT run: its model is its selection E5:sel (AM-21; catalogue scope_class none)",
+        "role": [
+          "listed"
+        ],
+        "run_id": "e5_s44_clip5.0_a1",
+        "scope": [],
+        "seed": 44,
+        "slot": "E5:s44:15ep",
+        "stage": "E5"
+      },
+      {
+        "catalogue": {
+          "cut_place": 19,
+          "never_cut": false,
+          "parent": "E5:s44:15ep"
+        },
+        "class": "derived",
+        "dl_rows": [
+          "DL-144"
+        ],
+        "evaluator_stage": "E5",
+        "hashed": {
+          "appended": "freeze",
+          "artifact_sha256": "0cc1ef811fefe4053cb24cb393285e17a51c15bce5f2176fffb3cdeb6cce2f70",
+          "evaluations": [
+            {
+              "dir": "qat_record_20261017/evals/a1/e5_s44_clip5.0_a1",
+              "fault_report": null
+            }
+          ],
+          "image_digest": "sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf",
+          "isolation": null,
+          "made_utc": "2026-10-21T02:10:14Z",
+          "provenance": {
+            "path": "qat_record_20261017/evals/a1/e5_s44_clip5.0_a1/converted/e15_run_meta.json",
+            "sha256": "58cd3d44c7fa9091401cce79735ac26a41dc484a25b5bba76647e36474cc539d"
+          },
+          "record": {
+            "path": "qat_record_20261017/evals/a1/e5_s44_clip5.0_a1/qat_selection.json",
+            "sha256": "3c217a9be8bfbc5b1dbe7450761f43f1c4b639509c236c59c7d412b4346a0d5c"
+          },
+          "selected_checkpoint": {
+            "path": "e5_s44_clip5.0_a1/epoch_ckpts/e15.pt",
+            "sha256": "f4c86265d557216aeaf7af863164c4d27eb7c94b4347ae95786df751159c9f7f"
+          },
+          "state_dict_sha256": "a5b105424d502739eeb7b857198106b743096aa0ee208bcc37bdd8f65645b525",
+          "x86_copy_sha256": "45d78007a3d8c2e8f80e1d6ed1ccc0c2a854425b4c0bd0f1e9623b941dd0eeee"
+        },
+        "inputs": {
+          "clip_selection": {
+            "path": "qat_pilot_20261014/evals/a2/clip_selection/clip_selection.json",
+            "sha256": "c433145a6cfe0e133ebee8fcb70a76f05b60fc6462670abee34c5304704fe698"
+          },
+          "image_digest": "sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf",
+          "rules_sha256": "76addc57d0367dda9a1163f749ec32c9c240b20736104dc12aa77488344f9568",
+          "run_slot": "E5:s44:15ep",
+          "scripts_commit": "2b3b55651e8092fd7fff6e786b73d971096deb17",
+          "telemetry_sha256": "93b072cdfd31f8e5723684b6eb32506987c025411c132c0ecb803ae980a6460f"
+        },
+        "kind": "derived",
+        "method": "qat_selection",
+        "parent": "E5:s44:15ep",
+        "ptq_record": null,
+        "role": [
+          "per_seed"
+        ],
+        "scope": [
+          "clean",
+          "upstream",
+          "dedup",
+          "fq_off"
+        ],
+        "seed": 44,
+        "slot": "E5:s44:sel",
+        "stage": "E5"
+      },
+      {
+        "attempts": [
+          {
+            "attempt": 1,
+            "run_id": "e6_s43_clip5.0_a1"
+          }
+        ],
+        "catalogue": {
+          "cut_place": 19,
+          "never_cut": false,
+          "parent": "E3:s43:lambda0.5:alpha25:80k"
+        },
+        "checkpoint": null,
+        "class": "run",
+        "completion": {
+          "at_utc": "2026-10-19T07:55:13Z",
+          "line": 5056,
+          "record": "qat_telemetry.jsonl",
+          "sha256": "7fbc381c93540e71a27e639bb905c3c346c082a7122ca050f8f189adbccd0b48"
+        },
+        "dl_rows": [
+          "DL-143"
+        ],
+        "kind": "listed_run",
+        "reason": "a QAT run: its model is its selection E6:sel (AM-21; catalogue scope_class none)",
+        "role": [
+          "listed"
+        ],
+        "run_id": "e6_s43_clip5.0_a1",
+        "scope": [],
+        "seed": 43,
+        "slot": "E6:s43:15ep",
+        "stage": "E6"
+      },
+      {
+        "catalogue": {
+          "cut_place": 19,
+          "never_cut": false,
+          "parent": "E6:s43:15ep"
+        },
+        "class": "derived",
+        "dl_rows": [
+          "DL-143"
+        ],
+        "evaluator_stage": "E6",
+        "hashed": {
+          "appended": "freeze",
+          "artifact_sha256": "0b0a6bada81e4eb29b48514efa5272c400569c035942b0f97145af25e414ac35",
+          "evaluations": [
+            {
+              "dir": "qat_record_20261017/evals/a1/e6_s43_clip5.0_a1",
+              "fault_report": null
+            }
+          ],
+          "image_digest": "sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf",
+          "isolation": null,
+          "made_utc": "2026-10-20T23:59:17Z",
+          "provenance": {
+            "path": "qat_record_20261017/evals/a1/e6_s43_clip5.0_a1/converted/e13_run_meta.json",
+            "sha256": "40d6bc01fc6dc4383040c23b0696b3ffce8b72e72856276adf8e0947de74ff4b"
+          },
+          "record": {
+            "path": "qat_record_20261017/evals/a1/e6_s43_clip5.0_a1/qat_selection.json",
+            "sha256": "bd64ba88e2eef7bef7f3742b668ebbd2f4ea32a9fd68bd983e06f51d26373bd8"
+          },
+          "selected_checkpoint": {
+            "path": "e6_s43_clip5.0_a1/epoch_ckpts/e13.pt",
+            "sha256": "33e88a879f7e81f382af6c046b78a70341b439c1ad7977195ef300411f2cb13a"
+          },
+          "state_dict_sha256": "52760680cf69e0e85beb25701540e2d3e4f79a96e72a3553e80f2e4dfc759204",
+          "x86_copy_sha256": "6fbf91a521cf6055e1f6ab39bfc08191a9f484456c61e0296473cb38415a5547"
+        },
+        "inputs": {
+          "clip_selection": {
+            "path": "qat_pilot_20261014/evals/a2/clip_selection/clip_selection.json",
+            "sha256": "c433145a6cfe0e133ebee8fcb70a76f05b60fc6462670abee34c5304704fe698"
+          },
+          "image_digest": "sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf",
+          "rules_sha256": "76addc57d0367dda9a1163f749ec32c9c240b20736104dc12aa77488344f9568",
+          "run_slot": "E6:s43:15ep",
+          "scripts_commit": "2b3b55651e8092fd7fff6e786b73d971096deb17",
+          "telemetry_sha256": "7fbc381c93540e71a27e639bb905c3c346c082a7122ca050f8f189adbccd0b48"
+        },
+        "kind": "derived",
+        "method": "qat_selection",
+        "parent": "E6:s43:15ep",
+        "ptq_record": null,
+        "role": [
+          "per_seed"
+        ],
+        "scope": [
+          "clean",
+          "upstream",
+          "dedup",
+          "corrupted",
+          "fq_off"
+        ],
+        "seed": 43,
+        "slot": "E6:s43:sel",
+        "stage": "E6"
+      },
+      {
+        "attempts": [
+          {
+            "attempt": 1,
+            "run_id": "e6_s44_clip5.0_a1"
+          }
+        ],
+        "catalogue": {
+          "cut_place": 19,
+          "never_cut": false,
+          "parent": "E3:s44:lambda0.5:alpha25:80k"
+        },
+        "checkpoint": null,
+        "class": "run",
+        "completion": {
+          "at_utc": "2026-10-19T08:10:30Z",
+          "line": 5056,
+          "record": "qat_telemetry.jsonl",
+          "sha256": "e6054b2425af5d534fbb569036cd5c679e1dd3cc245632c9355b31e754a9192c"
+        },
+        "dl_rows": [
+          "DL-145"
+        ],
+        "kind": "listed_run",
+        "reason": "a QAT run: its model is its selection E6:sel (AM-21; catalogue scope_class none)",
+        "role": [
+          "listed"
+        ],
+        "run_id": "e6_s44_clip5.0_a1",
+        "scope": [],
+        "seed": 44,
+        "slot": "E6:s44:15ep",
+        "stage": "E6"
+      },
+      {
+        "catalogue": {
+          "cut_place": 19,
+          "never_cut": false,
+          "parent": "E6:s44:15ep"
+        },
+        "class": "derived",
+        "dl_rows": [
+          "DL-145"
+        ],
+        "evaluator_stage": "E6",
+        "hashed": {
+          "appended": "freeze",
+          "artifact_sha256": "ee7e22da92dfb4f27fbf4a8b93388beb5aabe857c7ac23195ff68f5a68c2d2ff",
+          "evaluations": [
+            {
+              "dir": "qat_record_20261017/evals/a1/e6_s44_clip5.0_a1",
+              "fault_report": null
+            }
+          ],
+          "image_digest": "sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf",
+          "isolation": null,
+          "made_utc": "2026-10-21T07:17:57Z",
+          "provenance": {
+            "path": "qat_record_20261017/evals/a1/e6_s44_clip5.0_a1/converted/e13_run_meta.json",
+            "sha256": "5bb9a878328b68e21189d28c16d531e79163bafef3b9ee7be01305186b79a8c0"
+          },
+          "record": {
+            "path": "qat_record_20261017/evals/a1/e6_s44_clip5.0_a1/qat_selection.json",
+            "sha256": "2817e9f3794f95c3e8fb4a0cf68a4b0007364906ab2037975a63876a0e80c538"
+          },
+          "selected_checkpoint": {
+            "path": "e6_s44_clip5.0_a1/epoch_ckpts/e13.pt",
+            "sha256": "61cb09d58a7b8db961295d8ac718cfb0ce50d8588e7e1184e5f8194d8d581a35"
+          },
+          "state_dict_sha256": "0f4e31b2b5c5a1cea798e688062bee3ed48d79d4cd0c2013e21064b910cccb00",
+          "x86_copy_sha256": "e74ddd90cda05eb53383ede560f09ac81cd9ccb9091e88421a7111a755639a5e"
+        },
+        "inputs": {
+          "clip_selection": {
+            "path": "qat_pilot_20261014/evals/a2/clip_selection/clip_selection.json",
+            "sha256": "c433145a6cfe0e133ebee8fcb70a76f05b60fc6462670abee34c5304704fe698"
+          },
+          "image_digest": "sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf",
+          "rules_sha256": "76addc57d0367dda9a1163f749ec32c9c240b20736104dc12aa77488344f9568",
+          "run_slot": "E6:s44:15ep",
+          "scripts_commit": "2b3b55651e8092fd7fff6e786b73d971096deb17",
+          "telemetry_sha256": "e6054b2425af5d534fbb569036cd5c679e1dd3cc245632c9355b31e754a9192c"
+        },
+        "kind": "derived",
+        "method": "qat_selection",
+        "parent": "E6:s44:15ep",
+        "ptq_record": null,
+        "role": [
+          "per_seed"
+        ],
+        "scope": [
+          "clean",
+          "upstream",
+          "dedup",
+          "corrupted",
+          "fq_off"
+        ],
+        "seed": 44,
+        "slot": "E6:s44:sel",
+        "stage": "E6"
+      },
+      {
+        "attempts": [
+          {
+            "attempt": 1,
+            "run_id": "e6-kd_s42_clip5.0_a1"
+          }
+        ],
+        "catalogue": {
+          "cut_place": null,
+          "never_cut": true,
+          "parent": "E3:s42:lambda0.5:alpha25:80k"
+        },
+        "checkpoint": null,
+        "class": "run",
+        "completion": {
+          "at_utc": "2026-10-26T17:10:35Z",
+          "line": 5057,
+          "record": "qat_telemetry.jsonl",
+          "sha256": "dbd9c2e28f37383e5dbc36ebbb00fcef1df465df6f818589f200a4ec736efe88"
+        },
+        "dl_rows": [
+          "DL-169",
+          "DL-170"
+        ],
+        "kind": "listed_run",
+        "reason": "a QAT run: its model is its selection E6-KD:sel (AM-21; catalogue scope_class none)",
+        "role": [
+          "listed"
+        ],
+        "run_id": "e6-kd_s42_clip5.0_a1",
+        "scope": [],
+        "seed": 42,
+        "slot": "E6-KD:s42:15ep",
+        "stage": "E6-KD"
+      },
+      {
+        "catalogue": {
+          "cut_place": null,
+          "never_cut": true,
+          "parent": "E6-KD:s42:15ep"
+        },
+        "class": "derived",
+        "dl_rows": [
+          "DL-171"
+        ],
+        "evaluator_stage": "E6-KD",
+        "hashed": {
+          "appended": "freeze",
+          "artifact_sha256": "482c75e18e87690e3c94f8a25b32327ed38808627f6fe0676fe0848e58fa1006",
+          "evaluations": [
+            {
+              "dir": "qat_e6kd_20261026/evals/a1/e6-kd_s42_clip5.0_a1",
+              "fault_report": null
+            }
+          ],
+          "image_digest": "sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf",
+          "isolation": null,
+          "made_utc": "2026-10-27T06:47:54Z",
+          "provenance": {
+            "path": "qat_e6kd_20261026/evals/a1/e6-kd_s42_clip5.0_a1/converted/e04_run_meta.json",
+            "sha256": "d26b35996713052ff81473882f1a60a6e540fa7452a39a49327c687c99651936"
+          },
+          "record": {
+            "path": "qat_e6kd_20261026/evals/a1/e6-kd_s42_clip5.0_a1/qat_selection.json",
+            "sha256": "cfe272f77dc7d5d5298c4b2537043a502efe16d8e94375a56c65cdf5abc5bb6a"
+          },
+          "selected_checkpoint": {
+            "path": "e6-kd_s42_clip5.0_a1/epoch_ckpts/e04.pt",
+            "sha256": "7cd793cb89e4ceeeefc9a2cd8e9223bcbe9ad0d7e8e04d6060e91133bf6b627b"
+          },
+          "state_dict_sha256": "07a3522c9cd15410a213dea8938e05a1fd0e4776b88e8d97f2d6f326d7e3ddea",
+          "x86_copy_sha256": null
+        },
+        "inputs": {
+          "clip_selection": {
+            "path": "qat_pilot_20261014/evals/a2/clip_selection/clip_selection.json",
+            "sha256": "c433145a6cfe0e133ebee8fcb70a76f05b60fc6462670abee34c5304704fe698"
+          },
+          "image_digest": "sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf",
+          "rules_sha256": "5acad295ffd71ea7630bf10184d0ae0f959a395ed7a27306b23f7dc86c847304",
+          "run_slot": "E6-KD:s42:15ep",
+          "scripts_commit": "ebc1201c183700dc146843e482811cb74d030ad8",
+          "telemetry_sha256": "dbd9c2e28f37383e5dbc36ebbb00fcef1df465df6f818589f200a4ec736efe88"
+        },
+        "kind": "derived",
+        "method": "qat_selection",
+        "parent": "E6-KD:s42:15ep",
+        "ptq_record": null,
+        "role": [
+          "e6kd"
+        ],
+        "scope": [
+          "clean",
+          "upstream",
+          "dedup",
+          "fq_off"
+        ],
+        "seed": 42,
+        "slot": "E6-KD:s42:sel",
+        "stage": "E6-KD"
+      },
+      {
+        "attempts": [
+          {
+            "attempt": 1,
+            "run_id": "e6-e2_s42_clip5.0_a1"
+          }
+        ],
+        "catalogue": {
+          "cut_place": 3,
+          "never_cut": false,
+          "parent": "E2:s42:lambda0.5:80k"
+        },
+        "checkpoint": null,
+        "class": "run",
+        "completion": {
+          "at_utc": "2026-10-20T09:14:44Z",
+          "line": 5056,
+          "record": "qat_telemetry.jsonl",
+          "sha256": "75974edd67f6e9711f381125a925f08e5656f60d2401ccf4ebc5031d6862b6b4"
+        },
+        "dl_rows": [
+          "DL-146"
+        ],
+        "kind": "listed_run",
+        "reason": "a QAT run: its model is its selection E6-E2:sel (AM-21; catalogue scope_class none)",
+        "role": [
+          "listed"
+        ],
+        "run_id": "e6-e2_s42_clip5.0_a1",
+        "scope": [],
+        "seed": 42,
+        "slot": "E6-E2:s42:15ep",
+        "stage": "E6-E2"
+      },
+      {
+        "catalogue": {
+          "cut_place": 3,
+          "never_cut": false,
+          "parent": "E6-E2:s42:15ep"
+        },
+        "class": "derived",
+        "dl_rows": [
+          "DL-146"
+        ],
+        "evaluator_stage": "E6-E2",
+        "hashed": {
+          "appended": "freeze",
+          "artifact_sha256": "12e60c895ff067df97bb8f9f644af774718ae1c65bdbef677a2777a83cae7c37",
+          "evaluations": [
+            {
+              "dir": "qat_e6e2_20261020/evals/a1/e6-e2_s42_clip5.0_a1",
+              "fault_report": null
+            }
+          ],
+          "image_digest": "sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf",
+          "isolation": null,
+          "made_utc": "2026-10-21T11:37:23Z",
+          "provenance": {
+            "path": "qat_e6e2_20261020/evals/a1/e6-e2_s42_clip5.0_a1/converted/e06_run_meta.json",
+            "sha256": "232706897ede99bee062755384e043a468d8c1670212099c1557de8ef63db9a4"
+          },
+          "record": {
+            "path": "qat_e6e2_20261020/evals/a1/e6-e2_s42_clip5.0_a1/qat_selection.json",
+            "sha256": "dd37419fcfff4f02abbd6e7f50ea3ff19214a8bec070d42a925038d43426b809"
+          },
+          "selected_checkpoint": {
+            "path": "e6-e2_s42_clip5.0_a1/epoch_ckpts/e06.pt",
+            "sha256": "2018cfa2c72e6fc0a59205c1af2a2394dfcc25bfafc443957075ae58330c078e"
+          },
+          "state_dict_sha256": "a2a58bed5cf9e5341a8c8591fa628b2de4376d22c0dc532a429c91b5efefe860",
+          "x86_copy_sha256": "eed07f984c6bcf3eff61171c146be254725350d9bc8c8d1c229c638533492f57"
+        },
+        "inputs": {
+          "clip_selection": {
+            "path": "qat_pilot_20261014/evals/a2/clip_selection/clip_selection.json",
+            "sha256": "c433145a6cfe0e133ebee8fcb70a76f05b60fc6462670abee34c5304704fe698"
+          },
+          "image_digest": "sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf",
+          "rules_sha256": "e299941524968f143359d154566930819cd064152691395fb3647f4de0d98f3d",
+          "run_slot": "E6-E2:s42:15ep",
+          "scripts_commit": "3373139179e6e27ecbe25f280be7b2b7889c38f2",
+          "telemetry_sha256": "75974edd67f6e9711f381125a925f08e5656f60d2401ccf4ebc5031d6862b6b4"
+        },
+        "kind": "derived",
+        "method": "qat_selection",
+        "parent": "E6-E2:s42:15ep",
+        "ptq_record": null,
+        "role": [
+          "quant_descriptive"
+        ],
+        "scope": [
+          "clean",
+          "upstream",
+          "dedup",
+          "fq_off"
+        ],
+        "seed": 42,
+        "slot": "E6-E2:s42:sel",
+        "stage": "E6-E2"
+      },
+      {
+        "catalogue": {
+          "cut_place": null,
+          "never_cut": false,
+          "parent": "E2:s42:lambda0.5:80k"
+        },
+        "class": "derived",
+        "dl_rows": [
+          "DL-10"
+        ],
+        "evaluator_stage": "E7-E2",
+        "hashed": null,
+        "inputs": {
+          "calibration_list": {
+            "file_sha256": "3ae68d511deec0b31062db8f7c49a7badad00b52ebc10fc526a7a5b9a44eba01",
+            "path": "configs/calibration/ptq_calibration_seed42.json"
+          },
+          "image_digest": "sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf",
+          "parent_checkpoint_sha256": "73dbc32dfc988124a9b81df24abd97c526f927ac2b094996411d174e89d32f06",
+          "qconfig_fingerprint": "f93844bd738abc83",
+          "script": {
+            "commit": "dc40dd2eb5b8be01882f53c37b7f6a3ea9365b71",
+            "path": "scripts/run_ptq.py"
+          }
+        },
+        "kind": "derived",
+        "method": "ptq",
+        "parent": "E2:s42:lambda0.5:80k",
+        "ptq_record": null,
+        "role": [
+          "quant_descriptive"
+        ],
+        "scope": [
+          "clean",
+          "upstream",
+          "dedup"
+        ],
+        "seed": 42,
+        "slot": "E7-E2:s42:list42",
+        "stage": "E7-E2"
+      },
+      {
+        "catalogue": {
+          "cut_place": 2,
+          "never_cut": false,
+          "parent": "E3-R1:s42:lambda0.5:alpha25:80k"
+        },
+        "class": "run",
+        "comparator": null,
+        "cut_date": "2026-10-24",
+        "dl_rows": [
+          "DL-137",
+          "DL-221"
+        ],
+        "entry": {
+          "path": "reports/derived/tday_entries/cut__E6-R1_s42_15ep__20261024__01.json",
+          "sha256": "fc5cef018aff7e0c0c2d30501ce5236d625bc6141a38209ede10ed8ede570b7f"
+        },
+        "kind": "cut",
+        "role": [
+          "listed"
+        ],
+        "rule": "cutoff",
+        "scope": [],
+        "seed": 42,
+        "slot": "E6-R1:s42:15ep",
+        "stage": "E6-R1"
+      },
+      {
+        "catalogue": {
+          "cut_place": 2,
+          "never_cut": false,
+          "parent": "E6-R1:s42:15ep"
+        },
+        "class": "derived",
+        "dl_rows": [
+          "DL-226"
+        ],
+        "entry": {
+          "path": "reports/derived/tday_entries/not_run__E6-R1_s42_sel__20261103__01.json",
+          "sha256": "4b0a09cca03fcc40998067103d92d05391885f0af886d259ad781f8c9fef475a"
+        },
+        "kind": "not_run",
+        "parent": "E6-R1:s42:15ep",
+        "parent_record": {
+          "path": "reports/derived/tday_entries/cut__E6-R1_s42_15ep__20261024__01.json",
+          "sha256": "fc5cef018aff7e0c0c2d30501ce5236d625bc6141a38209ede10ed8ede570b7f"
+        },
+        "reason": "parent cut",
+        "role": [
+          "quant_descriptive"
+        ],
+        "scope": [],
+        "seed": 42,
+        "slot": "E6-R1:s42:sel",
+        "stage": "E6-R1"
+      },
+      {
+        "catalogue": {
+          "cut_place": 1,
+          "never_cut": false,
+          "parent": "E3-R2:s42:lambda0.5:alpha25:80k"
+        },
+        "class": "run",
+        "comparator": null,
+        "cut_date": "2026-10-24",
+        "dl_rows": [
+          "DL-138",
+          "DL-222"
+        ],
+        "entry": {
+          "path": "reports/derived/tday_entries/cut__E6-R2_s42_15ep__20261024__01.json",
+          "sha256": "e336938da61ae7beacf765b7e5d48cb05e8ba76dfcae73e858e13bf2d560eb9b"
+        },
+        "kind": "cut",
+        "role": [
+          "listed"
+        ],
+        "rule": "cutoff",
+        "scope": [],
+        "seed": 42,
+        "slot": "E6-R2:s42:15ep",
+        "stage": "E6-R2"
+      },
+      {
+        "catalogue": {
+          "cut_place": 1,
+          "never_cut": false,
+          "parent": "E6-R2:s42:15ep"
+        },
+        "class": "derived",
+        "dl_rows": [
+          "DL-227"
+        ],
+        "entry": {
+          "path": "reports/derived/tday_entries/not_run__E6-R2_s42_sel__20261103__01.json",
+          "sha256": "9a3af28ef21d1c0f44a316680cecd7b9d25b5fe7631b5b56313e7d308547020f"
+        },
+        "kind": "not_run",
+        "parent": "E6-R2:s42:15ep",
+        "parent_record": {
+          "path": "reports/derived/tday_entries/cut__E6-R2_s42_15ep__20261024__01.json",
+          "sha256": "e336938da61ae7beacf765b7e5d48cb05e8ba76dfcae73e858e13bf2d560eb9b"
+        },
+        "reason": "parent cut",
+        "role": [
+          "quant_descriptive"
+        ],
+        "scope": [],
+        "seed": 42,
+        "slot": "E6-R2:s42:sel",
+        "stage": "E6-R2"
+      },
+      {
+        "catalogue": {
+          "cut_place": null,
+          "never_cut": true,
+          "parent": "E1:s42:80k"
+        },
+        "class": "derived",
+        "dl_rows": [
+          "DL-10"
+        ],
+        "evaluator_stage": "E4",
+        "hashed": null,
+        "inputs": {
+          "calibration_list": {
+            "file_sha256": "3ae68d511deec0b31062db8f7c49a7badad00b52ebc10fc526a7a5b9a44eba01",
+            "path": "configs/calibration/ptq_calibration_seed42.json"
+          },
+          "image_digest": "sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf",
+          "parent_checkpoint_sha256": "cf0879f7007dfacbd0d510085ff28a4b47ee845ddb8fd599611d74109e1d6a03",
+          "qconfig_fingerprint": "f93844bd738abc83",
+          "script": {
+            "commit": "dc40dd2eb5b8be01882f53c37b7f6a3ea9365b71",
+            "path": "scripts/run_ptq.py"
+          }
+        },
+        "kind": "derived",
+        "method": "ptq",
+        "parent": "E1:s42:80k",
+        "ptq_record": null,
+        "role": [
+          "family"
+        ],
+        "scope": [
+          "clean",
+          "upstream",
+          "dedup",
+          "corrupted",
+          "corrupted_sev45",
+          "efficiency"
+        ],
+        "seed": 42,
+        "slot": "E4:s42:list42",
+        "stage": "E4"
+      },
+      {
+        "catalogue": {
+          "cut_place": null,
+          "never_cut": true,
+          "parent": "E1:s43:80k"
+        },
+        "class": "derived",
+        "dl_rows": [
+          "DL-10"
+        ],
+        "evaluator_stage": "E4",
+        "hashed": null,
+        "inputs": {
+          "calibration_list": {
+            "file_sha256": "3ae68d511deec0b31062db8f7c49a7badad00b52ebc10fc526a7a5b9a44eba01",
+            "path": "configs/calibration/ptq_calibration_seed42.json"
+          },
+          "image_digest": "sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf",
+          "parent_checkpoint_sha256": "95f21204788f2986aba9311272c7f7e84f8d2049724c4bfdf5b0da66b6a78153",
+          "qconfig_fingerprint": "f93844bd738abc83",
+          "script": {
+            "commit": "dc40dd2eb5b8be01882f53c37b7f6a3ea9365b71",
+            "path": "scripts/run_ptq.py"
+          }
+        },
+        "kind": "derived",
+        "method": "ptq",
+        "parent": "E1:s43:80k",
+        "ptq_record": null,
+        "role": [
+          "per_seed"
+        ],
+        "scope": [
+          "clean",
+          "upstream",
+          "dedup"
+        ],
+        "seed": 43,
+        "slot": "E4:s43:list42",
+        "stage": "E4"
+      },
+      {
+        "catalogue": {
+          "cut_place": null,
+          "never_cut": true,
+          "parent": "E1:s44:80k"
+        },
+        "class": "derived",
+        "dl_rows": [
+          "DL-10"
+        ],
+        "evaluator_stage": "E4",
+        "hashed": null,
+        "inputs": {
+          "calibration_list": {
+            "file_sha256": "3ae68d511deec0b31062db8f7c49a7badad00b52ebc10fc526a7a5b9a44eba01",
+            "path": "configs/calibration/ptq_calibration_seed42.json"
+          },
+          "image_digest": "sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf",
+          "parent_checkpoint_sha256": "ef95aefd8f383e3b23674e0c6abf040dfb1ef0da997a53140c59ced294108c8f",
+          "qconfig_fingerprint": "f93844bd738abc83",
+          "script": {
+            "commit": "dc40dd2eb5b8be01882f53c37b7f6a3ea9365b71",
+            "path": "scripts/run_ptq.py"
+          }
+        },
+        "kind": "derived",
+        "method": "ptq",
+        "parent": "E1:s44:80k",
+        "ptq_record": null,
+        "role": [
+          "per_seed"
+        ],
+        "scope": [
+          "clean",
+          "upstream",
+          "dedup"
+        ],
+        "seed": 44,
+        "slot": "E4:s44:list42",
+        "stage": "E4"
+      },
+      {
+        "catalogue": {
+          "cut_place": null,
+          "never_cut": true,
+          "parent": "E3:s42:lambda0.5:alpha25:80k"
+        },
+        "class": "derived",
+        "dl_rows": [
+          "DL-10"
+        ],
+        "evaluator_stage": "E7",
+        "hashed": null,
+        "inputs": {
+          "calibration_list": {
+            "file_sha256": "3ae68d511deec0b31062db8f7c49a7badad00b52ebc10fc526a7a5b9a44eba01",
+            "path": "configs/calibration/ptq_calibration_seed42.json"
+          },
+          "image_digest": "sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf",
+          "parent_checkpoint_sha256": "4baa5bad682995091b66c67fb2d2ce467b3f139e02cc5a5cc62c243fe00f1a0d",
+          "qconfig_fingerprint": "f93844bd738abc83",
+          "script": {
+            "commit": "dc40dd2eb5b8be01882f53c37b7f6a3ea9365b71",
+            "path": "scripts/run_ptq.py"
+          }
+        },
+        "kind": "derived",
+        "method": "ptq",
+        "parent": "E3:s42:lambda0.5:alpha25:80k",
+        "ptq_record": null,
+        "role": [
+          "family"
+        ],
+        "scope": [
+          "clean",
+          "upstream",
+          "dedup",
+          "corrupted",
+          "corrupted_sev45",
+          "efficiency"
+        ],
+        "seed": 42,
+        "slot": "E7:s42:list42",
+        "stage": "E7"
+      },
+      {
+        "catalogue": {
+          "cut_place": null,
+          "never_cut": true,
+          "parent": "E3:s43:lambda0.5:alpha25:80k"
+        },
+        "class": "derived",
+        "dl_rows": [
+          "DL-10"
+        ],
+        "evaluator_stage": "E7",
+        "hashed": null,
+        "inputs": {
+          "calibration_list": {
+            "file_sha256": "3ae68d511deec0b31062db8f7c49a7badad00b52ebc10fc526a7a5b9a44eba01",
+            "path": "configs/calibration/ptq_calibration_seed42.json"
+          },
+          "image_digest": "sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf",
+          "parent_checkpoint_sha256": "f4d6f689d5545fb222fc9cb706c8143e5c04dff2082e86135dfdcabab4fc9a0e",
+          "qconfig_fingerprint": "f93844bd738abc83",
+          "script": {
+            "commit": "dc40dd2eb5b8be01882f53c37b7f6a3ea9365b71",
+            "path": "scripts/run_ptq.py"
+          }
+        },
+        "kind": "derived",
+        "method": "ptq",
+        "parent": "E3:s43:lambda0.5:alpha25:80k",
+        "ptq_record": null,
+        "role": [
+          "per_seed"
+        ],
+        "scope": [
+          "clean",
+          "upstream",
+          "dedup"
+        ],
+        "seed": 43,
+        "slot": "E7:s43:list42",
+        "stage": "E7"
+      },
+      {
+        "catalogue": {
+          "cut_place": null,
+          "never_cut": true,
+          "parent": "E3:s44:lambda0.5:alpha25:80k"
+        },
+        "class": "derived",
+        "dl_rows": [
+          "DL-10"
+        ],
+        "evaluator_stage": "E7",
+        "hashed": null,
+        "inputs": {
+          "calibration_list": {
+            "file_sha256": "3ae68d511deec0b31062db8f7c49a7badad00b52ebc10fc526a7a5b9a44eba01",
+            "path": "configs/calibration/ptq_calibration_seed42.json"
+          },
+          "image_digest": "sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf",
+          "parent_checkpoint_sha256": "6585ed09398ec8225a2d49304e1e5d8611b585456ac3e7c111eb1744c313363b",
+          "qconfig_fingerprint": "f93844bd738abc83",
+          "script": {
+            "commit": "dc40dd2eb5b8be01882f53c37b7f6a3ea9365b71",
+            "path": "scripts/run_ptq.py"
+          }
+        },
+        "kind": "derived",
+        "method": "ptq",
+        "parent": "E3:s44:lambda0.5:alpha25:80k",
+        "ptq_record": null,
+        "role": [
+          "per_seed"
+        ],
+        "scope": [
+          "clean",
+          "upstream",
+          "dedup"
+        ],
+        "seed": 44,
+        "slot": "E7:s44:list42",
+        "stage": "E7"
+      },
+      {
+        "catalogue": {
+          "cut_place": null,
+          "never_cut": true,
+          "parent": "E1:s42:80k"
+        },
+        "class": "derived",
+        "dl_rows": [
+          "DL-10"
+        ],
+        "evaluator_stage": "E4",
+        "hashed": null,
+        "inputs": {
+          "calibration_list": {
+            "file_sha256": "301ae5d1f18f3dadd7a7290eac65802081adc4b9ad167e4c576355d60ec4c0b2",
+            "path": "configs/calibration/ptq_calibration_seed43.json"
+          },
+          "image_digest": "sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf",
+          "parent_checkpoint_sha256": "cf0879f7007dfacbd0d510085ff28a4b47ee845ddb8fd599611d74109e1d6a03",
+          "qconfig_fingerprint": "f93844bd738abc83",
+          "script": {
+            "commit": "dc40dd2eb5b8be01882f53c37b7f6a3ea9365b71",
+            "path": "scripts/run_ptq.py"
+          }
+        },
+        "kind": "derived",
+        "method": "ptq",
+        "parent": "E1:s42:80k",
+        "ptq_record": null,
+        "role": [
+          "calibration_sensitivity"
+        ],
+        "scope": [
+          "clean",
+          "dedup"
+        ],
+        "seed": 42,
+        "slot": "E4:s42:list43",
+        "stage": "E4"
+      },
+      {
+        "catalogue": {
+          "cut_place": null,
+          "never_cut": true,
+          "parent": "E1:s42:80k"
+        },
+        "class": "derived",
+        "dl_rows": [
+          "DL-10"
+        ],
+        "evaluator_stage": "E4",
+        "hashed": null,
+        "inputs": {
+          "calibration_list": {
+            "file_sha256": "4c67ab28d01b3536ebd187c03ea633e34bd9ac48d5e9f0647a93b906956c7137",
+            "path": "configs/calibration/ptq_calibration_seed44.json"
+          },
+          "image_digest": "sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf",
+          "parent_checkpoint_sha256": "cf0879f7007dfacbd0d510085ff28a4b47ee845ddb8fd599611d74109e1d6a03",
+          "qconfig_fingerprint": "f93844bd738abc83",
+          "script": {
+            "commit": "dc40dd2eb5b8be01882f53c37b7f6a3ea9365b71",
+            "path": "scripts/run_ptq.py"
+          }
+        },
+        "kind": "derived",
+        "method": "ptq",
+        "parent": "E1:s42:80k",
+        "ptq_record": null,
+        "role": [
+          "calibration_sensitivity"
+        ],
+        "scope": [
+          "clean",
+          "dedup"
+        ],
+        "seed": 42,
+        "slot": "E4:s42:list44",
+        "stage": "E4"
+      },
+      {
+        "catalogue": {
+          "cut_place": null,
+          "never_cut": true,
+          "parent": "E1:s42:80k"
+        },
+        "class": "derived",
+        "dl_rows": [
+          "DL-10"
+        ],
+        "evaluator_stage": "E4",
+        "hashed": null,
+        "inputs": {
+          "calibration_list": {
+            "file_sha256": "85d5a9483422c2d7de929f232d58209fcd97d9a21d32ecb4d87707dcb32f2a10",
+            "path": "configs/calibration/ptq_calibration_seed45.json"
+          },
+          "image_digest": "sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf",
+          "parent_checkpoint_sha256": "cf0879f7007dfacbd0d510085ff28a4b47ee845ddb8fd599611d74109e1d6a03",
+          "qconfig_fingerprint": "f93844bd738abc83",
+          "script": {
+            "commit": "dc40dd2eb5b8be01882f53c37b7f6a3ea9365b71",
+            "path": "scripts/run_ptq.py"
+          }
+        },
+        "kind": "derived",
+        "method": "ptq",
+        "parent": "E1:s42:80k",
+        "ptq_record": null,
+        "role": [
+          "calibration_sensitivity"
+        ],
+        "scope": [
+          "clean",
+          "dedup"
+        ],
+        "seed": 42,
+        "slot": "E4:s42:list45",
+        "stage": "E4"
+      },
+      {
+        "catalogue": {
+          "cut_place": null,
+          "never_cut": true,
+          "parent": "E3:s42:lambda0.5:alpha25:80k"
+        },
+        "class": "derived",
+        "dl_rows": [
+          "DL-10"
+        ],
+        "evaluator_stage": "E7",
+        "hashed": null,
+        "inputs": {
+          "calibration_list": {
+            "file_sha256": "301ae5d1f18f3dadd7a7290eac65802081adc4b9ad167e4c576355d60ec4c0b2",
+            "path": "configs/calibration/ptq_calibration_seed43.json"
+          },
+          "image_digest": "sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf",
+          "parent_checkpoint_sha256": "4baa5bad682995091b66c67fb2d2ce467b3f139e02cc5a5cc62c243fe00f1a0d",
+          "qconfig_fingerprint": "f93844bd738abc83",
+          "script": {
+            "commit": "dc40dd2eb5b8be01882f53c37b7f6a3ea9365b71",
+            "path": "scripts/run_ptq.py"
+          }
+        },
+        "kind": "derived",
+        "method": "ptq",
+        "parent": "E3:s42:lambda0.5:alpha25:80k",
+        "ptq_record": null,
+        "role": [
+          "calibration_sensitivity"
+        ],
+        "scope": [
+          "clean",
+          "dedup"
+        ],
+        "seed": 42,
+        "slot": "E7:s42:list43",
+        "stage": "E7"
+      },
+      {
+        "catalogue": {
+          "cut_place": null,
+          "never_cut": true,
+          "parent": "E3:s42:lambda0.5:alpha25:80k"
+        },
+        "class": "derived",
+        "dl_rows": [
+          "DL-10"
+        ],
+        "evaluator_stage": "E7",
+        "hashed": null,
+        "inputs": {
+          "calibration_list": {
+            "file_sha256": "4c67ab28d01b3536ebd187c03ea633e34bd9ac48d5e9f0647a93b906956c7137",
+            "path": "configs/calibration/ptq_calibration_seed44.json"
+          },
+          "image_digest": "sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf",
+          "parent_checkpoint_sha256": "4baa5bad682995091b66c67fb2d2ce467b3f139e02cc5a5cc62c243fe00f1a0d",
+          "qconfig_fingerprint": "f93844bd738abc83",
+          "script": {
+            "commit": "dc40dd2eb5b8be01882f53c37b7f6a3ea9365b71",
+            "path": "scripts/run_ptq.py"
+          }
+        },
+        "kind": "derived",
+        "method": "ptq",
+        "parent": "E3:s42:lambda0.5:alpha25:80k",
+        "ptq_record": null,
+        "role": [
+          "calibration_sensitivity"
+        ],
+        "scope": [
+          "clean",
+          "dedup"
+        ],
+        "seed": 42,
+        "slot": "E7:s42:list44",
+        "stage": "E7"
+      },
+      {
+        "catalogue": {
+          "cut_place": null,
+          "never_cut": true,
+          "parent": "E3:s42:lambda0.5:alpha25:80k"
+        },
+        "class": "derived",
+        "dl_rows": [
+          "DL-10"
+        ],
+        "evaluator_stage": "E7",
+        "hashed": null,
+        "inputs": {
+          "calibration_list": {
+            "file_sha256": "85d5a9483422c2d7de929f232d58209fcd97d9a21d32ecb4d87707dcb32f2a10",
+            "path": "configs/calibration/ptq_calibration_seed45.json"
+          },
+          "image_digest": "sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf",
+          "parent_checkpoint_sha256": "4baa5bad682995091b66c67fb2d2ce467b3f139e02cc5a5cc62c243fe00f1a0d",
+          "qconfig_fingerprint": "f93844bd738abc83",
+          "script": {
+            "commit": "dc40dd2eb5b8be01882f53c37b7f6a3ea9365b71",
+            "path": "scripts/run_ptq.py"
+          }
+        },
+        "kind": "derived",
+        "method": "ptq",
+        "parent": "E3:s42:lambda0.5:alpha25:80k",
+        "ptq_record": null,
+        "role": [
+          "calibration_sensitivity"
+        ],
+        "scope": [
+          "clean",
+          "dedup"
+        ],
+        "seed": 42,
+        "slot": "E7:s42:list45",
+        "stage": "E7"
+      },
+      {
+        "catalogue": {
+          "cut_place": 14,
+          "never_cut": false,
+          "parent": null
+        },
+        "class": "measurement",
+        "comparator": null,
+        "cut_date": "2026-11-03",
+        "dl_rows": [
+          "DL-130",
+          "DL-224"
+        ],
+        "entry": {
+          "path": "reports/derived/tday_entries/cut__ARM_latency__20261103__01.json",
+          "sha256": "1af5c68e6d92665109c699e2ca3a1cd7254db357d2274f59966474549f522aa1"
+        },
+        "kind": "cut",
+        "role": [],
+        "rule": "freeze",
+        "scope": [],
+        "seed": null,
+        "slot": "ARM:latency",
+        "stage": "ARM"
+      }
+    ],
+    "evaluator": {
+      "commit": "dc40dd2eb5b8be01882f53c37b7f6a3ea9365b71",
+      "files": {
+        "configs/augment.py": "29061da522bd099c6e513bd6e7bede1487ad6238",
+        "configs/corruption_protocol.json": "61ffda9d34245c085e3f4f7c68ac77665a5b3c8b",
+        "configs/data.py": "39879f91cc25b4be778517deb98676ce7759287d",
+        "configs/distill.py": "71013fcb61501bdc2dde2c6103db6ca02fa14030",
+        "configs/e1_student.py": "c647eee4ad93e064397ec491b8f3574e41031854",
+        "configs/model.py": "d0f96a70cb97c7fb20a93ed2bd3418ae0e6b015d",
+        "configs/plantseg_class_map.json": "4bc802e9cd2eb34c18d2c4b0a8617efb3c86adf5",
+        "configs/quant.py": "f6fe42db96c224d42b47a0057925dd3777dbfb09",
+        "configs/teacher/arms/r1_bema.py": "46e7628f05857f7227546f400fdff86360c10c7a",
+        "configs/teacher/arms/r2_bema_rare.py": "5275139e8522e6ecfc9faf272278ea0fbd433657",
+        "configs/teacher/segnext_mscan-b_1xb16-adamw-40k_plantseg116-512x512.py": "3c6a7b28ebad5fce6187c307f87fd7fc91f81933",
+        "scripts/build_corruption_cache.py": "f1811d037fc33baccb4580e3aafd98e3c5287e31",
+        "scripts/build_train_strata.py": "d070fabf8909dc56bed413c6c7c3a85bdccdd358",
+        "scripts/evaluate_corruptions.py": "6ac3b7e1713cb66bc0fbfb7bd5579ac4a50e0760",
+        "scripts/evaluate_model.py": "17132638c91a4b52d384c1f1a5e01662dfe265b1",
+        "scripts/gap_bootstrap_val.py": "d9d3562596ae23bbfcd182d1fbe360a22217f7be",
+        "scripts/preflight_distill.py": "29c915cd19043d472066c4b9d18f50781a8498a5",
+        "scripts/profile_efficiency.py": "76bf03aa1c0213e071fd16a3498605fb7415d5a6",
+        "scripts/report_robustness.py": "8e6d19f398f95348433182522c7555ea2f227178",
+        "scripts/run_corruption_grid.py": "6f58d7e55c8ebd9324c0df4e2b06775916f94a0f",
+        "scripts/smoke_frozen_blobs.py": "050bafb5b7861c0131a01e898c84c089fd80ee58",
+        "scripts/verify_corruption_cache.py": "8d50b6e1d1947187068329d29a7f4a4fead9fb5d",
+        "src/__init__.py": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391",
+        "src/corruption_cache.py": "4521276f9584f3b686c6804525c3b9f21524e01b",
+        "src/corruption_roles.py": "f8a5ad8a5c5f3bd960dd41dae5502350c3ca5262",
+        "src/corruption_source.py": "643c833d939038cf9e796ce412e8c392a903de9d",
+        "src/data/__init__.py": "f09e50e8e9a43d7871ed2f36b8e75da64b5b2027",
+        "src/data/dataset.py": "2600d792b34957c1ed9fb0ccf0f129c7e2dc3cc8",
+        "src/data/isolation.py": "2f816dd7543779615402d0c03b950e55830805df",
+        "src/data/original_resolution.py": "447b286875f8f2eedfd479fb130bc24ecdbac5de",
+        "src/data/transforms.py": "b68c1d25cbcedab22f89d45faac936471bdba98e",
+        "src/distill/__init__.py": "c7a8bd9343059251e1423d83a008e7ed3f7d977c",
+        "src/distill/cwd_projection.py": "2de9e9bfd326261ab705f7ee7fcb01329fe894c0",
+        "src/distill/export.py": "453eb5ea290c48a3acf3f01fa39f70a4fad5fd68",
+        "src/distill/features.py": "74545c9ab2a76567575482e822ea790adc06b13b",
+        "src/distill/nmf_stream.py": "f0a1d4fcda085e9a0e8bc769158b4baf89914a8e",
+        "src/distill/segnext_teacher.py": "fb8b6aacb9b81f134e4721df04ba7057c9f4e62c",
+        "src/distill/teacher.py": "3334e2b7a4cdb4917df14336667f2388adef30a2",
+        "src/eval/__init__.py": "fe78489e5179745110fa84f79f435ba6c118956b",
+        "src/eval/adapters.py": "a0941d2b1b945b6a3a76becf8aa69f9204008c4b",
+        "src/eval/artifacts.py": "693c3626ab55f50ff5ec628fad5c3e75ce502a72",
+        "src/eval/corrupted.py": "70e23180665daba79e7028769ace7b19e55f77ce",
+        "src/eval/efficiency.py": "1a982ee3897e03763e66823c4d30d1cc32ea6777",
+        "src/eval/eval_runtime.py": "a6e4c261e3d9e9a258c45b30bbfa173e3b2b112b",
+        "src/eval/evaluate.py": "06d6f55f7b37f41be52626dc23f25e5ba73b3f6a",
+        "src/eval/metrics.py": "cbd5fa86db928529299a7dfff7c845137bda7e82",
+        "src/eval/model_loading.py": "79b695eb47b216e1d855c30fdb9678c8fa9df609",
+        "src/eval/protocols.py": "b4d7db89d84ad453851d675963f337567e39089c",
+        "src/eval/robustness.py": "12152a9cc05ddbe18243c917f832326e76affec8",
+        "src/eval/robustness_report.py": "6a65919e80cf532837c88245d47aa8a34110ba6d",
+        "src/eval/stage_artifacts.py": "2bb9c9443a33f74b83784d7a9472ec7d02ed9239",
+        "src/eval/teacher_diag.py": "0700501c826865146369212165e5e02033bb1188",
+        "src/models/__init__.py": "74abae1fde59a9050a4fd31839bb0c9e013df4a3",
+        "src/models/student.py": "40a84c45a35fd7af8f39ca7e111b1a3d9ff9e2ef",
+        "src/quant/__init__.py": "a3b7a42b5160c6b6da5f463ed7195182134d9d69",
+        "src/quant/calibration.py": "9daff8e350e23d21e7c9efa82bf0856dcc9a303c",
+        "src/quant/checkpoint.py": "1943cacd3a893b99126614c9ec19f90ac863f06d",
+        "src/quant/e6kd_trigger.py": "941ed1367a9b526573337b9003db4200a31c723f",
+        "src/quant/e6x_condition.py": "d0b7f3ee3a7b4a858b4a3988bf0701bf68359d34",
+        "src/quant/prepare.py": "e54a9c60801c896f296a5edeb8d2aebc3f37b246",
+        "src/quant/ptq.py": "90cc6d7667ba0684c50dce6040942a45e5fbab4b",
+        "src/quant/ptq_record.py": "df4831bbbbda0fc1822c2fad86527c34f00344a3",
+        "src/quant/qat.py": "f0a43aafda02c329b46d1f114e9f370b5fbc286f",
+        "src/quant/qat_artifacts.py": "8160e48eb4ec43bb882188e70f52ff05125a5ada",
+        "src/quant/qat_kd.py": "c2e2221ed402ab80b0d8b6028c5e273639d5ca6b",
+        "src/quant/qat_select.py": "adf49ed6f286c5a4f3ab2b828282807db79afc13",
+        "src/quant/qconfig.py": "a26532284b897e4edb3124ecef76ec0e3980e618",
+        "src/quant/runner.py": "4c84149369a22b82c10d6daebaa641858c693c52",
+        "src/quant/stages.py": "8798ea328c77442cabe9c3fa7d05079399ac89f7",
+        "src/quant/x86_latency.py": "327d141a70c4f9c08c71f096f9b265ba41b5c12b",
+        "src/seeds.py": "a0ea5d6a1c0791a0c7455dd6dd0b84f008329a08",
+        "src/stats/__init__.py": "de228dbdef797f3c48adccda8e3995ed534c558d",
+        "src/stats/align.py": "0e700ee64f4bdea5465820a5118d4a15cab5d7d4",
+        "src/stats/artifact.py": "c95798bb49c2365fdc83a102ed02b219e7f3fae8",
+        "src/stats/bootstrap.py": "22d6db054ef9e1eb4e7325c28f850fb9775b1907",
+        "src/stats/corruption_protocol.py": "a7cac793ce70482d12e8268ff893cecd8056010b",
+        "src/stats/driver.py": "4032147dc0c0c5e956142043f385d0ebb348de55",
+        "src/stats/eligibility.py": "64ccd312705da713d6b2361b9ebb07b0b58e99ec",
+        "src/stats/gap.py": "ae311bcffa12ce70de53eeb111a3e5c86f8e887f",
+        "src/stats/ingest.py": "ab627ea63f751431a4a933b4a4a46cd66d037f0d",
+        "src/stats/noninferiority.py": "ab981966b7395514cfb2c8eb56a45f50b969abd5",
+        "src/stats/report.py": "8c2bf7ce97d1bb66c7e4640b73d86ddc9a615882",
+        "src/stats/robustness.py": "3fb16de20bd01a1e84a85ab564711a7b2bfb2467",
+        "src/stats/tests.py": "ae3bef565c5cefa4d29b7a59fe5e160aa452e113",
+        "src/stats/val_artifacts.py": "1de957830d2eed02cf347c284f31c7f9ba19eeca",
+        "src/tman/__init__.py": "490ccda3a697c06abb7b0d1334414be833d353fa",
+        "src/tman/binding.py": "1d6cbe87248d264d8947244e64e8097f1f2882d0",
+        "src/tman/schema.py": "1600ff2c23ea73118d4a23e3c11cec2395911669",
+        "src/training/__init__.py": "889e10b8add87d86a8f41016aa2e33bdf827ba55",
+        "src/training/kd_arms.py": "901b49e5dd5cc496421e4569235fc3720a4145db",
+        "src/training/losses.py": "8be2a7bd75e4c5ca6cc5d9248818a97a4e53bb85",
+        "src/training/sweep_select.py": "c16ff191a5dca8923a19566b0e01c88fd9f9616f",
+        "src/training/teacher_arm_components.py": "c4209598698b5b519e578ed151f16018819c9199",
+        "src/training/teacher_components.py": "33a2b6980e93c615483236522d1294916ef3441b",
+        "src/training/train_distill.py": "63805c422fd95c5e88021c864d449c40b1c44160",
+        "src/training/train_e1.py": "cecf39f26cd7aa055dffc0c920f9e98b0cc80f27",
+        "src/vendor/__init__.py": "aaea0b4f737baacb251249c9c0ae23c4b27b516b",
+        "src/vendor/imagecorruptions/__init__.py": "1720ef9bc9b1df5b22f70fd3258a6d66e53938f0",
+        "src/vendor/imagecorruptions/corruptions.py": "782726c435ee6b50b1de194b225bf8e1cbd6a8dc",
+        "src/vendor/imagecorruptions/provenance.py": "10dc89b4591fda574e55c0a967f83ee502421a8b"
+      }
+    },
+    "execution_context": {
+      "batch_size": 1,
+      "determinism_policy_applied": false,
+      "evaluator_commit": "dc40dd2eb5b8be01882f53c37b7f6a3ea9365b71",
+      "host": {
+        "cpu_model": "13th Gen Intel(R) Core(TM) i7-1360P",
+        "name": "DESKTOP-2ACIJH0"
+      },
+      "image_digest": "sha256:cb413304e2445e5c8ac3786f7a370f2ed05a07d11843b11687bb9eb23dc32c2b",
+      "input_devices": [
+        "cpu"
+      ],
+      "model_device": "cpu",
+      "num_workers": 0,
+      "processes": 4,
+      "torch_num_threads": 1
+    },
+    "expected_rows": {
+      "cites": [
+        "reports/dataset_report.md:30",
+        "src/eval/stage_artifacts.py:30"
+      ],
+      "value": 1561
+    },
+    "generator_pins": {
+      "corrupted_cache": {
+        "pin": {
+          "commit": "dc40dd2eb5b8be01882f53c37b7f6a3ea9365b71",
+          "library_versions": {
+            "image_digest": "sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf",
+            "numpy": "1.26.4",
+            "pillow": "12.3.0",
+            "python": "3.11",
+            "scikit_image": "0.23.2"
+          },
+          "parameters": {
+            "cache_schema": "plantseg-corruption-cache/2.0.0",
+            "cells": [
+              "motion_blur_s1",
+              "motion_blur_s2",
+              "motion_blur_s3",
+              "motion_blur_s4",
+              "motion_blur_s5",
+              "gaussian_noise_s1",
+              "gaussian_noise_s2",
+              "gaussian_noise_s3",
+              "gaussian_noise_s4",
+              "jpeg_compression_s1",
+              "jpeg_compression_s2",
+              "jpeg_compression_s3",
+              "jpeg_compression_s4",
+              "jpeg_compression_s5",
+              "brightness_s1",
+              "brightness_s2",
+              "brightness_s3",
+              "brightness_s4",
+              "brightness_s5",
+              "fog_s1",
+              "fog_s2",
+              "fog_s3",
+              "fog_s4",
+              "fog_s5"
+            ],
+            "expected_images": 1561,
+            "master_seed": 42,
+            "protocol": {
+              "path": "configs/corruption_protocol.json",
+              "schema_version": "plantseg-corruptions/2.0.0",
+              "sha256": "13860bd19ba0ae6b9c2a568749a6b1f9fbe76711a6d9bdc9e20559727f43c446"
+            },
+            "seed_policy_id": "plantseg-corruption-v1",
+            "source_resize": "core_preprocess/1.0.0 image path",
+            "split": "test",
+            "storage": {
+              "dtype": "uint8",
+              "format": "npy",
+              "layout": "HxWx3",
+              "relative_path": "<corruption>/s<severity>/<manifest_index:05d>.npy"
+            },
+            "vendor_runtime_sha256": "caad653555d6d4098c5b6c11d8e821f3c3a86eaf56cbeaca1603fc7d9237e90e"
+          },
+          "pin_sha256": "17b4342a8ddccc87b54fd05ecb324c3c85940df23e49de9180982e850a229934",
+          "schema": "plantseg-corruption-generator-pin/1.0.0",
+          "script": {
+            "git_blob": "f1811d037fc33baccb4580e3aafd98e3c5287e31",
+            "path": "scripts/build_corruption_cache.py"
+          }
+        },
+        "value": null
+      },
+      "image_hasher": {
+        "pin": {
+          "parameters": {
+            "digest": "sha256 of the file bytes",
+            "expected_images": 1561,
+            "folder": "images/{split}",
+            "modules": {
+              "src/tman/dedup.py": "76fe0c6b815e98c8311a5a4959f650f16ba2b7a65db89451944accae8c78f079"
+            },
+            "outputs": {
+              "dedup": "tday_dedup.json",
+              "dedup_format": "tday_dedup/1",
+              "hash_list": "tday_image_hashes.tsv"
+            },
+            "rule": {
+              "ids": "the file stem; sorted is Python's sorted(), in code-point order",
+              "keep": "of each group of identical images equal to no TRAIN or VAL image, its first sorted id",
+              "precedence": [
+                "equal_train",
+                "equal_val",
+                "duplicate_in_split"
+              ]
+            },
+            "split": {
+              "from": "src.eval.stage_artifacts.OFFICIAL_SPLIT"
+            },
+            "suffixes": [
+              ".jpeg",
+              ".jpg"
+            ],
+            "train_val_list": {
+              "dl": "DL-91",
+              "path": "train_val_image_hashes.tsv",
+              "rows": 6213,
+              "sha256": "62e5ba9d38e1de1111f59ee46d5cc8ff23d8253c546cde9fa13c11a03233837c",
+              "train": 5367,
+              "val": 846
+            }
+          },
+          "python": "3.11",
+          "script": {
+            "commit": "dc40dd2eb5b8be01882f53c37b7f6a3ea9365b71",
+            "path": "scripts/tday_hash_images.py",
+            "sha256": "5f65eb4893c49e6b41e363d924cf0b5697dc0d0a9b736a983c015b91f549096a"
+          }
+        },
+        "value": null
+      }
+    },
+    "lane_code": {
+      "commit": "028de20751cd581698c8666f5101fc399339be8e",
+      "files_sha256": {
+        "configs/tday_catalogue.json": "6c05a78ec34fd440999c939ea76d56779f891013c89668f4a0a5cfecca3438bd",
+        "scripts/tday_hash_images.py": "5f65eb4893c49e6b41e363d924cf0b5697dc0d0a9b736a983c015b91f549096a",
+        "scripts/tday_manifest.py": "493772af3102a2e6d4e18bc1c37e489291a929ea0e7cb5877317d6c8385734dc",
+        "src/tman/__init__.py": "ecd30301770df15c2b9141964b2e80c55355684122061874aa9e4b592b836ecc",
+        "src/tman/am22.py": "db9d8d02d306f1708d1c195ed9f31a03dc1c72998b1fa352fbe7354286e88776",
+        "src/tman/binding.py": "7836ec2238d763fecce0be2fae9dbc7e63ff303c0d01f6cd94f69c7995af58cc",
+        "src/tman/completion.py": "87211ddab40f7a0badfb84811db0d99c5ee49b5e260e315841a08f5318a14626",
+        "src/tman/dedup.py": "76fe0c6b815e98c8311a5a4959f650f16ba2b7a65db89451944accae8c78f079",
+        "src/tman/entries.py": "94c6c21bb78058eb532c30fe361568c50dd12e0460b6f660db61f1c42d4cf34f",
+        "src/tman/manifest.py": "46e8fe260c1b4288932f96d4af814eb9f29e25d508db32fedf1a7c6bad2e38dc",
+        "src/tman/records.py": "b23eeb06cfb46b0866d5a0e1602dc11ef0847fe9b184e5bb19a5b664ee2d4d71",
+        "src/tman/schedule.py": "93bb41ea9cffef65e8201cfb8000452e618566a3f36ab3dd0a5ddb4b03a4993b",
+        "src/tman/schema.py": "19cc217e0705ff3fdca5ae341a196ab5b8b3e044296b251ed9885aff99a80b79",
+        "src/tman/validate.py": "c5233cfad1c90db08e844f62b13947c6488301d61b42c1aa0634a9f586e30e14"
+      }
+    },
+    "references": {
+      "mde_entry": {
+        "dl": "DL-99",
+        "path": "reports/derived/mde_entry_20261009T034825Z.json",
+        "sha256": "7749c61eb7b82da6bc250bcce0d2239361460b110ef8b9ab615b44464a90c2ae"
+      },
+      "strata": {
+        "dl": "DL-63",
+        "path": "reports/strata/train_strata_v1.json",
+        "sha256": "ab0df4e3af32f0d25d416700effe51e036cb83ca1c9d451e7e80c9077bdc65b6"
+      },
+      "teacher_of_record": {
+        "bytes": 335949080,
+        "dl": "DL-88",
+        "path": "iter_24000.pth",
+        "sha256": "8c0e649a1457782c99e02a3c81867c3b5aa55d924b697cc859455e6022179c4e"
+      },
+      "trainval_hash_list": {
+        "dl": "DL-91",
+        "path": "train_val_image_hashes.tsv",
+        "rows": 6213,
+        "sha256": "62e5ba9d38e1de1111f59ee46d5cc8ff23d8253c546cde9fa13c11a03233837c"
+      }
+    },
+    "schedule": {
+      "decision_log_entry": "DL-70",
+      "file": "configs/kd_schedule.json",
+      "file_sha256": "cfc9c56ce80b1bd9204878148c9fc697455e37158e0f39119910e48a577cae1b",
+      "freeze_source": {
+        "path": "configs/kd_schedule.json",
+        "provider": "schedule",
+        "sha256": "cfc9c56ce80b1bd9204878148c9fc697455e37158e0f39119910e48a577cae1b"
+      },
+      "in_force": "T",
+      "moved_freeze_date": null,
+      "original_freeze_date": "2026-11-03",
+      "original_freeze_utc": "2026-11-03T16:00:00Z",
+      "test_deadline": "2026-11-08"
+    },
+    "trigger": {
+      "path": "reports/derived/e6kd_trigger.json",
+      "sha256": "d0093ff47dd04715e5710912f6ec23f007fb3c58322e31ef869bcac48f9e0de1",
+      "triggered": true
+    }
+  },
+  "format": "tday_manifest/1",
+  "session": null
+}

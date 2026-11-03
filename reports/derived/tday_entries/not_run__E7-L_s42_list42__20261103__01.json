@@ -1,0 +1,21 @@
+{
+  "amendment": "AM-19 item 4(a)",
+  "corrects": null,
+  "date": "2026-11-03",
+  "format": "tday_entry/1",
+  "kind": "not_run",
+  "parent": "E3-L:s42:lambda0.5:alpha25:80k",
+  "parent_record": {
+    "path": "reports/derived/tday_entries/cut__teacher-L_s42_40k__20261020__01.json",
+    "sha256": "e4f4d8e64a40c56c013968a6225d7528faaaa4f7b2033bedbc1fc2dc4496b24c"
+  },
+  "printed_by": {
+    "commit": "f55dc9447e42d1a47467926761812d25b87abb1c",
+    "script": "scripts/tday_manifest.py"
+  },
+  "push_evidence": null,
+  "reason": "parent cut",
+  "slots": [
+    "E7-L:s42:list42"
+  ]
+}

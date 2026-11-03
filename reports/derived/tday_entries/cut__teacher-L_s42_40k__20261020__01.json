@@ -1,0 +1,55 @@
+{
+  "amendment": "AM-22 item 2(a); AM-18 item 7(b)",
+  "arithmetic": null,
+  "comparator": null,
+  "corrects": null,
+  "cut_order_position": null,
+  "date": "2026-10-20",
+  "format": "tday_entry/1",
+  "kind": "cut",
+  "launched": false,
+  "printed_by": {
+    "commit": "29374f64e7249b479f27fd374c722355663bf625",
+    "script": "scripts/tday_manifest.py"
+  },
+  "push_evidence": null,
+  "reason": "code not merged",
+  "results_known": [
+    {
+      "dl": "DL-118",
+      "path": "reports/arms/arm_teacher_record_R1.json",
+      "sha256": "6933fbe0632fac79962695b1e2c31e9480973b6bb44dee9cd8e522826fe940d5"
+    },
+    {
+      "dl": "DL-124",
+      "path": "reports/arms/arm_go_rule_R1.json",
+      "sha256": "71d024d1ba17e68ebf679dcf178ddb84472e5147815850e8c4ab3748c0a35e9f"
+    },
+    {
+      "dl": "DL-122",
+      "path": "reports/arms/arm_teacher_record_R2.json",
+      "sha256": "fc45d7711b96cbdcfb999d203f28c947af1a45e293e70ed970250fba4d6483e5"
+    },
+    {
+      "dl": "DL-125",
+      "path": "reports/arms/arm_go_rule_R2.json",
+      "sha256": "0e3552c622b219c34c4ca9b289b2d960775a8f7922f731e4bc8fce684a6f3288"
+    }
+  ],
+  "rule": "cutoff",
+  "rule_record": null,
+  "run_ids": [],
+  "since": {
+    "date": "2026-10-14",
+    "record": {
+      "path": "docs/DECISION_LOG.md",
+      "sha256": "9a7e055d29faa6aa59819fb972b43b02145705649d6f03fbbf1a1eaf27124b86"
+    }
+  },
+  "slots": [
+    "teacher-L:s42:40k",
+    "E2-L:s42:lambda0.5:80k",
+    "E3-L:s42:lambda0.5:alpha25:80k"
+  ],
+  "telemetry": []
+}

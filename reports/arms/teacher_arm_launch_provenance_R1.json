@@ -1,0 +1,220 @@
+{
+  "format": "teacher_arm_launch_provenance/1",
+  "arm": "R1",
+  "attempt": 1,
+  "work_dir": "/workspace/arm_runs/teacher-r1_s42_40k_a1",
+  "records_commit": "96fa4050772a2a7c5e0399a4c6c602243c433808",
+  "code_pin": "0b219e949b56c121bf3c048671bef19b00de5e12",
+  "checkout_git_head": "0b219e949b56c121bf3c048671bef19b00de5e12",
+  "rows": {
+    "approval": {
+      "dl": "DL-101",
+      "row_sha256": "fbf96508a7f464129790c86f0722c1892ab9662d4fd1bfea700c1e9d4e463a6b"
+    },
+    "recheck": {
+      "dl": "DL-103",
+      "row_sha256": "0688c325b74439782ffd0a1d47242b58aa3e08ab2467e1988369ff8cb423da37"
+    },
+    "config": {
+      "dl": "DL-111",
+      "row_sha256": "3ce5a754a9c661ec46d6757a48323343aac274fd5fafec12f125096cd7c66223"
+    },
+    "r2_config": {
+      "dl": "DL-112",
+      "row_sha256": "3e79809e3e6460b2eb995535691e1d32ce30718f45c9e5588699c7963be575ae"
+    },
+    "r2_table": {
+      "dl": "DL-112",
+      "row_sha256": "3e79809e3e6460b2eb995535691e1d32ce30718f45c9e5588699c7963be575ae"
+    }
+  },
+  "config": {
+    "path_rel": "configs/teacher/arms/r1_bema.py",
+    "sha256": "9ccdd2b97ae73459562b1813f14461740a986c0456524ce1dc773892fad8fb03",
+    "git_blob": "46e7628f05857f7227546f400fdff86360c10c7a"
+  },
+  "record_config": {
+    "path_rel": "configs/teacher/segnext_mscan-b_1xb16-adamw-40k_plantseg116-512x512.py",
+    "sha256": "1b94aa32a7d22be647d8e60a42daa1dd8dd756158b586feec6465385e299ae4a",
+    "git_blob": "3c6a7b28ebad5fce6187c307f87fd7fc91f81933"
+  },
+  "registered_difference": {
+    "entries": [
+      "custom_hooks",
+      "model.backbone.drop_path_rate"
+    ],
+    "sha256": "fde18fefc655102fdf2e154978aa20df7c8a5a077d5609ec1aa4a0aa170bce0d",
+    "reg_sha256": "fde18fefc655102fdf2e154978aa20df7c8a5a077d5609ec1aa4a0aa170bce0d"
+  },
+  "resolved_paths": {
+    "PLANTSEG_DATA_ROOT": {
+      "value": "/workspace/plantseg_data/plantseg",
+      "inherited": null
+    },
+    "SEGNEXT_ADE20K_CKPT": {
+      "value": "/workspace/init/segnext_mscan-b_1x16_512x512_adamw_160k_ade20k_20230209_172053-b6f6c70c.pth",
+      "inherited": null
+    },
+    "TEACHER_WORK_DIR": {
+      "value": "/workspace/arm_runs/teacher-r1_s42_40k_a1",
+      "inherited": null
+    }
+  },
+  "r2_table": {
+    "path": "/workspace/arm_inputs/r2_table_v1.json",
+    "sha256": "fc4cb4ce2ebd67996ead31c9d7cb339cb801e04fddeea2f738cb1008014be740",
+    "images": 5367,
+    "repeated": 5726,
+    "rare_classes": {
+      "9": 2,
+      "13": 2,
+      "17": 2,
+      "18": 2,
+      "20": 2,
+      "21": 2,
+      "26": 2,
+      "32": 2,
+      "34": 2,
+      "35": 2,
+      "38": 2,
+      "42": 4,
+      "43": 2,
+      "53": 2,
+      "54": 2,
+      "57": 2,
+      "64": 2,
+      "66": 2,
+      "69": 3,
+      "71": 2,
+      "74": 2,
+      "75": 2,
+      "78": 2,
+      "79": 2,
+      "80": 2,
+      "81": 2,
+      "92": 2,
+      "95": 2
+    }
+  },
+  "r1_record": null,
+  "previous_attempt": null,
+  "arithmetic": {
+    "iterations": 40000,
+    "freeze_date": "2026-11-03",
+    "freeze_utc": "2026-11-03T16:00:00Z",
+    "now_utc": "2026-10-12T12:08:44.074101Z",
+    "seconds_left": 1914675.9258990288,
+    "references": [
+      {
+        "source": "scalars",
+        "path": "/workspace/arm_inputs/record_run_scalars.json",
+        "rows": 800,
+        "median": 1.5024688363075256,
+        "field": "time of every row with an integer iter (vis_data/scalars.json)",
+        "sha256": "9d1dbcca9b9e162b590c029b2ed95bbe0164b2ec7d292826a4987187aa5f4107"
+      }
+    ],
+    "measured": true,
+    "applied_s_per_iter": 1.5024688363075256,
+    "seconds_needed": 60098.753452301025,
+    "cut": false,
+    "text": "40000 iterations x 1.5024688363075256 s/iter (the larger of 1 reference(s): scalars 1.5024688363075256) = 60099 s; time left to the original freeze date 2026-11-03 (end: 2026-11-03T16:00:00Z) = 1914676 s: it fits: not cut"
+  },
+  "cut_place": 4,
+  "governed_paths": {
+    "governed_paths_clean": true,
+    "governed_prefixes": [
+      "src/",
+      "configs/",
+      "scripts/",
+      "requirements",
+      "docs/EVALUATION_CONTRACT.md",
+      "docs/IMPLEMENTATION_CONTRACT.md"
+    ]
+  },
+  "modules": {
+    "launcher": {
+      "path": "/workspace/arms_clone/scripts/launch_teacher_arm.py",
+      "sha256": "0b3eb069c6a8ac1cb746015ee940cfeb11eb2f94f23aa947c345325b01bd716b"
+    },
+    "frozen_launcher": {
+      "path": "/workspace/arms_clone/scripts/launch_teacher_finetune.py",
+      "sha256": "47537c016bde8a0119c625a04b31fbf4227924ad7cb201062bffbad69e8419a1"
+    },
+    "teacher_arm_components": {
+      "path": "/workspace/arms_clone/src/training/teacher_arm_components.py",
+      "sha256": "b26438481681539e012eeb2f94e63dd1b719e0e7a3c406b0629cf4e01e03fc81"
+    }
+  },
+  "launch": true,
+  "preflight": {
+    "stage": "teacher",
+    "architecture": "SegNeXt-B / MSCAN-B",
+    "protocol_classification": "thesis-derived",
+    "public_plantseg_source_commit": "1a3dd4d9224bcc97a5850af7dd1c423abc24eae0",
+    "config_path": "/workspace/arms_clone/configs/teacher/arms/r1_bema.py",
+    "config_sha256": "9ccdd2b97ae73459562b1813f14461740a986c0456524ce1dc773892fad8fb03",
+    "plantseg_root": "/workspace/plantseg_data/plantseg",
+    "split_counts": {
+      "train": {
+        "images": 5367,
+        "masks": 5367
+      },
+      "val": {
+        "images": 846,
+        "masks": 846
+      }
+    },
+    "test_isolation": {
+      "surfaces": {
+        "images/test": "absent",
+        "annotations/test": "absent",
+        "annotation_test.json": "absent"
+      },
+      "method": "os.path.lexists on exact TEST paths (no enumeration); TRAIN/VAL counted by name"
+    },
+    "ade20k_init_checkpoint": {
+      "path": "/workspace/init/segnext_mscan-b_1x16_512x512_adamw_160k_ade20k_20230209_172053-b6f6c70c.pth",
+      "sha256": "647a0cda7678a35396689a4f8e9fddc33a088d8b539195d0dc97485ab8640ef1",
+      "expected_sha256": "647a0cda7678a35396689a4f8e9fddc33a088d8b539195d0dc97485ab8640ef1",
+      "sha256_verified": true,
+      "bytes": 110977141,
+      "filename": "segnext_mscan-b_1x16_512x512_adamw_160k_ade20k_20230209_172053-b6f6c70c.pth",
+      "expected_filename": "segnext_mscan-b_1x16_512x512_adamw_160k_ade20k_20230209_172053-b6f6c70c.pth",
+      "stock_config": {
+        "name": "segnext_mscan-b_1xb16-adamw-160k_ade20k-512x512",
+        "path": "/usr/local/lib/python3.11/site-packages/mmseg/.mim/configs/segnext/segnext_mscan-b_1xb16-adamw-160k_ade20k-512x512.py",
+        "sha256": "33dcb71bcbf41bbdd6e2da2cfa399f84587b4edffb8de39c147d3e58178bc74b"
+      },
+      "classifier_only_rule": "only decode_head.conv_seg.{weight,bias} may differ (150 -> 116); enforced at load by TeacherInitCompatibilityHook"
+    },
+    "work_dir": "/workspace/arm_runs/teacher-r1_s42_40k_a1",
+    "seed": 42,
+    "optimizer": "AdamW lr=6e-5 wd=0.01 betas=(0.9,0.999) head_lr_mult=10",
+    "max_iters": 40000,
+    "val_interval": 4000,
+    "checkpoint_interval": 4000,
+    "locked_policy": {
+      "M2_augmentation": "E1-E3 recipe reused: src/data/transforms.train_preprocess + configs/augment.AUGMENT",
+      "M3_scale": "train long side round(512*r), r~U[0.75,2.0]; evaluation long side 512 + pad 512x512",
+      "M4_nmf": "rand_init=True; M4-T upstream in training; M4-V private CPU stream seed 42 per val pass, batch 1, frozen order, caller RNG restored",
+      "M5_schedule": "AdamW 6e-5 wd 0.01 betas (0.9,0.999) head lr_mult 10; LinearLR 1500 from 1e-6; PolyLR power 1.0 to 40000; batch 16; crop 512; val and checkpoint every 4000",
+      "M11_isolation": "TRAIN/VAL-only staged root; no active test_dataloader/test_evaluator/test_cfg",
+      "M12_selection": "highest full-precision VAL all-class mIoU (mIoU_full) over 4k..40k; exact tie -> earliest; same-pass metric; records in teacher_selection_records.jsonl",
+      "M13_loss": "unweighted CrossEntropyLoss, ignore_index=255, avg_non_ignore=True"
+    },
+    "versions": {
+      "python": "3.11.16",
+      "torch": "2.1.0+cu121",
+      "mmsegmentation": "1.2.2",
+      "mmcv": "2.1.0",
+      "mmengine": "0.10.7"
+    },
+    "cuda": {
+      "gpu_count": 1,
+      "gpu_names": null
+    },
+    "recorded_utc": "2026-10-12T12:08:41Z"
+  },
+  "recorded_utc": "2026-10-12T12:08:44Z"
+}
