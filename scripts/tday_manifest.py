@@ -554,7 +554,9 @@ def cmd_append(args) -> int:
         raise S.TmanRefused("append_invalid", "; ".join(errs))
     if args.runs is not None:
         errs = M.derived_hash_errors(M.appended_entry(append, frozen), by_slot.get(frozen["parent"]) or {}, cat,
-                                     doc["body"].get("calibration_index"), args.runs)
+                                     doc["body"].get("calibration_index"), args.runs, pilot_rules_sha256=(
+                                         M.pilot_rules_sha256(records, cat) if frozen["method"] == "qat_selection"
+                                         else ""))
         if errs:
             raise S.TmanRefused("derived_hash_mismatch", "; ".join(errs))
     new = dict(doc, appends=doc["appends"] + [append])

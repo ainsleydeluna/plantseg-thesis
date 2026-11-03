@@ -228,12 +228,14 @@ class Ctx:
         lanes = doc.get("lanes") if isinstance(doc, dict) else None
         return lanes if isinstance(lanes, list) else []
 
-    def _cut_refs(self, field: str) -> list[dict]:
-        """`field`'s references in the cut entry files, well-formed ones only (the entry-file gate checks the
-        fields)."""
+    def _cut_refs(self, field: str, rule: str | None = None) -> list[dict]:
+        """`field`'s references in the cut entry files (those of `rule` only, when given), well-formed ones only (the
+        entry-file gate checks the fields)."""
         out = []
         for c in self.cited_entries():
             doc = self.entry_doc(c["path"]) if c["kind"] == "cut" else None
+            if rule is not None and not (isinstance(doc, dict) and doc.get("rule") == rule):
+                continue
             refs = doc.get(field) if isinstance(doc, dict) else None
             refs = [refs] if isinstance(refs, dict) else refs
             out += [r for r in refs if isinstance(r, dict) and isinstance(r.get("path"), str)
@@ -245,8 +247,10 @@ class Ctx:
         return self._cut_refs("results_known")
 
     def rule_records(self) -> list[dict]:
-        """The records the named-rule cuts cite (AM-19 item 3(b))."""
-        return self._cut_refs("rule_record")
+        """The records the named-rule cuts cite (AM-19 item 3(b)); a cutoff cut's rule_record is chk_date's
+        (TMANB4-ADD-1): the record that set its cutoff (entries.py), a run's record under --runs, the alpha selection
+        or decision record, the pilot's winner record, or a repeat's stop record (date only)."""
+        return self._cut_refs("rule_record", rule="named_rule")
 
     def qat_hashed(self) -> list[dict]:
         """The QAT selections' hashed forms, in the body and appended (their fields are derived_inputs_incomplete's
@@ -380,8 +384,9 @@ def g_record_uncommitted(x: Ctx):
         rels.append(x.body["trigger"]["path"])
     if x.mode in U:
         rels.append(S.LANES_REL)
-    if any(e["kind"] == "derived" and e.get("method") == "qat_selection" for e in x.entries):
-        rels.append(M.QAT_RULES_REL)                       # TB13
+    qat = [e["slot"] for e in x.entries if e["kind"] == "derived" and e.get("method") == "qat_selection"]
+    if qat:     # TB13 per slot: each slot's rules file and the pilot's (its clip selection's); unlisted: refused later
+        rels += sorted({M.QAT_RULES_BY_SLOT[k] for k in qat + [M.pilot_slot(x.cat)] if k in M.QAT_RULES_BY_SLOT})
     for rel in rels:
         x.records.read(rel)
     if x.mode in U and x.records.read(S.MANIFEST_REL) != x.data:
@@ -1095,14 +1100,16 @@ def g_derived_parent_incomplete(x: Ctx):
 
 
 def g_derived_inputs_incomplete(x: Ctx):
-    """A derived entry's inputs are all of its method's; a QAT selection's rules file is the committed one (TB13;
-    DL-24 #18-#20)."""
+    """A derived entry's inputs are all of its method's; a QAT selection's rules file is its slot's committed one
+    (TB13 per slot, M.QAT_RULES_BY_SLOT: a slot it lacks is refused; DL-24 #18-#20)."""
     errs = [err for e in _derived(x) for err in M.derived_inputs_errors(e)]
-    qat = [e for e in _derived(x) if e["method"] == "qat_selection"]
-    if not errs and qat:
-        rules = M.qat_rules_sha256(x.records)
-        errs = [f"{e['slot']}: inputs.rules_sha256 is not the committed {M.QAT_RULES_REL}'s {rules[:12]} (TB13)"
-                for e in qat if e["inputs"]["rules_sha256"] != rules]
+    sel = [e for e in _derived(x) if e["method"] == "qat_selection"]
+    if not errs and sel:
+        for rel in sorted({M.qat_rules_rel(e["slot"]) for e in sel}):          # each rules file read once
+            qat = [e for e in sel if M.qat_rules_rel(e["slot"]) == rel]
+            rules = M.qat_rules_sha256(x.records, qat[0]["slot"])
+            errs += [f"{e['slot']}: inputs.rules_sha256 is not the committed {rel}'s {rules[:12]} (TB13)"
+                     for e in qat if e["inputs"]["rules_sha256"] != rules]
     return _err(errs)
 
 
@@ -1218,8 +1225,9 @@ def g_derived_hash_mismatch(x: Ctx):
         if M.appendable(app, listed):
             made.append(M.appended_entry(app, listed))
     ci = x.body["calibration_index"]
+    pilot = M.pilot_rules_sha256(x.records, x.cat) if any(e["method"] == "qat_selection" for e in made) else ""
     return _err([err for e in made for err in M.derived_hash_errors(e, x.by_slot.get(e["parent"]) or {}, x.cat, ci,
-                                                                      x.runs_root)])
+                                                                      x.runs_root, pilot_rules_sha256=pilot)])
 
 
 def _unlock_doc(x: Ctx) -> dict | None:
