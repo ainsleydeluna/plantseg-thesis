@@ -303,7 +303,8 @@ class World:
         rec = S.json_file_bytes({
             "format": "qat_selection/1", "rules_sha256": QAT_RULES_SHA256, "stage": stage, "run_id": rid, "seed": 42,
             "clip_norm": clip, "telemetry_sha256": tsha,
-            "winner": {"epoch": epoch, "value": 0.4125, "checkpoint": ck, "checkpoint_sha256": ck_sha, "run_id": rid,
+            "winner": {"epoch": epoch, "value": 0.4125, "checkpoint": ck, "checkpoint_sha256": ck_sha,
+                       "run_id": f"{rid}_e{epoch:02d}_{ck_sha[:12]}",          # qat_select.py:453 (TMANB4-ADD-3)
                        "artifact_of_record": {"path": f"e{epoch:02d}/model.pt", "sha256": art["ts"]},
                        "provenance": {"path": f"e{epoch:02d}_provenance.json", "sha256": S.sha256_bytes(prov)},
                        "summary": {"path": f"e{epoch:02d}_summary.json", "sha256": "5" * 64}},
@@ -3060,6 +3061,27 @@ def case_x86_absent_slots():
           got == [[], [f"append {kd}.hashed.x86_copy_sha256: '{sha}' is not one of []"]], str(got))
 
 
+def case_winner_run_id():
+    """TMANB4-ADD-3: a qat_selection/1 record names its winner by the per-epoch evaluation run id, <run_id>_eNN_<the
+    selected checkpoint's sha256[:12]> (src/quant/qat_select.py:453), as the fixtures now write it. That id passes
+    derived_hash_mismatch; the training run's id (the old expectation), another epoch and another 12-hex part are
+    each refused, naming winner.run_id alone."""
+    w, q6 = WORLD, "E6:s42:sel"
+    qh = w.entry(w.doc, q6)["hashed"]
+    rec = json.loads((w.runs / qh["record"]["path"]).read_bytes())
+    rid, epoch, ck = rec["run_id"], rec["winner"]["epoch"], qh["selected_checkpoint"]["sha256"]
+    code, passed, e = w.run("freeze")
+    real = rec["winner"]["run_id"] == f"{rid}_e{epoch:02d}_{ck[:12]}"
+    check("qat_winner_run_id_of_the_evaluation_run_passes_ADD3", real and "derived_hash_mismatch" in (passed or []),
+          f"{rec['winner']['run_id']}; {code}: {(e.detail if e else '')[:200]}")
+    for tag, wid in (("of_the_training_run", rid), ("of_another_epoch", f"{rid}_e{epoch + 1:02d}_{ck[:12]}"),
+                     ("of_another_checkpoint", f"{rid}_e{epoch:02d}_{'0' * 12}")):
+        ref = runs_variant(w, qh["record"], f"variant_winner_{tag}.json", {"winner.run_id": wid})
+        expect_gate(w, f"qat_winner_run_id_{tag}_refused_ADD3", "derived_hash_mismatch",
+                    doc=mutated(w, lambda d, ref=ref: w.entry(d, q6)["hashed"].update(record=ref)),
+                    detail=f"{q6}: its records disagree with the entry and its run at ['winner.run_id']")
+
+
 WORLD: World | None = None
 
 
@@ -3081,7 +3103,7 @@ def main() -> int:
                              case_inventory_dedup, case_inventory_dedup_reader, case_inventory_fq_off,
                              case_shallow_records,
                              case_malformed_inputs_refused, case_rules_per_slot, case_rule_records_named_only,
-                             case_x86_absent_slots, case_coverage))
+                             case_x86_absent_slots, case_winner_run_id, case_coverage))
     finally:
         if REAL_TEACHER is not None:
             WORLD.M.TEACHER_OF_RECORD.clear()

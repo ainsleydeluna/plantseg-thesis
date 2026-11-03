@@ -2890,3 +2890,294 @@ return only the rule_record refs of cut entry files whose "rule" is "named_rule"
 **Confirmed, no change:** the clip-selection check compares the clip selection's rules_sha256 with the pilot's rules
 file, pilot_rules_sha256 (manifest.py:260-263; §5). It is pinned by own_rules_selections_pass_freeze_B4, the two
 clip_selection_under_its_own_rules cases and the KILLED mutation clip_selection_compared_with_the_slot_s_rules.
+
+### ADD-2
+
+**The ruling.** ORCH-5's TMANB4-ADD-2 (a scope addition, 8/10, relayed by Ice De Luna).
+- E6-KD:s42:sel can have no x86 latency copy, yet the hashed block required x86_copy_sha256 as a sha256 on every
+  hashed derived entry.
+- The fix is slot-named: one code commit plus this addendum. "Everything else in your brief, TMANB4-STOP-1 and
+  TMANB4-ADD-1 stands."
+- The lane's size cap rises to about +450/−120 lines.
+
+**The commits.**
+- C4 = `a5962165c38cbb8f76333ccdf176e8623156abdc`, the code and smokes (parent C3 e8bc417). It was pushed as a
+  fast-forward, with no trailers.
+- Ruling TMANB4-ADD-3 then added C5 on top of it and stopped C4's full run. C5's full run, below, covers both.
+
+**The defect** (REPOSITORY-PROVEN at C3 unless marked):
+- HASHED (manifest.py:48-50) requires `"x86_copy_sha256": "sha256"`, and HASHED_QAT (:53-54) inherits it.
+- hashed_spec (:105-106) chose by method only. derived_inputs_errors (:109-115, every mode) and append_errors (:446)
+  applied it.
+- E6-KD can have no x86 copy:
+  - src/quant/x86_latency.py:206-210 refuses a stage whose method is not "qat" (`not_a_qat_stage`), and E6-KD's
+    method is qat_kd;
+  - the smoke finalize_refuses_e6kd is at scripts/smoke_e6kd_selection.py:631-639;
+  - DL-171 (:315) says "no finalize (E6-KD has no qat_finalize.json)";
+  - LB31 (docs/lane_reports/am3-e6kd.md) is DOCUMENTED by the ruling. That file was not opened, because the brief
+    names no such path.
+- Nothing in TMAN reads a QAT selection's x86_copy_sha256:
+  - the QAT branch of derived_hash_errors compares no x86 field;
+  - the one other reader is ptq_record_errors' artifact loop (C3 :414-418, C4 :427-431), which is PTQ only.
+  - DL-185 (:329) says "No efficiency quantity for … E6-KD".
+  - src/eval/efficiency.py:89-92 keeps E6-KD out of the stages that report efficiency (EFFICIENCY_ANALYSIS_STAGES,
+    :92).
+- MEASURED: C3's reading is the mutant x86_absent_slots_emptied, which empties X86_ABSENT_SLOTS so that every slot
+  gets C3's spec. Under it, E6-KD's null is refused derived_inputs_incomplete, and the mutation is KILLED by item a's
+  check (below).
+
+**The diff** (C4; e8bc417..a596216, +104 −8, three files):
+- src/tman/manifest.py (+21 −7):
+  - :55-59, new: X86_ABSENT_SLOTS = ("E6-KD:s42:sel",) (:58), with a comment citing LB31, DL-171, DL-185 and this
+    ruling. Beside it, X86_NULL = S.nullable(("enum", ())) (:59), which accepts null only, since the empty enum
+    refuses every value.
+  - :110-114: `hashed_spec(method, slot)`, the one slot-aware spec function. For a slot in X86_ABSENT_SLOTS it is the
+    method's spec with x86_copy_sha256 = X86_NULL (the key stays); for every other slot it is the method's spec
+    unchanged.
+  - :122-123: derived_inputs_errors uses it, and :460: append_errors uses it. Their docstrings say so (:119, :451-452).
+  - :263-265, new, in derived_hash_errors' QAT branch (under --runs only): for a slot in X86_ABSENT_SLOTS, it refuses
+    derived_hash_mismatch when the directory of hashed.record.path under the run directories holds
+    qat_finalize.json (`exists()`) or a final/ folder (`is_dir()`). The docstring says so (:214-215).
+  - Nothing else changes, for any other slot or method, and no refusal code, exit code or format changes.
+- No caller outside manifest.py needed the slot. append_errors reads it from the append; scripts/tday_manifest.py's
+  append path (:543-559) passes the append and, for derived_hash_errors, appended_entry (the frozen entry's slot).
+  validate.py and tday_manifest.py are unchanged.
+- scripts/smoke_tman_validate.py (+54 −1):
+  - :2862: RulesWorld, the lane's own B-4 fixture from C1, hashes E6-KD:s42:sel with x86_copy_sha256 null, the ruled
+    form.
+  - :3011-3060: X86_MADE and case_x86_absent_slots, new.
+  - :3084: the case list.
+  - No case or fixture from before this lane changed. No other smoke hashes E6-KD:s42:sel: LREP's E6-KD entry
+    (scripts/lrep_fixtures.py:811) is in LREP's own export format, with no TMAN hashed block.
+- scripts/smoke_tman_mutations.py (+29 −0): :536-564, eight mutations.
+
+**The smokes** (case_x86_absent_slots, on a fresh RulesWorld; MEASURED in C5's final run):
+
+| Ruling item | Check | What it runs | Result |
+|---|---|---|---|
+| a | e6kd_x86_copy_null_passes_derived_inputs_incomplete_ADD2 | freeze with E6-KD's x86_copy_sha256 null: derived_inputs_incomplete passes | PASS |
+| a | e6kd_x86_copy_null_passes_derived_hash_mismatch_ADD2 | the same run under --runs: derived_hash_mismatch passes | PASS |
+| b | e6kd_x86_copy_sha256_refused_ADD2 | E6-KD with "0"×64: derived_inputs_incomplete, detail "E6-KD:s42:sel.hashed.x86_copy_sha256: '0…0' is not one of []" | PASS |
+| c | E6:s42:sel_x86_copy_null_refused_ADD2 | E6:s42:sel with null: derived_inputs_incomplete, "… None is not sha256" | PASS |
+| c | E6-E2:s42:sel_x86_copy_null_refused_ADD2 | E6-E2:s42:sel with null: the same | PASS |
+| d | e6kd_selection_dir_with_qat_finalize_refused_ADD2 | qat_finalize.json in E6-KD's selection record directory: derived_hash_mismatch, the whole message | PASS |
+| d | e6kd_selection_dir_with_final_refused_ADD2 | a final/ folder there: the same | PASS |
+| (fix 3) | E6:s42:sel_selection_dir_with_qat_finalize_and_final_passes_ADD2 | E6:s42:sel's record directory holding qat_finalize.json and final/: the freeze still passes derived_hash_mismatch | PASS |
+| (fix 2) | e6kd_append_reads_the_same_spec_ADD2 | append_errors' structural pass: null passes; a sha256 is refused with the schema's message, prefixed "append " | PASS |
+
+- Each gate refusal is checked by expect_gate, with every earlier gate passing. The append check compares
+  append_errors' return directly.
+- d's files, and the E6:s42:sel check's files, are made and removed inside the case.
+- The last two checks go beyond the ruling's list:
+  - the E6:s42:sel check pins the --runs check's slot restriction. It is what lets the real E5 and E6 selections pass,
+    since finalize writes final/ and qat_finalize.json beside qat_selection.json (scripts/qat_epoch_eval.py:56-59,
+    :403-405, :467-468, :499; workflow 11);
+  - the append check pins fix item 2's "derived_inputs_errors and append_errors alike".
+- Workflow 11 suggested the E6:s42:sel check. The append check was already in the first staged diff, and workflow
+  11 noted that it had no mutation.
+- The refusal "'<sha256>' is not one of []" is the schema's message for the empty enum. Here it means the value must
+  be null.
+
+**The mutations** (scripts/smoke_tman_mutations.py:536-564; C5's final run):
+
+| Mutation | Edit | Ruling | Killed by | Result |
+|---|---|---|---|---|
+| x86_absent_slots_emptied | X86_ABSENT_SLOTS = () | the exception removed (a fails) | e6kd_x86_copy_null_passes_derived_inputs_incomplete_ADD2 | KILLED by validate:case_x86_absent_slots -- failed ['e6kd_x86_copy_null_passes_derived_inputs_incomplete_ADD2'] |
+| x86_null_for_every_qat_slot | every other slot of a method other than ptq takes S.nullable("sha256") | null allowed for every QAT slot (c fails) | E6:s42:sel_x86_copy_null_refused_ADD2 | KILLED by validate:case_x86_absent_slots -- failed ['E6:s42:sel_x86_copy_null_refused_ADD2'] |
+| x86_sha256_for_e6kd | X86_NULL = S.nullable("sha256") | a sha256 allowed for E6-KD (b fails) | e6kd_x86_copy_sha256_refused_ADD2 | KILLED by validate:case_x86_absent_slots -- failed ['e6kd_x86_copy_sha256_refused_ADD2'] |
+| x86_made_copy_unread | the --runs check's condition becomes False | the --runs check removed (d fails) | e6kd_selection_dir_with_qat_finalize_refused_ADD2 | KILLED by validate:case_x86_absent_slots -- failed ['e6kd_selection_dir_with_qat_finalize_refused_ADD2'] |
+| x86_made_copy_always_refused | the check refuses every X86_ABSENT_SLOTS slot | (beyond e) | e6kd_x86_copy_null_passes_derived_hash_mismatch_ADD2 | KILLED by validate:case_x86_absent_slots -- failed ['e6kd_x86_copy_null_passes_derived_hash_mismatch_ADD2'] |
+| x86_final_folder_unread | the final/ half of the check dropped | (beyond e) | e6kd_selection_dir_with_final_refused_ADD2 | KILLED by validate:case_x86_absent_slots -- failed ['e6kd_selection_dir_with_final_refused_ADD2'] |
+| x86_made_copy_checked_for_every_slot | the check's slot restriction dropped | (beyond e) | E6:s42:sel_selection_dir_with_qat_finalize_and_final_passes_ADD2 | KILLED by validate:case_x86_absent_slots -- failed ['E6:s42:sel_selection_dir_with_qat_finalize_and_final_passes_ADD2'] |
+| x86_append_spec_without_the_slot | append_errors calls hashed_spec without the slot | (beyond e) | e6kd_append_reads_the_same_spec_ADD2 | KILLED by validate:case_x86_absent_slots -- failed ['e6kd_append_reads_the_same_spec_ADD2'] |
+
+- The first four are item e's. The last four, as workflow 11 suggested, make every other ADD-2 check killable
+  except E6-E2:s42:sel's c check, which no mutation kills (the last bullet below).
+- Each old text occurs exactly once in manifest.py.
+- A worker runs its case only up to its mutation's named check (smoke_tman_mutations.py:2447-2460 at C5, caught at
+  :2470; the kill rule is :2564). So under x86_null_for_every_qat_slot only E6:s42:sel's check is reached, not E6-E2's.
+
+**Verification before C4:**
+- **Workflow 11** (wf_47b52733-e97, 3 agents: the ruling, the tests, safety), over the first staged diff (+78 −8).
+  - No major or minor finding; six notes.
+  - Acting on them:
+    - the E6:s42:sel slot-restriction check and four mutations were added;
+    - x86_null_for_every_slot was narrowed to the ruling's "every QAT slot" (x86_null_for_every_qat_slot).
+  - Its other notes are answered above: the terse "is not one of []" message, and why RulesWorld's change is needed.
+- **Workflow 12** (1 agent), over that 59-line delta.
+  - Its first run (wf_d52f0090-ccc) failed when the account hit its 5-hour usage limit, which reset at 07:20 UTC.
+  - It was rerun at 07:40 UTC (wf_76641bd2-02c), after Ice's "Try again", and PASSED.
+  - Its two notes were left unapplied, so that the committed code is what was verified:
+    - the case's docstring does not mention the E6:s42:sel check;
+    - a harness citation in its prompt was off (corrected in this text).
+- C4 was committed after workflow 12, with the staged diff byte-identical to the one it checked.
+
+### ADD-3
+
+**The ruling.** ORCH-5's TMANB4-ADD-3 (a scope addition, 9/10, relayed by Ice De Luna).
+- A qat_selection/1 record names its winner by the per-epoch evaluation run id, not by the training run's id.
+- The fix is one more code commit, C5, on top of C4, with its smokes. C4's full run was stopped, and C5's replaces it.
+- The report addendum covers ADD-2 and ADD-3, and the lane's size cap rises to about +480/−120.
+- "Everything else in your brief, TMANB4-STOP-1, ADD-1 and ADD-2 stands."
+
+**The commits.**
+- C5 = `412223067fa5f7ca1bf2d74bd2fb542cb9dba712`, the code and smokes (parent C4 a596216).
+- C6 = this addendum (parent C5).
+- C5 was pushed as a fast-forward before its full run, and C6 is pushed after its commit. No trailers, no merges.
+- C4's full run was stopped at 09:00 UTC, as ruled, after 11 of its 19 smokes. All 11 had the expected lines
+  (validate PASS (492/492)).
+
+**The defect** (REPOSITORY-PROVEN at C4 unless marked):
+- derived_hash_errors' QAT branch put `"winner.run_id": rid` in its `want` dict (manifest.py:253), so a record's
+  winner.run_id had to equal the training run's id.
+- The selection code names the winner by its per-epoch evaluation run id instead:
+  - src/quant/qat_select.py:453 builds it, `want_id = f"{rec['run_id']}_e{e:02d}_{ck_sha[:12]}"`;
+  - it is stored at :470 and written as winner.run_id at :537;
+  - scripts/qat_epoch_eval.py:298 uses the same rule.
+- MEASURED by ORCH-5 on the laptop's real run files (DOCUMENTED here): all 8 real selection records follow that rule,
+  and `validate --mode freeze --runs` at master e9d6bc1 refused all 8 at ['winner.run_id']. Every other field
+  matched.
+- The base fixtures wrote winner.run_id = rid, so no smoke saw it. World.qat_files' winner line was
+  smoke_tman_validate.py:306 at C4.
+
+**The diff** (C5; a596216..4122230, +46 −2, three files):
+- src/tman/manifest.py (+3 −0), :257-259: after the want dict, `want["winner.run_id"] = win`, where
+  `win = f"{rid}_e{epoch:02d}_{h['selected_checkpoint']['sha256'][:12]}"` when the record's winner.epoch is an int, and
+  None otherwise. A record without an int winner.epoch keeps failing. A comment cites src/quant/qat_select.py:453.
+- The dict's own text (`"winner.run_id": rid`, :253) is left as it was, because two existing mutations target that
+  line, qat_record_clip_norm_of_its_run and qat_record_telemetry. Its value is now overwritten.
+- Nothing else changes. The clip selection's winner.run_id, which is a run id (TB9, :274 at C5), is untouched.
+- scripts/smoke_tman_validate.py (+24 −2):
+  - :306-307: World.qat_files writes the real rule, as ruled ("the fixture selection records now use the real
+    rule"). Every World-based fixture's QAT selection records change with it: the base World and those built on it,
+    RulesWorld, AmWorld and LREP's tman_world.
+  - :3064-3082: case_winner_run_id, new.
+  - :3106: the case list.
+  - case_derived_sources' qat variants pass unchanged:
+    - winner_of_another_run is refused at ['winner.run_id'];
+    - winner_of_another_epoch now also names winner.run_id, but its check matches the epoch_end-row detail by
+      substring.
+- scripts/smoke_tman_mutations.py (+19 −0): :565-583, five mutations.
+
+**The smokes** (case_winner_run_id, on the shared base World's E6:s42:sel; MEASURED in C5's final run):
+
+| Ruling item | Check | What it runs | Result |
+|---|---|---|---|
+| a | qat_winner_run_id_of_the_evaluation_run_passes_ADD3 | the fixture record's winner.run_id is `<rid>_e12_<ck[:12]>`, and the freeze passes derived_hash_mismatch | PASS |
+| b | qat_winner_run_id_of_the_training_run_refused_ADD3 | winner.run_id = rid: derived_hash_mismatch, "E6:s42:sel: its records disagree with the entry and its run at ['winner.run_id']" | PASS |
+| c | qat_winner_run_id_of_another_epoch_refused_ADD3 | `<rid>_e13_<ck[:12]>`: the same refusal | PASS |
+| c | qat_winner_run_id_of_another_checkpoint_refused_ADD3 | `<rid>_e12_000000000000`: the same refusal | PASS |
+
+Each refusal is checked by expect_gate, with every earlier gate passing and the whole message.
+
+**The mutations** (scripts/smoke_tman_mutations.py:565-583; C5's final run):
+
+| Mutation | Edit | Ruling | Killed by | Result |
+|---|---|---|---|---|
+| winner_run_id_of_the_training_run | `want["winner.run_id"] = rid` | the old rule restored (a fails) | qat_winner_run_id_of_the_evaluation_run_passes_ADD3 | KILLED by validate:case_winner_run_id -- failed ['qat_winner_run_id_of_the_evaluation_run_passes_ADD3'] |
+| winner_run_id_without_its_epoch | `f"{rid}_{…sha256[:12]}"` | the epoch part dropped | qat_winner_run_id_of_the_evaluation_run_passes_ADD3 | KILLED by validate:case_winner_run_id -- failed ['qat_winner_run_id_of_the_evaluation_run_passes_ADD3'] |
+| winner_run_id_without_its_sha256 | `f"{rid}_e{epoch:02d}"` | the sha256 part dropped | qat_winner_run_id_of_the_evaluation_run_passes_ADD3 | KILLED by validate:case_winner_run_id -- failed ['qat_winner_run_id_of_the_evaluation_run_passes_ADD3'] |
+| winner_run_id_sha256_of_another_field | `h['artifact_sha256'][:12]` | the sha256 part from another field | qat_winner_run_id_of_the_evaluation_run_passes_ADD3 | KILLED by validate:case_winner_run_id -- failed ['qat_winner_run_id_of_the_evaluation_run_passes_ADD3'] |
+| winner_run_id_unchecked | `want["winner.run_id"] = _dotted(rec, "winner.run_id")` | (beyond d) | qat_winner_run_id_of_the_training_run_refused_ADD3 | KILLED by validate:case_winner_run_id -- failed ['qat_winner_run_id_of_the_training_run_refused_ADD3'] |
+
+- The first four are item d's. The fifth makes check b killable.
+- The two c checks have no mutation of their own.
+  - The one mutation that would fail them, winner_run_id_unchecked, is named at check b, which runs first.
+  - A worker stops at its mutation's named check.
+  - Item d's mutants would still refuse both c variants.
+- Each old text occurs exactly once in manifest.py. The existing qat_record_clip_norm_of_its_run and
+  qat_record_telemetry still match once, and are KILLED in C5's final run.
+
+**Verification before C5:**
+- Workflow 13 (wf_e97d441e-8d3, 2 agents: the code, the tests) ran over the staged diff and found no major or
+  minor finding. It made six notes, the same three from each lens, all left as they are:
+  - the want dict's `"winner.run_id": rid` is kept on purpose and overwritten at :259;
+  - `isinstance(epoch, int)` accepts a boolean, as the row lookup above it does, and qat_select.py always
+    writes an int (for ORCH-5's awareness);
+  - two of case_winner_run_id's variant files share their names with case_derived_sources' in the same
+    directory. That is harmless, since each ref is used at once.
+- A whole-validate development run on the staged code gave PASS (496/496).
+- C5 was committed after workflow 13, with the staged diff byte-identical to the one it checked.
+
+### ADD-2 and ADD-3: the final run at C5
+
+**The run** (MEASURED; the same venv, one smoke at a time with `-I -B` and its own TMPDIR). C2's final run is the
+reference, since C3 changed only this report.
+
+| Smoke | C2's final run (dfa5efa) | C5's final run |
+|---|---|---|
+| smoke_tman_schema | RESULT: PASS (167/167) | RESULT: PASS (167/167) |
+| smoke_tman_paths | RESULT: PASS (103/103) | RESULT: PASS (103/103) |
+| smoke_tman_complete | RESULT: PASS (93/93) | RESULT: PASS (93/93) |
+| smoke_tman_cuts | RESULT: PASS (204/204) | RESULT: PASS (204/204) |
+| smoke_tman_parent | RESULT: PASS (33/33) | RESULT: PASS (33/33) |
+| smoke_tman_derived | RESULT: PASS (101/101) | RESULT: PASS (101/101) |
+| smoke_tman_pins | RESULT: PASS (61/61) | RESULT: PASS (61/61) |
+| smoke_tman_validate | RESULT: PASS (483/483) | RESULT: PASS (496/496) |
+| smoke_tman_unlock | RESULT: PASS (109/109) | RESULT: PASS (109/109) |
+| smoke_tman_noscore | RESULT: PASS (46/46) | RESULT: PASS (46/46) |
+| smoke_tman_determinism | RESULT: PASS (18/18) | RESULT: PASS (18/18) |
+| smoke_tman_mutations | RESULT: PASS (778/778), 680 KILLED | RESULT: PASS (793/793), 693 KILLED |
+| smoke_tman_am22 | RESULT: PASS (191/191) | RESULT: PASS (191/191) |
+| smoke_frozen_blobs | RESULT: FROZEN BLOBS OK (10/10) | RESULT: FROZEN BLOBS OK (10/10) |
+| smoke_tman_dedup | RESULT: PASS (96/96) | RESULT: PASS (96/96) |
+| smoke_tman_hasher | RESULT: PASS (136/136) | RESULT: PASS (136/136) |
+| smoke_tman_b3_mutations | RESULT: PASS (141/141), 114 KILLED | RESULT: PASS (141/141), 114 KILLED |
+| smoke_tman_binding | RESULT: PASS (193/193) | RESULT: PASS (193/193) |
+| smoke_tman_b3b_mutations | RESULT: PASS (135/135), 119 KILLED | RESULT: PASS (135/135), 119 KILLED |
+
+- validate gains 13 checks: ADD-2's 9 (case_x86_absent_slots) and ADD-3's 4 (case_winner_run_id). 483 → 496.
+- mutations gains 15:
+  - ADD-2's 8 mut_ checks and 1 baseline;
+  - ADD-3's 5 mut_ checks and 1 baseline;
+  - 778 → 793, with 13 more KILLED (680 → 693).
+- No other line moved. In all three mutation smokes, every mutation is KILLED and none SURVIVED.
+- every_refusal_code_has_a_killed_mutation passes; it requires all 99 refusal codes.
+- HEAD was C5 before and after the run, and the scoped status was clean before and after.
+- fill_add23.py checks every one of these lines against the logs before it writes them.
+
+**The other lanes' smokes at C5** (MEASURED, each exit 0):
+- scripts/smoke_lrep_conformance.py: `RESULT: LREP CONFORMANCE OK (22/22); 14 s`.
+- scripts/smoke_seed_stability.py: `RESULT: L-AM8 SEED STABILITY OK (152/152); 43 s`.
+
+**Scoped numstat** (`git diff --no-renames --numstat`, over src, scripts and configs with the three excludes):
+
+| File | ADD-2 (e8bc417..a596216) | ADD-3 (a596216..4122230) | The lane (424cbea..4122230) |
+|---|---|---|---|
+| scripts/smoke_tman_mutations.py | +29 −0 | +19 −0 | +87 −0 |
+| scripts/smoke_tman_validate.py | +54 −1 | +24 −2 | +260 −2 |
+| scripts/tday_manifest.py | — | — | +3 −1 |
+| src/tman/manifest.py | +21 −7 | +3 −0 | +75 −20 |
+| src/tman/validate.py | — | — | +23 −15 |
+| **Total** | **+104 −8** | **+46 −2** | **+448 −38** |
+
+- The lane's total is within the raised cap of about +480/−120.
+- The lane column falls short of C2's lane (§12) plus ADD-2 plus ADD-3 in two files:
+  - manifest.py by +1 −1: ADD-2 rewrote one line of derived_hash_errors' docstring that C1 had rewritten;
+  - smoke_tman_validate.py by +2 −2: ADD-2 and then ADD-3 rewrote main's case-list line from C2;
+  - the lane's diff sees each rewritten line once.
+
+**Records.**
+- The IMPLEMENTED row (§13) gains:
+  - ADD-2: "TMANB4-ADD-2: E6-KD:s42:sel hashes x86_copy_sha256 null (X86_ABSENT_SLOTS, manifest.py:58); a made copy
+    beside its selection record is refused."
+  - ADD-3: "TMANB4-ADD-3: a QAT selection's winner.run_id is its per-epoch evaluation run,
+    <run_id>_eNN_<checkpoint sha256[:12]> (manifest.py:257-259)."
+- The row's verbatim TB13 line keeps its words, with "mapping at manifest.py:57-67" becoming :62-72 at C5. ADD-2's
+  five lines at :55-59 moved the mapping.
+- The DL-37 pin form becomes "<merge commit> (TMAN B-4: TB13 per slot, ADD-1, ADD-2 and ADD-3, from lane/tman-b4
+  <this report commit>, <date>)".
+- The row's code commits are now:
+  - C1 07a01a72a4121316cd61de35521174bd4fc1dbf6;
+  - C2 dfa5efa15e16d04c4e62f2212a353f0827869ed1;
+  - C4 a5962165c38cbb8f76333ccdf176e8623156abdc;
+  - C5 412223067fa5f7ca1bf2d74bd2fb542cb9dba712.
+- The DL-37 pin at C5 (MEASURED):
+  - src/tman/manifest.py sha256 46e8fe260c1b4288932f96d4af814eb9f29e25d508db32fedf1a7c6bad2e38dc;
+  - src/tman/validate.py c5233cfad1c90db08e844f62b13947c6488301d61b42c1aa0634a9f586e30e14 and scripts/tday_manifest.py
+    493772af3102a2e6d4e18bc1c37e489291a929ea0e7cb5877317d6c8385734dc, both unchanged since C2.
+  - scripts/tday_hash_images.py and src/tman/dedup.py, TMAN's pinned files, are unchanged.
+
+**Open items.**
+- None new.
+- §14's items stand. Item 0's stop-record gap is untouched by ADD-2 and ADD-3.
