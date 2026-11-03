@@ -1,0 +1,47 @@
+{
+  "amendment": "AM-22 item 2(a)",
+  "arithmetic": null,
+  "comparator": null,
+  "corrects": null,
+  "cut_order_position": null,
+  "date": "2026-10-24",
+  "format": "tday_entry/1",
+  "kind": "cut",
+  "launched": false,
+  "printed_by": {
+    "commit": "29374f64e7249b479f27fd374c722355663bf625",
+    "script": "scripts/tday_manifest.py"
+  },
+  "push_evidence": null,
+  "reason": "gate not met",
+  "results_known": [
+    {
+      "dl": "DL-122",
+      "path": "reports/arms/arm_teacher_record_R2.json",
+      "sha256": "fc45d7711b96cbdcfb999d203f28c947af1a45e293e70ed970250fba4d6483e5"
+    },
+    {
+      "dl": "DL-125",
+      "path": "reports/arms/arm_go_rule_R2.json",
+      "sha256": "0e3552c622b219c34c4ca9b289b2d960775a8f7922f731e4bc8fce684a6f3288"
+    }
+  ],
+  "rule": "cutoff",
+  "rule_record": {
+    "date": "2026-10-22",
+    "path": "e3-r2_s42_lambda0.5_alpha25_80k_a2/e3_telemetry.jsonl",
+    "sha256": "8c8465b4001cd089a39c21e9f3731644210f814b0fcf7adc39e47411edfe9c24"
+  },
+  "run_ids": [],
+  "since": {
+    "date": "2026-10-22",
+    "record": {
+      "path": "e3-r2_s42_lambda0.5_alpha25_80k_a2/e3_telemetry.jsonl",
+      "sha256": "8c8465b4001cd089a39c21e9f3731644210f814b0fcf7adc39e47411edfe9c24"
+    }
+  },
+  "slots": [
+    "E6-R2:s42:15ep"
+  ],
+  "telemetry": []
+}

@@ -1,0 +1,32 @@
+{
+  "amendment": "AM-19 item 3(b); AM-22 item 1(g)",
+  "arithmetic": null,
+  "comparator": null,
+  "corrects": null,
+  "cut_order_position": 14,
+  "date": "2026-11-03",
+  "format": "tday_entry/1",
+  "kind": "cut",
+  "launched": false,
+  "printed_by": {
+    "commit": "29374f64e7249b479f27fd374c722355663bf625",
+    "script": "scripts/tday_manifest.py"
+  },
+  "push_evidence": null,
+  "reason": "code not merged",
+  "results_known": [],
+  "rule": "freeze",
+  "rule_record": null,
+  "run_ids": [],
+  "since": {
+    "date": "2026-10-14",
+    "record": {
+      "path": "docs/DECISION_LOG.md",
+      "sha256": "9a7e055d29faa6aa59819fb972b43b02145705649d6f03fbbf1a1eaf27124b86"
+    }
+  },
+  "slots": [
+    "ARM:latency"
+  ],
+  "telemetry": []
+}
