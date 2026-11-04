@@ -39,8 +39,9 @@ def score_batches(model, batches, manifest, *, forward=None) -> tuple[dict, obje
 
 
 def score_val(model, *, device: str = "cpu", split: str = "val", max_samples: int | None = None,
-              batch_size: int = 1) -> tuple[dict, object]:
-    """Score `model` on the VAL split under the canvas protocol. The caller has run the E0 guard (the data root)."""
+              batch_size: int = 1, forward=None) -> tuple[dict, object]:
+    """Score `model` on the VAL split under the canvas protocol. The caller has run the E0 guard (the data root).
+    `forward(model, images)` replaces the evaluator's device-forward hook (KL-3's agreement pass)."""
     G.refuse_split(split, allowed=G.VAL_ONLY)
     from src.eval.adapters import (build_eval_loader, build_expected_manifest_for, build_protocol_adapter,
                                    deterministic_subset, protocol_forward_kwargs)
@@ -50,7 +51,7 @@ def score_val(model, *, device: str = "cpu", split: str = "val", max_samples: in
     manifest = build_expected_manifest_for("val", idx)
     adapter = build_protocol_adapter(PROTOCOL, "val", idx)
     model_device = resolve_model_device(device, cpu_only=str(device) == "cpu")
-    fwd = ModelDeviceForward(model_device)
+    fwd = ModelDeviceForward(model_device) if forward is None else forward
     loader = build_eval_loader(adapter, batch_size, num_workers=EVAL_NUM_WORKERS)
     from src.eval import Condition, evaluate_model
     t0 = time.time()
