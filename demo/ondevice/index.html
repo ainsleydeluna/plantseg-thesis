@@ -244,8 +244,12 @@
   async function init() {
     $("selEp").value = EP; $("selModel").value = MODEL;
     if (!("gpu" in navigator)) $("selEp").querySelector('option[value="webgpu"]').disabled = true;
-    var info = await (await fetch("../api/info", { cache: "no-store" })).json();
-    var man = await (await fetch("manifest.json", { cache: "no-store" })).json();
+    var info = null, man = await (await fetch("manifest.json", { cache: "no-store" })).json();
+    try {                                           // the demo server, else a static bundle's info.json
+      var ri = await fetch("../api/info", { cache: "no-store" });
+      if (ri.ok) info = await ri.json();
+    } catch (e) { info = null; }
+    if (!info) { info = await (await fetch("info.json", { cache: "no-store" })).json(); state.staticBundle = true; }
     state.info = info; state.manifest = man;
     $("noticePrototype").textContent = info.notices.prototype; $("noticeLicence").textContent = info.notices.licence;
     $("noticeStandIn").style.display = info.model.stand_in ? "block" : "none";
@@ -265,7 +269,9 @@
     state.session = await ort.InferenceSession.create(bytes, { executionProviders: [EP], graphOptimizationLevel: "all" });
     var tCreate = performance.now() - t0;
     var threads = ort.env.wasm.numThreads;
-    $("mRuntime").textContent = "onnxruntime-web 1.20.1 (" + (man.ort_web_vendored ? "served by the demo server" : "jsDelivr CDN") +
+    if (state.staticBundle) { var link = document.querySelector('footer a[href="../"]'); if (link) link.style.display = "none"; }
+    $("mRuntime").textContent = "onnxruntime-web 1.20.1 (" + (man.ort_web_vendored ? "local copy" : "jsDelivr CDN") +
+      (state.staticBundle ? ", static bundle" : ", demo server") +
       "), " + EP + ", threads " + (threads || 1) + ", crossOriginIsolated " + !!window.crossOriginIsolated + ", session " + tCreate.toFixed(0) + " ms";
     setStatus("Ready (" + EP + "). Take or upload a photo.");
     window.__demo.ready = true; window.__demo.ep = EP; window.__demo.model = MODEL; window.__demo.modelSha256 = sha;
