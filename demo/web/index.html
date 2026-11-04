@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>PlantSeg lesion demo</title>
+<style>
+  :root {
+    --bg: #f6f7f4; --surface: #ffffff; --text: #1d241c; --muted: #5d6a5b; --line: #dfe4dc;
+    --accent: #2f6d3a; --accent-text: #ffffff; --warn-bg: #fff4d6; --warn-text: #5c4300;
+    --stand-bg: #fde3e1; --stand-text: #7a1c14; --radius: 14px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #121612; --surface: #1b211b; --text: #e7ece5; --muted: #a3b0a1; --line: #2c352b;
+      --accent: #6fbf7c; --accent-text: #0b130c; --warn-bg: #3a3014; --warn-text: #f5dd9b;
+      --stand-bg: #3d1a17; --stand-text: #f6b8b0;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 16px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  main { max-width: 760px; margin: 0 auto;
+         padding: 12px max(16px, env(safe-area-inset-right)) 32px max(16px, env(safe-area-inset-left)); }
+  h1 { font-size: 1.3rem; margin: 6px 0 2px; }
+  .sub { color: var(--muted); margin: 0 0 12px; font-size: .92rem; }
+  .notice { border-radius: var(--radius); padding: 10px 14px; margin: 8px 0; font-size: .95rem; }
+  .notice.proto { background: var(--warn-bg); color: var(--warn-text); font-weight: 600; }
+  .notice.stand { background: var(--stand-bg); color: var(--stand-text); display: none; }
+  .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 14px 0; }
+  .btn { position: relative; display: flex; align-items: center; justify-content: center; min-height: 52px;
+         padding: 10px 12px; border-radius: var(--radius); background: var(--accent); color: var(--accent-text);
+         font-weight: 650; font-size: 1rem; text-align: center; cursor: pointer; user-select: none;
+         -webkit-tap-highlight-color: transparent; }
+  .btn.secondary { background: var(--surface); color: var(--text); border: 1px solid var(--line); }
+  .btn input { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
+  .btn[aria-disabled="true"] { opacity: .55; pointer-events: none; }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+          padding: 14px; margin: 12px 0; }
+  .stage { position: relative; border-radius: 10px; overflow: hidden; background: #0003; }
+  .stage img { display: block; width: 100%; height: auto; }
+  .stage img.ov { position: absolute; top: 0; left: 0; right: 0; bottom: 0; width: 100%; height: 100%; }
+  .slider { display: flex; align-items: center; gap: 12px; margin: 12px 0 2px; }
+  .slider input { flex: 1; min-height: 32px; accent-color: var(--accent); }
+  .slider output { min-width: 3.2em; text-align: right; font-variant-numeric: tabular-nums; }
+  .legend { list-style: none; margin: 8px 0 0; padding: 0; }
+  .legend li { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-top: 1px solid var(--line); }
+  .legend li:first-child { border-top: 0; }
+  .sw { width: 18px; height: 18px; border-radius: 5px; flex: none; border: 1px solid #0002; }
+  .legend .name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .legend .pct { font-variant-numeric: tabular-nums; color: var(--muted); }
+  .kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; font-size: .92rem; }
+  .kv dt { color: var(--muted); }
+  .kv dd { margin: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .85rem; }
+  .big { font-size: 1.6rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .err { display: none; background: var(--stand-bg); color: var(--stand-text); }
+  .busy { display: none; align-items: center; gap: 10px; color: var(--muted); }
+  .spin { width: 20px; height: 20px; border: 3px solid var(--line); border-top-color: var(--accent);
+          border-radius: 50%; animation: s 0.9s linear infinite; }
+  @keyframes s { to { transform: rotate(360deg); } }
+  details summary { cursor: pointer; color: var(--muted); }
+  #allClasses { columns: 2 220px; font-size: .88rem; padding-left: 1.2em; }
+  footer { color: var(--muted); font-size: .85rem; margin-top: 18px; }
+  h2 { font-size: 1.02rem; margin: 0 0 6px; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Plant lesion segmentation</h1>
+  <p class="sub">MobileNetV3-Large + LR-ASPP student, INT8 (QNNPACK), running on the demo server's CPU.</p>
+
+  <div class="notice proto" id="noticePrototype">Research prototype; not for agronomic decisions.</div>
+  <div class="notice stand" id="noticeStandIn"><b>Stand-in model:</b> random weights, used until the
+    model of record is chosen. The colours below are <b>not</b> predictions.</div>
+
+  <div class="actions">
+    <label class="btn" id="btnCamera">Take photo
+      <input id="inCamera" type="file" accept="image/*" capture="environment"></label>
+    <label class="btn secondary" id="btnUpload">Upload image
+      <input id="inUpload" type="file" accept="image/*"></label>
+  </div>
+
+  <div class="busy" id="busy"><div class="spin"></div><span>Segmenting&hellip;</span></div>
+  <div class="notice err" id="error" role="alert"></div>
+
+  <section class="card" id="result" hidden>
+    <div class="stage">
+      <img id="imgBase" alt="The photo as the model saw it (long side 512 px)">
+      <img id="imgOverlay" class="ov" alt="Predicted lesion classes, coloured">
+    </div>
+    <div class="slider">
+      <label for="opacity">Overlay</label>
+      <input id="opacity" type="range" min="0" max="100" value="60">
+      <output id="opacityOut" for="opacity">60%</output>
+    </div>
+
+    <h2 style="margin-top:14px">Top classes (share of the photo's pixels)</h2>
+    <ul class="legend" id="legend"></ul>
+
+    <h2 style="margin-top:14px">Latency</h2>
+    <div><span class="big" id="latInfer">&ndash;</span> ms model inference</div>
+    <dl class="kv" style="margin-top:6px">
+      <dt>Server total</dt><dd id="latTotal">&ndash;</dd>
+      <dt>Round trip</dt><dd id="latTrip">&ndash;</dd>
+      <dt>Upload</dt><dd id="uploadNote">&ndash;</dd>
+    </dl>
+  </section>
+
+  <section class="card">
+    <h2>Model</h2>
+    <dl class="kv">
+      <dt>File</dt><dd class="mono" id="modelFile">&ndash;</dd>
+      <dt>SHA-256</dt><dd class="mono" id="modelSha">&ndash;</dd>
+      <dt>Identity</dt><dd id="modelMeta">&ndash;</dd>
+      <dt>Runtime</dt><dd id="modelRuntime">&ndash;</dd>
+      <dt>Input</dt><dd id="modelInput">&ndash;</dd>
+    </dl>
+    <details style="margin-top:10px">
+      <summary id="classesSummary">Classes the model can output</summary>
+      <ol id="allClasses" start="0"></ol>
+    </details>
+  </section>
+
+  <footer>
+    <p id="noticeLicence">Data licence: the model was trained on PlantSeg, licensed CC BY-NC 4.0
+      (non-commercial use only, with attribution).</p>
+    <p>Research prototype; not for agronomic decisions. Photos are processed in memory and not stored.
+      <a href="ondevice/">On-device (in-browser) version</a></p>
+  </footer>
+</main>
+<script>
+(function () {
+  "use strict";
+  var $ = function (id) { return document.getElementById(id); };
+  var busy = false;
+
+  function pct(x) { return (100 * x).toFixed(x >= 0.1 ? 1 : 2) + "%"; }
+  function showError(msg) { var e = $("error"); e.textContent = msg; e.style.display = "block"; }
+  function hideError() { $("error").style.display = "none"; }
+  function setBusy(on) {
+    busy = on;
+    $("busy").style.display = on ? "flex" : "none";
+    ["btnCamera", "btnUpload"].forEach(function (id) { $(id).setAttribute("aria-disabled", on ? "true" : "false"); });
+  }
+
+  function renderInfo(info) {
+    var m = info.model, meta = m.embedded_meta || {};
+    $("modelFile").textContent = m.file + " (" + (m.size_bytes / 1048576).toFixed(2) + " MB)";
+    $("modelSha").textContent = m.sha256;
+    $("modelMeta").textContent = "stage " + meta.stage + ", " + meta.quantization + ", role " + meta.artifact_role;
+    $("modelRuntime").textContent = "torch " + m.torch + ", engine " + m.engine + ", " + m.threads + " CPU thread(s)";
+    $("modelInput").textContent = info.preprocessing.protocol + " (the evaluator's own preprocessing)";
+    $("noticeStandIn").style.display = m.stand_in ? "block" : "none";
+    $("noticePrototype").textContent = info.notices.prototype;
+    $("noticeLicence").textContent = info.notices.licence;
+    var ol = $("allClasses");
+    ol.innerHTML = "";
+    info.classes.forEach(function (c) {
+      var li = document.createElement("li");
+      li.textContent = c.label;
+      ol.appendChild(li);
+    });
+    $("classesSummary").textContent = "Classes the model can output (" + info.classes.length + ")";
+  }
+
+  function legendRow(c) {
+    var li = document.createElement("li");
+    var sw = document.createElement("span"); sw.className = "sw"; sw.style.background = c.color;
+    var nm = document.createElement("span"); nm.className = "name"; nm.textContent = c.label;
+    var pc = document.createElement("span"); pc.className = "pct"; pc.textContent = pct(c.share);
+    li.appendChild(sw); li.appendChild(nm); li.appendChild(pc);
+    return li;
+  }
+
+  function render(res, note, tripMs) {
+    $("imgBase").src = res.images.photo_jpeg;
+    $("imgOverlay").src = res.images.overlay_png;
+    var ul = $("legend"); ul.innerHTML = "";
+    if (res.classes.top.length === 0) {
+      var li = document.createElement("li"); li.textContent = "No disease class predicted."; ul.appendChild(li);
+    }
+    res.classes.top.forEach(function (c) { ul.appendChild(legendRow(c)); });
+    if (res.classes.background) {
+      var b = legendRow(res.classes.background);
+      b.querySelector(".sw").style.background = "transparent";
+      ul.appendChild(b);
+    }
+    $("latInfer").textContent = res.latency_ms.inference.toFixed(0);
+    $("latTotal").textContent = res.latency_ms.total.toFixed(0) + " ms (decode " + res.latency_ms.decode.toFixed(0) +
+      ", preprocess " + res.latency_ms.preprocess.toFixed(0) + ", post " + res.latency_ms.postprocess.toFixed(0) +
+      "; " + res.threads + " thread(s))";
+    $("latTrip").textContent = tripMs.toFixed(0) + " ms (phone to server and back)";
+    $("uploadNote").textContent = note + "; " + res.input.original_size_wh.join("x") + " " + (res.input.format || "");
+    $("result").hidden = false;
+    $("result").scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function decodeToJpeg(file) {
+    return new Promise(function (resolve, reject) {
+      var url = URL.createObjectURL(file), img = new Image();
+      img.onload = function () {
+        var s = Math.min(1, 2048 / Math.max(img.naturalWidth, img.naturalHeight));
+        var c = document.createElement("canvas");
+        c.width = Math.round(img.naturalWidth * s); c.height = Math.round(img.naturalHeight * s);
+        c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+        URL.revokeObjectURL(url);
+        c.toBlob(function (b) {
+          if (b) resolve({ blob: b, note: "re-encoded on the phone to JPEG " + c.width + "x" + c.height });
+          else reject(new Error("the browser could not re-encode this image"));
+        }, "image/jpeg", 0.92);
+      };
+      img.onerror = function () { URL.revokeObjectURL(url); reject(new Error("the browser could not decode this image")); };
+      img.src = url;
+    });
+  }
+
+  function prepareUpload(file) {
+    if (/^image\/(jpeg|png|webp)$/.test(file.type) && file.size <= 12 * 1048576) {
+      return Promise.resolve({ blob: file, note: "original file sent" });
+    }
+    return decodeToJpeg(file);   // HEIC/HEIF, unknown types, or very large files
+  }
+
+  function run(file) {
+    if (!file || busy) return;
+    hideError(); setBusy(true);
+    var t0;
+    prepareUpload(file).then(function (up) {
+      var fd = new FormData();
+      fd.append("file", up.blob, file.name || "photo.jpg");
+      t0 = performance.now();
+      return fetch("api/segment", { method: "POST", body: fd }).then(function (r) {
+        if (!r.ok) {
+          return r.json().catch(function () { return {}; }).then(function (j) {
+            throw new Error(j.detail ? String(j.detail) : "server error " + r.status);
+          });
+        }
+        return r.json().then(function (res) { render(res, up.note, performance.now() - t0); });
+      });
+    }).catch(function (e) { showError(e && e.message ? e.message : String(e)); })
+      .then(function () { setBusy(false); });
+  }
+
+  ["inCamera", "inUpload"].forEach(function (id) {
+    $(id).addEventListener("change", function (ev) {
+      var f = ev.target.files && ev.target.files[0];
+      ev.target.value = "";
+      run(f);
+    });
+  });
+  $("opacity").addEventListener("input", function () {
+    $("imgOverlay").style.opacity = String($("opacity").value / 100);
+    $("opacityOut").textContent = $("opacity").value + "%";
+  });
+  $("imgOverlay").style.opacity = "0.6";
+
+  fetch("api/info", { cache: "no-store" }).then(function (r) {
+    if (!r.ok) throw new Error("server error " + r.status);
+    return r.json();
+  }).then(renderInfo).catch(function (e) { showError("Could not reach the demo server: " + e.message); });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,16 @@
+# requirements-demo.txt — the demo server's CPU runtime (lane DEMO-1). Python 3.11 (torch 2.1 has no
+# wheels for 3.12+). torch/torchvision are the repository's pins (requirements-e1.txt 2.1.0 / 0.16.0),
+# here as the CPU builds from the PyTorch index; numpy/pillow are the repository's pins.
+#   pip install -r demo/requirements-demo.txt
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.1.0+cpu
+torchvision==0.16.0+cpu
+numpy==1.26.4
+pillow==12.3.0
+requests==2.34.2          # imported by torchvision 0.16
+fastapi==0.115.12
+uvicorn==0.34.2
+python-multipart==0.0.20  # FastAPI form uploads
+# Only for the on-device exports (demo/ondevice/export_onnx.py); the server does not import them.
+onnx==1.17.0
+onnxruntime==1.20.1
