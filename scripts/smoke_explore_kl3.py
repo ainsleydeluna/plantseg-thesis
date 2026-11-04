@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Smoke for E5, KL-3 parity (src/explore/kl3_parity.py, scripts/explore_kl3_parity.py). Synthetic models only.
+"""Smoke for KL-3 parity (src/explore/kl3_parity.py, scripts/explore_kl3_parity.py). Synthetic models only.
 
 A synthetic pair is built the way block B builds the real one: a random student, prepared and calibrated; its
 pre-convert state saved as an epoch checkpoint (src/quant/qat.py save_epoch_checkpoint); the QNNPACK artifact

@@ -1,4 +1,4 @@
-"""N5: E6-E2 with the LR-ASPP logit head in FP32 (addendum L-AM24-ADD-1, from MVA-AUDIT-1; lane L-AM24, item E3).
+"""N5: E6-E2 with the LR-ASPP logit head in FP32 (addendum L-AM24-ADD-1, from MVA-AUDIT-1; lane L-AM24, the QAT entry's --fp32-head).
 
 The head's two 1x1 classifiers (head.high_logits, head.low_logits), their add (head.ff_add) and the final upsample
 stay in float: in training no fake-quant is attached to them (each carries qconfig None, which prepare_qat's qconfig

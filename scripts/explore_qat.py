@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""E3 (lane L-AM24): the exploratory QAT entry for C1, N1, N2, N5 and D (E6-E2's recipe of record, one named change).
+"""C1, N1, N2, N5 and D (lane L-AM24): the exploratory QAT entry (E6-E2's recipe of record, one named change).
 
     python -B -I scripts/explore_qat.py --real-run --confirm-real-run --item C1|N1|N2|N5|D --seed S
         --source-run-dir <E2 run dir | D: the exploratory winner's trainer dir>
@@ -9,7 +9,7 @@
         [N1: --kd-logit --teacher-ckpt <.../iter_24000.pth> --teacher-ckpt-sha256 8c0e649a...]
         [N2: --sites-on-input-grid --tf32-off]   [N5: --fp32-head]
 
-Order: the item's flags and seed; the E0 guard (split VAL, the data root's TRAIN/VAL-only check, x- run ID, output
+Order: the item's flags and seed; the guard (split VAL, the data root's TRAIN/VAL-only check, x- run ID, output
 outside the repository and official folders); the real-run gates of src/quant/qat.py real_run_gates that apply (the
 config pins, HEAD = --expect-head, the pinned QAT paths and the lane's files clean at HEAD, workers, CUDA present and
 uninitialised, TF32 at torch defaults before launch, QNNPACK, the clip selection of record with clip 5.0); the
@@ -128,20 +128,28 @@ def gates(args, flags: set) -> dict:
                                          expect_source_sha256=args.expect_source_sha256,
                                          parent_sha256=args.parent_sha256)
     model, source_meta = Q.load_source(stage, parent)
+    census = None
+    if args.item == "N2":                         # AM-24 v2.4: the ten sites from the code, or STOP before launch
+        from src.explore.sites import calibrated_copy, require_site_set
+        census = require_site_set(calibrated_copy(model))
     teacher = teacher_rec = None
     if args.item == "N1":
         from src.quant import qat_kd as K
         teacher, teacher_rec = K.teacher_of_record(args.teacher_ckpt, args.teacher_ckpt_sha256)
     return {"guard": st, "clip": clip, "stage": stage, "parent": parent, "model": model, "source_meta": source_meta,
-            "teacher": teacher, "teacher_record": teacher_rec}
+            "teacher": teacher, "teacher_record": teacher_rec, "site_census": census}
 
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     flags = {f for f in FLAG_NAMES if getattr(args, f)}
     from src.quant import qat as Q
+    from src.explore.sites import SiteError
     try:
         g = gates(args, flags)
+    except SiteError as e:
+        print(f"RESULT: STOP {e}. Nothing was written.")
+        return Q.EXIT_STOP
     except (G.GuardError, X.ExploreQATError, Q.QATRefused) as e:
         print(f"RESULT: REFUSED {e}. Nothing was written.")
         return Q.EXIT_REFUSED
@@ -161,7 +169,7 @@ def main(argv=None) -> int:
         extra_x["x_precision_label"] = PRECISION_LABEL
     doc = dict(st["run_meta"])
     doc.update({"parent_check": g["parent"], "clip_binding": g["clip"], "quant_stage": g["stage"]["name"],
-                "teacher_record": g["teacher_record"], **extra_x})
+                "teacher_record": g["teacher_record"], "site_census": g["site_census"], **extra_x})
     path = G.write_run_meta(out, doc)
     inner = out / args.run_id
     extra = {"clip_selection": g["clip"]["clip_selection"], "u4_pilot": False, "e6_selections": None,

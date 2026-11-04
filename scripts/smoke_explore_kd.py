@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Smoke for E4, the exploratory KD entry (src/explore/dist_loss.py, src/explore/kd_explore.py, scripts/explore_kd.py).
+"""Smoke for N3, A1'' and A2, the exploratory KD entry (src/explore/dist_loss.py, src/explore/kd_explore.py, scripts/explore_kd.py).
 Synthetic tensors, a synthetic loader and MockTeacher; no dataset, no teacher stack.
 
   * DIST against the official dist_kd.py formulas, transcribed independently below (_ref_*: (B*W*H, C) rows via

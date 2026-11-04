@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Smoke for E3, the exploratory QAT entry (src/explore/qat_explore.py, src/explore/fp32_head.py,
+"""Smoke for C1, N1, N2, N5 and D, the exploratory QAT entry (src/explore/qat_explore.py, src/explore/fp32_head.py,
 scripts/explore_qat.py, scripts/explore_qat_blockb.py). Synthetic students, loaders and fixture records; no dataset.
 
   * the parent constants against the records (DL-146 / DL-109, DL-218 and the TEST-day manifest, DL-139);
@@ -228,6 +228,15 @@ def run_cases(verbose: bool = False) -> Cases:
             meta2.get("x_substitution", {}).get("pinned_file") == "src/quant/qat.py"
             and len(meta2["x_substitution"].get("pinned_file_sha256", "")) == 64)
     c.check("N2: the pinned prepare_qat_model is restored afterwards", Q.prepare_qat_model is pinned_prepare)
+    from src.explore.sites import calibrated_copy, require_site_set
+    c.passes("N2 launch gate (AM-24 v2.4): the parent's calibrated copy gives the ten sites", require_site_set,
+             calibrated_copy(random_student(seed=4)))
+    import torch.nn as nn
+    bad = random_student(seed=4)
+    ctx = bad.head.context
+    bad.head.context = nn.Sequential(nn.AdaptiveAvgPool2d(2), nn.AdaptiveAvgPool2d(1), ctx[1], ctx[2])
+    c.refuses("N2 launch gate STOPs when the code gives a different site set", "site_set_mismatch", require_site_set,
+              calibrated_copy(bad))
     # ---- N5
     pf = calibrated_prepared(random_student(seed=5, fp32_head=True), size=96)
     tr = H.training_islands_report(pf)

@@ -168,6 +168,27 @@ def run_cases(verbose: bool = False) -> Cases:
         h.remove()
     c.check("each pool site's input IS its producer's output (object identity, one forward)",
             all(seen[("s", n)] is seen[("p", n)] for n in sites if sites[n]["kind"] != "head_resize"))
+    # AM-24 v2.4: the ten sites listed from the code, or STOP
+    census = c.passes("AM-24 v2.4 site census: the code gives the ten sites", S.require_site_set, p)
+    if census:
+        c.check("census lists the eight SE pools and head.context.0 by module, then the head's interpolate",
+                [s["module"] for s in census["sites_by_module"][:9]] == list(S.EXPECTED_POOLS)
+                and census["sites_by_module"][9]["module"] == S.EXPECTED_RESIZE)
+        c.check("census: exactly these nine converted modules round onto their input's grid",
+                census["runtime"]["rounding_modules"] == sorted(S.EXPECTED_POOLS), str(census["runtime"]["rounding_modules"]))
+        c.check("census: the head's resize keeps head.ff_mul's grid in the converted model",
+                census["runtime"]["resize"]["keeps_ff_mul_grid"] is True,
+                f"fake-quant off-grid fraction {census['runtime']['resize'].get('fake_quant_off_grid_fraction')}")
+        c.check("census: no other converted module keeps its input's grid unobserved",
+                all(k["observed_in_prepared"] or k["exact_type"] or k["module"] in S.EXPECTED_POOLS
+                    for k in census["runtime"]["grid_keeping_modules"]))
+        c.check("census: src/models/student.py is dc40dd2's (git blob)", census["student_py_is_dc40dd2s"])
+    extra_pool = calibrated_prepared(_student_with_extra_pool(), size=128)
+    c.refuses("census STOPs on an extra average pool in the head", "site_set_mismatch", S.require_site_set,
+              extra_pool)
+    two_interp = calibrated_prepared(_student_with_two_interpolates(), size=128)
+    c.refuses("census STOPs on a second interpolate in the head's forward", "site_set_mismatch", S.require_site_set,
+              two_interp)
     # (A)
     ex = per_site_exactness(p, conv, torch.randn(1, 3, 128, 128, generator=torch.Generator().manual_seed(3)))
     c.check("(A) the producer's grid is the converted input's grid, at all ten sites",
@@ -305,10 +326,41 @@ def main() -> int:
         "every site reads head.ff_add's grid": lambda: patched(
             S, "resolve_sites", _wrong_producer(S.resolve_sites)),
         "TF32 switch sets cuDNN only": lambda: patched(S, "set_tf32", _one_flag),
+        "a site check that never STOPs": lambda: patched(S, "require_site_set", lambda prepared, example=None: {
+            "sites_by_module": [], "runtime": {"rounding_modules": [], "resize": {}}}),
     }.items():
         killed, failed = mutation_killed(lambda: run_cases(False), mut)
         c.check(f"mutation KILLED: {name}", killed, f"e.g. {failed[:2]}")
     return c.result()
+
+
+def _student_with_extra_pool():
+    """A code that gives a different set: the head's context branch pools twice (2x2, then 1x1)."""
+    import torch.nn as nn
+    m = random_student(seed=8)
+    ctx = m.head.context
+    m.head.context = nn.Sequential(nn.AdaptiveAvgPool2d(2), nn.AdaptiveAvgPool2d(1), ctx[1], ctx[2])
+    return m
+
+
+def _student_with_two_interpolates():
+    """A code that gives a different set: the head's forward resizes twice."""
+    from src.models.student import LRASPPHead
+
+    class TwoResizeHead(LRASPPHead):
+        def forward(self, low, high):
+            a = self.high_proj(high)
+            s = self.context(high)
+            high_feat = self.ff_mul.mul(a, s)
+            mid = F.interpolate(high_feat, scale_factor=1.0, mode="bilinear", align_corners=False)
+            high_os8 = F.interpolate(mid, size=low.shape[-2:], mode="bilinear", align_corners=False)
+            return self.ff_add.add(self.high_logits(high_os8), self.low_logits(low))
+    m = random_student(seed=9)
+    old = m.head
+    head = TwoResizeHead.__new__(TwoResizeHead)
+    head.__dict__.update(old.__dict__)
+    m.head = head
+    return m
 
 
 def _wrong_producer(orig):

@@ -1,4 +1,4 @@
-"""B1, the D-1 conversion-gap split (audit EXPLORE-AUDIT-1 §2 B1, items (i)-(v); lane L-AM24, build item E2).
+"""B1, the D-1 conversion-gap split (audit EXPLORE-AUDIT-1 §2 B1, items (i)-(v); lane L-AM24).
 
 For one QAT model's selected epoch, VAL is scored through the fake-quant graph (qat_artifacts.fake_quant_model: the
 prepared student holding the epoch's state exactly, observers off, eval) in these passes:

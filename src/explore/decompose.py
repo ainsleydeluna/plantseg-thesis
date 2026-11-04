@@ -1,4 +1,4 @@
-"""N4: free decompositions from existing records (audit EXPLORE-AUDIT-1 §2 N4; lane L-AM24, build item E1).
+"""N4: free decompositions from existing records (audit EXPLORE-AUDIT-1 §2 N4; lane L-AM24).
 
 (a) `term_magnitudes`: per-term loss magnitudes over the last `last` iterations (10,000 by default) of a KD run's
     telemetry (E3 seed 42 of record for A1''), read from the run folder given by path: <run>/<stage>_telemetry.jsonl

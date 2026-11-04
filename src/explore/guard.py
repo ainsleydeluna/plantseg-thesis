@@ -1,4 +1,4 @@
-"""E0: the guard every exploratory entry point runs first (lane L-AM24; audit EXPLORE-AUDIT-1 §5.2 clauses 2, 4, 7).
+"""The exploratory guard every entry point runs first (lane L-AM24; audit EXPLORE-AUDIT-1 §5.2 clauses 2, 4, 7).
 
 `guarded_start` runs these steps in order and writes nothing until every one has passed:
 

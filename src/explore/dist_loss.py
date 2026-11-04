@@ -1,4 +1,4 @@
-"""A2: DIST (Huang et al., NeurIPS 2022) in place of lambda * KL only (audit EXPLORE-AUDIT-1 §2 A2; lane L-AM24, E4).
+"""A2: DIST (Huang et al., NeurIPS 2022) in place of lambda * KL only (audit EXPLORE-AUDIT-1 §2 A2; lane L-AM24).
 
 The official segmentation code's settings (audit source S1c, hunto/DIST_KD segmentation/losses/dist_kd.py, as the
 audit read it on 3 Nov 2026; this lane had no web access and transcribed the formulas below from that description

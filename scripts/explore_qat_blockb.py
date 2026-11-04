@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Block B of an exploratory QAT run (lane L-AM24, E3): 15 converted epochs scored on the CPU, AM-23's selection
+"""Block B of an exploratory QAT run (lane L-AM24; C1, N1, N2, N5, D): 15 converted epochs scored on the CPU, AM-23's selection
 rules, finalize.
 
     python -B -I scripts/explore_qat_blockb.py --run-dir <item dir>/<run-id> --expect-telemetry-sha256 <sha>
         --host-label TEXT --run-id x-...-bb --out-dir <root>/x-...-bb [--threads 8]
 
-The E0 guard runs first (VAL, the data root's TRAIN/VAL-only check, x- run ID, the output outside the repository,
+The guard runs first (VAL, the data root's TRAIN/VAL-only check, x- run ID, the output outside the repository,
 every official folder and the run directory). The run is identified from its x_run_meta.json (the item folder that
 holds the trainer's run directory): it must be an exploratory C1, N1, N2, N5 or D run.
 

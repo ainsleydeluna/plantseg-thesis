@@ -1,11 +1,12 @@
-"""E3: the exploratory QAT entry for C1, N1, N2, N5 and D (audit EXPLORE-AUDIT-1 §6.2; addendum L-AM24-ADD-1).
+"""The exploratory QAT entry for C1, N1, N2, N5 and D (audit EXPLORE-AUDIT-1 §6.2; addendum L-AM24-ADD-1).
 
 Every run is E6-E2's recipe of record (AM-23 item 1 = AM-4a item 1 + clip 5.0, DL-139/DL-146), run by the pinned
 src/quant/qat.py run_qat in mode "real", except the one named change of its item:
 
   C1   E6-E2 at seed 43 or 44 from E2 s43 / s44's best checkpoint of record; QAT seed = source seed. No change.
-  N1   --kd-logit: logit KD in the QAT loss, lambda 0.5, T 4, E6-KD's one-epoch ramp and teacher stream (the teacher of
-       record, one frozen forward per step on its private M4-KD NMF stream), no CWD term, no projection. run_qat has no
+  N1   --kd-logit: logit KD in the QAT loss, lambda 0.5 at full weight (not E6-KD's 0.5x), T 4, the logit term only,
+       E6-KD's one-epoch ramp and teacher stream (the teacher of record, one frozen forward per step on its private
+       M4-KD NMF stream), no CWD term, no projection (AM-24 v2.4). run_qat has no
        loss hook, so N1 runs `run_qat_logit_kd` below: run_qat's loop with the teacher forward and
        train_distill.distillation_losses on stage e2 added, every other line E6-E2's (src/quant/qat.py constants,
        loaders, freezes, VAL bracket, state predicate, epoch checkpoint, telemetry).
@@ -15,10 +16,11 @@ src/quant/qat.py run_qat in mode "real", except the one named change of its item
        a wrapper that calls the pinned function and installs the sites (src/explore/patching.py), recorded in
        run_meta (x_substitution). The file is unchanged and its sha256 recorded.
   N5   --fp32-head: the LR-ASPP logit head in FP32 (src/explore/fp32_head.py): a MIXED-PRECISION model, never INT8.
-  D    --parent-sha256: an exploratory FP32 winner (an x- run of N3, A1'' or A2) whose best VAL all-class mIoU is at
-       least D_TRIGGER = 0.3875 (compared as Decimal of the value's repr); its own seed; E6-E2's recipe of record, not
-       the corrected one (one change at a time). An E2-stage parent runs stage E6-E2, an E3-stage parent (A1'') stage
-       E6 (E6's recipe is E6-E2's; only the parent loader differs).
+  D    --parent-sha256 only (AM-24 v2.4): an exploratory FP32 winner (an x- run of N3, A1'' or A2) whose best VAL
+       all-class mIoU is at least D_TRIGGER = 0.3875 (compared as Decimal of the value's repr); one D per qualifying
+       run, each its own launch; its own seed; E6-E2's recipe of record, not the corrected one (one change at a
+       time). An E2-stage parent runs stage E6-E2, an E3-stage parent (A1'') stage E6 (E6's recipe is E6-E2's; only
+       the parent loader differs).
 
 The exploratory parent check accepts, for C1, N1, N2 and N5, exactly E2 s42 / s43 / s44's best checkpoints of record
 by their recorded sha256 (E2_PARENTS_OF_RECORD), through the pinned resolve_parent (best.json, run_meta, a complete

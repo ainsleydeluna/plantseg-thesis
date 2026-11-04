@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""N4 (lane L-AM24, build item E1): free decompositions from existing records. CPU; reads records only.
+"""N4 (lane L-AM24): free decompositions from existing records. CPU; reads records only.
 
     terms      --run-dir <KD run folder> --run-id x-... --out-dir <root>/<run-id> [--stage-key e3] [--window 10000]
                per-term loss magnitudes over the last 10,000 iterations of the run's telemetry and the A1'' alpha
@@ -8,7 +8,7 @@
                parent, fake-quant (selected epoch), converted and fake-quant-off VAL per QAT model, one table;
                models.json is a list of {"label", "parent_best_json", "qat_run_dir", "selection", "fqoff_summary"}
 
-Both run the E0 guard first (records-only: no data root is opened) and write x_run_meta.json, then their outputs,
+Both run the guard (src/explore/guard.py) first (records-only: no data root is opened) and write x_run_meta.json, then their outputs,
 into the item directory. Exit codes: 0 done, 2 refused, 4 error.
 """
 from __future__ import annotations

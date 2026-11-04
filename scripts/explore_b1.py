@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""B1 (lane L-AM24, build item E2): the D-1 conversion-gap split of one QAT model's selected epoch, on VAL.
+"""B1 (lane L-AM24): the D-1 conversion-gap split of one QAT model's selected epoch, on VAL.
 
     python -I scripts/explore_b1.py --qat-run-dir <QAT run dir> --selection <qat_selection.json>
         --selection-sha256 <sha> --artifact <converted/eNN_int8_qnnpack.torchscript.pt> --stage E6-E2
         --run-id x-b1-<model> --out-dir <root>/x-b1-<model> [--device cpu|cuda] [--threads 8] [--passes ...]
 
-The E0 guard runs first (VAL only; the data root's TRAIN/VAL-only check; x- run ID; the output outside the
+The guard (src/explore/guard.py) runs first (VAL only; the data root's TRAIN/VAL-only check; x- run ID; the output outside the
 repository, every official folder and every input). The QAT run, the selection and the artifact are read only: the
 artifact's and the selected checkpoint's sha256 are checked before they are loaded and again after the last pass.
 The artifact must be the selection's winner (its artifact_of_record sha256). Each pass's summary is appended to
@@ -26,6 +26,7 @@ if str(REPO) not in sys.path:
 
 from src.explore import b1_split as B                                # noqa: E402
 from src.explore import guard as G                                   # noqa: E402
+from src.explore import sites as S                                   # noqa: E402
 
 PINNED = ("src/quant/qat.py", "src/quant/qat_artifacts.py", "src/quant/prepare.py", "src/quant/qconfig.py",
           "src/quant/x86_latency.py", "src/models/student.py", "src/eval/evaluate.py", "src/eval/adapters.py",
@@ -64,7 +65,10 @@ def main(argv=None) -> int:
             recipe={"what": "D-1 conversion-gap split (audit §2 B1 items (i)-(v))", "passes": plan,
                     "device": args.device, "threads": torch.get_num_threads(), "stage": args.stage,
                     "selection_sha256": args.selection_sha256, "scorer": "src/explore/valscore.py (canvas, VAL 846)",
-                    "site_definition": "src/explore/sites.py (derived from the code; D-1 names none in the repo)"})
+                    "site_definition": ("AM-24 v2.4: the eight SE pools, head.context.0 and the head's one bilinear "
+                                        "interpolate, as src/models/student.py builds them at dc40dd2; listed from "
+                                        "the code by src/explore/sites.py site_census, a different set STOPs")},
+            write=False)
         out, inp = st["out_dir"], st["inputs"]
         sel = B.read_selection(inp["--selection"], args.selection_sha256)
         win = sel["doc"]["winner"]
@@ -75,6 +79,10 @@ def main(argv=None) -> int:
                                                             f"{fq_meta['checkpoint_sha256']}, the selection names "
                                                             f"{win.get('checkpoint_sha256')}")
         conv, conv_meta = B.load_converted(inp["--artifact"], stage=args.stage, expect_sha256=art_sha)
+        census = S.require_site_set(fq)                   # AM-24 v2.4: the ten sites from the code, or STOP
+        print("[b1] the ten sites, from the code: " + "; ".join(f"{s['site']}={s['module']}"
+                                                                 for s in census["sites_by_module"]))
+        G.write_run_meta(out, {**st["run_meta"], "site_census": census})
         fq = fq.to(args.device)
         from src.explore.valscore import score_val
         log = out / "b1_passes.jsonl"
@@ -93,6 +101,7 @@ def main(argv=None) -> int:
         doc = {"format": B.FORMAT, "run_id": args.run_id, "exploratory": True, "amendment": G.AMENDMENT,
                "split": "val", "item": "B1", "selection": {k: sel[k] for k in ("path", "sha256")},
                "winner": win, "fake_quant": fq_meta, "converted": conv_meta, "sites": B.describe_sites(fq.cpu()),
+               "site_census": census,
                "scores": scores, "reconciliation": rec, "inputs_unchanged": not changed, "changed": changed,
                "item_iv_hardware_match": (str(args.device).startswith("cuda")
                                           and str(fq_meta.get("recorded_device") or "").startswith("cuda")),
@@ -106,6 +115,9 @@ def main(argv=None) -> int:
             return G.EXIT_ABORTED
         print(f"RESULT: B1 DONE ({len(scores)} passes) -> {out / 'b1_split.json'}")
         return G.EXIT_OK
+    except S.SiteError as e:
+        print(f"RESULT: STOP {e}. Nothing was written.")
+        return G.EXIT_STOP
     except (G.GuardError, B.B1Error) as e:
         print(f"RESULT: REFUSED {e}")
         return G.EXIT_REFUSED

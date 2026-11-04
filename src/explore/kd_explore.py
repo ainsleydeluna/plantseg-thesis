@@ -1,4 +1,4 @@
-"""E4: the exploratory KD entry for N3, A1'' and A2 (audit EXPLORE-AUDIT-1 §6.1, §6.3; lane L-AM24).
+"""The exploratory KD entry for N3, A1'' and A2 (audit EXPLORE-AUDIT-1 §6.1, §6.3; lane L-AM24).
 
 Every run is E2 seed 42's recipe of record (A1'': E3 seed 42's) run by the pinned src/training/train_distill.py
 main() in mode real, with its every gate, except the one named change:

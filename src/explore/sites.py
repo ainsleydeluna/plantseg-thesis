@@ -1,8 +1,10 @@
 """The ten D-1 sites and their input-grid fake-quant (lane L-AM24: N2's correction, B1's passes).
 
-The repository's D-1 record does not name the sites: DL-180 (and AMENDMENTS AM-22 item 2, AM-23 item 1, DL-127,
-DL-146, which it cites) say only "the ten sites fake-quantized on their input's grid" (searched in this lane; see the
-lane report). They are therefore derived here from the code and checked against the converted model:
+AM-24 v2.4 (approved 4 Nov) names them: the eight squeeze-excitation blocks' global average pools, the LR-ASPP head's
+context pool (head.context.0) and the head's one quantized bilinear interpolate (LRASPPHead.forward), as
+src/models/student.py builds them at dc40dd2. Before v2.4 no repository record named them (DL-180 and what it cites
+say only "the ten sites fake-quantized on their input's grid"), so this lane derived them from the code; the
+derivation is v2.4's set. `require_site_set` lists them from the code each tool runs and STOPs on a different set:
 
   REPOSITORY-PROVEN (src/models/student.py; torchvision 0.16's quantizable MobileNetV3; torch 2.1 eager quantization)
   and MEASURED on a synthetic student (scripts/smoke_explore_sites.py): in the prepared (QAT) student, ten operations
@@ -177,3 +179,209 @@ def set_tf32(enabled: bool) -> dict:
     if got["cudnn_allow_tf32"] != bool(enabled) or got["cuda_matmul_allow_tf32"] != bool(enabled):
         raise SiteError("tf32_not_applied", f"setting TF32 {enabled} left {got}")
     return got
+
+
+# ------------------------------------------------------------------ AM-24 v2.4: the ten sites, from the code, or STOP
+# AM-24 v2.4 (approved 4 Nov): B1's ten sites are the eight squeeze-excitation blocks' global average pools, the LR-ASPP
+# head's context pool (head.context.0) and the head's one quantized bilinear interpolate (LRASPPHead.forward), as
+# src/models/student.py builds them at dc40dd2. The tools list them by module from the code they run and STOP when the
+# code gives a different set (`require_site_set`). src/models/student.py's git blob at dc40dd2 is the one at fe93a24.
+EXPECTED_POOLS = tuple(f"features.{i}.block.2.avgpool" for i in SE_BLOCKS) + ("head.context.0",)
+EXPECTED_RESIZE = "head: one bilinear F.interpolate in the head's forward (LRASPPHead.forward), read by head.high_logits"
+STUDENT_REL = "src/models/student.py"
+STUDENT_BLOB_DC40DD2 = "40a84c45a35fd7af8f39ca7e111b1a3d9ff9e2ef"     # git rev-parse dc40dd2:src/models/student.py
+POOL_TYPES = (nn.AdaptiveAvgPool1d, nn.AdaptiveAvgPool2d, nn.AdaptiveAvgPool3d, nn.AvgPool1d, nn.AvgPool2d,
+              nn.AvgPool3d)
+RESAMPLE_MODULE_TYPES = (nn.Upsample, nn.UpsamplingBilinear2d, nn.UpsamplingNearest2d)
+RESAMPLE_CALLS = ("interpolate", "upsample", "upsample_bilinear", "upsample_nearest", "grid_sample", "avg_pool1d",
+                  "avg_pool2d", "avg_pool3d", "adaptive_avg_pool1d", "adaptive_avg_pool2d", "adaptive_avg_pool3d")
+PASS_THROUGH_TYPES = (nn.Identity, nn.Dropout)
+# Ops that keep their input's grid EXACTLY (no rounding): never a site, whatever their qparams.
+EXACT_TYPES = (nn.Identity, nn.Dropout, nn.ReLU, nn.ReLU6, nn.MaxPool1d, nn.MaxPool2d, nn.MaxPool3d,
+               nn.AdaptiveMaxPool1d, nn.AdaptiveMaxPool2d, nn.AdaptiveMaxPool3d, nn.Flatten)
+
+
+def git_blob_sha1(path) -> str:
+    """The git blob id of a file (`git rev-parse <rev>:<path>` form), computed from its bytes."""
+    import hashlib
+    from pathlib import Path
+    data = Path(path).read_bytes()
+    return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
+
+
+def _calls_in_source(cls) -> list[dict]:
+    """Resampling and pooling CALLS in one class's own source (functional ops a module walk cannot see)."""
+    import ast
+    import inspect
+    import textwrap
+    try:
+        src = textwrap.dedent(inspect.getsource(cls))
+    except (OSError, TypeError):
+        return [{"call": "<source unavailable>", "mode": None, "line": None}]
+    out = []
+    for node in ast.walk(ast.parse(src)):
+        if isinstance(node, ast.Call):
+            f = node.func
+            name = f.attr if isinstance(f, ast.Attribute) else (f.id if isinstance(f, ast.Name) else None)
+            if name in RESAMPLE_CALLS:
+                mode = next((kw.value.value for kw in node.keywords
+                             if kw.arg == "mode" and isinstance(kw.value, ast.Constant)), None)
+                out.append({"call": name, "mode": mode, "line": node.lineno})
+    return out
+
+
+def functional_census(model: nn.Module) -> dict:
+    """{class: [calls]} for every class in the model's modules' MROs that the repository or torchvision defines."""
+    seen: dict[str, list] = {}
+    for m in model.modules():
+        for cls in type(m).__mro__:
+            mod = getattr(cls, "__module__", "") or ""
+            if not mod.startswith(("src.", "torchvision.")):
+                continue
+            key = f"{mod}.{cls.__qualname__}"
+            if key not in seen:
+                seen[key] = _calls_in_source(cls)
+    return {k: v for k, v in seen.items() if v}
+
+
+def _off_grid_fraction(x: torch.Tensor, scale: float, zp: int) -> float:
+    q = x.detach().float() / scale + zp
+    return float(((q - q.round()).abs() > 1e-3).float().mean())
+
+
+@torch.no_grad()
+def runtime_census(prepared: nn.Module, example: torch.Tensor) -> dict:
+    """The modules of an eager QNNPACK conversion of `prepared` (data-free, as block B converts) whose quantized output
+    carries its quantized input's scale and zero point, and whether the fake-quant graph's output of the same module
+    lies off that grid (a rounding site) or on it (an exact op); and the head's resize: the input of the module that
+    reads it carries head.ff_mul's grid in the converted model and lies off it in the fake-quant graph."""
+    import copy
+    from src.quant.prepare import convert_model
+    from src.quant.qconfig import select_qnnpack_backend
+    select_qnnpack_backend()
+    was_training = prepared.training
+    pm = copy.deepcopy(prepared).eval()
+    conv = convert_model(pm)
+    cmods, pmods = dict(conv.named_modules()), dict(pm.named_modules())
+    reader = "head.dequant_high" if "head.dequant_high" in cmods else "head.high_logits"
+    seen_c, seen_p, hooks = {}, {}, []
+
+    def recorder(store: dict, name: str):
+        def hook(mod, i, o):                     # returns None: a hook's return value would replace the output
+            if name not in store:
+                store[name] = (i[0] if i else None, o)
+        return hook
+    for n, m in cmods.items():
+        if list(m.children()) or isinstance(m, PASS_THROUGH_TYPES):
+            continue
+        hooks.append(m.register_forward_hook(recorder(seen_c, n)))
+    for n, m in pmods.items():
+        if not list(m.children()):
+            hooks.append(m.register_forward_hook(recorder(seen_p, n)))
+    hooks.append(cmods[reader].register_forward_pre_hook(lambda mod, i: seen_c.__setitem__("<resize>", (i[0], None))))
+    hooks.append(pmods[reader].register_forward_pre_hook(lambda mod, i: seen_p.__setitem__("<resize>", (i[0], None))))
+    conv(example)
+    pm(example)
+    for h in hooks:
+        h.remove()
+    prepared.train(was_training)
+    keep = []
+    for n, (i, o) in seen_c.items():
+        if n == "<resize>" or not (torch.is_tensor(i) and torch.is_tensor(o) and i.is_quantized and o.is_quantized):
+            continue
+        if i.qscheme() != torch.per_tensor_affine or o.qscheme() != torch.per_tensor_affine:
+            continue
+        if i.q_scale() != o.q_scale() or i.q_zero_point() != o.q_zero_point():
+            continue
+        po = seen_p.get(n, (None, None))[1]
+        frac = None if not torch.is_tensor(po) else _off_grid_fraction(po, i.q_scale(), i.q_zero_point())
+        keep.append({"module": n, "type": type(cmods[n]).__name__, "scale": i.q_scale(), "zero_point": i.q_zero_point(),
+                     "observed_in_prepared": hasattr(pmods.get(n), "activation_post_process"),
+                     "exact_type": isinstance(cmods[n], EXACT_TYPES),
+                     "fake_quant_off_grid_fraction": frac})
+    # Structural, not data-dependent: the converted module emits on its input's grid, the prepared module has no
+    # output observer of its own (so the training graph leaves its float result unrounded), and the op is not one that
+    # keeps the grid exactly. The off-grid fraction on the census input is recorded for information only.
+    rounding = sorted(k["module"] for k in keep if not k["observed_in_prepared"] and not k["exact_type"])
+    ff = conv.head.ff_mul
+    ci = seen_c.get("<resize>", (None, None))[0]
+    pi = seen_p.get("<resize>", (None, None))[0]
+    resize = {"reader": reader, "converted_input_quantized": bool(torch.is_tensor(ci) and ci.is_quantized)}
+    if resize["converted_input_quantized"]:
+        resize.update({"input_scale": ci.q_scale(), "input_zero_point": ci.q_zero_point(),
+                       "ff_mul_scale": float(ff.scale), "ff_mul_zero_point": int(ff.zero_point),
+                       "keeps_ff_mul_grid": ci.q_scale() == float(ff.scale) and ci.q_zero_point() == int(ff.zero_point),
+                       "fake_quant_off_grid_fraction": (None if not torch.is_tensor(pi) else
+                                                        _off_grid_fraction(pi, float(ff.scale), int(ff.zero_point)))})
+    return {"grid_keeping_modules": keep, "rounding_modules": rounding, "resize": resize}
+
+
+def site_census(prepared: nn.Module, *, example: torch.Tensor | None = None) -> dict:
+    """The ten sites as the code gives them: the average-pool modules, the functional resamples by class, the runtime
+    census and the student file's git blob; `matches` says whether it is AM-24 v2.4's set, with every difference."""
+    from pathlib import Path
+    mods = dict(prepared.named_modules())
+    pools = sorted(n for n, m in mods.items() if isinstance(m, POOL_TYPES))
+    resample_modules = sorted(n for n, m in mods.items() if isinstance(m, RESAMPLE_MODULE_TYPES))
+    calls = functional_census(prepared)
+    head_cls = type(prepared.head)
+    head_key = f"{head_cls.__module__}.{head_cls.__qualname__}"
+    root_cls = type(prepared)
+    root_key = f"{root_cls.__module__}.{root_cls.__qualname__}"
+    if example is None:
+        example = torch.randn(1, 3, 128, 128, generator=torch.Generator().manual_seed(0))
+    rt = runtime_census(prepared, example)
+    repo = Path(__file__).resolve().parents[2]
+    blob = git_blob_sha1(repo / STUDENT_REL)
+    problems = []
+    if tuple(sorted(EXPECTED_POOLS)) != tuple(pools):
+        problems.append(f"average-pool modules {pools} != {sorted(EXPECTED_POOLS)}")
+    if tuple(sorted(EXPECTED_POOLS)) != tuple(rt["rounding_modules"]):
+        problems.append(f"converted modules that round onto their input's grid {rt['rounding_modules']} != "
+                        f"{sorted(EXPECTED_POOLS)}")
+    if resample_modules:
+        problems.append(f"resampling modules {resample_modules}")
+    head_calls = _calls_in_source(head_cls)                # wherever the head class is defined
+    if [(c["call"], c["mode"]) for c in head_calls] != [("interpolate", "bilinear")]:
+        problems.append(f"the head's forward ({head_key}) calls {head_calls}, not one bilinear interpolate")
+    root_calls = _calls_in_source(root_cls)
+    if [(c["call"], c["mode"]) for c in root_calls] != [("interpolate", "bilinear")]:
+        problems.append(f"the student's forward ({root_key}) calls {root_calls}, not one (the final float upsample)")
+    others = {k: v for k, v in calls.items() if k not in (head_key, root_key)}
+    if others:
+        problems.append(f"other classes call resampling or pooling functions: {others}")
+    r = rt["resize"]
+    if not (r.get("converted_input_quantized") and r.get("keeps_ff_mul_grid")):
+        problems.append(f"the head's resize does not emit on head.ff_mul's grid in the converted model: {r}")
+    listed = [{"site": n, "module": EXPECTED_POOLS[k] if k < len(EXPECTED_POOLS) else EXPECTED_RESIZE}
+              for k, n in enumerate(SITE_NAMES)]
+    return {"rule": "AM-24 v2.4: the eight SE pools, head.context.0 and the head's one bilinear interpolate, as "
+                    "src/models/student.py builds them at dc40dd2; a different set STOPs",
+            "sites_by_module": listed, "average_pool_modules": pools, "resample_modules": resample_modules,
+            "functional_calls": calls, "runtime": rt, "student_py_blob": blob,
+            "student_py_blob_dc40dd2": STUDENT_BLOB_DC40DD2, "student_py_is_dc40dd2s": blob == STUDENT_BLOB_DC40DD2,
+            "problems": problems, "matches": not problems}
+
+
+def require_site_set(prepared: nn.Module, *, example: torch.Tensor | None = None) -> dict:
+    """STOP (SiteError site_set_mismatch) unless the code gives AM-24 v2.4's ten sites; else the census."""
+    census = site_census(prepared, example=example)
+    if not census["matches"]:
+        raise SiteError("site_set_mismatch", "the code gives a different set of sites than AM-24 v2.4's: "
+                                             + "; ".join(census["problems"]))
+    return census
+
+
+def calibrated_copy(model: nn.Module, *, size: int = 128, seed: int = 0) -> nn.Module:
+    """A prepared (QAT) copy of an FP32 student, observers moved by one train-mode forward on random inputs, then
+    frozen: the census's input when no trained epoch exists yet (N2's launch). The model itself is not touched."""
+    import copy
+    from src.quant.prepare import disable_observers, prepare_qat_model
+    from src.quant.qconfig import select_qnnpack_backend
+    select_qnnpack_backend()
+    p = prepare_qat_model(copy.deepcopy(model), select_backend=False)
+    p.train()
+    with torch.no_grad():
+        p(torch.randn(2, 3, size, size, generator=torch.Generator().manual_seed(seed)))
+    disable_observers(p)
+    return p.eval()

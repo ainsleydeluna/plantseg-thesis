@@ -1,4 +1,4 @@
-"""E5 (addendum L-AM24-ADD-1): KL-3 parity, the x86 fbgemm latency copies against their QNNPACK artifacts on VAL.
+"""KL-3 parity (addendum L-AM24-ADD-1): the x86 fbgemm latency copies against their QNNPACK artifacts on VAL.
 
 DL-181 records that E5/E6's x86 latency copy (finalize's translation of the selected epoch's pre-convert state into an
 x86-prepared student, reduce_range true, quantization parameters recomputed, the x86 engine) is certified only by

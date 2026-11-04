@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Smoke for E0, src/explore/guard.py (lane L-AM24). Synthetic fixtures only; no dataset.
+"""Smoke for the exploratory guard, src/explore/guard.py (lane L-AM24). Synthetic fixtures only; no dataset.
 
 Cases: the split refusals (TEST in any case first, then any non-TRAIN/VAL split, VAL-only tools), the run ID rules,
 SL-1 on input paths, every output-path refusal (repository, name, official folder, official records in an ancestor,

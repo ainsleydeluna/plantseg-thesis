@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-"""E4 (lane L-AM24): the exploratory KD entry for N3, A1'' and A2 (E2 / E3 seed 42's recipe, one named change).
+"""N3, A1'' and A2 (lane L-AM24): the exploratory KD entry (E2 / E3 seed 42's recipe, one named change).
 
     python -B -I scripts/explore_kd.py --real-run --confirm-real-run --item N3|A1pp|A2
         --teacher-ckpt <absolute .../iter_24000.pth> --teacher-ckpt-sha256 <N3: R2's d5085961... | the record's>
         --num-workers 12 --expect-head <40-hex HEAD> --run-id x-... --out-dir <root>/<run-id>
         [A1pp: --alpha-from <N4 item dir>/n4_terms.json --alpha-from-sha256 <its sha256>]
-        [--futility-stop --futility-comparator-telemetry <E2 s42's e2_telemetry.jsonl | E3 s42's>
-         --futility-comparator-sha256 <its sha256: the TEST-day manifest's completion record>]
 
-Order: the item's rules (seed 42; the item's teacher by sha256; A1'''s alpha from N4); the E0 guard (VAL, the data
+AM-24 v2.4: every launch has the futility flag OFF and no item stops early on a VAL value. The flag stays in the code
+(audit §6.3's optional rule: --futility-stop --futility-comparator-telemetry <E2 s42's or E3 s42's telemetry>
+--futility-comparator-sha256 <the TEST-day manifest's completion record>) and is not used by any launch.
+
+Order: the item's rules (seed 42; the item's teacher by sha256; A1'''s alpha from N4); the guard (VAL, the data
 root's TRAIN/VAL-only check, x- run ID, output outside the repository and official folders); HEAD = --expect-head
 with the pinned KD modules and the lane's files clean; CUDA present and uninitialised; TF32 at torch defaults;
 the teacher path absolute, outside the repository and named iter_24000.pth; the record's teacher config by sha256.
@@ -48,7 +50,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--expect-head", default=None)
     p.add_argument("--alpha-from", default=None)
     p.add_argument("--alpha-from-sha256", default=None)
-    p.add_argument("--futility-stop", action="store_true")
+    p.add_argument("--futility-stop", action="store_true",
+                   help="audit §6.3's optional 40k rule; OFF in every AM-24 v2.4 launch (no item stops early)")
     p.add_argument("--futility-comparator-telemetry", default=None)
     p.add_argument("--futility-comparator-sha256", default=None)
     p.add_argument("--run-id", required=True)

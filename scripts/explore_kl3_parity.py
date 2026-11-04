@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""E5 (lane L-AM24, addendum L-AM24-ADD-1): KL-3 parity of one x86 latency copy against its QNNPACK artifact, on VAL.
+"""KL-3 parity (lane L-AM24, addendum L-AM24-ADD-1) of one x86 latency copy against its QNNPACK artifact, on VAL.
 
     python -B -I scripts/explore_kl3_parity.py --slot E6-E2:s42:sel --stage E6-E2
         --qnnpack-artifact <eval dir>/converted/eNN_int8_qnnpack.torchscript.pt --qnnpack-sha256 <sha>
@@ -8,7 +8,7 @@
         [--threads 8]
 
 Order: the split (TEST refused first, by name); AM-24 clause 3 (the decision-log row of the committed TEST results,
-RECORDED at HEAD, naming TEST and the commit, the commit in HEAD's history); the E0 guard (VAL, the data root's
+RECORDED at HEAD, naming TEST and the commit, the commit in HEAD's history); the guard (VAL, the data root's
 TRAIN/VAL-only check, x- run ID, the output outside the repository, every official folder and both artifacts'
 folders); with --slot, both sha256 must be the TEST-day manifest's for that slot. Both artifacts are read only:
 hashed before the load and after the last pass. Writes kl3_parity.json and kl3_parity.txt (exploratory) into the
