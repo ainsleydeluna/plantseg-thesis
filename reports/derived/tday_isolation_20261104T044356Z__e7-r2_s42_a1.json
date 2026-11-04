@@ -1,0 +1,24 @@
+{
+  "format": "tday_isolation/1",
+  "image_digest": "sha256:b80b645d6087a51bc4bae41c433ed77c3f30e43d442bf9c52c1be01698866aaf",
+  "result": {
+    "counts": {
+      "train": {
+        "images": 5367,
+        "masks": 5367
+      },
+      "val": {
+        "images": 846,
+        "masks": 846
+      }
+    },
+    "method": "os.path.lexists on exact TEST paths (no enumeration); TRAIN/VAL counted by name",
+    "test_surfaces": {
+      "annotation_test.json": "absent",
+      "annotations/test": "absent",
+      "images/test": "absent"
+    }
+  },
+  "root": "/data/plantseg_trainval",
+  "utc": "2026-11-04T04:43:56Z"
+}
