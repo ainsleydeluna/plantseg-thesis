@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>PlantSeg on-device demo</title>
+<style>
+  :root { --bg:#f6f7f4; --surface:#fff; --text:#1d241c; --muted:#5d6a5b; --line:#dfe4dc; --accent:#2f6d3a;
+          --accent-text:#fff; --warn-bg:#fff4d6; --warn-text:#5c4300; --stand-bg:#fde3e1; --stand-text:#7a1c14; --r:14px; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#121612; --surface:#1b211b; --text:#e7ece5; --muted:#a3b0a1; --line:#2c352b; --accent:#6fbf7c;
+            --accent-text:#0b130c; --warn-bg:#3a3014; --warn-text:#f5dd9b; --stand-bg:#3d1a17; --stand-text:#f6b8b0; }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin:0; background:var(--bg); color:var(--text);
+         font:16px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  main { max-width:760px; margin:0 auto; padding:12px max(16px, env(safe-area-inset-right)) 32px max(16px, env(safe-area-inset-left)); }
+  h1 { font-size:1.3rem; margin:6px 0 2px; } h2 { font-size:1.02rem; margin:0 0 6px; }
+  .sub { color:var(--muted); margin:0 0 12px; font-size:.92rem; }
+  .notice { border-radius:var(--r); padding:10px 14px; margin:8px 0; font-size:.95rem; }
+  .proto { background:var(--warn-bg); color:var(--warn-text); font-weight:600; }
+  .stand { background:var(--stand-bg); color:var(--stand-text); display:none; }
+  .err { background:var(--stand-bg); color:var(--stand-text); display:none; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; margin:10px 0; }
+  .row label.sel { display:flex; flex-direction:column; font-size:.85rem; color:var(--muted); flex:1; min-width:140px; }
+  select { font-size:1rem; min-height:44px; border-radius:10px; border:1px solid var(--line); background:var(--surface); color:var(--text); padding:0 8px; }
+  .actions { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin:12px 0; }
+  .btn { position:relative; display:flex; align-items:center; justify-content:center; min-height:52px; padding:10px 12px;
+         border-radius:var(--r); background:var(--accent); color:var(--accent-text); font-weight:650; cursor:pointer; }
+  .btn.secondary { background:var(--surface); color:var(--text); border:1px solid var(--line); }
+  .btn input { position:absolute; width:1px; height:1px; opacity:0; overflow:hidden; }
+  .btn[aria-disabled="true"] { opacity:.55; pointer-events:none; }
+  .card { background:var(--surface); border:1px solid var(--line); border-radius:var(--r); padding:14px; margin:12px 0; }
+  .stage { position:relative; border-radius:10px; overflow:hidden; }
+  .stage canvas { display:block; width:100%; height:auto; }
+  .stage canvas.ov { position:absolute; top:0; left:0; width:100%; height:100%; }
+  .slider { display:flex; align-items:center; gap:12px; margin:12px 0 2px; }
+  .slider input { flex:1; min-height:32px; accent-color:var(--accent); }
+  .legend { list-style:none; margin:8px 0 0; padding:0; }
+  .legend li { display:flex; align-items:center; gap:10px; padding:7px 0; border-top:1px solid var(--line); }
+  .legend li:first-child { border-top:0; }
+  .sw { width:18px; height:18px; border-radius:5px; flex:none; border:1px solid #0002; }
+  .legend .name { flex:1; min-width:0; overflow-wrap:anywhere; } .legend .pct { color:var(--muted); font-variant-numeric:tabular-nums; }
+  .kv { display:grid; grid-template-columns:max-content 1fr; gap:4px 12px; font-size:.92rem; }
+  .kv dt { color:var(--muted); } .kv dd { margin:0; overflow-wrap:anywhere; font-variant-numeric:tabular-nums; }
+  .mono { font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:.85rem; }
+  .big { font-size:1.6rem; font-weight:700; font-variant-numeric:tabular-nums; }
+  footer { color:var(--muted); font-size:.85rem; margin-top:18px; } a { color:var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Plant lesion segmentation, on this device</h1>
+  <p class="sub">The model runs inside this browser (ONNX Runtime Web); the photo never leaves the phone.</p>
+  <div class="notice proto" id="noticePrototype">Research prototype; not for agronomic decisions.</div>
+  <div class="notice stand" id="noticeStandIn"><b>Stand-in model:</b> random weights. The colours are <b>not</b> predictions.</div>
+
+  <div class="row">
+    <label class="sel">Model<select id="selModel">
+      <option value="student_int8_qdq.onnx">INT8 (QDQ, from the TorchScript artifact)</option>
+      <option value="student_fp32.onnx">FP32</option></select></label>
+    <label class="sel">Execution provider<select id="selEp">
+      <option value="wasm">WebAssembly (CPU)</option>
+      <option value="webgpu">WebGPU (GPU)</option></select></label>
+  </div>
+  <div class="actions">
+    <label class="btn" id="btnCamera">Take photo<input id="inCamera" type="file" accept="image/*" capture="environment"></label>
+    <label class="btn secondary" id="btnUpload">Upload image<input id="inUpload" type="file" accept="image/*"></label>
+  </div>
+  <div id="status" class="sub">Loading&hellip;</div>
+  <div class="notice err" id="error" role="alert"></div>
+
+  <section class="card" id="result" hidden>
+    <div class="stage"><canvas id="cvPhoto"></canvas><canvas id="cvOverlay" class="ov"></canvas></div>
+    <div class="slider"><label for="opacity">Overlay</label>
+      <input id="opacity" type="range" min="0" max="100" value="60"><output id="opacityOut">60%</output></div>
+    <h2 style="margin-top:14px">Top classes (share of the photo's pixels)</h2>
+    <ul class="legend" id="legend"></ul>
+    <h2 style="margin-top:14px">Latency on this device</h2>
+    <div><span class="big" id="latInfer">&ndash;</span> ms model inference</div>
+    <dl class="kv" style="margin-top:6px">
+      <dt>Preprocess</dt><dd id="latPre">&ndash;</dd>
+      <dt>Runs</dt><dd id="latRuns">&ndash;</dd>
+      <dt>Preprocessing</dt><dd id="preNote">&ndash;</dd>
+    </dl>
+  </section>
+
+  <section class="card">
+    <h2>Model</h2>
+    <dl class="kv">
+      <dt>File</dt><dd class="mono" id="mFile">&ndash;</dd>
+      <dt>SHA-256</dt><dd class="mono" id="mSha">&ndash;</dd>
+      <dt>Exported from</dt><dd class="mono" id="mSrc">&ndash;</dd>
+      <dt>Runtime</dt><dd id="mRuntime">&ndash;</dd>
+    </dl>
+  </section>
+  <footer>
+    <p id="noticeLicence">Data licence: the model was trained on PlantSeg, licensed CC BY-NC 4.0 (non-commercial use only, with attribution).</p>
+    <p>Research prototype; not for agronomic decisions. <a href="../">Server version</a></p>
+  </footer>
+</main>
+<script>
+(function () {
+  "use strict";
+  var $ = function (id) { return document.getElementById(id); };
+  var params = new URLSearchParams(location.search);
+  var EP = params.get("ep") === "webgpu" ? "webgpu" : "wasm";
+  var MODEL = params.get("model") === "fp32" ? "student_fp32.onnx" : "student_int8_qdq.onnx";
+  var CDN = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/";
+  var MAX_CANVAS_PIXELS = 16777216;                 // iOS Safari's canvas area limit
+  var state = { session: null, info: null, manifest: null, runs: 0, lastInput: null, busy: false, base: null };
+  window.__demo = { results: [], ready: false };
+
+  function showError(m) { var e = $("error"); e.textContent = m; e.style.display = "block"; }
+  function setStatus(m) { $("status").textContent = m; }
+  function pct(x) { return (100 * x).toFixed(x >= 0.1 ? 1 : 2) + "%"; }
+
+  // ---------------- core_preprocess/1.0.0 + finalize, ported from src/data/transforms.py and Pillow 12.3.0
+  // src/libImaging/Resample.c (BILINEAR, 8 bits per channel). Exact for the same decoded pixels.
+  function pyRound(x) {                             // Python's round(): half to even
+    var f = Math.floor(x), d = x - f;
+    if (d > 0.5) return f + 1;
+    if (d < 0.5) return f;
+    return (f % 2 === 0) ? f : f + 1;
+  }
+  function coeffs(inSize, outSize) {                // precompute_coeffs + normalize_coeffs_8bpc
+    var scale = inSize / outSize, filterscale = scale < 1.0 ? 1.0 : scale, support = 1.0 * filterscale;
+    var ksize = Math.ceil(support) * 2 + 1, kk = new Float64Array(outSize * ksize), bounds = new Int32Array(outSize * 2);
+    var inv = 1.0 / filterscale;
+    for (var xx = 0; xx < outSize; xx++) {
+      var center = 0 + (xx + 0.5) * scale, ww = 0.0;
+      var xmin = Math.trunc(center - support + 0.5); if (xmin < 0) xmin = 0;
+      var xmax = Math.trunc(center + support + 0.5); if (xmax > inSize) xmax = inSize;
+      xmax -= xmin;
+      var o = xx * ksize;
+      for (var x = 0; x < xmax; x++) {
+        var t = ((x + xmin) - center + 0.5) * inv; if (t < 0.0) t = -t;
+        var w = t < 1.0 ? 1.0 - t : 0.0;
+        kk[o + x] = w; ww += w;
+      }
+      if (ww !== 0.0) for (x = 0; x < xmax; x++) kk[o + x] /= ww;
+      bounds[xx * 2] = xmin; bounds[xx * 2 + 1] = xmax;
+    }
+    var k = new Int32Array(outSize * ksize);
+    for (var i = 0; i < k.length; i++) k[i] = kk[i] < 0 ? Math.trunc(-0.5 + kk[i] * 4194304) : Math.trunc(0.5 + kk[i] * 4194304);
+    return { ksize: ksize, k: k, bounds: bounds };
+  }
+  function clip8(v) { v = v >> 22; return v < 0 ? 0 : (v > 255 ? 255 : v); }
+  function resizeBilinear(src, w, h, nw, nh) {      // src: RGBA bytes; returns RGBA bytes nw x nh
+    var cur = src, cw = w, out, x, y, i, j, c, ss0, ss1, ss2, kb, mn, cnt;
+    if (nw !== w) {
+      var H = coeffs(w, nw);
+      out = new Uint8Array(nw * h * 4);
+      for (y = 0; y < h; y++) {
+        var row = y * w * 4, orow = y * nw * 4;
+        for (x = 0; x < nw; x++) {
+          mn = H.bounds[x * 2]; cnt = H.bounds[x * 2 + 1]; kb = x * H.ksize;
+          ss0 = ss1 = ss2 = 2097152;
+          for (j = 0; j < cnt; j++) {
+            var kv = H.k[kb + j], p = row + (mn + j) * 4;
+            ss0 += cur[p] * kv; ss1 += cur[p + 1] * kv; ss2 += cur[p + 2] * kv;
+          }
+          i = orow + x * 4; out[i] = clip8(ss0); out[i + 1] = clip8(ss1); out[i + 2] = clip8(ss2); out[i + 3] = 255;
+        }
+      }
+      cur = out; cw = nw;
+    }
+    if (nh !== h) {
+      var V = coeffs(h, nh);
+      out = new Uint8Array(cw * nh * 4);
+      for (y = 0; y < nh; y++) {
+        mn = V.bounds[y * 2]; cnt = V.bounds[y * 2 + 1]; kb = y * V.ksize;
+        for (x = 0; x < cw; x++) {
+          ss0 = ss1 = ss2 = 2097152;
+          for (j = 0; j < cnt; j++) {
+            var kv2 = V.k[kb + j], q = ((mn + j) * cw + x) * 4;
+            ss0 += cur[q] * kv2; ss1 += cur[q + 1] * kv2; ss2 += cur[q + 2] * kv2;
+          }
+          i = (y * cw + x) * 4; out[i] = clip8(ss0); out[i + 1] = clip8(ss1); out[i + 2] = clip8(ss2); out[i + 3] = 255;
+        }
+      }
+      cur = out;
+    }
+    return cur;
+  }
+  var MEAN = [Math.fround(0.485), Math.fround(0.456), Math.fround(0.406)];
+  var STD = [Math.fround(0.229), Math.fround(0.224), Math.fround(0.225)];
+  function corePreprocess(rgba, w, h) {
+    var nw, nh;
+    if (w >= h) { nw = 512; nh = Math.max(1, pyRound(h * 512 / w)); }
+    else { nw = Math.max(1, pyRound(w * 512 / h)); nh = 512; }
+    var r = (nw === w && nh === h) ? rgba : resizeBilinear(rgba, w, h, nw, nh);
+    var top = Math.floor((512 - nh) / 2), left = Math.floor((512 - nw) / 2);
+    var canvas = new Uint8Array(512 * 512 * 3);
+    for (var i = 0; i < 512 * 512; i++) { canvas[i * 3] = 124; canvas[i * 3 + 1] = 116; canvas[i * 3 + 2] = 104; }
+    for (var y = 0; y < nh; y++) for (var x = 0; x < nw; x++) {
+      var s = (y * nw + x) * 4, d = ((top + y) * 512 + left + x) * 3;
+      canvas[d] = r[s]; canvas[d + 1] = r[s + 1]; canvas[d + 2] = r[s + 2];
+    }
+    var N = 512 * 512, t = new Float32Array(3 * N);
+    for (var c = 0; c < 3; c++) for (i = 0; i < N; i++) {
+      var v = Math.fround(canvas[i * 3 + c] / 255);
+      v = Math.fround(v - MEAN[c]);
+      t[c * N + i] = v / STD[c];
+    }
+    return { tensor: t, canvas: canvas, box: { top: top, left: left, height: nh, width: nw } };
+  }
+
+  // ---------------- decoding (EXIF orientation applied by the browser, no colour conversion where supported)
+  function loadImg(blob) {
+    return new Promise(function (res, rej) {
+      var url = URL.createObjectURL(blob), img = new Image();
+      img.onload = function () { res(img); }; img.onerror = function () { rej(new Error("the browser could not decode this image")); };
+      img.src = url;
+    });
+  }
+  async function decode(file) {
+    var src = null, how = "img";
+    try { src = await createImageBitmap(file, { imageOrientation: "from-image", colorSpaceConversion: "none", premultiplyAlpha: "none" }); how = "createImageBitmap"; }
+    catch (e) { src = await loadImg(file); }
+    var w = src.width || src.naturalWidth, h = src.height || src.naturalHeight, scaled = false;
+    if (w * h > MAX_CANVAS_PIXELS) {                // pre-scale (browser resampling: not byte-identical)
+      var s = Math.sqrt(MAX_CANVAS_PIXELS / (w * h)) * 0.999;
+      w = Math.floor(w * s); h = Math.floor(h * s); scaled = true;
+    }
+    var cv = document.createElement("canvas"); cv.width = w; cv.height = h;
+    var ctx = cv.getContext("2d", { willReadFrequently: true });
+    ctx.drawImage(src, 0, 0, w, h);
+    return { rgba: ctx.getImageData(0, 0, w, h).data, w: w, h: h, how: how, prescaled: scaled };
+  }
+
+  // ---------------- runtime
+  function loadScript(url) {
+    return new Promise(function (res, rej) { var s = document.createElement("script"); s.src = url; s.onload = res;
+      s.onerror = function () { rej(new Error("could not load " + url)); }; document.head.appendChild(s); });
+  }
+  async function sha256Hex(buf) {
+    if (!(window.crypto && crypto.subtle)) return null;  // needs a secure context (HTTPS or localhost)
+    var d = await crypto.subtle.digest("SHA-256", buf);
+    return Array.prototype.map.call(new Uint8Array(d), function (b) { return ("0" + b.toString(16)).slice(-2); }).join("");
+  }
+  async function init() {
+    $("selEp").value = EP; $("selModel").value = MODEL;
+    if (!("gpu" in navigator)) $("selEp").querySelector('option[value="webgpu"]').disabled = true;
+    var info = await (await fetch("../api/info", { cache: "no-store" })).json();
+    var man = await (await fetch("manifest.json", { cache: "no-store" })).json();
+    state.info = info; state.manifest = man;
+    $("noticePrototype").textContent = info.notices.prototype; $("noticeLicence").textContent = info.notices.licence;
+    $("noticeStandIn").style.display = info.model.stand_in ? "block" : "none";
+    var bundle = EP === "webgpu" ? "ort.webgpu.min.js" : "ort.wasm.min.js";
+    state.base = man.ort_web_vendored ? new URL("vendor/", location.href).href : CDN;
+    await loadScript(state.base + bundle);
+    ort.env.wasm.wasmPaths = state.base;
+    var m = man.models[MODEL];
+    if (!m) throw new Error(MODEL + " is not exported yet: run python3 -I demo/ondevice/export_onnx.py");
+    setStatus("Downloading " + MODEL + " (" + (m.size_bytes / 1048576).toFixed(1) + " MB)…");
+    var bytes = new Uint8Array(await (await fetch("models/" + MODEL)).arrayBuffer());
+    var sha = await sha256Hex(bytes);
+    $("mFile").textContent = MODEL + " (" + (bytes.length / 1048576).toFixed(2) + " MB)";
+    $("mSha").textContent = (sha || m.sha256) + (sha ? (sha === m.sha256 ? " (verified in browser)" : " (MISMATCH with server)") : " (server-reported; hashing needs HTTPS)");
+    $("mSrc").textContent = man.source_model.file + " sha256 " + man.source_model.sha256.slice(0, 16) + "…";
+    var t0 = performance.now();
+    state.session = await ort.InferenceSession.create(bytes, { executionProviders: [EP], graphOptimizationLevel: "all" });
+    var tCreate = performance.now() - t0;
+    var threads = ort.env.wasm.numThreads;
+    $("mRuntime").textContent = "onnxruntime-web 1.20.1 (" + (man.ort_web_vendored ? "served by the demo server" : "jsDelivr CDN") +
+      "), " + EP + ", threads " + (threads || 1) + ", crossOriginIsolated " + !!window.crossOriginIsolated + ", session " + tCreate.toFixed(0) + " ms";
+    setStatus("Ready (" + EP + "). Take or upload a photo.");
+    window.__demo.ready = true; window.__demo.ep = EP; window.__demo.model = MODEL; window.__demo.modelSha256 = sha;
+  }
+
+  function drawResult(pre, mask, info) {
+    var b = pre.box, ph = $("cvPhoto"), ov = $("cvOverlay");
+    ph.width = ov.width = b.width; ph.height = ov.height = b.height;
+    var img = ph.getContext("2d").createImageData(b.width, b.height), ovi = ov.getContext("2d").createImageData(b.width, b.height);
+    var counts = new Array(info.classes.length).fill(0), cols = info.classes.map(function (c) {
+      return [parseInt(c.color.slice(1, 3), 16), parseInt(c.color.slice(3, 5), 16), parseInt(c.color.slice(5, 7), 16), c.role !== "background_or_non_disease"]; });
+    var crop = new Uint8Array(b.width * b.height);
+    for (var y = 0; y < b.height; y++) for (var x = 0; x < b.width; x++) {
+      var ci = (b.top + y) * 512 + b.left + x, o = (y * b.width + x) * 4, cls = mask[ci];
+      crop[y * b.width + x] = cls; counts[cls]++;
+      img.data[o] = pre.canvas[ci * 3]; img.data[o + 1] = pre.canvas[ci * 3 + 1]; img.data[o + 2] = pre.canvas[ci * 3 + 2]; img.data[o + 3] = 255;
+      var col = cols[cls]; if (col[3]) { ovi.data[o] = col[0]; ovi.data[o + 1] = col[1]; ovi.data[o + 2] = col[2]; ovi.data[o + 3] = 255; }
+    }
+    ph.getContext("2d").putImageData(img, 0, 0); ov.getContext("2d").putImageData(ovi, 0, 0);
+    var total = b.width * b.height, present = [];
+    counts.forEach(function (n, i) { if (n > 0) present.push({ class_id: i, n: n, share: n / total }); });
+    present.sort(function (a, c) { return c.n - a.n; });
+    var ul = $("legend"); ul.innerHTML = "";
+    var shown = present.filter(function (p) { return info.classes[p.class_id].role === "disease"; }).slice(0, 5);
+    if (!shown.length) { var li0 = document.createElement("li"); li0.textContent = "No disease class predicted."; ul.appendChild(li0); }
+    shown.concat(present.filter(function (p) { return p.class_id === 0; })).forEach(function (p) {
+      var c = info.classes[p.class_id], li = document.createElement("li"), sw = document.createElement("span");
+      sw.className = "sw"; sw.style.background = p.class_id === 0 ? "transparent" : c.color;
+      var nm = document.createElement("span"); nm.className = "name"; nm.textContent = c.label;
+      var pc = document.createElement("span"); pc.className = "pct"; pc.textContent = pct(p.share);
+      li.appendChild(sw); li.appendChild(nm); li.appendChild(pc); ul.appendChild(li);
+    });
+    return { crop: crop, present: present };
+  }
+
+  async function run(file) {
+    if (!file || state.busy || !state.session) return;
+    state.busy = true; $("error").style.display = "none"; setStatus("Running on this device…");
+    try {
+      var t0 = performance.now(), dec = await decode(file), pre = corePreprocess(dec.rgba, dec.w, dec.h), t1 = performance.now();
+      state.lastInput = pre.tensor;
+      var feeds = { input: new ort.Tensor("float32", pre.tensor, [1, 3, 512, 512]) };
+      var t2 = performance.now(), out = await state.session.run(feeds, ["mask"]), t3 = performance.now();
+      state.runs++;
+      var r = drawResult(pre, out.mask.data, state.info);
+      $("latInfer").textContent = (t3 - t2).toFixed(0);
+      $("latPre").textContent = (t1 - t0).toFixed(0) + " ms (decode + core_preprocess port)";
+      $("latRuns").textContent = state.runs + (state.runs === 1 ? " (the first run includes warm-up)" : "");
+      $("preNote").textContent = (dec.prescaled ? "pre-scaled in the browser to " + dec.w + "x" + dec.h + " (iOS canvas limit; not byte-identical)" :
+        "exact port of core_preprocess/1.0.0") + "; decoded by " + dec.how;
+      $("result").hidden = false;
+      var res = { file: file.name, w: dec.w, h: dec.h, prescaled: dec.prescaled, decoder: dec.how, box: pre.box,
+                  inference_ms: t3 - t2, preprocess_ms: t1 - t0, run: state.runs,
+                  tensor_sha256: await sha256Hex(pre.tensor.buffer), mask_crop_sha256: await sha256Hex(r.crop.buffer),
+                  present: r.present.map(function (p) { return [p.class_id, p.share]; }) };
+      window.__demo.results.push(res);
+      setStatus("Done (" + EP + ").");
+    } catch (e) { showError(e && e.message ? e.message : String(e)); setStatus("Error."); }
+    finally { state.busy = false; }
+  }
+  // Test hook (headless parity check): logits for the last input vs a reference float32 file.
+  // The reference holds every `stride`-th row and column of all channels.
+  window.__demo.compareLogits = async function (refUrl, stride) {
+    var out = await state.session.run({ input: new ort.Tensor("float32", state.lastInput, [1, 3, 512, 512]) }, ["logits"]);
+    var ref = new Float32Array(await (await fetch(refUrl)).arrayBuffer()), a = out.logits.data, C = out.logits.dims[1];
+    var s = stride || 1, g = Math.ceil(512 / s), mx = 0, sum = 0, n = 0;
+    if (ref.length !== C * g * g) return { error: "reference length " + ref.length + " != " + C * g * g };
+    for (var c = 0; c < C; c++) for (var y = 0; y < g; y++) for (var x = 0; x < g; x++) {
+      var d = Math.abs(a[(c * 512 + y * s) * 512 + x * s] - ref[(c * g + y) * g + x]);
+      if (d > mx) mx = d; sum += d; n++;
+    }
+    return { max_abs_diff: mx, mean_abs_diff: sum / n, compared: n, stride: s };
+  };
+
+  ["inCamera", "inUpload"].forEach(function (id) {
+    $(id).addEventListener("change", function (ev) { var f = ev.target.files && ev.target.files[0]; ev.target.value = ""; run(f); });
+  });
+  $("opacity").addEventListener("input", function () {
+    $("cvOverlay").style.opacity = String($("opacity").value / 100); $("opacityOut").textContent = $("opacity").value + "%"; });
+  $("cvOverlay").style.opacity = "0.6";
+  function reload() { location.search = "?model=" + ($("selModel").value === "student_fp32.onnx" ? "fp32" : "int8") + "&ep=" + $("selEp").value; }
+  $("selModel").addEventListener("change", reload); $("selEp").addEventListener("change", reload);
+  init().catch(function (e) { showError(e && e.message ? e.message : String(e)); setStatus("Not ready."); window.__demo.error = String(e); });
+})();
+</script>
+</body>
+</html>

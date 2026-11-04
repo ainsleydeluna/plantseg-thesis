@@ -85,6 +85,69 @@ def export(module, path: Path) -> dict:
             "sha256": common.sha256_file(path)}
 
 
+def drop_int32_zero_points(path: Path) -> int:
+    """Remove the all-zero zero-point input of every int32 DequantizeLinear (the quantized biases).
+
+    For int32 the ONNX operator treats zero_point as 0 when it is absent, so this does not change the
+    graph's outputs; ONNX Runtime Web 1.20.1's WebGPU kernel refuses int32 dequantization with a zero
+    point (measured), while the WASM/CPU kernels accept both forms. Returns the number of nodes changed.
+    """
+    import numpy as np
+    import onnx
+    from onnx import numpy_helper
+
+    from onnx.helper import tensor_dtype_to_np_dtype
+
+    m = onnx.load(str(path))
+    inits = {i.name: numpy_helper.to_array(i) for i in m.graph.initializer}
+    prod = {o: n for n in m.graph.node for o in n.output}
+    memo: dict = {}
+
+    def value(name):
+        """The constant value of `name`, through Constant, ConstantOfShape and Cast; else None."""
+        if name in memo:
+            return memo[name]
+        v, n = inits.get(name), prod.get(name)
+        if v is None and n is not None:
+            attrs = {a.name: a for a in n.attribute}
+            if n.op_type == "Constant" and "value" in attrs:
+                v = numpy_helper.to_array(attrs["value"].t)
+            elif n.op_type == "ConstantOfShape":
+                shape = value(n.input[0])
+                fill = (numpy_helper.to_array(attrs["value"].t) if "value" in attrs
+                        else np.zeros(1, np.float32))
+                v = None if shape is None else np.full(tuple(int(s) for s in shape), fill.ravel()[0], fill.dtype)
+            elif n.op_type == "Cast":
+                src = value(n.input[0])
+                v = None if src is None else src.astype(tensor_dtype_to_np_dtype(attrs["to"].i))
+        memo[name] = v
+        return v
+
+    changed = 0
+    for n in m.graph.node:
+        if n.op_type != "DequantizeLinear" or len(n.input) < 3:
+            continue
+        x, zp = value(n.input[0]), value(n.input[2])
+        if x is None or zp is None or x.dtype != np.int32 or np.any(zp != 0):
+            continue
+        del n.input[2]
+        changed += 1
+    if changed:                                    # drop the now-unused zero-point producers
+        while True:
+            used = {i for n in m.graph.node for i in n.input} | {o.name for o in m.graph.output}
+            keep_nodes = [n for n in m.graph.node if any(o in used for o in n.output)]
+            if len(keep_nodes) == len(m.graph.node):
+                break
+            del m.graph.node[:]
+            m.graph.node.extend(keep_nodes)
+        keep = [i for i in m.graph.initializer if i.name in used]
+        del m.graph.initializer[:]
+        m.graph.initializer.extend(keep)
+        onnx.checker.check_model(m)
+        onnx.save(m, str(path))
+    return changed
+
+
 def onnx_summary(path: Path) -> dict:
     import collections
 
@@ -205,6 +268,9 @@ def main(argv=None) -> int:
             module = make()
         try:
             info = export(module, config.ONNX_INT8_PATH)
+            info["int32_zero_points_dropped"] = drop_int32_zero_points(config.ONNX_INT8_PATH)
+            info["size_bytes"] = config.ONNX_INT8_PATH.stat().st_size
+            info["sha256"] = common.sha256_file(config.ONNX_INT8_PATH)
             info.update(onnx_summary(config.ONNX_INT8_PATH))
             info["parity_vs_int8_torchscript"] = parity(ts, config.ONNX_INT8_PATH, inputs, step)
             attempts.append({"source": label, "ok": True, **info})

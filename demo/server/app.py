@@ -13,6 +13,7 @@ Uploads are decoded in memory and discarded after the response.
 """
 from __future__ import annotations
 
+import json
 import mimetypes
 from pathlib import Path
 
@@ -82,10 +83,28 @@ def create_app(model_path: Path | None = None, threads: int | None = None) -> Fa
     def ondevice():
         return FileResponse(ONDEVICE_DIR / "index.html", headers={"Cache-Control": "no-cache"})
 
+    onnx_files = {config.ONNX_FP32_PATH.name: config.ONNX_FP32_PATH,
+                  config.ONNX_INT8_PATH.name: config.ONNX_INT8_PATH}
+    manifest_cache: dict = {}
+
+    @app.get("/ondevice/manifest.json")
+    def ondevice_manifest():
+        files = {}
+        for name, p in onnx_files.items():
+            if p.is_file():
+                key = (name, p.stat().st_size, p.stat().st_mtime_ns)
+                if key not in manifest_cache:
+                    manifest_cache[key] = common.sha256_file(p)
+                files[name] = {"size_bytes": p.stat().st_size, "sha256": manifest_cache[key]}
+        vendor_meta = ONDEVICE_DIR / "vendor" / "VERSION.json"
+        ort = json.loads(vendor_meta.read_text(encoding="utf-8")) if vendor_meta.is_file() else None
+        return {"models": files, "ort_web_vendored": ort is not None,
+                "ort_web_version": ort["version"] if ort else None,
+                "source_model": {"file": seg.model.path.name, "sha256": seg.model.sha256}}
+
     @app.get("/ondevice/models/{name}")
     def onnx_model(name: str):
-        allowed = {config.ONNX_FP32_PATH.name: config.ONNX_FP32_PATH,
-                   config.ONNX_INT8_PATH.name: config.ONNX_INT8_PATH}
+        allowed = onnx_files
         p = allowed.get(name)
         if p is None or not p.is_file():
             raise HTTPException(404, f"{name} not found; run python3 -I demo/ondevice/export_onnx.py")
