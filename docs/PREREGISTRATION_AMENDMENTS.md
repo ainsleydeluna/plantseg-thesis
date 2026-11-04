@@ -42,6 +42,7 @@ leaves the original readable beside it.
 | AM-19a | — (settles readings of AM-19's Definitions and items 2 and 3) | Readings of AM-19 for the KD sweeps (DRAFT) |
 | AM-22 | — (amends AM-19 items 1(a), 1(c), 1(d) and 3(b) under Schedule T; extends AM-16's cut rule, AM-17 item 9, AM-18 items 2(c), 7(a) and 7(b), and AM-19 items 3(c), 3(d), 4(c), 6(a), 8 and 9) | Early TEST freeze once every registered run is settled; a launch cutoff for cuttable runs (DRAFT) |
 | AM-23 | — (amends AM-18 item 3(a), AM-21 items 1(g) and 2(b) and the seed-42 QAT STOP of AM-22's Definitions for its own runs, and AM-19 item 4(c) for E7-E2; extends AM-4a, AM-10, AM-16 item 4, AM-17b item 4, AM-18 items 3(d), 7(b) and 8(c), AM-19 items 3(d) and 4, and AM-22's Definitions and items 1(a) and 2(a)) | Descriptive quantizations of E2 seed 42 (E6-E2, E7-E2) and of the arms' KD runs (E6-X) (DRAFT) |
+| AM-24 | — (amends no registered run; adds no test) | Exploratory items after the freeze (EXPLORE-2): INT8-loss diagnostics and QAT variants, FP32 KD variants and, after TEST, PTQ variants, a float-head QAT, the x86-copy parity, the phone's latency and the phone demo (DRAFT) |
 
 Code that implements an amendment is named by lane (L-AM…). Until that lane lands, the committed runtime
 keeps its pre-amendment behaviour and its launch gates.
@@ -2624,6 +2625,338 @@ non-inferiority check is unchanged.
 
 Code: one lane (AM-23's quantization lane: E2 sources and the arm parents of E6-X). The
 TEST-manifest lane lists every quantity here.
+
+## AM-24 — Exploratory items after the freeze (EXPLORE-2): INT8-loss diagnostics and QAT variants, FP32 KD variants and, after TEST, PTQ variants, a float-head QAT, the x86-copy parity, the phone's latency and the phone demo (amends no registered run; adds no test; changes no registered analysis)
+
+Dated 2026-11-04. Status: DRAFT (group-recorded; OK by Ice De Luna under the group's delegation, 2026-11-04, in the REC-3 kick-off line; the orchestrators' rulings EXPLORE-2 and MVA-1 (ORCH-5, 3 Nov 2026), AM24-MOVE-1 (ORCH-5, 2 Nov 2026), CREDIT-PLAN-REVIEW-1 (a) (ORCH-3), REC2B-RULE-1 R6-1 and R6-2 (ORCH-5, 2 Nov 2026) and AM24V2-RULINGS-1 (ORCH-6, 4 Nov 2026); DL-232).
+- **Fixed text.** From its commit this text is changed only by a new amendment, which lists the
+  results known when it is written. A dated bracket note only points to a later record or records an
+  outcome.
+- **In force** from the time its commit reaches the remote, after the TEST manifest's freeze
+  (DL-228) and before TEST is unlocked. No item launches before then. Approval gates nothing here.
+- **A rejection** is entered verbatim in the decision log on the day it arrives. It changes a rule
+  only through a new amendment, which lists the results known when it is written. It never reopens a
+  run already launched or a TEST evaluation.
+- **Written after results.** This amendment was written after every result its State lists was
+  known, and before TEST was unlocked or evaluated; its items were chosen from the VAL results known
+  on 2026-11-03 (EXPLORE-AUDIT-1, at master 93d096e, adopted by EXPLORE-2). The PTQ values of the
+  local d4 and d5 checks and of the VAL-score check (State) were known when it was written and chose
+  nothing. It adds exploratory items only; none reads TEST, and none changes a registered analysis.
+
+State at amendment (as of the commit).
+- The TEST-day manifest was frozen on 2026-11-03 (DL-228). After the freeze and before the unlock,
+  the PTQ block made the 16 PTQ slots the manifest lists by inputs, every E4, E7 and E7-E2 artifact
+  among them, and appended each to the manifest (DL-229 to DL-231). TEST has not been unlocked or
+  evaluated.
+- FP32, best VAL all-class mIoU of record: the teacher of record 0.38576993346214294 (AM-17 item
+  1(a)); E1 seed 42 0.36314016580581665 (DL-17; DL-99); E2 seeds 42, 43 and 44 0.38749080896377563,
+  0.3716566562652588 and 0.3703170716762543 (DL-109; DL-120); E3 seeds 42, 43 and 44
+  0.36337557435035706, 0.3819650709629059 and 0.35045793652534485 (DL-121; DL-158); the arms A, G
+  and F 0.3509308695793152, 0.3659243881702423 and 0.17468085885047913 (DL-165); arm teacher R2's
+  M12 selection (iteration 24000) 0.3971906304359436 (DL-122) and E3-R2 0.3842073380947113 (DL-136).
+  E2 seed 42's value is post-selection: the best of five λ candidates (DL-109) and of its run's 20
+  VAL evaluations.
+- QAT, converted QNNPACK VAL of record, each the best of 15 converted epochs: E5 seeds 42, 43 and 44
+  0.3343045115470886, 0.31922274827957153 and 0.33282384276390076 (DL-139; DL-142; DL-144); E6 seeds
+  42, 43 and 44 0.33082112669944763, 0.3489743173122406 and 0.319689005613327 (DL-131; DL-143;
+  DL-145); E6-E2 seed 42 at epoch 06 0.35132896900177 (DL-146); E6-KD seed 42 at epoch 04
+  0.3320615291595459 (DL-171). L-FQOFF's fake-quant-off VAL of those eight models is recorded
+  (DL-176); E6-E2's is 0.3615630865097046.
+- PTQ, INT8 VAL from the local d4 check (provisional; canvas, batch 1, threads 1; DL-235): E4 seed
+  42 0.3171420395374298 and E7 seed 42 0.32679593563079834. The local d5 check (DL-235) scored
+  their x86 latency copies on VAL under the x86 engine: 0.26196855306625366 and
+  0.15147320926189423, x86 minus QNNPACK −5.517 and −17.532 pp (descriptive; no threshold).
+- PTQ, INT8 VAL from the VAL-score check, scored as the d4 check scored (DL-236): E7-E2
+  0.35287559032440186, E7-R1 0.3220382630825043, E7-R2 0.3355395495891571 and E7-flip
+  0.32010215520858765 (AM-23 item 5; AM-18 item 3(d)).
+- ORCH-3's QGAP-1 (relayed in ORCH-4's ORCH3-INFO-1): the fake-quant VAL mIoU minus the converted
+  INT8 VAL mIoU is positive at 30 of 30 epochs (E6-E2 1.08–2.75 pp; E6-KD 0.52–2.44 pp); at the
+  selected epochs, FP32 to fake-quant plus fake-quant to INT8 is 1.75 + 1.87 = 3.62 pp (E6-E2, epoch
+  06) and 1.56 + 1.56 = 3.13 pp (E6-KD, epoch 04).
+- E6-E2-M (TF32 off and the ten sites fake-quantized on their input's grid) was never registered and
+  never launched (DL-180). Lane L-AM24 (item 4) is not merged: its branch lane/l-am24, based on
+  fe93a24, adds new files only, its smokes pass by its report (docs/lane_reports/l-am24.md on the
+  branch), and its Fable audit is not yet recorded.
+
+No test is added to the Holm family. No test, threshold, family member, recipe, model of record,
+selection, seed, decision date, never-cut item, cut order, launch order, TEST scope or TEST quantity
+changes. Every item below is exploratory and descriptive: it trains on TRAIN only, is scored on VAL
+only or on no dataset image (items 11(m) and 11(n)), and is never run on TEST. VAL also selected the
+checkpoints, the clip and these items, so a VAL reading here is not an unbiased estimate and
+supports no claim of an effect (item 7 sets the words). An item not listed here is not run. The
+per-class INT8 changes after TEST are AM-17 item 8's registered table (its E1→E4, E1→E5, E1→E6,
+E3→E6 and E3→E7 changes with the classes whose IoU falls to 0 after INT8 conversion), not an item
+here.
+
+1. **Scope.** This amendment registers no run, no test, no family member and no derived artifact.
+   Every item is exploratory and descriptive, uses TRAIN and VAL only (the 846-image VAL split,
+   canvas protocol core_preprocess/1.0.0, union-present all-class mIoU), and runs at seed 42 unless
+   the item names seeds. Nothing here touches TEST, the TEST-day manifest, a run or derived artifact
+   of record, a registered selection or a registered analysis. AM-23's E6-E2 (seed 42 only; AM-23
+   item 1) is unchanged by item 11(c).
+2. **TEST.** No exploratory model, checkpoint, converted artifact, loss variant, fake-quant path or
+   PTQ variant is scored on TEST, listed in the TEST-day manifest or present in the TEST session,
+   for the thesis or for any paper. Exploratory entry points refuse --split test, any split but
+   train and val, any data root that fails src/data/isolation.py's assert_trainval_only_root
+   (checked before any data is read) and any output path of a run or record of record; they run only
+   on a TRAIN/VAL-only staged root (AM-19 item 4(c)), and their artifacts carry artifact_status
+   exploratory, split val and amendment AM-24. TEST is evaluated once, never split or repeated
+   (AM-19 item 1(c); AM-22 item 1(h)). Any later TEST use (e.g. MVA-AUDIT-1's PX-1) needs its own
+   amendment, written after the thesis TEST results are committed.
+3. **Ordering.** (a) The TEST session and the Chapter 5 data work take precedence (every E4, E7 and
+   E7-E2 artifact already exists, DL-230); an exploratory launch or block-B scoring that would delay
+   them is not started. (b) Items 11(j) to 11(n) launch only after the TEST results are committed.
+   (c) Exploratory runs use their own pods; the laptop, the TEST host (DL-220), runs no exploratory
+   item (no training, scoring, conversion or decomposition) between the TEST unlock and the commit
+   of the TEST results; it may launch pods.
+4. **Code.** The code of items 11(a) to 11(l) lives in one lane, L-AM24 (EXPLORE-2), on the branch
+   lane/l-am24 from fe93a24 (items 11(k) and 11(l) by its addendum L-AM24-ADD-1, MVA-1; item 11(j)
+   later, under the same rules): new files only, which import the pinned trainers, quantizers,
+   loaders and evaluator unchanged. No file that the TEST-day manifest or a derived-artifact pin
+   names is modified before the TEST results are committed, and the lane is merged to master only
+   after that. No item of the lane launches before a Fable audit of its code is recorded (EXPLORE-2;
+   DL-24). Item 11(n)'s code is the DEMO-1 lane's. Each item runs from a kit or card that names its
+   code by commit and sha256.
+5. **No feedback.** No exploratory result selects, re-selects, re-scores or amends anything of
+   record, or is the reason for any decision of record: no epoch, checkpoint, λ, α, clip,
+   calibration list, qconfig, evaluator setting or teacher of record (item 11(f)'s use of R2 argues
+   nothing about the teacher of record). The corrected fake-quant path (item 11(e)), the KD-in-QAT
+   path (item 11(d)) and the float logit head (item 11(k)) are never applied to E5, E6, E6-KD or
+   E6-E2 of record in training or conversion; no B3 variant replaces E4, E7 or E7-E2 of record; and
+   no model of record is re-scored through any of them, except by the diagnostics of items 11(b)
+   and 11(l), which score models and copies of record on VAL through named settings; their numbers
+   are exploratory, are never a value of record, and replace, amend or select nothing.
+6. **One shot.** Each item is one run per named configuration, its recipe written here before
+   launch; nothing is decided at the pod, and no value changes after any VAL number of the item is
+   seen. (a) A run stopped by an infrastructure cause (host fault, OOM, pod loss, a non-finite value
+   caused by hardware) is relaunched once, identical, from iteration or epoch 0 in a fresh directory
+   (AM-8a's form); the stopped attempt's rows are evidence, never a result. (b) A run that
+   completes, diverges (AM-7's (a) or (b)) or ends non-finite is the item's result and is not
+   repeated or re-tuned; a completed run below its comparator is a result. An exploratory run
+   belongs to no registered stage, so its divergence stops that run only and fires no consequence of
+   AM-7 or AM-7a. (c) A run that stops at a pre-training check before its first training step is not
+   a launch. After a cause outside its recipe is fixed (data staging, the environment, or code
+   changed under item 4's rules with a Fable audit of the change), it is started once more; the stop
+   and the fix are recorded as a deviation. A fix that changes its recipe means the item is not run
+   here (MVA track). No item stops early on a VAL value: items 11(f) to 11(h) run to 80,000
+   iterations and stop only under (a) or (b). L-AM24's optional futility flag
+   (l_am24_brief_20261103.md, item E4) is off at every launch.
+7. **Labelling and claims.** Run IDs start with x-; run_meta carries exploratory true, amendment
+   AM-24, split val, the item's id, its full recipe, its commit and the sha256 of every pinned
+   module it imports. Chapter 5 reports items 11(a) to 11(l) in a separate section after the
+   confirmatory results, never in a table with a Holm-family contrast, each with the words
+   "exploratory; VAL (846 images); seed 42 [or the seeds]; not pre-registered; not evaluated on
+   TEST". A single-seed result may state its value, its difference from the matched run of record at
+   the same seed, and the confirmatory seed spread as context (E2 0.3703–0.3875; E3 0.3505–0.3820;
+   E6 0.3197–0.3490); it may say that a hypothesis is "consistent with" or "not supported by" the
+   run. It may not say "significantly", "outperforms" or "confirms", or generalize to TEST or
+   deployment. A difference smaller than the comparator's seed spread is reported as "within the
+   observed seed spread". E2 seed 42's VAL value is cited as a post-selection value, and every INT8
+   VAL value of record as the best of 15 converted epochs. D's trigger and every comparator are
+   numbers written here; none is a judgment.
+8. **MVA 2027.** Exploratory runs enter the MVA 2027 paper only as development-set ablations so
+   labelled; a claim about a method there needs at least three seeds. No exploratory run is scored
+   on TEST for the paper (item 2); any other held-out protocol is a matter for a new
+   pre-registration.
+9. **Records.** Each item's launch, end or stop, VAL value or values, GPU-hours and the sha256 of
+   its checkpoint or artifact are entered in the decision log by the end of the day after its end,
+   marked "exploratory (AM-24)", as for a run of record; the entry names the comparator of record
+   and its value. An item that is not run (its condition false, cut, or its code not built) is
+   entered with its reason.
+10. **Held fixed.** Each item changes only what it names against one of two reference recipes.
+    (a) **E2 seed 42's recipe**, for items 11(f) to 11(h) (EXPLORE-AUDIT-1 §6.1): the TRAIN and VAL
+        lists of record (split manifest 35f6788e…, DL-176); the augmentation of record
+        (configs/augment.py and src/data/transforms.py at the hashes DL-88 pins); 512 crops; ignore
+        255; the class weights of record (fd78ba13…, DL-88); SGD at lr 1e-2, momentum 0.9 and weight
+        decay 1e-4, poly 0.9 over 80,000 iterations, batch 16, no clipping and AM-7's divergence
+        rule; VAL every 4,000 iterations; seed 42 with set_seed and both loaders seeded; the KD
+        image of record (cb413304…, torch 2.1.0+cu121); a commit whose trainer, loss, data and
+        evaluator modules hash-match the KD pin 8487551, or a run record that lists every module
+        that differs and why; the teacher of record (iter_24000, 8c0e649a…, DL-88) with the M4 NMF
+        stream and one frozen forward per step; CE + Dice unchanged, a one-epoch linear ramp on
+        every distillation term, T = 4; the checkpoint with the best VAL all-class mIoU over the 20
+        evaluations (best.json), as for E2 and E3 (DL-109; DL-121); the evaluator of record, canvas
+        protocol, union-present mIoU, as the KD runs' in-training VAL, with the best checkpoint
+        re-scored once on CPU by scripts/evaluate_model.py for the record, as E3 seed 42's was
+        (DL-132).
+    (b) **E6-E2's recipe**, for items 11(c) to 11(e), 11(i) and 11(k) (AM-23 item 1: AM-4a item 1's
+        recipe with the clip of record, 5.0, DL-139; EXPLORE-AUDIT-1 §6.2): the parent by sha256
+        through an exploratory parent check; the source seed, set before CUDA, loaders seeded (AM-4a
+        item 4); SGD at lr 3e-4, momentum 0.9 and weight decay 1e-4, cosine with T_max 5,025, batch
+        16 with drop_last, 15 epochs, clip 5.0; fake-quant from step 0, BN frozen at the top of
+        epoch 11, observers off at the top of epoch 13, the VAL bracket; the QNNPACK qconfig of
+        record (per-channel symmetric INT8 weights, per-tensor UINT8 activations); TF32 at torch's
+        defaults; block B as AM-23's: all 15 epochs converted and each scored on CPU in the student
+        image of record (b80b645d…) at 8 threads, as the VAL block (DL-176), the epoch selected by
+        configs/qat_selection_rules_am23.json (the highest converted VAL, ties to the earlier
+        epoch), the QNNPACK TorchScript artifact finalized, and the selected epoch's fake-quant VAL
+        and fake-quant-off VAL recorded as DL-176 records them.
+    (c) **Comparators** (State): for (a), E2 seed 42 0.38749080896377563, E3 seed 42
+        0.36337557435035706 and the arms A, G and F; for (b), E6-E2 seed 42 0.35132896900177, E6 and
+        E5 at the item's seed, and E6-KD 0.3320615291595459.
+11. **The items, in launch order.** N4 and B1 first; then C1, N1 and N2; then N3, A1'' and A2, each
+    on its own pod; D only on its trigger; then, after the TEST results are committed, B3, N5, N6
+    (the x86-copy parity), PHONE-LAT-1/2 and PHONE-DEMO-1. Item 6 is every item's stop rule.
+    (a) **N4, decompositions from existing records** (CPU, no GPU; on the laptop only outside item
+        3(c)'s window). From E3 seed 42's telemetry, each loss term's mean over its last 10,000
+        iterations, and the weight α = 0.5 × mean L_logitKD / mean L_feat for item 11(g), printed
+        with its inputs; and, for the eight QAT models of record, one table of parent VAL,
+        selected-epoch fake-quant VAL, converted VAL and fake-quant-off VAL from their records
+        (DL-176's form). A value missing from a record is reported as missing, never estimated.
+        Split: existing TRAIN telemetry and VAL records; nothing is scored. May show: measured
+        values for the decompositions EXPLORE-AUDIT-1 infers. May not show: anything new about a
+        model.
+    (b) **B1, the INT8 conversion gap by site (D-1, DL-180).** Models: E6, E6-E2 and E6-KD at seed
+        42, each its selected epoch's checkpoint of record, by the sha256 its selection records
+        (DL-131; DL-146; DL-171). Change: none to a model. The ten sites are the eight
+        squeeze-excitation blocks' global average pools, the LR-ASPP head's context pool and its one
+        quantized bilinear interpolate, as src/models/student.py builds the model at the evaluator
+        commit of record, dc40dd2 (DL-220); L-AM24 names them by module in the decision log before
+        B1 launches, and a different set STOPs B1 and item 11(e) for a ruling. VAL is scored through
+        each model's fake-quant graph with each of the ten sites alone on its input's grid, with all
+        ten together, with TF32 off (both flags) alone, and with all ten and TF32 off (the full
+        corrected simulation: its residual against the converted VAL of record is item 11(e)'s
+        validation); the sum of the shares is reconciled with the total, interactions are reported,
+        and the SE-pool sites are reported first. The fake-quant passes run on the GPU class, and
+        with the TF32 state, under which each model's fake-quant VAL of record was logged. Split:
+        VAL. May show: each site's and TF32's share of the conversion gap, and whether the ten sites
+        explain it. May not show: what a trained corrected model does (item 11(e)). Stop: one pass
+        per site, configuration and model; no site is tuned. Slot: about 1 GPU-hour.
+    (c) **C1, E6-E2 at seeds 43 and 44.** Change against item 10(b): the parent and the seed only,
+        E2 seeds 43 and 44's best checkpoints of record (e3c4e05c… and be48da05…, DL-218), each at
+        its source seed. Split: TRAIN; VAL for selection and reporting. May show: whether E6-E2's
+        lead over E6 holds at seeds 43 and 44; until C1 is entered, no sentence reads E6-E2 − E6
+        beyond AM-23 item 6's seed-42 contrast. May not show: a registered E6-E2 quantity, which
+        stays seed 42 only. Slot: an exploratory QAT pod, two 15-epoch runs; about 4 GPU-hours.
+    (d) **N1, E6-E2-KD.** Change against item 10(b): E2 seed 42's parent (73dbc32d…, DL-109) at seed
+        42, with E2's logit-KD term added to the QAT loss: λ 0.5 at full weight, T 4, E6-KD's
+        one-epoch ramp (DL-141) and its teacher stream; no CWD term. Split: as item 11(c). May show:
+        whether keeping the distillation during QAT reduces the training-side loss (E6-E2's
+        fake-quant-off VAL is 0.3615630865097046, E1 seed 42's VAL 0.36314016580581665) and the
+        converted VAL loss. May not show: a general QAT-KD claim. Slot: an exploratory QAT pod;
+        about 2.5 GPU-hours.
+    (e) **N2, E6-E2-M** (DL-180's shelved run). Change against item 10(b), as one configuration: E2
+        seed 42's parent at seed 42, with the ten sites of item 11(b) fake-quantized on their
+        input's grid (a fake-quant sharing its input's quantization parameters after each of the ten
+        operations) and TF32 off for both cudnn and matmul. It launches after item 11(b)'s record is
+        entered. Split: as item 11(c). May show: how much of E6-E2's conversion gap (1.87 pp at
+        epoch 06, QGAP-1) a QAT whose fake-quant graph matches the converted model at the ten sites
+        recovers, against item 11(b)'s ceiling. May not show: anything about E5, E6, E6-KD or E6-E2
+        of record. Slot: an exploratory QAT pod; about 3 GPU-hours.
+    (f) **N3, E2-R2.** Change against item 10(a): the teacher is arm teacher R2 at its M12
+        selection, iteration 24000 (iter_24000.pth, sha256 d5085961…, DL-122), loaded as E3-R2's run
+        loaded it (DL-136); stage e2, logit KD only, λ 0.5, T 4. Split: TRAIN; VAL for the
+        checkpoint and reporting. May show: whether the teacher, not the loss form, moves this
+        student (E3-R2 − E3 seed 42 is +2.08 pp; DL-121; DL-136). May not show: anything about the
+        registered pipeline, which excludes E2-X (AM-18 item 3(a); AM-23 item 3(a)), or about the
+        teacher of record; a sentence about N3 states that exclusion. Slot: the first 28-GPU-hour
+        slot, on its own pod.
+    (g) **A1'', the feature-map CWD at the logit-KD term's scale.** Change against item 10(a) with
+        E3 seed 42's three terms (λ 0.5 logit KD, the feature-map CWD through its 1×1 projection,
+        the logit-map CWD at weight 3): the feature-map weight α, 25 in E3, is item 11(a)'s value,
+        entered in the decision log before launch; if item 11(a) cannot compute it, A1'' is not run.
+        Split: as item 11(f). May show: whether a feature term at that scale helps at all, the
+        question the α sweep's boundary result left (DL-121). May not show: anything about α or E3
+        of record. Slot: the second 28-GPU-hour slot, on its own pod (funded, EXPLORE-2).
+    (h) **A2, DIST in place of the KL term.** Change against item 10(a): λ·KL is replaced by DIST
+        (Huang et al., 2022) as its official segmentation code computes it, with no tuning: logits
+        flattened to (B·H·W, C), softmax at τ = 1, β = γ = 1, weight 1 against CE; E2's stride-8
+        logit grid, validity mask and ramp unchanged. The teacher of record is at parity with E2
+        seed 42 on VAL (0.38576993346214294 against 0.38749080896377563), so a null result is the
+        expected outcome. Split: as item 11(f). May show: whether a relation-matching loss changes
+        anything under a parity teacher. May not show: that DIST beats KD (one untuned run against a
+        λ-tuned, post-selection E2). Slot: the third 28-GPU-hour slot, on its own pod (funded,
+        EXPLORE-2).
+    (i) **D, QAT of each exploratory FP32 winner.** Trigger: a best VAL of at least 0.3875, compared
+        unrounded (E2 seed 42's 0.38749080896377563, DL-109, does not reach it), in item 11(f),
+        11(g) or 11(h); a stopped attempt does not qualify. Each qualifying run gets its own D,
+        launched after that run's record is entered: at most three, with no selection among them; if
+        none qualifies, D is not run. Change against item 10(b): the parent only, the qualifying
+        run's best.json checkpoint by an explicit sha256, at seed 42; E6-E2's recipe of record, not
+        item 11(d)'s or 11(e)'s. Split: as item 11(c). May show: each exploratory student's INT8 VAL
+        against E6-E2's 0.35132896900177 under the identical recipe, graded by margin (item 7). May
+        not show: anything beyond one seed. Slot: an exploratory QAT pod; about 2 GPU-hours per D.
+    (j) **B3, PTQ variants** (INT8-EXPLORE-1 with E2 seed 42 added; EXPLORE-2: after the TEST
+        results are committed). Models: E1, E2 and E3 at seed 42, their best checkpoints of record
+        (cf0879f7…, DL-99; 73dbc32d…, DL-109; 4baa5bad…, DL-121). Change against the PTQ recipe of
+        record (src/quant/qconfig.py ptq_qconfig; DL-160), calibrated on the AM-10 list of record
+        (seed 42; DL-10) and made in the student image of record (b80b645d…), as the PTQ of record
+        is (DL-160): (i) cross-layer equalization plus bias correction, only across ReLU-joined
+        pairs (MobileNetV3's early ReLU blocks; the hard-swish blocks cannot be equalized, a limit
+        stated with the result); (ii) mixed precision, the SE gates (pool, fc, fc, hardsigmoid, mul)
+        and the LR-ASPP head (pool branch, sigmoid, both 1×1 classifiers) in FP32 and the rest by
+        the recipe of record, with the share of MACs left in FP32 reported; the artifact is mixed
+        precision, never called INT8. Per-channel weights and histogram calibration are already in
+        the recipe of record, so they are not variants. Split: the TRAIN calibration list; VAL for
+        reporting. B3 scores only its own variants, on CPU under d4's settings (the KD image, canvas
+        protocol core_preprocess/1.0.0, batch 1, threads 1), and never scores an artifact of record.
+        Its comparators are numbers of record for the PTQ artifact of the same parent at seed 42
+        (DL-230): E4 0.3171420395374298 and E7 0.32679593563079834 (the d4 check; DL-235) and
+        E7-E2 0.35287559032440186 (AM-23 item 5's converted VAL score; DL-236), each scored with
+        d4's settings. May show: how close a better PTQ gets to QAT for this student. May not
+        show: anything about E4, E7 or E7-E2, which their inputs pin (AM-19 item 4(c)). Stop: each
+        variant once per model, at the settings named here; no search. Slot: CPU.
+    (k) **N5, E6-E2 with the LR-ASPP logit head in float** (MVA-1; L-AM24-ADD-1; MVA-AUDIT-1 W3 (b);
+        after the TEST results are committed). Change against item 10(b): E2 seed 42's parent at
+        seed 42, with head.high_logits, head.low_logits and head.ff_add kept in float, dequantized
+        before them, in training and in every converted epoch, and everything else as item 10(b)
+        (the final upsample is already float at dc40dd2, src/models/student.py:148-149); the
+        artifact is mixed precision, never called INT8. Split: as item 11(c). May show: how much of
+        E6-E2's INT8 loss its quantized logit head carries (MVA-AUDIT-1's P2(b)). May not show: an
+        INT8 result, or anything about E6-E2 of record. Slot: an exploratory QAT pod.
+    (l) **N6, the x86-copy parity (KL-3)** (MVA-1; L-AM24-ADD-1; after the TEST results are
+        committed). A CPU tool scores on VAL the seven x86 latency copies, each named by the
+        x86_copy_sha256 that the frozen TEST-day manifest's body (DL-228) holds for its QAT slot: E5
+        at seeds 42, 43 and 44 (fd5f4b31…, 8aa1be08…, 45d78007…), E6 at seeds 42, 43 and 44
+        (f81c2f73…, 6fbf91a5…, e74ddd90…) and E6-E2 at seed 42 (eed07f98…); E6-KD's slot holds none
+        (DL-220). Each copy is scored on CPU in the student image of record (b80b645d…) at 8
+        threads, canvas, as block B (DL-146; DL-176), with the quantized engine its finalize record
+        names, and is compared with its QNNPACK artifact's converted VAL of record (DL-139, DL-142
+        and DL-144 for E5; DL-131, DL-143 and DL-145 for E6; DL-146 for E6-E2). Change: none to a
+        model. Split: VAL. May show: the accuracy parity that KL-3 records as unmeasured; a measured
+        parity is entered under item 9 and may be pointed to by a dated bracket note on KL-3. May
+        not show: anything about a latency or efficiency quantity of record, which stays as
+        measured. Stop: one VAL pass per copy. Slot: CPU.
+    (m) **PHONE-LAT-1/2, the phone's latency** (MVA-1: P1 waits until after the TEST results).
+        Models: FP32 E3 seed 42, with E1 seed 42 as a check that the weights do not change the time;
+        INT8 by QAT E6 seed 42's converted QNNPACK artifact, with E5 seed 42's as the same check;
+        INT8 by PTQ E7 seed 42's artifact (DL-230); each by sha256; not the teacher. Method: a fixed
+        input on the phone, warm-up then timed runs, the median and the spread, the threads stated
+        and the phone's state recorded; the FP32 path runs with mkldnn off (PHONE-FIX-1), so it is
+        not the phone's fastest FP32, and QNNPACK is unaffected. Split: no dataset image, ever; no
+        accuracy number from the phone. May show: the phone's latency of these exact artifacts. May
+        not show: any accuracy, or AM-16 item 7's ARM latency measurement, which stays cut (DL-130;
+        DL-224). Stop: one timing sitting per model, never during a laptop transfer (XFER-QUIET-1);
+        no further seeds. Slot: the phone; no pod. Reporting: a result made by the cut may enter
+        Chapter 4, labelled exploratory.
+    (n) **PHONE-DEMO-1, the phone demo** (the DEMO-1 lane; after the TEST results are committed): a
+        demonstration, never a result. Model: the INT8 model the demo card names, by sha256, chosen
+        without reading any TEST score. Input: Ice's own camera photos of leaves only, never a web
+        image and never a dataset image (DEMO-PHOTO-2; PHONE-OPT-1); a dataset mode, if built, shows
+        VAL images with their masks only. Method: laptop first, then the phone, with PHONE-FIX-1's
+        line and the qnnpack engine; it shows the predicted disease pixels, the class names, the
+        share of the leaf flagged and the time, and no accuracy on a photo, which has no ground
+        truth. Split: no TEST image, ever. Stop: a minimal version by 2026-11-12; the demo freezes
+        on 2026-11-25. Reporting: Chapter 4 describes it as a demonstration only if it is made by
+        the cut; a later version goes only to the defense and MVA.
+12. **The cut and the reporting.** The cut is 12:00 +08:00 on 2026-11-12, by the clock, never by a
+    result. An item not launched by the end of 2026-11-11 goes to December (MVA, paper deadline
+    2027-01-14). Each of items 11(f) to 11(h) is launched only if at least 58 h remain before the
+    cut, two runs of about 29 h (EXPLORE-AUDIT-1 §7.2): the run and its one identical relaunch (item
+    6(a)); otherwise it goes to the MVA track. A result made by the cut may enter Chapter 5 (items
+    11(m) and 11(n): Chapter 4), labelled exploratory (POSTTEST-PA-1); a later result goes only to
+    the defense backup slides and the MVA track, never to the 17 Nov manuscript.
+13. **Not run here.** A1 (class-masked CWD) and B2 (the unconditional TF32-off QAT) are dropped
+    (EXPLORE-2), and no TF32-only QAT runs; QAT-DROP-1's condition gates nothing here. A3 (CIRKD)
+    goes to the MVA track and is not under this amendment, and so does AdaRound, EXPLORE-AUDIT-1's
+    third B3 variant, under its own amendment, since no settings for it could be written before the
+    unlock. D-1 (DL-180) is item 11(b), the conditional TF32-off QAT is folded into item 11(e), and
+    INT8-EXPLORE-1 is item 11(j).
+
+Code: one lane, L-AM24 (item 4), for items 11(a) to 11(l): items 11(a) to 11(i) in its first part,
+items 11(k) and 11(l) by its addendum L-AM24-ADD-1, and item 11(j) later. Items 11(m) and 11(n) run
+from the code their kits name, item 11(n) the DEMO-1 lane's. The TEST-manifest lane lists none of
+these quantities.
 
 ## Status of PREREGISTRATION §10 items after these amendments
 

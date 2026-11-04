@@ -1,0 +1,110 @@
+{
+  "format": "tday_lanes/1",
+  "lanes": [
+    {
+      "lane": "Q2",
+      "serves": [],
+      "status": {
+        "dl": "DL-02",
+        "entry": null,
+        "kind": "implemented",
+        "merge_commit": "2b3b55651e8092fd7fff6e786b73d971096deb17"
+      }
+    },
+    {
+      "lane": "LQP",
+      "serves": [],
+      "status": {
+        "dl": "DL-160",
+        "entry": null,
+        "kind": "implemented",
+        "merge_commit": "cee583621219637823f8a3aea73566c83fb11d58"
+      }
+    },
+    {
+      "lane": "L-AM3",
+      "serves": [],
+      "status": {
+        "dl": "DL-190",
+        "entry": null,
+        "kind": "implemented",
+        "merge_commit": "ebc1201c183700dc146843e482811cb74d030ad8"
+      }
+    },
+    {
+      "lane": "L-FQOFF",
+      "serves": [],
+      "status": {
+        "dl": "DL-175",
+        "entry": null,
+        "kind": "implemented",
+        "merge_commit": "a4f807ba536504f4e4aac32570fab4a0f5596fa1"
+      }
+    },
+    {
+      "lane": "L-AM23Q",
+      "serves": [],
+      "status": {
+        "dl": "DL-191",
+        "entry": null,
+        "kind": "implemented",
+        "merge_commit": "3373139179e6e27ecbe25f280be7b2b7889c38f2"
+      }
+    },
+    {
+      "lane": "L-CORR",
+      "serves": [],
+      "status": {
+        "dl": "DL-192",
+        "entry": null,
+        "kind": "implemented",
+        "merge_commit": "524116bb3558da15556a9496ca248ae9f3a3d23e"
+      }
+    },
+    {
+      "lane": "LEFF",
+      "serves": [],
+      "status": {
+        "dl": "DL-193",
+        "entry": null,
+        "kind": "implemented",
+        "merge_commit": "1e87a4a0c9c6dcd4e4e3fef6511243295a03ea0b"
+      }
+    },
+    {
+      "lane": "TMAN",
+      "serves": [],
+      "status": {
+        "dl": "DL-207",
+        "entry": null,
+        "kind": "implemented",
+        "merge_commit": "31f782d52380359fb85726db6f258bacf50b7ddc"
+      }
+    },
+    {
+      "lane": "LREP",
+      "serves": [],
+      "status": {
+        "dl": "DL-217",
+        "entry": null,
+        "kind": "implemented",
+        "merge_commit": "424cbea1d9414c58b7346437f51489586c978ee5"
+      }
+    },
+    {
+      "lane": "L-AM16-ARM",
+      "serves": [
+        "ARM:latency"
+      ],
+      "status": {
+        "dl": "DL-241",
+        "entry": {
+          "path": "reports/derived/tday_entries/not_required__ARM_latency__20261104__01.json",
+          "sha256": "1619f98a25c4a1bb04b94e8f27482acbf38135bb253f625fcd74bd7fd9e4b8d1"
+        },
+        "kind": "not_required",
+        "merge_commit": null
+      }
+    }
+  ]
+}

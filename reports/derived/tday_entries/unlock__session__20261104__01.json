@@ -1,0 +1,27 @@
+{
+  "amendment": "AM-17 item 9; AM-19 items 3(d) and 4(c); AM-22 item 1(e)",
+  "corrects": null,
+  "date": "2026-11-04",
+  "format": "tday_entry/1",
+  "freeze_record": {
+    "path": "reports/derived/tday_entries/freeze__session__20261103__01.json",
+    "sha256": "5b5fa8701ad57732f8a7eed755ebf4d9d604bac452372ca9922a7e8f2eb390db"
+  },
+  "kind": "unlock",
+  "lanes": {
+    "path": "reports/derived/tday_lanes.json",
+    "sha256": "b7c6fda9b7572db2ff89dea6835a3eeb26dcda70eed4b7cbc2d04ac4bc8b1aa5"
+  },
+  "manifest": {
+    "appends_sha256": "34b2be5713c9d8c0ea8cf201e0a943f8a12d8ce4983cdd5300f3083ea7d442b1",
+    "body_sha256": "6c00cc4b9a0efe1d2df0359e8a91d1959da0ef5d8f83ccfd3c42a2b5bede14ce",
+    "path": "reports/derived/tday_manifest.json",
+    "sha256": "f03ca5d3c5f0a9a02e5f5acb654efa7be9ff4eb094ea7c94124f64a9e3903331"
+  },
+  "printed_by": {
+    "commit": "3d273db77a648333e74b6d9b68a5567c40c5d462",
+    "script": "scripts/tday_manifest.py"
+  },
+  "push_evidence": null,
+  "slots": []
+}
