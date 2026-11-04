@@ -72,6 +72,25 @@ class WithMask:
         return _W(module).eval()
 
 
+def load_fp32(path: Path):
+    """FP32 weights: the repository's nested checkpoint (src/eval/model_loading.py
+    load_student_checkpoint, e.g. the E1 source checkpoint), else the stand-in's bare state_dict."""
+    import torch
+
+    from src.eval.model_loading import CheckpointError, load_student_checkpoint
+    from src.models.student import build_student
+
+    try:
+        model, info = load_student_checkpoint(path)
+        return model.eval(), f"load_student_checkpoint({path.name}) sha256 {info.sha256}"
+    except CheckpointError as e:
+        if "BARE state_dict" not in str(e):
+            raise
+    model = build_student(pretrained=False).eval()
+    model.load_state_dict(torch.load(path, map_location="cpu", weights_only=True), strict=True)
+    return model, f"build_student(pretrained=False) + bare state_dict {path.name} sha256 {common.sha256_file(path)}"
+
+
 def export(module, path: Path) -> dict:
     import torch
 
@@ -207,14 +226,14 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="ONNX exports for the in-browser demo")
     ap.add_argument("--model", default=None, help="INT8 TorchScript (default: demo/config.py MODEL_PATH)")
     ap.add_argument("--fp32-state", default=None,
-                    help="FP32 state_dict for the FP32 export (default: the stand-in's random weights)")
+                    help="FP32 weights for the FP32 export: the repository's nested FP32 checkpoint "
+                         "(e.g. the E1 source checkpoint) or, by default, the stand-in's random weights")
     ap.add_argument("--no-fp32", action="store_true")
     a = ap.parse_args(argv)
 
     import torch
 
     from src.eval.model_loading import select_int8_backend
-    from src.models.student import build_student
 
     torch.manual_seed(0)
     int8_path = config.resolve_model_path(a.model)
@@ -228,14 +247,13 @@ def main(argv=None) -> int:
         if not fp32_state.is_file():
             facts["fp32"] = {"ok": False, "error": f"no FP32 state at {fp32_state}"}
         else:
-            fp32 = build_student(pretrained=False).eval()
-            fp32.load_state_dict(torch.load(fp32_state, map_location="cpu"), strict=True)
+            fp32, fp32_source = load_fp32(fp32_state)
             try:
                 info = export(fp32, config.ONNX_FP32_PATH)
                 info.update(onnx_summary(config.ONNX_FP32_PATH))
                 info["parity_vs_pytorch_fp32"] = parity(fp32, config.ONNX_FP32_PATH, inputs)
                 facts["fp32"] = {"ok": True, "file": config.ONNX_FP32_PATH.name,
-                                 "source": f"build_student + {fp32_state.name}", **info}
+                                 "source": fp32_source, **info}
             except Exception as e:  # noqa: BLE001 -- recorded verbatim
                 facts["fp32"] = {"ok": False, "error": f"{type(e).__name__}: {e}",
                                  "trace": traceback.format_exc()[-2000:]}

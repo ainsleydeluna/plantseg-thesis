@@ -33,22 +33,23 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("out_dir")
     ap.add_argument("--model", default=None)
+    ap.add_argument("--fp32-state", default=None,
+                    help="FP32 weights (nested repository checkpoint or the stand-in's state); optional")
     a = ap.parse_args(argv)
     import torch
     from PIL import Image
 
+    from demo.ondevice.export_onnx import load_fp32
     from demo.server.inference import load_model
     from demo.server.preprocess import evaluator_preprocess
     from demo.synthetic import make_leaf_image
-    from src.models.student import build_student
 
     out = Path(a.out_dir)
     out.mkdir(parents=True, exist_ok=True)
     model_path = config.resolve_model_path(a.model)
     int8 = load_model(model_path).module
-    fp32 = build_student(pretrained=False).eval()
-    fp32.load_state_dict(torch.load(model_path.with_name(model_path.stem + "_fp32_state.pt"),
-                                    map_location="cpu"), strict=True)
+    fp32_path = Path(a.fp32_state) if a.fp32_state else model_path.with_name(model_path.stem + "_fp32_state.pt")
+    fp32 = load_fp32(fp32_path)[0] if fp32_path.is_file() else None     # no FP32 refs without weights
     rows = []
     for i, (name, size, fmt) in enumerate(CASES):
         img = make_leaf_image(300 + i, size)
@@ -62,6 +63,8 @@ def main(argv=None) -> int:
                "box": {"top": b[0], "left": b[1], "height": b[2], "width": b[3]}}
         with torch.no_grad():
             for tag, m in (("int8", int8), ("fp32", fp32)):
+                if m is None:
+                    continue
                 y = m(t)
                 crop = y.argmax(1)[0].to(torch.uint8).numpy()[b[0]:b[0] + b[2], b[1]:b[1] + b[3]]
                 row[f"mask_crop_sha256_{tag}"] = hashlib.sha256(crop.tobytes()).hexdigest()

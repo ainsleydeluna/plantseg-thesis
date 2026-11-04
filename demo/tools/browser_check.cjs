@@ -19,8 +19,9 @@ async function main() {
   const browser = await chromium.launch({ args: ["--enable-unsafe-webgpu", "--enable-features=Vulkan",
     "--use-angle=swiftshader", "--use-webgpu-adapter=swiftshader"] });
   report.chromium = browser.version();
+  const models = expected.cases[0].mask_crop_sha256_fp32 ? ["int8", "fp32"] : ["int8"];
   for (const ep of (eps.length ? eps : ["wasm"])) {
-    for (const model of ["int8", "fp32"]) {
+    for (const model of models) {
       const ctx = await browser.newContext({ ...devices["iPhone 15 Plus"] });
       const page = await ctx.newPage();
       const logs = [];
