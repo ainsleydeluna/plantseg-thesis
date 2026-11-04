@@ -1,0 +1,22 @@
+{
+  "amendment": "AM-19 item 3(d); AM-22 item 1(g)",
+  "corrects": null,
+  "cut_entries": [
+    {
+      "path": "reports/derived/tday_entries/cut__ARM_latency__20261103__01.json",
+      "sha256": "1af5c68e6d92665109c699e2ca3a1cd7254db357d2274f59966474549f522aa1"
+    }
+  ],
+  "date": "2026-11-04",
+  "format": "tday_entry/1",
+  "kind": "not_required",
+  "lane": "L-AM16-ARM",
+  "printed_by": {
+    "commit": "4b370e1875e84af4a15f6d66d0a3e9edb798a90f",
+    "script": "scripts/tday_manifest.py"
+  },
+  "push_evidence": null,
+  "slots": [
+    "ARM:latency"
+  ]
+}
