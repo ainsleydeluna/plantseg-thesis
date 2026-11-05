@@ -1,0 +1,17 @@
+{
+  "amendment": "AM-19a reading 21",
+  "corrects": null,
+  "date": "2026-11-05",
+  "format": "tday_entry/1",
+  "host": "DESKTOP-2ACIJH0",
+  "kind": "clock_offset",
+  "measured_utc": "2026-11-05T10:55:42Z",
+  "offset_seconds": 0.261082,
+  "printed_by": {
+    "commit": "f006465b86d773a35636f9ef2f5416ed0b4563c2",
+    "script": "scripts/tday_manifest.py"
+  },
+  "push_evidence": null,
+  "slots": [],
+  "source": "w32tm /stripchart /computer:time.windows.com /samples:5 /dataonly on DESKTOP-2ACIJH0: the median of 5 samples, in seconds, as w32tm prints it (TDAY-CLOCK-1)"
+}
