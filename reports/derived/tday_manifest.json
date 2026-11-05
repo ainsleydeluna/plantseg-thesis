@@ -4083,5 +4083,46 @@
     }
   },
   "format": "tday_manifest/1",
-  "session": null
+  "session": {
+    "clock_offset": {
+      "path": "reports/derived/tday_entries/clock_offset__session__20261105__01.json",
+      "sha256": "631a23018a179312671006d763029483de67acd321332071546945d1d025f4c2"
+    },
+    "host": {
+      "cpu_model": "13th Gen Intel(R) Core(TM) i7-1360P",
+      "name": "DESKTOP-2ACIJH0"
+    },
+    "push_evidence": {
+      "list": {
+        "path": "reports/derived/tday_push_list.json",
+        "sha256": "0cbf9deac9d467494da8062bdd29ba82bca10cff5f690519bf69e85d7aad9429"
+      },
+      "response": {
+        "path": "reports/derived/tday_push_response.json",
+        "sha256": "36a6720824ae5956aa3caed4490c2f7ace6a0b78d7831e6c84c246b5ac45ae18"
+      }
+    },
+    "started_utc": "2026-11-05T10:56:07Z",
+    "unlock_entry": {
+      "path": "reports/derived/tday_entries/unlock__session__20261104__01.json",
+      "sha256": "e7e3e5550d42aefa6b2e183b90102314a8697b9bf8744f84e9b64d07be86c676"
+    },
+    "values": {
+      "corrupted_cache": {
+        "canonical_manifest_sha256": "dc7185f0b5fc75e0e0fbd0608e5e30f621c189b6ed2d8ad8a4e57d4a3c26db47",
+        "inferential_cells_sha256": "a0ad7b68fef3fb9c4fb72c778dca0956b329b298f60efc3dc7711e8dd08566cf",
+        "manifest_file_sha256": "d47ea91250c894919d56ba66e589ec7f004e350b92849c21ff123f1912fbf5f0",
+        "verification_record_sha256": "1236c25270b08af1736ed9757956c11d17bf6048f42f518b3c6df5f2a91ac192"
+      },
+      "image_hasher": {
+        "counts_by_reason": {
+          "duplicate_in_split": 13,
+          "equal_train": 79,
+          "equal_val": 11
+        },
+        "dedup_list_sha256": "ed6db85707444734ccc6a377817843697a66be2be2ec92c94204a2d2c7ceb630",
+        "hash_list_sha256": "551e9fb374a6534e2280862ee285f45b05004c3ec32b482249829083b7672255"
+      }
+    }
+  }
 }
