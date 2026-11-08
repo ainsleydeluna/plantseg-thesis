@@ -1,0 +1,87 @@
+{
+  "all_class_miou": {
+    "max": 0.3618554174900055,
+    "min": 0.34457892179489136,
+    "range": 0.017276495695114136
+  },
+  "alongside": "dataset_level.disease_only_miou",
+  "authority": "AM-16 item 5 (descriptive: per subset, with the range over all four calibration sets); lane L-AM16-CALIB",
+  "condition": {
+    "name": null,
+    "severity": null,
+    "type": "clean"
+  },
+  "descriptive": true,
+  "disease_only_miou": {
+    "max": 0.3573560416698456,
+    "min": 0.33993765711784363,
+    "range": 0.017418384552001953
+  },
+  "format": "ptq_calibration_range/1",
+  "generated_utc": "2026-11-08T06:09:15Z",
+  "metric": "dataset_level.all_class_miou",
+  "parent_checkpoint_sha256": "cf0879f7007dfacbd0d510085ff28a4b47ee845ddb8fd599611d74109e1d6a03",
+  "per_subset": [
+    {
+      "all_class_miou": 0.34457892179489136,
+      "artifact_status": "official",
+      "checksum_sha256": "09320cbe7d5e8cee6d6a55c84679a65619fb52e3323fcdbae102c834a902357a",
+      "disease_only_miou": 0.33993765711784363,
+      "list_seed": 42,
+      "record": "/runs/e4_s42_cal42_a1/e4_ptq_record.json",
+      "record_sha256": "4c7601b75f1530f730cbe627b60d637a95404fcacd95e09dcbbdfffb27af78af",
+      "role": "of_record",
+      "summary": "/g/tday_clean_E4_s42_list42/summary.json",
+      "summary_sha256": "531b15640a7e1ab2f2496b4e11701e0d9c4255fdd568532134716917fe195dd8",
+      "torchscript_sha256": "9ca06a3d570824766dca9b7c668d1d3422f60891fa7c2de6f41daea498cd41ed"
+    },
+    {
+      "all_class_miou": 0.3449563980102539,
+      "artifact_status": "provisional",
+      "checksum_sha256": "1fbfc12a2d35d4e09db33aaed70fe558380ea9db49ae18857c0dc6323e24ffa9",
+      "disease_only_miou": 0.3403578996658325,
+      "list_seed": 43,
+      "record": "/runs/e4_s42_cal43_a1/e4_ptq_record.json",
+      "record_sha256": "506dec7a0289bebf9a67923036e6b0661650ab6422b247fea85e62742904a6a7",
+      "role": "calibration_sensitivity",
+      "summary": "/g/tday_clean_E4_s42_list43/summary.json",
+      "summary_sha256": "18e77a470c08e04425a6dea586335db04b5059756bd030e4a4effe814219a916",
+      "torchscript_sha256": "439cf41be2beea4dbbb938828296fa3c9e676086151c50469176cd555e0f9bcf"
+    },
+    {
+      "all_class_miou": 0.3618554174900055,
+      "artifact_status": "provisional",
+      "checksum_sha256": "e8e04425f0cac2b6f6aa42895c874e5d1176ce4319a44438a229d92bc920082b",
+      "disease_only_miou": 0.3573560416698456,
+      "list_seed": 44,
+      "record": "/runs/e4_s42_cal44_a1/e4_ptq_record.json",
+      "record_sha256": "96dcd4ffcc46239705480ef9c9b30439dea74417e8daa1d6558f7bca7ce8589d",
+      "role": "calibration_sensitivity",
+      "summary": "/g/tday_clean_E4_s42_list44/summary.json",
+      "summary_sha256": "a44c9ceab9085547f02d981600a62f649ea51d40c653eda3fa171ee5db1f0559",
+      "torchscript_sha256": "7e8ba7b85163a934c444c5132163cbc686655924fd3375bcee3da99c3e33312f"
+    },
+    {
+      "all_class_miou": 0.35339459776878357,
+      "artifact_status": "provisional",
+      "checksum_sha256": "02966ea8d619dd3d3384519ef34a36eb33a672441bead52cc1f0300a6b10af9d",
+      "disease_only_miou": 0.3488587439060211,
+      "list_seed": 45,
+      "record": "/runs/e4_s42_cal45_a1/e4_ptq_record.json",
+      "record_sha256": "749f9983e58fd42e59b0a13822b00f751bdb2e5a2ff63317d59b1bae90604ab9",
+      "role": "calibration_sensitivity",
+      "summary": "/g/tday_clean_E4_s42_list45/summary.json",
+      "summary_sha256": "d9c65a8878cf6775db448c5d82acdc527c95731380a5046a59ad606c911e403b",
+      "torchscript_sha256": "d92fedece7de9345ad63a7c321cb20d40b4acaa16dbfb701cddf09db33f95f4d"
+    }
+  ],
+  "protocol": "core_preprocess/1.0.0",
+  "rows": 1561,
+  "seed": 42,
+  "split": "test",
+  "stage": "E4",
+  "writer": {
+    "path": "scripts/ptq_calibration_range.py",
+    "sha256": "0b783584eb9e419eb03c64e3421040ee275041780528feceab93146ea5c0567b"
+  }
+}
