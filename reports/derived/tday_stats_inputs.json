@@ -1,0 +1,338 @@
+{
+  "inputs": [
+    {
+      "condition": {
+        "name": null,
+        "severity": null,
+        "type": "clean"
+      },
+      "path": "reports/tday/E1_s42_80k/fp32/clean",
+      "stage": "E1"
+    },
+    {
+      "condition": {
+        "name": null,
+        "severity": null,
+        "type": "clean"
+      },
+      "path": "reports/tday/E2_s42_lambda0.5_80k/fp32/clean",
+      "stage": "E2"
+    },
+    {
+      "condition": {
+        "name": null,
+        "severity": null,
+        "type": "clean"
+      },
+      "path": "reports/tday/E3_s42_lambda0.5_alpha25_80k/fp32/clean",
+      "stage": "E3"
+    },
+    {
+      "condition": {
+        "name": null,
+        "severity": null,
+        "type": "clean"
+      },
+      "path": "reports/tday/E4_s42_list42/int8_ptq/clean",
+      "stage": "E4"
+    },
+    {
+      "condition": {
+        "name": null,
+        "severity": null,
+        "type": "clean"
+      },
+      "path": "reports/tday/E5_s42_sel/int8_qat/clean",
+      "stage": "E5"
+    },
+    {
+      "condition": {
+        "name": null,
+        "severity": null,
+        "type": "clean"
+      },
+      "path": "reports/tday/E6_s42_sel/int8_qat/clean",
+      "stage": "E6"
+    },
+    {
+      "condition": {
+        "name": null,
+        "severity": null,
+        "type": "clean"
+      },
+      "path": "reports/tday/E7_s42_list42/int8_ptq/clean",
+      "stage": "E7"
+    },
+    {
+      "condition": {
+        "name": "motion_blur",
+        "severity": 1,
+        "type": "corruption"
+      },
+      "path": "reports/tday/E1_s42_80k/fp32/corrupted/motion_blur_s1",
+      "stage": "E1"
+    },
+    {
+      "condition": {
+        "name": "motion_blur",
+        "severity": 2,
+        "type": "corruption"
+      },
+      "path": "reports/tday/E1_s42_80k/fp32/corrupted/motion_blur_s2",
+      "stage": "E1"
+    },
+    {
+      "condition": {
+        "name": "motion_blur",
+        "severity": 3,
+        "type": "corruption"
+      },
+      "path": "reports/tday/E1_s42_80k/fp32/corrupted/motion_blur_s3",
+      "stage": "E1"
+    },
+    {
+      "condition": {
+        "name": "gaussian_noise",
+        "severity": 1,
+        "type": "corruption"
+      },
+      "path": "reports/tday/E1_s42_80k/fp32/corrupted/gaussian_noise_s1",
+      "stage": "E1"
+    },
+    {
+      "condition": {
+        "name": "gaussian_noise",
+        "severity": 2,
+        "type": "corruption"
+      },
+      "path": "reports/tday/E1_s42_80k/fp32/corrupted/gaussian_noise_s2",
+      "stage": "E1"
+    },
+    {
+      "condition": {
+        "name": "gaussian_noise",
+        "severity": 3,
+        "type": "corruption"
+      },
+      "path": "reports/tday/E1_s42_80k/fp32/corrupted/gaussian_noise_s3",
+      "stage": "E1"
+    },
+    {
+      "condition": {
+        "name": "jpeg_compression",
+        "severity": 1,
+        "type": "corruption"
+      },
+      "path": "reports/tday/E1_s42_80k/fp32/corrupted/jpeg_compression_s1",
+      "stage": "E1"
+    },
+    {
+      "condition": {
+        "name": "jpeg_compression",
+        "severity": 2,
+        "type": "corruption"
+      },
+      "path": "reports/tday/E1_s42_80k/fp32/corrupted/jpeg_compression_s2",
+      "stage": "E1"
+    },
+    {
+      "condition": {
+        "name": "jpeg_compression",
+        "severity": 3,
+        "type": "corruption"
+      },
+      "path": "reports/tday/E1_s42_80k/fp32/corrupted/jpeg_compression_s3",
+      "stage": "E1"
+    },
+    {
+      "condition": {
+        "name": "brightness",
+        "severity": 1,
+        "type": "corruption"
+      },
+      "path": "reports/tday/E1_s42_80k/fp32/corrupted/brightness_s1",
+      "stage": "E1"
+    },
+    {
+      "condition": {
+        "name": "brightness",
+        "severity": 2,
+        "type": "corruption"
+      },
+      "path": "reports/tday/E1_s42_80k/fp32/corrupted/brightness_s2",
+      "stage": "E1"
+    },
+    {
+      "condition": {
+        "name": "brightness",
+        "severity": 3,
+        "type": "corruption"
+      },
+      "path": "reports/tday/E1_s42_80k/fp32/corrupted/brightness_s3",
+      "stage": "E1"
+    },
+    {
+      "condition": {
+        "name": "fog",
+        "severity": 1,
+        "type": "corruption"
+      },
+      "path": "reports/tday/E1_s42_80k/fp32/corrupted/fog_s1",
+      "stage": "E1"
+    },
+    {
+      "condition": {
+        "name": "fog",
+        "severity": 2,
+        "type": "corruption"
+      },
+      "path": "reports/tday/E1_s42_80k/fp32/corrupted/fog_s2",
+      "stage": "E1"
+    },
+    {
+      "condition": {
+        "name": "fog",
+        "severity": 3,
+        "type": "corruption"
+      },
+      "path": "reports/tday/E1_s42_80k/fp32/corrupted/fog_s3",
+      "stage": "E1"
+    },
+    {
+      "condition": {
+        "name": "motion_blur",
+        "severity": 1,
+        "type": "corruption"
+      },
+      "path": "reports/tday/E6_s42_sel/int8_qat/corrupted/motion_blur_s1",
+      "stage": "E6"
+    },
+    {
+      "condition": {
+        "name": "motion_blur",
+        "severity": 2,
+        "type": "corruption"
+      },
+      "path": "reports/tday/E6_s42_sel/int8_qat/corrupted/motion_blur_s2",
+      "stage": "E6"
+    },
+    {
+      "condition": {
+        "name": "motion_blur",
+        "severity": 3,
+        "type": "corruption"
+      },
+      "path": "reports/tday/E6_s42_sel/int8_qat/corrupted/motion_blur_s3",
+      "stage": "E6"
+    },
+    {
+      "condition": {
+        "name": "gaussian_noise",
+        "severity": 1,
+        "type": "corruption"
+      },
+      "path": "reports/tday/E6_s42_sel/int8_qat/corrupted/gaussian_noise_s1",
+      "stage": "E6"
+    },
+    {
+      "condition": {
+        "name": "gaussian_noise",
+        "severity": 2,
+        "type": "corruption"
+      },
+      "path": "reports/tday/E6_s42_sel/int8_qat/corrupted/gaussian_noise_s2",
+      "stage": "E6"
+    },
+    {
+      "condition": {
+        "name": "gaussian_noise",
+        "severity": 3,
+        "type": "corruption"
+      },
+      "path": "reports/tday/E6_s42_sel/int8_qat/corrupted/gaussian_noise_s3",
+      "stage": "E6"
+    },
+    {
+      "condition": {
+        "name": "jpeg_compression",
+        "severity": 1,
+        "type": "corruption"
+      },
+      "path": "reports/tday/E6_s42_sel/int8_qat/corrupted/jpeg_compression_s1",
+      "stage": "E6"
+    },
+    {
+      "condition": {
+        "name": "jpeg_compression",
+        "severity": 2,
+        "type": "corruption"
+      },
+      "path": "reports/tday/E6_s42_sel/int8_qat/corrupted/jpeg_compression_s2",
+      "stage": "E6"
+    },
+    {
+      "condition": {
+        "name": "jpeg_compression",
+        "severity": 3,
+        "type": "corruption"
+      },
+      "path": "reports/tday/E6_s42_sel/int8_qat/corrupted/jpeg_compression_s3",
+      "stage": "E6"
+    },
+    {
+      "condition": {
+        "name": "brightness",
+        "severity": 1,
+        "type": "corruption"
+      },
+      "path": "reports/tday/E6_s42_sel/int8_qat/corrupted/brightness_s1",
+      "stage": "E6"
+    },
+    {
+      "condition": {
+        "name": "brightness",
+        "severity": 2,
+        "type": "corruption"
+      },
+      "path": "reports/tday/E6_s42_sel/int8_qat/corrupted/brightness_s2",
+      "stage": "E6"
+    },
+    {
+      "condition": {
+        "name": "brightness",
+        "severity": 3,
+        "type": "corruption"
+      },
+      "path": "reports/tday/E6_s42_sel/int8_qat/corrupted/brightness_s3",
+      "stage": "E6"
+    },
+    {
+      "condition": {
+        "name": "fog",
+        "severity": 1,
+        "type": "corruption"
+      },
+      "path": "reports/tday/E6_s42_sel/int8_qat/corrupted/fog_s1",
+      "stage": "E6"
+    },
+    {
+      "condition": {
+        "name": "fog",
+        "severity": 2,
+        "type": "corruption"
+      },
+      "path": "reports/tday/E6_s42_sel/int8_qat/corrupted/fog_s2",
+      "stage": "E6"
+    },
+    {
+      "condition": {
+        "name": "fog",
+        "severity": 3,
+        "type": "corruption"
+      },
+      "path": "reports/tday/E6_s42_sel/int8_qat/corrupted/fog_s3",
+      "stage": "E6"
+    }
+  ],
+  "schema": "plantseg-stats-inputs/1.0.0"
+}
