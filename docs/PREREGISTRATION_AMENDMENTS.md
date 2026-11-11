@@ -2958,6 +2958,68 @@ items 11(k) and 11(l) by its addendum L-AM24-ADD-1, and item 11(j) later. Items 
 from the code their kits name, item 11(n) the DEMO-1 lane's. The TEST-manifest lane lists none of
 these quantities.
 
+## AM-25 — The phone demo's photos: camera photos taken for the demo by a named person (amends AM-24 item 11(n)'s Input clause; amends no registered run; adds no test and no result; changes no registered analysis)
+
+Dated 2026-11-11. Status: DRAFT (group-recorded; OK by Ice De Luna under the group's delegation, 2026-11-11, in the words "AM-25 today"; the orchestrator's rulings DEMO-PHOTO-PROV-1 and DEMO-PHOTO-PROV-2 (ORCH-7, 11 Nov 2026); its decision-log row is the row of its commit).
+- **Fixed text.** From its commit this text is changed only by a new amendment, which lists the
+  results known when it is written. A dated bracket note only points to a later record or records an
+  outcome.
+- **In force** from the time its commit reaches the remote. No photo that only this amendment
+  admits is given to the demo before then. Approval gates nothing here.
+- **A rejection** is entered verbatim in the decision log on the day it arrives. It changes a rule
+  only through a new amendment, which lists the results known when it is written. It never reopens a
+  run already launched or a TEST evaluation.
+- **Written after the photos.** This amendment was written after the photos of item 2 were taken
+  and after the orchestrator had seen five of them (State), and before any demo block read a photo:
+  no model of the study had been run on any of them, and no demo output existed. Ice asked for it
+  after the orchestrator had found, from the EXIF, that the photos were not from his own camera, and
+  after he had given their origin. It admits photos; it chooses no model, no setting and no result.
+
+State at amendment (as of the commit).
+- The TEST results of record (DL-249), the exploratory records up to DL-258 and the seven parity
+  records of N6 (AM-24 item 11(l), made on 2026-11-11) are known. None was made by or for the demo,
+  and none bears on this amendment.
+- The demo (AM-24 item 11(n)) has no output: no demo block that reads a photo has been run.
+- The photos. On 2026-11-11 Ice sent eleven JPEG photos, 13573.jpg to 13583.jpg. By his statement
+  of that day they were taken at his request, for this demo, by a family member of his with that
+  person's phone. The orchestrator read five of them (13578, 13579, 13581, 13582 and 13583): the
+  EXIF of each gives make samsung, model Galaxy S25 FE and a time from 13:17:54 to 13:19:08 +08:00
+  on 2026-11-11, with no location; each shows a potted plant; 13581.jpg shows part of a person in
+  the background. The other six were not opened.
+- Earlier that day Ice had uploaded re-saved copies of five of the photos (HEIC, without camera
+  data). The orchestrator converted them and placed four in the demo's input folder at 16:06 on the
+  assumption that they were Ice's own, and withdrew them at 16:53, when the EXIF of 13582.jpg was
+  read. Nothing had used them.
+
+1. **The Input clause of AM-24 item 11(n)** reads from now on: "Input: only camera photos of
+   leaves taken for this demo, by Ice or by a person whom the photo record names (AM-25 item 2),
+   never a web image and never a dataset image (DEMO-PHOTO-2; PHONE-OPT-1); a dataset mode, if
+   built, shows VAL images with their masks only." Everything else in item 11(n) stands: a
+   demonstration, never a result; no accuracy on a photo; no TEST image, ever; the minimal version
+   by 2026-11-12; the freeze on 2026-11-25; the reporting rule. AM-24 item 12 stands.
+2. **The photo record.** A photo that Ice did not take is used only if a decision-log row,
+   recorded before the photo is used, gives its file name, its sha256, who took it (by name or by
+   relation to a group member) and the device and the time as its EXIF states them. A photo whose
+   EXIF names no device is not admitted under this item. No photo that shows a person is used. The
+   first photos admitted are four of the State's, taken as the State says:
+   (a) 13578.jpg, sha256 da099f938bee63ac8f85d66dccd4892fba62d1e97aaa7c8e60c39d8788f8f340, EXIF time 13:17:54;
+   (b) 13579.jpg, sha256 15aa2eab763b16723b1fafd86c8af0a8e06eec5807e83c12332e6c2de8d8796d, EXIF time 13:18:16;
+   (c) 13582.jpg, sha256 944242c33a7faee7b318083814559d46e90fcfd5b2f9102513efaa77ffeb7d92, EXIF time 13:18:48;
+   (d) 13583.jpg, sha256 dafb2e8e5d9a72b003e00d42c5303eb24545a1b99cbc1cc0c9a479b4bce0354c, EXIF time 13:19:08.
+   13581.jpg (sha256 bdcee59ebe67a9adc1437de847d7c0ce30c9f077869ebbf532e86024690e9797) is not
+   admitted: it shows a person. Each of the other six is admitted only by a later row made as this
+   item says. A copy given to the demo is the photo itself, checked by its sha256, or differs from
+   it only by a provenance block that the orchestrator's file delivery adds, which the row or the
+   orchestrator's ledger states with the check that the remaining bytes are the photo's.
+3. **Why.** DEMO-PHOTO-2's reason is that a web image may be a dataset image, even a TEST image.
+   A camera photo taken for the demo by a named person, whose EXIF gives the device and the time, is
+   not a web image, and the ruling itself lists "a groupmate's photo taken for this" among its
+   alternatives. AM-24 item 11(n) had narrowed this to Ice's own camera.
+4. **What may be said.** The manuscript, the defense and any record state the origin of these
+   photos as it is: taken for the demonstration by a family member of a group member with a phone
+   camera. They are never described as Ice's own photos or as photos taken by the group. No claim
+   rests on a photo: the demo shows no accuracy and is not a result (AM-24 item 11(n)).
+
 ## Status of PREREGISTRATION §10 items after these amendments
 
 | Item | Status |
