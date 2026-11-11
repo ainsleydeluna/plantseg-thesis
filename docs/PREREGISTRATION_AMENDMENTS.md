@@ -3020,6 +3020,50 @@ State at amendment (as of the commit).
    camera. They are never described as Ice's own photos or as photos taken by the group. No claim
    rests on a photo: the demo shows no accuracy and is not a result (AM-24 item 11(n)).
 
+## AM-26 — The phone demo's manuscript cut: 2026-11-16, for item 11(n) only (amends AM-24 item 11(n)'s Reporting clause and, for item 11(n) only, the cut of AM-24 item 12; amends no registered run; adds no test and no result; changes no registered analysis)
+
+Dated 2026-11-11. Status: DRAFT (group-recorded; OK by Ice De Luna under the group's delegation, 2026-11-11, in the words "lets try to do it until nov 16 and finish the manuscript part on the demo last bef submission on nov 17"; the orchestrator's ruling DEMO-CUT-1 (ORCH-7, 11 Nov 2026); its decision-log row is the row of its commit).
+- **Fixed text.** From its commit this text is changed only by a new amendment, which lists the
+  results known when it is written. A dated bracket note only points to a later record or records an
+  outcome.
+- **In force** from the time its commit reaches the remote, and only if that is before the cut of
+  AM-24 item 12 (12:00 +08:00 on 2026-11-12). If its commit reaches the remote later, it is void and
+  AM-24's cut stands for the demo. Approval gates nothing here.
+- **A rejection** is entered verbatim in the decision log on the day it arrives. It changes a rule
+  only through a new amendment, which lists the results known when it is written. It never reopens a
+  run already launched or a TEST evaluation.
+- **Written before any demo output.** This amendment was written before the cut that it moves had
+  passed, before any demo block had read a photo and before any demo output existed. The demo has
+  no result (AM-24 item 11(n): a demonstration, never a result). It moves a date by the clock; it
+  chooses no model, no setting and no result.
+
+State at amendment (as of the commit).
+- The TEST results of record (DL-249), the exploratory records up to DL-258 and the seven parity
+  records of N6 (AM-24 item 11(l), made on 2026-11-11) are known. None was made by or for the demo,
+  and none bears on this amendment.
+- AM-25 (the demo's photos) is on the remote. The demo has no output.
+- The manuscript is due on 2026-11-17, and the orchestrator freezes its numbers on 2026-11-14.
+
+1. **The demo's cut.** For AM-24 item 11(n) only, the cut of AM-24 item 12 is 12:00 +08:00 on
+   2026-11-16, by the clock, never by a result. The Reporting clause of item 11(n) reads from now
+   on: "Reporting: Chapter 4 and Appendix D of the manuscript describe and show it as a
+   demonstration only, in the build made by 12:00 +08:00 on 2026-11-16 that AM-26 item 2 admits; a
+   later version goes only to the defense and MVA." Items 11(a) to 11(m) keep the cut of 2026-11-12.
+2. **The builds.** (a) The minimal version is still made by 12:00 +08:00 on 2026-11-12 (the Stop of
+   item 11(n) stands), and the launch rule of AM-24 item 12 stands: the demo is launched by the end
+   of 2026-11-11 or goes to December. (b) A build is described or shown in the manuscript only if a
+   decision-log row, committed before the manuscript is submitted, gives the time by the clock at
+   which the build was made, the commit of its code and the sha256 of its model and of each
+   screenshot shown. (c) If no later build is admitted, the manuscript shows the last build that
+   is; if none is, the manuscript does not describe the demo.
+3. **What does not move.** No other part of the manuscript waits for the demo, and after the
+   freeze of 2026-11-14 only the demo's paragraph in Chapter 4 and its screenshots in Appendix D may
+   change for it. The demo still shows no accuracy on a photo and is never a result; no TEST image,
+   ever; its input is as AM-25 says; the freeze of 2026-11-25 stands for the defense version.
+4. **Why.** The cut of AM-24 item 12 keeps late exploratory results out of the manuscript. The demo
+   has no result, so a later cut for it changes no analysis and no claim. It lets the manuscript
+   show the interface that the group will present.
+
 ## Status of PREREGISTRATION §10 items after these amendments
 
 | Item | Status |
