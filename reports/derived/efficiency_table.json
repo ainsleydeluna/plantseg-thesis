@@ -1,0 +1,1368 @@
+{
+  "cpu_proxy": true,
+  "created_utc": "2026-11-09T11:49:42Z",
+  "format": "efficiency_table/1",
+  "host_type_fingerprint": "62eb3ab05e27b594455d23d5b489bd588b2d0b1d8b0e7bf8d556a9fc0ff1a0ef",
+  "image": {
+    "digest": "sha256:cb413304e2445e5c8ac3786f7a370f2ed05a07d11843b11687bb9eb23dc32c2b",
+    "fingerprint": {
+      "ftfy": "6.3.0",
+      "import ftfy": true,
+      "import mmseg.apis": true,
+      "imported": {
+        "PIL": [
+          "pillow"
+        ],
+        "numpy": [
+          "numpy"
+        ],
+        "torch": [
+          "torch"
+        ],
+        "torchvision": [
+          "torchvision"
+        ]
+      },
+      "mmcv": "2.1.0",
+      "mmengine": "0.10.7",
+      "mmsegmentation": "1.2.2",
+      "numpy": "1.26.4",
+      "nvidia": [],
+      "pillow": "12.3.0",
+      "python": "3.11.16",
+      "torch": "2.1.0+cu121",
+      "torchvision": "0.16.0+cu121"
+    },
+    "fvcore": "0.1.5.post20221221"
+  },
+  "inter_op": 1,
+  "measurement_role": "descriptive",
+  "on_device": false,
+  "pins": {
+    "path": "/workspace/lb1in/lb1_pins.json",
+    "sha256": "5fcf6d12f4f21077551679e1b83657d587c08d870aef25f089a9aed868d2c61a"
+  },
+  "records": [
+    {
+      "host_label": "1h4og4b0b2ojx2",
+      "host_note": "RunPod Secure Cloud CPU pod 1h4og4b0b2ojx2; Compute Optimized 4 vCPU 8 GB, EU-CZ-1, USD 0.12/h; KD image sha256:cb413304e2445e5c8ac3786f7a370f2ed05a07d11843b11687bb9eb23dc32c2b; LB-1 kit lb1_pod_20261105.sh; AMD EPYC 9B45 128-Core Processor; 4 CPUs; avx2 fma; vnni: avx512_vnni avx_vnni",
+      "path": "/workspace/lb1/session/teacher/static/efficiency_teacher_accuracy_static_20261109T105718Z.json",
+      "sha256": "ef4e2d61df29fe04227497c6b81c60838f803348d633ccbb722783d8a0e53afd"
+    },
+    {
+      "host_label": "1h4og4b0b2ojx2",
+      "host_note": "RunPod Secure Cloud CPU pod 1h4og4b0b2ojx2; Compute Optimized 4 vCPU 8 GB, EU-CZ-1, USD 0.12/h; KD image sha256:cb413304e2445e5c8ac3786f7a370f2ed05a07d11843b11687bb9eb23dc32c2b; LB-1 kit lb1_pod_20261105.sh; AMD EPYC 9B45 128-Core Processor; 4 CPUs; avx2 fma; vnni: avx512_vnni avx_vnni",
+      "path": "/workspace/lb1/session/teacher/latency/efficiency_teacher_accuracy_latency_20261109T110352Z.json",
+      "sha256": "5dd6bbd9a8b2caf2632a36526d5f2e5d6c2c4949bbbe6b4bf93702101b662962"
+    },
+    {
+      "host_label": "1h4og4b0b2ojx2",
+      "host_note": "RunPod Secure Cloud CPU pod 1h4og4b0b2ojx2; Compute Optimized 4 vCPU 8 GB, EU-CZ-1, USD 0.12/h; KD image sha256:cb413304e2445e5c8ac3786f7a370f2ed05a07d11843b11687bb9eb23dc32c2b; LB-1 kit lb1_pod_20261105.sh; AMD EPYC 9B45 128-Core Processor; 4 CPUs; avx2 fma; vnni: avx512_vnni avx_vnni",
+      "path": "/workspace/lb1/session/teacher/memory/efficiency_teacher_accuracy_memory_20261109T110712Z.json",
+      "sha256": "9391311b72faf558304e892272967612dff01f237b6d58f8217169d3d1debc4f"
+    },
+    {
+      "host_label": "1h4og4b0b2ojx2",
+      "host_note": "RunPod Secure Cloud CPU pod 1h4og4b0b2ojx2; Compute Optimized 4 vCPU 8 GB, EU-CZ-1, USD 0.12/h; KD image sha256:cb413304e2445e5c8ac3786f7a370f2ed05a07d11843b11687bb9eb23dc32c2b; LB-1 kit lb1_pod_20261105.sh; AMD EPYC 9B45 128-Core Processor; 4 CPUs; avx2 fma; vnni: avx512_vnni avx_vnni",
+      "path": "/workspace/lb1/session/E1/static/efficiency_E1_accuracy_static_20261109T110817Z.json",
+      "sha256": "6037bb94e9f0544f5004cdae1d3f2956a6ad126efd118b25561c6280a69a804b"
+    },
+    {
+      "host_label": "1h4og4b0b2ojx2",
+      "host_note": "RunPod Secure Cloud CPU pod 1h4og4b0b2ojx2; Compute Optimized 4 vCPU 8 GB, EU-CZ-1, USD 0.12/h; KD image sha256:cb413304e2445e5c8ac3786f7a370f2ed05a07d11843b11687bb9eb23dc32c2b; LB-1 kit lb1_pod_20261105.sh; AMD EPYC 9B45 128-Core Processor; 4 CPUs; avx2 fma; vnni: avx512_vnni avx_vnni",
+      "path": "/workspace/lb1/session/E1/latency/efficiency_E1_accuracy_latency_20261109T111016Z.json",
+      "sha256": "59c7a0b6fbf6db9a6b2eb23cc1a160d3f0ac49737e8f980468cb9fd0f31ded37"
+    },
+    {
+      "host_label": "1h4og4b0b2ojx2",
+      "host_note": "RunPod Secure Cloud CPU pod 1h4og4b0b2ojx2; Compute Optimized 4 vCPU 8 GB, EU-CZ-1, USD 0.12/h; KD image sha256:cb413304e2445e5c8ac3786f7a370f2ed05a07d11843b11687bb9eb23dc32c2b; LB-1 kit lb1_pod_20261105.sh; AMD EPYC 9B45 128-Core Processor; 4 CPUs; avx2 fma; vnni: avx512_vnni avx_vnni",
+      "path": "/workspace/lb1/session/E1/memory/efficiency_E1_accuracy_memory_20261109T111142Z.json",
+      "sha256": "00764e9fe904ed5e919d1fa6a0c8c532eb712618e0ff51bd17a1b9085673c9f7"
+    },
+    {
+      "host_label": "1h4og4b0b2ojx2",
+      "host_note": "RunPod Secure Cloud CPU pod 1h4og4b0b2ojx2; Compute Optimized 4 vCPU 8 GB, EU-CZ-1, USD 0.12/h; KD image sha256:cb413304e2445e5c8ac3786f7a370f2ed05a07d11843b11687bb9eb23dc32c2b; LB-1 kit lb1_pod_20261105.sh; AMD EPYC 9B45 128-Core Processor; 4 CPUs; avx2 fma; vnni: avx512_vnni avx_vnni",
+      "path": "/workspace/lb1/session/E2/static/efficiency_E2_accuracy_static_20261109T111247Z.json",
+      "sha256": "91f48ef10c8f2f78af30f0efabf74e59122019e62793c9f2c92e5f46c3770d38"
+    },
+    {
+      "host_label": "1h4og4b0b2ojx2",
+      "host_note": "RunPod Secure Cloud CPU pod 1h4og4b0b2ojx2; Compute Optimized 4 vCPU 8 GB, EU-CZ-1, USD 0.12/h; KD image sha256:cb413304e2445e5c8ac3786f7a370f2ed05a07d11843b11687bb9eb23dc32c2b; LB-1 kit lb1_pod_20261105.sh; AMD EPYC 9B45 128-Core Processor; 4 CPUs; avx2 fma; vnni: avx512_vnni avx_vnni",
+      "path": "/workspace/lb1/session/E2/latency/efficiency_E2_accuracy_latency_20261109T111448Z.json",
+      "sha256": "17008e6c8220004f4f28f40c13d78708fe823743994f8ddba0f619caa1aca01c"
+    },
+    {
+      "host_label": "1h4og4b0b2ojx2",
+      "host_note": "RunPod Secure Cloud CPU pod 1h4og4b0b2ojx2; Compute Optimized 4 vCPU 8 GB, EU-CZ-1, USD 0.12/h; KD image sha256:cb413304e2445e5c8ac3786f7a370f2ed05a07d11843b11687bb9eb23dc32c2b; LB-1 kit lb1_pod_20261105.sh; AMD EPYC 9B45 128-Core Processor; 4 CPUs; avx2 fma; vnni: avx512_vnni avx_vnni",
+      "path": "/workspace/lb1/session/E2/memory/efficiency_E2_accuracy_memory_20261109T111612Z.json",
+      "sha256": "7d0120178ffc92379cd145498765c836ccc99b6401fd71a50a6b519e4b926595"
+    },
+    {
+      "host_label": "1h4og4b0b2ojx2",
+      "host_note": "RunPod Secure Cloud CPU pod 1h4og4b0b2ojx2; Compute Optimized 4 vCPU 8 GB, EU-CZ-1, USD 0.12/h; KD image sha256:cb413304e2445e5c8ac3786f7a370f2ed05a07d11843b11687bb9eb23dc32c2b; LB-1 kit lb1_pod_20261105.sh; AMD EPYC 9B45 128-Core Processor; 4 CPUs; avx2 fma; vnni: avx512_vnni avx_vnni",
+      "path": "/workspace/lb1/session/E3/static/efficiency_E3_accuracy_static_20261109T111717Z.json",
+      "sha256": "d0735a54aa8d4f0274b3efdb92453f9dc8e1637be98da5ca6373752dcebc164d"
+    },
+    {
+      "host_label": "1h4og4b0b2ojx2",
+      "host_note": "RunPod Secure Cloud CPU pod 1h4og4b0b2ojx2; Compute Optimized 4 vCPU 8 GB, EU-CZ-1, USD 0.12/h; KD image sha256:cb413304e2445e5c8ac3786f7a370f2ed05a07d11843b11687bb9eb23dc32c2b; LB-1 kit lb1_pod_20261105.sh; AMD EPYC 9B45 128-Core Processor; 4 CPUs; avx2 fma; vnni: avx512_vnni avx_vnni",
+      "path": "/workspace/lb1/session/E3/latency/efficiency_E3_accuracy_latency_20261109T111912Z.json",
+      "sha256": "b5807811ec16885a7611519bc4d2c8db0c68cc1be3d27697f9c451302ac81be3"
+    },
+    {
+      "host_label": "1h4og4b0b2ojx2",
+      "host_note": "RunPod Secure Cloud CPU pod 1h4og4b0b2ojx2; Compute Optimized 4 vCPU 8 GB, EU-CZ-1, USD 0.12/h; KD image sha256:cb413304e2445e5c8ac3786f7a370f2ed05a07d11843b11687bb9eb23dc32c2b; LB-1 kit lb1_pod_20261105.sh; AMD EPYC 9B45 128-Core Processor; 4 CPUs; avx2 fma; vnni: avx512_vnni avx_vnni",
+      "path": "/workspace/lb1/session/E3/memory/efficiency_E3_accuracy_memory_20261109T112036Z.json",
+      "sha256": "298e13391aa795e9a0d642a3e4e73e8809b8bf63bada4c8fec42d72197515ea6"
+    },
+    {
+      "host_label": "1h4og4b0b2ojx2",
+      "host_note": "RunPod Secure Cloud CPU pod 1h4og4b0b2ojx2; Compute Optimized 4 vCPU 8 GB, EU-CZ-1, USD 0.12/h; KD image sha256:cb413304e2445e5c8ac3786f7a370f2ed05a07d11843b11687bb9eb23dc32c2b; LB-1 kit lb1_pod_20261105.sh; AMD EPYC 9B45 128-Core Processor; 4 CPUs; avx2 fma; vnni: avx512_vnni avx_vnni",
+      "path": "/workspace/lb1/session/E4/static/efficiency_E4_accuracy_static_20261109T112142Z.json",
+      "sha256": "ef05fe29094f3c9f9ce37504dcc9118dcb84012c4765dcef7a10fdca9ea66a6b"
+    },
+    {
+      "host_label": "1h4og4b0b2ojx2",
+      "host_note": "RunPod Secure Cloud CPU pod 1h4og4b0b2ojx2; Compute Optimized 4 vCPU 8 GB, EU-CZ-1, USD 0.12/h; KD image sha256:cb413304e2445e5c8ac3786f7a370f2ed05a07d11843b11687bb9eb23dc32c2b; LB-1 kit lb1_pod_20261105.sh; AMD EPYC 9B45 128-Core Processor; 4 CPUs; avx2 fma; vnni: avx512_vnni avx_vnni",
+      "path": "/workspace/lb1/session/E4/latency/efficiency_E4_x86_cpu_proxy_latency_latency_20261109T112544Z.json",
+      "sha256": "3bef3d2f0fe7ac0afb91fc328e553889beb08373129dfd1e31b3f53f1fd6a4ed"
+    },
+    {
+      "host_label": "1h4og4b0b2ojx2",
+      "host_note": "RunPod Secure Cloud CPU pod 1h4og4b0b2ojx2; Compute Optimized 4 vCPU 8 GB, EU-CZ-1, USD 0.12/h; KD image sha256:cb413304e2445e5c8ac3786f7a370f2ed05a07d11843b11687bb9eb23dc32c2b; LB-1 kit lb1_pod_20261105.sh; AMD EPYC 9B45 128-Core Processor; 4 CPUs; avx2 fma; vnni: avx512_vnni avx_vnni",
+      "path": "/workspace/lb1/session/E4/memory/efficiency_E4_x86_cpu_proxy_latency_memory_20261109T112754Z.json",
+      "sha256": "11c0010dce5e7eded6f94c6dad7d8d611c42a8985054c1f785995377c895870c"
+    },
+    {
+      "host_label": "1h4og4b0b2ojx2",
+      "host_note": "RunPod Secure Cloud CPU pod 1h4og4b0b2ojx2; Compute Optimized 4 vCPU 8 GB, EU-CZ-1, USD 0.12/h; KD image sha256:cb413304e2445e5c8ac3786f7a370f2ed05a07d11843b11687bb9eb23dc32c2b; LB-1 kit lb1_pod_20261105.sh; AMD EPYC 9B45 128-Core Processor; 4 CPUs; avx2 fma; vnni: avx512_vnni avx_vnni",
+      "path": "/workspace/lb1/session/E5/static/efficiency_E5_accuracy_static_20261109T112900Z.json",
+      "sha256": "98917c252db139b665d927159387d8e25fb9b3c40cee7a3d209dfe966c1bdb9e"
+    },
+    {
+      "host_label": "1h4og4b0b2ojx2",
+      "host_note": "RunPod Secure Cloud CPU pod 1h4og4b0b2ojx2; Compute Optimized 4 vCPU 8 GB, EU-CZ-1, USD 0.12/h; KD image sha256:cb413304e2445e5c8ac3786f7a370f2ed05a07d11843b11687bb9eb23dc32c2b; LB-1 kit lb1_pod_20261105.sh; AMD EPYC 9B45 128-Core Processor; 4 CPUs; avx2 fma; vnni: avx512_vnni avx_vnni",
+      "path": "/workspace/lb1/session/E5/latency/efficiency_E5_x86_cpu_proxy_latency_latency_20261109T113259Z.json",
+      "sha256": "163652c3508cd50566efad7ab20411395bb45c4c0c18c3544d7d9e0dfa1095ea"
+    },
+    {
+      "host_label": "1h4og4b0b2ojx2",
+      "host_note": "RunPod Secure Cloud CPU pod 1h4og4b0b2ojx2; Compute Optimized 4 vCPU 8 GB, EU-CZ-1, USD 0.12/h; KD image sha256:cb413304e2445e5c8ac3786f7a370f2ed05a07d11843b11687bb9eb23dc32c2b; LB-1 kit lb1_pod_20261105.sh; AMD EPYC 9B45 128-Core Processor; 4 CPUs; avx2 fma; vnni: avx512_vnni avx_vnni",
+      "path": "/workspace/lb1/session/E5/memory/efficiency_E5_x86_cpu_proxy_latency_memory_20261109T113509Z.json",
+      "sha256": "3172f2bcc18a3beed5910a7d57078afb131d29378bdc36ff041cd7cdb66da23c"
+    },
+    {
+      "host_label": "1h4og4b0b2ojx2",
+      "host_note": "RunPod Secure Cloud CPU pod 1h4og4b0b2ojx2; Compute Optimized 4 vCPU 8 GB, EU-CZ-1, USD 0.12/h; KD image sha256:cb413304e2445e5c8ac3786f7a370f2ed05a07d11843b11687bb9eb23dc32c2b; LB-1 kit lb1_pod_20261105.sh; AMD EPYC 9B45 128-Core Processor; 4 CPUs; avx2 fma; vnni: avx512_vnni avx_vnni",
+      "path": "/workspace/lb1/session/E6/static/efficiency_E6_accuracy_static_20261109T113614Z.json",
+      "sha256": "107dc3e581735e244ec8b73674cf811ea7fe8c5338ee4eaf66f0d7f7df00f84a"
+    },
+    {
+      "host_label": "1h4og4b0b2ojx2",
+      "host_note": "RunPod Secure Cloud CPU pod 1h4og4b0b2ojx2; Compute Optimized 4 vCPU 8 GB, EU-CZ-1, USD 0.12/h; KD image sha256:cb413304e2445e5c8ac3786f7a370f2ed05a07d11843b11687bb9eb23dc32c2b; LB-1 kit lb1_pod_20261105.sh; AMD EPYC 9B45 128-Core Processor; 4 CPUs; avx2 fma; vnni: avx512_vnni avx_vnni",
+      "path": "/workspace/lb1/session/E6/latency/efficiency_E6_x86_cpu_proxy_latency_latency_20261109T114014Z.json",
+      "sha256": "e5df5d29534a6eec23f221f81fa09e72961a870a666f9c2a7e3a9de832737c1c"
+    },
+    {
+      "host_label": "1h4og4b0b2ojx2",
+      "host_note": "RunPod Secure Cloud CPU pod 1h4og4b0b2ojx2; Compute Optimized 4 vCPU 8 GB, EU-CZ-1, USD 0.12/h; KD image sha256:cb413304e2445e5c8ac3786f7a370f2ed05a07d11843b11687bb9eb23dc32c2b; LB-1 kit lb1_pod_20261105.sh; AMD EPYC 9B45 128-Core Processor; 4 CPUs; avx2 fma; vnni: avx512_vnni avx_vnni",
+      "path": "/workspace/lb1/session/E6/memory/efficiency_E6_x86_cpu_proxy_latency_memory_20261109T114225Z.json",
+      "sha256": "2a4dc642728636589c565212327804546cf3f04c9211407ff83de07b4dd1a007"
+    },
+    {
+      "host_label": "1h4og4b0b2ojx2",
+      "host_note": "RunPod Secure Cloud CPU pod 1h4og4b0b2ojx2; Compute Optimized 4 vCPU 8 GB, EU-CZ-1, USD 0.12/h; KD image sha256:cb413304e2445e5c8ac3786f7a370f2ed05a07d11843b11687bb9eb23dc32c2b; LB-1 kit lb1_pod_20261105.sh; AMD EPYC 9B45 128-Core Processor; 4 CPUs; avx2 fma; vnni: avx512_vnni avx_vnni",
+      "path": "/workspace/lb1/session/E7/static/efficiency_E7_accuracy_static_20261109T114330Z.json",
+      "sha256": "71400ac1a55c072d38c520b95188f2b4f871f6d816cb4b8c5d1f5406a920dbdf"
+    },
+    {
+      "host_label": "1h4og4b0b2ojx2",
+      "host_note": "RunPod Secure Cloud CPU pod 1h4og4b0b2ojx2; Compute Optimized 4 vCPU 8 GB, EU-CZ-1, USD 0.12/h; KD image sha256:cb413304e2445e5c8ac3786f7a370f2ed05a07d11843b11687bb9eb23dc32c2b; LB-1 kit lb1_pod_20261105.sh; AMD EPYC 9B45 128-Core Processor; 4 CPUs; avx2 fma; vnni: avx512_vnni avx_vnni",
+      "path": "/workspace/lb1/session/E7/latency/efficiency_E7_x86_cpu_proxy_latency_latency_20261109T114730Z.json",
+      "sha256": "f1c3519d0a4abf3c04311e07aafaf3c2f79c9f663327f5f1f99386a656774859"
+    },
+    {
+      "host_label": "1h4og4b0b2ojx2",
+      "host_note": "RunPod Secure Cloud CPU pod 1h4og4b0b2ojx2; Compute Optimized 4 vCPU 8 GB, EU-CZ-1, USD 0.12/h; KD image sha256:cb413304e2445e5c8ac3786f7a370f2ed05a07d11843b11687bb9eb23dc32c2b; LB-1 kit lb1_pod_20261105.sh; AMD EPYC 9B45 128-Core Processor; 4 CPUs; avx2 fma; vnni: avx512_vnni avx_vnni",
+      "path": "/workspace/lb1/session/E7/memory/efficiency_E7_x86_cpu_proxy_latency_memory_20261109T114941Z.json",
+      "sha256": "becd8b26dd5a2c5a30e01baa3876b13025d90a3ee160ccc68e73617fa1cf9c4a"
+    }
+  ],
+  "repo_commit": "dc40dd2eb5b8be01882f53c37b7f6a3ea9365b71",
+  "rows": [
+    {
+      "artifact_role_latency_memory": "accuracy",
+      "flops": {
+        "record": "/workspace/lb1/session/teacher/static/efficiency_teacher_accuracy_static_20261109T105718Z.json",
+        "record_sha256": "ef4e2d61df29fe04227497c6b81c60838f803348d633ccbb722783d8a0e53afd",
+        "value": {
+          "convention": "fvcore counts one fused multiply-add as one operation, so its total IS the MAC count; the thesis reports FLOPs = 2 x MACs",
+          "flops_2x_mac": 65676115968,
+          "input_shape": [
+            1,
+            3,
+            512,
+            512
+          ],
+          "macs": 32838057984,
+          "profiled_precision": "fp32",
+          "profiler": "fvcore",
+          "profiler_version": "0.1.5.post20221221",
+          "unsupported_flop_ops": {
+            "aten::add": 142,
+            "aten::clamp_min": 1,
+            "aten::clone": 42,
+            "aten::div": 16,
+            "aten::expand_as": 1,
+            "aten::feature_dropout": 1,
+            "aten::gelu": 43,
+            "aten::linalg_vector_norm": 1,
+            "aten::mul": 82,
+            "aten::rand": 1,
+            "aten::softmax": 1
+          }
+        }
+      },
+      "footprint": {
+        "record": "/workspace/lb1/session/teacher/static/efficiency_teacher_accuracy_static_20261109T105718Z.json",
+        "record_sha256": "ef4e2d61df29fe04227497c6b81c60838f803348d633ccbb722783d8a0e53afd",
+        "value": {
+          "byte_rule": {
+            "bias_scale_zero_point": 4,
+            "fp32_weight": 4,
+            "int8_weight": 1
+          },
+          "compression_vs_fp32": 1.0,
+          "footprint_source": "model",
+          "fp32_bytes": 109935872,
+          "fp32_equivalent_bytes": 110475472,
+          "fp32_weight_elements": 27483968,
+          "fully_quantized": false,
+          "int8_bytes": 0,
+          "int8_weight_elements": 0,
+          "metadata_bytes": 539600,
+          "metadata_elements": 134900,
+          "mixed_precision_remains": true,
+          "theoretical_weight_bytes": 110475472
+        }
+      },
+      "footprint_source": {
+        "record": "/workspace/lb1/session/teacher/static/efficiency_teacher_accuracy_static_20261109T105718Z.json",
+        "record_sha256": "ef4e2d61df29fe04227497c6b81c60838f803348d633ccbb722783d8a0e53afd",
+        "value": "model"
+      },
+      "latency": {
+        "record": "/workspace/lb1/session/teacher/latency/efficiency_teacher_accuracy_latency_20261109T110352Z.json",
+        "record_sha256": "5dd6bbd9a8b2caf2632a36526d5f2e5d6c2c4949bbbe6b4bf93702101b662962",
+        "value": {
+          "intra_op_observed": 1,
+          "latency_iqr_ms": 13.225003436673433,
+          "latency_median_ms": 1020.8910640794784,
+          "latency_p95_ms": 1048.7429826986045,
+          "latency_q1_ms": 1015.6895983382128,
+          "latency_q3_ms": 1028.9146017748863,
+          "latency_samples": 100,
+          "protocol": {
+            "forwards_executed": 320,
+            "measured": 100,
+            "num_threads": 1,
+            "timer": "torch.utils.benchmark.Timer.timeit(1)",
+            "untimed_executions_per_observation": 2,
+            "warmup": 20
+          }
+        }
+      },
+      "parameters": {
+        "record": "/workspace/lb1/session/teacher/static/efficiency_teacher_accuracy_static_20261109T105718Z.json",
+        "record_sha256": "ef4e2d61df29fe04227497c6b81c60838f803348d633ccbb722783d8a0e53afd",
+        "value": {
+          "counted_from": "model",
+          "total": 27618868,
+          "trainable": 0
+        }
+      },
+      "peak_memory": {
+        "record": "/workspace/lb1/session/teacher/memory/efficiency_teacher_accuracy_memory_20261109T110712Z.json",
+        "record_sha256": "9391311b72faf558304e892272967612dff01f237b6d58f8217169d3d1debc4f",
+        "value": {
+          "forwards": 120,
+          "negative_delta": false,
+          "peak_rss_delta_bytes": 154738688,
+          "ru_maxrss_consistent": true,
+          "slack_bytes": 1048576
+        }
+      },
+      "serialized_size": {
+        "record": "/workspace/lb1/session/teacher/static/efficiency_teacher_accuracy_static_20261109T105718Z.json",
+        "record_sha256": "ef4e2d61df29fe04227497c6b81c60838f803348d633ccbb722783d8a0e53afd",
+        "value": {
+          "model_only_companion": {
+            "checkpoint_holds_optimizer_state": true,
+            "checkpoint_top_level_keys": [
+              "message_hub",
+              "meta",
+              "optimizer",
+              "param_schedulers",
+              "state_dict"
+            ],
+            "deterministic_for": "one torch build",
+            "model_only_serialized_bytes": 110882246,
+            "model_only_serialized_mib": 105.74555015563965,
+            "role": "labelled companion: the model state alone, torch.save to memory; the serialized size of record is the checkpoint file (serialized_artifact_bytes)",
+            "source_bytes": 335949080,
+            "source_sha256": "8c0e649a1457782c99e02a3c81867c3b5aa55d924b697cc859455e6022179c4e",
+            "state_key": "state_dict"
+          },
+          "path": "/runs/teacher_official_20260925T122252Z/iter_24000.pth",
+          "serialized_artifact_bytes": 335949080,
+          "serialized_artifact_mib": 320.3860092163086,
+          "sha256": "8c0e649a1457782c99e02a3c81867c3b5aa55d924b697cc859455e6022179c4e",
+          "size_artifact_role": "accuracy",
+          "size_convention": "bytes canonical; MiB = bytes / 1024^2",
+          "size_measured_from_latency_copy": false
+        }
+      },
+      "stage": "teacher"
+    },
+    {
+      "artifact_role_latency_memory": "accuracy",
+      "flops": {
+        "record": "/workspace/lb1/session/E1/static/efficiency_E1_accuracy_static_20261109T110817Z.json",
+        "record_sha256": "6037bb94e9f0544f5004cdae1d3f2956a6ad126efd118b25561c6280a69a804b",
+        "value": {
+          "convention": "fvcore counts one fused multiply-add as one operation, so its total IS the MAC count; the thesis reports FLOPs = 2 x MACs",
+          "flops_2x_mac": 4088758016,
+          "input_shape": [
+            1,
+            3,
+            512,
+            512
+          ],
+          "macs": 2044379008,
+          "profiled_precision": "fp32",
+          "profiler": "fvcore",
+          "profiler_version": "0.1.5.post20221221",
+          "unsupported_flop_ops": {
+            "aten::add": 11,
+            "aten::hardsigmoid": 8,
+            "aten::hardswish_": 19,
+            "aten::mul": 9,
+            "aten::sigmoid": 1
+          }
+        }
+      },
+      "footprint": {
+        "record": "/workspace/lb1/session/E1/static/efficiency_E1_accuracy_static_20261109T110817Z.json",
+        "record_sha256": "6037bb94e9f0544f5004cdae1d3f2956a6ad126efd118b25561c6280a69a804b",
+        "value": {
+          "byte_rule": {
+            "bias_scale_zero_point": 4,
+            "fp32_weight": 4,
+            "int8_weight": 1
+          },
+          "compression_vs_fp32": 1.0,
+          "footprint_source": "model",
+          "fp32_bytes": 11666496,
+          "fp32_equivalent_bytes": 11734752,
+          "fp32_weight_elements": 2916624,
+          "fully_quantized": false,
+          "int8_bytes": 0,
+          "int8_weight_elements": 0,
+          "metadata_bytes": 68256,
+          "metadata_elements": 17064,
+          "mixed_precision_remains": true,
+          "theoretical_weight_bytes": 11734752
+        }
+      },
+      "footprint_source": {
+        "record": "/workspace/lb1/session/E1/static/efficiency_E1_accuracy_static_20261109T110817Z.json",
+        "record_sha256": "6037bb94e9f0544f5004cdae1d3f2956a6ad126efd118b25561c6280a69a804b",
+        "value": "model"
+      },
+      "latency": {
+        "record": "/workspace/lb1/session/E1/latency/efficiency_E1_accuracy_latency_20261109T111016Z.json",
+        "record_sha256": "59c7a0b6fbf6db9a6b2eb23cc1a160d3f0ac49737e8f980468cb9fd0f31ded37",
+        "value": {
+          "intra_op_observed": 1,
+          "latency_iqr_ms": 6.0169793432578444,
+          "latency_median_ms": 167.6500829635188,
+          "latency_p95_ms": 175.47253756783903,
+          "latency_q1_ms": 164.46603287477046,
+          "latency_q3_ms": 170.4830122180283,
+          "latency_samples": 100,
+          "protocol": {
+            "forwards_executed": 320,
+            "measured": 100,
+            "num_threads": 1,
+            "timer": "torch.utils.benchmark.Timer.timeit(1)",
+            "untimed_executions_per_observation": 2,
+            "warmup": 20
+          }
+        }
+      },
+      "parameters": {
+        "record": "/workspace/lb1/session/E1/static/efficiency_E1_accuracy_static_20261109T110817Z.json",
+        "record_sha256": "6037bb94e9f0544f5004cdae1d3f2956a6ad126efd118b25561c6280a69a804b",
+        "value": {
+          "counted_from": "model",
+          "total": 2933688,
+          "trainable": 2933688
+        }
+      },
+      "peak_memory": {
+        "record": "/workspace/lb1/session/E1/memory/efficiency_E1_accuracy_memory_20261109T111142Z.json",
+        "record_sha256": "00764e9fe904ed5e919d1fa6a0c8c532eb712618e0ff51bd17a1b9085673c9f7",
+        "value": {
+          "forwards": 120,
+          "negative_delta": false,
+          "peak_rss_delta_bytes": 176013312,
+          "ru_maxrss_consistent": true,
+          "slack_bytes": 1048576
+        }
+      },
+      "serialized_size": {
+        "record": "/workspace/lb1/session/E1/static/efficiency_E1_accuracy_static_20261109T110817Z.json",
+        "record_sha256": "6037bb94e9f0544f5004cdae1d3f2956a6ad126efd118b25561c6280a69a804b",
+        "value": {
+          "model_only_companion": {
+            "checkpoint_holds_optimizer_state": true,
+            "checkpoint_top_level_keys": [
+              "best_val_miou_all_class",
+              "iter",
+              "model_state_dict",
+              "num_classes",
+              "optimizer_state_dict",
+              "scheduler",
+              "scheduler_state_dict"
+            ],
+            "deterministic_for": "one torch build",
+            "model_only_serialized_bytes": 11933182,
+            "model_only_serialized_mib": 11.380369186401367,
+            "role": "labelled companion: the model state alone, torch.save to memory; the serialized size of record is the checkpoint file (serialized_artifact_bytes)",
+            "source_bytes": 23734564,
+            "source_sha256": "cf0879f7007dfacbd0d510085ff28a4b47ee845ddb8fd599611d74109e1d6a03",
+            "state_key": "model_state_dict"
+          },
+          "path": "/runs/e1_seed42/e1_student_best_iter80000.pt",
+          "serialized_artifact_bytes": 23734564,
+          "serialized_artifact_mib": 22.63504409790039,
+          "sha256": "cf0879f7007dfacbd0d510085ff28a4b47ee845ddb8fd599611d74109e1d6a03",
+          "size_artifact_role": "accuracy",
+          "size_convention": "bytes canonical; MiB = bytes / 1024^2",
+          "size_measured_from_latency_copy": false
+        }
+      },
+      "stage": "E1"
+    },
+    {
+      "artifact_role_latency_memory": "accuracy",
+      "flops": {
+        "record": "/workspace/lb1/session/E2/static/efficiency_E2_accuracy_static_20261109T111247Z.json",
+        "record_sha256": "91f48ef10c8f2f78af30f0efabf74e59122019e62793c9f2c92e5f46c3770d38",
+        "value": {
+          "convention": "fvcore counts one fused multiply-add as one operation, so its total IS the MAC count; the thesis reports FLOPs = 2 x MACs",
+          "flops_2x_mac": 4088758016,
+          "input_shape": [
+            1,
+            3,
+            512,
+            512
+          ],
+          "macs": 2044379008,
+          "profiled_precision": "fp32",
+          "profiler": "fvcore",
+          "profiler_version": "0.1.5.post20221221",
+          "unsupported_flop_ops": {
+            "aten::add": 11,
+            "aten::hardsigmoid": 8,
+            "aten::hardswish_": 19,
+            "aten::mul": 9,
+            "aten::sigmoid": 1
+          }
+        }
+      },
+      "footprint": {
+        "record": "/workspace/lb1/session/E2/static/efficiency_E2_accuracy_static_20261109T111247Z.json",
+        "record_sha256": "91f48ef10c8f2f78af30f0efabf74e59122019e62793c9f2c92e5f46c3770d38",
+        "value": {
+          "byte_rule": {
+            "bias_scale_zero_point": 4,
+            "fp32_weight": 4,
+            "int8_weight": 1
+          },
+          "compression_vs_fp32": 1.0,
+          "footprint_source": "model",
+          "fp32_bytes": 11666496,
+          "fp32_equivalent_bytes": 11734752,
+          "fp32_weight_elements": 2916624,
+          "fully_quantized": false,
+          "int8_bytes": 0,
+          "int8_weight_elements": 0,
+          "metadata_bytes": 68256,
+          "metadata_elements": 17064,
+          "mixed_precision_remains": true,
+          "theoretical_weight_bytes": 11734752
+        }
+      },
+      "footprint_source": {
+        "record": "/workspace/lb1/session/E2/static/efficiency_E2_accuracy_static_20261109T111247Z.json",
+        "record_sha256": "91f48ef10c8f2f78af30f0efabf74e59122019e62793c9f2c92e5f46c3770d38",
+        "value": "model"
+      },
+      "latency": {
+        "record": "/workspace/lb1/session/E2/latency/efficiency_E2_accuracy_latency_20261109T111448Z.json",
+        "record_sha256": "17008e6c8220004f4f28f40c13d78708fe823743994f8ddba0f619caa1aca01c",
+        "value": {
+          "intra_op_observed": 1,
+          "latency_iqr_ms": 4.413665388710797,
+          "latency_median_ms": 176.78913846611977,
+          "latency_p95_ms": 182.44669497944415,
+          "latency_q1_ms": 175.11150770587847,
+          "latency_q3_ms": 179.52517309458926,
+          "latency_samples": 100,
+          "protocol": {
+            "forwards_executed": 320,
+            "measured": 100,
+            "num_threads": 1,
+            "timer": "torch.utils.benchmark.Timer.timeit(1)",
+            "untimed_executions_per_observation": 2,
+            "warmup": 20
+          }
+        }
+      },
+      "parameters": {
+        "record": "/workspace/lb1/session/E2/static/efficiency_E2_accuracy_static_20261109T111247Z.json",
+        "record_sha256": "91f48ef10c8f2f78af30f0efabf74e59122019e62793c9f2c92e5f46c3770d38",
+        "value": {
+          "counted_from": "model",
+          "total": 2933688,
+          "trainable": 2933688
+        }
+      },
+      "peak_memory": {
+        "record": "/workspace/lb1/session/E2/memory/efficiency_E2_accuracy_memory_20261109T111612Z.json",
+        "record_sha256": "7d0120178ffc92379cd145498765c836ccc99b6401fd71a50a6b519e4b926595",
+        "value": {
+          "forwards": 120,
+          "negative_delta": false,
+          "peak_rss_delta_bytes": 220987392,
+          "ru_maxrss_consistent": true,
+          "slack_bytes": 1048576
+        }
+      },
+      "serialized_size": {
+        "record": "/workspace/lb1/session/E2/static/efficiency_E2_accuracy_static_20261109T111247Z.json",
+        "record_sha256": "91f48ef10c8f2f78af30f0efabf74e59122019e62793c9f2c92e5f46c3770d38",
+        "value": {
+          "model_only_companion": {
+            "checkpoint_holds_optimizer_state": true,
+            "checkpoint_top_level_keys": [
+              "best_val_miou_all_class",
+              "iter",
+              "lambda_logit",
+              "logit_kd_semantics",
+              "logit_kd_semantics_declared",
+              "logit_kd_semantics_override_used",
+              "model_state_dict",
+              "num_classes",
+              "optimizer_state_dict",
+              "scheduler",
+              "scheduler_state_dict",
+              "stage",
+              "teacher_provenance",
+              "terms"
+            ],
+            "deterministic_for": "one torch build",
+            "model_only_serialized_bytes": 11933182,
+            "model_only_serialized_mib": 11.380369186401367,
+            "role": "labelled companion: the model state alone, torch.save to memory; the serialized size of record is the checkpoint file (serialized_artifact_bytes)",
+            "source_bytes": 23736548,
+            "source_sha256": "73dbc32dfc988124a9b81df24abd97c526f927ac2b094996411d174e89d32f06",
+            "state_key": "model_state_dict"
+          },
+          "path": "/runs/e2_s42_lambda0.5_80k_a1/e2_student_best_iter64000.pt",
+          "serialized_artifact_bytes": 23736548,
+          "serialized_artifact_mib": 22.63693618774414,
+          "sha256": "73dbc32dfc988124a9b81df24abd97c526f927ac2b094996411d174e89d32f06",
+          "size_artifact_role": "accuracy",
+          "size_convention": "bytes canonical; MiB = bytes / 1024^2",
+          "size_measured_from_latency_copy": false
+        }
+      },
+      "stage": "E2"
+    },
+    {
+      "artifact_role_latency_memory": "accuracy",
+      "flops": {
+        "record": "/workspace/lb1/session/E3/static/efficiency_E3_accuracy_static_20261109T111717Z.json",
+        "record_sha256": "d0735a54aa8d4f0274b3efdb92453f9dc8e1637be98da5ca6373752dcebc164d",
+        "value": {
+          "convention": "fvcore counts one fused multiply-add as one operation, so its total IS the MAC count; the thesis reports FLOPs = 2 x MACs",
+          "flops_2x_mac": 4088758016,
+          "input_shape": [
+            1,
+            3,
+            512,
+            512
+          ],
+          "macs": 2044379008,
+          "profiled_precision": "fp32",
+          "profiler": "fvcore",
+          "profiler_version": "0.1.5.post20221221",
+          "unsupported_flop_ops": {
+            "aten::add": 11,
+            "aten::hardsigmoid": 8,
+            "aten::hardswish_": 19,
+            "aten::mul": 9,
+            "aten::sigmoid": 1
+          }
+        }
+      },
+      "footprint": {
+        "record": "/workspace/lb1/session/E3/static/efficiency_E3_accuracy_static_20261109T111717Z.json",
+        "record_sha256": "d0735a54aa8d4f0274b3efdb92453f9dc8e1637be98da5ca6373752dcebc164d",
+        "value": {
+          "byte_rule": {
+            "bias_scale_zero_point": 4,
+            "fp32_weight": 4,
+            "int8_weight": 1
+          },
+          "compression_vs_fp32": 1.0,
+          "footprint_source": "model",
+          "fp32_bytes": 11666496,
+          "fp32_equivalent_bytes": 11734752,
+          "fp32_weight_elements": 2916624,
+          "fully_quantized": false,
+          "int8_bytes": 0,
+          "int8_weight_elements": 0,
+          "metadata_bytes": 68256,
+          "metadata_elements": 17064,
+          "mixed_precision_remains": true,
+          "theoretical_weight_bytes": 11734752
+        }
+      },
+      "footprint_source": {
+        "record": "/workspace/lb1/session/E3/static/efficiency_E3_accuracy_static_20261109T111717Z.json",
+        "record_sha256": "d0735a54aa8d4f0274b3efdb92453f9dc8e1637be98da5ca6373752dcebc164d",
+        "value": "model"
+      },
+      "latency": {
+        "record": "/workspace/lb1/session/E3/latency/efficiency_E3_accuracy_latency_20261109T111912Z.json",
+        "record_sha256": "b5807811ec16885a7611519bc4d2c8db0c68cc1be3d27697f9c451302ac81be3",
+        "value": {
+          "intra_op_observed": 1,
+          "latency_iqr_ms": 1.010726555250585,
+          "latency_median_ms": 158.46375899855047,
+          "latency_p95_ms": 160.77247859211639,
+          "latency_q1_ms": 158.1295754876919,
+          "latency_q3_ms": 159.1403020429425,
+          "latency_samples": 100,
+          "protocol": {
+            "forwards_executed": 320,
+            "measured": 100,
+            "num_threads": 1,
+            "timer": "torch.utils.benchmark.Timer.timeit(1)",
+            "untimed_executions_per_observation": 2,
+            "warmup": 20
+          }
+        }
+      },
+      "parameters": {
+        "record": "/workspace/lb1/session/E3/static/efficiency_E3_accuracy_static_20261109T111717Z.json",
+        "record_sha256": "d0735a54aa8d4f0274b3efdb92453f9dc8e1637be98da5ca6373752dcebc164d",
+        "value": {
+          "counted_from": "model",
+          "total": 2933688,
+          "trainable": 2933688
+        }
+      },
+      "peak_memory": {
+        "record": "/workspace/lb1/session/E3/memory/efficiency_E3_accuracy_memory_20261109T112036Z.json",
+        "record_sha256": "298e13391aa795e9a0d642a3e4e73e8809b8bf63bada4c8fec42d72197515ea6",
+        "value": {
+          "forwards": 120,
+          "negative_delta": false,
+          "peak_rss_delta_bytes": 167997440,
+          "ru_maxrss_consistent": true,
+          "slack_bytes": 1048576
+        }
+      },
+      "serialized_size": {
+        "record": "/workspace/lb1/session/E3/static/efficiency_E3_accuracy_static_20261109T111717Z.json",
+        "record_sha256": "d0735a54aa8d4f0274b3efdb92453f9dc8e1637be98da5ca6373752dcebc164d",
+        "value": {
+          "model_only_companion": {
+            "checkpoint_holds_optimizer_state": true,
+            "checkpoint_top_level_keys": [
+              "alpha_cwd",
+              "best_val_miou_all_class",
+              "beta_cwd",
+              "iter",
+              "lambda_logit",
+              "logit_kd_semantics",
+              "logit_kd_semantics_declared",
+              "logit_kd_semantics_override_used",
+              "model_state_dict",
+              "num_classes",
+              "optimizer_state_dict",
+              "scheduler",
+              "scheduler_state_dict",
+              "stage",
+              "teacher_provenance",
+              "terms"
+            ],
+            "deterministic_for": "one torch build",
+            "model_only_serialized_bytes": 11933182,
+            "model_only_serialized_mib": 11.380369186401367,
+            "role": "labelled companion: the model state alone, torch.save to memory; the serialized size of record is the checkpoint file (serialized_artifact_bytes)",
+            "source_bytes": 23736612,
+            "source_sha256": "4baa5bad682995091b66c67fb2d2ce467b3f139e02cc5a5cc62c243fe00f1a0d",
+            "state_key": "model_state_dict"
+          },
+          "path": "/runs/e3_s42_lambda0.5_alpha25_80k_a1/e3_student_best_iter76000.pt",
+          "serialized_artifact_bytes": 23736612,
+          "serialized_artifact_mib": 22.63699722290039,
+          "sha256": "4baa5bad682995091b66c67fb2d2ce467b3f139e02cc5a5cc62c243fe00f1a0d",
+          "size_artifact_role": "accuracy",
+          "size_convention": "bytes canonical; MiB = bytes / 1024^2",
+          "size_measured_from_latency_copy": false
+        }
+      },
+      "stage": "E3"
+    },
+    {
+      "artifact_role_latency_memory": "x86_cpu_proxy_latency",
+      "flops": {
+        "record": "/workspace/lb1/session/E4/static/efficiency_E4_accuracy_static_20261109T112142Z.json",
+        "record_sha256": "ef05fe29094f3c9f9ce37504dcc9118dcb84012c4765dcef7a10fdca9ea66a6b",
+        "value": {
+          "convention": "fvcore counts one fused multiply-add as one operation, so its total IS the MAC count; the thesis reports FLOPs = 2 x MACs",
+          "flops_2x_mac": 4088758016,
+          "input_shape": [
+            1,
+            3,
+            512,
+            512
+          ],
+          "macs": 2044379008,
+          "profiled_precision": "fp32",
+          "profiler": "fvcore",
+          "profiler_version": "0.1.5.post20221221",
+          "unsupported_flop_ops": {
+            "aten::add": 11,
+            "aten::hardsigmoid": 8,
+            "aten::hardswish_": 19,
+            "aten::mul": 9,
+            "aten::sigmoid": 1
+          }
+        }
+      },
+      "footprint": {
+        "record": "/workspace/lb1/session/E4/static/efficiency_E4_accuracy_static_20261109T112142Z.json",
+        "record_sha256": "ef05fe29094f3c9f9ce37504dcc9118dcb84012c4765dcef7a10fdca9ea66a6b",
+        "value": {
+          "artifact_count": {
+            "byte_rule": {
+              "bias_scale_zero_point": 4,
+              "fp32_weight": 4,
+              "int8_weight": 1
+            },
+            "compression_vs_fp32": 3.8024679924987845,
+            "counted_from": "artifact_packed_params",
+            "fp32_bytes": 0,
+            "fp32_equivalent_bytes": 11825280,
+            "fp32_weight_elements": 0,
+            "fully_quantized": true,
+            "int8_bytes": 2905128,
+            "int8_weight_elements": 2905128,
+            "metadata_bytes": 204768,
+            "metadata_elements": 51192,
+            "mixed_precision_remains": false,
+            "packed_params_unpacked": 65,
+            "packed_params_unreadable": [],
+            "theoretical_weight_bytes": 3109896
+          },
+          "byte_rule": {
+            "bias_scale_zero_point": 4,
+            "fp32_weight": 4,
+            "int8_weight": 1
+          },
+          "companion_count": {
+            "byte_rule": {
+              "bias_scale_zero_point": 4,
+              "fp32_weight": 4,
+              "int8_weight": 1
+            },
+            "compression_vs_fp32": 3.8024679924987845,
+            "counted_from": "state_dict_companion_eager_rebuild",
+            "fp32_bytes": 0,
+            "fp32_equivalent_bytes": 11825280,
+            "fp32_weight_elements": 0,
+            "fully_quantized": true,
+            "int8_bytes": 2905128,
+            "int8_weight_elements": 2905128,
+            "metadata_bytes": 204768,
+            "metadata_elements": 51192,
+            "mixed_precision_remains": false,
+            "path": "/workspace/lb1in/runs/e4_s42_cal42_a1/e4_int8_student.pt",
+            "sha256": "d777d60d377030ac3f298c5a4d4d43854eb0c2810f438b78d663f75a0065c858",
+            "theoretical_weight_bytes": 3109896
+          },
+          "compression_vs_fp32": 3.8024679924987845,
+          "counted_from": "artifact_packed_params",
+          "footprint_source": "artifact",
+          "fp32_bytes": 0,
+          "fp32_equivalent_bytes": 11825280,
+          "fp32_weight_elements": 0,
+          "fully_quantized": true,
+          "int8_bytes": 2905128,
+          "int8_weight_elements": 2905128,
+          "metadata_bytes": 204768,
+          "metadata_elements": 51192,
+          "mixed_precision_remains": false,
+          "packed_params_unpacked": 65,
+          "packed_params_unreadable": [],
+          "theoretical_weight_bytes": 3109896
+        }
+      },
+      "footprint_source": {
+        "record": "/workspace/lb1/session/E4/static/efficiency_E4_accuracy_static_20261109T112142Z.json",
+        "record_sha256": "ef05fe29094f3c9f9ce37504dcc9118dcb84012c4765dcef7a10fdca9ea66a6b",
+        "value": "artifact"
+      },
+      "latency": {
+        "record": "/workspace/lb1/session/E4/latency/efficiency_E4_x86_cpu_proxy_latency_latency_20261109T112544Z.json",
+        "record_sha256": "3bef3d2f0fe7ac0afb91fc328e553889beb08373129dfd1e31b3f53f1fd6a4ed",
+        "value": {
+          "intra_op_observed": 1,
+          "latency_iqr_ms": 5.487299698870629,
+          "latency_median_ms": 551.8376220716164,
+          "latency_p95_ms": 564.6722605102696,
+          "latency_q1_ms": 549.6964430785738,
+          "latency_q3_ms": 555.1837427774444,
+          "latency_samples": 100,
+          "protocol": {
+            "forwards_executed": 320,
+            "measured": 100,
+            "num_threads": 1,
+            "timer": "torch.utils.benchmark.Timer.timeit(1)",
+            "untimed_executions_per_observation": 2,
+            "warmup": 20
+          }
+        }
+      },
+      "parameters": {
+        "record": "/workspace/lb1/session/E4/static/efficiency_E4_accuracy_static_20261109T112142Z.json",
+        "record_sha256": "ef05fe29094f3c9f9ce37504dcc9118dcb84012c4765dcef7a10fdca9ea66a6b",
+        "value": {
+          "counted_from": "fp32_reference_architecture",
+          "total": 2933688,
+          "trainable": 2933688
+        }
+      },
+      "peak_memory": {
+        "record": "/workspace/lb1/session/E4/memory/efficiency_E4_x86_cpu_proxy_latency_memory_20261109T112754Z.json",
+        "record_sha256": "11c0010dce5e7eded6f94c6dad7d8d611c42a8985054c1f785995377c895870c",
+        "value": {
+          "forwards": 120,
+          "negative_delta": false,
+          "peak_rss_delta_bytes": 147869696,
+          "ru_maxrss_consistent": true,
+          "slack_bytes": 1048576
+        }
+      },
+      "serialized_size": {
+        "record": "/workspace/lb1/session/E4/static/efficiency_E4_accuracy_static_20261109T112142Z.json",
+        "record_sha256": "ef05fe29094f3c9f9ce37504dcc9118dcb84012c4765dcef7a10fdca9ea66a6b",
+        "value": {
+          "path": "/workspace/lb1in/runs/e4_s42_cal42_a1/e4_int8_qnnpack.torchscript.pt",
+          "serialized_artifact_bytes": 3812805,
+          "serialized_artifact_mib": 3.636174201965332,
+          "sha256": "9ca06a3d570824766dca9b7c668d1d3422f60891fa7c2de6f41daea498cd41ed",
+          "size_artifact_role": "accuracy",
+          "size_convention": "bytes canonical; MiB = bytes / 1024^2",
+          "size_measured_from_latency_copy": false
+        }
+      },
+      "stage": "E4"
+    },
+    {
+      "artifact_role_latency_memory": "x86_cpu_proxy_latency",
+      "flops": {
+        "record": "/workspace/lb1/session/E5/static/efficiency_E5_accuracy_static_20261109T112900Z.json",
+        "record_sha256": "98917c252db139b665d927159387d8e25fb9b3c40cee7a3d209dfe966c1bdb9e",
+        "value": {
+          "convention": "fvcore counts one fused multiply-add as one operation, so its total IS the MAC count; the thesis reports FLOPs = 2 x MACs",
+          "flops_2x_mac": 4088758016,
+          "input_shape": [
+            1,
+            3,
+            512,
+            512
+          ],
+          "macs": 2044379008,
+          "profiled_precision": "fp32",
+          "profiler": "fvcore",
+          "profiler_version": "0.1.5.post20221221",
+          "unsupported_flop_ops": {
+            "aten::add": 11,
+            "aten::hardsigmoid": 8,
+            "aten::hardswish_": 19,
+            "aten::mul": 9,
+            "aten::sigmoid": 1
+          }
+        }
+      },
+      "footprint": {
+        "record": "/workspace/lb1/session/E5/static/efficiency_E5_accuracy_static_20261109T112900Z.json",
+        "record_sha256": "98917c252db139b665d927159387d8e25fb9b3c40cee7a3d209dfe966c1bdb9e",
+        "value": {
+          "artifact_count": {
+            "byte_rule": {
+              "bias_scale_zero_point": 4,
+              "fp32_weight": 4,
+              "int8_weight": 1
+            },
+            "compression_vs_fp32": 3.8024679924987845,
+            "counted_from": "artifact_packed_params",
+            "fp32_bytes": 0,
+            "fp32_equivalent_bytes": 11825280,
+            "fp32_weight_elements": 0,
+            "fully_quantized": true,
+            "int8_bytes": 2905128,
+            "int8_weight_elements": 2905128,
+            "metadata_bytes": 204768,
+            "metadata_elements": 51192,
+            "mixed_precision_remains": false,
+            "packed_params_unpacked": 65,
+            "packed_params_unreadable": [],
+            "theoretical_weight_bytes": 3109896
+          },
+          "byte_rule": {
+            "bias_scale_zero_point": 4,
+            "fp32_weight": 4,
+            "int8_weight": 1
+          },
+          "companion_count": {
+            "byte_rule": {
+              "bias_scale_zero_point": 4,
+              "fp32_weight": 4,
+              "int8_weight": 1
+            },
+            "compression_vs_fp32": 3.8024679924987845,
+            "counted_from": "state_dict_companion_eager_rebuild",
+            "fp32_bytes": 0,
+            "fp32_equivalent_bytes": 11825280,
+            "fp32_weight_elements": 0,
+            "fully_quantized": true,
+            "int8_bytes": 2905128,
+            "int8_weight_elements": 2905128,
+            "metadata_bytes": 204768,
+            "metadata_elements": 51192,
+            "mixed_precision_remains": false,
+            "path": "/workspace/lb1in/runs/qat_pilot_20261014/evals/a2/e5_s42_clip5.0/converted/e10_int8_student.pt",
+            "sha256": "ebc4834558c9dac32adb0ebad0ce0f915ba7f20975323d9e32dfe52d7c9a49e5",
+            "theoretical_weight_bytes": 3109896
+          },
+          "compression_vs_fp32": 3.8024679924987845,
+          "counted_from": "artifact_packed_params",
+          "footprint_source": "artifact",
+          "fp32_bytes": 0,
+          "fp32_equivalent_bytes": 11825280,
+          "fp32_weight_elements": 0,
+          "fully_quantized": true,
+          "int8_bytes": 2905128,
+          "int8_weight_elements": 2905128,
+          "metadata_bytes": 204768,
+          "metadata_elements": 51192,
+          "mixed_precision_remains": false,
+          "packed_params_unpacked": 65,
+          "packed_params_unreadable": [],
+          "theoretical_weight_bytes": 3109896
+        }
+      },
+      "footprint_source": {
+        "record": "/workspace/lb1/session/E5/static/efficiency_E5_accuracy_static_20261109T112900Z.json",
+        "record_sha256": "98917c252db139b665d927159387d8e25fb9b3c40cee7a3d209dfe966c1bdb9e",
+        "value": "artifact"
+      },
+      "latency": {
+        "record": "/workspace/lb1/session/E5/latency/efficiency_E5_x86_cpu_proxy_latency_latency_20261109T113259Z.json",
+        "record_sha256": "163652c3508cd50566efad7ab20411395bb45c4c0c18c3544d7d9e0dfa1095ea",
+        "value": {
+          "intra_op_observed": 1,
+          "latency_iqr_ms": 2.4803754058666527,
+          "latency_median_ms": 542.8195865824819,
+          "latency_p95_ms": 548.5187714919448,
+          "latency_q1_ms": 541.8961902032606,
+          "latency_q3_ms": 544.3765656091273,
+          "latency_samples": 100,
+          "protocol": {
+            "forwards_executed": 320,
+            "measured": 100,
+            "num_threads": 1,
+            "timer": "torch.utils.benchmark.Timer.timeit(1)",
+            "untimed_executions_per_observation": 2,
+            "warmup": 20
+          }
+        }
+      },
+      "parameters": {
+        "record": "/workspace/lb1/session/E5/static/efficiency_E5_accuracy_static_20261109T112900Z.json",
+        "record_sha256": "98917c252db139b665d927159387d8e25fb9b3c40cee7a3d209dfe966c1bdb9e",
+        "value": {
+          "counted_from": "fp32_reference_architecture",
+          "total": 2933688,
+          "trainable": 2933688
+        }
+      },
+      "peak_memory": {
+        "record": "/workspace/lb1/session/E5/memory/efficiency_E5_x86_cpu_proxy_latency_memory_20261109T113509Z.json",
+        "record_sha256": "3172f2bcc18a3beed5910a7d57078afb131d29378bdc36ff041cd7cdb66da23c",
+        "value": {
+          "forwards": 120,
+          "negative_delta": false,
+          "peak_rss_delta_bytes": 156258304,
+          "ru_maxrss_consistent": true,
+          "slack_bytes": 1048576
+        }
+      },
+      "serialized_size": {
+        "record": "/workspace/lb1/session/E5/static/efficiency_E5_accuracy_static_20261109T112900Z.json",
+        "record_sha256": "98917c252db139b665d927159387d8e25fb9b3c40cee7a3d209dfe966c1bdb9e",
+        "value": {
+          "path": "/workspace/lb1in/runs/qat_pilot_20261014/evals/a2/e5_s42_clip5.0/converted/e10_int8_qnnpack.torchscript.pt",
+          "serialized_artifact_bytes": 3817477,
+          "serialized_artifact_mib": 3.640629768371582,
+          "sha256": "220b2b0e1cc63cc2e3b8622174871de6cf5b2725deb8df36fad61b3c3f904c61",
+          "size_artifact_role": "accuracy",
+          "size_convention": "bytes canonical; MiB = bytes / 1024^2",
+          "size_measured_from_latency_copy": false
+        }
+      },
+      "stage": "E5"
+    },
+    {
+      "artifact_role_latency_memory": "x86_cpu_proxy_latency",
+      "flops": {
+        "record": "/workspace/lb1/session/E6/static/efficiency_E6_accuracy_static_20261109T113614Z.json",
+        "record_sha256": "107dc3e581735e244ec8b73674cf811ea7fe8c5338ee4eaf66f0d7f7df00f84a",
+        "value": {
+          "convention": "fvcore counts one fused multiply-add as one operation, so its total IS the MAC count; the thesis reports FLOPs = 2 x MACs",
+          "flops_2x_mac": 4088758016,
+          "input_shape": [
+            1,
+            3,
+            512,
+            512
+          ],
+          "macs": 2044379008,
+          "profiled_precision": "fp32",
+          "profiler": "fvcore",
+          "profiler_version": "0.1.5.post20221221",
+          "unsupported_flop_ops": {
+            "aten::add": 11,
+            "aten::hardsigmoid": 8,
+            "aten::hardswish_": 19,
+            "aten::mul": 9,
+            "aten::sigmoid": 1
+          }
+        }
+      },
+      "footprint": {
+        "record": "/workspace/lb1/session/E6/static/efficiency_E6_accuracy_static_20261109T113614Z.json",
+        "record_sha256": "107dc3e581735e244ec8b73674cf811ea7fe8c5338ee4eaf66f0d7f7df00f84a",
+        "value": {
+          "artifact_count": {
+            "byte_rule": {
+              "bias_scale_zero_point": 4,
+              "fp32_weight": 4,
+              "int8_weight": 1
+            },
+            "compression_vs_fp32": 3.8024679924987845,
+            "counted_from": "artifact_packed_params",
+            "fp32_bytes": 0,
+            "fp32_equivalent_bytes": 11825280,
+            "fp32_weight_elements": 0,
+            "fully_quantized": true,
+            "int8_bytes": 2905128,
+            "int8_weight_elements": 2905128,
+            "metadata_bytes": 204768,
+            "metadata_elements": 51192,
+            "mixed_precision_remains": false,
+            "packed_params_unpacked": 65,
+            "packed_params_unreadable": [],
+            "theoretical_weight_bytes": 3109896
+          },
+          "byte_rule": {
+            "bias_scale_zero_point": 4,
+            "fp32_weight": 4,
+            "int8_weight": 1
+          },
+          "companion_count": {
+            "byte_rule": {
+              "bias_scale_zero_point": 4,
+              "fp32_weight": 4,
+              "int8_weight": 1
+            },
+            "compression_vs_fp32": 3.8024679924987845,
+            "counted_from": "state_dict_companion_eager_rebuild",
+            "fp32_bytes": 0,
+            "fp32_equivalent_bytes": 11825280,
+            "fp32_weight_elements": 0,
+            "fully_quantized": true,
+            "int8_bytes": 2905128,
+            "int8_weight_elements": 2905128,
+            "metadata_bytes": 204768,
+            "metadata_elements": 51192,
+            "mixed_precision_remains": false,
+            "path": "/workspace/lb1in/runs/qat_record_20261017/evals/a1/e6_s42_clip5.0_a1/converted/e15_int8_student.pt",
+            "sha256": "34b0e9077debedf1826a760ee18ad940f7a5f4a8c41817019a93aaa7f280eaa2",
+            "theoretical_weight_bytes": 3109896
+          },
+          "compression_vs_fp32": 3.8024679924987845,
+          "counted_from": "artifact_packed_params",
+          "footprint_source": "artifact",
+          "fp32_bytes": 0,
+          "fp32_equivalent_bytes": 11825280,
+          "fp32_weight_elements": 0,
+          "fully_quantized": true,
+          "int8_bytes": 2905128,
+          "int8_weight_elements": 2905128,
+          "metadata_bytes": 204768,
+          "metadata_elements": 51192,
+          "mixed_precision_remains": false,
+          "packed_params_unpacked": 65,
+          "packed_params_unreadable": [],
+          "theoretical_weight_bytes": 3109896
+        }
+      },
+      "footprint_source": {
+        "record": "/workspace/lb1/session/E6/static/efficiency_E6_accuracy_static_20261109T113614Z.json",
+        "record_sha256": "107dc3e581735e244ec8b73674cf811ea7fe8c5338ee4eaf66f0d7f7df00f84a",
+        "value": "artifact"
+      },
+      "latency": {
+        "record": "/workspace/lb1/session/E6/latency/efficiency_E6_x86_cpu_proxy_latency_latency_20261109T114014Z.json",
+        "record_sha256": "e5df5d29534a6eec23f221f81fa09e72961a870a666f9c2a7e3a9de832737c1c",
+        "value": {
+          "intra_op_observed": 1,
+          "latency_iqr_ms": 3.8072438328526914,
+          "latency_median_ms": 548.2507394626737,
+          "latency_p95_ms": 558.4151421207935,
+          "latency_q1_ms": 546.0113649605773,
+          "latency_q3_ms": 549.81860879343,
+          "latency_samples": 100,
+          "protocol": {
+            "forwards_executed": 320,
+            "measured": 100,
+            "num_threads": 1,
+            "timer": "torch.utils.benchmark.Timer.timeit(1)",
+            "untimed_executions_per_observation": 2,
+            "warmup": 20
+          }
+        }
+      },
+      "parameters": {
+        "record": "/workspace/lb1/session/E6/static/efficiency_E6_accuracy_static_20261109T113614Z.json",
+        "record_sha256": "107dc3e581735e244ec8b73674cf811ea7fe8c5338ee4eaf66f0d7f7df00f84a",
+        "value": {
+          "counted_from": "fp32_reference_architecture",
+          "total": 2933688,
+          "trainable": 2933688
+        }
+      },
+      "peak_memory": {
+        "record": "/workspace/lb1/session/E6/memory/efficiency_E6_x86_cpu_proxy_latency_memory_20261109T114225Z.json",
+        "record_sha256": "2a4dc642728636589c565212327804546cf3f04c9211407ff83de07b4dd1a007",
+        "value": {
+          "forwards": 120,
+          "negative_delta": false,
+          "peak_rss_delta_bytes": 152236032,
+          "ru_maxrss_consistent": true,
+          "slack_bytes": 1048576
+        }
+      },
+      "serialized_size": {
+        "record": "/workspace/lb1/session/E6/static/efficiency_E6_accuracy_static_20261109T113614Z.json",
+        "record_sha256": "107dc3e581735e244ec8b73674cf811ea7fe8c5338ee4eaf66f0d7f7df00f84a",
+        "value": {
+          "path": "/workspace/lb1in/runs/qat_record_20261017/evals/a1/e6_s42_clip5.0_a1/converted/e15_int8_qnnpack.torchscript.pt",
+          "serialized_artifact_bytes": 3817477,
+          "serialized_artifact_mib": 3.640629768371582,
+          "sha256": "cf14ae0362d07f6a576405320780622f504f1bccd032335c2968c02e37dbb0bb",
+          "size_artifact_role": "accuracy",
+          "size_convention": "bytes canonical; MiB = bytes / 1024^2",
+          "size_measured_from_latency_copy": false
+        }
+      },
+      "stage": "E6"
+    },
+    {
+      "artifact_role_latency_memory": "x86_cpu_proxy_latency",
+      "flops": {
+        "record": "/workspace/lb1/session/E7/static/efficiency_E7_accuracy_static_20261109T114330Z.json",
+        "record_sha256": "71400ac1a55c072d38c520b95188f2b4f871f6d816cb4b8c5d1f5406a920dbdf",
+        "value": {
+          "convention": "fvcore counts one fused multiply-add as one operation, so its total IS the MAC count; the thesis reports FLOPs = 2 x MACs",
+          "flops_2x_mac": 4088758016,
+          "input_shape": [
+            1,
+            3,
+            512,
+            512
+          ],
+          "macs": 2044379008,
+          "profiled_precision": "fp32",
+          "profiler": "fvcore",
+          "profiler_version": "0.1.5.post20221221",
+          "unsupported_flop_ops": {
+            "aten::add": 11,
+            "aten::hardsigmoid": 8,
+            "aten::hardswish_": 19,
+            "aten::mul": 9,
+            "aten::sigmoid": 1
+          }
+        }
+      },
+      "footprint": {
+        "record": "/workspace/lb1/session/E7/static/efficiency_E7_accuracy_static_20261109T114330Z.json",
+        "record_sha256": "71400ac1a55c072d38c520b95188f2b4f871f6d816cb4b8c5d1f5406a920dbdf",
+        "value": {
+          "artifact_count": {
+            "byte_rule": {
+              "bias_scale_zero_point": 4,
+              "fp32_weight": 4,
+              "int8_weight": 1
+            },
+            "compression_vs_fp32": 3.8024679924987845,
+            "counted_from": "artifact_packed_params",
+            "fp32_bytes": 0,
+            "fp32_equivalent_bytes": 11825280,
+            "fp32_weight_elements": 0,
+            "fully_quantized": true,
+            "int8_bytes": 2905128,
+            "int8_weight_elements": 2905128,
+            "metadata_bytes": 204768,
+            "metadata_elements": 51192,
+            "mixed_precision_remains": false,
+            "packed_params_unpacked": 65,
+            "packed_params_unreadable": [],
+            "theoretical_weight_bytes": 3109896
+          },
+          "byte_rule": {
+            "bias_scale_zero_point": 4,
+            "fp32_weight": 4,
+            "int8_weight": 1
+          },
+          "companion_count": {
+            "byte_rule": {
+              "bias_scale_zero_point": 4,
+              "fp32_weight": 4,
+              "int8_weight": 1
+            },
+            "compression_vs_fp32": 3.8024679924987845,
+            "counted_from": "state_dict_companion_eager_rebuild",
+            "fp32_bytes": 0,
+            "fp32_equivalent_bytes": 11825280,
+            "fp32_weight_elements": 0,
+            "fully_quantized": true,
+            "int8_bytes": 2905128,
+            "int8_weight_elements": 2905128,
+            "metadata_bytes": 204768,
+            "metadata_elements": 51192,
+            "mixed_precision_remains": false,
+            "path": "/workspace/lb1in/runs/e7_s42_cal42_a1/e7_int8_student.pt",
+            "sha256": "8a54135f45975436e2ea4ab666eed1a6518af40155912c53c67aba8623bd3608",
+            "theoretical_weight_bytes": 3109896
+          },
+          "compression_vs_fp32": 3.8024679924987845,
+          "counted_from": "artifact_packed_params",
+          "footprint_source": "artifact",
+          "fp32_bytes": 0,
+          "fp32_equivalent_bytes": 11825280,
+          "fp32_weight_elements": 0,
+          "fully_quantized": true,
+          "int8_bytes": 2905128,
+          "int8_weight_elements": 2905128,
+          "metadata_bytes": 204768,
+          "metadata_elements": 51192,
+          "mixed_precision_remains": false,
+          "packed_params_unpacked": 65,
+          "packed_params_unreadable": [],
+          "theoretical_weight_bytes": 3109896
+        }
+      },
+      "footprint_source": {
+        "record": "/workspace/lb1/session/E7/static/efficiency_E7_accuracy_static_20261109T114330Z.json",
+        "record_sha256": "71400ac1a55c072d38c520b95188f2b4f871f6d816cb4b8c5d1f5406a920dbdf",
+        "value": "artifact"
+      },
+      "latency": {
+        "record": "/workspace/lb1/session/E7/latency/efficiency_E7_x86_cpu_proxy_latency_latency_20261109T114730Z.json",
+        "record_sha256": "f1c3519d0a4abf3c04311e07aafaf3c2f79c9f663327f5f1f99386a656774859",
+        "value": {
+          "intra_op_observed": 1,
+          "latency_iqr_ms": 3.8740792660973966,
+          "latency_median_ms": 546.1153024807572,
+          "latency_p95_ms": 559.3858684762381,
+          "latency_q1_ms": 544.5864619105123,
+          "latency_q3_ms": 548.4605411766097,
+          "latency_samples": 100,
+          "protocol": {
+            "forwards_executed": 320,
+            "measured": 100,
+            "num_threads": 1,
+            "timer": "torch.utils.benchmark.Timer.timeit(1)",
+            "untimed_executions_per_observation": 2,
+            "warmup": 20
+          }
+        }
+      },
+      "parameters": {
+        "record": "/workspace/lb1/session/E7/static/efficiency_E7_accuracy_static_20261109T114330Z.json",
+        "record_sha256": "71400ac1a55c072d38c520b95188f2b4f871f6d816cb4b8c5d1f5406a920dbdf",
+        "value": {
+          "counted_from": "fp32_reference_architecture",
+          "total": 2933688,
+          "trainable": 2933688
+        }
+      },
+      "peak_memory": {
+        "record": "/workspace/lb1/session/E7/memory/efficiency_E7_x86_cpu_proxy_latency_memory_20261109T114941Z.json",
+        "record_sha256": "becd8b26dd5a2c5a30e01baa3876b13025d90a3ee160ccc68e73617fa1cf9c4a",
+        "value": {
+          "forwards": 120,
+          "negative_delta": false,
+          "peak_rss_delta_bytes": 153571328,
+          "ru_maxrss_consistent": true,
+          "slack_bytes": 1048576
+        }
+      },
+      "serialized_size": {
+        "record": "/workspace/lb1/session/E7/static/efficiency_E7_accuracy_static_20261109T114330Z.json",
+        "record_sha256": "71400ac1a55c072d38c520b95188f2b4f871f6d816cb4b8c5d1f5406a920dbdf",
+        "value": {
+          "path": "/workspace/lb1in/runs/e7_s42_cal42_a1/e7_int8_qnnpack.torchscript.pt",
+          "serialized_artifact_bytes": 3812805,
+          "serialized_artifact_mib": 3.636174201965332,
+          "sha256": "f7e28721612ed2d32700115a10a9f13e12136b1b6adbe40046a4c8bf364e0dc2",
+          "size_artifact_role": "accuracy",
+          "size_convention": "bytes canonical; MiB = bytes / 1024^2",
+          "size_measured_from_latency_copy": false
+        }
+      },
+      "stage": "E7"
+    }
+  ],
+  "sittings": [
+    {
+      "host_labels": [
+        "1h4og4b0b2ojx2"
+      ],
+      "records": 24,
+      "session": "/workspace/lb1/session"
+    }
+  ],
+  "threads": 1
+}
