@@ -99,9 +99,10 @@
     </div>
 
     <h2 style="margin-top:14px">Top classes (share of the photo's pixels)</h2>
+    <p class="sub">Class names are the PlantSeg dataset's. They are the model's output for the marked pixels, not a diagnosis; the plant in the photo may not be the crop named.</p>
     <ul class="legend" id="legend"></ul>
 
-    <h2 style="margin-top:14px">Latency</h2>
+    <h2 style="margin-top:14px">Time for this photo (a demonstration, not a measurement)</h2>
     <div><span class="big" id="latInfer">&ndash;</span> ms model inference</div>
     <dl class="kv" style="margin-top:6px">
       <dt>Server total</dt><dd id="latTotal">&ndash;</dd>
@@ -128,8 +129,7 @@
   <footer>
     <p id="noticeLicence">Data licence: the model was trained on PlantSeg, licensed CC BY-NC 4.0
       (non-commercial use only, with attribution).</p>
-    <p>Research prototype; not for agronomic decisions. Photos are processed in memory and not stored.
-      <a href="ondevice/">On-device (in-browser) version</a></p>
+    <p>Research prototype; not for agronomic decisions. Photos are processed in memory and not stored.</p>
   </footer>
 </main>
 <script>
@@ -151,7 +151,7 @@
     var m = info.model, meta = m.embedded_meta || {};
     $("modelFile").textContent = m.file + " (" + (m.size_bytes / 1048576).toFixed(2) + " MB)";
     $("modelSha").textContent = m.sha256;
-    $("modelMeta").textContent = "stage " + meta.stage + ", " + meta.quantization + ", role " + meta.artifact_role;
+    $("modelMeta").textContent = "stage " + meta.stage + ", " + meta.quantization;
     $("modelRuntime").textContent = "torch " + m.torch + ", engine " + m.engine + ", " + m.threads + " CPU thread(s)";
     $("modelInput").textContent = info.preprocessing.protocol + " (the evaluator's own preprocessing)";
     $("noticeStandIn").style.display = m.stand_in ? "block" : "none";
@@ -193,7 +193,7 @@
     $("latTotal").textContent = res.latency_ms.total.toFixed(0) + " ms (decode " + res.latency_ms.decode.toFixed(0) +
       ", preprocess " + res.latency_ms.preprocess.toFixed(0) + ", post " + res.latency_ms.postprocess.toFixed(0) +
       "; " + res.threads + " thread(s))";
-    $("latTrip").textContent = tripMs.toFixed(0) + " ms (phone to server and back)";
+    $("latTrip").textContent = tripMs.toFixed(0) + " ms (page to server and back)";
     $("uploadNote").textContent = note + "; " + res.input.original_size_wh.join("x") + " " + (res.input.format || "");
     $("result").hidden = false;
     $("result").scrollIntoView({ behavior: "smooth", block: "start" });
