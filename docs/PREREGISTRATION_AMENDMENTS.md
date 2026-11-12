@@ -3064,6 +3064,98 @@ State at amendment (as of the commit).
    has no result, so a later cut for it changes no analysis and no claim. It lets the manuscript
    show the interface that the group will present.
 
+## AM-27 — The qualitative TEST figures: one later use of TEST for the figures that Chapter III plans and DL-182 selects the images of (the amendment that AM-24 item 2 requires for a later TEST use; amends no registered run; adds no test and no result; changes no registered analysis)
+
+Dated 2026-11-12. Status: DRAFT (group-recorded; OK by Ice De Luna under the group's delegation, 2026-11-12, in the words "am-27 ok"; the orchestrator's ruling QUAL-PLAN-1 (ORCH-7, 12 Nov 2026); its decision-log row is the row of its commit).
+- **Fixed text.** From its commit this text is changed only by a new amendment, which lists the
+  results known when it is written. A dated bracket note only points to a later record or records an
+  outcome.
+- **In force** from the time its commit reaches the remote. Before then no TEST image, no mask, no
+  per-image file and no cached corrupted copy is read for a figure. Approval gates nothing here.
+- **A rejection** is entered verbatim in the decision log on the day it arrives. It changes a rule
+  only through a new amendment, which lists the results known when it is written. It never reopens a
+  run already launched or a TEST evaluation.
+- **Written after the TEST results, before any figure.** AM-24 item 2 says: "Any later TEST use
+  (e.g. MVA-AUDIT-1's PX-1) needs its own amendment, written after the thesis TEST results are
+  committed." This is that amendment for the qualitative figures. It was written after the TEST
+  results of record were committed (DL-249) and before the image set S was computed, before any
+  prediction map existed and before any TEST image was opened for a figure. It chooses no image, no
+  model and no result: the images follow DL-182, which was fixed before TEST was opened.
+
+State at amendment (as of the commit).
+- The TEST results of record (DL-249), the exploratory records up to DL-259 and the demo's records
+  (DL-260 to DL-262) are known. None was made by or for these figures.
+- Chapter III plans the figures from the held-out TEST images (Section E.2, item g; DL-182 cites
+  its pp. 133–134) and planned stored prediction maps (Section E.2, item d). The evaluator stored no
+  prediction map in the TEST session, so the figures can be made only by running the models of
+  record again on the selected images.
+- No qualitative figure exists. Chapter 4's draft holds five placeholders.
+
+1. **The use.** One later use of TEST is registered: the qualitative figures of Chapter III's
+   Section E.2, item g, on the image set S of DL-182. For it a kit reads, in the TEST session's
+   files and data root, only: (a) the official per-image artifacts of the four models of item 2 on
+   clean TEST, and of E1, E3 and E6 under motion blur, Gaussian noise and fog at severity 2; (b) the
+   TEST split's manifest, for the image order that DL-182 calls manifest order; (c) the images and
+   masks of the nine images of S; (d) the cached corrupted copies of those nine images for the
+   three corruptions at severity 2, never regenerated. S is computed exactly as DL-182 says, from
+   E6 seed 42's official clean per-image artifact and that order. The eligibility of DL-182 item 1
+   is read from the official artifacts; if they do not carry it, the kit stops, and no mask outside
+   S is read.
+2. **The models.** The four models of record at seed 42, by slot in the TEST-day manifest
+   (reports/derived/tday_manifest.json): teacher:s42:40k, E1:s42:80k,
+   E3:s42:lambda0.5:alpha25:80k and E6:s42:sel (the INT8 QNNPACK artifact). Each file is checked
+   against the manifest's sha256 before it is loaded. No other model, seed, slot or copy is run. The
+   appendix panels that Chapter III allows for E2, E4, E5 and E7 "where useful" are not made.
+3. **The figures.** Five, with the number of images fixed here before any output exists (DL-182
+   item 4: a figure that shows k images shows the first k of S):
+   (a) Figure 4.2, one image traced through the system: the 50th-percentile pick;
+   (b) Figure 4.3, k = 9: input, ground truth and the predictions of the Teacher, E1, E3 and E6;
+   (c) Figure 4.4, k = 9: error maps (true positives, false positives and false negatives) for the
+       same four models;
+   (d) Figure 4.5, k = 3: clean, motion blur, Gaussian noise and fog at severity 2, with the
+       predictions of E1, E3 and E6;
+   (e) Figure 4.6, k = 3: class-confusion overlays for the four models.
+   Each image is shown as it comes out (DL-182 item 5). A figure's number may change with the
+   manuscript's numbering; its content and k do not.
+4. **Nothing is scored.** No dataset-level or per-image score of record is computed, changed or
+   replaced, and no statistic is computed from the nine images. The only numbers a figure prints
+   are per-image values of record. As a check, and not as a result, the kit recomputes for each
+   image, model and condition shown the per-image disease-only mIoU from its own prediction, with
+   the evaluator's own function, and compares it with the official value: within 1e-6 where the
+   device class is the record's, within 0.5 pp otherwise. A larger gap stops the run before any
+   figure is rendered, and a second run is made only after a decision-log row states the cause.
+   Chapter 4 states the largest gap.
+5. **Code, audit and run.** The code is new files on a lane branch from master
+   f3bd4f3a539d2ce254594ac398488f3523dd1b91. It imports the evaluator's own model loading,
+   preprocessing (core_preprocess/1.0.0) and per-image metric, and it changes no existing file. A
+   Fable audit of that code is recorded in the decision log before the run (DL-24). The run is made
+   once, from the audited commit, on the machine that holds the TEST session, in the image or
+   images in which that session scored the four models. The random picks are drawn under
+   CPython 3.11.16 in the KD image of record
+   (sha256:cb413304e2445e5c8ac3786f7a370f2ed05a07d11843b11687bb9eb23dc32c2b), as DL-182 item 3
+   says. A fault of layout is corrected by rendering again from the arrays that the run saved,
+   never by a new selection or a new prediction.
+6. **Who sees what.** No AI session opens a TEST image, a mask, a per-image file, the cache, the
+   identities of S or a figure of this run. The kit prints counts, hashes and PASS or STOP lines.
+   The group views the figures and places them in the manuscript. The run's manifest (the
+   identities of S, the sha256 of every input and output, each tile's check) stays with the TEST
+   session's records, outside the repository; the decision-log row of the run gives its sha256 and
+   the sha256 of each figure.
+7. **Reporting.** Chapter 4 shows the figures as examples chosen by DL-182's rule and says so. It
+   states that each image is shown as it came out, and it gives the check's outcome. No claim rests
+   on a figure. If the run has not passed by 12:00 +08:00 on 2026-11-15, the manuscript submitted on
+   2026-11-17 says that the qualitative figures are not included, and nothing is substituted; the
+   figures may then be made later under this amendment, unchanged, for the defense and the final
+   manuscript.
+8. **What does not change.** TEST stays evaluated once, never split or repeated (AM-19 item 1(c);
+   AM-22 item 1(h)): this use scores nothing. No exploratory model or artifact touches TEST (AM-24
+   item 2). DL-182 stands as it is. Any other later use of TEST still needs its own amendment.
+9. **Why.** Chapter III plans these figures from the held-out TEST images, and the template that
+   the group follows for Chapter 4 asks for a sample simulation of test data. DL-182 fixed the
+   images before TEST was opened, so that the choice could favour no model. The predictions were
+   not stored on TEST day, so the planned figures need the models of record run again on nine
+   images.
+
 ## Status of PREREGISTRATION §10 items after these amendments
 
 | Item | Status |
