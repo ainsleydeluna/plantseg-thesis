@@ -2,29 +2,45 @@
 """Smoke for the QUAL-1 kit (scripts/qual_select.py, qual_predict.py, qual_render.py), synthetic data only.
 
 No dataset, no model file, no record and no TEST or VAL file is read: every input is made here, in a
-temporary folder. Checks:
+temporary folder (configs/plantseg_class_map.json, a committed config, gives S9 its 115 names). Checks:
   S0  every repo module the three steps import loads in this checkout (a module the sparse clone leaves out
       stops the smoke, not a run)
   S1  DL-182's rule: eligibility from the rows (a row without it stops), nearest ranks, ties to the lower
       manifest index under both tie readings, a duplicate percentile pick stops, six random picks outside
-      the percentile picks in shuffle order; the tie-readings word (ruling QUAL-A-1 Q2)
+      the percentile picks in shuffle order; the tie-readings word (ruling QUAL-A-1 Q2); S.json's nonce (N-01)
   S2  the version guard refuses another interpreter, version or image digest, and no random pick is drawn
       without it; random.Random(42).sample's known answer (measured under CPython 3.11.15 and 3.13)
   S3  the check of AM-27 item 4: the evaluator's own evaluate_model on a synthetic batch gives the recorded
       value back (gap 0) and a one-pixel change of the prediction fails the 1e-6 tolerance; the confusion
       counts follow the prediction and are compared by class (Q6); the class-level error map's TP pixels
-      equal the record's tp sum and padding is none of TP, FN or FP (Q4)
+      equal the record's tp sum and padding is none of TP, FN or FP (Q4); the counts recomputed from the saved
+      arrays equal the pass's (N-14); core_preprocess of an original pair gives its canvas (N-09)
   S4  the teacher's stream advance (QUAL-1 Q1): a subset with skipped rows draws exactly the bases a full
       pass draws at those rows
-  S5  every figure renders from synthetic arrays (11 PNG files at 300 dpi, 1,950 px wide, and a manifest),
-      a re-render from the same arrays gives the same colours (Q3), the pair legend (Q5), the value label
-      (Q8), the padding key (L1), a changed array is refused, on TEST a failed tile stops the step before
-      anything is drawn, on TEST an unexpected error prints its type only (its message, which may name an
-      image, goes to the run's log), and a re-render opens only from a render-only commit (Q10)
+  S5  every figure renders from synthetic arrays (11 PNG files at 300 dpi, 1,950 px wide; the manifest beside
+      the figures folder, N-06), a re-render from the same arrays gives the same colours (Q3), the pair legend
+      (Q5, F-05), the value label (Q8), the padding key (L1), a changed array is refused, on TEST the render
+      gate refuses a failed tile's `pass` alone and a record's `all_pass` alone before anything is drawn
+      (T7 (2)), on TEST an unexpected error prints its type only (its message, which may name an image, goes
+      to the run's log), a re-render opens only from a render-only commit (Q10), outputs that exist already
+      and a run folder inside the repository are refused before any read (N-03, N-04)
   S6  the class palette is the measured list and the categorical keys are colour-blind-safe; the padding grey
       stays apart from the map underlay
+  S7  the pass rule in one function (T7 (1)): the 1e-6 and 0.5 pp tolerances at their edges, the device rule
+      (the record's model device), the counts on the same device class; the execution context (F-03)
+  S8  wiring (T7 (3)): every tile of synthetic arrays encodes its position, model and condition; Figures 4.2 to
+      4.6 are read back at the tile centres and show the right tile in the right place; class maps and the
+      categorical layers hold no colour outside their legend (N-10)
+  S9  the 115 class names of configs/plantseg_class_map.json, each as ground truth and as prediction, wrap at a
+      space within the Figure 4.6 column, never cut (F-07); every class legend keys black "Background" (F-08)
+  S10 the TEST-only functions on made-up files (T7 (4)): LREP's open_inventory reads a made-up export and binding
+      through LREP's own stub reader standing in for TMAN's; load_test_official, check_record_identity and
+      manifest_order on made-up artifacts (LREP's load_bound stood in: the binding record and the four files'
+      hashes are real); open_cell's official branch (the evaluator's two cache gates stood in, the pins real);
+      the preflight P1 passes, and refuses a record's context, a second repo_commit, a changed file, another
+      listing and a cache refusal (exit 3, REFUSED, nothing per-image named); select's TEST path end to end
 
-  python -B scripts/smoke_qual.py --font PATH_TO_A_TTF      (inside the KD image: torch for S0, S3 and S4)
+  python -B scripts/smoke_qual.py --font PATH_TO_A_TTF      (inside the KD image: torch for S0, S3, S4, S10)
 """
 from __future__ import annotations
 
@@ -33,10 +49,12 @@ import contextlib
 import io
 import json
 import random
+import re
 import shutil
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 REPO = Path(__file__).resolve().parents[1]
 if str(REPO) not in sys.path:
@@ -53,6 +71,15 @@ RESULTS = []
 def check(name: str, ok: bool, detail: str = "") -> None:
     RESULTS.append(bool(ok))
     print(f"{'PASS' if ok else 'FAIL'} {name}{(': ' + detail) if detail and not ok else ''}", flush=True)
+
+
+def tmpdir(prefix: str) -> Path:
+    """A new temporary folder whose path never names 'test' (the qual steps refuse such paths)."""
+    while True:
+        p = Path(tempfile.mkdtemp(prefix=prefix))
+        if "test" not in str(p).casefold():
+            return p
+        p.rmdir()
 
 
 def stops(code: str, fn, *a, **k) -> bool:
@@ -116,6 +143,11 @@ def s1_s2():
           and Q.tie_readings_word(pairs) == "different" and sel["tie_readings"] == "different"
           and Q.tie_readings_word(Q.scored(tied, Q.eligible(tied, 40))) == "literal_undefined"
           and sel["indices"][:3] == picks)
+    doc_a = Q.s_document("val", sel, [f"img{m:03d}" for m in range(40)], rule="r", reading="rank")
+    doc_b = Q.s_document("val", sel, [f"img{m:03d}" for m in range(40)], rule="r", reading="rank")
+    check("S1 S.json carries a fresh 32-hex nonce that changes its sha256 and nothing else (QUAL-AUD-1 N-01)",
+          re.fullmatch(r"[0-9a-f]{32}", doc_a["nonce"]) is not None and doc_a["nonce"] != doc_b["nonce"]
+          and {k: v for k, v in doc_a.items() if k != "nonce"} == {k: v for k, v in doc_b.items() if k != "nonce"})
     check("S2 the guard refuses CPython 3.11.15", stops("version_guard", Q.version_guard, implementation="CPython",
                                                         version="3.11.15", digest=Q.KD_DIGEST))
     check("S2 the guard refuses another implementation", stops("version_guard", Q.version_guard,
@@ -188,6 +220,22 @@ def s3():
     check("S3 padding is grey and none of TP, FN or FP; FN holds the wrong-class pixels (QUAL-A-1 Q4)",
           (em[gt_np == 255] == R.IGNORE).all() and not (lay["tp"] | lay["fn"] | lay["fp"])[gt_np == 255].any()
           and bool(lay["wrong"].any()) and not (lay["wrong"] & ~lay["fn"]).any())
+    from scripts.qual_predict import counts_of_arrays, original_matches
+    pr_moved = changed[0].argmax(0).numpy().astype(np.uint8)
+    check("S3 the counts recomputed from the saved arrays equal the pass's, and follow a changed prediction "
+          "(QUAL-AUD-1 N-14)", counts_of_arrays(pr_np.astype(np.uint8), gt_np.astype(np.uint8))
+          == result_counts(ref, "img000")
+          and counts_of_arrays(pr_moved, gt_np.astype(np.uint8)) == result_counts(moved, "img000"))
+    from PIL import Image
+    from src.data.transforms import core_preprocess
+    rgb = np.random.default_rng(5).integers(0, 255, (300, 437, 3), dtype=np.uint8)
+    omask = np.zeros((300, 437), dtype=np.uint8)
+    omask[100:200, 50:300] = 9
+    cv_, mc_ = core_preprocess(Image.fromarray(rgb), Image.fromarray(omask))
+    bad = mc_.copy()
+    bad[256, 256] = 3
+    check("S3 core_preprocess of the original pair gives the saved canvas and mask, and a changed mask is caught "
+          "(QUAL-AUD-1 N-09)", original_matches(rgb, omask, cv_, mc_) and not original_matches(rgb, omask, cv_, bad))
     st = Q.repo_state(None)
     check("S3 the checkout is read with the evaluator's git helpers (HEAD and the governed paths)",
           len(st["commit"]) == 40 and isinstance(st["governed_paths_clean"], bool), str(st)[:120])
@@ -241,27 +289,78 @@ def s4():
 
 # ----------------------------------------------------------------------------------------------------- S5
 FAKE_REPO = {"commit": "0" * 40, "governed_paths_clean": True, "governed_violations": []}   # the smoke's own checkout
+FAIL_MODES = (None, "both", "pass_only", "all_pass_only")
 
 
-def synthetic_run(root: Path, split: str, *, fail_tile=False) -> str:
+def png_of(arr) -> bytes:
     import numpy as np
     from PIL import Image
+    b = io.BytesIO()
+    Image.fromarray(np.ascontiguousarray(arr)).save(b, format="PNG")
+    return b.getvalue()
 
-    def png(arr):
-        b = io.BytesIO()
-        Image.fromarray(np.ascontiguousarray(arr)).save(b, format="PNG")
-        return b.getvalue()
 
-    rng = np.random.default_rng(3)
+def write_run(root: Path, split: str, *, canvas, mask, pred, original, fail_tile=None) -> str:
+    """A synthetic run folder as the select and predict steps leave it: S.json, the select record, the arrays
+    (canvas(condition, position), mask(position), pred(model, condition, position), original = (image, mask) of
+    position 2), each model's checks, values and record. `fail_tile` (FAIL_MODES): "both" fails E3's clean tile 4
+    and its record says so; "pass_only" fails that tile while the record's all_pass stays true; "all_pass_only"
+    passes every tile while E3's record says all_pass false."""
+    if fail_tile not in FAIL_MODES:
+        raise ValueError(fail_tile)
     picks = [{"position": i + 1, "role": r, "manifest_index": 10 * i, "image_id": f"syn{i}"}
              for i, r in enumerate(["p10", "p50", "p90", "r1", "r2", "r3", "r4", "r5", "r6"])]
     s_doc = {"format": Q.SELECT_FORMAT, "split": split, "rule": "synthetic", "tie_reading": "rank", "n_rows": 90,
-             "n_eligible": 90, "ranks": None, "shuffle_sha256": None, "picks": picks}
+             "n_eligible": 90, "ranks": None, "shuffle_sha256": None, "picks": picks, "nonce": "0" * 32}
     s_sha = Q.write_new(root / "select" / "S.json", Q.canonical_bytes(s_doc))
     Q.write_new(root / "select" / "record.json", Q.canonical_bytes({"inputs": {"synthetic": True}, "repo": FAKE_REPO,
                                                                     "outputs": {"select/S.json": s_sha}}))
+    shared = {}
+    for p in range(1, 10):
+        shared[f"arrays/input/clean/{p}.png"] = png_of(canvas(Q.CLEAN, p))
+        shared[f"arrays/mask/{p}.png"] = png_of(mask(p))
+        if p <= 3:
+            for cell in Q.CELLS:
+                shared[f"arrays/input/{cell}/{p}.png"] = png_of(canvas(cell, p))
+    shared["arrays/original/2_image.png"] = png_of(original[0])
+    shared["arrays/original/2_mask.png"] = png_of(original[1])
+    for rel, data in shared.items():
+        Q.write_new(root / rel, data)
+    for model in Q.MODEL_ORDER:
+        arrays, checks, values = {}, [], {}
+        for cond in Q.CONDITIONS[model]:
+            for p in range(1, Q.k_of(cond) + 1):
+                rel = f"arrays/pred/{model}/{cond}/{p}.png"
+                arrays[rel] = Q.write_new(root / rel, png_of(pred(model, cond, p)))
+                ok = not (fail_tile in ("both", "pass_only") and model == "E3" and cond == Q.CLEAN and p == 4)
+                checks.append({"condition": cond, "position": p, "manifest_index": 10 * (p - 1),
+                               "image_id": f"syn{p - 1}", "recomputed": 0.5, "official": 0.5 if ok else 0.4,
+                               "gap": 0.0 if ok else 0.1, "tolerance": 1e-6, "same_device_class": True,
+                               "binding": True, "pass": ok, "counts_equal": ok, "am5_excluded": False})
+                values.setdefault(cond, {})[str(p)] = 0.5 + 0.01 * p
+        for rel in shared:
+            arrays[rel] = Q.sha256_file(root / rel)
+        all_pass = all(c["pass"] for c in checks)
+        if model == "E3" and fail_tile == "pass_only":
+            all_pass = True
+        if model == "E3" and fail_tile == "all_pass_only":
+            all_pass = False
+        rec = {"format": Q.RECORD_FORMAT, "step": "predict", "model": model, "split": split, "repo": FAKE_REPO,
+               "select_sha256": s_sha, "streamcheck": None, "inputs": {"synthetic": True},
+               "versions": {"synthetic": True}, "conditions": {},
+               "outputs": {"checks": Q.write_new(root / "checks" / f"{model}.json", Q.canonical_bytes(checks)),
+                           "values": Q.write_new(root / "values" / f"{model}.json", Q.canonical_bytes(values)),
+                           "arrays": arrays},
+               "summary": {"all_pass": all_pass}}
+        Q.write_new(root / "records" / f"predict_{model}.json", Q.canonical_bytes(rec))
+    return s_sha
 
-    def canvas(seed):
+
+def synthetic_run(root: Path, split: str, *, fail_tile=None) -> str:
+    import numpy as np
+    rng = np.random.default_rng(3)
+
+    def canvas_mask(seed):
         r = np.random.default_rng(seed)
         c = np.empty((512, 512, 3), dtype=np.uint8)
         c[:] = (124, 116, 104)
@@ -271,50 +370,24 @@ def synthetic_run(root: Path, split: str, *, fail_tile=False) -> str:
         m[150:300, 100:260] = 1 + seed % 115
         return c, m
 
-    shared = {}
-    for p in range(1, 10):
-        c, m = canvas(p)
-        shared[f"arrays/input/clean/{p}.png"] = png(c)
-        shared[f"arrays/mask/{p}.png"] = png(m)
-        if p <= 3:
-            for cell in Q.CELLS:
-                shared[f"arrays/input/{cell}/{p}.png"] = png(np.clip(c.astype(int) + 20, 0, 255).astype(np.uint8))
+    def canvas(cond, p):
+        c = canvas_mask(p)[0]
+        return c if cond == Q.CLEAN else np.clip(c.astype(int) + 20, 0, 255).astype(np.uint8)
+
+    def pred(model, cond, p):
+        m = canvas_mask(p)[1]
+        a = np.where(m == 255, 0, m).astype(np.uint8)
+        a[200:230, 150:200] = 40 + Q.MODEL_ORDER.index(model)          # a wrong disease class
+        a[260:280, 120:140] = 60 + p                                    # a second wrong class
+        a[150:170, 100:150] = 0                                         # missed
+        a[100:120, 400:480] = 1 + p % 115                               # a false alarm
+        return a
+
     big = rng.integers(0, 255, (900, 1200, 3), dtype=np.uint8)
     bigm = np.zeros((900, 1200), dtype=np.uint8)
     bigm[300:600, 200:700] = 1 + 2 % 115
-    shared["arrays/original/2_image.png"] = png(big)
-    shared["arrays/original/2_mask.png"] = png(bigm)
-    for rel, data in shared.items():
-        Q.write_new(root / rel, data)
-    for model in Q.MODEL_ORDER:
-        arrays, checks, values = {}, [], {}
-        for cond in Q.CONDITIONS[model]:
-            for p in range(1, Q.k_of(cond) + 1):
-                _, m = canvas(p)
-                pred = np.where(m == 255, 0, m).astype(np.uint8)
-                pred[200:230, 150:200] = 40 + Q.MODEL_ORDER.index(model)          # a wrong disease class
-                pred[260:280, 120:140] = 60 + p                                    # a second wrong class
-                pred[150:170, 100:150] = 0                                         # missed
-                pred[100:120, 400:480] = 1 + p % 115                               # a false alarm
-                rel = f"arrays/pred/{model}/{cond}/{p}.png"
-                arrays[rel] = Q.write_new(root / rel, png(pred))
-                ok = not (fail_tile and model == "E3" and cond == Q.CLEAN and p == 4)
-                checks.append({"condition": cond, "position": p, "manifest_index": 10 * (p - 1),
-                               "image_id": f"syn{p - 1}", "recomputed": 0.5, "official": 0.5 if ok else 0.4,
-                               "gap": 0.0 if ok else 0.1, "tolerance": 1e-6, "same_device_class": True,
-                               "binding": True, "pass": ok, "counts_equal": ok, "am5_excluded": False})
-                values.setdefault(cond, {})[str(p)] = 0.5 + 0.01 * p
-        for rel in shared:
-            arrays[rel] = Q.sha256_file(root / rel)
-        rec = {"format": Q.RECORD_FORMAT, "step": "predict", "model": model, "split": split, "repo": FAKE_REPO,
-               "select_sha256": s_sha, "streamcheck": None, "inputs": {"synthetic": True},
-               "versions": {"synthetic": True},
-               "outputs": {"checks": Q.write_new(root / "checks" / f"{model}.json", Q.canonical_bytes(checks)),
-                           "values": Q.write_new(root / "values" / f"{model}.json", Q.canonical_bytes(values)),
-                           "arrays": arrays},
-               "summary": {"all_pass": all(c["pass"] for c in checks)}}
-        Q.write_new(root / "records" / f"predict_{model}.json", Q.canonical_bytes(rec))
-    return s_sha
+    return write_run(root, split, canvas=canvas, mask=lambda p: canvas_mask(p)[1], pred=pred, original=(big, bigm),
+                     fail_tile=fail_tile)
 
 
 def s5(font: str):
@@ -322,7 +395,7 @@ def s5(font: str):
     from PIL import Image
     names = [""] + [f"Plant {i // 5} disease {i}" if i % 7 else f"A much longer plant name {i} with a long disease name"
                     for i in range(1, 116)]
-    tmp = Path(tempfile.mkdtemp(prefix="qual1_smoke_"))
+    tmp = tmpdir("qual1_smoke_")
     real_repo_state, real_roc = R.repo_state, R.render_only_change
     R.repo_state = lambda expect: dict(FAKE_REPO)        # synthetic records name a synthetic checkout
     try:
@@ -330,11 +403,12 @@ def s5(font: str):
         s_sha = synthetic_run(run, "val")
         rc = R.main(["--run", str(run), "--split", "val", "--select-sha256", s_sha, "--font", font,
                      "--synthetic"], class_names=names)
-        figs = sorted(p.name for p in (run / "figures").glob("*.png"))
+        figs = sorted(p.name for p in (run / "figures").iterdir())
         want = ["fig4_2.png", "fig4_3a.png", "fig4_3b.png", "fig4_3c.png", "fig4_4a.png", "fig4_4b.png",
                 "fig4_4c.png", "fig4_5a.png", "fig4_5b.png", "fig4_5c.png", "fig4_6.png"]
-        check("S5 every figure renders (11 files and a manifest)", rc == 0 and figs == want
-              and (run / "figures" / "MANIFEST.json").is_file(), f"rc {rc}, {figs}")
+        check("S5 every figure renders (11 PNG files, nothing else, in the figures folder; the manifest beside it: "
+              "QUAL-AUD-1 N-06)", rc == 0 and figs == want and (run / "manifest_figures.json").is_file(),
+              f"rc {rc}, {figs}")
         sizes = []
         for f in want:
             with Image.open(run / "figures" / f) as im:
@@ -345,8 +419,8 @@ def s5(font: str):
                       "--synthetic"], class_names=names) == 1)
         rc_b = R.main(["--run", str(run), "--split", "val", "--select-sha256", s_sha, "--font", font,
                        "--synthetic", "--out", "figures_b"], class_names=names)
-        man_a = json.loads((run / "figures" / "MANIFEST.json").read_text(encoding="utf-8"))
-        man_b = json.loads((run / "figures_b" / "MANIFEST.json").read_text(encoding="utf-8")) if rc_b == 0 else {}
+        man_a = json.loads((run / "manifest_figures.json").read_text(encoding="utf-8"))
+        man_b = json.loads((run / "manifest_figures_b.json").read_text(encoding="utf-8")) if rc_b == 0 else {}
         check("S5 a re-render from the same arrays gives the same colours and the same figures (QUAL-A-1 Q3)",
               rc_b == 0 and man_a["palette"] == man_b.get("palette") and man_a["figures"] == man_b.get("figures"))
         fonts, _ = R.load_fonts(font, True)
@@ -354,9 +428,10 @@ def s5(font: str):
         _, side = R.columns(4)
         pl = R.pair_lines(cv, names, [(1, 9, 50), (2, 8, 40), (1, 3, 40), (5, 6, 7), (7, 5, 7)], 4000)
         tied = R.confused_pairs(np.array([[3, 3, 1, 1]], dtype=np.uint8), np.array([[5, 4, 6, 2]], dtype=np.uint8))
-        check("S5 pairs: three by pixel count, ties to the lower (ground truth, predicted), then 'and n further "
-              "pairs' (QUAL-A-1 Q5)", pl[-1] == "and 2 further pairs" and len(pl) == 4 and R.further(1) ==
-              "and 1 further pair" and [t[:2] for t in tied] == [(1, 2), (1, 6), (3, 4), (3, 5)], str(pl))
+        check("S5 pairs: three by pixel count, ties to the lower (ground truth, predicted), then 'and further pairs' "
+              "with no number (QUAL-A-1 Q5; QUAL-AUD-1 F-05)", pl[-1] == "and further pairs" and len(pl) == 4
+              and not any(ch.isdigit() for ch in pl[-1]) and R.pair_lines(cv, names, [(1, 9, 5)], 4000)[-1]
+              != "and further pairs" and [t[:2] for t in tied] == [(1, 2), (1, 6), (3, 4), (3, 5)], str(pl))
         check("S5 the value label is the record's value as a percentage with two decimals (QUAL-A-1 Q8)",
               " ".join(R.value_lines(cv, 0.5, "test", side)) == "Per-image disease-only mIoU: 50.00%"
               and stops("value_missing", R.value_lines, cv, None, "test", side))
@@ -370,10 +445,13 @@ def s5(font: str):
         p.unlink()
         Image.fromarray(a).save(p)
         check("S5 a changed array is refused", stops("array_changed", R.Inputs, run2, "val", s_sha2))
-        run3 = tmp / "run_gate"
-        s_sha3 = synthetic_run(run3, "test", fail_tile=True)
-        check("S5 on TEST a failed tile stops the step before anything is drawn",
-              stops("check_incomplete", R.Inputs, run3, "test", s_sha3))
+        gate = {}
+        for mode in ("both", "pass_only", "all_pass_only"):
+            r3 = tmp / f"run_gate_{mode}"
+            gate[mode] = stops("check_incomplete", R.Inputs, r3, "test", synthetic_run(r3, "test", fail_tile=mode))
+        check("S5 on TEST the gate stops before anything is drawn when a tile failed and its record says so, when a "
+              "tile's pass is false alone, and when a record's all_pass is false alone (QUAL-AUD-1 T7 (2))",
+              all(gate.values()), str(gate))
         run4 = tmp / "run_gate_ok"
         s_sha4 = synthetic_run(run4, "test")
         try:
@@ -397,6 +475,21 @@ def s5(font: str):
         check("S5 on TEST another error prints its type only; its message goes to the run's log",
               rc5 == 1 and secret not in buf.getvalue() and "unexpected_error: ValueError" in buf.getvalue()
               and secret in log, buf.getvalue().strip())
+        # QUAL-AUD-1 N-03 and N-04: outputs that exist already, and a run folder inside the repository
+        r7 = tmp / "run_exists"
+        (r7 / "select").mkdir(parents=True)
+        (r7 / "select" / "S.json").write_text("{}", encoding="utf-8")
+        (r7 / "manifest_figures.json").write_text("{}", encoding="utf-8")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc7 = Q.main(["--run", str(r7), "--split", "val", "--val-artifact", str(tmp / "absent")])
+            rc8 = R.main(["--run", str(r7), "--split", "val", "--select-sha256", "0" * 64, "--font", font,
+                          "--synthetic"], class_names=names)
+        check("S5 a step whose outputs exist already stops before any read: select (refused, exit 3), render (exit 1) "
+              "(QUAL-AUD-1 N-03)", rc7 == 3 and rc8 == 1 and buf.getvalue().count("output_exists") == 2
+              and not (r7 / "figures").exists(), buf.getvalue().strip()[-300:])
+        check("S5 a run folder inside the repository is refused (QUAL-AUD-1 N-04)",
+              stops("run_in_repo", Q.run_dir, Q.REPO / "scripts"))
         R.repo_state = lambda expect: dict(FAKE_REPO, commit="1" * 40)
         run6 = tmp / "run_other_commit"
         s_sha6 = synthetic_run(run6, "val")
@@ -407,7 +500,7 @@ def s5(font: str):
         R.render_only_change = lambda repo, base, head: ["scripts/qual_render.py"]
         base = ["--run", str(run6), "--split", "val", "--select-sha256", s_sha6, "--font", font, "--synthetic"]
         rc_r = R.main(base + ["--rerender", "L1", "--out", "figures_r2"], class_names=names)
-        man_r = json.loads((run6 / "figures_r2" / "MANIFEST.json").read_text(encoding="utf-8")) if rc_r == 0 else {}
+        man_r = json.loads((run6 / "manifest_figures_r2.json").read_text(encoding="utf-8")) if rc_r == 0 else {}
         R.render_only_change = lambda repo, base, head: ["scripts/qual_predict.py", "scripts/qual_render.py"]
         rc_x = R.main(base + ["--rerender", "L1", "--out", "figures_r3"], class_names=names)
         check("S5 a re-render (QUAL-A-1 Q10) opens when only qual_render.py changed, records both commits, and is "
@@ -554,6 +647,477 @@ def s6(regenerate: bool):
         check("S6 CLASS_COLOURS regenerates exactly", palette_generate() == list(R.CLASS_COLOURS))
 
 
+# ----------------------------------------------------------------------------------------------------- S7
+def s7():
+    from scripts.qual_predict import OTHER_DEVICE_TOL, SAME_DEVICE_TOL, tile_verdict
+
+    def v(a, b, eq=True, same=True):
+        return tile_verdict(a, b, counts_equal=eq, same_device=same)
+
+    check("S7 the pass rule (T7 (1)): on the record's device class a gap of exactly 1e-6 passes, a larger one fails",
+          v(0.0, 1e-6)[0] and v(0.0, 1e-6)[2] == SAME_DEVICE_TOL == 1e-6 and not v(0.0, 1.0000001e-6)[0]
+          and v(0.25, 0.25) == (True, 0.0, 1e-6))
+    check("S7 the pass rule: on the record's device class unequal confusion counts fail, even at gap 0",
+          not v(0.5, 0.5, eq=False)[0])
+    check("S7 the pass rule: on another device class the tolerance is 0.5 pp and the counts do not bind",
+          v(0.5, 0.504, eq=False, same=False)[0] and not v(0.5, 0.506, same=False)[0]
+          and v(0.5, 0.5, same=False)[2] == OTHER_DEVICE_TOL == 0.005)
+    check("S7 the pass rule: a missing, non-finite or non-float value fails",
+          not any(v(a, b)[0] for a, b in ((0.5, None), (None, 0.5), (0.5, float("nan")), (float("inf"), 0.5),
+                                         (0.5, 1), (True, 1.0))) and v(0.5, None)[1] is None)
+
+    def summ(**er):
+        base = {"torch_num_threads": 1, "batch_size": 1, "image_digest": Q.KD_DIGEST, "model_device": "cpu"}
+        return {"run": {"eval_runtime": dict(base, **er)}}
+
+    check("S7 the device rule: the record's model device as the evaluator recorded it, 'cpu' only (F-03)",
+          Q.same_device_class(summ()) and not any(Q.same_device_class(summ(model_device=d))
+                                                  for d in ("cuda:0", "CPU", "cpu:0", None))
+          and not Q.same_device_class({}))
+    guard = {"image_digest": Q.KD_DIGEST}
+    check("S7 the execution context (QUAL-AUD-1 F-03): T 1, batch 1, the guard's image, model device cpu; each "
+          "departure is named", Q.record_context_problems(summ(), guard) == []
+          and Q.record_context_problems(summ(torch_num_threads=8), guard) == ["torch_num_threads"]
+          and Q.record_context_problems(summ(torch_num_threads=True), guard) == ["torch_num_threads"]
+          and Q.record_context_problems(summ(batch_size=2), guard) == ["batch_size"]
+          and Q.record_context_problems(summ(image_digest="sha256:" + "b" * 64), guard) == ["image_digest"]
+          and Q.record_context_problems(summ(model_device="cuda:0"), guard) == ["model_device"]
+          and Q.record_context_problems(summ(), {"image_digest": None}) == ["image_digest"]
+          and len(Q.record_context_problems({}, guard)) == 4)
+
+
+# ----------------------------------------------------------------------------------------------------- S8
+W_COMBOS = [(m, c, p) for m in Q.MODEL_ORDER for c in Q.CONDITIONS[m] for p in range(1, Q.k_of(c) + 1)]
+W_CONDS = (Q.CLEAN, *Q.CELLS)
+W_EDGES = (0, 171, 341, 512)
+W_RING = ((0, 0), (0, 1), (0, 2), (1, 2), (2, 2), (2, 1), (2, 0), (1, 0))
+W_CENTRES = (85, 256, 426)
+W_ORIG_CLASS, W_ORIG_RGB = 110, (7, 77, 177)
+
+
+def w_code(m, c, p) -> int:          # a prediction's centre class: 1..63, one per (model, condition, position)
+    return 1 + W_COMBOS.index((m, c, p))
+
+
+def w_gt(p) -> int:                  # the ground truth's disease class of a position: 101..109
+    return 100 + p
+
+
+def w_bits(m, c, p) -> int:          # eight bits in the ring of cells: TP where a bit is 1, missed where it is 0
+    return (Q.MODEL_ORDER.index(m) * 4 + W_CONDS.index(c)) * 16 + p
+
+
+def w_rgb(c, p) -> tuple:            # a canvas' one colour, one per (condition, position)
+    return (25 * p, 50 * W_CONDS.index(c) + 20, 128)
+
+
+def wiring_run(root: Path) -> str:
+    import numpy as np
+
+    def canvas(c, p):
+        a = np.empty((512, 512, 3), dtype=np.uint8)
+        a[:] = w_rgb(c, p)
+        return a
+
+    def mask(p):
+        m = np.full((512, 512), 255, dtype=np.uint8)
+        m[64:448] = w_gt(p)
+        return m
+
+    def pred(m, c, p):
+        a = np.zeros((512, 512), dtype=np.uint8)
+        e = W_EDGES
+        a[e[1]:e[2], e[1]:e[2]] = w_code(m, c, p)
+        for k, (i, j) in enumerate(W_RING):
+            if w_bits(m, c, p) >> k & 1:
+                a[e[i]:e[i + 1], e[j]:e[j + 1]] = w_gt(p)
+        return a
+
+    orig = np.empty((300, 400, 3), dtype=np.uint8)
+    orig[:] = W_ORIG_RGB
+    return write_run(root, "val", canvas=canvas, mask=mask, pred=pred,
+                     original=(orig, np.full((300, 400), W_ORIG_CLASS, dtype=np.uint8)))
+
+
+def rows_of(placed) -> list:
+    """The panels of a figure as rows (by their centre's height) of panels left to right."""
+    rows = []
+    for t in sorted(placed, key=lambda t: (t[1] + t[3] / 2, t[0])):
+        cy = t[1] + t[3] / 2
+        if rows and abs(rows[-1][0] - cy) <= 3:
+            rows[-1][1].append(t)
+        else:
+            rows.append((cy, [t]))
+    return [sorted(r, key=lambda t: t[0]) for _, r in rows]
+
+
+def s8(font: str):
+    import numpy as np
+    from PIL import Image
+    tmp = tmpdir("qual1_smoke_wiring_")
+    try:
+        run = tmp / "run"
+        inp = R.Inputs(run, "val", wiring_run(run))
+        names = [""] + [f"class {i}" for i in range(1, 116)]
+        present = R.present_classes(inp)
+        lut = R.class_lut(present)
+        pset = set(present)
+        rev = {tuple(int(x) for x in lut[c]): c for c in present}
+        bits_of = {w_bits(*k): k for k in W_COMBOS}
+        code_of = {w_code(*k): k for k in W_COMBOS}
+        fonts, _ = R.load_fonts(font, True)
+        tp, fn, wr, ig = (tuple(R.CATEGORY["tp"]), tuple(R.CATEGORY["fn"]), tuple(R.CATEGORY["wrong"]),
+                          tuple(R.IGNORE))
+
+        def px(img, t, sy, sx):
+            ox, oy, nw, nh = t
+            return tuple(int(v) for v in img[oy + int(sy * nh / 512), ox + int(sx * nw / 512)])
+
+        def colours(img, t):
+            ox, oy, nw, nh = t
+            return {tuple(int(v) for v in c) for c in np.unique(img[oy:oy + nh, ox:ox + nw].reshape(-1, 3), axis=0)}
+
+        def probe(img, t, kind):
+            """What a panel shows: ('photo', (condition, position)) / ('photo', 'original'), ('class', id), or
+            (kind, (model, condition, position)) decoded from the ring of an error map or overlay."""
+            ox, oy, nw, nh = t
+            centre = tuple(int(v) for v in img[oy + nh // 2, ox + nw // 2])
+            if kind == "photo":
+                if centre == W_ORIG_RGB:
+                    return ("photo", "original")
+                hits = [(c, p) for c in W_CONDS for p in range(1, 10) if w_rgb(c, p) == centre]
+                return ("photo", hits[0] if len(hits) == 1 else None)
+            if kind == "class":
+                return ("class", rev.get(centre))
+            one, zero = tp, fn
+            b = 0
+            for k, (i, j) in enumerate(W_RING):
+                c = px(img, t, W_CENTRES[i], W_CENTRES[j])
+                if c not in (one, zero):
+                    return (kind, None)
+                b |= (c == one) << k
+            return (kind, bits_of.get(b), centre)
+
+        def pred_cell(m, c, p):
+            return ("class", w_code(m, c, p))
+
+        def err(m, p):
+            return ("error", (m, Q.CLEAN, p), fn)
+
+        def conf(m, p):
+            return ("conf", (m, Q.CLEAN, p), wr)
+
+        want = {
+            "fig4_2": [[("photo", "original"), ("class", W_ORIG_CLASS), ("photo", (Q.CLEAN, 2)), err("E6", 2)],
+                       [pred_cell(m, Q.CLEAN, 2) for m in Q.MODEL_ORDER]],
+            "fig4_6": [[("photo", (Q.CLEAN, p))] + [conf(m, p) for m in Q.MODEL_ORDER] for p in (1, 2, 3)]}
+        for part, ps in zip("abc", ((1, 2, 3), (4, 5, 6), (7, 8, 9))):
+            want[f"fig4_3{part}"] = [[("photo", (Q.CLEAN, p)), ("class", w_gt(p))]
+                                     + [pred_cell(m, Q.CLEAN, p) for m in Q.MODEL_ORDER] for p in ps]
+            want[f"fig4_4{part}"] = [[("photo", (Q.CLEAN, p))] + [err(m, p) for m in Q.MODEL_ORDER] for p in ps]
+        for part, pos in zip("abc", (1, 2, 3)):
+            want[f"fig4_5{part}"] = [[("photo", (c, pos)), ("class", w_gt(pos))]
+                                     + [pred_cell(m, c, pos) for m in ("E1", "E3", "E6")] for c in W_CONDS]
+        draw = {"fig4_2": lambda cv: R.fig4_2(inp, cv, lut, pset, names),
+                "fig4_6": lambda cv: R.fig4_6(inp, cv, names, [1, 2, 3])}
+        for part, ps in zip("abc", ([1, 2, 3], [4, 5, 6], [7, 8, 9])):
+            draw[f"fig4_3{part}"] = lambda cv, ps=ps: R.fig4_3(inp, cv, lut, pset, names, ps)
+            draw[f"fig4_4{part}"] = lambda cv, ps=ps: R.fig4_4(inp, cv, ps)
+        for part, pos in zip("abc", (1, 2, 3)):
+            draw[f"fig4_5{part}"] = lambda cv, pos=pos: R.fig4_5(inp, cv, lut, pset, names, pos)
+        wrong_place, stray = [], []
+        for name in sorted(want):
+            cv = R.Canvas(fonts)
+            img = np.asarray(Image.open(io.BytesIO(draw[name](cv))).convert("RGB"))
+            grid = rows_of(cv.placed)
+            shape = [len(r) for r in grid]
+            if shape != [len(r) for r in want[name]]:
+                wrong_place.append(f"{name}: panels {shape}")
+                continue
+            for r, (row, wrow) in enumerate(zip(grid, want[name])):
+                for c, (t, w) in enumerate(zip(row, wrow)):
+                    got = probe(img, t, w[0])
+                    if got != w:
+                        wrong_place.append(f"{name} row {r + 1} column {c + 1}: {got} for {w}")
+                    if w[0] == "class":                                      # N-10: no colour outside the legend
+                        k = code_of.get(w[1])
+                        allowed = ({tuple(int(x) for x in lut[w[1]]), (0, 0, 0)} if w[1] == W_ORIG_CLASS else
+                                   {tuple(int(x) for x in lut[w[1]]), ig} if k is None else
+                                   {tuple(int(x) for x in lut[w[1]]), tuple(int(x) for x in lut[w_gt(k[2])]),
+                                    (0, 0, 0)})
+                    elif w[0] in ("error", "conf"):
+                        allowed = {tp, fn, ig} if w[0] == "error" else {tp, wr, fn, ig}
+                    else:
+                        continue
+                    extra = colours(img, t) - allowed
+                    if extra:
+                        stray.append(f"{name} row {r + 1} column {c + 1}: {len(extra)} colours outside the legend")
+        check("S8 wiring (T7 (3)): every panel of Figures 4.2 to 4.6 shows its own position, model and condition "
+              "in its own place", not wrong_place, "; ".join(wrong_place[:4]))
+        blend = Image.fromarray(lut[inp.pred("E1", Q.CLEAN, 1)]).resize((379, 379), Image.BOX)
+        check("S8 class maps, error maps and overlays hold no colour outside their legend (nearest; the photographs "
+              "box-filtered), where a box filter would blend (QUAL-AUD-1 N-10)",
+              not stray and len(np.unique(np.asarray(blend).reshape(-1, 3), axis=0)) > 3, "; ".join(stray[:4]))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+# ----------------------------------------------------------------------------------------------------- S9
+def s9(font: str):
+    doc = json.loads((Q.REPO / "configs" / "plantseg_class_map.json").read_text(encoding="utf-8"))
+    names = [e["name"] for e in doc["entries"]]
+    fonts, info = R.load_fonts(font, True)
+    cv = R.Canvas(fonts)
+    _, side = R.columns(5)                                   # Figure 4.6's column
+    widest = max(range(1, 116), key=lambda c: cv.text_size(R.name_of(names, c), R.TEXT_PT)[0])
+    bad = []
+    for c in range(1, 116):
+        for a, b in ((c, widest), (widest, c)):
+            try:
+                lines = R.pair_lines(cv, names, [(a, b, 9)], side)
+            except Q.QualStop as e:
+                bad.append(f"{a}->{b}: {e.code}")
+                continue
+            joined = " ".join(lines)
+            if (joined != f"{R.name_of(names, a)} → {R.name_of(names, b)}" or any("…" in t for t in lines)
+                    or not all(cv.fits(t, R.TEXT_PT, side) for t in lines)):
+                bad.append(f"{a}->{b}")
+    check(f"S9 the 115 class names of configs/plantseg_class_map.json, as ground truth and as prediction beside the "
+          f"widest, wrap at a space within the {side} px column of Figure 4.6, never cut (QUAL-AUD-1 F-07; font "
+          f"{info['family']})", len(names) == 116 and not bad, "; ".join(bad[:5]))
+
+    class Keys:
+        def __init__(self):
+            self.entries = None
+
+        def legend(self, entries, size=R.TEXT_PT):
+            self.entries = list(entries)
+
+    k1, k2 = Keys(), Keys()
+    lut = R.class_lut([3, 9])
+    R.class_legend(k1, {3, 9}, lut, names, padding=True)
+    R.class_legend(k2, set(), lut, names, padding=False)
+    check("S9 every class legend keys black first as 'Background' (QUAL-AUD-1 F-08), then the classes, then the "
+          "padding where shown", k1.entries[0] == ((0, 0, 0), "Background") and len(k1.entries) == 4
+          and k1.entries[-1] == R.PAD_KEY and k2.entries == [((0, 0, 0), "Background")])
+
+
+# ---------------------------------------------------------------------------------------------------- S10
+def s10():
+    """T7 (4): the TEST-only functions and the preflight P1 on made-up files. Real: LREP's open_inventory (its
+    binding and freeze rules) reading a made-up export and binding through LREP's own stub reader (TMAN's reader
+    validates against the committed catalogue and the 37 stats identities, so a made-up export cannot pass it),
+    LREP's binding_record and input_file_sha256, the qual steps' own code and the evaluator's check_cache_sources.
+    Stood in: LREP's load_bound (it needs an artifact the evaluator wrote in official mode) and the evaluator's two
+    cache gates (they need an official cache). The listing is made up (no TEST folder is read)."""
+    import hashlib
+    import subprocess
+    import numpy as np
+    import scripts.evaluate_corruptions as EC
+    import src.eval.adapters as AD
+    import src.stats.heldout_inputs as HI
+    from src.corruption_cache import MANIFEST_NAME
+    from src.eval.artifacts import hash_split_manifest
+    from src.eval.evaluate import ManifestEntry
+    from src.eval.protocols import CANVAS_PROTOCOL_ID
+    from src.stats.driver import input_file_sha256
+    n = Q.N_SPLIT["test"]
+    entries = [ManifestEntry(i, f"syn{i:04d}", f"syn{i:04d}") for i in range(n)]
+    lsha = hash_split_manifest(entries)
+    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(Q.REPO), capture_output=True, text=True).stdout.strip()
+    model_sha = {m: Q.record_model_sha256(m) for m in Q.MODEL_ORDER}
+    guard = {"implementation": "CPython", "python": Q.PYTHON, "image_digest": Q.KD_DIGEST}
+    tmp = tmpdir("qual1_smoke_t74_")
+    calls = {"resolve": [], "record": [], "load_bound": []}
+    keep = {(HI, "tman_reader"): HI.tman_reader, (HI, "load_bound"): HI.load_bound,
+            (EC, "resolve_corruption_cache"): EC.resolve_corruption_cache,
+            (EC, "check_verification_record"): EC.check_verification_record,
+            (AD, "build_expected_manifest_for"): AD.build_expected_manifest_for, (Q, "split_listing"): Q.split_listing,
+            (Q, "version_guard"): Q.version_guard, (Q, "repo_state"): Q.repo_state}
+    cache_err = {}
+
+    def setup(name, *, threads_of=None, commit_of=None, tamper=None):
+        """A session checkout with the thirteen made-up artifacts, the export and binding beside a derived folder,
+        a cache; returns the select command line for it."""
+        root = tmp / name
+        session, derived, cache = root / "session", root / "derived", root / "cache"
+        recs = []
+        rng = np.random.default_rng(11)
+        for m, c in Q.RECORD_KEYS:
+            rel = f"reports/tday/{m}/{c}"
+            d = session / rel
+            d.mkdir(parents=True)
+            want = {"type": "clean", "name": None, "severity": None} if c == Q.CLEAN else {
+                "type": "corruption", "name": c.rpartition("_s")[0], "severity": int(c.rpartition("_s")[2])}
+            commit = "e" * 40 if commit_of == (m, c) else head
+            summary = {"dataset": {"split": "test", "preprocess_protocol": CANVAS_PROTOCOL_ID, "condition": want,
+                                   "actual_rows": n, "split_manifest_sha256": lsha},
+                       "run": {"checkpoint_sha256": model_sha[m], "repo_commit": commit, "env": {"device": "cpu"},
+                               "eval_runtime": {"torch_num_threads": 8 if threads_of == (m, c) else 1,
+                                                "batch_size": 1, "image_digest": Q.KD_DIGEST, "model_device": "cpu"}}}
+            vals = rng.random(n)
+            rows = "".join(json.dumps({"manifest_index": i, "image_id": e.image_id, "clean_image_id": e.image_id,
+                                       "am5_excluded": False, "n_eligible_disease_only": 1,
+                                       "disease_only_miou": float(vals[i]), "disease_only_miou_status": "ok"}) + "\n"
+                           for i, e in enumerate(entries))
+            buf = io.BytesIO()
+            np.savez(buf, image_index=np.arange(n), class_id=np.full(n, 7), tp=np.ones(n, dtype=np.int64),
+                     gt=np.ones(n, dtype=np.int64), pred=np.ones(n, dtype=np.int64),
+                     manifest_ids=np.array([e.image_id for e in entries]))
+            payload = {"per_image.jsonl": rows.encode(), "sufficient_stats.npz": buf.getvalue(),
+                       "summary.json": Q.canonical_bytes(summary)}
+            for k, data in payload.items():
+                (d / k).write_bytes(data)
+            (d / "MANIFEST.sha256").write_text("".join(f"{hashlib.sha256(v).hexdigest()}  {k}\n"
+                                                       for k, v in sorted(payload.items())), encoding="utf-8")
+            slot, prec, scope, cell = Q.binding_key(m, c)
+            recs.append({"slot": slot, "precision": prec, "scope": scope, "cell": cell, "protocol": "canvas",
+                         "repo_relative_path": rel, "files_sha256": input_file_sha256(d),
+                         "checkpoint_sha256": model_sha[m], "repo_commit": commit, "split_manifest_sha256": lsha})
+            if tamper == (m, c):
+                (d / "per_image.jsonl").write_bytes(rows.encode() + b"\n")
+        derived.mkdir(parents=True)
+        bdata = Q.canonical_bytes({"schema": HI.BINDING_SCHEMA, "artifacts": recs})
+        (derived / "binding.json").write_bytes(bdata)
+        doc = {"schema": HI.INVENTORY_SCHEMA, "evaluator_commit": head, "manifest_sha256": "a" * 64,
+               "execution_context": {}, "dedup": None, "freeze": {"manifest_sha256": "a" * 64},
+               "models": [{"slot": Q.MODELS[m]["slot"], "precision": Q.MODELS[m]["precision"]} for m in Q.MODEL_ORDER],
+               "entries": [{"slot": Q.MODELS[m]["slot"], "role": ["family"]} for m in Q.MODEL_ORDER],
+               "binding": {"state": "bound", "path": "binding.json", "sha256": hashlib.sha256(bdata).hexdigest()}}
+        edata = Q.canonical_bytes(doc)
+        (derived / "inventory.json").write_bytes(edata)
+        (cache / "verification").mkdir(parents=True)
+        cman = {"cells": [{"cell_id": c} for c in Q.CELLS], "entries": [],
+                "sources": [{"manifest_index": e.manifest_index, "image_id": e.image_id} for e in entries]}
+        (cache / MANIFEST_NAME).write_bytes(Q.canonical_bytes(cman))
+        (cache / "verification" / "record.json").write_text("{}", encoding="utf-8")
+        cache_err["manifest"] = cman
+        (root / "run").mkdir()
+        return root, ["--run", str(root / "run"), "--split", "test", "--export", str(derived / "inventory.json"),
+                      "--export-sha256", hashlib.sha256(edata).hexdigest(), "--session-root", str(session),
+                      "--expect-commit", head, "--corruption-cache", str(cache), "--cache-canonical-sha256", "c" * 64,
+                      "--cache-manifest-file-sha256", Q.sha256_file(cache / MANIFEST_NAME),
+                      "--verification-record", str(cache / "verification" / "record.json"),
+                      "--verification-record-sha256", Q.sha256_file(cache / "verification" / "record.json")]
+
+    def fake_resolve(root, corruption, severity, *, split, official, artifact_status=None, expected_sha256=None):
+        calls["resolve"].append((corruption, severity, split, official, artifact_status, expected_sha256))
+        if cache_err.get("raise"):
+            e = RuntimeError("[cache_canonical_sha256_mismatch] a made-up refusal naming syn0001")
+            e.code = "cache_canonical_sha256_mismatch"
+            raise e
+        return cache_err["manifest"]
+
+    def fake_record(root, manifest, record, *, artifact_status):
+        calls["record"].append((Path(record).name, artifact_status))
+        return Q.sha256_file(record)
+
+    def fake_load_bound(inv, *, slot, stage, precision, scope, cell=None, input_root, policy):
+        calls["load_bound"].append((slot, stage, precision, scope, cell, policy.name))
+        rec = HI.binding_record(inv, slot, precision, scope, cell)
+        d = Path(input_root) / rec["repo_relative_path"]
+        if input_file_sha256(d) != rec["files_sha256"]:
+            raise HI.refusal("artifact_record_mismatch", f"{d}: files differ from the binding record")
+        return SimpleNamespace(record=rec, loaded=SimpleNamespace(directory=d))
+
+    listing = {"entries": entries}
+    try:
+        HI.tman_reader = lambda: HI.read_inventory_stub
+        HI.load_bound = fake_load_bound
+        EC.resolve_corruption_cache = fake_resolve
+        EC.check_verification_record = fake_record
+        AD.build_expected_manifest_for = lambda split, idx: [listing["entries"][i] for i in sorted(idx)]
+        Q.split_listing = lambda split: (list(listing["entries"]), [e.image_id for e in entries], n)
+        root, argv = setup("pass")
+        args = Q.build_parser().parse_args(argv)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            pre = Q.preflight(args, guard, {"commit": head})
+        trees = pre["evaluator_trees"].get(head, {})
+        check("S10 P1 passes on made-up files: 13 records and 52 files against the binding (LREP's open_inventory), "
+              "one repo_commit whose src/ and configs/ trees are HEAD's, the listing's sha256, 3 cells opened "
+              "official with their pins; nothing per-image parsed, no id printed",
+              len(pre["records"]) == 13 and pre["repo_commits"] == [head] and trees.get("compared") is True
+              and trees["src"]["equal"] and trees["configs"]["equal"]
+              and pre["listing"]["split_manifest_sha256"] == lsha
+              and [(x[0], x[3], x[4], x[5]) for x in calls["resolve"]] == [
+                  (c.rpartition("_s")[0], True, "official", "c" * 64) for c in Q.CELLS]
+              and calls["record"] == [("record.json", "official")] * 3 and calls["load_bound"] == []
+              and "syn0" not in buf.getvalue(), buf.getvalue().strip()[-300:])
+        inv = Q.open_test_inventory(args.export, args.export_sha256)
+        offs = {}
+        for m, c in Q.RECORD_KEYS:
+            offs[(m, c)] = Q.load_test_official(inv, m, c, args.session_root)
+            Q.check_record_identity(offs[(m, c)], split="test", condition=c, checkpoint_sha256=model_sha[m])
+        ids = Q.manifest_order("test", offs[("E6", Q.CLEAN)])
+        want_calls = [(Q.MODELS[m]["slot"], Q.MODELS[m]["stage"], *Q.binding_key(m, c)[1:], "OFFICIAL")
+                      for m, c in Q.RECORD_KEYS]
+        check("S10 open_test_inventory, load_test_official (each model and condition's binding key), "
+              "check_record_identity and manifest_order on the made-up export, binding and artifacts (T7 (4))",
+              calls["load_bound"] == want_calls and ids == [e.image_id for e in entries]
+              and all(o.files_sha256 == pre["records"][Q.record_label(*k)]["files_sha256"] for k, o in offs.items())
+              and stops("record_identity", Q.check_record_identity, offs[("E1", "fog_s2")], split="test",
+                        condition="motion_blur_s2", checkpoint_sha256=model_sha["E1"])
+              and stops("record_identity", Q.check_record_identity, offs[("E1", Q.CLEAN)], split="test",
+                        condition=Q.CLEAN, checkpoint_sha256=model_sha["E3"]), str(calls["load_bound"][:2]))
+        refused, kept = {}, []
+
+        def refusal_of(name, a):
+            try:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    Q.preflight(a, guard, {"commit": head})
+                refused[name] = None
+            except Q.PreflightRefusal as e:
+                refused[name] = e.code
+                kept.append(e.private)
+
+        for name, kw in (("context", {"threads_of": ("E3", "gaussian_noise_s2")}),
+                         ("commit", {"commit_of": ("teacher", Q.CLEAN)}), ("tamper", {"tamper": ("E6", "fog_s2")})):
+            refusal_of(name, Q.build_parser().parse_args(setup(name, **kw)[1]))
+        listing["entries"] = entries[:5] + [ManifestEntry(5, "syn9999", "syn9999")] + entries[6:]
+        refusal_of("listing", args)
+        listing["entries"] = entries
+        cache_err["raise"] = True
+        refusal_of("cache", args)
+        cache_err["raise"] = False
+        check("S10 P1 refuses a record made with T 8, a second repo_commit, a file changed after the binding, "
+              "another listing and a cache refusal (QUAL-AUD-1 A.3, F-01, F-03, F-04); on TEST no refusal keeps a "
+              "library message, even for the run's log (A.2)",
+              refused == {"context": "record_context", "commit": "repo_commit", "tamper": "record_files",
+                          "listing": "manifest_mismatch", "cache": "cache_refused"} and kept == [None] * 5,
+              f"{refused} {kept}")
+        # select's TEST path end to end (its interpreter and checkout guards stood in)
+        Q.version_guard = lambda **kw: dict(guard)
+        Q.repo_state = lambda expect: {"commit": head, "governed_paths_clean": True, "governed_violations": []}
+        calls["load_bound"].clear()
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = Q.main(argv)
+        out = buf.getvalue()
+        rec = json.loads((root / "run" / "select" / "record.json").read_text(encoding="utf-8")) if rc == 0 else {}
+        sdoc = json.loads((root / "run" / "select" / "S.json").read_text(encoding="utf-8")) if rc == 0 else {}
+        check("S10 select on TEST: the preflight first, then E6's record and the other twelve (F-02), all thirteen "
+              "files_sha256 kept, S drawn; the console names no image",
+              rc == 0 and calls["load_bound"][0][:2] == (Q.MODELS["E6"]["slot"], "E6")
+              and len(calls["load_bound"]) == 13
+              and out.index("P1 records") < out.index("records: 13 loaded")
+              and sorted(rec.get("records", {})) == sorted(Q.record_label(*k) for k in Q.RECORD_KEYS)
+              and rec["records"] == {k: v["files_sha256"] for k, v in pre["records"].items()}
+              and len(sdoc.get("picks", [])) == 9 and len(sdoc.get("nonce", "")) == 32 and "syn" not in out, out[-400:])
+        root_x, argv_x = setup("context_select", threads_of=("E1", Q.CLEAN))
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc_x = Q.main(argv_x)
+        out = buf.getvalue()
+        check("S10 a refusal in select's preflight prints REFUSED, exits 3 and writes nothing of S",
+              rc_x == 3 and "REFUSED record_context" in out and not (root_x / "run" / "select").exists()
+              and "syn" not in out, out[-300:])
+    finally:
+        for (mod, attr), v in keep.items():
+            setattr(mod, attr, v)
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 # every repo module the three steps import (select, predict on clean and corrupted conditions, render), TEST and
 # VAL paths alike; S0 loads them all in this checkout, so a module the clone leaves out stops the smoke, not a run
 STEP_MODULES = ("scripts.qual_select", "scripts.qual_predict", "scripts.qual_render",
@@ -562,7 +1126,7 @@ STEP_MODULES = ("scripts.qual_select", "scripts.qual_predict", "scripts.qual_ren
                 "src.eval.robustness", "src.data.dataset", "src.data.transforms", "src.distill.nmf_stream",
                 "src.corruption_cache", "scripts.evaluate_model", "scripts.evaluate_corruptions",
                 "src.stats.heldout_inputs", "src.stats.ingest", "src.stats.driver", "src.tman.validate",
-                "src.tman.schema", "src.tman.binding")
+                "src.tman.schema", "src.tman.binding", "configs.data")
 
 
 def s0():
@@ -580,18 +1144,22 @@ def s0():
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--font", required=True, help="any TrueType font file (the smoke's figures are synthetic)")
-    ap.add_argument("--no-torch", action="store_true", help="skip S3 and S4 (only where torch is absent)")
+    ap.add_argument("--no-torch", action="store_true", help="skip S0, S3, S4 and S10 (only where torch is absent)")
     ap.add_argument("--palette", action="store_true", help="also regenerate CLASS_COLOURS (about two minutes)")
     args = ap.parse_args(argv)
     s1_s2()
     if args.no_torch:
-        print("SKIP S0 S3 S4: --no-torch (not a PASS of the full smoke)")
+        print("SKIP S0 S3 S4 S10: --no-torch (not a PASS of the full smoke)")
     else:
         s0()
         s3()
         s4()
+        s10()
     s5(args.font)
     s6(args.palette)
+    s7()
+    s8(args.font)
+    s9(args.font)
     n, ok = len(RESULTS), sum(RESULTS)
     full = not args.no_torch and ok == n
     print(f"RESULT: QUAL SMOKE {'OK' if full else 'PARTIAL' if ok == n else 'FAILED'} ({ok}/{n})")

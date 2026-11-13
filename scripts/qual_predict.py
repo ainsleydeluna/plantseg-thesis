@@ -15,22 +15,25 @@ stream seeded 42, so row m was predicted after m draws. Only the images of S are
 them the stream is advanced by the draws of the rows not read, each a discarded call of the module's own
 _build_bases with the arguments of the real call (QUAL-1 Q1). Draws are counted and held to the row's index.
 
-The check (AM-27 item 4): for every image and condition, the evaluator's per-image disease-only mIoU of this
-prediction against the official value: within 1e-6 when the record's device class (summary run.env.device) is
-this run's, within 0.5 pp otherwise. The per-image confusion counts are compared with the record's NPZ too and
-reported (QUAL-1: proposed as a STOP on the same device class). A failed tile ends the step with STOP and
-the render step refuses to draw anything.
+The record of each condition is loaded and checked before its pass (ruling QUAL-AUD-1 F-02, F-03): its
+identity, and on TEST its execution context (T = 1, batch 1, model device cpu, the image this run runs in), else
+STOP record_context before anything of it is predicted. The check (AM-27 item 4; tile_verdict): for every image and
+condition, the evaluator's per-image disease-only mIoU of this prediction against the official value: within 1e-6
+when the record's device class (summary run.eval_runtime.model_device) is this run's, within 0.5 pp otherwise; on
+the same device class the per-image confusion counts must also equal the record's NPZ, class by class (QUAL-A-1
+Q6). The counts are computed once more from the saved arrays and held to the pass's (N-14). A failed tile ends
+the step with STOP and the render step refuses to draw anything.
 
 Writes into <run>: arrays/pred/<model>/<condition>/<position>.png (class-index PNG), arrays/input/<condition>/
 <position>.png (the 512x512 canvas, proven to be the bytes the model saw), arrays/mask/<position>.png,
-arrays/original/ (position 2: the image and its mask as read), values/<model>.json (the per-image values of
-record that a figure may print), checks/<model>.json and records/predict_<model>.json. The console shows
-counts, hashes and PASS or STOP lines only.
+arrays/original/ (position 2: the image and its mask as read, held to the canvas through core_preprocess: N-09),
+values/<model>.json (the per-image values of record that a figure may print), checks/<model>.json and
+records/predict_<model>.json (per condition and position, without a name: the sha256 of the image file, of the mask
+file and of the cached copy read: F-06). The console shows counts, hashes and PASS or STOP lines only.
 """
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from pathlib import Path
 
@@ -38,42 +41,22 @@ REPO = Path(__file__).resolve().parents[1]
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
-from scripts.qual_select import (CELLS, CLEAN, CONDITIONS, MODELS, N_SPLIT, P50_POSITION,  # noqa: E402
-                                 RECORD_FORMAT, QualStop, canonical_bytes, check_record_identity, counts_map, k_of,
-                                 expected_commit, load_test_official, load_val_official, no_test,
-                                 open_test_inventory, read_s, repo_state, run_dir, run_step, say, sha256_bytes,
-                                 sha256_file, version_guard, write_new)
+from scripts.qual_select import (BATCH, CELLS, CLEAN, CONDITIONS, DEVICE, MODELS, N_SPLIT,  # noqa: E402
+                                 P50_POSITION, RECORD_FORMAT, THREADS, QualStop, add_cache_args, cache_args_given,
+                                 canonical_bytes, check_record_identity, counts_map, expected_commit, expected_hashes,
+                                 k_of, load_test_official, load_val_official, open_cell,
+                                 open_test_inventory, outputs_absent, read_s, record_context_problems, record_label,
+                                 repo_state, run_dir, run_step, same_device_class, say, sha256_file, version_guard,
+                                 write_new)
 
-TDAY_MANIFEST_REL = "reports/derived/tday_manifest.json"
-TDAY_MANIFEST_SHA256 = "3ca39b40dfba45a7e486cf40098994582b8d2a22e11c0768a345e8cf5676059d"   # SUMMARY.txt
 TEACHER_CFG_REL = "configs/teacher/segnext_mscan-b_1xb16-adamw-40k_plantseg116-512x512.py"
 TEACHER_CFG_SHA256 = "1b94aa32a7d22be647d8e60a42daa1dd8dd756158b586feec6465385e299ae4a"    # DL-88
-THREADS = 1                  # TEST day: T = 1 (tday_manifest execution_context; every summary.json)
-BATCH = 1
-DEVICE = "cpu"
 SAME_DEVICE_TOL = 1e-6       # AM-27 item 4
 OTHER_DEVICE_TOL = 0.005     # 0.5 pp, in the record's unit (mIoU in [0, 1])
 M4V = ("M4-V", 42)
 
 
 # ------------------------------------------------------------------------------------------ the model file
-def expected_hashes(model: str, manifest_path: Path) -> dict:
-    """AM-27 item 2: the sha256 each file must have, from the TEST-day manifest (itself held to its sha256)."""
-    data = manifest_path.read_bytes()
-    if sha256_bytes(data) != TDAY_MANIFEST_SHA256:
-        raise QualStop("tday_manifest_changed", "reports/derived/tday_manifest.json is not the file of record")
-    entries = {e["slot"]: e for e in json.loads(data)["body"]["entries"]}
-    e = entries.get(MODELS[model]["slot"])
-    if e is None:
-        raise QualStop("slot_missing", f"{MODELS[model]['slot']} is not in the TEST-day manifest")
-    role = "teacher_reference" if model == "teacher" else "family"
-    if role not in (e.get("role") or []):
-        raise QualStop("slot_role", f"{MODELS[model]['slot']} is not of role {role}")
-    if model == "E6":
-        return {"converted": e["hashed"]["artifact_sha256"], "provenance": e["hashed"]["provenance"]["sha256"]}
-    return {"checkpoint": e["checkpoint"]["sha256"]}
-
-
 def hash_first(path, expected: str, what: str) -> Path:
     p = Path(path)
     if not p.is_file():
@@ -237,6 +220,38 @@ def result_counts(result, image_id: str) -> dict:
                       result.sparse_pred[sel], "this pass")
 
 
+def counts_of_arrays(pred, mask, *, num_classes: int = 116, ignore: int = 255) -> dict:
+    """QUAL-AUD-1 N-14: one image's confusion counts {class: (tp, gt, pred)} from a saved prediction and its saved
+    mask, the ignore pixels (255) left out; every class with a nonzero count, as the evaluator's sparse rows."""
+    import numpy as np
+    valid = np.asarray(mask) != ignore
+    g = np.asarray(mask)[valid].astype(np.int64)
+    p = np.asarray(pred)[valid].astype(np.int64)
+    if g.size and (g.min() < 0 or p.min() < 0 or g.max() >= num_classes or p.max() >= num_classes):
+        raise QualStop("class_range", "a saved prediction or mask holds a class outside 0..115 (and 255)")
+    gt = np.bincount(g, minlength=num_classes)
+    pr = np.bincount(p, minlength=num_classes)
+    tp = np.bincount(g[g == p], minlength=num_classes)
+    nz = np.nonzero((tp != 0) | (gt != 0) | (pr != 0))[0]
+    return {int(c): (int(tp[c]), int(gt[c]), int(pr[c])) for c in nz}
+
+
+def tolerance(same_device: bool) -> float:
+    """AM-27 item 4: 1e-6 on the record's device class, 0.5 pp otherwise."""
+    return SAME_DEVICE_TOL if same_device else OTHER_DEVICE_TOL
+
+
+def tile_verdict(recomputed, official, *, counts_equal: bool, same_device: bool) -> tuple:
+    """AM-27 item 4 and QUAL-A-1 Q6 in one place (QUAL-AUD-1 T7 (1)): on the record's device class the gap must be
+    within 1e-6 and the confusion counts equal class by class; on another device class within 0.5 pp. Both values
+    must be finite floats. Returns (passed, gap or None, tolerance)."""
+    import math
+    tol = tolerance(same_device)
+    ok = all(isinstance(v, float) and math.isfinite(v) for v in (recomputed, official))
+    gap = abs(recomputed - official) if ok else None
+    return bool(ok and gap <= tol and (counts_equal or not same_device)), gap, tol
+
+
 # ------------------------------------------------------------------------------------- canvases, written
 def png_bytes(arr) -> bytes:
     import io
@@ -283,9 +298,12 @@ def pairs_of(split: str):
 
 def display_canvases(split: str, tap: dict, cell) -> tuple:
     """The uint8 canvas and the mask behind one tapped sample, made by the evaluator's own functions and held
-    bit for bit to the tensors the model saw (finalize(canvas) == the batch)."""
+    bit for bit to the tensors the model saw (finalize(canvas) == the batch); and, for the manifest (QUAL-AUD-1
+    F-06, AM-27 item 6), the whole-file sha256 of the image and of the mask, and under a corruption the cache
+    entry's cached_file_sha256 (the file load_cached verified on its read). Returns (canvas, mask, hashes)."""
     import torch
     from PIL import Image
+    from src.corruption_cache import cache_index
     from src.data.transforms import core_preprocess, finalize
     from src.eval.corrupted import corrupted_canvas
     img_path, mask_path = pairs_of(split)[tap["manifest_index"]]
@@ -295,7 +313,13 @@ def display_canvases(split: str, tap: dict, cell) -> tuple:
     image, target = finalize(canvas, mcanvas)
     if not (torch.equal(image, tap["image"]) and torch.equal(target, tap["target"])):
         raise QualStop("canvas_differs", "a display canvas is not the input the model saw")
-    return canvas, mcanvas
+    hashes = {"image_file_sha256": sha256_file(img_path), "mask_file_sha256": sha256_file(mask_path)}
+    if cell is not None:
+        entry = cache_index(cell.manifest).entries.get((tap["image_id"], cell.corruption, int(cell.severity)))
+        if entry is None:
+            raise QualStop("cache_entry", "the cache holds no entry for an image of S")
+        hashes["cached_file_sha256"] = entry["cached_file_sha256"]
+    return canvas, mcanvas, hashes
 
 
 def original_pair(split: str, manifest_index: int) -> tuple:
@@ -312,27 +336,14 @@ def original_pair(split: str, manifest_index: int) -> tuple:
     return rgb, mask.astype(np.uint8)
 
 
-# ----------------------------------------------------------------------------------------------- the cache
-def open_cell(args, split: str, condition: str):
-    from scripts.evaluate_corruptions import (cached_image_loader, check_verification_record,
-                                              resolve_corruption_cache)
-    from src.corruption_cache import MANIFEST_NAME
-    from src.eval.corrupted import CacheCell
-    name, _, sev = condition.rpartition("_s")
-    status = "official" if split == "test" else "provisional"
-    root = no_test(args.corruption_cache)
-    manifest = resolve_corruption_cache(str(root), name, int(sev), split=split, official=status == "official",
-                                        artifact_status=status, expected_sha256=args.cache_canonical_sha256)
-    if sha256_file(Path(root) / MANIFEST_NAME) != args.cache_manifest_file_sha256:
-        raise QualStop("cache_manifest_file", "the cache's manifest file is not the pinned one")
-    rec_sha = check_verification_record(str(root), manifest, str(no_test(args.verification_record)),
-                                        artifact_status=status)
-    if rec_sha != args.verification_record_sha256:
-        raise QualStop("cache_record", "the cache's verification record is not the pinned one")
-    cell = CacheCell(Path(root).resolve(), manifest, name, int(sev),
-                     load=cached_image_loader(str(root), manifest, name, int(sev)))
-    cell.entry()
-    return cell, manifest
+def original_matches(rgb, mask, canvas, mcanvas) -> bool:
+    """QUAL-AUD-1 N-09: Figure 4.2's "Image" and "Mask" panels are the pair the canvas was made from:
+    core_preprocess of the original pair, as read, gives the saved canvas and mask bit for bit."""
+    import numpy as np
+    from PIL import Image
+    from src.data.transforms import core_preprocess
+    c2, m2 = core_preprocess(Image.fromarray(rgb), Image.fromarray(mask))
+    return bool(np.array_equal(c2, canvas) and np.array_equal(m2, mcanvas))
 
 
 # ---------------------------------------------------------------------------------------------------- CLI
@@ -346,11 +357,7 @@ def build_parser():
     ap.add_argument("--provenance", help="E6: the converted artifact's run_meta (e15_run_meta.json)")
     ap.add_argument("--conditions", default=None,
                     help="comma list; default: every condition the figures need for this model")
-    ap.add_argument("--corruption-cache")
-    ap.add_argument("--cache-canonical-sha256")
-    ap.add_argument("--cache-manifest-file-sha256")
-    ap.add_argument("--verification-record")
-    ap.add_argument("--verification-record-sha256")
+    add_cache_args(ap)
     ap.add_argument("--export", help="TEST: reports/derived/tday_inventory.json")
     ap.add_argument("--export-sha256")
     ap.add_argument("--session-root", help="TEST: the session checkout holding reports/tday")
@@ -368,12 +375,28 @@ def main(argv=None) -> int:
     return run_step(f"predict_{args.model}", args, _main)
 
 
+def step_outputs(args) -> list:
+    """The files and folders this step writes that no other step writes (QUAL-AUD-1 N-03)."""
+    m = args.model
+    if args.val_indices is not None:
+        sub = f"streamcheck/{args.tag}"
+        return [f"{sub}/checks/{m}.json", f"{sub}/records/predict_{m}.json"]
+    return [f"values/{m}.json", f"checks/{m}.json", f"records/predict_{m}.json", f"arrays/pred/{m}"]
+
+
 def _main(args) -> int:
     import platform
+    import re
     import numpy as np
     import torch
     from scripts.evaluate_model import CliError, apply_threads
     run = run_dir(args.run)
+    if args.tag is not None and (not re.fullmatch(r"[A-Za-z0-9_.-]{1,40}", args.tag) or args.tag in (".", "..")
+                                 or "test" in args.tag.casefold()):
+        raise QualStop("cli", "--tag is a plain folder name")
+    if args.val_indices is not None and not args.tag:
+        raise QualStop("streamcheck", "a VAL stream check needs --tag")
+    outputs_absent(run, step_outputs(args))
     guard = version_guard()
     repo = repo_state(expected_commit(args))
     model = args.model
@@ -395,16 +418,16 @@ def _main(args) -> int:
         allowed = (CLEAN, *CELLS) if streamcheck else CONDITIONS[model]
         if not conditions or not set(conditions) <= set(allowed):
             raise QualStop("conditions", f"{model}: conditions {list(conditions)} are not among {list(allowed)}")
-        if streamcheck and not args.tag:
-            raise QualStop("streamcheck", "a VAL stream check needs --tag")
     if model == "teacher" and len(conditions) != 1:
         raise QualStop("nmf_stream", "one teacher load serves one pass (M4-V): one condition per process")
+    if any(c != CLEAN for c in conditions) and not cache_args_given(args):
+        raise QualStop("cli", "a corrupted condition needs the cache and its three pins")
     s_doc, s_sha = read_s(run, args.select_sha256)
     if s_doc["split"] != args.split:
         raise QualStop("s_split", "S.json is of another split")
     by_pos = {p["position"]: p for p in s_doc["picks"]}
 
-    expected = expected_hashes(model, REPO / "reports" / "derived" / "tday_manifest.json")
+    expected = expected_hashes(model)
     net, model_sha, engine, inputs = load_model(model, args, expected)
     say("PASS", f"model {MODELS[model]['slot']}: sha256 {model_sha[:12]}... is the manifest's; loaded by the "
                 f"evaluator's functions" + (f" (engine {engine})" if engine else ""))
@@ -422,21 +445,48 @@ def _main(args) -> int:
               "versions": {"python": platform.python_version(), "torch": torch.__version__,
                            "numpy": np.__version__, "pillow": __import__("PIL").__version__,
                            "threads": torch.get_num_threads(), "quantized_engine": engine},
-              "inputs": dict(inputs), "records": {}, "outputs": {}, "conditions": {}}
+              "inputs": dict(inputs), "outputs": {}, "conditions": {}}
     checks, values, outputs = [], {}, {}
     any_fail = False
     for condition in conditions:
+        label = record_label(model, condition)
         if streamcheck:
             positions = None
             indices = sorted(int(i) for i in args.val_indices.split(","))
         else:
             positions = list(range(1, k_of(condition) + 1))
             indices = [by_pos[p]["manifest_index"] for p in positions]
+
+        # ---- the record of this model and condition, before its pass (QUAL-AUD-1 F-02, F-03) ----
+        if args.split == "test":
+            off = load_test_official(inv, model, condition, args.session_root)
+        elif condition in val_records:
+            off = load_val_official(val_records[condition], f"VAL {label}")
+        else:
+            off = None
+        cond_rec = {"rows": len(indices), "record": None}
+        same, tol, binding = False, None, False
+        if off is not None:
+            check_record_identity(off, split=args.split, condition=condition, checkpoint_sha256=model_sha)
+            bad = record_context_problems(off.summary, guard)
+            if bad and args.split == "test":
+                raise QualStop("record_context", f"{label}: the record's {bad} are not T {THREADS}, batch {BATCH}, "
+                                                 f"model device {DEVICE} and this run's image; nothing of it was "
+                                                 "predicted")
+            same = same_device_class(off.summary)
+            tol = tolerance(same)
+            # TEST: every tile binds (AM-27 item 4), in the record's own context (F-03). VAL (Phase A): a record made
+            # with other threads, another image or batch size is shown for information and does not bind the exit.
+            binding = args.split == "test" or not bad
+            er = off.summary["run"]["eval_runtime"]
+            cond_rec["record"] = {"source": off.source, "files_sha256": off.files_sha256, "device": off.device,
+                                  "model_device": off.model_device, "threads": er.get("torch_num_threads"),
+                                  "batch_size": er.get("batch_size"), "image_digest": er.get("image_digest"),
+                                  "repo_commit": off.summary["run"].get("repo_commit"), "context_problems": bad,
+                                  "same_device_class": same, "tolerance": tol, "binding": binding}
+
         cell = cache_manifest = None
         if condition != CLEAN:
-            if not (args.corruption_cache and args.cache_canonical_sha256 and args.cache_manifest_file_sha256
-                    and args.verification_record and args.verification_record_sha256):
-                raise QualStop("cli", "a corrupted condition needs the cache and its three pins")
             cell, cache_manifest = open_cell(args, args.split, condition)
             record["inputs"]["cache"] = {"canonical_sha256": args.cache_canonical_sha256,
                                          "manifest_file_sha256": args.cache_manifest_file_sha256,
@@ -450,40 +500,17 @@ def _main(args) -> int:
             record["nmf"] = {"policy": st["policy"], "seed": st["seed"], "draws": st["draws"],
                              "skipped": stream.skipped, "state_sha256": st["state_sha256"]}
 
-        # ---- the record of this model and condition ----
-        if args.split == "test":
-            off = load_test_official(inv, model, condition, args.session_root)
-        elif condition in val_records:
-            off = load_val_official(val_records[condition], f"VAL {model} {condition}")
-        else:
-            off = None
+        # ---- the check of AM-27 item 4 ----
         rows = {r.manifest_index: r for r in result.rows}
-        cond_rec = {"rows": len(indices), "record": None}
         if off is not None:
-            check_record_identity(off, split=args.split, condition=condition, checkpoint_sha256=model_sha)
-            er = off.summary["run"]["eval_runtime"]
-            same = off.device == DEVICE
-            tol = SAME_DEVICE_TOL if same else OTHER_DEVICE_TOL
-            # TEST: every tile binds (AM-27 item 4). VAL (Phase A): a record made with other threads, another image
-            # or batch size is shown for information and does not bind the step's exit status.
-            binding = args.split == "test" or (er["torch_num_threads"] == THREADS and er["batch_size"] == BATCH
-                                               and er["image_digest"] == guard["image_digest"])
-            cond_rec["record"] = {"source": off.source, "files_sha256": off.files_sha256, "device": off.device,
-                                  "threads": er["torch_num_threads"], "batch_size": er["batch_size"],
-                                  "image_digest": er["image_digest"], "repo_commit": off.summary["run"]["repo_commit"],
-                                  "tolerance": tol, "binding": binding}
             for t in taps:
                 m = t["manifest_index"]
                 orow, mine = off.row(m), rows[m]
                 if orow.get("image_id") != t["image_id"] or mine.image_id != t["image_id"]:
                     raise QualStop("record_row", "a record row is not the image predicted at its index")
                 a, b = mine.disease_only_miou, orow.get("disease_only_miou")
-                ok = isinstance(a, float) and isinstance(b, float)
-                gap = abs(a - b) if ok else None
                 counts_equal = result_counts(result, t["image_id"]) == off.counts(t["image_id"])
-                # AM-27 item 4's tolerance; and on the record's device class the confusion counts must be equal,
-                # class by class (QUAL-A-1 Q6: stricter than item 4, replaces nothing in it)
-                passed = bool(ok and gap <= tol and (counts_equal or not same))
+                passed, gap, _ = tile_verdict(a, b, counts_equal=counts_equal, same_device=same)
                 checks.append({"condition": condition, "manifest_index": m, "image_id": t["image_id"],
                                "recomputed": a, "official": b, "gap": gap, "tolerance": tol,
                                "same_device_class": same, "binding": binding, "pass": passed,
@@ -492,28 +519,39 @@ def _main(args) -> int:
         # ---- the arrays (not for a stream check) ----
         if positions is not None:
             pos_of = {by_pos[p]["manifest_index"]: p for p in positions}
+            by_position = {}
             for t in taps:
                 p = pos_of[t["manifest_index"]]
                 pred = t["pred"].numpy()
                 if pred.shape != (512, 512) or pred.min() < 0 or pred.max() > 115:
                     raise QualStop("pred_range", "a prediction is not a 512x512 map of classes 0..115")
-                put_array(run, f"arrays/pred/{model}/{condition}/{p}.png", pred.astype(np.uint8), outputs)
-                canvas, mcanvas = display_canvases(args.split, t, cell)
+                pred8 = pred.astype(np.uint8)
+                put_array(run, f"arrays/pred/{model}/{condition}/{p}.png", pred8, outputs)
+                canvas, mcanvas, hashes = display_canvases(args.split, t, cell)
+                mask8 = mcanvas.astype(np.uint8)
                 put_array(run, f"arrays/input/{condition}/{p}.png", canvas, outputs)
-                put_array(run, f"arrays/mask/{p}.png", mcanvas.astype(np.uint8), outputs)
+                put_array(run, f"arrays/mask/{p}.png", mask8, outputs)
+                if counts_of_arrays(pred8, mask8) != result_counts(result, t["image_id"]):    # N-14
+                    raise QualStop("saved_counts", "the saved prediction and mask do not give the pass's confusion "
+                                                   "counts")
+                by_position[str(p)] = hashes                                                  # F-06
                 if condition == CLEAN and p == P50_POSITION:
                     rgb, mask = original_pair(args.split, t["manifest_index"])
+                    if not original_matches(rgb, mask, canvas, mcanvas):                      # N-09
+                        raise QualStop("original_differs", "core_preprocess of Figure 4.2's original pair is not "
+                                                           "the saved canvas and mask")
                     put_array(run, f"arrays/original/{p}_image.png", rgb, outputs)
                     put_array(run, f"arrays/original/{p}_mask.png", mask, outputs)
                 if off is not None:
                     values.setdefault(condition, {})[str(p)] = off.row(t["manifest_index"]).get("disease_only_miou")
+            cond_rec["inputs_by_position"] = {k: by_position[k] for k in sorted(by_position, key=int)}
             for c in checks:
                 if c["condition"] == condition and c["manifest_index"] in pos_of:
                     c["position"] = pos_of[c["manifest_index"]]
         record["conditions"][condition] = cond_rec
         n_c = [c for c in checks if c["condition"] == condition]
         if off is None:
-            say("NOTE", f"{model} {condition}: no {args.split.upper()} record of this model; "
+            say("NOTE", f"{label}: no {args.split.upper()} record of this model; "
                         f"{len(indices)} predictions made, nothing compared")
         else:
             n_pass = sum(c["pass"] for c in n_c)
@@ -521,9 +559,9 @@ def _main(args) -> int:
             n_eq = sum(c["counts_equal"] for c in n_c)
             r = cond_rec["record"]
             kind = ("PASS" if n_pass == len(n_c) else "STOP") if r["binding"] else "INFO"
-            say(kind, f"check {model} {condition}: {n_pass} of {len(n_c)} tiles within {r['tolerance']:g} of the "
-                      f"record (device {r['device']}, T {r['threads']}, batch {r['batch_size']}, image "
-                      f"{r['image_digest'][7:19]}){'' if r['binding'] else ' [other context: information only]'}; "
+            say(kind, f"check {label}: {n_pass} of {len(n_c)} tiles within {r['tolerance']:g} of the record "
+                      f"(device {r['model_device']}, T {r['threads']}, batch {r['batch_size']}, image "
+                      f"{str(r['image_digest'])[7:19]}){'' if r['binding'] else ' [other context: information only]'}; "
                       f"largest gap {largest!r}; confusion counts equal {n_eq} of {len(n_c)}")
 
     # ---- the step's files ----

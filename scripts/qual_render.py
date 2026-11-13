@@ -15,17 +15,22 @@ Figures (AM-27 item 3; the brief's item 3; ruling QUAL-A-1; numbering as the bri
   fig4_5{a,b,c}.png  k = 3, S[0], S[1], S[2]: clean, motion blur, Gaussian noise and fog (severity 2) rows;
                      input, ground truth, E1, E3, E6 columns
   fig4_6.png         k = 3: input and the class-confusion overlays of the four models, each with the class
-                     pairs it confuses (Q5)
+                     pairs it confuses (Q5; "and further pairs" without a number: QUAL-AUD-1 F-05; names wrapped at
+                     a space, never cut: F-07)
 Style (the brief's item 6): PNG, 300 dpi, 6.5 in wide (1,950 px), Arial or Liberation Sans in black, no title
 inside, column headers inside; the canvas is drawn whole, padding included (in error maps and overlays the padding
 is grey whatever was predicted there); one colour per class index across every figure (Q3, PALETTE_RULE);
-categorical keys from a colour-blind-safe set (CATEGORY); every part's legend names every class it shows.
+categorical keys from a colour-blind-safe set (CATEGORY); every part's legend names every class it shows, black
+included ("Background": F-08). Scaling (QUAL-AUD-1 N-10): class maps and the categorical layer of error maps and
+overlays with nearest, so that no colour outside a legend appears; photographs (the inputs and the grey underlay)
+with the box filter.
 A layout fault is corrected by rendering again from the saved arrays into a new folder (AM-27 item 5; Q10:
 --rerender, from a commit that differs from the predict commit in scripts/qual_render.py alone).
 
-Writes <run>/<out>/ (the figures) and <run>/<out>/MANIFEST.json (AM-27 item 6: the identities of S, the sha256
-of every input and output, each tile's check, the largest gap, the versions). Prints counts, hashes and PASS or
-STOP lines only.
+Writes <run>/<out>/ (the figures, PNG files only) and <run>/manifest_<out>.json, outside the figures folder
+(QUAL-AUD-1 N-06; AM-27 item 6: the identities of S, the sha256 of every input and output, per position the sha256
+of the image, mask and cached copy read, all thirteen records' files_sha256, each tile's check, the largest gap,
+the versions). Prints counts, hashes and PASS or STOP lines only.
 """
 from __future__ import annotations
 
@@ -43,8 +48,8 @@ if str(REPO) not in sys.path:
 
 from scripts.qual_select import (CELLS, CLEAN, CONDITIONS, K_ALL, K_CELLS, MODEL_ORDER, MODELS,  # noqa: E402
                                  P50_POSITION, RECORD_FORMAT, TIE_READING, QualStop, canonical_bytes,
-                                 expected_commit, k_of, read_s, repo_state, run_dir, run_step, say, sha256_bytes,
-                                 sha256_file, strict_json, write_new)
+                                 expected_commit, k_of, no_test, read_s, repo_state, run_dir, run_step, say,
+                                 sha256_bytes, sha256_file, strict_json, write_new)
 
 DPI = 300
 WIDTH = 1950                       # 6.5 in at 300 dpi
@@ -232,24 +237,44 @@ def error_layers(gt, pred) -> dict:
             "pad": pad}
 
 
-def error_map(canvas, gt, pred):
-    out = underlay(canvas)
+def _layer(shape, parts) -> tuple:
+    import numpy as np
+    rgb = np.zeros(tuple(shape) + (3,), dtype=np.uint8)
+    where = np.zeros(tuple(shape), dtype=bool)
+    for sel, colour in parts:
+        rgb[sel] = colour
+        where |= sel
+    return rgb, where
+
+
+def error_layer(gt, pred) -> tuple:
+    """The categorical layer of an error map (Q4): padding grey, then TP, FN and FP; (rgb, where)."""
     lay = error_layers(gt, pred)
-    out[lay["pad"]] = IGNORE
-    for k in ("tp", "fn", "fp"):
-        out[lay[k]] = CATEGORY[k]
+    return _layer(gt.shape, [(lay["pad"], IGNORE)] + [(lay[k], CATEGORY[k]) for k in ("tp", "fn", "fp")])
+
+
+def confusion_layer(gt, pred) -> tuple:
+    """The categorical layer of a Figure 4.6 overlay: padding grey, correct class, wrong disease class, missed and
+    false alarm; (rgb, where)."""
+    lay = error_layers(gt, pred)
+    return _layer(gt.shape, [(lay["pad"], IGNORE), (lay["tp"], CATEGORY["tp"]), (lay["wrong"], CATEGORY["wrong"]),
+                             (lay["missed"], CATEGORY["fn"]), (lay["fp"], CATEGORY["fp"])])
+
+
+def composite(canvas, layer):
+    """The full-size picture of a photograph's grey underlay with a categorical layer over it."""
+    out = underlay(canvas)
+    rgb, where = layer
+    out[where] = rgb[where]
     return out
+
+
+def error_map(canvas, gt, pred):
+    return composite(canvas, error_layer(gt, pred))
 
 
 def confusion_map(canvas, gt, pred):
-    out = underlay(canvas)
-    lay = error_layers(gt, pred)
-    out[lay["pad"]] = IGNORE
-    out[lay["tp"]] = CATEGORY["tp"]
-    out[lay["wrong"]] = CATEGORY["wrong"]
-    out[lay["missed"]] = CATEGORY["fn"]
-    out[lay["fp"]] = CATEGORY["fp"]
-    return out
+    return composite(canvas, confusion_layer(gt, pred))
 
 
 def confused_pairs(gt, pred) -> list:
@@ -266,7 +291,8 @@ def confused_pairs(gt, pred) -> list:
 
 # ------------------------------------------------------------------------------------------------ drawing
 class Canvas:
-    """A figure being drawn: a white page 1,950 px wide that grows downward."""
+    """A figure being drawn: a white page 1,950 px wide that grows downward. `placed` lists every panel drawn, as
+    (left, top, width, height) on the page, for the smoke's wiring check (QUAL-AUD-1 T7 (3))."""
 
     def __init__(self, fonts):
         from PIL import Image, ImageDraw
@@ -274,6 +300,7 @@ class Canvas:
         self.img = Image.new("RGB", (WIDTH, 8000), FIG_BG)
         self.draw = ImageDraw.Draw(self.img)
         self.y = MARGIN
+        self.placed = []
 
     def text_size(self, text, size):
         box = self.draw.textbbox((0, 0), text, font=self.fonts[size])
@@ -285,17 +312,29 @@ class Canvas:
     def fits(self, text, size, width) -> bool:
         return self.text_size(text, size)[0] <= width
 
-    def tile(self, arr, x, y, side, *, nearest=False):
-        """One panel: the array scaled into a side x side box, aspect kept, centred, with a thin border."""
+    def tile(self, arr, x, y, side, *, nearest=False, layer=None):
+        """One panel: the array scaled into a side x side box, aspect kept, centred, with a thin border. A class map
+        is scaled with nearest (`nearest`); a photograph with the box filter. `layer` = (rgb, where), at the array's
+        own size, is a categorical layer over the photograph `arr`: it is scaled with nearest and painted where
+        `where` holds, so that no blended colour appears (QUAL-AUD-1 N-10)."""
+        import numpy as np
         from PIL import Image
         im = Image.fromarray(arr)
         w, h = im.size
         s = side / max(w, h)
         nw, nh = max(1, round(w * s)), max(1, round(h * s))
         im = im.resize((nw, nh), Image.NEAREST if nearest else Image.BOX)
+        if layer is not None:
+            rgb, where = layer
+            if rgb.shape[:2] != (h, w) or where.shape != (h, w):
+                raise QualStop("layout", "a categorical layer is not the size of its photograph")
+            top = Image.fromarray(np.ascontiguousarray(rgb)).resize((nw, nh), Image.NEAREST)
+            sel = Image.fromarray(np.where(where, 255, 0).astype(np.uint8)).resize((nw, nh), Image.NEAREST)
+            im.paste(top, (0, 0), sel)
         ox, oy = x + (side - nw) // 2, y + (side - nh) // 2
         self.img.paste(im, (ox, oy))
         self.draw.rectangle([ox - 1, oy - 1, ox + nw, oy + nh], outline=BORDER, width=1)
+        self.placed.append((ox, oy, nw, nh))
 
     def headers(self, xs, side, labels, size=HEADER_PT):
         h = self.text_size("Ag", size)[1]
@@ -338,9 +377,14 @@ def name_of(names, c: int) -> str:
 
 
 # ------------------------------------------------------------------------------------------------ figures
+BACKGROUND_KEY = (BACKGROUND, "Background")
+
+
 def class_legend(cv, classes, lut, names, padding: bool):
-    """Every class the part shows, by the dataset's own names; the padding key only when a panel shows padding."""
-    cv.legend([(lut[c], name_of(names, c)) for c in sorted(classes)] + ([PAD_KEY] if padding else []))
+    """Every class the part shows, by the dataset's own names, black first ("Background": QUAL-AUD-1 F-08); the
+    padding key only when a panel shows padding."""
+    cv.legend([BACKGROUND_KEY] + [(lut[c], name_of(names, c)) for c in sorted(classes)]
+              + ([PAD_KEY] if padding else []))
 
 
 def map_legend(cv, keys, texts, padding: bool):
@@ -382,16 +426,16 @@ def fig4_2(inp, cv, lut, present, names):
     canvas, gt = inp.canvas(CLEAN, p), inp.mask(p)
     cv.headers(xs, side, ["Image", "Mask", "Canvas input", "E6 error map"])
     cv.tile(rgb, xs[0], cv.y, side)
-    cv.tile(colourise(omask, lut, present), xs[1], cv.y, side)
+    cv.tile(colourise(omask, lut, present), xs[1], cv.y, side, nearest=True)
     cv.tile(canvas, xs[2], cv.y, side)
-    cv.tile(error_map(canvas, gt, inp.pred("E6", CLEAN, p)), xs[3], cv.y, side)
+    cv.tile(underlay(canvas), xs[3], cv.y, side, layer=error_layer(gt, inp.pred("E6", CLEAN, p)))
     cv.y += side + GAP
     cv.headers(xs, side, [MODELS[m]["header"] for m in MODEL_ORDER])
     classes = classes_in(omask)                        # the classes shown in class colours: the mask as read and
     for x, m in zip(xs, MODEL_ORDER):                  # the four predictions
         pr = inp.pred(m, CLEAN, p)
         classes |= classes_in(pr)
-        cv.tile(colourise(pr, lut, present), x, cv.y, side)
+        cv.tile(colourise(pr, lut, present), x, cv.y, side, nearest=True)
     cv.y += side + pt(2)
     h = cv.text_size("Ag", TEXT_PT)[1] + pt(1)
     labels = {x: value_lines(cv, inp.value(m, CLEAN, p), inp.split, side) for x, m in zip(xs, MODEL_ORDER)}
@@ -418,8 +462,8 @@ def fig4_3(inp, cv, lut, present, names, positions):
             pr = inp.pred(m, CLEAN, p)
             classes |= classes_in(pr)
             maps.append(colourise(pr, lut, present))
-        for x, a in zip(xs, maps):
-            cv.tile(a, x, cv.y, side)
+        for j, (x, a) in enumerate(zip(xs, maps)):
+            cv.tile(a, x, cv.y, side, nearest=j > 0)
         cv.y += side + (GAP if i < len(positions) - 1 else pt(2))
     class_legend(cv, classes - {0, 255}, lut, names, padding=has_pad(*gts))
     return cv.png()
@@ -434,7 +478,7 @@ def fig4_4(inp, cv, positions):
         gts.append(gt)
         cv.tile(canvas, xs[0], cv.y, side)
         for x, m in zip(xs[1:], MODEL_ORDER):
-            cv.tile(error_map(canvas, gt, inp.pred(m, CLEAN, p)), x, cv.y, side)
+            cv.tile(underlay(canvas), x, cv.y, side, layer=error_layer(gt, inp.pred(m, CLEAN, p)))
         cv.y += side + (GAP if i < len(positions) - 1 else pt(2))
     map_legend(cv, ("tp", "fn", "fp"), CATEGORY_TEXT, padding=has_pad(*gts))
     return cv.png()
@@ -461,32 +505,49 @@ def fig4_5(inp, cv, lut, present, names, pos):
             pr = inp.pred(m, cond, pos)
             classes |= classes_in(pr)
             maps.append(colourise(pr, lut, present))
-        for x, a in zip(xs, maps):
-            cv.tile(a, x, cv.y, side)
+        for j, (x, a) in enumerate(zip(xs, maps)):
+            cv.tile(a, x, cv.y, side, nearest=j > 0)
         cv.y += side + (GAP if i < len(CELLS) else pt(2))
     class_legend(cv, classes - {0, 255}, lut, names, padding=has_pad(gt))
     return cv.png()
 
 
-MAX_PAIRS = 3     # ruling QUAL-A-1 Q5: up to three pairs a panel by pixel count, then "and n further pairs"
+MAX_PAIRS = 3     # ruling QUAL-A-1 Q5: up to three pairs a panel by pixel count, then FURTHER_PAIRS
+# Ruling QUAL-AUD-1 F-05 (AM-27 item 4: "The only numbers a figure prints are per-image values of record"): the
+# legend says that further pairs exist, without their number.
+FURTHER_PAIRS = "and further pairs"
 
 
-def further(n: int) -> str:
-    return f"and {n} further pair" + ("" if n == 1 else "s")
+def wrap(cv, text, width) -> list:
+    """`text` on as few lines as fit `width`, broken at spaces only (ruling QUAL-AUD-1 F-07: never cut, no
+    ellipsis); a single word wider than the column stops the step (layout)."""
+    lines, cur = [], ""
+    for word in text.split(" "):
+        cand = word if not cur else f"{cur} {word}"
+        if cv.fits(cand, TEXT_PT, width):
+            cur = cand
+            continue
+        if not cv.fits(word, TEXT_PT, width):
+            raise QualStop("layout", "a class name holds a word wider than its column")
+        lines.append(cur)
+        cur = word
+    if cur:
+        lines.append(cur)
+    return lines
 
 
 def pair_lines(cv, names, pairs, width) -> list:
-    """The panel's legend lines: each pair "ground truth → predicted" on one line, or on two when it does not
-    fit (the arrow ends the first); a name longer than the column is cut with an ellipsis."""
+    """The panel's legend lines: each pair "ground truth → predicted" on one line, or, when it does not fit, the
+    ground truth and the arrow, then the prediction, each wrapped at a space (F-07); then FURTHER_PAIRS (F-05)."""
     out = []
     for a, b, _ in pairs[:MAX_PAIRS]:
         one = f"{name_of(names, a)} → {name_of(names, b)}"
         if cv.fits(one, TEXT_PT, width):
             out.append(one)
         else:
-            out += [shorten(cv, f"{name_of(names, a)} →", width), shorten(cv, name_of(names, b), width)]
+            out += wrap(cv, f"{name_of(names, a)} →", width) + wrap(cv, name_of(names, b), width)
     if len(pairs) > MAX_PAIRS:
-        out.append(further(len(pairs) - MAX_PAIRS))
+        out.append(FURTHER_PAIRS)
     return out or ["No wrong-class pixels"]
 
 
@@ -502,7 +563,7 @@ def fig4_6(inp, cv, names, positions):
         lines = {}
         for x, m in zip(xs[1:], MODEL_ORDER):
             pr = inp.pred(m, CLEAN, p)
-            cv.tile(confusion_map(canvas, gt, pr), x, cv.y, side)
+            cv.tile(underlay(canvas), x, cv.y, side, layer=confusion_layer(gt, pr))
             lines[x] = pair_lines(cv, names, confused_pairs(gt, pr), side)
         cv.y += side + pt(2)
         n = max(len(v) for v in lines.values())
@@ -512,14 +573,6 @@ def fig4_6(inp, cv, names, positions):
         cv.y += n * h + (GAP if i < len(positions) - 1 else pt(2))
     map_legend(cv, ("tp", "wrong", "fn", "fp"), CONFUSION_TEXT, padding=has_pad(*gts))
     return cv.png()
-
-
-def shorten(cv, text, width):
-    if cv.fits(text, TEXT_PT, width):
-        return text
-    while text and not cv.fits(text + "…", TEXT_PT, width):
-        text = text[:-1]
-    return text + "…"
 
 
 # ---------------------------------------------------------------------------------------------------- run
@@ -620,10 +673,13 @@ def _main(args, class_names) -> int:
     import numpy as np
     import PIL
     run = run_dir(args.run)
-    out = run / args.out
-    if out.exists() or "/" in args.out or "\\" in args.out:
-        raise QualStop("output_exists", f"the folder {args.out} exists already or is not a plain name; "
-                                        "a rendering is never overwritten")
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{1,40}", args.out) or args.out in (".", ".."):
+        raise QualStop("cli", f"--out {args.out!r} is not a plain folder name")
+    out = no_test(run / args.out)
+    manifest_rel = f"manifest_{args.out}.json"                  # QUAL-AUD-1 N-06: outside the figures folder
+    if out.exists() or (run / manifest_rel).exists():           # N-03: before any read
+        raise QualStop("output_exists", f"the folder {args.out} or {manifest_rel} exists already; a rendering is "
+                                        "never overwritten")
     if args.synthetic and args.split == "test":
         raise QualStop("cli", "--synthetic is for smoke_qual only")
     repo = repo_state(expected_commit(args))
@@ -663,24 +719,32 @@ def _main(args, class_names) -> int:
         "rerender": rerender, "s": inp.s, "select_sha256": inp.s_sha,
         "select_record": {"sha256": sha256_bytes(inp.select_record_bytes), "inputs": inp.select_record["inputs"],
                           "tie_readings": inp.select_record.get("tie_readings")},
-        "rules": {"ruling": "QUAL-A-1", "tie_reading": TIE_READING, "error_map": ERROR_MAP_RULE,
+        "rules": {"ruling": "QUAL-A-1, QUAL-AUD-1", "tie_reading": TIE_READING, "error_map": ERROR_MAP_RULE,
                   "palette": PALETTE_RULE, "max_pairs": MAX_PAIRS, "pair_ties": "lower (ground truth, predicted)",
+                  "further_pairs": FURTHER_PAIRS, "names": "wrapped at a space, never cut (F-07)",
+                  "legend_background": BACKGROUND_KEY[1], "scaling": "class maps and categorical layers nearest; "
+                  "photographs box (N-10)",
                   "value_label": "Per-image disease-only mIoU: xx.xx% (the official value of record)",
                   "underlay_min": UNDERLAY_MIN},
         "versions": {"python": platform.python_version(), "pillow": PIL.__version__, "numpy": np.__version__},
         "font": font_info, "dpi": DPI, "width_px": WIDTH,
         "palette": {str(c): CLASS_COLOURS[i] for i, c in enumerate(present)},
         "predict_inputs": {m: inp.records[m]["inputs"] for m in MODEL_ORDER},
+        # QUAL-AUD-1 F-06 (AM-27 item 6): per model and condition, the record's files_sha256 and, per position, the
+        # sha256 of the image file, the mask file and the cached copy read; and the select step's thirteen records
+        "predict_conditions": {m: inp.records[m].get("conditions") for m in MODEL_ORDER},
+        "select_records": inp.select_record.get("records"),
+        "select_preflight": inp.select_record.get("preflight"),
         "predict_versions": {m: inp.records[m]["versions"] for m in MODEL_ORDER},
         "nmf": inp.records["teacher"].get("nmf"),
         "files": inp.files, "figures": digests,
         "checks": {m: inp.checks[m] for m in MODEL_ORDER}, "tiles": inp.n_tiles, "largest_gap": inp.largest,
     }
-    man_sha = write_new(out / "MANIFEST.json", canonical_bytes(manifest))
+    man_sha = write_new(run / manifest_rel, canonical_bytes(manifest))
     for name, d in digests.items():
         say("FIGURE", f"{name} sha256 {d}")
     say("RESULT:", f"QUAL RENDER OK: {len(digests)} figure files; {inp.n_tiles} tiles; largest gap {inp.largest!r}; "
-                   f"MANIFEST.json sha256 {man_sha}")
+                   f"{manifest_rel} sha256 {man_sha}")
     return 0
 
 
