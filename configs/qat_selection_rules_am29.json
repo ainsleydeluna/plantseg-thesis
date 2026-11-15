@@ -1,0 +1,27 @@
+{
+  "format": "qat_selection_rules/1",
+  "note": "AM-29's QAT epoch rules (lane L-AM29, P3): the nine AM-29 arms (src/quant/am29.py ARMS), which run AM-4a item 1's recipe with the allow-list's factor, rate and seed. Read by scripts/am29_blockb.py select through src/quant/qat_select.py load_rules, the file registered for AM-29's stages in that process only (src/quant/am29_registry.py), which refuses a disagreement. The qat_epoch block is configs/qat_selection_rules_am23.json's but for stages, source and value: every converted epoch is scored all-INT8 through src/eval/am29_score.py (the evaluator's own loading, preprocessing and metric code; scripts/evaluate_model.py cannot take an AM-29 stage). The clip is configs/qat_selection_rules.json's U4 winner (AM-4a item 3; DL-139), so this file holds no qat_clip block.",
+  "qat_epoch": {
+    "source": "AM-29 (P3); AM-4; AM-4a item 2; AM-21 item 2(a); DL-09; DL-38; DL-139",
+    "stages": ["AM29-T1", "AM29-T2", "AM29-T3", "AM29-T4", "AM29-A3-S43", "AM29-A3-S44", "AM29-LR-S42", "AM29-LR-S43", "AM29-LR-S44"],
+    "epochs": 15,
+    "value": "dataset_level.all_class_miou of the epoch's converted all-INT8 QNNPACK TorchScript artifact, scored on VAL by src/eval/am29_score.py score_model",
+    "evaluator": {
+      "split": "val",
+      "expected_rows": 846,
+      "precision": "int8",
+      "quant_backend": "qnnpack",
+      "device": "cpu",
+      "preprocess_protocol": "core_preprocess/1.0.0",
+      "eval_runtime": {"batch_size": 1, "forward_batches": 846, "num_workers": 0},
+      "gt_support_sum": 159279104
+    },
+    "equal_across_scores": ["git_head", "torch", "torch_num_threads", "class_map_sha256", "manifest_ids_sha256", "image_digest"],
+    "equal_across_evaluations": ["git_head", "host_label", "cpu_model", "purpose"],
+    "purpose": "record",
+    "compare": "strict_greater",
+    "tie": "earliest_epoch",
+    "excluded": "an epoch whose checkpoint fails item 1(a): excluded: non-finite state (AM-21 item 2(a))",
+    "never_selects": ["fake_quant_val_all_class_miou"]
+  }
+}
