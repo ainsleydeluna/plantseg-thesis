@@ -15,7 +15,8 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 SMOKES = ("smoke_explore_guard", "smoke_explore_decompose", "smoke_explore_sites", "smoke_explore_qat",
-          "smoke_explore_kd", "smoke_explore_kl3")
+          "smoke_explore_kd", "smoke_explore_kl3",
+          "smoke_explore_n2r2")                    # addendum L-AM24-ADD-2: N2R2 and block B's card fix 1
 
 
 def main() -> int:

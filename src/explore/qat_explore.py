@@ -1,4 +1,5 @@
-"""The exploratory QAT entry for C1, N1, N2, N5 and D (audit EXPLORE-AUDIT-1 §6.2; addendum L-AM24-ADD-1).
+"""The exploratory QAT entry for C1, N1, N2, N2R2, N5 and D (audit EXPLORE-AUDIT-1 §6.2; addenda L-AM24-ADD-1 and
+L-AM24-ADD-2).
 
 Every run is E6-E2's recipe of record (AM-23 item 1 = AM-4a item 1 + clip 5.0, DL-139/DL-146), run by the pinned
 src/quant/qat.py run_qat in mode "real", except the one named change of its item:
@@ -15,6 +16,18 @@ src/quant/qat.py run_qat in mode "real", except the one named change of its item
        built inside run_qat by the name prepare_qat_model of src/quant/qat.py; for this one run that name is bound to
        a wrapper that calls the pinned function and installs the sites (src/explore/patching.py), recorded in
        run_meta (x_substitution). The file is unchanged and its sha256 recorded.
+  N2R2 --sites-on-input-grid --tf32-off (addendum L-AM24-ADD-2; AM-29's E6-R2-M): N2's change exactly, on E6-R2 (AM-23
+       items 3(a) and 4: E6-E2's recipe, only the parent differs; scripts/run_e6_r2.py). The parent is E3-R2 seed 42's
+       best checkpoint as DL-136 records it (E3R2_PARENT_OF_RECORD), seed 42, run ID x-n2r2-s42, checked by sha256 and
+       identity and then through E6-R2's own parent loader: src/quant/qat.py read_tracked_selection (the λ and α
+       selections), resolve_parent (stage E6-R2) and am23_parent_binding (AM-23 item 3(b)'s condition record and its
+       RECORDED decision-log row), and load_source (the strict E3 loader). That loader reads those committed inputs at
+       the HEAD of a checkout. lane/l-am24 holds no other file than fe93a24's, and no condition record exists at
+       fe93a24 (DL-136: none was made) or at master aa8cac2 (its tree, 15 Nov), so N2R2 takes them as required
+       arguments with their sha256, and the
+       checkout that holds them as --records-root at --records-commit: the binding's own repo_root parameter, as the
+       pinned scripts/smoke_am23_quant.py passes it. `run_n2r2` runs the pinned run_qat on stage e6-r2 with N2's
+       substituted prepare_qat_model and TF32 off, exactly as N2's branch of scripts/explore_qat.py does on e6-e2.
   N5   --fp32-head: the LR-ASPP logit head in FP32 (src/explore/fp32_head.py): a MIXED-PRECISION model, never INT8.
   D    --parent-sha256 only (AM-24 v2.4): an exploratory FP32 winner (an x- run of N3, A1'' or A2) whose best VAL
        all-class mIoU is at least D_TRIGGER = 0.3875 (compared as Decimal of the value's repr); one D per qualifying
@@ -24,11 +37,16 @@ src/quant/qat.py run_qat in mode "real", except the one named change of its item
 
 The exploratory parent check accepts, for C1, N1, N2 and N5, exactly E2 s42 / s43 / s44's best checkpoints of record
 by their recorded sha256 (E2_PARENTS_OF_RECORD), through the pinned resolve_parent (best.json, run_meta, a complete
-run, the seed); D's parent through resolve_parent with --parent-sha256, which must match the file.
+run, the seed); D's parent through resolve_parent with --parent-sha256, which must match the file. N2R2's parent check
+(`n2r2_parent`) accepts E3-R2 seed 42's checkpoint only, so N2's E2 parent is refused there, and N2's (the E2 table
+above) refuses E3-R2's.
 """
 from __future__ import annotations
 
 import math
+import os
+import re
+import subprocess
 import time
 from decimal import Decimal
 from pathlib import Path
@@ -54,10 +72,32 @@ CLIP_SELECTION_SHA256 = "c433145a6cfe0e133ebee8fcb70a76f05b60fc6462670abee34c530
 D_TRIGGER = Decimal("0.3875")               # audit §2 D / §6.3: exploratory FP32 best VAL >= 0.3875
 D_PARENT_ITEMS = ("N3", "A1pp", "A2")
 N1_LAMBDA = 0.5
-ITEMS = ("C1", "N1", "N2", "N5", "D")
-ITEM_SEEDS = {"C1": (43, 44), "N1": (42,), "N2": (42,), "N5": (42,)}
+ITEMS = ("C1", "N1", "N2", "N2R2", "N5", "D")
+ITEM_SEEDS = {"C1": (43, 44), "N1": (42,), "N2": (42,), "N2R2": (42,), "N5": (42,)}
 ITEM_FLAGS = {"C1": frozenset(), "N1": frozenset({"kd_logit"}), "N2": frozenset({"sites_on_input_grid", "tf32_off"}),
               "N5": frozenset({"fp32_head"}), "D": frozenset()}
+ITEM_FLAGS["N2R2"] = ITEM_FLAGS["N2"]       # N2R2: exactly N2's flag set (the same object)
+
+# N2R2 (addendum L-AM24-ADD-2; AM-29's E6-R2-M). E3-R2 seed 42's best checkpoint and its records as DL-136 records them
+# (AM-23 item 3(b)'s entry: E3-R2 complete, best VAL 0.3842073380947113 > 0.36337557435035706, "yes"; DL-138: E6-R2
+# cut, never launched). The values were MEASURED there on the laptop's copy of the run's keep.
+E3R2_PARENT_OF_RECORD = {
+    "seed": 42, "arm": "E3-R2", "run_id": "e3-r2_s42_lambda0.5_alpha25_80k_a2",
+    "checkpoint": "e3_student_best_iter80000.pt",
+    "sha256": "da70d82fcba6543488d6748691fbe9f56a4bf8c29b1c9d29d92f0d5287291ef4",
+    "best_json_sha256": "9cb73b2bab64f1c9941295de87c1541ec198dfa3b85298e5b37b7b38704e0f52",
+    "best_val": 0.3842073380947113,
+    "run_meta_sha256": "f68e4ec0889cbca427a9a559293c8d3f3147f5d017a3ad0a79967f5c871c5b39",
+    "telemetry_sha256": "8c8465b4001cd089a39c21e9f3731644210f814b0fcf7adc39e47411edfe9c24",
+    "records": "DL-136 (AM-23 item 3(b)'s condition entry); DL-138 (E6-R2 cut, never launched)"}
+N2R2_STAGE = "e6-r2"                        # E6-R2's stage key (src/quant/stages.py; scripts/run_e6_r2.py STAGE)
+N2R2_RUN_ID = "x-n2r2-s42"
+# The committed inputs E6-R2's parent loader reads (src/quant/qat.py build_parser's E6-R2 flags), and the checkout that
+# holds them at its HEAD: each a required argument of N2R2, with no default (the sha256 flags pin the files).
+N2R2_RECORD_FLAGS = ("records_root", "records_commit", "lambda_selection", "lambda_selection_sha256", "alpha_selection",
+                     "alpha_selection_sha256", "condition_record", "condition_sha256", "condition_dl")
+N2R2_MATCHED_RUN = ("E6-R2 seed 42 (AM-28; scripts/run_e6_r2.py): the same parent, recipe, parent loader and clip; "
+                    "N2's substitution (the ten sites on their input's grid, TF32 off) is the only change")
 COMPARATORS = {"E6-E2 s42": 0.35132896900177, "E6 s42/43/44": [0.3308, 0.3490, 0.3197],
                "E5 s42/43/44": [0.3343, 0.3192, 0.3328], "E6-KD s42": 0.3321,
                "source": "audit §6.2 (values of record: DL-131, DL-139, DL-142 to DL-146)"}
@@ -65,9 +105,19 @@ RECIPE_OF_RECORD = ("E6-E2 (AM-23 item 1 = AM-4a item 1 + clip 5.0): SGD lr 3e-4
                     "T_max 5,025, batch 16 drop_last, 15 epochs, clip 5.0, fake-quant from step 0, BN frozen top of "
                     "epoch 11, observers off top of epoch 13, the VAL bracket, the QNNPACK qconfig of record, TF32 at "
                     "torch defaults; block B: 15 converted epochs scored on CPU, AM-23's selection rules, finalize")
+RECIPE_OF_RECORD_N2R2 = ("E6-R2 (AM-23 items 3(a) and 4; scripts/run_e6_r2.py): E6-E2's recipe of record (AM-23 "
+                         "item 1 = AM-4a item 1 + clip 5.0) on E3-R2 seed 42's best checkpoint, read through E6-R2's "
+                         "parent loader (src/quant/qat.py read_tracked_selection, resolve_parent, "
+                         "am23_parent_binding, load_source): SGD lr 3e-4, momentum 0.9, wd 1e-4, cosine T_max 5,025, "
+                         "batch 16 drop_last, 15 epochs, clip 5.0, fake-quant from step 0, BN frozen top of epoch 11, "
+                         "observers off top of epoch 13, the VAL bracket, the QNNPACK qconfig of record, TF32 at "
+                         "torch defaults; block B: 15 converted epochs scored on CPU, AM-23's selection rules, "
+                         "finalize")
 CHANGES = {"C1": "none (seeds 43/44, which AM-23 item 1 excludes)",
            "N1": "logit KD in the QAT loss: lambda 0.5, T 4, E6-KD's ramp and teacher stream; no CWD term",
            "N2": "the ten sites fake-quantized on their input's grid, and TF32 off (cuDNN and matmul)",
+           "N2R2": ("N2's change on E6-R2: the ten sites fake-quantized on their input's grid, and TF32 off (cuDNN and "
+                    "matmul); the parent E3-R2 seed 42 (DL-136) through E6-R2's parent loader"),
            "N5": "the LR-ASPP logit head in FP32 (mixed precision; never INT8)",
            "D": "none: the parent is an exploratory FP32 winner (best VAL >= 0.3875)"}
 
@@ -143,6 +193,132 @@ def exploratory_parent(item: str, run_dir, *, seed: int, expect_source_sha256: s
     if (Path(parent["run_dir"]) / PROJECTION_FILE).exists():
         raise ExploreQATError("parent_projection_present", "an E2 run directory holds no projection.pt")
     return stage, {**parent, "of_record": rec}
+
+
+# ------------------------------------------------------------------ N2R2 (addendum L-AM24-ADD-2; AM-29's E6-R2-M)
+_HEX40 = re.compile(r"[0-9a-f]{40}")
+
+
+def records_root_record(root, commit) -> dict:
+    """The checkout whose HEAD holds the committed inputs E6-R2's parent loader reads (the λ and α selections, AM-23
+    item 3(b)'s condition record and docs/DECISION_LOG.md). Refused unless `root` is a git checkout's top level,
+    holding no "test" (SL-1) and checked before git runs on it, whose HEAD is `commit`. git runs as
+    src/quant/qat.py _git_head_bytes runs it, so it names the HEAD the pinned readers then read."""
+    if not isinstance(commit, str) or not _HEX40.fullmatch(commit):
+        raise ExploreQATError("records_commit_format", "--records-commit must be the 40-hex HEAD of --records-root")
+    if not root or G.names_test(root) or G.names_test(os.path.realpath(str(root))):
+        raise ExploreQATError("records_root_path", f"--records-root {root!r} is not given or holds 'test' (SL-1)")
+    p = Path(root).resolve()
+    if not p.is_dir():
+        raise ExploreQATError("records_root_missing", f"--records-root {root!r} is not a directory")
+    env = {**os.environ, "GIT_OPTIONAL_LOCKS": "0"}
+
+    def _git(*argv):
+        try:
+            r = subprocess.run(["git", "-C", str(p), *argv], capture_output=True, text=True, timeout=60, env=env)
+        except (OSError, subprocess.SubprocessError):
+            return None
+        return r.stdout.strip() if r.returncode == 0 else None
+    top, head = _git("rev-parse", "--show-toplevel"), _git("rev-parse", "HEAD")
+    if top is None or Path(top).resolve() != p:
+        raise ExploreQATError("records_root_not_checkout", f"--records-root {p} is not the top level of a git checkout "
+                                                           f"(git gives {top!r})")
+    if head != commit:
+        raise ExploreQATError("records_commit_mismatch", f"the records checkout's HEAD is {head!r}, --records-commit "
+                                                         f"{commit}")
+    return {"path": str(p), "commit": head,
+            "reads": ("the λ and α selections, the condition record and docs/DECISION_LOG.md at this HEAD, through "
+                      "src/quant/qat.py read_tracked_selection and am23_parent_binding (repo_root)")}
+
+
+def n2r2_identity_differ(parent: dict, rec: dict) -> list[str]:
+    """The fields of resolve_parent's record that differ from E3-R2 seed 42 as DL-136 records it (`rec`)."""
+    want = {"run_id": rec["run_id"], "checkpoint": rec["checkpoint"], "checkpoint_sha256": rec["sha256"],
+            "best_json_sha256": rec["best_json_sha256"], "run_meta_sha256": rec["run_meta_sha256"],
+            "telemetry_sha256": rec["telemetry_sha256"], "seed": rec["seed"], "stage": "E3"}
+    differ = [k for k, v in want.items() if parent.get(k) != v]
+    if repr(parent.get("best_val_miou_all_class")) != repr(rec["best_val"]):
+        differ.append("best_val_miou_all_class")
+    return differ
+
+
+def n2r2_parent(run_dir, *, seed: int, expect_source_sha256: str | None, parent_sha256: str | None = None,
+                records_root, records_commit, lambda_selection, lambda_selection_sha256, alpha_selection,
+                alpha_selection_sha256, condition_record, condition_sha256, condition_dl) -> dict:
+    """N2R2's parent check: E3-R2 seed 42's best checkpoint by sha256 and by its identity as DL-136 records it (run ID,
+    checkpoint file, best.json, run_meta, telemetry, best value), then E6-R2's own parent loader unchanged, in the order
+    src/quant/qat.py real_run_gates runs it: the λ and α selections (read_tracked_selection), the parent
+    (resolve_parent on stage E6-R2) and AM-23 item 4's binding (am23_parent_binding: arm E3-R2, descriptive, never a
+    parent of E4-E7, the 80,000-iteration horizon, the selections' λ and α, and item 3(b)'s condition record with its
+    RECORDED decision-log row), each committed input read at --records-root's HEAD. Returns {"stage", "parent",
+    "am23_binding", "records_root"}; raises ExploreQATError or the pinned QATRefused (the condition reader's refusals
+    are QATRefused too)."""
+    from types import SimpleNamespace
+
+    from src.quant import qat as Q
+    from src.quant.stages import resolve_quant_stage
+    rec = E3R2_PARENT_OF_RECORD
+    if parent_sha256 is not None:
+        raise ExploreQATError("parent_sha256_not_d", "--parent-sha256 is D's flag")
+    if type(seed) is not int or seed != rec["seed"]:
+        raise ExploreQATError("item_seed", f"N2R2 runs seed {rec['seed']} only (E6-R2, AM-23 items 3 and 4), not "
+                                           f"{seed!r}")
+    if expect_source_sha256 != rec["sha256"]:
+        raise ExploreQATError("parent_not_of_record", f"--expect-source-sha256 {expect_source_sha256!r} is not E3-R2 "
+                                                      f"seed 42's best checkpoint ({rec['sha256']}, DL-136)")
+    root = records_root_record(records_root, records_commit)
+    root_p = Path(root["path"])
+    stage = resolve_quant_stage(N2R2_STAGE)
+    lam = Q.read_tracked_selection(lambda_selection, lambda_selection_sha256, Q.LAMBDA_SELECTION_FORMAT, "lambda",
+                                   root_p)
+    alpha = Q.read_tracked_selection(alpha_selection, alpha_selection_sha256, Q.ALPHA_SELECTION_FORMAT, "alpha", root_p)
+    parent = Q.resolve_parent(stage, run_dir, expect_source_sha256, seed)
+    differ = n2r2_identity_differ(parent, rec)
+    if differ:
+        raise ExploreQATError("parent_identity", f"the parent is not E3-R2 seed 42 as DL-136 records it: {differ} "
+                                                 f"differ ({parent.get('run_id')}/{parent.get('checkpoint')})")
+    flags = SimpleNamespace(seed=seed, condition_record=condition_record, condition_sha256=condition_sha256,
+                            condition_dl=condition_dl)
+    binding = Q.am23_parent_binding(stage, parent, flags, (lam, alpha), repo_root=root_p)
+    return {"stage": stage, "parent": {**parent, "of_record": rec}, "am23_binding": binding, "records_root": root}
+
+
+def run_n2r2(*, mode: str, model: nn.Module, source_meta: dict, out_dir, seed: int, clip_norm: float,
+             clip_source: str, device: str, num_workers: int, parent: dict | None, extra_meta: dict | None = None,
+             sites: bool = True, loaders=None, max_steps: int | None = None, max_val_batches: int | None = None,
+             log=print):
+    """N2R2's run: the pinned src/quant/qat.py run_qat on stage e6-r2 with N2's change, as scripts/explore_qat.py's N2
+    branch makes it on e6-e2: TF32 off (both flags, set_tf32), then prepare_qat_model bound for this call to a wrapper
+    that calls the pinned function and installs the ten site fake-quants (SiteMatcher), the binding recorded in
+    run_meta (x_substitution) and restored after. Returns (summary, substitution record, matcher). `sites` False runs
+    the same call with neither TF32 nor the binding touched, i.e. E6-R2's own path; it is refused in a real run (one
+    named change per run). `mode` "smoke" passes injected loaders, a step cap and a VAL cap to run_qat, which refuses
+    them in a real run."""
+    from src.quant import qat as Q
+    from .patching import substituted
+    from .sites import SITE_NAMES, SiteMatcher, set_tf32
+    if mode == "real" and sites is not True:
+        raise ExploreQATError("n2r2_change_required", "a real N2R2 run carries N2's change: the ten sites and TF32 off")
+    kw = dict(stage=N2R2_STAGE, mode=mode, model=model, source_meta=source_meta, out_dir=out_dir, seed=seed,
+              clip_norm=clip_norm, clip_source=clip_source, device=device, num_workers=num_workers, parent=parent,
+              loaders=loaders, max_steps=max_steps, max_val_batches=max_val_batches, log=log)
+    extra = dict(extra_meta or {})
+    if sites is not True:
+        return Q.run_qat(extra_meta=extra, **kw), None, None
+    holder = {}
+    pinned_prepare = Q.prepare_qat_model
+
+    def prepare_with_sites(m, *, select_backend=True):
+        prepared = pinned_prepare(m, select_backend=select_backend)
+        holder["matcher"] = SiteMatcher(prepared, SITE_NAMES)
+        return prepared
+
+    extra["x_tf32_set"] = set_tf32(False)
+    with substituted(Q, "prepare_qat_model", prepare_with_sites, item="N2R2",
+                     why="install the ten input-grid site fake-quants on the prepared student") as rec:
+        extra["x_substitution"] = rec
+        summary = Q.run_qat(extra_meta=extra, **kw)
+    return summary, rec, holder.get("matcher")
 
 
 # ------------------------------------------------------------------ N1: run_qat's loop with logit KD
