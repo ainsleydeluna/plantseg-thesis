@@ -3156,6 +3156,194 @@ State at amendment (as of the commit).
    not stored on TEST day, so the planned figures need the models of record run again on nine
    images.
 
+## AM-28 — E6-R1 and E6-R2 restored after TEST as exploratory runs with one TEST look each, and DL-212 (c)'s per-image readings made late: two named slots after the numbers freeze (amends, for E6-R1 and E6-R2 only, AM-22 item 2(a)'s cut and the settled state that AM-22's Definitions gave them, and AM-22 item 1(h), AM-19 item 1(c), AM-24 item 2 and AM-23 item 5 on TEST; amends the cut of AM-24 item 12 for this amendment's two slots only; adds a late branch to DL-212 (c); amends no run of record; adds no test; changes no registered analysis and no result of record)
+
+Dated 2026-11-16. Status: DRAFT (group-recorded; OK by Ice De Luna under the group's delegation on 2026-11-14, in the words "AM-28 ok: E6-X + per-image" at 17:19 and "both in parallel" at 18:07 (+08:00); the orchestrator's rulings AM28-EARLY-1 to AM28-EARLY-5 and DEADLINE-23 (ORCH-7, 14 Nov 2026) and, for the records cut of item 8(e), AM29-MS-1 (ORCH-8, 15 Nov 2026); planned in DL-269 (h); its decision-log row is the row of its commit).
+- **Fixed text.** From its commit this text is changed only by a new amendment, which lists the
+  results known when it is written. A dated bracket note only points to a later record or records an
+  outcome.
+- **In force** from the time its commit reaches the remote, and only if that is no later than 22:00
+  +08:00 on 2026-11-17. If its commit reaches the remote later, it is void: E6-R1 and E6-R2 stay cut,
+  DL-212 (c)'s "not produced" branch stands, and the manuscript keeps the text of the freeze for both.
+  Before it is in force no E6-X run launches, and no TEST file or per-image artifact is read for
+  anything here. Approval gates nothing here.
+- **A rejection** is entered verbatim in the decision log on the day it arrives. It changes a rule
+  only through a new amendment, which lists the results known when it is written. It never reopens a
+  run already launched or a TEST evaluation.
+- **Written after the TEST results.** AM-24 item 2 says: "Any later TEST use (e.g. MVA-AUDIT-1's PX-1)
+  needs its own amendment, written after the thesis TEST results are committed." This is that amendment
+  for E6-R1 and E6-R2, and for the per-image readings that DL-212 (c) deferred. It was written after
+  the TEST results of record (DL-249), the arms' and E6-KD's TEST results and the numbers freeze
+  (DL-269) were known, before any E6-R1 or E6-R2 run, conversion or score existed and before any
+  per-image artifact was read for DL-212 (c). It chooses no model and no result: it restores both cut
+  runs as AM-23 item 3 registered them, never one of them, and it keeps the method that DL-212 (c)
+  fixed before TEST. DL-269 (h) planned its drafting after 18:00 on 2026-11-15; the drafting began at
+  14:30 that day, on Ice De Luna's call, a change of time that changes nothing else.
+
+State at amendment (as of the commit).
+- Every decision-log row up to DL-269 is known: the TEST results of record (DL-249) and the numbers
+  freeze of the manuscript at 11:00 +08:00 on 2026-11-15 (DL-269) among them.
+- E3-R1 and E3-R2 are complete, with best VAL all-class mIoU 0.3687419891357422 and
+  0.3842073380947113 (DL-135, DL-136), both above E3 seed 42's 0.36337557435035706, so AM-23 item
+  3(b) gives yes for both. Those entries were made late and by hand. The condition tool's records
+  (reports/arms/e6x_condition_R1.json and reports/arms/e6x_condition_R2.json) were never made, and
+  without them the code of record refuses an E6-X launch (src/quant/qat.py, e6x_parent_binding and
+  condition_dl_row).
+- E6-R1 and E6-R2 were cut at the end of 2026-10-24 by AM-22 item 2(a), because a required pre-launch
+  entry and the run kit were not prepared in time (DL-137, DL-138): a planning deviation, not a
+  result. No E6-R1 or E6-R2 run, conversion or score exists.
+- Known on clean TEST at seed 42 (dataset-level all-class mIoU; Tables E.1 and F.2): E6 35.48%; E7
+  36.37%, E7-R1 36.27% and E7-R2 36.25%; E3 40.65%, E3-R1 39.95% and E3-R2 41.72%; E6-KD 36.50%.
+  These values could suggest which E6-X would score higher, which is why both runs are restored and
+  neither is chosen.
+- The code: E6-R1's and E6-R2's stages, parent check and entry points (scripts/run_e6_r1.py,
+  scripts/run_e6_r2.py) were merged with lane L-AM23Q at 3373139 (DL-137, DL-138); src/quant/qat.py, qat_artifacts.py, e6x_condition.py and both entry points are byte-identical at 3373139 and at master aa8cac2; stages.py, runner.py and qat_select.py changed after 3373139. The evaluator (scripts/evaluate_model.py, src/eval), the quantization
+  code (src/quant) and src/stats/arm_tables.py are the same at the TEST session's commit dc40dd2
+  (DL-248) and at aa8cac2.
+- AM-29, drafted after this amendment, changes nothing here, and nothing here waits for it.
+
+No test is added to the Holm family. No test, threshold, family member, recipe, seed, selection rule,
+teacher of record or result of record changes. E6 and E7 of record stay built from E3 (AM-18 item
+3(d)), and the eight tests, the non-inferiority check and the conclusions are unchanged.
+
+1. **The two runs.** E6-R1 and E6-R2 are restored, both, exactly as AM-23 items 3(a), 3(e) and 4
+   register them: for X ∈ {R1, R2}, the QAT of E3-X's best.json checkpoint (DL-135, DL-136), at seed
+   42 only, with E6-E2's recipe (AM-23 item 1: AM-4a item 1's recipe, AM-4a item 2's selection as AM-21
+   amends it, AM-21 items 1(a) to 1(f), 2, 4 and 5, and the clip value of record, 5.0, DL-139), through
+   the code of record and its entry points scripts/run_e6_r1.py and scripts/run_e6_r2.py. The epoch is
+   selected by configs/qat_selection_rules_am23.json: the highest converted VAL all-class mIoU of the
+   15 epochs, ties to the earlier. Only the parent differs from E6 seed 42.
+   (a) For these two runs only, AM-22 item 2(a)'s cut and the settled state that AM-22's Definitions gave them (DL-137,
+       DL-138: "AM-22 never reopens a cut") are lifted. The cut entries stay in the log, and the
+       deviation stays reported.
+   (b) The launch is decided for both at once: no pod is created until item 2's records and rows exist for both, and both are then launched in one session. A run that then fails to launch or to complete is recorded as items 3, 8(c) and 9 say; the other is unaffected. No condition, value or result chooses one of them.
+   (c) They are exploratory. As AM-23 item 3(f) says, they are never a parent and are not in the Holm
+       family or in the robustness or efficiency analyses; no seed 43 or 44 is run.
+   (d) No new code trains, converts or scores them.
+2. **Before launch: the condition records.** For each X, AM-23 item 3(b)'s condition is recorded by
+   its tool (scripts/e6x_condition.py record, at master) from E3-X's run directory as kept on the laptop
+   (keep_e3-r1_s42_lambda0.5_alpha25_80k_a2.tar and keep_e3-r2_s42_lambda0.5_alpha25_80k_a2.tar, each
+   checked against the sha256 that DL-135 or DL-136 gives before it is opened).
+   (a) Each record's verdict and value must equal those of DL-135 or DL-136. If one does not, or the tool refuses a record, neither run is launched until a decision-log row states the cause.
+   (b) Each record is committed alone at reports/arms/e6x_condition_<X>.json, after this amendment's
+       commit. The text that the tool prints is entered as a RECORDED decision-log row, as the launch
+       gate requires.
+   (c) These entries are late (DL-135, DL-136): a deviation that changes nothing else, since the
+       outcome follows from the value alone.
+3. **The pods.** One A40 pod per run. Both are launched in one session, one after the other, from
+   master at a commit that holds item 2's records and rows.
+   (a) Each pod is stopped when its run ends. Its kept files are copied to the laptop and checked by
+       sha256 on both sides before the pod is terminated (as DL-146).
+   (b) A host fault is repeated once under AM-8a if the repeat can launch before item 8(c)'s cutoff;
+       otherwise the run is "not completed".
+   (c) A run with no convertible epoch, or one aborted by a rule, is handled as AM-23 item 3(e) says.
+   (d) Nothing here is decided by a value.
+   (e) AM-22 item 2(f)'s N, 6 cards, governs registered runs; these two runs take two cards, and AM-29's exploratory pods are not registered runs.
+4. **Block B** (on the laptop, one kit at a time). E6-R1 runs first, then E6-R2: the priority that AM-23 item 3(d) registered before any E3-X existed. No value fixes the order. For each run, the 15 epochs are converted and scored on VAL, the epoch is selected
+   by item 1's rules file, and the INT8 QNNPACK artifact and its x86 latency copy are finalized, as for
+   E6-E2 (DL-146). This runs in the student image of record, with an evaluation clone at the pods'
+   commit, mounted read-only.
+5. **The VAL dry run.** Before any TEST look, E6 seed 42's converted artifact of record (DL-131) is
+   scored on the full VAL split, as a check and not as a result, in item 6's image, evaluator commit and thread setting.
+   (a) Its all-class mIoU is compared with 0.33082112669944763 (the repr of the float); an exact match passes.
+   (b) If it differs by at most 1e-4 (DL-17's band, in which a difference is recorded and is not a failure; block B made the value of record in the student image with no thread setting, so an exact match in item 6's image is not certain), the difference is entered in a decision-log row and the looks go ahead. If it differs by more, or the run fails, no TEST look is made until a decision-log row states the cause and a repeated dry run passes.
+6. **One TEST look each.** Fixed here, before any training: each run's selected INT8 QNNPACK artifact
+   is scored once on the full clean TEST split, under the canvas protocol and under the upstream
+   PlantSeg protocol (AM-23 item 5).
+   (a) The scoring uses scripts/evaluate_model.py at the TEST session's commit, dc40dd2, in the TEST
+       session's KD image (sha256:cb413304e2445e5c8ac3786f7a370f2ed05a07d11843b11687bb9eb23dc32c2b), on
+       CPU, at batch 1 with one thread (DL-248), with the TEST session's single-run flags and every TEST
+       guard of the evaluator: --confirm-test-split and the expected checkpoint and converted sha256s. The
+       artifact status is official, as E6's at the TEST session; if the evaluator's own official-INT8 gate refuses the artifact, no look is made until a decision-log row states the cause.
+   (b) If the evaluator at dc40dd2 refuses an artifact made at the pods' commit on code identity
+       alone, the look is made at the pods' commit instead (the evaluator is the same at both), after a
+       decision-log row names the refusal.
+   (c) A look starts only after the run's selection record exists and its sha256 has been sent to the
+       orchestrator.
+   (d) A look is two scorings, canvas then upstream. A scoring whose summary is written is never repeated, re-scored or replaced; one that fails before its summary is written is made once more, alone, after a decision-log row gives the cause.
+   (e) For these two models only, AM-22 item 1(h)'s "no run is added to TEST after the freeze", the rule that TEST is evaluated once (AM-19 item 1(c); AM-22 item 1(h); AM-24 item 2), AM-24 item 2's first sentence and AM-23 item 5's "at the single TEST evaluation" give way to one look each. For every other model they stand.
+7. **DL-212 (c)'s per-image readings, made late.** The per-image mean ΔmIoU with its BCa 95%
+   interval, for F − E1, G − E1, A − E1 and E3 − A at seed 42 (AM-17b item 1(e)), is computed once, on
+   the laptop, from the clean TEST per-image artifacts of record of E1, E3, A, F and G.
+   (a) The method is the one used for the arms' per-image readings in src/stats/arm_tables.py
+       (arm_row): the official statistics artifact and the TEST inventory of DL-248 and DL-249, the
+       per-image disease-only mIoU vectors aligned under the artifact's policy (align_runs on
+       align.METRIC_DISEASE_ONLY), and the mean Δ with its two-sided BCa 95% interval at
+       B = 10,000 (lrep_descriptive.mean_delta_task), its seed drawn from LREP's descriptive namespace.
+       The contrast ids, fixed here, are am17b__f__e1, am17b__g__e1, am17b__a__e1 and am17b__e3__a. A driver calls these functions unchanged (src/stats is byte-identical at dc40dd2), since arm_tables itself skips A, F and G: the driver that AUDIT-AM28-1 audited (am28_perimage_20261115.py, sha256 5889cd2811f6ccca2f9f796c13425f7b1956e4cd46c8b62039be027998811d61, outside the repository), changed only by that audit's fixes F10 (b) and (c), and committed as the new file scripts/am28_perimage.py in a records commit before item 7 runs.
+   (b) Every input is checked by the LREP readers against its sha256 in the TEST session's binding (reports/derived/tday_binding.json, DL-248) or in the official statistics artifact (DL-249) before it is
+       read. A missing or mismatched file stops the kit, and "not produced" then stands.
+   (c) The readings are descriptive, with no test. The kit prints only the four summary rows.
+   (d) A run that stops before it prints its rows is made again after the cause is fixed. A run that
+       has printed its rows is never repeated.
+8. **Deadlines.** All times are +08:00, by the clock and never by a result. Each is a deadline, not a
+   start time: a step starts as soon as the step before it is done.
+   (a) This amendment is on the remote by 22:00 on 2026-11-17 (otherwise void, as above).
+   (b) The VAL dry run (item 5) and the per-image readings (item 7) are done by 22:00 on 2026-11-18.
+       If the readings miss this, "not produced" stands for the manuscript. A dry run made later only has to precede the first look.
+   (c) Item 2's records and rows are on the remote, and both pods have launched, by 12:00 on
+       2026-11-19. A run not launched by then is entered as "not run: AM-28's launch cutoff".
+   (d) Both block B runs and both TEST looks are done by 22:00 on 2026-11-20. A look made later, under this amendment and unchanged, goes only to the defense.
+   (e) The records commit is on the remote by 12:00 on 2026-11-21, and the slots (item 10) are filled
+       by 22:00 that day. For this amendment's two slots only, this replaces the cut of AM-24 item 12
+       (12:00 on 2026-11-12), which keeps late exploratory results out of the manuscript.
+9. **Reporting and the fallback, by completion only.** At 12:00 on 2026-11-21 (item 8(e)), a run counts
+   as complete if a records commit on the remote holds its TEST look.
+   (a) Both complete: both enter slot 1.
+   (b) One complete: that one enters slot 1, with the other's record as it stands: "not run: AM-28's launch cutoff"; "aborted (rule, cause)"; "non-finite: no model", not evaluable (AM-23 item 3(e)); otherwise "E6-R1 [or E6-R2] was not completed by the manuscript's cut and is reported at the defense."
+   (c) Neither complete: Table 4.5 and the rest of slot 1 keep the text of the freeze.
+   (d) Slot 2 gets item 7's readings only from a records commit on the remote by that time; otherwise
+       "not produced" stands.
+   (e) A later result goes only to the defense and to the final manuscript after it, never into the
+       manuscript submitted by 2026-11-23.
+   (f) A complete run is reported as AM-23 items 5 to 7 register it, and as src/stats/arm_tables.py
+       places its row: E6-X − E6 at seed 42 on clean TEST, all-class with disease-only alongside,
+       beside √2·s = 1.56 pp ("not distinguishable from seed noise" inside it); the per-image mean Δ
+       with its BCa 95% interval, made by item 7's path with the contrast ids that the code registered
+       before TEST (arm__r2__e6 and arm__r1__e6, lrep_descriptive.arm_contrast_id); the converted VAL
+       selection value; and the upstream protocol's values beside them, as AM-16 item 4 reports every student. AM-23 item 5's duplicate-free subset (AM-18 item 8(c)) is not produced for E6-X under this amendment.
+   (g) It is reported whatever it shows, with no test. It is never called "best", and "significantly",
+       "outperforms" and "confirms" are not used for it (AM-24).
+10. **The slots.** These are the slots that DL-269 (a) and (h) allow after the freeze. Every value
+    comes from the records commit through the orchestrator's builder, never typed (ruling
+    GDOC-COPY-1).
+    (a) Slot 1, E6-R1 and E6-R2:
+        - Table F.2 gains the rows E6-R1 − E6 and E6-R2 − E6 (item 9(f)). Its source line "E6-R1 and
+          E6-R2 were cut (Table 4.5)" becomes "E6-R1 and E6-R2 were restored after TEST by AM-28".
+        - Table B.3's two rows give the runs' records.
+        - Table 4.5's row keeps its cut and gains "(restored after TEST by AM-28)".
+        - The glossary line gains "restored after TEST as exploratory runs (AM-28)".
+        - The paragraph of item 11 is added after Table 4.5.
+    (b) Slot 2, the per-image readings:
+        - The four readings join the four bullets that follow Table 4.19 ("per image, mean … pp, BCa
+          95% CI … to …").
+        - Section B.5's paragraph "Readings not produced" gains: "They were produced later, after the
+          numbers freeze, under AM-28, by the method that DL-212 (c) fixed before TEST; the deviation
+          stands."
+11. **Disclosure** (pre-written for Chapter 4, passive voice). "E6-R1 and E6-R2 were restored after the
+    TEST session by AM-28, which was registered after the TEST results were known and before either run
+    was launched. Both cut runs were restored, as AM-23 item 3 had registered them, so that neither was
+    chosen on a result; each was scored once on TEST, and both are reported whatever they show. AM-28
+    also moved the cut of AM-24 item 12, which keeps late exploratory results out of the manuscript, for these runs; the per-image readings that DL-212 (c) had deferred were produced late under this amendment. The runs had been cut for a
+    planning deviation (the pre-launch entry and the kit were not ready; DL-137; DL-138), not for a
+    result. The runs are exploratory: no test is made, they enter no conclusion, and E6 of record is
+    unchanged. As AM-23 item 7 notes, E6-X exists only for arms whose E3-X scored above E3 on VAL, so
+    E6-X − E6 is read with that selection in mind. The duplicate-free subset that AM-23 item 5 lists was not produced for these runs."
+12. **Who sees what.** AM-27 item 6 applies to every step. No AI session opens a TEST image, a mask, a
+    per-image file, the cache or the identities of S, and none prints a per-image value. The kits print
+    only counts, hashes, PASS or STOP lines and the summary values of items 5 to 7 and 9(f).
+13. **Kits and audit.** Each step runs from a kit outside the repository that names the code it calls
+    by commit and sha256. Each kit is audited before it runs (DL-24) and is run by Ice De Luna. A kit that writes records or pushes runs only after its sha256 is checked. This text was audited by AUDIT-AM28-1 (Fable 5.2; PASS WITH CHANGES, 15 Nov 2026), and its fixes are folded in.
+14. **What does not change.**
+    - TEST is not split, and no model of record is scored on TEST again.
+    - No exploratory result selects, re-selects or amends anything of record (AM-24 item 5).
+    - The TEST session's records, the eight tests and the conclusions stand.
+    - Any other later use of TEST still needs its own amendment.
+15. **Why.** The two runs were registered before TEST (AM-23 item 3) and were cut only because their
+    pre-launch entry and kit were late. Restoring both, with one look each fixed before training,
+    reports what the registered design would have shown, without choosing a model on a result. The
+    per-image readings were fixed before TEST (DL-212 (c)) and need no new look: only their date moves.
+
 ## Status of PREREGISTRATION §10 items after these amendments
 
 | Item | Status |

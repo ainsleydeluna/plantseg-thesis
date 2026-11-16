@@ -1,0 +1,148 @@
+{
+  "amendment": "AM-23 item 3(b)",
+  "arm": "R2",
+  "best_json": {
+    "file": "best.json",
+    "sha256": "9cb73b2bab64f1c9941295de87c1541ec198dfa3b85298e5b37b7b38704e0f52"
+  },
+  "checkpoint": {
+    "bytes": 23736740,
+    "file": "e3_student_best_iter80000.pt",
+    "sha256": "da70d82fcba6543488d6748691fbe9f56a4bf8c29b1c9d29d92f0d5287291ef4"
+  },
+  "dl_deadline": {
+    "enter_by_end_utc": "2026-10-23T16:00:00Z",
+    "enter_by_manila_date": "2026-10-23",
+    "rule": "AM-23 item 3(b): entered in the decision log by the end of the day after E3-X's run_end (Asia/Manila, +08:00), and before E6-X launches; computed from run_end.wall_clock_end",
+    "run_end_manila_date": "2026-10-22",
+    "run_end_utc": "2026-10-22T10:36:31Z",
+    "run_end_wall_clock_end": 1792665391.5086315,
+    "timezone": "Asia/Manila (+08:00)"
+  },
+  "format": "e6x_condition/1",
+  "launch_log": {
+    "launch": {
+      "alpha_cwd": 25.0,
+      "am8a_report": {
+        "path": "reports/kd_e3-r2_s42_lambda0.5_alpha25_80k_a1_host_fault.md",
+        "sha256": "1e6030b8eb4d27af1df5246fd62de1cc2c62bb293b8a4f914bcef97b1a22fe66"
+      },
+      "attempt": 2,
+      "ckpt_dir": "/workspace/kd/e3-r2_s42_lambda0.5_alpha25_80k_a2",
+      "code_pin": "572ab226aff8f9ef63cbf8d1fe212187afafdd67",
+      "event": "launch",
+      "format": "kd_launch_log/1",
+      "horizon": 80000,
+      "lambda_logit": 0.5,
+      "run_id": "e3-r2_s42_lambda0.5_alpha25_80k_a2",
+      "schedule": "T",
+      "seed": 42,
+      "stage": "E3-R2",
+      "sweep": null,
+      "value": null
+    },
+    "launched": {
+      "decision_date": null,
+      "event": "launched",
+      "git_head": "572ab226aff8f9ef63cbf8d1fe212187afafdd67",
+      "launch_order_position": null,
+      "launch_time_utc": 1792564331.6225271,
+      "records_commit": "dba0244a5e82d147faa926b95a9b96b82c782f1c",
+      "run_id": "e3-r2_s42_lambda0.5_alpha25_80k_a2",
+      "run_meta_sha256": "f68e4ec0889cbca427a9a559293c8d3f3147f5d017a3ad0a79967f5c871c5b39"
+    },
+    "path": "reports/kd_launch_log.jsonl",
+    "sha256": "af9c6102b839aa69f0be8624f00ae8bc7b02734193b3e8ea73f96f404b457562"
+  },
+  "parent_run_stage": "E3-R2",
+  "run_end": {
+    "best_ckpt": "e3_student_best_iter80000.pt",
+    "best_val_miou_all_class": 0.3842073380947113,
+    "checks_passed": true,
+    "iter": 80000,
+    "wall_clock_end": 1792665391.5086315
+  },
+  "run_id": "e3-r2_s42_lambda0.5_alpha25_80k_a2",
+  "run_meta": {
+    "file": "e3_run_meta.jsonl",
+    "sha256": "f68e4ec0889cbca427a9a559293c8d3f3147f5d017a3ad0a79967f5c871c5b39"
+  },
+  "seed": 42,
+  "selections": {
+    "alpha": {
+      "path": "reports/derived/alpha_selection.json",
+      "sha256": "1399b897278db17a8876c724b89c8d8e7a7b42ffe1d9c4d67002578a889f2dd8",
+      "winner": {
+        "alpha": 25.0,
+        "best_val": 0.36337557435035706,
+        "checkpoint_present": true,
+        "ckpt_sha256": "4baa5bad682995091b66c67fb2d2ce467b3f139e02cc5a5cc62c243fe00f1a0d",
+        "run_id": "e3_s42_lambda0.5_alpha25_80k_a1"
+      }
+    },
+    "lambda": {
+      "path": "reports/derived/lambda_selection.json",
+      "sha256": "719eaa0ae2379633786a545aff087d385b16a6c503cfa445ba456784f2592145",
+      "winner": {
+        "best_val": 0.38749080896377563,
+        "checkpoint_present": true,
+        "ckpt_sha256": "73dbc32dfc988124a9b81df24abd97c526f927ac2b094996411d174e89d32f06",
+        "lambda": 0.5,
+        "run_id": "e2_s42_lambda0.5_80k_a1"
+      }
+    }
+  },
+  "stage": "E6-R2",
+  "teacher_record": {
+    "checkpoint_name": "iter_24000.pth",
+    "checkpoint_sha256": "d5085961e1529d83b1fc13ff04fac83957bcc44c4f70a0635ff0d840083ffab9",
+    "path": "reports/arms/arm_teacher_record_R2.json",
+    "sha256": "fc45d7711b96cbdcfb999d203f28c947af1a45e293e70ed970250fba4d6483e5"
+  },
+  "telemetry": {
+    "file": "e3_telemetry.jsonl",
+    "sha256": "8c8465b4001cd089a39c21e9f3731644210f814b0fcf7adc39e47411edfe9c24"
+  },
+  "threshold": {
+    "comparison": "Decimal(repr(value)) > Decimal(threshold), strictly; the equal value gives no",
+    "repr": "0.36337557435035706",
+    "source": "reports/derived/alpha_selection.json winner.best_val: E3 seed 42, run e3_s42_lambda0.5_alpha25_80k_a1 (DL-121)"
+  },
+  "tool": {
+    "clean_at_commit": true,
+    "code_paths": [
+      "src/quant/e6x_condition.py",
+      "scripts/e6x_condition.py",
+      "src/quant/qat.py",
+      "src/quant/runner.py",
+      "src/training/train_e1.py",
+      "src/quant/ptq.py",
+      "src/training/sweep_select.py",
+      "src/training/kd_arms.py",
+      "configs/kd_arms",
+      "configs/kd_arms/e3_flip.json",
+      "configs/kd_arms/e3_r1.json",
+      "configs/kd_arms/e3_r2.json"
+    ],
+    "commit": "aa8cac283c1d7bda7aceb0844b47f6c3cf1ab1b7",
+    "files_sha256": {
+      "configs/kd_arms/e3_flip.json": "f6198343b73a00b320ca84be605e41be25ccc53e2ca9b49a0c8828194a57a404",
+      "configs/kd_arms/e3_r1.json": "abe59f99d971ea10e04d8df8179241014d8e91fa82a030ad462aae635f9ebbb0",
+      "configs/kd_arms/e3_r2.json": "c645c990f4f02d3c71e8a962132fbda76622fab9a2e4840f1c714dd6568957c0",
+      "scripts/e6x_condition.py": "8fee159a96e462a3adfd4d43474a478091018e2403828f53a76d9ec4c6e039bb",
+      "src/quant/e6x_condition.py": "db77fe632f87b330513803e0e6f9769312e6ab916afe4a0935f9ce0c2c98ff21",
+      "src/quant/ptq.py": "e36f6ae02d1b9c4fb06d3fae39510116d459954c6e246bb392a964efae31ed97",
+      "src/quant/qat.py": "a0416ca6ce64b06b8e2eb64b10c288f11b3f092d4ab425a6064cd9b9c8a79c62",
+      "src/quant/runner.py": "98fd67b7c86d834420a12238b0f02b1879b4d1088a89bc21c7edcb208dc8693f",
+      "src/training/kd_arms.py": "0c3b46254d2c0c95f8188b166b1ee7051647f5be980edc2bd2936ea8919fe1a5",
+      "src/training/sweep_select.py": "8a32479cc1426a1cf0676d163bc503af1982683c6fcb77ebfec4bf5908f2e3cf",
+      "src/training/train_e1.py": "b1e89093f45695d844c2034c8162d3334430b3f802dbdeb6911213bed7f98fd9"
+    }
+  },
+  "value": {
+    "best_val_miou_all_class": 0.3842073380947113,
+    "repr": "0.3842073380947113",
+    "source": "best.json"
+  },
+  "verdict": "yes"
+}
