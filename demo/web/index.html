@@ -66,6 +66,27 @@
   footer { color: var(--muted); font-size: .85rem; margin-top: 18px; }
   h2 { font-size: 1.02rem; margin: 0 0 6px; }
   a { color: var(--accent); }
+  [hidden] { display: none !important; }
+  .compare { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface);
+             padding: 6px 12px 12px; margin: 0 0 12px; }
+  .compare legend { padding: 0 4px; color: var(--muted); font-size: .92rem; }
+  .seg { display: flex; flex-wrap: wrap; gap: 6px; }
+  .seg label { position: relative; flex: 1 1 auto; display: flex; align-items: center; justify-content: center;
+               min-height: 44px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 10px;
+               text-align: center; font-size: .92rem; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+  .seg label.on { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 650; }
+  .seg input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+  .panels { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px 12px; align-items: start; }
+  .panels.two { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .panels > .span { grid-column: 1 / -1; }
+  .ph h2 { margin: 0; }
+  .ph .pdesc { margin: 0; color: var(--muted); font-size: .9rem; }
+  .ph .pmeta { margin: 2px 0 0; color: var(--muted); font-size: .8rem; overflow-wrap: anywhere; }
+  .panels .slider, .panels h2.cls, .panels .time { margin-top: 6px; }
+  .panels.two .legend li { gap: 6px; font-size: .86rem; }
+  .panels.two .big { font-size: 1.3rem; }
+  .panels.two .time h2 { font-size: .9rem; }
+  .more { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
 </style>
 </head>
 <body>
@@ -84,35 +105,58 @@
       <input id="inUpload" type="file" accept="image/*"></label>
   </div>
 
+  <fieldset class="compare" id="compareBox" hidden>
+    <legend>Compare with:</legend>
+    <div class="seg" id="compareSeg">
+      <label class="on"><input type="radio" name="compare" value="none" checked>none</label>
+    </div>
+  </fieldset>
+
   <div class="busy" id="busy"><div class="spin"></div><span>Segmenting&hellip;</span></div>
   <div class="notice err" id="error" role="alert"></div>
 
   <section class="card" id="result" hidden>
-    <div class="stage">
-      <img id="imgBase" alt="The photo as the model saw it (long side 512 px)">
-      <img id="imgOverlay" class="ov" alt="Predicted lesion classes, coloured">
-    </div>
-    <div class="slider">
-      <label for="opacity">Overlay</label>
-      <input id="opacity" type="range" min="0" max="100" value="60">
-      <output id="opacityOut" for="opacity">60%</output>
-    </div>
+    <div class="panels" id="panels">
+      <div class="ph" id="p0Head"><h2 id="p0Label"></h2><p class="pdesc" id="p0Desc"></p><p class="pmeta mono" id="p0Meta"></p></div>
+      <div class="ph" id="p1Head" hidden><h2 id="p1Label"></h2><p class="pdesc" id="p1Desc"></p><p class="pmeta mono" id="p1Meta"></p></div>
+      <div class="stage" id="p0Stage">
+        <img id="imgBase" alt="The photo as the model saw it (long side 512 px)">
+        <img id="imgOverlay" class="ov" alt="Predicted lesion classes, coloured">
+      </div>
+      <div class="stage" id="p1Stage" hidden>
+        <img id="imgBase1" alt="The same photo, for the comparison model">
+        <img id="imgOverlay1" class="ov" alt="The comparison model's predicted lesion classes, coloured">
+      </div>
+      <div class="slider span">
+        <label for="opacity">Overlay</label>
+        <input id="opacity" type="range" min="0" max="100" value="60">
+        <output id="opacityOut" for="opacity">60%</output>
+      </div>
 
-    <h2 style="margin-top:14px">Top classes (share of the photo's pixels)</h2>
-    <p class="sub">Class names are the PlantSeg dataset's. They are the model's output for the marked pixels, not a diagnosis; the plant in the photo may not be the crop named.</p>
-    <ul class="legend" id="legend"></ul>
+      <h2 class="cls span" style="margin-top:14px">Top classes (share of the photo's pixels)</h2>
+      <p class="sub span" id="classNote">Class names are the PlantSeg dataset's. They are the model's output for the marked pixels, not a diagnosis; the plant in the photo may not be the crop named.</p>
+      <ul class="legend" id="legend"></ul>
+      <ul class="legend" id="legend1" hidden></ul>
 
-    <h2 style="margin-top:14px">Time for this photo (a demonstration, not a measurement)</h2>
-    <div><span class="big" id="latInfer">&ndash;</span> ms model inference</div>
-    <dl class="kv" style="margin-top:6px">
-      <dt>Server total</dt><dd id="latTotal">&ndash;</dd>
-      <dt>Round trip</dt><dd id="latTrip">&ndash;</dd>
-      <dt>Upload</dt><dd id="uploadNote">&ndash;</dd>
-    </dl>
+      <div class="time" id="p0Time" style="margin-top:14px">
+        <h2>Time for this photo (a demonstration, not a measurement)</h2>
+        <div><span class="big" id="latInfer">&ndash;</span> ms model inference</div>
+      </div>
+      <div class="time" id="p1Time" style="margin-top:14px" hidden>
+        <h2>Time for this photo (a demonstration, not a measurement)</h2>
+        <div><span class="big" id="latInfer1">&ndash;</span> ms model inference</div>
+      </div>
+      <dl class="kv span" style="margin-top:6px">
+        <dt>Server total</dt><dd id="latTotal">&ndash;</dd>
+        <dt>Round trip</dt><dd id="latTrip">&ndash;</dd>
+        <dt>Upload</dt><dd id="uploadNote">&ndash;</dd>
+      </dl>
+    </div>
   </section>
 
   <section class="card">
     <h2>Model</h2>
+    <p class="sub" id="modelLabel" style="margin-bottom:6px">&ndash;</p>
     <dl class="kv">
       <dt>File</dt><dd class="mono" id="modelFile">&ndash;</dd>
       <dt>SHA-256</dt><dd class="mono" id="modelSha">&ndash;</dd>
@@ -120,6 +164,7 @@
       <dt>Runtime</dt><dd id="modelRuntime">&ndash;</dd>
       <dt>Input</dt><dd id="modelInput">&ndash;</dd>
     </dl>
+    <div id="moreModels"></div>
     <details style="margin-top:10px">
       <summary id="classesSummary">Classes the model can output</summary>
       <ol id="allClasses" start="0"></ol>
@@ -136,25 +181,78 @@
 (function () {
   "use strict";
   var $ = function (id) { return document.getElementById(id); };
-  var busy = false;
+  var busy = false, lastUp = null, models = {};
 
   function pct(x) { return (100 * x).toFixed(x >= 0.1 ? 1 : 2) + "%"; }
   function showError(msg) { var e = $("error"); e.textContent = msg; e.style.display = "block"; }
   function hideError() { $("error").style.display = "none"; }
+  function compareValue() {
+    var c = document.querySelector('input[name="compare"]:checked');
+    return c ? c.value : "none";
+  }
   function setBusy(on) {
     busy = on;
     $("busy").style.display = on ? "flex" : "none";
     ["btnCamera", "btnUpload"].forEach(function (id) { $(id).setAttribute("aria-disabled", on ? "true" : "false"); });
+    Array.prototype.forEach.call(document.querySelectorAll('input[name="compare"]'), function (r) { r.disabled = on; });
+  }
+  function identity(m) {
+    var meta = m.embedded_meta || {};
+    if (m.kind === "fp32") {
+      return "stage " + meta.stage + ", fp32, seed " + meta.seed + ", from checkpoint " +
+        String(meta.source_checkpoint_sha256 || "").slice(0, 12) + "…";
+    }
+    return "stage " + meta.stage + ", " + meta.quantization;
+  }
+  function runtime(m) { return "torch " + m.torch + ", engine " + m.engine + ", " + m.threads + " CPU thread(s)"; }
+  function kvRow(dl, k, v, mono) {
+    var dt = document.createElement("dt"); dt.textContent = k;
+    var dd = document.createElement("dd"); dd.textContent = v; if (mono) dd.className = "mono";
+    dl.appendChild(dt); dl.appendChild(dd);
   }
 
   function renderInfo(info) {
-    var m = info.model, meta = m.embedded_meta || {};
+    var m = info.model, list = info.models || [m];
+    list.forEach(function (x) { models[x.slot] = x; });
+    $("modelLabel").textContent = m.label + " · " + m.description;
     $("modelFile").textContent = m.file + " (" + (m.size_bytes / 1048576).toFixed(2) + " MB)";
     $("modelSha").textContent = m.sha256;
-    $("modelMeta").textContent = "stage " + meta.stage + ", " + meta.quantization;
-    $("modelRuntime").textContent = "torch " + m.torch + ", engine " + m.engine + ", " + m.threads + " CPU thread(s)";
+    $("modelMeta").textContent = identity(m);
+    $("modelRuntime").textContent = runtime(m);
     $("modelInput").textContent = info.preprocessing.protocol + " (the evaluator's own preprocessing)";
-    $("noticeStandIn").style.display = m.stand_in ? "block" : "none";
+    var more = $("moreModels"); more.innerHTML = "";
+    list.slice(1).forEach(function (x) {
+      var box = document.createElement("div"); box.className = "more";
+      var p = document.createElement("p"); p.className = "sub"; p.style.marginBottom = "6px";
+      p.textContent = x.label + " · " + x.description;
+      var dl = document.createElement("dl"); dl.className = "kv";
+      kvRow(dl, "File", x.file + " (" + (x.size_bytes / 1048576).toFixed(2) + " MB)", true);
+      kvRow(dl, "SHA-256", x.sha256, true);
+      kvRow(dl, "Identity", identity(x));
+      kvRow(dl, "Runtime", runtime(x));
+      box.appendChild(p); box.appendChild(dl); more.appendChild(box);
+    });
+    var stand = list.filter(function (x) { return x.stand_in; });
+    if (stand.length) {
+      $("noticeStandIn").innerHTML = "";
+      var b = document.createElement("b");
+      b.textContent = list.length > 1 ? "Stand-in model (" + stand.map(function (x) { return x.label; }).join(", ") + "):"
+                                      : "Stand-in model:";
+      var b2 = document.createElement("b"); b2.textContent = "not";
+      $("noticeStandIn").appendChild(b);
+      $("noticeStandIn").appendChild(document.createTextNode(" random weights, used until the model of record is chosen. The colours below are "));
+      $("noticeStandIn").appendChild(b2);
+      $("noticeStandIn").appendChild(document.createTextNode(" predictions."));
+    }
+    $("noticeStandIn").style.display = stand.length ? "block" : "none";
+    var opts = info.compare_options || [], seg = $("compareSeg");
+    opts.forEach(function (o) {
+      var lab = document.createElement("label"), inp = document.createElement("input");
+      inp.type = "radio"; inp.name = "compare"; inp.value = o.slot;
+      lab.appendChild(inp); lab.appendChild(document.createTextNode(o.option));
+      seg.appendChild(lab);
+    });
+    $("compareBox").hidden = opts.length === 0;          // no loaded comparison model: no switch at all
     $("noticePrototype").textContent = info.notices.prototype;
     $("noticeLicence").textContent = info.notices.licence;
     var ol = $("allClasses");
@@ -176,23 +274,36 @@
     return li;
   }
 
-  function render(res, note, tripMs) {
-    $("imgBase").src = res.images.photo_jpeg;
-    $("imgOverlay").src = res.images.overlay_png;
-    var ul = $("legend"); ul.innerHTML = "";
-    if (res.classes.top.length === 0) {
+  function fillPanel(i, p, photo) {
+    var sfx = i === 0 ? "" : "1";
+    $("p" + i + "Label").textContent = p.label;
+    $("p" + i + "Desc").textContent = p.description;
+    $("p" + i + "Meta").textContent = "SHA-256 " + p.sha256_short + " · engine " + p.engine;
+    $("imgBase" + sfx).src = photo;
+    $("imgOverlay" + sfx).src = p.images.overlay_png;
+    var ul = $("legend" + sfx); ul.innerHTML = "";
+    if (p.classes.top.length === 0) {
       var li = document.createElement("li"); li.textContent = "No disease class predicted."; ul.appendChild(li);
     }
-    res.classes.top.forEach(function (c) { ul.appendChild(legendRow(c)); });
-    if (res.classes.background) {
-      var b = legendRow(res.classes.background);
+    p.classes.top.forEach(function (c) { ul.appendChild(legendRow(c)); });
+    if (p.classes.background) {
+      var b = legendRow(p.classes.background);
       b.querySelector(".sw").style.background = "transparent";
       ul.appendChild(b);
     }
-    $("latInfer").textContent = res.latency_ms.inference.toFixed(0);
-    $("latTotal").textContent = res.latency_ms.total.toFixed(0) + " ms (decode " + res.latency_ms.decode.toFixed(0) +
-      ", preprocess " + res.latency_ms.preprocess.toFixed(0) + ", post " + res.latency_ms.postprocess.toFixed(0) +
-      "; " + res.threads + " thread(s))";
+    $("latInfer" + sfx).textContent = p.latency_ms.inference.toFixed(0);
+  }
+
+  function render(res, note, tripMs) {
+    var panels = res.panels || [], two = panels.length > 1;
+    fillPanel(0, panels[0], res.images.photo_jpeg);
+    if (two) fillPanel(1, panels[1], res.images.photo_jpeg);
+    ["p1Head", "p1Stage", "legend1", "p1Time"].forEach(function (id) { $(id).hidden = !two; });
+    $("panels").className = two ? "panels two" : "panels";
+    var l = res.latency_ms;
+    $("latTotal").textContent = l.total.toFixed(0) + " ms (decode " + l.decode.toFixed(0) +
+      ", preprocess " + l.preprocess.toFixed(0) + ", post " + l.postprocess.toFixed(0) +
+      (two ? "; both models' inference included" : "") + "; " + res.threads + " thread(s))";
     $("latTrip").textContent = tripMs.toFixed(0) + " ms (page to server and back)";
     $("uploadNote").textContent = note + "; " + res.input.original_size_wh.join("x") + " " + (res.input.format || "");
     $("result").hidden = false;
@@ -225,24 +336,36 @@
     return decodeToJpeg(file);   // HEIC/HEIF, unknown types, or very large files
   }
 
-  function run(file) {
-    if (!file || busy) return;
+  function send(up) {
+    var fd = new FormData(), t0;
+    fd.append("file", up.blob, up.name);
+    fd.append("compare", compareValue());
+    t0 = performance.now();
+    return fetch("api/segment", { method: "POST", body: fd }).then(function (r) {
+      if (!r.ok) {
+        return r.json().catch(function () { return {}; }).then(function (j) {
+          throw new Error(j.detail ? String(j.detail) : "server error " + r.status);
+        });
+      }
+      return r.json().then(function (res) { render(res, up.note, performance.now() - t0); });
+    });
+  }
+
+  function go(work) {
+    if (busy) return;
     hideError(); setBusy(true);
-    var t0;
-    prepareUpload(file).then(function (up) {
-      var fd = new FormData();
-      fd.append("file", up.blob, file.name || "photo.jpg");
-      t0 = performance.now();
-      return fetch("api/segment", { method: "POST", body: fd }).then(function (r) {
-        if (!r.ok) {
-          return r.json().catch(function () { return {}; }).then(function (j) {
-            throw new Error(j.detail ? String(j.detail) : "server error " + r.status);
-          });
-        }
-        return r.json().then(function (res) { render(res, up.note, performance.now() - t0); });
-      });
-    }).catch(function (e) { showError(e && e.message ? e.message : String(e)); })
+    work().catch(function (e) { showError(e && e.message ? e.message : String(e)); })
       .then(function () { setBusy(false); });
+  }
+
+  function run(file) {
+    if (!file) return;
+    go(function () {
+      return prepareUpload(file).then(function (up) {
+        lastUp = { blob: up.blob, note: up.note, name: file.name || "photo.jpg" };
+        return send(lastUp);
+      });
+    });
   }
 
   ["inCamera", "inUpload"].forEach(function (id) {
@@ -252,11 +375,18 @@
       run(f);
     });
   });
+  $("compareSeg").addEventListener("change", function () {
+    Array.prototype.forEach.call($("compareSeg").querySelectorAll("label"), function (lab) {
+      lab.className = lab.querySelector("input").checked ? "on" : "";
+    });
+    if (lastUp) go(function () { return send(lastUp); });     // the same photo, with the new comparison
+  });
   $("opacity").addEventListener("input", function () {
-    $("imgOverlay").style.opacity = String($("opacity").value / 100);
+    var v = String($("opacity").value / 100);
+    $("imgOverlay").style.opacity = v; $("imgOverlay1").style.opacity = v;
     $("opacityOut").textContent = $("opacity").value + "%";
   });
-  $("imgOverlay").style.opacity = "0.6";
+  $("imgOverlay").style.opacity = "0.6"; $("imgOverlay1").style.opacity = "0.6";
 
   fetch("api/info", { cache: "no-store" }).then(function (r) {
     if (!r.ok) throw new Error("server error " + r.status);

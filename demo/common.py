@@ -18,6 +18,30 @@ if str(REPO_ROOT) not in sys.path:          # python3 -I does not put the checko
     sys.path.insert(0, str(REPO_ROOT))
 
 
+def phone_fix() -> dict:
+    """PHONE-FIX-1, applied by every demo process before its first forward: oneDNN (mkldnn) off for the
+    FP32 CPU path. The INT8 path selects the qnnpack engine through the evaluator's own
+    select_int8_backend. Returns the state, for the start-up line and the smokes."""
+    import torch
+
+    torch.backends.mkldnn.enabled = False
+    return {"mkldnn_enabled": bool(torch.backends.mkldnn.enabled),
+            "quantized_engine": str(torch.backends.quantized.engine)}
+
+
+def refuse_test_named(path, what: str) -> None:
+    """Refuse a path containing "test" (any case), as given or with symlinks resolved. Opens nothing."""
+    import os
+
+    for form in (str(path), os.path.realpath(path)):
+        if "test" in form.lower():
+            raise SystemExit(f"refusing {what} {form!r}: the path contains 'test'; TEST data is never read")
+
+
+def short_sha(sha256: str) -> str:
+    return sha256[:12] + "\u2026"
+
+
 def stats_modules_loaded() -> list[str]:
     """Names of any src.stats modules in this process. The demo must never import src.stats."""
     return sorted(m for m in sys.modules if m == "src.stats" or m.startswith("src.stats."))

@@ -2,7 +2,8 @@
 """Build the demo's STAND-IN model: the thesis student with RANDOM weights, quantized through the
 repository's own QNNPACK eager path and serialized the way the artifact of record is.
 
-    python3 -I demo/model/build_stand_in.py [--out PATH] [--force]
+    python3 -I demo/model/build_stand_in.py [--out PATH] [--force] [--seed N]
+    python3 -I demo/model/build_stand_in.py --e3-checkpoint PATH [--seed N]
 
   * model     src/models/student.py build_student(pretrained=False): random init, no download
   * quantize  src/quant/ptq.py quantize_qnnpack: QNNPACK engine -> fuse -> the registered PTQ qconfig
@@ -15,6 +16,11 @@ repository's own QNNPACK eager path and serialized the way the artifact of recor
 
 Writes <out> (default demo/models/stand_in_int8_qnnpack.pt), <out stem>_fp32_state.pt (the random FP32
 weights, for the ONNX exports) and <out stem>.facts.json. Refuses to overwrite without --force.
+--seed changes the random init (default 20261103), e.g. for a second INT8 stand-in in the registry's
+"shown" slot. --e3-checkpoint writes, instead, a random-weights stand-in in E3's checkpoint schema
+(src/training/train_distill.py: stage "E3", model_state_dict, num_classes 116, plus stand_in: true), the
+input demo/model/export_fp32_torchscript.py takes; with the default seed its weights are exactly the FP32
+weights the default INT8 stand-in was quantized from. Every run applies PHONE-FIX-1 (mkldnn off).
 The stand-in's output is NOT a prediction: its weights are random.
 """
 from __future__ import annotations
@@ -40,7 +46,35 @@ STAND_IN_STAGE = "DEMO_STAND_IN"
 STAND_IN_ROLE = "demo_stand_in"
 
 
-def build(out: Path, force: bool = False) -> dict:
+def build_e3_checkpoint(out: Path, seed: int = STAND_IN_SEED) -> dict:
+    """A random-weights stand-in in E3's checkpoint schema. Never a thesis checkpoint."""
+    import torch
+
+    from src.models.student import build_student
+
+    common.phone_fix()
+    if out.exists():
+        raise SystemExit(f"refusing to overwrite {out}")
+    torch.manual_seed(seed)
+    model = build_student(pretrained=False).eval()
+    if model.used_pretrained:
+        raise SystemExit("build_student loaded pretrained weights; the stand-in must be random")
+    payload = {"stage": "E3", "iter": 0, "model_state_dict": {k: v.clone() for k, v in model.state_dict().items()},
+               "num_classes": int(model.num_classes), "stand_in": True,
+               "warning": "random weights: the output is not a prediction; not a thesis checkpoint",
+               "weights": f"build_student(pretrained=False) after torch.manual_seed({seed})",
+               "builder": "demo/model/build_stand_in.py --e3-checkpoint"}
+    buf = io.BytesIO()
+    torch.save(payload, buf)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with open(out, "xb") as fh:
+        fh.write(buf.getvalue())
+    common.assert_no_stats()
+    return {"file": out.name, "size_bytes": out.stat().st_size, "sha256": common.sha256_file(out),
+            "stage": "E3", "stand_in": True, "seed": seed}
+
+
+def build(out: Path, force: bool = False, seed: int = STAND_IN_SEED) -> dict:
     import torch
 
     from demo.server.preprocess import PROTOCOL_ID, evaluator_preprocess
@@ -59,8 +93,9 @@ def build(out: Path, force: bool = False) -> dict:
     if student_traced_in_process():
         raise SystemExit("the student was already traced in this process; run in a fresh process")
 
+    phone_fix = common.phone_fix()
     t0 = time.perf_counter()
-    torch.manual_seed(STAND_IN_SEED)
+    torch.manual_seed(seed)
     model = build_student(pretrained=False).eval()
     if model.used_pretrained:
         raise SystemExit("build_student loaded pretrained weights; the stand-in must be random")
@@ -74,7 +109,7 @@ def build(out: Path, force: bool = False) -> dict:
         "num_classes": int(model.num_classes), "engine": "qnnpack", "artifact_role": STAND_IN_ROLE,
         "stand_in": True,
         "warning": "random weights: the output is not a prediction",
-        "weights": f"build_student(pretrained=False) after torch.manual_seed({STAND_IN_SEED})",
+        "weights": f"build_student(pretrained=False) after torch.manual_seed({seed})",
         "calibration": (f"{n_cal} synthetic images (demo/synthetic.py, seed {CALIBRATION_SEED}) "
                         f"through {PROTOCOL_ID}; no dataset"),
         "builder": "demo/model/build_stand_in.py",
@@ -114,6 +149,7 @@ def build(out: Path, force: bool = False) -> dict:
         "torch": torch.__version__, "python": platform.python_version(),
         "machine": platform.machine(), "engine": torch.backends.quantized.engine,
         "src_stats_imported": common.stats_modules_loaded(),
+        "phone_fix": phone_fix,
     }
     facts_out.write_text(json.dumps(facts, indent=2, sort_keys=True), encoding="utf-8")
     return facts
@@ -123,8 +159,14 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--out", default=str(config.STAND_IN_PATH))
     ap.add_argument("--force", action="store_true")
+    ap.add_argument("--seed", type=int, default=STAND_IN_SEED, help="torch seed for the random init")
+    ap.add_argument("--e3-checkpoint", default=None,
+                    help="write a random-weights stand-in in E3's checkpoint schema here instead")
     a = ap.parse_args(argv)
-    facts = build(config.resolve_model_path(a.out), force=a.force)
+    if a.e3_checkpoint:
+        print(json.dumps(build_e3_checkpoint(config.resolve_model_path(a.e3_checkpoint), a.seed), indent=2))
+        return 0
+    facts = build(config.resolve_model_path(a.out), force=a.force, seed=a.seed)
     print(json.dumps({k: facts[k] for k in ("file", "size_bytes", "sha256", "output_shape_for_1x3x512x512",
                                              "quantized_ops", "build_seconds")}, indent=2))
     print(f"graph_census ok={facts['graph_census']['ok']}  parity all_equal="

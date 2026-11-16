@@ -5,9 +5,11 @@
 # demo/docker/build_context.py, never from the repository root: the script copies only src/ (without
 # src/stats), configs/, demo/ and the model file, so docs/ and test-named paths never enter the context.
 #
-#   python3 -I demo/docker/build_context.py ../plantseg-demo-context [--with-ondevice]
+#   python3 -I demo/docker/build_context.py ../plantseg-demo-context [--e3 PATH] [--shown PATH] [--with-ondevice]
 #   docker build -t plantseg-demo ../plantseg-demo-context
-#   docker run --rm -p 8000:8000 plantseg-demo            # then http://<host>:8000 on the phone
+#   docker run --rm -p 8000:8000 --env-file ../plantseg-demo-context/demo.env plantseg-demo
+#                                                          # then http://<host>:8000 on the phone
+# demo.env carries the registry's expected sha256 for each slot the context holds (demo/config.py).
 FROM python:3.11.11-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1 PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
@@ -22,8 +24,11 @@ COPY src /app/src
 COPY configs /app/configs
 COPY demo /app/demo
 
-# build_context.py places the model (MODEL_PATH at build time) here
-ENV PLANTSEG_DEMO_MODEL=/app/demo/models/model.pt
+# build_context.py places the registry's files here: e6 (MODEL_PATH at build time), and e3 and shown
+# when their expected sha256 is set. A slot without an expected sha256 is not loaded.
+ENV PLANTSEG_DEMO_MODEL=/app/demo/models/model.pt \
+    PLANTSEG_DEMO_E3_MODEL=/app/demo/models/e3.pt \
+    PLANTSEG_DEMO_SHOWN_MODEL=/app/demo/models/shown.pt
 RUN useradd --uid 10001 --no-create-home demo
 USER demo
 EXPOSE 8000

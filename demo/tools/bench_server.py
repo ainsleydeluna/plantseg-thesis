@@ -47,7 +47,7 @@ def child(model: str, threads: int, runs: int) -> dict:
     from demo.synthetic import make_leaf_image
 
     out["rss_after_imports_mb"] = round(rss_mb(), 1)
-    seg = Segmenter(config.resolve_model_path(model), threads)
+    seg = Segmenter.for_file(config.resolve_model_path(model), threads)
     out["rss_after_model_load_mb"] = round(rss_mb(), 1)
     for name, size in (("1024x768", (1024, 768)), ("4032x3024", (4032, 3024))):
         buf = io.BytesIO()
