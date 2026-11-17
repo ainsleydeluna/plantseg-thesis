@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""C1, N1, N2, N2R2, N5 and D (lane L-AM24): the exploratory QAT entry (E6-E2's recipe of record, one named change).
+"""C1, N1, N2, N2R2, N2R2T, N5 and D (lane L-AM24): the exploratory QAT entry (E6-E2's recipe of record, one named
+change).
 
-    python -B -I scripts/explore_qat.py --real-run --confirm-real-run --item C1|N1|N2|N2R2|N5|D --seed S
+    python -B -I scripts/explore_qat.py --real-run --confirm-real-run --item C1|N1|N2|N2R2|N2R2T|N5|D --seed S
         --source-run-dir <E2 run dir | D: the exploratory winner's trainer dir | N2R2: E3-R2 seed 42's run dir>
         (--expect-source-sha256 <E2 of record's checkpoint sha256 | N2R2: da70d82f...> |
          D: --parent-sha256 <its checkpoint sha256>)
@@ -13,10 +14,16 @@
                --lambda-selection reports/derived/lambda_selection.json --lambda-selection-sha256 <sha>
                --alpha-selection reports/derived/alpha_selection.json --alpha-selection-sha256 <sha>
                --condition-record reports/arms/e6x_condition_R2.json --condition-sha256 <sha> --condition-dl DL-<n>]
+        [N2R2T: N2R2's flags and records flags exactly, with --run-id x-n2r2t-s42]
 
 N2R2 (addendum L-AM24-ADD-2) is N2's change on E6-R2: E6-R2's stage, clip binding and parent loader (src/quant/qat.py
 resolve_parent and am23_parent_binding, which read the selections, AM-23 item 3(b)'s condition record and its RECORDED
 decision-log row at the HEAD of --records-root), then the pinned run_qat with N2's substitution and TF32 off.
+N2R2T (addendum L-AM24-ADD-3; AM-29a's E6-R2-MT) is N2R2 with AM-29's T1 term added to the QAT loss: the same gates,
+parent check and change, then src/explore/n2r2t.py run_n2r2t (run_am29_qat's loop on stage e6-r2, with N2's
+substitution and TF32 off as run_n2r2 makes them) with a frozen FP32 copy of the loaded parent as the teacher, factor
+0.5 and E3's lambda_logit from the λ selection the parent check read. Its order below is N2R2's at every step, and the
+teacher is built after the site census.
 
 Order: the item's flags and seed (N2R2: also its nine records flags and its run ID); the guard (split VAL, the data
 root's TRAIN/VAL-only check, x- run ID, output outside the repository and official folders); the real-run gates of
@@ -76,7 +83,7 @@ def build_parser() -> argparse.ArgumentParser:
 def pinned_paths(item: str) -> tuple[str, ...]:
     from src.quant import qat as Q
     paths = list(Q.QAT_CODE_PATHS)
-    if item == "N1":
+    if item in ("N1", "N2R2T"):                   # N2R2T: train_distill and the distill modules, as AM-29's T1 pins
         from src.quant import qat_kd as K
         paths += list(K.E6KD_CODE_PATHS)
     return tuple(dict.fromkeys(paths))
@@ -97,13 +104,15 @@ def gates(args, flags: set) -> dict:
     if args.item != "N1" and (args.teacher_ckpt or args.teacher_ckpt_sha256):
         raise X.ExploreQATError("teacher_not_applicable", f"{args.item} runs no teacher")
     n2r2_given = {f: getattr(args, f, None) for f in X.N2R2_RECORD_FLAGS}
-    if args.item == "N2R2":
+    if args.item in X.RECORDS_ITEMS:              # N2R2, and N2R2T with N2R2's parent check (addendum L-AM24-ADD-3)
         missing = ["--" + f.replace("_", "-") for f, v in n2r2_given.items() if v in (None, "")]
         if missing:
-            raise X.ExploreQATError("n2r2_records_required", f"N2R2 reads E6-R2's committed inputs through its parent "
-                                                              f"loader: {', '.join(missing)} required (no default)")
-        if args.run_id != X.N2R2_RUN_ID:
-            raise X.ExploreQATError("n2r2_run_id", f"N2R2's run ID is {X.N2R2_RUN_ID}, not {args.run_id!r}")
+            raise X.ExploreQATError("n2r2_records_required", f"{args.item} reads E6-R2's committed inputs through its "
+                                                              f"parent loader: {', '.join(missing)} required (no "
+                                                              f"default)")
+        if args.run_id != X.RECORDS_ITEMS[args.item]:
+            raise X.ExploreQATError("n2r2_run_id", f"{args.item}'s run ID is {X.RECORDS_ITEMS[args.item]}, not "
+                                                   f"{args.run_id!r}")
     elif any(v is not None for v in n2r2_given.values()):
         given = sorted(k for k, v in n2r2_given.items() if v is not None)
         raise X.ExploreQATError("n2r2_flags_not_applicable", f"{args.item} takes none of N2R2's flags {given}")
@@ -112,14 +121,17 @@ def gates(args, flags: set) -> dict:
                      "stage": "E6-R2", "registered_by": "AM-29 (E6-R2-M; drafted in parallel, not committed at this "
                                                          "commit); lane addendum L-AM24-ADD-2"}
                     if args.item == "N2R2" else {})
+    if args.item == "N2R2T":                      # addendum L-AM24-ADD-3: N2R2's recipe fields with the term's
+        from src.explore import n2r2t as T
+        recipe_extra = T.recipe_extra()
     st = G.guarded_start(
         item=args.item, run_id=args.run_id, out_dir=args.out_dir, split=args.split, allowed_splits=G.VAL_ONLY,
         input_paths={"--source-run-dir": args.source_run_dir, "--clip-selection": args.clip_selection,
                      "--teacher-ckpt": args.teacher_ckpt, "--records-root": args.records_root},
         seeds=[args.seed], pinned_paths=pinned_paths(args.item),
         precision_label=(PRECISION_LABEL if args.item == "N5" else
-                         "int8 QNNPACK (as E6-R2)" if args.item == "N2R2" else "int8 QNNPACK (as E6-E2)"),
-        recipe={"recipe_of_record": X.RECIPE_OF_RECORD_N2R2 if args.item == "N2R2" else X.RECIPE_OF_RECORD,
+                         "int8 QNNPACK (as E6-R2)" if args.item in X.RECORDS_ITEMS else "int8 QNNPACK (as E6-E2)"),
+        recipe={"recipe_of_record": X.RECIPE_OF_RECORD_N2R2 if args.item in X.RECORDS_ITEMS else X.RECIPE_OF_RECORD,
                 "change": X.CHANGES[args.item], "flags": sorted(flags),
                 "seed": args.seed, "clip": X.CLIP_OF_RECORD, "comparators": X.COMPARATORS,
                 "lambda_logit": X.N1_LAMBDA if args.item == "N1" else None,
@@ -151,10 +163,10 @@ def gates(args, flags: set) -> dict:
     if args.clip_selection_sha256 != X.CLIP_SELECTION_SHA256:
         raise X.ExploreQATError("clip_selection_not_of_record", f"--clip-selection-sha256 is not DL-139's "
                                                                 f"{X.CLIP_SELECTION_SHA256}")
-    clip = Q.clip_binding("E6-R2" if args.item == "N2R2" else "E6-E2", args.seed, X.CLIP_OF_RECORD, u4_pilot=False,
+    clip = Q.clip_binding("E6-R2" if args.item in X.RECORDS_ITEMS else "E6-E2", args.seed, X.CLIP_OF_RECORD, u4_pilot=False,
                           clip_selection=args.clip_selection, clip_selection_sha256=args.clip_selection_sha256)
     am23 = records = None
-    if args.item == "N2R2":                       # E6-R2's parent loader, its committed inputs at --records-root's HEAD
+    if args.item in X.RECORDS_ITEMS:              # E6-R2's parent loader, its committed inputs at --records-root's HEAD
         got = X.n2r2_parent(st["inputs"]["--source-run-dir"], seed=args.seed,
                             expect_source_sha256=args.expect_source_sha256, parent_sha256=args.parent_sha256,
                             records_root=st["inputs"]["--records-root"], records_commit=args.records_commit,
@@ -173,16 +185,22 @@ def gates(args, flags: set) -> dict:
     if args.item == "N2":                         # AM-24 v2.4: the ten sites from the code, or STOP before launch
         from src.explore.sites import calibrated_copy, require_site_set
         census = require_site_set(calibrated_copy(model))
-    if args.item == "N2R2":                       # N2's launch gate, on a calibrated copy of E6-R2's parent
+    if args.item in X.RECORDS_ITEMS:              # N2's launch gate, on a calibrated copy of E6-R2's parent
         from src.explore.sites import calibrated_copy, require_site_set
         census = require_site_set(calibrated_copy(model))
     teacher = teacher_rec = None
     if args.item == "N1":
         from src.quant import qat_kd as K
         teacher, teacher_rec = K.teacher_of_record(args.teacher_ckpt, args.teacher_ckpt_sha256)
+    e3_lambda = None
+    if args.item == "N2R2T":                      # a frozen FP32 copy of the loaded parent; E3's lambda_logit is the λ
+        from src.explore import n2r2t as T        # selection's winner, which the binding checked against the parent
+        teacher = T.SelfTeacher(model, checkpoint_sha256=source_meta["sha256"])
+        teacher_rec = T.teacher_record(teacher)
+        e3_lambda = am23["lambda_selection"]["winner"]["lambda"]
     return {"guard": st, "clip": clip, "stage": stage, "parent": parent, "model": model, "source_meta": source_meta,
             "teacher": teacher, "teacher_record": teacher_rec, "site_census": census, "am23_binding": am23,
-            "records_root": records}
+            "records_root": records, "e3_lambda": e3_lambda}
 
 
 def main(argv=None) -> int:
@@ -212,13 +230,13 @@ def main(argv=None) -> int:
         extra_x["x_mac_share"] = mac_share(copy.deepcopy(model))
         apply_fp32_head(model)
         extra_x["x_precision_label"] = PRECISION_LABEL
-    if args.item == "N2R2":
+    if args.item in X.RECORDS_ITEMS:
         extra_x["x_parent_of_record"] = X.E3R2_PARENT_OF_RECORD
         extra_x["x_records_root"] = g["records_root"]
     doc = dict(st["run_meta"])
     doc.update({"parent_check": g["parent"], "clip_binding": g["clip"], "quant_stage": g["stage"]["name"],
                 "teacher_record": g["teacher_record"], "site_census": g["site_census"], **extra_x})
-    if args.item == "N2R2":
+    if args.item in X.RECORDS_ITEMS:
         doc["am23_parent"] = g["am23_binding"]
     path = G.write_run_meta(out, doc)
     inner = out / args.run_id
@@ -228,7 +246,7 @@ def main(argv=None) -> int:
              "cwd_projection_loaded": False, "x_exploratory": True, "x_amendment": G.AMENDMENT, "x_item": args.item,
              "x_flags": sorted(flags), "x_change": X.CHANGES[args.item], "x_run_meta_sha256": G.sha256_file(path),
              "x_artifact_status": G.ARTIFACT_STATUS, **extra_x}
-    if args.item == "N2R2":                           # as src/quant/qat.py main records it for an AM-23 stage
+    if args.item in X.RECORDS_ITEMS:                  # as src/quant/qat.py main records it for an AM-23 stage
         extra["am23_parent"] = g["am23_binding"]
     try:
         if args.item == "N1":
@@ -263,6 +281,14 @@ def main(argv=None) -> int:
                 clip_norm=X.CLIP_OF_RECORD, clip_source=g["clip"]["clip_source"], device=args.device,
                 num_workers=args.num_workers, parent=g["parent"], extra_meta=extra)
             print(f"[n2r2] site hook calls: {matcher.calls}")
+        elif args.item == "N2R2T":                    # N2R2 with AM-29's T1 term (src/explore/n2r2t.py run_n2r2t)
+            from src.explore import n2r2t as T
+            summary, substitution, matcher = T.run_n2r2t(
+                mode="real", model=model, teacher=g["teacher"], source_meta=g["source_meta"], out_dir=inner,
+                seed=args.seed, clip_norm=X.CLIP_OF_RECORD, clip_source=g["clip"]["clip_source"], device=args.device,
+                num_workers=args.num_workers, parent=g["parent"], factor=T.FACTOR, e3_lambda=g["e3_lambda"],
+                extra_meta=extra)
+            print(f"[n2r2t] site hook calls: {matcher.calls}")
         else:
             summary = Q.run_qat(stage=g["stage"]["key"], mode="real", model=model, source_meta=g["source_meta"],
                                 out_dir=inner, seed=args.seed, clip_norm=X.CLIP_OF_RECORD,

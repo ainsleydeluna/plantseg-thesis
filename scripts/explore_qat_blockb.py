@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Block B of an exploratory QAT run (lane L-AM24; C1, N1, N2, N2R2, N5, D): 15 converted epochs scored on the CPU,
-AM-23's selection rules, finalize.
+"""Block B of an exploratory QAT run (lane L-AM24; C1, N1, N2, N2R2, N2R2T, N5, D): 15 converted epochs scored on the
+CPU, AM-23's selection rules, finalize.
 
     python -B -I scripts/explore_qat_blockb.py --run-dir <item dir>/<run-id> --expect-telemetry-sha256 <sha>
         --host-label TEXT --run-id x-...-bb --out-dir <root>/x-...-bb [--threads 8]
 
 The guard runs first (VAL, the data root's TRAIN/VAL-only check, x- run ID, the output outside the repository,
 every official folder and the run directory). The run is identified from its x_run_meta.json (the item folder that
-holds the trainer's run directory): it must be an exploratory C1, N1, N2, N2R2, N5 or D run.
+holds the trainer's run directory): it must be an exploratory C1, N1, N2, N2R2, N2R2T, N5 or D run.
 
-  C1, N1, N2, N2R2, D: the existing scripts, unchanged, as subprocesses from the checkout, into <out-dir>/eval:
+  C1, N1, N2, N2R2, N2R2T, D: the existing scripts, unchanged, as subprocesses from the checkout, into <out-dir>/eval:
                  qat_epoch_eval.py convert --purpose record, score (the evaluator at --artifact-status provisional:
                  the evaluator has no exploratory status), select_qat_epoch.py (the rules file of the run's stage:
                  AM-23's for E6-E2 and E6-R2), qat_epoch_eval.py finalize. They accept the run because its telemetry
@@ -22,6 +22,8 @@ holds the trainer's run directory): it must be an exploratory C1, N1, N2, N2R2, 
                  into <out-dir>/fqoff/eNN, each value recorded with its file and sha256 (DL-176's form). The
                  evaluator's own stage list (src/eval/artifacts.py FQOFF_STAGES) decides: it holds E6-E2, not E6-R2,
                  so for N2R2 the evaluator refuses and block B ends INCOMPLETE with that refusal recorded.
+  N2R2T:         as N2R2 at every step (addendum L-AM24-ADD-3): a run of stage E6-R2, AM-23's rules file, card fix 1,
+                 and so the same end, INCOMPLETE with the evaluator's [fqoff_stage_not_in_scope] recorded.
   N5:            its own steps (the registered converter refuses the FP32 head's key set and its float fallback):
                  each epoch's state, sha-checked against its epoch_end row, converted through the pinned copy and
                  convert onto the FP32-head skeleton (src/explore/fp32_head.py), the islands report, VAL scored on the
@@ -50,11 +52,14 @@ if str(REPO) not in sys.path:
 
 from src.explore import guard as G                                   # noqa: E402
 
-REGISTERED_ITEMS = ("C1", "N1", "N2", "N2R2", "D")
+REGISTERED_ITEMS = ("C1", "N1", "N2", "N2R2", "N2R2T", "D")
 FORMAT = "x_qat_blockb/1"
 # Card fix 1 (DL-251; AM-24 item 10(b)), for N2 and N2R2: the selected epoch's fake-quant and fake-quant-off VAL.
 FQOFF_ITEMS = ("N2", "N2R2")
-ITEM_STAGE = {"N2": "E6-E2", "N2R2": "E6-R2"}
+# Addendum L-AM24-ADD-3: N2R2T takes card fix 1 as N2R2 does. It is listed apart from FQOFF_ITEMS, which
+# scripts/smoke_explore_n2r2.py pins to ("N2", "N2R2"); that smoke stays unchanged.
+FQOFF_ITEMS_ADD3 = ("N2R2T",)
+ITEM_STAGE = {"N2": "E6-E2", "N2R2": "E6-R2", "N2R2T": "E6-R2"}
 AM23_RULES_REL = "configs/qat_selection_rules_am23.json"
 EVALUATOR_SCRIPT = "scripts/evaluate_model.py"          # run from the checkout, unchanged (as qat_epoch_eval.py does)
 FQOFF_PINNED = ("src/eval/artifacts.py", "src/eval/stage_artifacts.py", "src/eval/model_loading.py")
@@ -78,8 +83,8 @@ def run_item(run_dir: Path) -> dict:
         raise G.GuardError("run_not_exploratory", f"{run_dir} is not the trainer folder of an x- item folder")
     doc = json.loads(meta.read_text(encoding="utf-8"))
     if doc.get("exploratory") is not True or doc.get("item") not in (*REGISTERED_ITEMS, "N5"):
-        raise G.GuardError("run_item", f"{meta} records item {doc.get('item')!r}; block B takes C1, N1, N2, N2R2, N5, "
-                                       "D")
+        raise G.GuardError("run_item", f"{meta} records item {doc.get('item')!r}; block B takes C1, N1, N2, N2R2, "
+                                       "N2R2T, N5, D")
     return doc
 
 
@@ -260,7 +265,7 @@ def main(argv=None) -> int:
         G.check_input_paths({"--run-dir": args.run_dir})
         run_dir = Path(args.run_dir).resolve()
         item_doc = run_item(run_dir)
-        fqoff_item = item_doc["item"] in FQOFF_ITEMS
+        fqoff_item = item_doc["item"] in FQOFF_ITEMS + FQOFF_ITEMS_ADD3
         st = G.guarded_start(item=item_doc["item"], run_id=args.run_id, out_dir=args.out_dir, split=args.split,
                              allowed_splits=G.VAL_ONLY, input_paths={"--run-dir": str(run_dir.parent)},
                              seeds=item_doc.get("seeds"), pinned_paths=("scripts/qat_epoch_eval.py",

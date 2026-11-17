@@ -56,8 +56,8 @@ RUN_META_FORMAT = "x_run_meta/1"
 EXPECTED_COUNTS = {"train": 5367, "val": 846}          # configs/data.py SPLIT_SIZES (TRAIN, VAL)
 VAL_IMAGES = 846
 
-# The items of AM-24 this lane builds (audit §2; addendum L-AM24-ADD-1), and N2R2 (addendum L-AM24-ADD-2, the item
-# AM-29 registers). "A1pp" is A1''.
+# The items of AM-24 this lane builds (audit §2; addendum L-AM24-ADD-1), N2R2 (addendum L-AM24-ADD-2, the item
+# AM-29 registers) and N2R2T (addendum L-AM24-ADD-3, the candidate AM-29a adds). "A1pp" is A1''.
 ITEMS = {
     "N4": "free decompositions from existing records (CPU; no dataset, no model)",
     "B1": "D-1 conversion-gap split: the ten sites in turn, all ten, TF32 off, reconciled (CPU or GPU, VAL)",
@@ -66,6 +66,8 @@ ITEMS = {
     "N2": "E6-E2-M: E6-E2 with the ten sites fake-quantized on their input's grid and TF32 off",
     "N2R2": ("E6-R2-M (AM-29; addendum L-AM24-ADD-2): E6-R2 with N2's change, the ten sites fake-quantized on their "
              "input's grid and TF32 off, on E3-R2 seed 42's best checkpoint through E6-R2's parent loader"),
+    "N2R2T": ("E6-R2-MT (AM-29a; addendum L-AM24-ADD-3): N2R2 with AM-29's T1 term added to the QAT loss, 0.5 x E3's "
+              "lambda_logit 0.5 x logit KD (T 4) against a frozen FP32 copy of the same parent, constant weight"),
     "N5": "E6-E2 with an FP32 LR-ASPP logit head: a MIXED-PRECISION artifact, never called INT8",
     "D": "E6-E2's recipe of record on an exploratory FP32 winner (trigger: best VAL >= 0.3875)",
     "N3": "E2-R2: stage e2 (logit KD, lambda 0.5, T 4) from arm teacher R2 at its M12 iteration 24000",

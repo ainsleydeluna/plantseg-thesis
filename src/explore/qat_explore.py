@@ -1,5 +1,5 @@
-"""The exploratory QAT entry for C1, N1, N2, N2R2, N5 and D (audit EXPLORE-AUDIT-1 §6.2; addenda L-AM24-ADD-1 and
-L-AM24-ADD-2).
+"""The exploratory QAT entry for C1, N1, N2, N2R2, N2R2T, N5 and D (audit EXPLORE-AUDIT-1 §6.2; addenda L-AM24-ADD-1,
+L-AM24-ADD-2 and L-AM24-ADD-3).
 
 Every run is E6-E2's recipe of record (AM-23 item 1 = AM-4a item 1 + clip 5.0, DL-139/DL-146), run by the pinned
 src/quant/qat.py run_qat in mode "real", except the one named change of its item:
@@ -28,6 +28,12 @@ src/quant/qat.py run_qat in mode "real", except the one named change of its item
        checkout that holds them as --records-root at --records-commit: the binding's own repo_root parameter, as the
        pinned scripts/smoke_am23_quant.py passes it. `run_n2r2` runs the pinned run_qat on stage e6-r2 with N2's
        substituted prepare_qat_model and TF32 off, exactly as N2's branch of scripts/explore_qat.py does on e6-e2.
+  N2R2T --sites-on-input-grid --tf32-off (addendum L-AM24-ADD-3; AM-29a's E6-R2-MT, run ID x-n2r2t-s42): N2R2 exactly,
+       its flags, records flags, parent check, stage, recipe, clip and seed, with one term added to the QAT loss:
+       AM-29's T1 term, 0.5 x E3's lambda_logit 0.5 x logit_kd_kl(student head logits, the logits of a frozen FP32
+       copy of the same parent) at T 4, constant from the first step (src/explore/n2r2t.py: SelfTeacher and t_logit_kd
+       copied from src/quant/am29.py at 2a94019f, run_n2r2t_qat its run_am29_qat loop on stage e6-r2, run_n2r2t N2's
+       change as run_n2r2 makes it).
   N5   --fp32-head: the LR-ASPP logit head in FP32 (src/explore/fp32_head.py): a MIXED-PRECISION model, never INT8.
   D    --parent-sha256 only (AM-24 v2.4): an exploratory FP32 winner (an x- run of N3, A1'' or A2) whose best VAL
        all-class mIoU is at least D_TRIGGER = 0.3875 (compared as Decimal of the value's repr); one D per qualifying
@@ -72,11 +78,12 @@ CLIP_SELECTION_SHA256 = "c433145a6cfe0e133ebee8fcb70a76f05b60fc6462670abee34c530
 D_TRIGGER = Decimal("0.3875")               # audit §2 D / §6.3: exploratory FP32 best VAL >= 0.3875
 D_PARENT_ITEMS = ("N3", "A1pp", "A2")
 N1_LAMBDA = 0.5
-ITEMS = ("C1", "N1", "N2", "N2R2", "N5", "D")
-ITEM_SEEDS = {"C1": (43, 44), "N1": (42,), "N2": (42,), "N2R2": (42,), "N5": (42,)}
+ITEMS = ("C1", "N1", "N2", "N2R2", "N2R2T", "N5", "D")
+ITEM_SEEDS = {"C1": (43, 44), "N1": (42,), "N2": (42,), "N2R2": (42,), "N2R2T": (42,), "N5": (42,)}
 ITEM_FLAGS = {"C1": frozenset(), "N1": frozenset({"kd_logit"}), "N2": frozenset({"sites_on_input_grid", "tf32_off"}),
               "N5": frozenset({"fp32_head"}), "D": frozenset()}
 ITEM_FLAGS["N2R2"] = ITEM_FLAGS["N2"]       # N2R2: exactly N2's flag set (the same object)
+ITEM_FLAGS["N2R2T"] = ITEM_FLAGS["N2R2"]    # N2R2T: exactly N2R2's flag set (the same object); the item adds the term
 
 # N2R2 (addendum L-AM24-ADD-2; AM-29's E6-R2-M). E3-R2 seed 42's best checkpoint and its records as DL-136 records them
 # (AM-23 item 3(b)'s entry: E3-R2 complete, best VAL 0.3842073380947113 > 0.36337557435035706, "yes"; DL-138: E6-R2
@@ -92,6 +99,9 @@ E3R2_PARENT_OF_RECORD = {
     "records": "DL-136 (AM-23 item 3(b)'s condition entry); DL-138 (E6-R2 cut, never launched)"}
 N2R2_STAGE = "e6-r2"                        # E6-R2's stage key (src/quant/stages.py; scripts/run_e6_r2.py STAGE)
 N2R2_RUN_ID = "x-n2r2-s42"
+N2R2T_RUN_ID = "x-n2r2t-s42"                # addendum L-AM24-ADD-3: AM-29a's E6-R2-MT (src/explore/n2r2t.py)
+# The items that read E6-R2's committed inputs through N2R2's parent check (N2R2_RECORD_FLAGS), each with its run ID.
+RECORDS_ITEMS = {"N2R2": N2R2_RUN_ID, "N2R2T": N2R2T_RUN_ID}
 # The committed inputs E6-R2's parent loader reads (src/quant/qat.py build_parser's E6-R2 flags), and the checkout that
 # holds them at its HEAD: each a required argument of N2R2, with no default (the sha256 flags pin the files).
 N2R2_RECORD_FLAGS = ("records_root", "records_commit", "lambda_selection", "lambda_selection_sha256", "alpha_selection",
@@ -118,6 +128,10 @@ CHANGES = {"C1": "none (seeds 43/44, which AM-23 item 1 excludes)",
            "N2": "the ten sites fake-quantized on their input's grid, and TF32 off (cuDNN and matmul)",
            "N2R2": ("N2's change on E6-R2: the ten sites fake-quantized on their input's grid, and TF32 off (cuDNN and "
                     "matmul); the parent E3-R2 seed 42 (DL-136) through E6-R2's parent loader"),
+           "N2R2T": ("N2R2's change and parent, plus one term in the QAT loss: AM-29's T1 term, 0.5 x E3's lambda_logit "
+                     "0.5 x logit_kd_kl(student head logits, the head logits of a frozen FP32 copy of the same parent) "
+                     "at T 4 over downsample_validity, constant weight 0.25 from the first step; no CWD term, no "
+                     "projection"),
            "N5": "the LR-ASPP logit head in FP32 (mixed precision; never INT8)",
            "D": "none: the parent is an exploratory FP32 winner (best VAL >= 0.3875)"}
 
