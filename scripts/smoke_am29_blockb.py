@@ -589,6 +589,26 @@ def sec_lam24() -> None:
     ji = [json.loads(ln.split(" ", 1)[1]) for ln in out_i.splitlines() if ln.startswith("AM29_SCORE_JSON ")]
     check("lam24_d_int8_route", rc_i == 0 and bool(ji) and ji[0]["label"] == "int8" and ji[0]["name"] == "D"
           and ji[0]["stage"] == "E6-E2", last_result(out_i))
+    # AM-29a item 7(a): E6-R2-MT is bound by its run ID, x-n2r2t-s42. A smoke run so named (an E6-E2 run: the stage is
+    # the fixture's) in lane/l-am24's block B format is scored as int8; an unknown run ID is still refused
+    t_item = TMP / "x-n2r2t-s42-item"
+    t_rd = t_item / "x-n2r2t-s42"
+    t_item.mkdir()
+    Q.run_qat(stage="e6-e2", mode="smoke", model=FX.student(7), source_meta=SRC, out_dir=t_rd, seed=42, clip_norm=5.0,
+              clip_source="clip_selection", device="cpu", num_workers=0, loaders=FX.loaders(), max_val_batches=1,
+              log=FX.quiet)
+    t_bb = TMP / "x-n2r2t-bb"
+    rc_tc, out_tc = run("scripts/qat_epoch_eval.py", "convert-epoch", "--run-dir", t_rd, "--eval-dir", t_bb / "eval",
+                        "--epoch", 3, "--purpose", "record", "--host-label", "smoke", "--allow-smoke-inputs")
+    t_sel = _write_lam24_records(t_bb, t_rd, 3)
+    t_int8 = ["--split", "val", "--precision", "int8", "--l-am24-blockb-dir", t_bb, "--expect-artifact-sha256",
+              t_sel["winner"]["artifact_of_record"]["sha256"], "--max-samples", 2]
+    rc_t, out_t = run("scripts/am29_score.py", *t_int8, "--run-id", "x-n2r2t-s42")
+    rc_x, out_x = run("scripts/am29_score.py", *t_int8, "--run-id", "x-n2r2t-s43")
+    jt = [json.loads(ln.split(" ", 1)[1]) for ln in out_t.splitlines() if ln.startswith("AM29_SCORE_JSON ")]
+    check("lam24_e6r2mt_bound_by_run_id", rc_tc == 0 and rc_t == 0 and bool(jt) and jt[0]["label"] == "int8"
+          and jt[0]["name"] == "E6-R2-MT" and rc_x == 2 and "[artifact_unknown]" in out_x,
+          f"x-n2r2t-s42: {last_result(out_t)}; x-n2r2t-s43: {last_result(out_x)[:110]}")
 
 
 # ------------------------------------------------------------------ test (refused before anything is read)

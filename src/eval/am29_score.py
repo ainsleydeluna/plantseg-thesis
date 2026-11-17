@@ -49,6 +49,7 @@ L_AM24_RUNS = {
     "x-n2-s42": "N2",
     "x-n2r2-s42": "E6-R2-M",
     "x-d-n3-s42": "D",
+    "x-n2r2t-s42": "E6-R2-MT",
 }
 # the pinned QAT stages whose recipe is E6's (source E2 or E3) that such a run may record; any other is unknown here
 L_AM24_STAGES = ("E6", "E6-E2", "E6-R1", "E6-R2")
