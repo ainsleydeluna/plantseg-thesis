@@ -33,7 +33,7 @@ from src.stats import bootstrap as BS  # noqa: E402
 from src.stats import driver as D  # noqa: E402
 from src.stats import heldout_inputs as H  # noqa: E402
 from src.stats import lrep_descriptive as LD  # noqa: E402
-from src.stats.align import METRIC_DISEASE_ONLY, align_runs  # noqa: E402
+from src.stats.align import METRIC_DISEASE_ONLY, AlignmentError, align_runs  # noqa: E402
 
 INV_REL = "reports/derived/tday_inventory.json"
 INV_SHA256 = "e4e3b90f13121fe863436f671b73d87ae2ea344bebf8b513a9851a9cf3a64650"       # DL-248
@@ -99,6 +99,10 @@ def main(argv) -> int:
             fam = H.family_inputs(stats, inv, cells, stages=("E1", "E3"))
             arms = {st: H.load_slot(stats, inv, slot=sl, stage=st, precision="fp32", input_root=s_root)
                     for st, sl in ARM_SLOTS}
+            for st in arms:
+                H.check_row_at_entry(inv, arms[st])
+            H.cross_check({"E1": fam["E1"], "E3": fam["E3"], **arms}, {}, evaluator_commit=inv.evaluator_commit,
+                          official=stats.profile == "official")
             side = {"E1": fam["E1"], "E3": fam["E3"], **arms}
             for cid, cand, base in DL212C:
                 c = side[cand]
@@ -114,10 +118,13 @@ def main(argv) -> int:
                     continue
                 ev_stage = H.stage_spec(stage)[0]
                 cand = D.load_input(ev_stage, D.CLEAN, found[0], looks, stats.policy)
+                H.cross_check({"E6": fam["E6"], stage: cand}, {}, evaluator_commit=inv.evaluator_commit,
+                              official=stats.profile == "official")
                 rows.append(pair_row(LD.arm_contrast_id(x, "e6"), f"{stage} - E6", fam["E6"], cand, stats.policy,
                                      s_root=s_root, dt=False))
-    except (H.LrepRefusal, D.DriverRefusal) as e:
-        die(f"refused: {type(e).__name__}: {e}")
+    except (H.LrepRefusal, D.DriverRefusal, AlignmentError) as e:
+        print(f"DETAIL: {e}")
+        die(f"refused: {type(e).__name__}: {getattr(e, 'code', 'no code')}")
     doc = {"format": "am28_perimage/1", "amendment": "AM-28 items 7 and 9(f)", "mode": mode, "descriptive": True,
            "test": None, "inventory_sha256": INV_SHA256, "stats_artifact": STATS_REL, "B": BS.PRODUCTION_B,
            "rows": rows}
