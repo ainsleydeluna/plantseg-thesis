@@ -4,6 +4,8 @@
 Sections (all by default):
   term      the T arms' logit-KD term: the teacher's sha256 is checked; with the quantizers off and student = teacher the
             step-0 term is 0 within 1e-6; T^2 is in the term at T = 4 and T is train_distill's constant
+            (L-AM29-FIX, AUDIT-LAM29-1 F-07: on T1 and T3 runs every step's loss is sup + factor x 0.5 x logit_kd
+            within 2.4e-7)
   weight0   a T arm at factor 0 against src/quant/qat.py run_qat: every train row and every epoch state bitwise equal
   lr        the rate: in every parameter group, the scheduler's base and its cosine, and run_meta; at 3e-4 the LR loop
             equals run_qat bitwise
@@ -49,6 +51,7 @@ SRC = {"sha256": "0" * 64, "path": None}
 TRAIN_KEYS = ("loss", "ce", "dice", "grad_norm", "lr", "batch_sha256", "clipped")
 A3_KEYS = ("loss", "ce", "dice", "sup", "logit_kd", "cwd_feat", "cwd_logit", "ramp", "grad_norm", "grad_norm_student",
            "grad_norm_projection", "lr", "batch_sha256", "clipped")
+LOSS_IDENTITY_TOL = 2.4e-7       # AUDIT-LAM29-1 section 8 (F-07): loss = sup + factor x 0.5 x logit_kd within this
 check = FX.Checks("L-AM29 P1 (src/quant/am29.py)")
 R.register()
 
@@ -135,6 +138,28 @@ def sec_term() -> None:
     e2 = M.t_teacher_error("T1", good, {"checkpoint_sha256": "cd" * 32})
     e3 = M.t_teacher_error("T2", "zz", parent)
     check("term_teacher_sha256_refused", all((e1, e2, e3)), f"wrong value: {e1[:60]}; wrong file: {e2[:60]}; form: {e3}")
+    term_loss_identity()                                     # AUDIT-LAM29-1 F-07
+
+
+def term_loss_identity(tag: str = "") -> dict:
+    """AUDIT-LAM29-1 F-07 (its section 8): on a T1 run (factor 0.5) and a T3 run (factor 1.0), every train row's loss is
+    sup + factor x 0.5 x logit_kd within 2.4e-7, so the term's weight is 0.25 and 0.5 at every step. The weight comes
+    from the arm's factor and E3's lambda 0.5, never from the row's own kd_weight, so that a ramp or a weight without
+    lambda fails the check; the term must be non-zero at every step, so that the check is not vacuous."""
+    ok_by_arm = {}
+    for arm, factor in (("T1", 0.5), ("T3", 1.0)):
+        out = f"loss_identity_{arm.lower()}{tag}"
+        run_t(out, factor=factor, arm=arm)
+        rows = FX.rows(TMP / out, "train")
+        weight = factor * 0.5
+        diffs = [abs(r["loss"] - (r["sup"] + weight * r["logit_kd"])) for r in rows]
+        ok = (len(rows) == 4 and all(d <= LOSS_IDENTITY_TOL for d in diffs)
+              and all(abs(r["logit_kd"]) > 1e-3 for r in rows))
+        ok_by_arm[arm] = check(f"term_loss_identity_{arm}", ok,
+                               f"weight {weight} (factor {factor} x lambda 0.5), {len(rows)} steps: |loss - (sup + "
+                               f"weight x logit_kd)| {[float(f'{d:.3g}') for d in diffs]} <= {LOSS_IDENTITY_TOL}; "
+                               f"logit_kd {[round(r['logit_kd'], 4) for r in rows]}")
+    return ok_by_arm
 
 
 # ------------------------------------------------------------------ weight 0

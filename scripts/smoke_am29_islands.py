@@ -11,6 +11,8 @@
   ptq      the same variants from the PTQ path (re-entry, mixing, shares)
   cli      --split test refused by name before anything is read; a QAT run and a PTQ run of the CLI scoring VAL
            through the evaluator's own code (synthetic VAL tree, 2 samples)
+           (L-AM29-FIX, AUDIT-LAM29-1 F-14: E7-R2's G0 labelled under E7; E6 seed 42's full sha256 of record; --threads
+           read back; a run without smoke inputs requires clean code at HEAD)
 
     python -B scripts/smoke_am29_islands.py [--sections g0,islands,ptq,cli]
 """
@@ -244,6 +246,50 @@ def sec_cli() -> None:
                    "--out", str(TMP / "never2.json")])
     check("cli_ptq_source_not_of_record_refused", rc == 2 and "[source_not_of_record]" in out,
           "outside smoke inputs E7's source must be 4baa5bad... (DL-121)")
+    # L-AM29-FIX (AUDIT-LAM29-1 F-14): E7-R2's G0 state_dict is labelled under the stage of record, E7, so on the same
+    # weights and calibration its sha256 is E7's
+    from scripts import am29_islands as C
+    rep3 = TMP / "islands_ptq_r2.json"
+    rc, out = cli(["--split", "val", "--model", "E7-R2", "--fp32-checkpoint", str(e3), "--expect-source-sha256",
+                   FX.sha_file(e3), "--calibration-list", str(cal), "--expect-list-checksum", P.ids_checksum(ids),
+                   "--out", str(rep3), "--allow-smoke-inputs", "--groups", "G0", "--no-score"])
+    d3 = json.loads(rep3.read_text()) if rep3.is_file() else {}
+    g0_r2, g0_e7 = d3.get("g0_state_dict_sha256"), d2.get("g0_state_dict_sha256")
+    check("cli_e7r2_g0_labelled_e7", rc == 0 and C.MODELS["E7-R2"].get("stage") == "E7" and g0_r2 is not None
+          and g0_r2 == g0_e7, f"E7-R2 G0 {str(g0_r2)[:16]} == E7 G0 {str(g0_e7)[:16]}")
+    # E6 seed 42's checkpoint of record by its full sha256: one with the right first twelve digits is still refused
+    full = C.MODELS["E6-s42-e15"]["sha256"]
+    rc, out = cli(["--split", "val", "--model", "E6-s42-e15", "--qat-checkpoint", str(s["ck"]),
+                   "--expect-checkpoint-sha256", full[:12] + "0" * 52, "--out", str(TMP / "never3.json")])
+    check("cli_qat_full_sha256_of_record", rc == 2 and "[checkpoint_not_of_record]" in out
+          and full == "74fd438a9e953ce84117a61454b879940b0a6a8f357e7705c22a86ab0ed847a5"
+          and "sha256_prefix" not in C.MODELS["E6-s42-e15"], out.strip().splitlines()[-1][:140])
+    # --threads is read back after it is set: a thread count that does not take is refused before anything is read
+    saved_set = torch.set_num_threads
+    want = torch.get_num_threads() + 1
+    try:
+        torch.set_num_threads = lambda n: None
+        rc, out = cli(["--split", "val", "--model", "E6-s42-e15", "--qat-checkpoint", str(TMP / "absent.pt"),
+                       "--expect-checkpoint-sha256", "a" * 64, "--out", str(TMP / "never4.json"), "--threads", str(want),
+                       "--allow-smoke-inputs"])
+    finally:
+        torch.set_num_threads = saved_set
+    check("cli_threads_read_back", rc == 2 and "[threads_not_set]" in out and not (TMP / "never4.json").exists(),
+          out.strip().splitlines()[-1][:140])
+    # a run without --allow-smoke-inputs requires code_clean_at_head true: the source and the code identity are stubbed
+    # in this process (a source of record cannot be made here), and the run is refused before any conversion
+    from src.quant import am29 as M29
+    saved_q, saved_ci = C.qat_source, M29.code_identity
+    try:
+        C.qat_source = lambda a, spec: (s["state"], {"kind": "qat", "stub": True})
+        M29.code_identity = lambda: {"git_head": "0" * 40, "code_clean_at_head": False, "code_files_sha256": {}}
+        rc, out = cli(["--split", "val", "--model", "E6-s42-e15", "--qat-checkpoint", str(s["ck"]),
+                       "--expect-checkpoint-sha256", full, "--out", str(TMP / "never5.json"), "--groups", "G0",
+                       "--no-score"])
+    finally:
+        C.qat_source, M29.code_identity = saved_q, saved_ci
+    check("cli_nonsmoke_requires_clean_code", rc == 2 and "[code_not_clean]" in out
+          and not (TMP / "never5.json").exists(), out.strip().splitlines()[-1][:140])
 
 
 def main(argv=None) -> int:

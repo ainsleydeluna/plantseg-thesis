@@ -18,8 +18,8 @@ disease-only mIoU, aAcc), never a per-image row. Three sources:
 
   am29       an AM-29 arm's finalized block B (scripts/am29_blockb.py): am29_finalize.json -> am29_selection.json -> the
              selected epoch's converted all-INT8 TorchScript and its provenance (scored "int8")
-  l-am24     lane/l-am24's block B (scripts/explore_qat_blockb.py) of AM-29's two runs there, N2 (x-n2-s42) and
-             E6-R2-M (x-n2r2-s42), finalized through the pinned scripts/qat_epoch_eval.py: x_blockb.json ->
+  l-am24     lane/l-am24's block B (scripts/explore_qat_blockb.py) of a run AM-29 scores there (L_AM24_RUNS, by run
+             ID), finalized through the pinned scripts/qat_epoch_eval.py: x_blockb.json ->
              eval/qat_selection.json and eval/qat_finalize.json -> the artifact of record (scored "int8")
   provenance one converted epoch's eNN_run_meta.json (block B's VAL scoring of every epoch; VAL only)
 
@@ -43,9 +43,13 @@ LABEL_INT8 = "int8"
 LABEL_MIXED = "mixed precision"
 INT8_META = "plantseg_int8.json"            # = src.eval.model_loading.INT8_TORCHSCRIPT_META
 MIXED_META = "x_mixed_precision.json"       # lane/l-am24's mixed-precision identity (explore_qat_blockb.py:144)
-# lane/l-am24's two AM-29 runs: run ID -> AM-29's label (the run ID is the trainer's run directory, the run_id of every
-# record and of the artifact's identity)
-L_AM24_RUNS = {"x-n2-s42": "N2", "x-n2r2-s42": "E6-R2-M"}
+# the runs on lane/l-am24 that AM-29 scores: run ID -> AM-29's label (the run ID is the trainer's run directory, the
+# run_id of every record and of the artifact's identity)
+L_AM24_RUNS = {
+    "x-n2-s42": "N2",
+    "x-n2r2-s42": "E6-R2-M",
+    "x-d-n3-s42": "D",
+}
 # the pinned QAT stages whose recipe is E6's (source E2 or E3) that such a run may record; any other is unknown here
 L_AM24_STAGES = ("E6", "E6-E2", "E6-R1", "E6-R2")
 L_AM24_BLOCKB_FORMAT = "x_qat_blockb/1"

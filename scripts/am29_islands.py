@@ -7,14 +7,16 @@
         --expect-source-sha256 <64 hex> --calibration-list configs/calibration/ptq_calibration_seed42.json \\
         --expect-list-checksum <64 hex> --out <report.json> [--groups ...] [--threads T]
 
-(a) --model E6-s42-e15: E6 seed 42's selected epoch-15 checkpoint (a QAT state; DL-131, DL-176). Its full sha256 is
-not in the rows L-AM29 reads, so --expect-checkpoint-sha256 is required; DL-176's artifact name
-valfq_e6_s42_e15_74fd438a9e95 gives its first twelve hex digits (an inference from that naming, checked).
+(a) --model E6-s42-e15: E6 seed 42's selected epoch-15 checkpoint (a QAT state; DL-131, DL-176). Its sha256 of record
+is 74fd438a9e953ce84117a61454b879940b0a6a8f357e7705c22a86ab0ed847a5 (AM-29 item 2(a)); --expect-checkpoint-sha256 is
+required and, outside smoke inputs, must equal it.
 (b) --model E7 (E3 seed 42, 4baa5bad..., DL-121) or E7-R2 (E3-R2 seed 42, da70d82f...): the FP32 checkpoint through
 the PTQ of record (prepare_ptq, calibrate on the AM-10 list of record's 128 TRAIN images in list order, one per batch,
 convert under QNNPACK). VAL only: --split test is refused by name before anything is read. Each variant's INT8 share of
 parameters and of MACs is reported; a variant is eligible only if at least 90% of its parameters are INT8; G0 is "int8"
 and every other variant "mixed precision". Exit codes: 0 done, 1 a check failed, 2 refused, 4 error.
+--threads is read back after it is set, and a run without --allow-smoke-inputs requires code_clean_at_head true
+(AUDIT-LAM29-1 F-14); E7-R2's G0 state_dict is labelled under the stage of record, E7, as E7-R2 is made.
 """
 from __future__ import annotations
 
@@ -32,12 +34,12 @@ if str(REPO) not in sys.path:
 FORMAT = "am29_islands/1"
 EXIT_OK, EXIT_STOP, EXIT_REFUSED, EXIT_ERROR = 0, 1, 2, 4
 MODELS = {
-    "E6-s42-e15": {"source": "qat", "stage": "E6", "seed": 42, "epoch": 15, "sha256": None,
-                   "sha256_prefix": "74fd438a9e95",
-                   "record": "DL-131 (E6 seed 42 selected epoch 15); DL-176 artifact valfq_e6_s42_e15_74fd438a9e95"},
+    "E6-s42-e15": {"source": "qat", "stage": "E6", "seed": 42, "epoch": 15,
+                   "sha256": "74fd438a9e953ce84117a61454b879940b0a6a8f357e7705c22a86ab0ed847a5",
+                   "record": "DL-131 (E6 seed 42 selected epoch 15); AM-29 item 2(a) (epoch_ckpts/e15.pt, its sha256)"},
     "E7": {"source": "ptq", "parent": "E3 seed 42", "loader_stage": "e7",
            "sha256": "4baa5bad682995091b66c67fb2d2ce467b3f139e02cc5a5cc62c243fe00f1a0d", "record": "DL-121"},
-    "E7-R2": {"source": "ptq", "parent": "E3-R2 seed 42", "loader_stage": "e7",
+    "E7-R2": {"source": "ptq", "parent": "E3-R2 seed 42", "loader_stage": "e7", "stage": "E7",
               "sha256": "da70d82fcba6543488d6748691fbe9f56a4bf8c29b1c9d29d92f0d5287291ef4",
               "record": "the L-AM29 prompt (DL-136 holds the value)"},
 }
@@ -94,8 +96,8 @@ def qat_source(a, spec: dict) -> tuple[dict, dict]:
     from src.quant.x86_latency import validate_qat_sidecar
     if not a.qat_checkpoint or not _sha_ok(a.expect_checkpoint_sha256):
         raise Refused("qat_source_flags", "--qat-checkpoint and --expect-checkpoint-sha256 (64 hex) are required")
-    if not a.allow_smoke_inputs and not a.expect_checkpoint_sha256.startswith(spec["sha256_prefix"]):
-        raise Refused("checkpoint_not_of_record", f"{a.model}'s checkpoint sha256 begins {spec['sha256_prefix']} "
+    if not a.allow_smoke_inputs and a.expect_checkpoint_sha256 != spec["sha256"]:   # AUDIT-LAM29-1 F-14
+        raise Refused("checkpoint_not_of_record", f"{a.model}'s checkpoint sha256 is {spec['sha256']} "
                                                   f"({spec['record']}); got {a.expect_checkpoint_sha256}")
     raw = Path(a.qat_checkpoint).read_bytes()
     sha = Q.sha256_bytes(raw)
@@ -156,6 +158,17 @@ def ptq_source(a, spec: dict):
                                        "list_of_record_error": err}}
 
 
+def clean_identity(a) -> dict:
+    """AUDIT-LAM29-1 F-14: the code identity this run records (src/quant/am29.py code_identity), taken once its source is
+    bound and before any conversion; a run without --allow-smoke-inputs requires code_clean_at_head true."""
+    from src.quant.am29 import code_identity
+    ident = code_identity()
+    if not a.allow_smoke_inputs and ident.get("code_clean_at_head") is not True:
+        raise Refused("code_not_clean", f"code_clean_at_head is {ident.get('code_clean_at_head')!r} at HEAD "
+                                        f"{ident.get('git_head')}; a Step 1 record runs on code clean at HEAD")
+    return ident
+
+
 def main(argv=None) -> int:
     a = build_parser().parse_args(argv)
     try:
@@ -180,14 +193,19 @@ def main(argv=None) -> int:
         import torch
         if a.threads is not None:
             torch.set_num_threads(int(a.threads))
+            if torch.get_num_threads() != int(a.threads):          # AUDIT-LAM29-1 F-14: read back, before anything
+                raise Refused("threads_not_set", f"torch.set_num_threads({a.threads}) left {torch.get_num_threads()} "
+                                                 "threads; nothing was read")
         from src.quant import ptq as P
         t0 = time.time()
         if spec["source"] == "qat":
             state, source = qat_source(a, spec)
+            ident = clean_identity(a)                              # AUDIT-LAM29-1 F-14
             res = I.convert_qat_state(state, groups=tuple(a.groups))
             prepared_qat = res["prepared"]
         else:
             model, ds, source = ptq_source(a, spec)
+            ident = clean_identity(a)                              # AUDIT-LAM29-1 F-14
             prepared, n = I.calibrate_fp32(model, P.iter_calibration_images(ds))
             source["calibration"]["batches_seen"] = n
             res = I.convert_ptq_prepared(prepared, groups=tuple(a.groups))
@@ -208,8 +226,6 @@ def main(argv=None) -> int:
                   f"{sh['int8_mac_share']:.4f} ({sh['int8_mac_share_with_boundary']:.4f} with the final float "
                   f"upsample), eligible {rec['eligible']}, checks {'OK' if rec['checks_ok'] else 'FAIL'}")
             rows.append(rec)
-        from src.quant.am29 import code_identity
-        ident = code_identity()
         doc = {"format": FORMAT, "split": "val", "model": a.model, "spec": spec, "source": source,
                "groups": a.groups, "g0_state_dict_sha256": P._sha256_bytes(g0_bytes), "variants": rows,
                "eligibility_rule": f"int8_param_share >= {I.ELIGIBLE_PARAM_SHARE}", "seconds": time.time() - t0,

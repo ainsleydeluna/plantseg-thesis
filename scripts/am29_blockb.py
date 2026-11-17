@@ -3,7 +3,7 @@
 
     convert         --run-dir R --eval-dir E --host-label TEXT --expect-telemetry-sha256 H
     convert-epoch   the fresh-process worker `convert` spawns, one epoch per process
-    score           --run-dir R --eval-dir E --host-label TEXT [--threads T]
+    score           --run-dir R --eval-dir E --host-label TEXT --threads T
     select          --run-dir R --eval-dir E --expect-telemetry-sha256 H
     finalize        --run-dir R --eval-dir E
     (smokes only: --allow-smoke-inputs on each, and --max-samples N on score)
@@ -20,7 +20,8 @@ scripts/evaluate_model.py's --stage choices), so these are new entry points over
   select    configs/qat_selection_rules_am29.json, read through qat_select.load_rules: the highest all-INT8 converted
             VAL all-class mIoU of the 15 epochs, strict >, a tie keeps the earlier epoch; an epoch whose checkpoint
             fails AM-21 item 1(a) is excluded (qat_select.checkpoint_states decides); the fake-quant VAL never selects;
-            every input re-verified (checkpoint -> provenance -> TorchScript identity -> score); am29_selection.json
+            every input re-verified (checkpoint -> provenance -> TorchScript identity -> score); am29_selection.json;
+            outside smokes every score record must hold code_clean_at_head true and an image digest (AUDIT-LAM29-1 F-09)
   finalize  am29_finalize.json names the selected epoch's scored TorchScript as the artifact of record (re-hashed, never
             traced again) with its provenance, state_dict companion and checkpoint. There is no x86 latency copy.
 
@@ -72,7 +73,7 @@ def _parser() -> argparse.ArgumentParser:
         if name == "convert-epoch":
             p.add_argument("--epoch", type=int, required=True)
         if name == "score":
-            p.add_argument("--threads", type=int, default=None)
+            p.add_argument("--threads", type=int, required=True)          # AUDIT-LAM29-1 F-09
             p.add_argument("--max-samples", type=int, default=None)
     return ap
 
@@ -273,6 +274,11 @@ def _score_errors(s: dict, *, rules: dict, smoke: bool) -> list[str]:
             bad.append(f"rows {rows} (cap {sc.get('max_samples')!r}); the rules require {ev['expected_rows']}")
         if sc.get("gt_support_sum") != ev["gt_support_sum"]:
             bad.append(f"gt_support_sum {sc.get('gt_support_sum')!r}, the rules' {ev['gt_support_sum']}")
+        if s.get("code_clean_at_head") is not True:                   # AUDIT-LAM29-1 F-09
+            bad.append(f"code_clean_at_head = {s.get('code_clean_at_head')!r}: a record selection's scores ran on "
+                       "clean code at HEAD")
+        if (sc.get("eval_runtime") or {}).get("image_digest") is None:
+            bad.append("score.eval_runtime.image_digest = None: a record selection's scores name the image they ran in")
     elif not (rows[0] == rows[1] == rows[2]):
         bad.append(f"rows {rows} differ")
     return bad
