@@ -32,6 +32,9 @@ Labels, as in [demo.md](demo.md):
 
 ### File list
 
+These rows are `e06f1b3`'s. Six of these files changed in `e856eb6` (DEMO-3b: [demo3b.md](demo3b.md)
+section 5).
+
 | file | status | lines | sha256 |
 |---|---|---|---|
 | `demo/Dockerfile` | M | 35 | `854f308718b1cfd8b43cad51321dce02282168bb95b6189abcce17cf4ef88580` |

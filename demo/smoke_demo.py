@@ -480,7 +480,7 @@ def main(argv=None) -> int:
                   f"e3 {e3m.get('file')} sha256 {fp32_sha[:12]}... engine {e3m.get('engine')} stage {e3m.get('stage')}; "
                   f"compare=e3: HTTP {st}, {len(res.get('panels', []))} panels, inference e6 "
                   f"{res.get('latency_ms', {}).get('inference')} ms / e3 {res.get('latency_ms', {}).get('inference_compare')} "
-                  f"ms; E6's mask unchanged by the comparison: {model != reg_e6 or b_ok}")
+                  f"ms; E6's panel mask compared with server A's: {model == reg_e6}")
         check("S11 e6_with_fp32_stand_in_in_e3", b_ok, detail)
     else:
         check("S11 e6_with_fp32_stand_in_in_e3", False, b.get("detail", ""))

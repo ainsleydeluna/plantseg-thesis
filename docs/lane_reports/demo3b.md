@@ -21,6 +21,10 @@ file named), **REPOSITORY-PROVEN** (read in this branch's files), **INFERRED** (
 - **The smoke did not run its checks.** It stops at `import torch` with exit 1 (MEASURED).
   - No Python in this container has torch, and no install was made (open question 1).
   - So none of S1 to S16 was observed on the changed code.
+- **Later, after the one install was approved** (open question 1's first route), DEMO-3b ran
+  `python -I demo/smoke_demo.py` on `e856eb6` in a scratch venv on Python 3.11.18: exit 0,
+  `SUMMARY 16/16 passed`. `git status --ignored` over `demo`, `src` and the two report paths showed 0
+  entries before and after, and nothing was committed (DOCUMENTED: DEMO-3b's later reply).
 
 ## 1. The pairs
 
