@@ -44,6 +44,7 @@ def main(argv=None) -> int:
 
     if student_traced_in_process():
         raise SystemExit("run in a fresh process")
+    common.phone_fix()                                  # PHONE-FIX-1
     select_int8_backend(require_qnnpack=True)
     converted = rebuild_int8_from_state_dict(src, stage=a.stage.upper(), method=a.method)
     meta = {"schema": INT8_TORCHSCRIPT_SCHEMA, "stage": a.stage.upper(), "quantization": a.method,

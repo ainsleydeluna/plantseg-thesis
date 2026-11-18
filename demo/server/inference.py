@@ -354,6 +354,7 @@ class Segmenter:
         runs = [self.model] + ([self.models[compare]] if compare else [])
         outs = []
         with self._lock, torch.inference_mode():
+            t_lock = time.perf_counter()                       # a queue wait before this is in no part, as in build 2
             for m in runs:                                     # the same input tensor for every model
                 t0 = time.perf_counter()
                 logits = m.module(pre.tensor)
@@ -369,7 +370,7 @@ class Segmenter:
         latency = {"decode": round((t_dec - t_start) * 1e3, 2),
                    "preprocess": round((t_pre - t_dec) * 1e3, 2),
                    "inference": e6["latency_ms"]["inference"],
-                   "postprocess": round((t_end - t_pre) * 1e3 - sum(o[3] for o in outs), 2),
+                   "postprocess": round((t_end - t_lock) * 1e3 - sum(o[3] for o in outs), 2),
                    "total": round((t_end - t_start) * 1e3, 2)}
         if compare:
             latency["inference_compare"] = panels[1]["latency_ms"]["inference"]

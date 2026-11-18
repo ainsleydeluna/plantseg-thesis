@@ -77,7 +77,8 @@ variable, or else from its marked line in `demo/config.py`.
 `run_demo.py --model PATH` still overrides e6's file for one run. Today's route for e6 is kept:
 `PLANTSEG_DEMO_MODEL` names its file, and `MODEL_PATH` is its marked line.
 
-**The rules** (`demo/server/inference.py load_registry`; all MEASURED in S9 to S16):
+**The rules** (`demo/server/inference.py load_registry`; MEASURED in S9 to S16, except the order "hashed before
+deserialized", which is read from the code; S13 does not observe it):
 
 - A slot loads only if its expected sha256 is set and the file's sha256 equals it. No other model is loaded.
 - Every configured file is hashed and compared **before any file is deserialized**.
@@ -386,12 +387,15 @@ It refuses any other checkpoint before reading it.
 python -I demo/model/parity_fp32.py --model /path/outside/repo/demo_e3_fp32.pt --checkpoint /path/to/E3_seed42_checkpoint.pt --source-sha256 4baa5bad682995091b66c67fb2d2ce467b3f139e02cc5a5cc62c243fe00f1a0d --images "$PLANTSEG_DATA_ROOT/images/val" --n 32
 ```
 
-The last line must start with `PASS parity_fp32`. A `STOP` line means: do not use the file. The VAL path
-is INFERRED (open question 10).
+The VAL path is INFERRED (open question 10). This step is not run until the orchestrator has checked, in
+the repository's data configuration, that `$PLANTSEG_DATA_ROOT/images/val` holds the VAL split and nothing
+else. The last line must start with `PASS parity_fp32`. A `STOP` line means: do not use the file.
 
-**3. The orchestrator sets e3's expected sha256.** Set it to the `<HEX>` from step 1, either in
-`demo/config.py`'s `E3_SHA256` line or as `PLANTSEG_DEMO_E3_SHA256`. Do the same for `shown` once AM-29's
-file exists. e6's line already holds `cf14ae03…dbb0bb`.
+**3. The orchestrator sets e3's expected sha256.** Set it to the `<HEX>` from step 1 as
+`PLANTSEG_DEMO_E3_SHA256`, as steps 4 and 6 pass it. Do the same for `shown` once AM-29's file exists. The
+e3 and shown marked lines in `demo/config.py` stay empty. The smoke needs them empty: a sha256 line without
+its path line stops S1 (and every start-up that does not set the path variable), and both lines set make
+some of S9, S11, S12 and S14 fail. e6's line already holds `cf14ae03…dbb0bb`.
 
 **4. Run on the laptop.**
 
@@ -402,10 +406,10 @@ PLANTSEG_DEMO_MODEL=/path/to/E6_seed42_int8_qnnpack.pt PLANTSEG_DEMO_E3_MODEL=/p
 The start-up lines must show:
 - `loaded e6: … sha256 cf14ae0362d0…dbb0bb engine qnnpack stage E6`;
 - `loaded e3: demo_e3_fp32.pt sha256 <HEX> engine fp32 CPU (mkldnn off) stage E3`;
-- `e3 source checkpoint 4baa5bad682e... equals the one E6's identity names`.
+- `e3 source checkpoint 4baa5bad6829... equals the one E6's identity names`.
 
-**5. The smoke against the real E6.** S9 to S16 use an INT8 stand-in as e6 here, because the real E6's
-identity would correctly refuse an E3 stand-in. Expect `SUMMARY 16/16 passed`.
+**5. The smoke against the real E6.** S1 to S9 run on the real E6. S10 to S16 use an INT8 stand-in as e6,
+because the real E6's identity would correctly refuse an E3 stand-in. Expect `SUMMARY 16/16 passed`.
 
 ```bash
 python -I demo/smoke_demo.py --model /path/to/E6_seed42_int8_qnnpack.pt
@@ -443,20 +447,22 @@ This assumes a POSIX shell with Python 3.11 and the demo's pins installed, as fo
 open question 11). PHONE-FIX-1 is now in the code, so no patch is applied on the phone.
 
 ```bash
-mkdir -p ~/plantseg-demo && tar -C ~/plantseg-demo -xzf plantseg-demo-context.tgz
+sha256sum plantseg-demo-context.tgz && mkdir ~/plantseg-demo3 && tar -C ~/plantseg-demo3 -xzf plantseg-demo-context.tgz
 ```
 
 ```bash
-cd ~/plantseg-demo && sha256sum -c SHA256SUMS
+cd ~/plantseg-demo3 && sha256sum -c SHA256SUMS && sha256sum SHA256SUMS
 ```
 
 ```bash
 set -a; . ./demo.env; set +a; python -I demo/run_demo.py --no-build --host 0.0.0.0 --port 8000
 ```
 
+- The tgz's sha256 must equal the laptop's from step 6, and `mkdir` must succeed (a new, empty directory).
 - `sha256sum -c` must print OK for every listed file.
 - The sha256 of `SHA256SUMS` must equal the laptop's from step 6.
-- The start-up lines must match step 4.
+- The start-up lines must show step 4's sha256 values, engines and stages; here the files are named
+  `model.pt` and `e3.pt`.
 
 ## 4. Open questions
 
@@ -468,7 +474,8 @@ Where the prompt left a choice open, I took the option closest to build 2 and li
    - The consequence: the out-of-the-box stand-in no longer starts by itself. `run_demo.py` builds it,
      refuses it (wrong sha256), and prints the `PLANTSEG_DEMO_E6_SHA256=…` line that would serve it.
    - If the orchestrator wants every value empty until set, blank the `E6_SHA256` line. With it blank,
-     the server refuses to start until it is set.
+     the server refuses to start until it is set, and steps 4 and 6 of section 3 also pass
+     `PLANTSEG_DEMO_E6_SHA256`.
 2. **Expected sha256 values can also come from environment variables** (`PLANTSEG_DEMO_*_SHA256`), which
    override the marked lines.
    - They are used by the smoke's stand-ins, by Docker's `--env-file` and by the unpacked context

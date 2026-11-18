@@ -6,7 +6,8 @@
 
 Then open http://localhost:8000 on this computer, or the printed http://<this-computer's-IP>:8000 on
 a phone on the same network. If e6's model file (demo/config.py MODEL_PATH) is the default stand-in and
-does not exist yet, it is built first (about 15 s; random weights, synthetic calibration only).
+does not exist yet, it is built first (about 15 s; random weights, synthetic calibration only); it is served
+only with PLANTSEG_DEMO_E6_SHA256 set to its sha256, which the refusal prints.
 
 The models come from the registry in demo/config.py (slots e6, e3, shown). A slot is served only if its
 expected sha256 is set and the file matches it; e6 is required. At start-up each loaded file's name,

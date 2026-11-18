@@ -26,10 +26,11 @@ S10 the FP32 export round trip on a random-weights stand-in in E3's checkpoint s
     model on its synthetic tensors; load_fp32_model refuses tampered identities and an INT8 file;
     demo/model/parity_fp32.py prints PASS on synthetic image files and STOP-refuses a wrong checkpoint sha256
 S11 E6 with the FP32 stand-in in slot e3: both load, the option "E3 (FP32)" is offered, and one upload
-    returns E6's panel (unchanged by the comparison) beside E3's on the same photo
+    returns E6's panel beside E3's on the same photo (this e3 stand-in holds the E6 stand-in's FP32 weights,
+    so equal masks do not tell the two panels apart)
 S12 E6 with a second INT8 stand-in in slot shown: the same, with the option "shown student (INT8, exploratory)"
 S13 a wrong sha256 is refused: e6 or e3 naming another file's sha256, e6 under the marked line's sha256
-    (when the file is not that one) and a malformed sha256 each stop start-up (exit 2) before any model loads
+    (when the file is not that one) and a malformed sha256 each stop start-up (exit 2) with the sha256 refusal
 S14 an unset slot is hidden: a slot without an expected sha256 (with or without a file named) is not
     loaded, is absent from /api/info's options, is refused as a comparison (HTTP 400), and the page has no
     built-in option for it
@@ -37,7 +38,7 @@ S15 PHONE-FIX-1 holds: mkldnn is off and the quantized engine is qnnpack in ever
     off in the export and parity processes
 S16 all three slots load together and the switch offers both options, in registry order
 Exit 0 only if every check passes. If MODEL_PATH does not exist, a stand-in is built in a temp dir. The
-registry checks (S9-S16) use an INT8 stand-in as e6 (the --model file if it is one).
+registry checks S10-S16 use an INT8 stand-in as e6 (the --model file if it is one); S9 uses the S1 server.
 """
 from __future__ import annotations
 
@@ -514,7 +515,7 @@ def main(argv=None) -> int:
                                           PLANTSEG_DEMO_E3_MODEL=fp32, PLANTSEG_DEMO_E3_SHA256=shown_sha),
         "e6_malformed_sha256": slot_env(PLANTSEG_DEMO_MODEL=reg_e6, PLANTSEG_DEMO_E6_SHA256="abc123"),
     }
-    if config.E6_SHA256 != e6_sha and not os.environ.get("PLANTSEG_DEMO_E6_SHA256"):
+    if config.E6_SHA256 and config.E6_SHA256 != e6_sha and not os.environ.get("PLANTSEG_DEMO_E6_SHA256"):
         cases13["e6_marked_line_sha256"] = slot_env(PLANTSEG_DEMO_MODEL=reg_e6)
     outcomes = []
     for name, env in cases13.items():
@@ -527,7 +528,7 @@ def main(argv=None) -> int:
                                              else "was not loaded" in text)
         outcomes.append((name, ok, r.returncode))
     check("S13 wrong_sha256_refused", all(ok for _, ok, _ in outcomes) and len(outcomes) >= 3,
-          "; ".join(f"{n}: exit {rc}, refused before any model loaded: {ok}" for n, ok, rc in outcomes))
+          "; ".join(f"{n}: exit {rc}, sha256 refusal, server not started: {ok}" for n, ok, rc in outcomes))
 
     # ------------------------------------------------------------------ S14 an unset slot is hidden
     page = (config.DEMO_DIR / "web" / "index.html").read_text(encoding="utf-8")

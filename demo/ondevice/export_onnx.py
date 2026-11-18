@@ -231,6 +231,7 @@ def main(argv=None) -> int:
     ap.add_argument("--no-fp32", action="store_true")
     a = ap.parse_args(argv)
 
+    common.phone_fix()                                    # PHONE-FIX-1, before the FP32 export
     import torch
 
     from src.eval.model_loading import select_int8_backend

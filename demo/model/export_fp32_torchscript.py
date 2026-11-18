@@ -62,7 +62,8 @@ def main(argv=None) -> int:
     for p in (out, partial):
         if p.exists():
             raise SystemExit(f"refusing to overwrite {p}")
-    for p, what in ((src, "checkpoint"), (out, "output")):
+    e6_given = ((config.resolve_model_path(a.e6), "E6 file"),) if a.e6 else ()
+    for p, what in ((src, "checkpoint"), (out, "output")) + e6_given:
         common.refuse_test_named(p, what)
 
     phone_fix = common.phone_fix()
