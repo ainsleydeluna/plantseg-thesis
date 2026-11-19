@@ -1,0 +1,460 @@
+{
+ "format": "am29_records/1",
+ "amendments": [
+  "AM-29 items 8 and 9(e)",
+  "AM-29a item 7",
+  "AM-29b item 7(a)"
+ ],
+ "exploratory": true,
+ "dataset_level_only": true,
+ "date": "2026-11-19",
+ "rows": {
+  "looks": [
+   "DL-307",
+   "DL-308",
+   "DL-309",
+   "DL-310",
+   "DL-311",
+   "DL-312"
+  ],
+  "session": "DL-313"
+ },
+ "kit": {
+  "name": "am29_look_20261119.sh",
+  "sha256": "c9f50f6fa2dabfa001e8d671fb9098ebd94db77f9748acdb2da367c9c5b89acb"
+ },
+ "manifest": {
+  "path": "reports/derived/am29_look_manifest.json",
+  "sha256": "b81e2548cdd0e949d95eae12b51e3d6c08eed603fdb07042be67cdd8e408c032",
+  "git_blob": "8adc4c4e1f1d292c29a18cee395c0dadeba3d707",
+  "row": "DL-303"
+ },
+ "looks": [
+  {
+   "order": 1,
+   "key": "t1",
+   "label": "T1",
+   "role": "the shown student",
+   "run_id": "x-am29-t1-s42-a1",
+   "seed": 42,
+   "selected_epoch": 15,
+   "artifact_sha256": "1c5934b65e9bfcab90a0f15f8382a99b6aed8dc07d75faf287b2cc234adb8f7b",
+   "row": "DL-307",
+   "label_am29_item_1": "exploratory; registered after TEST (AM-29); VAL (846 images); seed 42; evaluated on TEST once",
+   "canvas": {
+    "protocol": "canvas",
+    "protocol_id": "core_preprocess/1.0.0",
+    "split": "test",
+    "rows": "1561/1561",
+    "all_class_miou": 0.38177457451820374,
+    "all_class_miou_n_eligible": 115,
+    "disease_only_miou": 0.3774205148220062,
+    "disease_only_miou_n_eligible": 114,
+    "container": "am29look_cv_t1_1",
+    "started_at": "2026-11-19T06:53:26.044484179Z",
+    "finished_at": "2026-11-19T07:02:01.971098765Z",
+    "exit": "ExitCode=0 OOMKilled=false",
+    "read_container": "am29look_cv_t1_1_read",
+    "read_started_at": "2026-11-19T07:02:03.477405491Z",
+    "read_finished_at": "2026-11-19T07:02:03.785952579Z",
+    "record": "plantseg_runs/am29_look_20261119/state/look_t1_cv_try1/record",
+    "record_sha256": "5850d26231c79cf706e142d74435b0a92d9b6c90b08e2cef858e4759a83643ba",
+    "record_written_at": "2026-11-19T15:02:08+0800",
+    "out_json_sha256": "bc55f990708379b69477808b9fef219d373e58dcb8a588aed69398e06b217e88",
+    "out_files": [
+     {
+      "name": "am29look_cv_t1_1.json",
+      "sha256": "bc55f990708379b69477808b9fef219d373e58dcb8a588aed69398e06b217e88"
+     }
+    ]
+   },
+   "upstream": {
+    "protocol": "upstream",
+    "protocol_id": "upstream/1.0.0",
+    "split": "test",
+    "rows": "1561/1561",
+    "all_class_miou": 0.34927061200141907,
+    "all_class_miou_n_eligible": 116,
+    "disease_only_miou": 0.3446206748485565,
+    "disease_only_miou_n_eligible": 115,
+    "container": "am29look_up_t1_1",
+    "started_at": "2026-11-19T07:39:26.487321676Z",
+    "finished_at": "2026-11-19T08:25:28.939479624Z",
+    "exit": "ExitCode=0 OOMKilled=false",
+    "read_container": "am29look_up_t1_1_read",
+    "read_started_at": "2026-11-19T08:25:31.306340018Z",
+    "read_finished_at": "2026-11-19T08:25:31.726568137Z",
+    "record": "plantseg_runs/am29_look_20261119/state/look_t1_up_try1/record",
+    "record_sha256": "c071e8e93d2ea7d08ab44a6872e03cf575baba635d41fe88d76b2e873a5ebd6e",
+    "record_written_at": "2026-11-19T16:25:35+0800",
+    "out_json_sha256": "a23470882e19bdf244bfbc3c97bc2ffa6da3356a11feaa6a693d903124bf9d15",
+    "out_files": [
+     {
+      "name": "am29look_up_t1_1.json",
+      "sha256": "a23470882e19bdf244bfbc3c97bc2ffa6da3356a11feaa6a693d903124bf9d15"
+     }
+    ]
+   }
+  },
+  {
+   "order": 2,
+   "key": "a3s43",
+   "label": "A3-s43",
+   "role": "A3 at seed 43",
+   "run_id": "x-am29-a3-s43-a1",
+   "seed": 43,
+   "selected_epoch": 10,
+   "artifact_sha256": "4a96956379a79303374bc3f68a014c6ffdbd344f3e58924a1644d6b5f914b925",
+   "row": "DL-308",
+   "label_am29_item_1": "exploratory; registered after TEST (AM-29); VAL (846 images); seed 43; evaluated on TEST once",
+   "canvas": {
+    "protocol": "canvas",
+    "protocol_id": "core_preprocess/1.0.0",
+    "split": "test",
+    "rows": "1561/1561",
+    "all_class_miou": 0.37352362275123596,
+    "all_class_miou_n_eligible": 115,
+    "disease_only_miou": 0.3690676689147949,
+    "disease_only_miou_n_eligible": 114,
+    "container": "am29look_cv_a3s43_1",
+    "started_at": "2026-11-19T07:02:10.598662293Z",
+    "finished_at": "2026-11-19T07:09:31.423088517Z",
+    "exit": "ExitCode=0 OOMKilled=false",
+    "read_container": "am29look_cv_a3s43_1_read",
+    "read_started_at": "2026-11-19T07:09:32.592540121Z",
+    "read_finished_at": "2026-11-19T07:09:32.805841856Z",
+    "record": "plantseg_runs/am29_look_20261119/state/look_a3s43_cv_try1/record",
+    "record_sha256": "5e4ac38eb49020bc021122e386e5ef2bd7ba174a279c8ab68548b6a0ad6631cd",
+    "record_written_at": "2026-11-19T15:09:36+0800",
+    "out_json_sha256": "455a7e2002436396b08e5789430af245cb57f2ad2161a97f7fbee4e0f6aecab0",
+    "out_files": [
+     {
+      "name": "am29look_cv_a3s43_1.json",
+      "sha256": "455a7e2002436396b08e5789430af245cb57f2ad2161a97f7fbee4e0f6aecab0"
+     }
+    ]
+   },
+   "upstream": {
+    "protocol": "upstream",
+    "protocol_id": "upstream/1.0.0",
+    "split": "test",
+    "rows": "1561/1561",
+    "all_class_miou": 0.34276553988456726,
+    "all_class_miou_n_eligible": 115,
+    "disease_only_miou": 0.33802950382232666,
+    "disease_only_miou_n_eligible": 114,
+    "container": "am29look_up_a3s43_1",
+    "started_at": "2026-11-19T08:25:37.586482102Z",
+    "finished_at": "2026-11-19T09:28:46.437826053Z",
+    "exit": "ExitCode=0 OOMKilled=false",
+    "read_container": "am29look_up_a3s43_1_read",
+    "read_started_at": "2026-11-19T09:28:49.209658727Z",
+    "read_finished_at": "2026-11-19T09:28:49.808139708Z",
+    "record": "plantseg_runs/am29_look_20261119/state/look_a3s43_up_try1/record",
+    "record_sha256": "0f10268c3062725019e7117b5ea9a79c129afc77945a05c7d20e15f4375f6500",
+    "record_written_at": "2026-11-19T17:28:56+0800",
+    "out_json_sha256": "3d8d508c25958c008a4541d59d86565548d3dda3c13a1b71c8a582bbbc3749ba",
+    "out_files": [
+     {
+      "name": "am29look_up_a3s43_1.json",
+      "sha256": "3d8d508c25958c008a4541d59d86565548d3dda3c13a1b71c8a582bbbc3749ba"
+     }
+    ]
+   }
+  },
+  {
+   "order": 3,
+   "key": "a3s44",
+   "label": "A3-s44",
+   "role": "A3 at seed 44",
+   "run_id": "x-am29-a3-s44-a1",
+   "seed": 44,
+   "selected_epoch": 7,
+   "artifact_sha256": "0d7ac79d48b2a4f90c9af3aca526a1faf9e445fcaacb22d48820a0707b69c9dd",
+   "row": "DL-309",
+   "label_am29_item_1": "exploratory; registered after TEST (AM-29); VAL (846 images); seed 44; evaluated on TEST once",
+   "canvas": {
+    "protocol": "canvas",
+    "protocol_id": "core_preprocess/1.0.0",
+    "split": "test",
+    "rows": "1561/1561",
+    "all_class_miou": 0.37112703919410706,
+    "all_class_miou_n_eligible": 116,
+    "disease_only_miou": 0.36673155426979065,
+    "disease_only_miou_n_eligible": 115,
+    "container": "am29look_cv_a3s44_1",
+    "started_at": "2026-11-19T07:09:38.540685154Z",
+    "finished_at": "2026-11-19T07:16:46.278457353Z",
+    "exit": "ExitCode=0 OOMKilled=false",
+    "read_container": "am29look_cv_a3s44_1_read",
+    "read_started_at": "2026-11-19T07:16:47.44623074Z",
+    "read_finished_at": "2026-11-19T07:16:47.674686103Z",
+    "record": "plantseg_runs/am29_look_20261119/state/look_a3s44_cv_try1/record",
+    "record_sha256": "72fd09fb782a84b2c58be49ae4e08e82268db27fd1378fa441358b47bcf75ba0",
+    "record_written_at": "2026-11-19T15:16:51+0800",
+    "out_json_sha256": "64a7843b3e7452c1cf5442774ddfe926b2945cd66040fc72a2f5bf2d9823fa63",
+    "out_files": [
+     {
+      "name": "am29look_cv_a3s44_1.json",
+      "sha256": "64a7843b3e7452c1cf5442774ddfe926b2945cd66040fc72a2f5bf2d9823fa63"
+     }
+    ]
+   },
+   "upstream": {
+    "protocol": "upstream",
+    "protocol_id": "upstream/1.0.0",
+    "split": "test",
+    "rows": "1561/1561",
+    "all_class_miou": 0.3532385230064392,
+    "all_class_miou_n_eligible": 116,
+    "disease_only_miou": 0.34863144159317017,
+    "disease_only_miou_n_eligible": 115,
+    "container": "am29look_up_a3s44_1",
+    "started_at": "2026-11-19T09:28:59.287726847Z",
+    "finished_at": "2026-11-19T10:03:28.653902852Z",
+    "exit": "ExitCode=0 OOMKilled=false",
+    "read_container": "am29look_up_a3s44_1_read",
+    "read_started_at": "2026-11-19T10:03:30.858781275Z",
+    "read_finished_at": "2026-11-19T10:03:31.465389128Z",
+    "record": "plantseg_runs/am29_look_20261119/state/look_a3s44_up_try1/record",
+    "record_sha256": "054db0aecc924f6f6bdeb677cd22d61ed2a74bb7ed60c79450910f2071c043f1",
+    "record_written_at": "2026-11-19T18:03:37+0800",
+    "out_json_sha256": "63c3b6bae566002e7b52b99678d7ca675c85962dc61a15d82fbff30af9dd85de",
+    "out_files": [
+     {
+      "name": "am29look_up_a3s44_1.json",
+      "sha256": "63c3b6bae566002e7b52b99678d7ca675c85962dc61a15d82fbff30af9dd85de"
+     }
+    ]
+   }
+  },
+  {
+   "order": 4,
+   "key": "lr42",
+   "label": "LR-s42",
+   "role": "the learning-rate run at seed 42",
+   "run_id": "x-am29-lr-s42-a1",
+   "seed": 42,
+   "selected_epoch": 13,
+   "artifact_sha256": "db4bcb7e71731a27a094427a251a693b5427865f79c034ce8172db7cd73eb2ea",
+   "row": "DL-310",
+   "label_am29_item_1": "exploratory; registered after TEST (AM-29); VAL (846 images); seed 42; evaluated on TEST once",
+   "canvas": {
+    "protocol": "canvas",
+    "protocol_id": "core_preprocess/1.0.0",
+    "split": "test",
+    "rows": "1561/1561",
+    "all_class_miou": 0.3578803837299347,
+    "all_class_miou_n_eligible": 116,
+    "disease_only_miou": 0.3533932864665985,
+    "disease_only_miou_n_eligible": 115,
+    "container": "am29look_cv_lr42_1",
+    "started_at": "2026-11-19T07:16:53.6617687Z",
+    "finished_at": "2026-11-19T07:24:20.211080505Z",
+    "exit": "ExitCode=0 OOMKilled=false",
+    "read_container": "am29look_cv_lr42_1_read",
+    "read_started_at": "2026-11-19T07:24:21.318444976Z",
+    "read_finished_at": "2026-11-19T07:24:21.533230933Z",
+    "record": "plantseg_runs/am29_look_20261119/state/look_lr42_cv_try1/record",
+    "record_sha256": "30d91299cc0916b859568b1e83a050af8cadc7e9191cb42530d88ce9312c72a0",
+    "record_written_at": "2026-11-19T15:24:25+0800",
+    "out_json_sha256": "e9b0fdc990cc00e4656be17a5f93e80d2b9d403ec253f90dc9280f254d7fa3da",
+    "out_files": [
+     {
+      "name": "am29look_cv_lr42_1.json",
+      "sha256": "e9b0fdc990cc00e4656be17a5f93e80d2b9d403ec253f90dc9280f254d7fa3da"
+     }
+    ]
+   },
+   "upstream": {
+    "protocol": "upstream",
+    "protocol_id": "upstream/1.0.0",
+    "split": "test",
+    "rows": "1561/1561",
+    "all_class_miou": 0.34599268436431885,
+    "all_class_miou_n_eligible": 116,
+    "disease_only_miou": 0.34132707118988037,
+    "disease_only_miou_n_eligible": 115,
+    "container": "am29look_up_lr42_1",
+    "started_at": "2026-11-19T10:03:41.70764825Z",
+    "finished_at": "2026-11-19T10:30:37.077006957Z",
+    "exit": "ExitCode=0 OOMKilled=false",
+    "read_container": "am29look_up_lr42_1_read",
+    "read_started_at": "2026-11-19T10:30:39.235818341Z",
+    "read_finished_at": "2026-11-19T10:30:39.799483927Z",
+    "record": "plantseg_runs/am29_look_20261119/state/look_lr42_up_try1/record",
+    "record_sha256": "2dc8a51859dcd6f481e6f5fd3c1cbd9bdb9cadc6fbaeb6944b4904d1df622d0c",
+    "record_written_at": "2026-11-19T18:30:45+0800",
+    "out_json_sha256": "ba0acb6c3d009d4152f84737377c91f0ee285efc85ca260e7c7a39747d43b0c7",
+    "out_files": [
+     {
+      "name": "am29look_up_lr42_1.json",
+      "sha256": "ba0acb6c3d009d4152f84737377c91f0ee285efc85ca260e7c7a39747d43b0c7"
+     }
+    ]
+   }
+  },
+  {
+   "order": 5,
+   "key": "lr43",
+   "label": "LR-s43",
+   "role": "the learning-rate run at seed 43",
+   "run_id": "x-am29-lr-s43-a1",
+   "seed": 43,
+   "selected_epoch": 13,
+   "artifact_sha256": "329a9bdbafba0605da31b34cdaea45d696fc55f14538dcad02610bc859de77ff",
+   "row": "DL-311",
+   "label_am29_item_1": "exploratory; registered after TEST (AM-29); VAL (846 images); seed 43; evaluated on TEST once",
+   "canvas": {
+    "protocol": "canvas",
+    "protocol_id": "core_preprocess/1.0.0",
+    "split": "test",
+    "rows": "1561/1561",
+    "all_class_miou": 0.36763525009155273,
+    "all_class_miou_n_eligible": 115,
+    "disease_only_miou": 0.363198846578598,
+    "disease_only_miou_n_eligible": 114,
+    "container": "am29look_cv_lr43_1",
+    "started_at": "2026-11-19T07:24:27.410635617Z",
+    "finished_at": "2026-11-19T07:31:49.376468238Z",
+    "exit": "ExitCode=0 OOMKilled=false",
+    "read_container": "am29look_cv_lr43_1_read",
+    "read_started_at": "2026-11-19T07:31:51.236680792Z",
+    "read_finished_at": "2026-11-19T07:31:51.462302752Z",
+    "record": "plantseg_runs/am29_look_20261119/state/look_lr43_cv_try1/record",
+    "record_sha256": "dd703d65450e18b725938d3fe9eac5e85d0409b28a1262091a42e3ecb549abbc",
+    "record_written_at": "2026-11-19T15:31:55+0800",
+    "out_json_sha256": "b9b07462a6c654cb09879e876d6306f352f29ff23a36f16d96545c0dcb68aedb",
+    "out_files": [
+     {
+      "name": "am29look_cv_lr43_1.json",
+      "sha256": "b9b07462a6c654cb09879e876d6306f352f29ff23a36f16d96545c0dcb68aedb"
+     }
+    ]
+   },
+   "upstream": {
+    "protocol": "upstream",
+    "protocol_id": "upstream/1.0.0",
+    "split": "test",
+    "rows": "1561/1561",
+    "all_class_miou": 0.3600837290287018,
+    "all_class_miou_n_eligible": 115,
+    "disease_only_miou": 0.35554787516593933,
+    "disease_only_miou_n_eligible": 114,
+    "container": "am29look_up_lr43_1",
+    "started_at": "2026-11-19T10:30:47.652308913Z",
+    "finished_at": "2026-11-19T10:58:09.229861381Z",
+    "exit": "ExitCode=0 OOMKilled=false",
+    "read_container": "am29look_up_lr43_1_read",
+    "read_started_at": "2026-11-19T10:58:11.42229818Z",
+    "read_finished_at": "2026-11-19T10:58:11.93189311Z",
+    "record": "plantseg_runs/am29_look_20261119/state/look_lr43_up_try1/record",
+    "record_sha256": "1b6285240e8a5191236d4e3e6348ba38166c585fa51206d3d65745f120ca3a88",
+    "record_written_at": "2026-11-19T18:58:16+0800",
+    "out_json_sha256": "c775b655af8f18ba201b3118b7a8fe738080af35a7567aa4326d8af2475538b8",
+    "out_files": [
+     {
+      "name": "am29look_up_lr43_1.json",
+      "sha256": "c775b655af8f18ba201b3118b7a8fe738080af35a7567aa4326d8af2475538b8"
+     }
+    ]
+   }
+  },
+  {
+   "order": 6,
+   "key": "lr44",
+   "label": "LR-s44",
+   "role": "the learning-rate run at seed 44",
+   "run_id": "x-am29-lr-s44-a1",
+   "seed": 44,
+   "selected_epoch": 15,
+   "artifact_sha256": "cd25f75a83fa183dbc76c8895603585990ac8606b99e5094dc2d133754edc8fe",
+   "row": "DL-312",
+   "label_am29_item_1": "exploratory; registered after TEST (AM-29); VAL (846 images); seed 44; evaluated on TEST once",
+   "canvas": {
+    "protocol": "canvas",
+    "protocol_id": "core_preprocess/1.0.0",
+    "split": "test",
+    "rows": "1561/1561",
+    "all_class_miou": 0.35685423016548157,
+    "all_class_miou_n_eligible": 116,
+    "disease_only_miou": 0.35238906741142273,
+    "disease_only_miou_n_eligible": 115,
+    "container": "am29look_cv_lr44_1",
+    "started_at": "2026-11-19T07:31:57.63854074Z",
+    "finished_at": "2026-11-19T07:39:19.36765828Z",
+    "exit": "ExitCode=0 OOMKilled=false",
+    "read_container": "am29look_cv_lr44_1_read",
+    "read_started_at": "2026-11-19T07:39:20.496160521Z",
+    "read_finished_at": "2026-11-19T07:39:20.704997634Z",
+    "record": "plantseg_runs/am29_look_20261119/state/look_lr44_cv_try1/record",
+    "record_sha256": "535ff0f6b95db3cef2670dab92377233eb13c9d23e6a8633092b8263dedbd48f",
+    "record_written_at": "2026-11-19T15:39:24+0800",
+    "out_json_sha256": "a47ec7fa5396adcfb3b38d6962b7c07421bd65c095e8b08914b28ee4660c45f3",
+    "out_files": [
+     {
+      "name": "am29look_cv_lr44_1.json",
+      "sha256": "a47ec7fa5396adcfb3b38d6962b7c07421bd65c095e8b08914b28ee4660c45f3"
+     }
+    ]
+   },
+   "upstream": {
+    "protocol": "upstream",
+    "protocol_id": "upstream/1.0.0",
+    "split": "test",
+    "rows": "1561/1561",
+    "all_class_miou": 0.33383551239967346,
+    "all_class_miou_n_eligible": 116,
+    "disease_only_miou": 0.32911720871925354,
+    "disease_only_miou_n_eligible": 115,
+    "container": "am29look_up_lr44_1",
+    "started_at": "2026-11-19T10:58:19.155181215Z",
+    "finished_at": "2026-11-19T11:29:51.439820871Z",
+    "exit": "ExitCode=0 OOMKilled=false",
+    "read_container": "am29look_up_lr44_1_read",
+    "read_started_at": "2026-11-19T11:29:53.788499652Z",
+    "read_finished_at": "2026-11-19T11:29:54.436764665Z",
+    "record": "plantseg_runs/am29_look_20261119/state/look_lr44_up_try1/record",
+    "record_sha256": "511779567f8c4cd4e66bb4ce90c093b2301e5a7b7d6cdb719e173eb8ac08d627",
+    "record_written_at": "2026-11-19T19:29:59+0800",
+    "out_json_sha256": "6af2c0559e149d06a4b0ffeeca838887a2a18ff7a5dc2127cf590c7d3935b202",
+    "out_files": [
+     {
+      "name": "am29look_up_lr44_1.json",
+      "sha256": "6af2c0559e149d06a4b0ffeeca838887a2a18ff7a5dc2127cf590c7d3935b202"
+     }
+    ]
+   }
+  }
+ ],
+ "session": {
+  "master": "5b2d42922d24593711ee47384617f96e62f9385b",
+  "looks": [
+   "t1",
+   "a3s43",
+   "a3s44",
+   "lr42",
+   "lr43",
+   "lr44"
+  ],
+  "not_made": [],
+  "precheck": "state/precheck_1/outcome: pass",
+  "first_started_at": "2026-11-19T06:53:26.044484179Z",
+  "last_finished_at": "2026-11-19T11:29:54.436764665Z",
+  "before_22_00_on_2026_11_20": true,
+  "session_done_sha256": "543db2e6ef636a309cc36131911a31ed0fa7b88ba6e21e583f09749ee4c80941",
+  "session_done_at": "2026-11-19T19:30:02+0800"
+ },
+ "sums_recheck": {
+  "file": "plantseg_runs/am29_look_20261119/sums/sums_20261119T193003.txt",
+  "bytes": 20596,
+  "sha256": "d07fab05722f2481d8dc6d82e13a6a6e57a1e511b24b9761ca14d3566cd28e55",
+  "lines": 189,
+  "kit_line": "RESULT: SUMS OK (189 files hashed into /c/Users/admin/plantseg_runs/am29_look_20261119/sums/sums_20261119T193003.txt, sha256 d07fab05722f2481d8dc6d82e13a6a6e57a1e511b24b9761ca14d3566cd28e55, and each re-checked: 189 of 189 OK; paste the lines above to ORCH)",
+  "matched_by_builder": "every record, out-json, the precheck, session_done and the manifest"
+ },
+ "paste": {
+  "name": "am29_session_window_20261119.txt",
+  "sha256": "ebd5ce38ea6c3cc8c76bc0abb6cecb89956add50cf0813beecda3f3d83165adc"
+ }
+}
